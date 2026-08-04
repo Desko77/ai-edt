@@ -38,8 +38,12 @@ A text-only assistant can search files, but it cannot reliably answer questions 
 - Why is the project validator rejecting this object?
 - What is happening in a suspended 1C debug session?
 - Can a metadata change be applied without hand-editing EDT XML?
+- Will this query compile against this particular configuration - do those tables and fields exist in it?
+- What does EDT's own validator make of the new code, rather than a text linter standing outside it?
+- Will this form open for a user, or fall apart when the configuration reaches the infobase?
+- Will this composition schema assemble into a report that works, rather than one that merely exists as a file?
 
-AI-EDT exposes those operations as purpose-built MCP tools. The result is less guessing, fewer brittle text edits and a workflow that stays inside the same model EDT uses.
+AI-EDT exposes those operations as purpose-built MCP tools - the same services the IDE itself runs on. The assistant does not only write BSL, a query, a form, a composition schema or a metadata object: it checks the result against EDT's validators straight away, so a mistake surfaces on the spot instead of the first time an infobase loads the configuration. Less guessing, fewer brittle text edits, and the whole job stays inside the model the developer sees in the IDE.
 
 ## ⚡ What you can do
 
