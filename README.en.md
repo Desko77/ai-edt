@@ -37,8 +37,6 @@ A text-only assistant can search files, but it cannot reliably answer questions 
 
 AI-EDT exposes those operations as purpose-built MCP tools. The result is less guessing, fewer brittle text edits and a workflow that stays inside the same model EDT uses.
 
-![An AI assistant reads the semantic EDT model instead of scraping project files.](docs/assets/screenshots/agent-workflow.png)
-
 ## What you can do
 
 | Workflow | What the assistant can do |
