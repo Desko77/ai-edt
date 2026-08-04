@@ -4,8 +4,10 @@ This page is written for an AI coding agent with shell access to the machine whe
 runs. It describes an unattended installation that needs no clicking.
 
 If you are a person: point your agent at this file and ask it to install or update the
-plugin. If you would rather do it yourself, the wizard walkthrough is in the
-[README](../README.en.md#3-install-into-edt).
+plugin. A prompt you can copy as is sits in the README, under
+[Just ask your agent to install the plugin](../README.en.md#just-ask-your-agent-to-install-the-plugin).
+If you would rather do it yourself, the wizard
+walkthrough is right below it.
 
 ## Why not the installation wizard
 
@@ -16,12 +18,19 @@ nothing, and reports its result as an exit code.
 
 ## Before you start
 
-- A built p2 repository. If it does not exist yet, build it first - see
-  [Quick start](../README.en.md#2-build). The output is
-  `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
+- A p2 repository to install from. Either works:
+  - the published update site `https://desko77.github.io/ai-edt/`, which needs nothing built
+    locally and is the normal choice for a first installation;
+  - a local build output, `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
+    If it does not exist yet, build it first - see [Quick start](../README.en.md#2-build).
 - The EDT installation directory. It contains `1cedtc.exe`, the console launcher used to run
   the director. Do not use `1cedt.exe` for this - that one opens the IDE.
 - The workspace path of the EDT session you are updating, if any session is running.
+
+Whether the plugin is already installed changes two steps: how you close EDT (step 2) and
+whether the director gets `-uninstallIU` (step 4). Establish that first - a running server
+answering on `/health`, or the feature listed in EDT under **Help -> About -> Installation
+Details**, means it is installed.
 
 No administrator rights are needed as long as EDT is installed for the current user.
 
@@ -47,6 +56,11 @@ It closes the workbench programmatically, so no "Exit 1C:EDT?" prompt appears - 
 window close would stall waiting for that prompt. The MCP connection drops as the server goes
 down with the IDE; that is expected, not a failure.
 
+On a first installation that tool does not exist yet, and there is no unattended way to close
+EDT: a window close raises the "Exit 1C:EDT?" prompt and waits for a human. Ask the person to
+close the session, then continue once the process is gone. If no session is running at all,
+skip to step 4.
+
 Never force-kill EDT. If the process does not exit, something is holding it (usually an open
 dialog) - report that and stop rather than killing it.
 
@@ -57,11 +71,15 @@ dialog) - report that and stop rather than killing it.
 ```powershell
 & "<EDT>\1cedtc.exe" -nosplash `
   -application org.eclipse.equinox.p2.director `
-  -repository "file:///C:/path/to/AI-EDT/mcp/repositories/ru.aiedt.mcp.server.repository/target/repository" `
+  -repository "https://desko77.github.io/ai-edt/" `
   -uninstallIU ru.aiedt.mcp.server.feature.feature.group `
   -installIU ru.aiedt.mcp.server.feature.feature.group `
   -profileProperties org.eclipse.update.reconcile=true
 ```
+
+To install a local build instead, point `-repository` at the build output as a file URL:
+`file:///C:/path/to/AI-EDT/mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
+Everything else stays the same.
 
 The feature is a p2 singleton, so installing a new version while the old one is still present
 fails with "only one can be installed". Uninstalling and installing the same unit in one

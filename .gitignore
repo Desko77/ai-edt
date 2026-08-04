@@ -50,3 +50,6 @@ CLAUDE.local.md
 
 # Generated brainstorming server state (machine-local, not reproducible)
 /.superpowers/
+
+# External review notes fed into the project (do not commit - working material)
+/docs/Issues/

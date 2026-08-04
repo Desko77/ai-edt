@@ -131,20 +131,43 @@ mcp/repositories/ru.aiedt.mcp.server.repository/target/repository
 
 ### 3. Install into EDT
 
-The built plugin is published as an update site, so building it yourself is optional:
+#### Just ask your agent to install the plugin
+
+**Installation comes down to one message to an agent: it installs the plugin itself, without a single click.** You need an AI agent with shell access on the machine where EDT is installed.
+
+Hand it this prompt:
+
+```text
+Install the AI-EDT plugin into my 1C:EDT.
+
+Recipe: https://github.com/Desko77/ai-edt/blob/main/docs/agent-install.md
+Read it in full and follow it.
+
+Install from the update site https://desko77.github.io/ai-edt/ using the Equinox p2
+director (1cedtc.exe in the EDT installation directory). Do not use the
+"Install New Software" wizard.
+This is a first installation, so do not pass -uninstallIU.
+
+Before installing, close the running EDT session and record its command line;
+afterwards relaunch it with the same arguments and wait for the health endpoint
+to answer status: ok.
+
+Never force-kill anything. If EDT will not close on its own, stop and tell me.
+```
+
+If the plugin is already installed and you are updating it, replace the first-installation sentence with: `The plugin is already installed, update it in a single director request with -uninstallIU and -installIU.`
+
+The full recipe, including the rules the agent has to respect around a running IDE, is in [docs/agent-install.md](docs/agent-install.md).
+
+#### Through the EDT user interface
+
+Both manual routes - the wizard and the command line - install the same feature from the same update site, so building the plugin yourself is optional:
 
 ```text
 https://desko77.github.io/ai-edt/
 ```
 
-EDT takes that address the same way it takes a local archive. Both routes below - the user interface and the command line - install the same feature.
-
-> [!TIP]
-> You can also ask your AI agent to do it for you. Point it at
-> **[docs/agent-install.md](docs/agent-install.md)** - an unattended recipe that needs no
-> clicking, with the rules the agent has to respect around a running IDE.
-
-#### Through the EDT user interface
+EDT takes that address the same way it takes a local archive.
 
 **Step 1.** Start EDT and open **Help → Install New Software**.
 
