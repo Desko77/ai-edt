@@ -95,6 +95,32 @@ fail instead. Drop that line the first time.
 the one configured in that workspace (`mcpServerPort` in the workspace preferences), which is
 not necessarily the default. Then confirm the running build is the one you installed.
 
+**7. Install the skill for yourself.** The plugin gives you the tools; the skill tells you how to
+use them - which facade fits a job, which checks are mandatory after an edit, what a resume key
+means. Without it you still work, just the expensive way: reading whole modules, hand-editing files
+EDT owns, retrying a call that already told you to come back for the result.
+
+```powershell
+Copy-Item -Recurse skills\ai-edt "$env:USERPROFILE\.claude\skills\ai-edt"
+```
+
+That is the per-user location for Claude Code; `.claude/skills/ai-edt` inside the project scopes it
+to one project instead. For another agent, follow that product's convention - `SKILL.md` is plain
+Markdown with a name and a description in its front matter. Details are in
+[skills/README.md](../skills/README.md).
+
+Installing from the update site usually means there is no checkout on the machine. Fetch one shallow
+copy, take the folder, drop the rest - do not skip the step:
+
+```powershell
+git clone --depth 1 https://github.com/Desko77/ai-edt.git "$env:TEMP\ai-edt-skill"
+Copy-Item -Recurse "$env:TEMP\ai-edt-skill\skills\ai-edt" "$env:USERPROFILE\.claude\skills\ai-edt"
+Remove-Item -Recurse -Force "$env:TEMP\ai-edt-skill"
+```
+
+The folder is four files: `SKILL.md` plus `references/facades.md`, `references/workflows.md` and
+`references/expected-behavior.md`, which the agent loads on demand rather than all at once.
+
 ## Or run the bundled script
 
 `scripts/edt-selfupdate.ps1` implements the whole sequence above, including the graceful close

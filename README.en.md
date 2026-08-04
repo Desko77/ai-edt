@@ -164,6 +164,9 @@ Before installing, close the running EDT session and record its command line;
 afterwards relaunch it with the same arguments and wait for the health endpoint
 to answer status: ok.
 
+Then install the skill from the repository's skills/ai-edt folder for yourself -
+without it you drive the server blind. The procedure is in skills/README.md.
+
 Never force-kill anything. If EDT will not close on its own, stop and tell me.
 ```
 
