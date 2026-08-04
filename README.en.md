@@ -235,6 +235,38 @@ The feature is a p2 singleton, so installing a new version over an existing one 
 
 For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check.
 
+#### 🎓 Install the skill while you are at it
+
+Whichever route you took, installing the plugin is not the end of it. The plugin gives the agent the
+tools; it does not say how to use them - which facade fits a job, which checks are mandatory after an
+edit, what a response carrying a resume key means. That knowledge lives in the `skills/ai-edt` folder
+and installs by copying it:
+
+```powershell
+Copy-Item -Recurse skills\ai-edt "$env:USERPROFILE\.claude\skills\ai-edt"
+```
+
+```bash
+cp -r skills/ai-edt ~/.claude/skills/ai-edt
+```
+
+That is the per-user location for Claude Code; `.claude/skills/ai-edt` inside a project scopes the
+skill to that project. If you installed from the update site and have no checkout at hand, take the
+folder from a shallow clone:
+
+```powershell
+git clone --depth 1 https://github.com/Desko77/ai-edt.git "$env:TEMP\ai-edt-skill"
+Copy-Item -Recurse "$env:TEMP\ai-edt-skill\skills\ai-edt" "$env:USERPROFILE\.claude\skills\ai-edt"
+Remove-Item -Recurse -Force "$env:TEMP\ai-edt-skill"
+```
+
+Another agent follows its own convention: `SKILL.md` is plain Markdown with a name and a description
+in the front matter, and the files under `references/` load on demand. Details in
+[skills/README.md](skills/README.md).
+
+The skill is optional. Without it an agent still works, just the expensive way - whole modules read,
+files EDT owns edited by hand, a call retried that had already handed back a resume key.
+
 ### ▶️ 4. Start and verify
 
 Open **Window → Preferences → AI-EDT** and check:
@@ -306,12 +338,12 @@ Create `.vscode/mcp.json`:
 
 Configurations for Claude Desktop, Cline and Antigravity are available in [docs/clients.md](docs/clients.md).
 
-### 🎓 5a. Teach the agent how to use the server
+### 🎓 5a. Check the skill is in place
 
-Connecting the server gives the agent the tools. It does not tell the agent which facade to reach
-for, which checks are mandatory after an edit, or what a response means. That is what the bundled
-skill in **[skills/ai-edt](skills/ai-edt)** is for - copy it into the agent's skills directory, see
-[skills/README.md](skills/README.md). It is optional, and an agent works better with it.
+The **[skills/ai-edt](skills/ai-edt)** skill installs back at the install step, under
+[Install the skill while you are at it](#-install-the-skill-while-you-are-at-it). If you skipped it,
+now is the moment: the client is connected and the difference shows on the first task. In Claude
+Code the skill appears in the available list as `ai-edt`.
 
 ### 💬 6. Make the first call
 

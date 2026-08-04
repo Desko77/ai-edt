@@ -57,7 +57,9 @@ jobs:
       - name: Create index.html
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          SITE_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+          # Lowercased: the owner keeps its original case in the environment, but the address a
+          # person copies into EDT should read the way GitHub Pages spells it.
+          SITE_URL="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/"
           REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
           cat > _site/index.html <<EOF
           <!DOCTYPE html>
