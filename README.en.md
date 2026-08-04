@@ -22,7 +22,7 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
 > [!IMPORTANT]
-> Update site: `https://desko77.github.io/ai-edt/` - point **Help → Install New Software** straight at it instead of building the plugin yourself. Building from source is described below as well. The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
+> The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
 
 ## Why AI-EDT
 
@@ -36,6 +36,8 @@ A text-only assistant can search files, but it cannot reliably answer questions 
 - Can a metadata change be applied without hand-editing EDT XML?
 
 AI-EDT exposes those operations as purpose-built MCP tools. The result is less guessing, fewer brittle text edits and a workflow that stays inside the same model EDT uses.
+
+![An AI assistant reads the semantic EDT model instead of scraping project files.](docs/assets/screenshots/agent-workflow.png)
 
 ## What you can do
 
@@ -60,12 +62,10 @@ flowchart TD
     P --> E["Edits BSL or metadata"]
     E --> V["Runs EDT validation and tests"]
     V --> D{"Problem found?"}
-    D -- Yes --> B["Debugs the live 1C session"]
+    D -- Yes --> B["Debugs the 1C session"]
     B --> E
     D -- No --> R["Returns the verified result"]
 ```
-
-![An AI assistant reads the semantic EDT model instead of scraping project files.](docs/assets/screenshots/agent-workflow.png)
 
 ## How it works
 
@@ -133,7 +133,13 @@ mcp/repositories/ru.aiedt.mcp.server.repository/target/repository
 
 ### 3. Install into EDT
 
-Install through the EDT user interface, or from the command line if you prefer scripting. Both routes install the same feature.
+The built plugin is published as an update site, so building it yourself is optional:
+
+```text
+https://desko77.github.io/ai-edt/
+```
+
+EDT takes that address the same way it takes a local archive. Both routes below - the user interface and the command line - install the same feature.
 
 > [!TIP]
 > You can also ask your AI agent to do it for you. Point it at
@@ -150,9 +156,10 @@ Install through the EDT user interface, or from the command line if you prefer s
 
 ![The installer opens with no repository selected.](docs/assets/screenshots/install-available-software.png)
 
-**Step 3.** In the **Add Repository** dialog point EDT at the build output. Either option works:
+**Step 3.** In the **Add Repository** dialog tell EDT where to take the plugin from. Any of these works:
 
-- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip`;
+- the **Location** field and the update site `https://desko77.github.io/ai-edt/`;
+- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip` from a local build;
 - **Local** and the folder `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 
 The repository name is arbitrary, for example `AI-EDT`.
