@@ -1,12 +1,20 @@
 name: Deploy Update Site
 
 on:
+  # A release created by a workflow using GITHUB_TOKEN does not raise the
+  # release event - GitHub suppresses it to stop workflows triggering each
+  # other. So the real trigger is the Release run finishing; the release
+  # event stays for a release published by hand.
   release:
     types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   deploy:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
