@@ -5,7 +5,7 @@ runs. It describes an unattended installation that needs no clicking.
 
 If you are a person: point your agent at this file and ask it to install or update the
 plugin. If you would rather do it yourself, the wizard walkthrough is in the
-[README](../README.md#3-install-into-edt).
+[README](../README.en.md#3-install-into-edt).
 
 ## Why not the installation wizard
 
@@ -17,7 +17,7 @@ nothing, and reports its result as an exit code.
 ## Before you start
 
 - A built p2 repository. If it does not exist yet, build it first - see
-  [Quick start](../README.md#2-build). The output is
+  [Quick start](../README.en.md#2-build). The output is
   `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 - The EDT installation directory. It contains `1cedtc.exe`, the console launcher used to run
   the director. Do not use `1cedt.exe` for this - that one opens the IDE.

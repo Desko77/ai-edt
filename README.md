@@ -1,97 +1,97 @@
 <div align="center">
 
-[English](README.md) · [Русский](README.ru.md)
+[Русский](README.md) · [English](README.en.md)
 
-<img src="docs/assets/readme/ai-edt-hero-agentic.svg" alt="AI-EDT - agentic development for 1C:EDT: an AI agent reaches the project and configuration through an MCP server" width="100%">
+<img src="docs/assets/readme/ai-edt-hero-agentic.svg" alt="AI-EDT - агентная разработка для 1C:EDT: AI-агент получает доступ к проекту и конфигурации через MCP-сервер" width="100%">
 
-[![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.1%2B-58a6ff?style=flat-square)](#requirements)
-[![Java](https://img.shields.io/badge/Java-17-f2cc60?style=flat-square)](#requirements)
-[![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-a371f7?style=flat-square)](#how-it-works)
+[![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.1%2B-58a6ff?style=flat-square)](#требования)
+[![Java](https://img.shields.io/badge/Java-17-f2cc60?style=flat-square)](#требования)
+[![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-a371f7?style=flat-square)](#как-это-работает)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-7ee787?style=flat-square)](LICENSE)
 
-**Give an AI assistant structured access to a 1C project through the services of a live EDT instance.**
+**Дайте AI-ассистенту структурированный доступ к проекту 1С через службы запущенного экземпляра EDT.**
 
-[Quick start](#quick-start) · [Capabilities](#what-you-can-do) · [Architecture](#how-it-works) · [Contributing](#contributing)
+[Быстрый старт](#быстрый-старт) · [Возможности](#что-можно-делать) · [Архитектура](#как-это-работает) · [Участие в разработке](#участие-в-разработке)
 
 </div>
 
 ---
 
-AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT instance**. It lets Claude, Cursor, GitHub Copilot and other MCP clients inspect and edit metadata and BSL, navigate semantic references, control the debugger, validate projects and work with a configured infobase.
+AI-EDT - MCP-сервер в виде плагина, работающего **внутри запущенного экземпляра 1C:EDT**. Он позволяет Claude, Cursor, GitHub Copilot и другим MCP-клиентам исследовать и изменять метаданные и BSL, переходить по семантическим ссылкам, управлять отладчиком, проверять проекты и работать с подключенной информационной базой.
 
-Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
+Вместо того чтобы воспринимать рабочее пространство EDT как каталог XML- и BSL-файлов, ассистент использует семантическую модель, индексы, валидаторы и службы отладки самой EDT.
 
 > [!IMPORTANT]
-> AI-EDT currently has no public update site. Installation is from a locally built P2 repository. The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
+> Публичный update site пока не опубликован. Плагин устанавливается из локально собранного P2-репозитория. Текущая версия рассчитана на **1C:EDT 2026.1+**, **Java 17** и Windows.
 
-## Why AI-EDT
+## Зачем нужен AI-EDT
 
-A text-only assistant can search files, but it cannot reliably answer questions that depend on the IDE model:
+Ассистент с доступом только к тексту может искать по файлам, но не способен надежно отвечать на вопросы, зависящие от модели IDE:
 
-- Which metadata object does this reference resolve to?
-- Which forms, roles and subsystems depend on a catalog?
-- What type did EDT infer at this BSL position?
-- Why is the project validator rejecting this object?
-- What is happening in a suspended 1C debug session?
-- Can a metadata change be applied without hand-editing EDT XML?
+- На какой объект метаданных указывает эта ссылка?
+- Какие формы, роли и подсистемы зависят от справочника?
+- Какой тип EDT вывела в этой позиции BSL?
+- Почему валидатор проекта отклоняет объект?
+- Что происходит в приостановленной отладочной сессии 1С?
+- Можно ли применить изменение метаданных без ручного редактирования XML EDT?
 
-AI-EDT exposes those operations as purpose-built MCP tools. The result is less guessing, fewer brittle text edits and a workflow that stays inside the same model EDT uses.
+AI-EDT предоставляет для этого специализированные MCP-инструменты. В результате ассистент меньше гадает, реже делает хрупкие текстовые правки и работает с той же моделью, которую использует EDT.
 
-## What you can do
+## Что можно делать
 
-| Workflow | What the assistant can do |
+| Сценарий | Что может сделать ассистент |
 |---|---|
-| **Explore code and metadata** | Search BSL, resolve symbols, find semantic references, inspect call hierarchies, list modules and read object structure. |
-| **Create and edit metadata** | Build catalogs, documents, registers, forms, roles, commands, services and other objects through `edit_metadata`, with preview and batch operations. |
-| **Debug BSL** | Start or attach a debug session, set line and exception breakpoints, inspect variables, evaluate expressions, step and collect profiling data. |
-| **Diagnose a configuration** | Read EDT problems, revalidate objects, inspect dependency graphs, detect query anti-patterns and estimate change impact. |
-| **Build complex artifacts** | Work with DCS, MXL, XDTO, extensions, external objects and external data sources through dedicated workshops. |
-| **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
-| **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
+| **Исследовать код и метаданные** | Искать по BSL, разрешать символы, находить семантические ссылки, строить иерархии вызовов, получать список модулей и структуру объектов. |
+| **Создавать и изменять метаданные** | Создавать справочники, документы, регистры, формы, роли, команды, сервисы и другие объекты через `edit_metadata`, включая предпросмотр и пакетные операции. |
+| **Отлаживать BSL** | Запускать или подключать отладочную сессию, ставить обычные и exception breakpoints, смотреть переменные, вычислять выражения, выполнять шаги и собирать профилирование. |
+| **Диагностировать конфигурацию** | Получать проблемы EDT, перевалидировать объекты, исследовать граф зависимостей, находить антипаттерны запросов и оценивать влияние изменений. |
+| **Собирать сложные артефакты** | Работать со СКД, MXL, XDTO, расширениями, внешними объектами и внешними источниками данных через специализированные мастерские. |
+| **Тестировать и исследовать данные** | Запускать и отлаживать тесты YAxUnit, выполнять сценарии Vanessa Automation и исследовать состояние исполнения в приостановленной сессии отладки. |
+| **Проверять границы доступа** | Аудировать роли и RLS, искать потенциально чувствительные данные в коде и метаданных, отключать записывающие инструменты пресетами. |
 
-The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
+Сервер предоставляет более ста операций. Родственные действия объединены фасадами `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` и `security_audit`, поэтому MCP-клиент видит компактный набор инструментов вместо длинного списка почти одинаковых команд.
 
-## A typical agent loop
+## Типичный цикл работы агента
 
 ```mermaid
 flowchart LR
-    Q["Developer describes a task"] --> S["AI searches the EDT model"]
-    S --> C["Reads code, metadata<br/>and dependencies"]
-    C --> P["Previews the proposed change"]
-    P --> E["Edits BSL or metadata"]
-    E --> V["Runs EDT validation<br/>and tests"]
-    V --> D{"Problem found?"}
-    D -- Yes --> B["Debugs the live 1C session"]
+    Q["Разработчик описывает задачу"] --> S["AI ищет в модели EDT"]
+    S --> C["Читает код, метаданные<br/>и зависимости"]
+    C --> P["Показывает предлагаемые изменения"]
+    P --> E["Изменяет BSL или метаданные"]
+    E --> V["Запускает валидацию EDT<br/>и тесты"]
+    V --> D{"Найдена проблема?"}
+    D -- Да --> B["Отлаживает живую сессию 1С"]
     B --> E
-    D -- No --> R["Returns the verified result"]
+    D -- Нет --> R["Возвращает проверенный результат"]
 ```
 
-![An AI assistant reads the semantic EDT model instead of scraping project files.](docs/assets/screenshots/agent-workflow.png)
+![AI-ассистент читает семантическую модель EDT, а не просматривает файлы проекта как обычный текст.](docs/assets/screenshots/agent-workflow.png)
 
-## How it works
+## Как это работает
 
 ```mermaid
 flowchart LR
-    subgraph Client["MCP client"]
+    subgraph Client["MCP-клиент"]
         AI["Claude · Cursor<br/>Copilot · Cline · ..."]
     end
 
-    subgraph Plugin["AI-EDT plugin · inside the EDT process"]
+    subgraph Plugin["Плагин AI-EDT · внутри процесса EDT"]
         HTTP["MCP endpoint<br/>Streamable HTTP + SSE"]
-        TOOLS["Tool facades<br/>and workshops"]
-        GATE["Tool policy<br/>presets and permissions"]
+        TOOLS["Фасады инструментов<br/>и мастерские"]
+        GATE["Политика доступа<br/>пресеты и разрешения"]
         HTTP --> GATE --> TOOLS
     end
 
-    subgraph EDT["1C:EDT services"]
-        BM["Semantic model<br/>BM index · FQN"]
-        AST["BSL parser<br/>Xtext · AST"]
-        CHECKS["Validation<br/>and problem markers"]
-        DEBUG["Debugger<br/>client + server attach"]
+    subgraph EDT["Службы 1C:EDT"]
+        BM["Семантическая модель<br/>BM-индекс · FQN"]
+        AST["Парсер BSL<br/>Xtext · AST"]
+        CHECKS["Валидация<br/>и маркеры проблем"]
+        DEBUG["Отладчик<br/>клиент + server attach"]
     end
 
-    subgraph Runtime["1C:Enterprise"]
-        APP["Client · server · jobs<br/>tests"]
+    subgraph Runtime["1С:Предприятие"]
+        APP["Клиент · сервер · задания<br/>тесты"]
     end
 
     AI <-->|"JSON-RPC · localhost:12250"| HTTP
@@ -102,88 +102,88 @@ flowchart LR
     DEBUG <--> APP
 ```
 
-The endpoint defaults to `http://localhost:12250/mcp`. The plugin is not a standalone headless server: EDT must be running and the target project must be loaded. This is what gives tools access to resolved references, inferred types, current validation markers and live debug state.
+По умолчанию сервер доступен по адресу `http://localhost:12250/mcp`. Плагин не является отдельным headless-сервером: EDT должна быть запущена, а целевой проект - загружен. Благодаря этому инструментам доступны разрешенные ссылки, выведенные типы, текущие маркеры валидации и состояние живой отладки.
 
-## Quick start
+## Быстрый старт
 
-### 1. Requirements
+### 1. Требования
 
-- 1C:EDT **2026.1 or newer**
+- 1C:EDT **2026.1 или новее**
 - Java / JDK **17**
-- Maven **3.9+** to build from source
-- An MCP-compatible client
-- Windows for the documented build and installation flow
+- Maven **3.9+** для сборки из исходников
+- MCP-совместимый клиент
+- Windows для описанного ниже сценария сборки и установки
 
-Optional features require YAxUnit, Vanessa Automation or an Attach debug configuration; see [Optional integrations](#optional-integrations).
+Для дополнительных возможностей потребуются YAxUnit, Vanessa Automation или конфигурация Attach. Подробнее - в разделе [Дополнительные интеграции](#дополнительные-интеграции).
 
-### 2. Build
+### 2. Сборка
 
-From the repository root:
+В корне репозитория выполните:
 
 ```cmd
 build.cmd [EDT_INSTALL_DIR]
 ```
 
-Alternatively, build the Maven reactor directly:
+Альтернативный вариант - собрать Maven-реактор напрямую:
 
 ```cmd
 cd mcp
 mvn clean verify
 ```
 
-The generated P2 repository is:
+Сгенерированный P2-репозиторий:
 
 ```text
 mcp/repositories/ru.aiedt.mcp.server.repository/target/repository
 ```
 
-### 3. Install into EDT
+### 3. Установка в EDT
 
-Install through the EDT user interface, or from the command line if you prefer scripting. Both routes install the same feature.
+Установить можно через интерфейс EDT или из командной строки, если привычнее скриптом. Оба способа ставят одну и ту же фичу.
 
 > [!TIP]
-> You can also ask your AI agent to do it for you. Point it at
-> **[docs/agent-install.md](docs/agent-install.md)** - an unattended recipe that needs no
-> clicking, with the rules the agent has to respect around a running IDE.
+> Можно просто попросить AI-агента сделать это за вас. Дайте ему ссылку на
+> **[docs/agent-install.md](docs/agent-install.md)** - это рецепт установки без единого щелчка
+> мышью, вместе с правилами обращения с запущенной средой.
 
-#### Through the EDT user interface
+#### Через интерфейс EDT
 
-**Step 1.** Start EDT and open **Help → Install New Software**.
+**Шаг 1.** Запустите EDT и откройте **Справка → Установить новое ПО**.
 
-![Installation starts from the Help menu.](docs/assets/screenshots/install-menu.png)
+![Установка начинается из меню Справка.](docs/assets/screenshots/install-menu.png)
 
-**Step 2.** Press **Add** next to the **Work with** field.
+**Шаг 2.** Нажмите **Добавить** рядом с полем **Работать с**.
 
-![The installer opens with no repository selected.](docs/assets/screenshots/install-available-software.png)
+![Установщик открывается без выбранного репозитория.](docs/assets/screenshots/install-available-software.png)
 
-**Step 3.** In the **Add Repository** dialog point EDT at the build output. Either option works:
+**Шаг 3.** В диалоге **Добавить репозиторий** укажите результат сборки. Подходит любой из вариантов:
 
-- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip`;
-- **Local** and the folder `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
+- **Архив...** и файл `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<версия>.zip`;
+- **Расположение...** и каталог `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 
-The repository name is arbitrary, for example `AI-EDT`.
+Имя репозитория произвольное, например `AI-EDT`.
 
-![Select the archive or the repository folder, then confirm.](docs/assets/screenshots/install-add-repository.png)
+![Выберите архив или каталог репозитория и подтвердите.](docs/assets/screenshots/install-add-repository.png)
 
-**Step 4.** Select the **AI-EDT** category or the **AI-EDT (1C AI tools for EDT)** feature inside it, then press **Next**. If the list appears empty, clear **Group items by category**.
+**Шаг 4.** Отметьте категорию **AI-EDT** или фичу **AI-EDT (1C AI tools for EDT)** внутри нее и нажмите **Далее**. Если список выглядит пустым, снимите флажок **Группировать элементы по категории**.
 
-![The feature appears under the AI-EDT category.](docs/assets/screenshots/install-select-feature.png)
+![Фича появляется в категории AI-EDT.](docs/assets/screenshots/install-select-feature.png)
 
-**Step 5.** Review the install details, accept the license agreement and press **Finish**.
+**Шаг 5.** Проверьте состав установки, примите лицензионное соглашение и нажмите **Готово**.
 
-![The install details page lists the feature and the version being installed.](docs/assets/screenshots/install-details.png)
+![На странице деталей видны фича и устанавливаемая версия.](docs/assets/screenshots/install-details.png)
 
-**Step 6.** The build is not signed, so on a first installation EDT asks for confirmation before installing unsigned content. Accept it to continue.
+**Шаг 6.** Сборка не подписана, поэтому при первой установке EDT просит подтвердить установку неподписанного содержимого. Согласитесь, чтобы продолжить.
 
-**Step 7.** Agree to restart EDT when the installer offers to.
+**Шаг 7.** Когда установщик предложит перезапустить EDT, нажмите **Перезапустить**.
 
-![EDT offers to restart once the installation finishes.](docs/assets/screenshots/install-restart.png)
+![По завершении установки EDT предлагает перезапуск.](docs/assets/screenshots/install-restart.png)
 
-After the restart, continue with **4. Start and verify** below.
+После перезапуска переходите к разделу **4. Запуск и проверка**.
 
-#### From the command line
+#### Из командной строки
 
-The Equinox P2 director installs the same feature with no UI. Close the EDT session you are updating first: a running instance keeps the old plugin in memory until it restarts, so the restart is needed anyway, and a session that is itself running a provisioning operation holds the profile lock.
+Equinox P2 director ставит ту же фичу без интерфейса. Сначала закройте обновляемый сеанс EDT: запущенный экземпляр держит старый плагин в памяти до перезапуска, то есть перезапуск все равно понадобится, а сеанс, который сам выполняет операцию установки, удерживает блокировку профиля.
 
 ```powershell
 & "<EDT>\1cedtc.exe" -nosplash `
@@ -194,38 +194,38 @@ The Equinox P2 director installs the same feature with no UI. Close the EDT sess
   -profileProperties org.eclipse.update.reconcile=true
 ```
 
-The feature is a p2 singleton, so installing a new version over an existing one fails unless the old unit is removed in the same request. On a first installation drop the `-uninstallIU` line - there is nothing to remove yet.
+Фича - это p2-синглтон, поэтому установка новой версии поверх существующей не пройдет, если в том же запросе не удалить старую. При самой первой установке строку `-uninstallIU` нужно убрать: удалять еще нечего.
 
-For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check.
+Для рабочей среды разработки скрипт `scripts/edt-selfupdate.ps1` выполняет весь цикл: аккуратное закрытие, установку, перезапуск и проверку состояния.
 
-### 4. Start and verify
+### 4. Запуск и проверка
 
-Open **Window → Preferences → AI-EDT** and check:
+Откройте **Window → Preferences → AI-EDT** и проверьте:
 
-1. the server port, normally `12250`;
-2. click **Start** to run the server now, or enable **Auto-start** and restart EDT;
-3. **Plain text mode** for clients that do not support MCP resources;
-4. the active tool preset.
+1. порт сервера, обычно `12250`;
+2. нажмите **Start**, чтобы запустить сервер сейчас, либо включите **Auto-start** и перезапустите EDT;
+3. **Plain text mode** для клиентов без поддержки MCP resources;
+4. активный пресет инструментов.
 
-![The General page controls transport, compatibility mode and server lifecycle.](docs/assets/screenshots/preferences-general.png)
+![На странице General настраиваются транспорт, режим совместимости и жизненный цикл сервера.](docs/assets/screenshots/preferences-general.png)
 
-Then check the health endpoint:
+После этого проверьте health endpoint:
 
 ```powershell
 curl.exe http://localhost:12250/health
 ```
 
-A ready instance returns a response with `status: ok` and `phase: ready`. If the phase is `indexing`, wait until EDT finishes loading the project.
+Готовый экземпляр возвращает ответ со значениями `status: ok` и `phase: ready`. Если указано `phase: indexing`, дождитесь завершения загрузки проекта в EDT.
 
-![The status bar reports the running server: its port, the last tool call and a one-click stop or restart.](docs/assets/screenshots/status-bar.png)
+![Строка состояния показывает работающий сервер: порт, последний вызов инструмента, а также остановку или перезапуск одним щелчком.](docs/assets/screenshots/status-bar.png)
 
-![The same control opens a context menu to copy the endpoint address, restart the server or stop it.](docs/assets/screenshots/status-bar-menu.png)
+![Тот же элемент открывает контекстное меню: скопировать адрес конечной точки, перезапустить сервер или остановить его.](docs/assets/screenshots/status-bar-menu.png)
 
-### 5. Connect an AI client
+### 5. Подключение AI-клиента
 
 #### Claude Code
 
-Add the server to `%USERPROFILE%\.claude.json`:
+Добавьте сервер в `%USERPROFILE%\.claude.json`:
 
 ```json
 {
@@ -240,7 +240,7 @@ Add the server to `%USERPROFILE%\.claude.json`:
 
 #### Cursor
 
-Create `.cursor/mcp.json` in the project root and enable **Plain text mode** in AI-EDT preferences:
+Создайте `.cursor/mcp.json` в корне проекта и включите **Plain text mode** в настройках AI-EDT:
 
 ```json
 {
@@ -254,7 +254,7 @@ Create `.cursor/mcp.json` in the project root and enable **Plain text mode** in 
 
 #### VS Code / GitHub Copilot
 
-Create `.vscode/mcp.json`:
+Создайте `.vscode/mcp.json`:
 
 ```json
 {
@@ -267,136 +267,140 @@ Create `.vscode/mcp.json`:
 }
 ```
 
-Configurations for Claude Desktop, Cline and Antigravity are available in [docs/clients.md](docs/clients.md).
+Конфигурации для Claude Desktop, Cline и Antigravity находятся в [docs/clients.md](docs/clients.md).
 
-### 5a. Teach the agent how to use the server
+### 5a. Научите агента пользоваться сервером
 
-Connecting the server gives the agent the tools. It does not tell the agent which facade to reach
-for, which checks are mandatory after an edit, or what a response means. That is what the bundled
-skill in **[skills/ai-edt](skills/ai-edt)** is for - copy it into the agent's skills directory, see
-[skills/README.md](skills/README.md). It is optional, and an agent works better with it.
+Подключение дает агенту инструменты, но не объясняет, какой фасад брать под задачу, какие проверки
+обязательны после правки и что означает тот или иной ответ. Для этого в составе репозитория есть
+скил **[skills/ai-edt](skills/ai-edt)** - скопируйте его в каталог скилов агента, порядок описан в
+[skills/README.md](skills/README.md). Он необязателен, но с ним агент работает заметно точнее.
 
-### 6. Make the first call
+### 6. Первый вызов
 
-Ask the client to list EDT projects or report the EDT version. A successful response should contain structured project information, not “tool unavailable”.
+Попросите клиента вывести список проектов EDT или версию EDT. Успешный ответ должен содержать структурированную информацию о проекте, а не сообщение "инструмент недоступен".
 
-Example prompts:
+Примеры запросов:
 
 ```text
-List the EDT projects in the current workspace and summarize their validation state.
+Покажи проекты EDT в текущем рабочем пространстве и кратко опиши состояние их валидации.
 ```
 
 ```text
-Find all semantic references to Catalog.Products and group them by metadata, forms and BSL modules.
+Найди все семантические ссылки на Справочник.Номенклатура и сгруппируй их по метаданным, формам и модулям BSL.
 ```
 
-![One call returns the object model: attributes with their types, tabular sections and forms.](docs/assets/screenshots/metadata-details.png)
+![Один вызов возвращает модель объекта: реквизиты с типами, табличные части и формы.](docs/assets/screenshots/metadata-details.png)
 
-## Tool surface
+## Набор инструментов
 
-AI-EDT uses a facade-first API. A facade accepts an operation discriminator and routes related actions through one stable entry point.
+В основе API AI-EDT лежат фасады. Фасад принимает дискриминатор операции и направляет родственные действия через единую стабильную точку входа.
 
-| Facade | Scope |
+> [!TIP]
+> **[Открыть полный каталог инструментов →](docs/tools/README.ru.md)**  
+> Все группы инструментов, режимы доступа и раскрываемые описания ключевых фасадов.
+
+| Фасад | Область применения |
 |---|---|
-| `code_search` | Text search, references, symbol resolution, call hierarchy, symbol information and content assist. |
-| `edit_metadata` | Metadata, forms, commands, roles, services, templates and other model mutations. |
-| `launch_debugger` | Launch/attach, breakpoints, stepping, variables, expression evaluation and profiling. |
-| `diagnostics` | Project problems, check documentation, cleanup and targeted revalidation. |
-| `insights` | Dependencies, metrics, anti-patterns, comparison and impact analysis. |
-| `security_audit` | Role rights, RLS violations and sensitive-data scanning. |
-| `project_admin` / `infobase_admin` | Workspace projects, launch configurations, database updates and synchronization. |
-| `dcs_workshop` / `mxl_workshop` / `xdto_workshop` | Programmatic builders for complex 1C artifacts. |
-| `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations. |
-| `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |
+| `code_search` | Текстовый поиск, ссылки, разрешение символов, иерархия вызовов, информация о символах и content assist. |
+| `edit_metadata` | Изменение метаданных, форм, команд, ролей, сервисов, макетов и других элементов модели. |
+| `launch_debugger` | Запуск/подключение, точки останова, шаги, переменные, вычисление выражений и профилирование. |
+| `diagnostics` | Проблемы проекта, документация проверок, очистка и точечная перевалидация. |
+| `insights` | Зависимости, метрики, антипаттерны, сравнение и анализ влияния. |
+| `security_audit` | Права ролей, нарушения RLS и поиск чувствительных данных. |
+| `project_admin` / `infobase_admin` | Проекты рабочего пространства, конфигурации запуска, обновление ИБ и синхронизация. |
+| `dcs_workshop` / `mxl_workshop` / `xdto_workshop` | Программные конструкторы сложных артефактов 1С. |
+| `extension_workshop` / `external_object_workshop` | Жизненный цикл расширений, внешних отчетов и обработок. |
+| `yaxunit_tests` | Запуск или отладка выбранных тестов YAxUnit и чтение отчетов. |
 
-Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
+Прежние отдельные имена инструментов сохранены как алиасы для обратной совместимости. Пресет **Canonical** скрывает их из `tools/list`, уменьшая расход контекста без потери возможностей.
 
-![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
+![Один фасад покрывает множество операций: здесь code_search разбирает исходящие вызовы метода.](docs/assets/screenshots/call-hierarchy.png)
 
-## Tool presets and safety
+## Пресеты инструментов и безопасность
 
-The **Tools** preference page groups tools by capability and supports these presets:
+На странице настроек **Tools** инструменты сгруппированы по назначению и доступны следующие пресеты:
 
-| Preset | Intended use |
+| Пресет | Назначение |
 |---|---|
-| **Canonical** | Recommended default. Facades are listed; compatibility aliases remain callable but hidden. |
-| **All Tools** | Lists every registered tool and alias. Useful for API exploration. |
-| **Read-only** | Search, navigation and validation without edits, debugging or database updates. |
-| **Editing** | Read and write access without debugging. |
-| **Debug & Test** | Read, debug and test access without source or metadata mutation. |
-| **Code Review** | Focused source and metadata analysis with no writes. |
+| **Canonical** | Рекомендуемый вариант. В списке видны фасады, а алиасы совместимости остаются вызываемыми, но скрытыми. |
+| **All Tools** | Показывает каждый зарегистрированный инструмент и алиас. Полезно для исследования API. |
+| **Read-only** | Поиск, навигация и валидация без правок, отладки и обновления ИБ. |
+| **Editing** | Чтение и запись без отладки. |
+| **Debug & Test** | Чтение, отладка и тесты без изменения исходников и метаданных. |
+| **Code Review** | Анализ кода и метаданных без записи. |
 
-Each tool can be **listed**, **callable-hidden** or **disabled**. Hidden tools still accept calls; disabled tools are rejected. This distinction lets the Canonical preset reduce catalog noise while restrictive presets enforce an actual boundary.
+У каждого инструмента может быть состояние **listed**, **callable-hidden** или **disabled**. Скрытые инструменты продолжают принимать вызовы, отключенные - отклоняются. Благодаря этому Canonical уменьшает шум в каталоге, а ограничивающие пресеты действительно устанавливают границы доступа.
 
-![Presets keep the MCP catalog compact and can enforce read-only or task-specific access.](docs/assets/screenshots/preferences-tools.png)
+![Пресеты делают каталог MCP компактным и могут ограничивать доступ режимом только для чтения или конкретной задачи.](docs/assets/screenshots/preferences-tools.png)
 
-![Expanding a group shows every tool with its description and its listed, callable-hidden or disabled state.](docs/assets/screenshots/preferences-tools-detail.png)
+![Раскрытая группа показывает каждый инструмент с описанием и состоянием: в списке, вызываемый скрыто или отключенный.](docs/assets/screenshots/preferences-tools-detail.png)
 
 > [!CAUTION]
-> The plugin runs with the permissions of the EDT process. It can modify source, metadata and infobases. Keep the project in version control, review previews before confirming destructive operations, and do not expose the unauthenticated local port beyond loopback.
+> Плагин работает с правами процесса EDT. Он может изменять исходники, метаданные и информационные базы. Храните проект в системе контроля версий, проверяйте предпросмотр перед подтверждением разрушающих операций и не публикуйте локальный порт без аутентификации за пределами loopback-интерфейса.
 
-Additional safety notes:
+Дополнительные меры безопасности:
 
-- The server binds to `127.0.0.1` by default.
-- Metadata refactoring tools provide preview/confirm workflows.
-- Read-only mode is the preferred preset for unfamiliar projects.
-- `evaluate_expression` executes code against a live 1C session.
-- Database deletion, configuration import and synchronization can be disabled independently.
-- Back up an infobase before structural updates that cannot be reverted from Git.
+- По умолчанию сервер привязан к `127.0.0.1`.
+- Инструменты рефакторинга метаданных используют сценарий preview/confirm.
+- Для незнакомых проектов рекомендуется пресет Read-only.
+- `evaluate_expression` выполняет код в живой сессии 1С.
+- Удаление ИБ, импорт конфигурации и синхронизацию можно отключить отдельно.
+- Перед структурными обновлениями, которые нельзя отменить через Git, сделайте резервную копию ИБ.
 
-## Debugging client and server code
+## Отладка клиентского и серверного кода
 
-The debugger facade supports ordinary client launches and **Attach to 1C:Enterprise Debug Server** configurations. Attach is required for HTTP services, server calls, background jobs, scheduled jobs and code running in `rphost`.
+Фасад отладки поддерживает обычные клиентские запуски и конфигурации **Attach to 1C:Enterprise Debug Server**. Attach необходим для HTTP-сервисов, серверных вызовов, фоновых и регламентных заданий, а также кода, выполняемого в `rphost`.
 
-The agent discovers an EDT launch configuration, attaches to the 1C debug server, sets a breakpoint and waits for a suspend event. AI-EDT then returns stable references to the thread, stack and frame so the agent can inspect variables, evaluate expressions, step through the code and resume execution.
+Агент получает список конфигураций запуска EDT, подключается к серверу отладки 1С, устанавливает точку останова и ждет приостановки. После этого AI-EDT возвращает стабильные ссылки на поток, стек и кадр, чтобы агент мог исследовать переменные, вычислять выражения, выполнять код по шагам и продолжать выполнение.
 
-## Optional integrations
+## Дополнительные интеграции
 
-| Integration | What it enables | Required setup |
+| Интеграция | Что становится доступно | Что нужно настроить |
 |---|---|---|
-| **YAxUnit** | Run and debug unit tests, filter suites and parse JUnit reports. | Install the YAxUnit extension in the target infobase. |
-| **Vanessa Automation** | Execute scenario-based UI tests. | Configure Vanessa separately and create the required launch setup. |
-| **1C debug server** | Debug server-side BSL through Attach. | Start `ragent` with `-debug -http` and create an EDT Attach configuration. |
-| **BSL Language Server** | Additional source review through `code_review`. | Configure the external JAR in AI-EDT preferences. |
+| **YAxUnit** | Запуск и отладка unit-тестов, фильтрация наборов и разбор JUnit-отчетов. | Установить расширение YAxUnit в целевую информационную базу. |
+| **Vanessa Automation** | Выполнение сценарных UI-тестов. | Отдельно настроить Vanessa и требуемую конфигурацию запуска. |
+| **Сервер отладки 1С** | Отладка серверного BSL через Attach. | Запустить `ragent` с `-debug -http` и создать конфигурацию Attach в EDT. |
+| **BSL Language Server** | Дополнительный анализ исходников через `code_review`. | Указать внешний JAR в настройках AI-EDT. |
 
-## Limitations
+## Ограничения
 
-- AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
-- The server is available only while EDT is running.
-- Some semantic tools require project indexing to be complete.
-- The default endpoint has no authentication because it is designed for loopback-only use.
-- The documented installation is source-based until a public update site is published.
+- AI-EDT зависит от внутренних и публичных служб EDT; после крупного обновления EDT может потребоваться новая версия плагина.
+- Сервер доступен только при запущенной EDT.
+- Для части семантических инструментов необходимо дождаться завершения индексации проекта.
+- В endpoint по умолчанию нет аутентификации, поскольку он рассчитан только на локальный loopback-доступ.
+- До публикации update site установка выполняется из исходников.
 
-## Contributing
+## Участие в разработке
 
-Contributions are welcome in the form of reproducible bug reports, focused feature proposals, documentation improvements and pull requests.
+Проект принимает воспроизводимые сообщения об ошибках, сфокусированные предложения возможностей, улучшения документации и pull request.
 
-Start with:
+Начните с документов:
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) - build process, code style and contribution rules (currently in Russian);
-- [SECURITY.md](SECURITY.md) - private vulnerability reporting and the threat model (currently in Russian);
-- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history.
+- [CONTRIBUTING.md](CONTRIBUTING.md) - сборка, стиль кода и правила участия;
+- [SECURITY.md](SECURITY.md) - закрытая передача уязвимостей и модель угроз;
+- [docs/PROVENANCE.md](docs/PROVENANCE.md) - происхождение исходников и история переимплементации.
 
-Repository layout:
+Структура репозитория:
 
 ```text
 mcp/
-├── bundles/       # OSGi plugin implementation
-├── features/      # installable Eclipse feature
-├── repositories/  # generated P2 repository
-├── targets/       # EDT target platform
-└── tests/         # plugin and contract tests
+├── bundles/       # реализация OSGi-плагина
+├── features/      # устанавливаемая Eclipse feature
+├── repositories/  # генерируемый P2-репозиторий
+├── targets/       # target platform EDT
+└── tests/         # тесты плагина и контрактов
 
-docs/              # guides, audits and release notes
-scripts/           # development and update automation
+docs/              # руководства, аудиты и release notes
+scripts/           # автоматизация разработки и обновления
 ```
 
-Before opening a pull request, build the reactor and describe how the change was verified against a running EDT instance.
+Перед созданием pull request соберите Maven-реактор и опишите, как изменение было проверено на запущенном экземпляре EDT.
 
-## Project origin
+## Происхождение проекта
 
-AI-EDT is an independent product that originated from [EDT-MCP](https://github.com/DitriXNew/EDT-MCP) by DitriX. The project is distributed under AGPL-3.0-or-later; retained notices and the detailed source history are documented in [LICENSE](LICENSE) and [docs/PROVENANCE.md](docs/PROVENANCE.md).
+AI-EDT - самостоятельный продукт, созданный на основе [EDT-MCP](https://github.com/DitriXNew/EDT-MCP) автора DitriX. Проект распространяется под лицензией AGPL-3.0-or-later; сохраненные уведомления и подробная история исходников описаны в [LICENSE](LICENSE) и [docs/PROVENANCE.md](docs/PROVENANCE.md).
 
-## License
+## Лицензия
 
-GNU Affero General Public License v3.0 or later. See [LICENSE](LICENSE).
+GNU Affero General Public License версии 3.0 или новее. Полный текст - в [LICENSE](LICENSE).
