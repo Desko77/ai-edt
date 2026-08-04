@@ -111,11 +111,14 @@ public class StorageKeyConstantsTest
     @Test
     public void aFreshInstallLooksForNothing()
     {
-        // Three separate ways this feature could start reaching out on its own, all shipped off.
-        // The empty address is the strongest of them: with no site there is no schedule, no
-        // network and no indicator, whatever the other switches say.
+        // The switch is the lock. ReleaseSweep gates every schedule, request and indicator on
+        // "enabled && site.accepted()", so a shipped address starts nothing by itself. The address
+        // used to be empty as a second lock; it now carries this plugin's own update site, because
+        // the person turning the check on should not have to know that URL by heart. The check
+        // itself stays off: reaching out on a fresh install is the user's decision, not ours.
         assertFalse("updates are not checked until asked for", PrefKeys.DEFAULT_UPKEEP_ENABLED); //$NON-NLS-1$
-        assertEquals("no site is configured out of the box", "", PrefKeys.DEFAULT_UPKEEP_SITE_URL); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the shipped address is this plugin's own update site", //$NON-NLS-1$
+            "https://desko77.github.io/ai-edt/", PrefKeys.DEFAULT_UPKEEP_SITE_URL); //$NON-NLS-1$
         assertFalse("a local directory is a testing concession, not a default", //$NON-NLS-1$
             PrefKeys.DEFAULT_UPKEEP_ALLOW_LOCAL_SITE);
     }

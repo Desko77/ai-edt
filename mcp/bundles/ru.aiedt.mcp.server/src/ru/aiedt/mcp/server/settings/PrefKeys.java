@@ -253,8 +253,13 @@ public final class PrefKeys
     /** Shipped upkeep: off. Nothing goes looking for updates until someone asks it to. */
     public static final boolean DEFAULT_UPKEEP_ENABLED = false;
 
-    /** Shipped update site: none, which is what keeps the feature dormant on a fresh install. */
-    public static final String DEFAULT_UPKEEP_SITE_URL = ""; //$NON-NLS-1$
+    /**
+     * Shipped update site: the one this plugin is published to. Filling it in costs nothing while
+     * {@link #DEFAULT_UPKEEP_ENABLED} keeps the check off - the address is read only once someone
+     * turns the check on - and it saves that person from typing a URL they have no reason to know
+     * by heart. Anyone serving their own builds overwrites the field.
+     */
+    public static final String DEFAULT_UPKEEP_SITE_URL = "https://desko77.github.io/ai-edt/"; //$NON-NLS-1$
 
     /** Shipped interval between checks, in hours. */
     public static final int DEFAULT_UPKEEP_INTERVAL_HOURS = 24;
