@@ -369,9 +369,38 @@ Each tool can be **listed**, **callable-hidden** or **disabled**. Hidden tools s
 > [!CAUTION]
 > The plugin runs with the permissions of the EDT process. It can modify source, metadata and infobases. Keep the project in version control, review previews before confirming destructive operations, and do not expose the unauthenticated local port beyond loopback.
 
-Additional safety notes:
+### Access token and interface binding
 
-- The server binds to `127.0.0.1` by default.
+By default the server listens on `127.0.0.1` only and asks for no authentication: nothing leaves the
+machine. To open the endpoint up, **Preferences → AI-EDT** carries two settings, and they belong
+together:
+
+- **Bearer token.** A button generates a random token; the client sends it as
+  `Authorization: Bearer <token>`. The comparison runs in constant time, so the token cannot be
+  guessed from response timings. A request without the right token is rejected before it reaches a
+  tool.
+- **Bind to every interface.** Lifts the loopback restriction. Turned on without a token, the plugin
+  writes a warning to the log: any host that can reach this machine can then read and change the
+  sources and the infobase.
+
+### Personal-data masking
+
+A separate setting masks personal data on its way out of a tool, by the categories Russian federal
+law 152-FZ names: taxpayer number, insurance number, payment card, passport, phone, email. Off by
+default.
+
+What it honestly is and is not:
+
+- It is built for precision over recall. Taxpayer, insurance and card numbers are checksum-validated,
+  and passport and phone require a separator, so an arbitrary numeric identifier is not mangled. The
+  other side of that: it does not catch names, addresses or other personal data in free text.
+- It masks a tool's own output and error text, not the JSON-RPC envelope and not image blobs: the
+  shape of the response never changes, only the content of strings.
+- It lowers the risk of a leak into a cloud model. It does not replace deciding what an assistant
+  should be shown in the first place.
+
+### Other measures
+
 - Metadata refactoring tools provide preview/confirm workflows.
 - Read-only mode is the preferred preset for unfamiliar projects.
 - `evaluate_expression` executes code against a live 1C session.
@@ -398,7 +427,7 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 - AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
 - The server is available only while EDT is running.
 - Some semantic tools require project indexing to be complete.
-- The default endpoint has no authentication because it is designed for loopback-only use.
+- By default the endpoint listens on loopback and asks for no authentication. A bearer token and a bind-to-every-interface setting exist, but turning them on is a deliberate act - see the safety section.
 - The update site is published automatically on release. Builds made between releases install from source or from a local P2 repository.
 
 ## 🤝 Contributing
