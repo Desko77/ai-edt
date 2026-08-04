@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<site>
+    <feature id="ru.aiedt.mcp.server.feature" version="0.0.0">
+        <category name="ai-edt"/>
+    </feature>
+
+    <category-def name="ai-edt" label="AI-EDT">
+        <description>
+            AI-EDT - 1C AI tools for EDT. MCP server plugin providing an HTTP endpoint for AI agents.
+        </description>
+    </category-def>
+</site>

@@ -1,0 +1,12 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: AI-EDT Tests
+Bundle-SymbolicName: ru.aiedt.mcp.server.tests
+Bundle-Version: 0.1.0.qualifier
+Bundle-Vendor: AI-EDT
+Fragment-Host: ru.aiedt.mcp.server;bundle-version="0.1.0"
+Bundle-RequiredExecutionEnvironment: JavaSE-17
+Automatic-Module-Name: ru.aiedt.mcp.server.tests
+Import-Package: org.junit;version="4.13.0",
+ org.junit.runner;version="4.13.0",
+ org.junit.runners;version="4.13.0"

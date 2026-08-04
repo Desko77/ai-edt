@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:Configuration xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass">
+  <name>AiEdtProbe</name>
+  <dataLockControlMode>Managed</dataLockControlMode>
+  <compatibilityMode>8.3.27</compatibilityMode>
+  <subsystems>Subsystem.Probe</subsystems>
+  <roles>Role.ProbeReader</roles>
+  <commonModules>CommonModule.ProbeApi</commonModules>
+  <commonModules>CommonModule.ProbeBroken</commonModules>
+  <commonModules>CommonModule.ProbeOrphan</commonModules>
+  <commonForms>CommonForm.ProbeForm</commonForms>
+  <catalogs>Catalog.ProbeItems</catalogs>
+  <documents>Document.ProbeEntry</documents>
+  <enums>Enum.ProbeState</enums>
+  <informationRegisters>InformationRegister.ProbeFacts</informationRegisters>
+</mdclass:Configuration>

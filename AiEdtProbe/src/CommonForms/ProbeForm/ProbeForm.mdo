@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:CommonForm xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="ab3b6ed4-3df1-4bb2-89f9-e99a50cd7ccc">
+  <name>ProbeForm</name>
+  <synonym>
+    <key>en</key>
+    <value>Probe common form</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Общая форма стенда</value>
+  </synonym>
+</mdclass:CommonForm>

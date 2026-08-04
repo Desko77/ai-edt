@@ -1,0 +1,428 @@
+/**
+ * AI-EDT - 1C AI tools for EDT
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server.support;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
+
+import ru.aiedt.mcp.server.Activator;
+
+/**
+ * Generic async work registry that backs the soft-timeout / {@code runKey}
+ * "Pending" protocol shared by every long-running MCP tool (a FULL infobase
+ * update, an {@code .epf}/{@code .erf} build, a project-wide {@code find_references},
+ * an {@code edit_metadata} batch). Such work can run for minutes and would
+ * otherwise pin one of the few MCP HTTP-handler threads for the whole duration.
+ * <p>
+ * This class consolidates three previously copy-pasted registries
+ * ({@code PendingUpdateRegistry} / {@code PendingExportRegistry} /
+ * {@code PendingReferencesRegistry}) into one parameterized implementation.
+ * Each caller keeps a dedicated instance ({@link #UPDATE}, {@link #EXPORT},
+ * {@link #REFERENCES}) with its <b>own</b> bounded executor, so a slow update
+ * cannot starve exports or reference searches - the isolation the separate
+ * classes provided is preserved.
+ * <p>
+ * runKeys only have to be unique <em>within</em> a domain: every instance owns a
+ * separate {@link #entries} map, so two domains that happen to hash to the same
+ * string never collide. Callers therefore build their key from their own
+ * canonical parameter set via {@link #computeRunKey(String...)}.
+ * <p>
+ * Lifecycle:
+ * <ol>
+ *   <li>{@link #getOrStart} - returns or creates the entry, dispatching the work
+ *       on a worker thread. Identical params coalesce onto one future.</li>
+ *   <li>{@link PendingEntry#await(long)} - blocks up to the soft timeout.</li>
+ *   <li>Completed within the window: the caller returns the result and
+ *       {@link #remove}s the entry.</li>
+ *   <li>Timeout elapses: the caller returns Pending JSON with the runKey; the
+ *       entry remains for subsequent retries with {@code runKey}.</li>
+ *   <li>{@link #cancel} detaches a runKey (best-effort - see its javadoc).</li>
+ *   <li>{@link #pruneExpired} evicts completed-not-retrieved entries (5 min, or
+ *       2 min when the result is oversized - see {@link #MAX_CACHED_RESULT_CHARS})
+ *       and abandoned entries (30 min).</li>
+ * </ol>
+ */
+public final class PendingWorkRegistry
+{
+    /** Async backend for {@code update_database} and {@code edit_metadata} batch. */
+    public static final PendingWorkRegistry UPDATE =
+        new PendingWorkRegistry("update_database", "update-db-async"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** Async backend for {@code export_object} .epf/.erf builds. */
+    public static final PendingWorkRegistry EXPORT =
+        new PendingWorkRegistry("export_object", "export-object-async"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** Async backend for {@code find_references} project-wide searches. */
+    public static final PendingWorkRegistry REFERENCES =
+        new PendingWorkRegistry("find_references", "find-references-async"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * Shared async backend for the slow read-only analysis tools that are wrapped
+     * generically (see {@code GenericPending}) rather than each hand-rolling their
+     * own registry. The runKey embeds the tool name, so distinct tools never
+     * collide inside this one instance. Reserved for idempotent, side-effect-free
+     * reads - never a mutator, whose cache-replay/coalescing would be unsafe.
+     */
+    public static final PendingWorkRegistry GENERIC =
+        new PendingWorkRegistry("generic_tool", "generic-tool-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** TTL for completed entries that were never retrieved. 5 minutes. */
+    private static final long COMPLETED_TTL_MS = 5 * 60 * 1000L;
+
+    /**
+     * Shorter TTL for a completed-not-retrieved entry whose result is oversized
+     * (see {@link #MAX_CACHED_RESULT_CHARS}). A large payload - a whole-config
+     * XML export, a project-wide reference dump - must not linger in the cache
+     * for the full {@link #COMPLETED_TTL_MS}: if the caller has not fetched it
+     * within this window it is evicted so it stops pinning the heap. 2 minutes -
+     * short enough to bound heap retention, long enough that a caller that issued
+     * one poll and briefly stepped away can still collect a large payload.
+     */
+    private static final long COMPLETED_TTL_OVERSIZED_MS = 2 * 60 * 1000L;
+
+    /**
+     * Result size (in {@code char}s) beyond which a completed entry is treated
+     * as oversized and evicted on {@link #COMPLETED_TTL_OVERSIZED_MS}. ~4M chars
+     * is roughly 8 MB of UTF-16 heap per retained entry - already generous for a
+     * tool response; anything larger should be consumed promptly, not cached.
+     */
+    private static final int MAX_CACHED_RESULT_CHARS = 4 * 1024 * 1024;
+
+    /** TTL for never-completed entries (runaway). 30 minutes. */
+    private static final long ABANDONED_TTL_MS = 30 * 60 * 1000L;
+
+    private final String domainLabel;
+
+    private final ConcurrentHashMap<String, PendingEntry> entries = new ConcurrentHashMap<>();
+
+    private final ExecutorService executor;
+
+    /**
+     * @param domainLabel human-readable domain used in error logs (e.g.
+     *            {@code "update_database"})
+     * @param threadPrefix worker-thread name prefix (e.g. {@code "update-db-async"})
+     */
+    private PendingWorkRegistry(String domainLabel, String threadPrefix)
+    {
+        this(domainLabel, threadPrefix, 8);
+    }
+
+    /**
+     * @param domainLabel human-readable domain used in error logs
+     * @param threadPrefix worker-thread name prefix
+     * @param maxPool executor ceiling. The shared {@link #GENERIC} domain uses a
+     *            tighter bound than the dedicated domains: its background work
+     *            keeps running after the heavy permit is released on a Pending
+     *            return, so a low ceiling keeps that background load close to the
+     *            B2 heavy-tool limit rather than letting it accumulate.
+     */
+    private PendingWorkRegistry(String domainLabel, String threadPrefix, int maxPool)
+    {
+        this.domainLabel = domainLabel;
+
+        ThreadFactory threadFactory = new ThreadFactory()
+        {
+            private final AtomicLong counter = new AtomicLong(0);
+
+            @Override
+            public Thread newThread(Runnable r)
+            {
+                Thread t = new Thread(r, threadPrefix + "-" + counter.incrementAndGet()); //$NON-NLS-1$
+                t.setDaemon(true);
+                t.setPriority(Thread.NORM_PRIORITY - 1);
+                return t;
+            }
+        };
+
+        // Bounded executor (corePoolSize=min(2,maxPool), maxPoolSize=maxPool,
+        // queue=20) with CallerRunsPolicy - backpressure when the queue saturates
+        // instead of unbounded thread growth. One executor PER domain so a slow
+        // update cannot starve exports or reference searches.
+        //
+        // Note: CallerRunsPolicy blocks the submitting thread - the MCP tool-worker
+        // (McpHttpEndpoint's per-call MCP-Tool-Executor thread) that dispatched the
+        // work, not the HTTP accept loop. Acceptable for the target audience of 1-2
+        // concurrent AI clients; under load tests of 100+ overflow tasks it can back up.
+        this.executor = new ThreadPoolExecutor(
+            Math.min(2, maxPool), maxPool,
+            60L, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(20),
+            threadFactory,
+            new ThreadPoolExecutor.CallerRunsPolicy());
+    }
+
+    /**
+     * Returns the existing entry for the given key, or creates and dispatches a
+     * new one when absent. Threadsafe; identical params coalesce onto one future.
+     */
+    public PendingEntry getOrStart(String runKey, Supplier<String> work)
+    {
+        // Capture just the calling (worker) thread's cancellation flag so the async work can expose
+        // it and a cooperative loop on the executor thread bails out when the operator cancels. We
+        // capture the flag, not the whole scope, so the future does not pin the RunningToolCall (and
+        // its HttpExchange) alive for the run's duration.
+        //
+        // On coalesce the first caller's flag wins - a later caller's cancel does not reach the shared
+        // work. That is right for a read whose result the later caller still wants; for a mutator that
+        // coalesces (UPDATE/EXPORT/REFERENCES/batch) it means a second caller cannot cancel the first's
+        // work, which those tools do not rely on today (they carry no cancellation checkpoints yet).
+        ToolCallScope current = ToolCallScope.current();
+        ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
+        return entries.computeIfAbsent(runKey, k ->
+        {
+            PendingEntry entry = new PendingEntry(k);
+            entry.future = CompletableFuture.supplyAsync(() ->
+            {
+                ToolCallScope previous = ToolCallScope.current();
+                if (dispatchCancellation != null)
+                {
+                    ToolCallScope.enter(ToolCallScope.forCancellation(dispatchCancellation));
+                }
+                try
+                {
+                    return work.get();
+                }
+                catch (Throwable t)
+                {
+                    Activator.logError(domainLabel + " async work failed for runKey=" + k, t); //$NON-NLS-1$
+                    return "Error: " + (t.getMessage() != null ? t.getMessage() //$NON-NLS-1$
+                        : t.getClass().getSimpleName());
+                }
+                finally
+                {
+                    // Restore whatever was bound before. On a fresh executor thread nothing was, so
+                    // exit; but CallerRunsPolicy runs this inline on the submitting tool-worker thread,
+                    // whose own scope must survive - re-enter it rather than clearing it.
+                    if (dispatchCancellation != null)
+                    {
+                        if (previous != null)
+                        {
+                            ToolCallScope.enter(previous);
+                        }
+                        else
+                        {
+                            ToolCallScope.exit();
+                        }
+                    }
+                }
+            }, executor);
+            entry.future.whenComplete((result, throwable) ->
+            {
+                String cached = result != null ? result : ("Error: " + throwable); //$NON-NLS-1$
+                entry.cachedResult = cached;
+                entry.oversized = cached.length() > MAX_CACHED_RESULT_CHARS;
+                entry.completedAt = System.currentTimeMillis();
+            });
+            return entry;
+        });
+    }
+
+    /**
+     * Returns the entry for the given key if present, or {@code null}. Used by
+     * {@code retry} mode (the AI explicitly polls a previously-issued runKey).
+     */
+    public PendingEntry get(String runKey)
+    {
+        return entries.get(runKey);
+    }
+
+    /**
+     * Removes an entry once the caller has consumed its result.
+     */
+    public void remove(String runKey)
+    {
+        entries.remove(runKey);
+    }
+
+    /** Number of tracked entries (running or completed-not-yet-collected), for diagnostics. */
+    public int size()
+    {
+        return entries.size();
+    }
+
+    /**
+     * Number of entries whose work is still running (not yet completed), for
+     * diagnostics. Weakly consistent - a snapshot over a live map, which is fine
+     * for a status read. Distinct from {@link #size()}, which also counts
+     * completed results not yet collected.
+     */
+    public int runningCount()
+    {
+        int running = 0;
+        for (PendingEntry entry : entries.values())
+        {
+            if (!entry.isDone())
+            {
+                running++;
+            }
+        }
+        return running;
+    }
+
+    /**
+     * Detaches a runKey: cancels the tracking future and drops the entry.
+     * <p>
+     * <b>Best-effort only.</b> A structural/FULL {@code update_database} runs
+     * against a platform behaviour delegate that wraps a blocking 1C Designer-mode
+     * process. {@link CompletableFuture#cancel} IGNORES {@code mayInterruptIfRunning}
+     * - it never interrupts the worker thread. So this only detaches the tracking
+     * future and stops the server from waiting on / caching the result; it is NOT
+     * guaranteed to abort work already in progress (the update may keep running
+     * and still commit, holding one executor slot until it returns naturally). Use
+     * it to stop tracking a runaway or no-longer-wanted poll, not as a guaranteed
+     * rollback.
+     *
+     * @return true if a tracked entry existed and was removed
+     */
+    public boolean cancel(String runKey)
+    {
+        PendingEntry entry = entries.remove(runKey);
+        if (entry == null)
+        {
+            return false;
+        }
+        if (entry.future != null && !entry.future.isDone())
+        {
+            entry.future.cancel(true);
+        }
+        return true;
+    }
+
+    /**
+     * Evicts entries past their TTL.
+     */
+    public void pruneExpired()
+    {
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<String, PendingEntry>> it = entries.entrySet().iterator();
+        while (it.hasNext())
+        {
+            Map.Entry<String, PendingEntry> e = it.next();
+            PendingEntry entry = e.getValue();
+            long completedTtl = entry.oversized ? COMPLETED_TTL_OVERSIZED_MS : COMPLETED_TTL_MS;
+            if (entry.completedAt > 0 && now - entry.completedAt > completedTtl)
+            {
+                it.remove();
+            }
+            else if (entry.completedAt == 0 && now - entry.startedAt > ABANDONED_TTL_MS)
+            {
+                if (entry.future != null && !entry.future.isDone())
+                {
+                    entry.future.cancel(true);
+                }
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * Computes a stable runKey from the given parts: SHA-256 (64-bit hex prefix)
+     * of the parts joined by {@code '|'}. Nulls fold to empty. An identical
+     * re-issue coalesces onto the same future. Callers pass their own canonical
+     * parameter set (booleans/ints via {@link String#valueOf}); the key only has
+     * to be unique within one domain's registry instance.
+     */
+    public static String computeRunKey(String... parts)
+    {
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts)
+        {
+            if (sb.length() > 0)
+            {
+                sb.append('|');
+            }
+            sb.append(p == null ? "" : p); //$NON-NLS-1$
+        }
+        return sha256(sb.toString());
+    }
+
+    private static String sha256(String input)
+    {
+        try
+        {
+            MessageDigest md = MessageDigest.getInstance("SHA-256"); //$NON-NLS-1$
+            byte[] digest = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest)
+            {
+                hex.append(String.format("%02x", b & 0xFF)); //$NON-NLS-1$
+            }
+            return hex.substring(0, 16); // 64-bit prefix is plenty for our scale
+        }
+        catch (NoSuchAlgorithmException e)
+        {
+            // Should never happen on standard JDK
+            return Integer.toHexString(input.hashCode());
+        }
+    }
+
+    /**
+     * Per-runKey state for the registry.
+     */
+    public static final class PendingEntry
+    {
+        public final String runKey;
+        public final long startedAt = System.currentTimeMillis();
+        public CompletableFuture<String> future;
+        /** Cached result once the future completes. */
+        public volatile String cachedResult;
+        /** Set when the cached result exceeds the oversized threshold (short TTL). */
+        public volatile boolean oversized;
+        public volatile long completedAt;
+
+        PendingEntry(String runKey)
+        {
+            this.runKey = runKey;
+        }
+
+        /**
+         * Waits up to the given milliseconds for the future to complete. Returns
+         * the cached result when ready, or {@code null} on timeout.
+         */
+        public String await(long timeoutMs)
+        {
+            if (cachedResult != null)
+            {
+                return cachedResult;
+            }
+            try
+            {
+                return future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+            catch (java.util.concurrent.TimeoutException timeout)
+            {
+                return null;
+            }
+            catch (Exception e)
+            {
+                return "Error: " + e.getMessage(); //$NON-NLS-1$
+            }
+        }
+
+        public boolean isDone()
+        {
+            return cachedResult != null || (future != null && future.isDone());
+        }
+
+        public long elapsedMs()
+        {
+            long end = completedAt > 0 ? completedAt : System.currentTimeMillis();
+            return end - startedAt;
+        }
+    }
+}

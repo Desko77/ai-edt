@@ -1,0 +1,76 @@
+name: Deploy Update Site
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Extract version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # workflow_dispatch: use the latest published release tag
+            VERSION=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName | ltrimstr("v")')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p _site
+          gh release download "v${{ steps.version.outputs.version }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "AI-EDT-*.zip" \
+            --output release.zip
+          unzip -q release.zip -d _site/
+
+      - name: Create index.html
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cat > _site/index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head><title>AI-EDT Update Site</title></head>
+          <body>
+            <h1>AI-EDT Update Site</h1>
+            <p>Current version: <strong>${VERSION}</strong></p>
+            <p>Use this URL in EDT: <strong>Help → Install New Software...</strong></p>
+            <pre>https://github.com/ (AI-EDT update site TBD)</pre>
+            <p>AI-EDT - 1C AI tools for EDT (based on EDT-MCP by DitriX, AGPL-3.0)</p>
+          </body>
+          </html>
+          EOF
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

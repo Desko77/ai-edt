@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">AI-EDT</title>
+  <desc id="desc">Semantic access to 1C:EDT through Model Context Protocol</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="0.58" stop-color="#111a2c"/>
+      <stop offset="1" stop-color="#17132b"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#a371f7"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#8b949e" stroke-opacity=".08"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="360" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="360" rx="18" fill="url(#grid)"/>
+  <rect x="1" y="1" width="1198" height="358" rx="17" fill="none" stroke="#30363d"/>
+
+  <g transform="translate(72 62)">
+    <circle cx="8" cy="8" r="6" fill="#ff7b72"/>
+    <circle cx="30" cy="8" r="6" fill="#d29922"/>
+    <circle cx="52" cy="8" r="6" fill="#3fb950"/>
+    <text x="0" y="62" fill="#7ee787" font-family="Consolas,Monaco,monospace" font-size="17">$ connect ai-edt</text>
+    <text x="0" y="131" fill="#f0f6fc" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="58" font-weight="700" letter-spacing="-1">AI-EDT</text>
+    <text x="2" y="174" fill="#b1bac4" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="22">Semantic access to 1C:EDT through MCP</text>
+    <g transform="translate(2 212)" font-family="Consolas,Monaco,monospace" font-size="15">
+      <rect width="132" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+      <text x="20" y="23" fill="#58a6ff">CODE</text>
+      <rect x="144" width="156" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+      <text x="164" y="23" fill="#a371f7">METADATA</text>
+      <rect x="312" width="142" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+      <text x="332" y="23" fill="#f2cc60">DEBUG</text>
+      <rect x="466" width="132" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+      <text x="486" y="23" fill="#7ee787">TEST</text>
+    </g>
+  </g>
+
+  <g transform="translate(802 75)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 104C96 44 172 39 222 91M55 126c45 54 121 67 174 17M134 58v133" stroke="url(#line)" stroke-width="3" stroke-opacity=".72"/>
+    <path d="M222 91l56 42-49 45M50 104L0 143l55 43" stroke="#8b949e" stroke-width="2" stroke-opacity=".55"/>
+    <g filter="url(#glow)">
+      <circle cx="50" cy="104" r="10" fill="#58a6ff" stroke="#0d1117" stroke-width="4"/>
+      <circle cx="134" cy="58" r="10" fill="#a371f7" stroke="#0d1117" stroke-width="4"/>
+      <circle cx="134" cy="191" r="10" fill="#f2cc60" stroke="#0d1117" stroke-width="4"/>
+      <circle cx="222" cy="91" r="10" fill="#7ee787" stroke="#0d1117" stroke-width="4"/>
+      <circle cx="229" cy="178" r="10" fill="#ff7b72" stroke="#0d1117" stroke-width="4"/>
+    </g>
+    <g fill="#8b949e" stroke="none" font-family="Consolas,Monaco,monospace" font-size="13">
+      <text x="24" y="84">AI</text>
+      <text x="108" y="34">MCP</text>
+      <text x="105" y="222">BSL</text>
+      <text x="239" y="72">EDT</text>
+      <text x="246" y="207">1C</text>
+    </g>
+  </g>
+</svg>

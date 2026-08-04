@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ai-edt": {
+      "type": "http",
+      "url": "http://127.0.0.1:12250/mcp"
+    }
+  }
+}

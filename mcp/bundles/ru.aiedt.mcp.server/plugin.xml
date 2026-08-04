@@ -1,0 +1,577 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+   <!-- Preferences page -->
+   <extension point="org.eclipse.ui.preferencePages">
+      <page
+            id="ru.aiedt.mcp.server.settings"
+            name="AI-EDT"
+            class="ru.aiedt.mcp.server.settings.McpSettingsPage">
+      </page>
+   </extension>
+   
+   <!-- Default preferences initializer -->
+   <extension point="org.eclipse.core.runtime.preferences">
+      <initializer class="ru.aiedt.mcp.server.settings.DefaultPreferences"/>
+   </extension>
+   
+   <!-- Startup for auto-starting server if enabled -->
+   <extension point="org.eclipse.ui.startup">
+      <startup class="ru.aiedt.mcp.server.McpAutoStart"/>
+   </extension>
+   
+   <!-- Commands for marker management -->
+   <extension point="org.eclipse.ui.commands">
+      <category
+            id="ru.aiedt.mcp.server.labels.category"
+            name="Metadata Markers">
+      </category>
+      <command
+            categoryId="ru.aiedt.mcp.server.labels.category"
+            id="ru.aiedt.mcp.server.labels.manageMarkers"
+            name="Manage Markers...">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.labels.category"
+            id="ru.aiedt.mcp.server.labels.filterByMarker"
+            name="Filter by Marker..."
+            description="Filter navigator by markers">
+         <state
+               class="org.eclipse.ui.handlers.RegistryToggleState:false"
+               id="org.eclipse.ui.commands.toggleState">
+         </state>
+      </command>
+      <!-- Toggle marker commands (Ctrl+Alt+1 through Ctrl+Alt+0) -->
+      <command
+            categoryId="ru.aiedt.mcp.server.labels.category"
+            id="ru.aiedt.mcp.server.labels.toggleMarker"
+            name="Toggle Marker by Index"
+            description="Toggle marker assignment by position (1-10)">
+         <commandParameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               name="Marker Index"
+               optional="false"/>
+      </command>
+      <!-- Navigator tree expansion commands -->
+      <command
+            categoryId="ru.aiedt.mcp.server.labels.category"
+            id="ru.aiedt.mcp.server.expandAll"
+            name="Expand All"
+            description="Expand all nodes in the Navigator tree">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.labels.category"
+            id="ru.aiedt.mcp.server.expandBelow"
+            name="Expand Below"
+            description="Expand all nodes below the selected element">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.labels.category"
+            id="ru.aiedt.mcp.server.collapseAll"
+            name="Collapse All"
+            description="Collapse all nodes in the Navigator tree">
+      </command>
+   </extension>
+   
+   <!-- Key bindings for toggle marker commands -->
+   <extension point="org.eclipse.ui.bindings">
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+1">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="1"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+2">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="2"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+3">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="3"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+4">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="4"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+5">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="5"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+6">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="6"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+7">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="7"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+8">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="8"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+9">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="9"/>
+      </key>
+      <key
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="Ctrl+Alt+0">
+         <parameter
+               id="ru.aiedt.mcp.server.labels.toggleMarker.index"
+               value="0"/>
+      </key>
+   </extension>
+   
+   <!-- Handlers for marker commands -->
+   <extension point="org.eclipse.ui.handlers">
+      <handler
+            class="ru.aiedt.mcp.server.labels.handlers.ManageMarkersCommand"
+            commandId="ru.aiedt.mcp.server.labels.manageMarkers">
+         <enabledWhen>
+            <with variable="selection">
+               <count value="1"/>
+               <iterate operator="and">
+                  <instanceof value="org.eclipse.emf.ecore.EObject"/>
+               </iterate>
+            </with>
+         </enabledWhen>
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.labels.handlers.FilterByMarkerCommand"
+            commandId="ru.aiedt.mcp.server.labels.filterByMarker">
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.labels.handlers.ToggleMarkerByIndexCommand"
+            commandId="ru.aiedt.mcp.server.labels.toggleMarker">
+         <enabledWhen>
+            <with variable="selection">
+               <count value="+"/>
+               <iterate operator="or">
+                  <instanceof value="org.eclipse.emf.ecore.EObject"/>
+               </iterate>
+            </with>
+         </enabledWhen>
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.navigation.ExpandTreeCommand"
+            commandId="ru.aiedt.mcp.server.expandAll">
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.navigation.ExpandSubtreeCommand"
+            commandId="ru.aiedt.mcp.server.expandBelow">
+         <enabledWhen>
+            <with variable="selection">
+               <count value="+"/>
+            </with>
+         </enabledWhen>
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.navigation.CollapseTreeCommand"
+            commandId="ru.aiedt.mcp.server.collapseAll">
+      </handler>
+   </extension>
+   
+   <!-- Context menu contributions -->
+   <extension point="org.eclipse.ui.menus">
+      <!-- Status bar indicator for MCP server in the trim area -->
+      <menuContribution
+            locationURI="toolbar:org.eclipse.ui.trim.status">
+         <toolbar
+               id="ru.aiedt.mcp.server.statusBar">
+            <control
+                  class="ru.aiedt.mcp.server.workbench.McpStatusBarItem"
+                  id="ru.aiedt.mcp.server.status">
+            </control>
+         </toolbar>
+      </menuContribution>
+      
+      <!-- Navigator toolbar buttons (positioned after filterBySubsystems) -->
+      <menuContribution
+            allPopups="false"
+            locationURI="toolbar:com._1c.g5.v8.dt.ui2.navigator?after=com._1c.g5.v8.dt.navigator.ui.filterBySubsystems">
+         <command
+               commandId="ru.aiedt.mcp.server.expandAll"
+               icon="icons/expand_all.png"
+               label="Expand All"
+               tooltip="Expand all nodes in the tree"
+               style="push">
+         </command>
+         <command
+               commandId="ru.aiedt.mcp.server.collapseAll"
+               icon="icons/collapse_all.png"
+               label="Collapse All"
+               tooltip="Collapse all nodes in the tree"
+               style="push">
+         </command>
+         <command
+               commandId="ru.aiedt.mcp.server.expandBelow"
+               icon="icons/expand_below.png"
+               label="Expand Below"
+               tooltip="Expand all nodes below the selected element"
+               style="push">
+         </command>
+         <command
+               commandId="ru.aiedt.mcp.server.labels.filterByMarker"
+               icon="icons/marker.png"
+               label="Filter by Marker"
+               tooltip="Filter navigator by markers"
+               style="toggle">
+         </command>
+      </menuContribution>
+      
+      <!-- Filter by Marker in EDT Navigator view menu -->
+      <menuContribution
+            allPopups="false"
+            locationURI="menu:com._1c.g5.v8.dt.ui2.navigator?after=additions">
+         <command
+               commandId="ru.aiedt.mcp.server.labels.filterByMarker"
+               icon="icons/marker.png"
+               label="Filter by Marker..."
+               style="toggle">
+         </command>
+      </menuContribution>
+      
+      <!-- Marker management in EDT navigator context menu -->
+      <menuContribution
+            allPopups="false"
+            locationURI="popup:com._1c.g5.v8.dt.navigator.ui.navigator.popup?after=cluster.edit">
+         <separator name="ru.aiedt.mcp.server.labels.separator" visible="true"/>
+         <menu
+               id="ru.aiedt.mcp.server.labels.menu"
+               icon="icons/marker.png"
+               label="Markers">
+            <!-- Dynamic markers list -->
+            <dynamic
+                  class="ru.aiedt.mcp.server.labels.ui.MarkerMenuBuilder"
+                  id="ru.aiedt.mcp.server.labels.dynamicMarkers">
+            </dynamic>
+            <!-- Manage Markers command at the bottom -->
+            <command
+                  commandId="ru.aiedt.mcp.server.labels.manageMarkers"
+                  label="Manage Markers..."
+                  style="push">
+               <visibleWhen checkEnabled="false">
+                  <with variable="selection">
+                     <count value="1"/>
+                     <iterate operator="and">
+                        <instanceof value="org.eclipse.emf.ecore.EObject"/>
+                     </iterate>
+                  </with>
+               </visibleWhen>
+            </command>
+         </menu>
+      </menuContribution>
+   </extension>
+   
+   <!-- Label decorator for showing markers on metadata objects -->
+   <extension point="org.eclipse.ui.decorators">
+      <decorator
+            class="ru.aiedt.mcp.server.labels.ui.MarkerBadgeDecorator"
+            id="ru.aiedt.mcp.server.labels.decorator"
+            label="Metadata Markers Decorator"
+            lightweight="true"
+            state="true">
+         <description>Shows markers assigned to metadata objects</description>
+         <enablement>
+            <objectClass name="org.eclipse.emf.ecore.EObject"/>
+         </enablement>
+      </decorator>
+   </extension>
+   
+   <!-- Marker Filter View -->
+   <extension point="org.eclipse.ui.views">
+      <category
+            id="ru.aiedt.mcp.server.labels.viewCategory"
+            name="AI-EDT">
+      </category>
+      <view
+            id="ru.aiedt.mcp.server.labels.filterView"
+            name="Marker Filter"
+            icon="icons/marker.png"
+            category="ru.aiedt.mcp.server.labels.viewCategory"
+            class="ru.aiedt.mcp.server.labels.ui.MarkerFilterPanel"
+            allowMultiple="false"
+            restorable="true">
+         <description>Filter metadata objects by markers</description>
+      </view>
+   </extension>
+   
+   <!-- Add Marker Filter View to Window > Show View menu -->
+   <extension point="org.eclipse.ui.perspectiveExtensions">
+      <perspectiveExtension targetID="*">
+         <viewShortcut id="ru.aiedt.mcp.server.labels.filterView"/>
+      </perspectiveExtension>
+   </extension>
+   
+   <!-- Marker Search Filter for EDT Navigator -->
+   <extension point="org.eclipse.ui.navigator.navigatorContent">
+      <commonFilter
+            id="ru.aiedt.mcp.server.labels.MarkerQueryFilter"
+            name="Marker Search Filter"
+            description="Filters metadata objects by marker when search starts with #"
+            activeByDefault="false"
+            visibleInUI="false"
+            class="ru.aiedt.mcp.server.labels.ui.MarkerQueryFilter">
+      </commonFilter>
+   </extension>
+   
+   <!-- Bind Marker Search Filter to EDT Navigator -->
+   <extension point="org.eclipse.ui.navigator.viewer">
+      <viewerContentBinding viewerId="com._1c.g5.v8.dt.ui2.navigator">
+         <includes>
+            <contentExtension pattern="ru.aiedt.mcp.server.labels.MarkerQueryFilter"/>
+         </includes>
+      </viewerContentBinding>
+   </extension>
+   
+   <!-- Refactoring contributors for marker sync on rename/delete -->
+   <extension point="com._1c.g5.v8.dt.refactoring.core.refactoringContributors">
+      <contributor
+            class="ru.aiedt.mcp.server.labels.refactoring.MarkerRenameRefactorHook">
+      </contributor>
+      <contributor
+            class="ru.aiedt.mcp.server.labels.refactoring.MarkerDeleteRefactorHook">
+      </contributor>
+      <contributor
+            class="ru.aiedt.mcp.server.folders.refactoring.ClusterRenameRefactorHook">
+      </contributor>
+      <contributor
+            class="ru.aiedt.mcp.server.folders.refactoring.ClusterDeleteRefactorHook">
+      </contributor>
+   </extension>
+   
+   <!-- ============================================== -->
+   <!-- Navigator Object Clusters                       -->
+   <!-- ============================================== -->
+   
+   <!-- Commands for cluster management -->
+   <extension point="org.eclipse.ui.commands">
+      <category
+            id="ru.aiedt.mcp.server.folders.category"
+            name="Navigator Clusters">
+      </category>
+      <command
+            categoryId="ru.aiedt.mcp.server.folders.category"
+            id="ru.aiedt.mcp.server.folders.newCluster"
+            name="New Cluster..."
+            description="Create a new virtual folder cluster">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.folders.category"
+            id="ru.aiedt.mcp.server.folders.addToCluster"
+            name="Add to Cluster..."
+            description="Add selected objects to a cluster">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.folders.category"
+            id="ru.aiedt.mcp.server.folders.deleteCluster"
+            name="Delete Cluster"
+            description="Delete the selected cluster">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.folders.category"
+            id="ru.aiedt.mcp.server.folders.renameCluster"
+            name="Rename Cluster..."
+            description="Rename the selected cluster">
+      </command>
+      <command
+            categoryId="ru.aiedt.mcp.server.folders.category"
+            id="ru.aiedt.mcp.server.folders.removeFromCluster"
+            name="Remove from Cluster"
+            description="Remove object from cluster (return to original location)">
+      </command>
+   </extension>
+   
+   <!-- Handlers for cluster commands -->
+   <extension point="org.eclipse.ui.handlers">
+      <handler
+            class="ru.aiedt.mcp.server.folders.handlers.NewClusterCommand"
+            commandId="ru.aiedt.mcp.server.folders.newCluster">
+         <!-- Handler does internal validation, always enabled in Navigator -->
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.folders.handlers.AddToClusterCommand"
+            commandId="ru.aiedt.mcp.server.folders.addToCluster">
+         <enabledWhen>
+            <with variable="selection">
+               <count value="+"/>
+               <iterate operator="or">
+                  <instanceof value="org.eclipse.emf.ecore.EObject"/>
+               </iterate>
+            </with>
+         </enabledWhen>
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.folders.handlers.DeleteClusterCommand"
+            commandId="ru.aiedt.mcp.server.folders.deleteCluster">
+         <enabledWhen>
+            <with variable="selection">
+               <iterate operator="and">
+                  <instanceof value="ru.aiedt.mcp.server.folders.ui.ClusterNavigatorBridge"/>
+               </iterate>
+            </with>
+         </enabledWhen>
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.folders.handlers.RenameClusterCommand"
+            commandId="ru.aiedt.mcp.server.folders.renameCluster">
+         <enabledWhen>
+            <with variable="selection">
+               <iterate operator="and">
+                  <instanceof value="ru.aiedt.mcp.server.folders.ui.ClusterNavigatorBridge"/>
+               </iterate>
+            </with>
+         </enabledWhen>
+      </handler>
+      <handler
+            class="ru.aiedt.mcp.server.folders.handlers.RemoveFromClusterCommand"
+            commandId="ru.aiedt.mcp.server.folders.removeFromCluster">
+         <!-- Handler has setEnabled() that checks for EObjects in clusters -->
+      </handler>
+      <!-- Copy handler for clusters - copies cluster name to clipboard -->
+      <handler
+            class="ru.aiedt.mcp.server.folders.handlers.CopyClusterCommand"
+            commandId="org.eclipse.ui.edit.copy">
+         <activeWhen>
+            <with variable="selection">
+               <iterate operator="and" ifEmpty="false">
+                  <instanceof value="ru.aiedt.mcp.server.folders.ui.ClusterNavigatorBridge"/>
+               </iterate>
+            </with>
+         </activeWhen>
+      </handler>
+   </extension>
+   
+   <!-- Context menu contributions for clusters -->
+   <extension point="org.eclipse.ui.menus">
+      <!-- New Cluster in collection folders context menu -->
+      <menuContribution
+            allPopups="false"
+            locationURI="popup:com._1c.g5.v8.dt.navigator.ui.navigator.popup?after=cluster.new">
+         <command
+               commandId="ru.aiedt.mcp.server.folders.newCluster"
+               icon="icons/cluster.png"
+               label="New Cluster..."
+               style="push">
+            <visibleWhen checkEnabled="true"/>
+         </command>
+      </menuContribution>
+      
+      <!-- Add to Cluster command for metadata objects -->
+      <menuContribution
+            allPopups="false"
+            locationURI="popup:com._1c.g5.v8.dt.navigator.ui.navigator.popup?after=cluster.edit">
+         <command
+               commandId="ru.aiedt.mcp.server.folders.addToCluster"
+               icon="icons/add_to_cluster.png"
+               label="Add to Cluster..."
+               style="push">
+            <visibleWhen checkEnabled="true"/>
+         </command>
+      </menuContribution>
+      
+      <!-- Cluster management submenu on cluster nodes -->
+      <menuContribution
+            allPopups="false"
+            locationURI="popup:com._1c.g5.v8.dt.navigator.ui.navigator.popup?after=cluster.edit">
+         <command
+               commandId="ru.aiedt.mcp.server.folders.renameCluster"
+               label="Rename Cluster..."
+               style="push">
+            <visibleWhen checkEnabled="true"/>
+         </command>
+         <command
+               commandId="ru.aiedt.mcp.server.folders.deleteCluster"
+               label="Delete Cluster"
+               style="push">
+            <visibleWhen checkEnabled="true"/>
+         </command>
+         <command
+               commandId="ru.aiedt.mcp.server.folders.removeFromCluster"
+               label="Remove from Cluster"
+               style="push">
+            <visibleWhen checkEnabled="true"/>
+         </command>
+      </menuContribution>
+   </extension>
+   
+   <!-- Navigator Content Extension for Clusters -->
+   <extension point="org.eclipse.ui.navigator.navigatorContent">
+      <navigatorContent
+            id="ru.aiedt.mcp.server.folders.navigatorContent"
+            name="Navigator Clusters"
+            contentProvider="ru.aiedt.mcp.server.folders.ui.ClusterTreeContent"
+            labelProvider="ru.aiedt.mcp.server.folders.ui.ClusterTreeLabels"
+            activeByDefault="true"
+            priority="highest">
+         <triggerPoints>
+            <or>
+               <!-- Use IWorkbenchAdapter which all EDT navigator elements implement -->
+               <instanceof value="org.eclipse.ui.model.IWorkbenchAdapter"/>
+            </or>
+         </triggerPoints>
+         <possibleChildren>
+            <or>
+               <instanceof value="ru.aiedt.mcp.server.folders.ui.ClusterNavigatorBridge"/>
+               <instanceof value="org.eclipse.ui.model.IWorkbenchAdapter"/>
+               <instanceof value="org.eclipse.emf.ecore.EObject"/>
+            </or>
+         </possibleChildren>
+      </navigatorContent>
+      
+      <!-- Filter to hide clustered objects from their original location -->
+      <commonFilter
+            id="ru.aiedt.mcp.server.folders.clusteredObjectsFilter"
+            name="Hide Clustered Objects"
+            description="Hides objects from their original location when they are placed in a cluster"
+            class="ru.aiedt.mcp.server.folders.ui.ClusterViewFilter"
+            activeByDefault="true"
+            visibleInUI="false">
+      </commonFilter>
+   </extension>
+   
+   <!-- Bind Clusters Content to EDT Navigator -->
+   <extension point="org.eclipse.ui.navigator.viewer">
+      <viewerContentBinding viewerId="com._1c.g5.v8.dt.ui2.navigator">
+         <includes>
+            <contentExtension pattern="ru.aiedt.mcp.server.folders.navigatorContent"/>
+            <contentExtension pattern="ru.aiedt.mcp.server.folders.clusteredObjectsFilter"/>
+         </includes>
+      </viewerContentBinding>
+   </extension>
+</plugin>

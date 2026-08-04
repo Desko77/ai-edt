@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:CommonModule xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="bb7a2687-58d7-46ec-b578-66b43d25df36">
+  <name>ProbeOrphan</name>
+  <synonym>
+    <key>en</key>
+    <value>Never called from anywhere</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Никем не вызывается</value>
+  </synonym>
+  <server>true</server>
+  <externalConnection>true</externalConnection>
+  <clientOrdinaryApplication>true</clientOrdinaryApplication>
+</mdclass:CommonModule>

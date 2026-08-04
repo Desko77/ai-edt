@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:InformationRegister xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="e5142814-d5fa-4ab0-8a65-11e95dbbc903">
+  <producedTypes>
+    <selectionType typeId="2024d68e-176b-49de-9e12-809d8cf0e6ed" valueTypeId="9d81640c-0c47-496e-a5ec-48b56a9d42ea"/>
+    <listType typeId="031c702f-a598-4b78-8b9c-4f56cc7944e9" valueTypeId="20144eaa-5ef9-4add-badf-48b7bf9d5ab3"/>
+    <managerType typeId="b43d1150-d04c-456a-91c6-a90f4128f17b" valueTypeId="df5d73e7-5ae4-4e3c-a727-453a631b74da"/>
+    <recordSetType typeId="675c03f0-a1bd-43fc-a8dd-7c05ef96960e" valueTypeId="6370875a-d2e7-4b95-b2db-a0d8a7e44b52"/>
+    <recordKeyType typeId="d5578179-ad1b-4866-93cc-deb6719a4fe7" valueTypeId="30d5d91b-1de4-4427-a556-7e0c99fac33f"/>
+    <recordType typeId="338206f2-40e0-411a-a1f4-9b6a325abe91" valueTypeId="7d74f527-d3cc-45a5-962b-27b6c6282fd2"/>
+    <recordManagerType typeId="e2ffe223-9b33-4f69-ab50-2a0418764635" valueTypeId="9f15cb59-68ea-4ba6-8ee2-3f06478d67ab"/>
+  </producedTypes>
+  <name>ProbeFacts</name>
+  <synonym>
+    <key>en</key>
+    <value>Probe facts</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Факты стенда</value>
+  </synonym>
+  <writeMode>RecorderSubordinate</writeMode>
+  <resources uuid="0557f14b-0fcd-4954-aa1c-9e72c7e270ca">
+    <name>Amount</name>
+    <synonym>
+      <key>ru</key>
+      <value>Amount</value>
+    </synonym>
+    <type>
+      <types>Number</types>
+      <numberQualifiers>
+        <precision>15</precision>
+        <scale>2</scale>
+      </numberQualifiers>
+    </type>
+  </resources>
+  <dimensions uuid="8833c7c1-2739-414a-b8eb-740f11df99f0">
+    <name>Subject</name>
+    <synonym>
+      <key>ru</key>
+      <value>Subject</value>
+    </synonym>
+    <type>
+      <types>String</types>
+      <stringQualifiers>
+        <length>50</length>
+      </stringQualifiers>
+    </type>
+  </dimensions>
+</mdclass:InformationRegister>

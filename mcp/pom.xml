@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+   Copyright (c) 2025 DitriX
+   Copyright (c) 2026 Desko77 (https://github.com/Desko77)
+   This program is free software: you can redistribute it and/or modify it
+   under the terms of the GNU Affero General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or (at your
+   option) any later version. See https://www.gnu.org/licenses/agpl-3.0.html
+   SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<project
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+  xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>ru.aiedt.mcp</groupId>
+    <artifactId>bom</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>./bom/pom.xml</relativePath>
+  </parent>
+
+  <artifactId>parent</artifactId>
+  <packaging>pom</packaging>
+
+  <name>AI-EDT Plugin</name>
+
+  <modules>
+    <module>targets</module>
+    <module>bundles</module>
+    <module>tests</module>
+    <module>features</module>
+    <module>repositories</module>
+  </modules>
+
+</project>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:Subsystem xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="2c9d1980-cda9-4b2b-866a-746fbb48a78c">
+  <name>Probe</name>
+  <synonym>
+    <key>en</key>
+    <value>Probe</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Стенд</value>
+  </synonym>
+  <content>Catalog.ProbeItems</content>
+  <content>Document.ProbeEntry</content>
+  <content>InformationRegister.ProbeFacts</content>
+</mdclass:Subsystem>

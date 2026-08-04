@@ -1,0 +1,74 @@
+# Expected behavior and response signals
+
+None of this is a defect list. These are responses the server returns deliberately and behaviors
+of EDT at scale. Each one has a right reaction, and retrying blindly is never it. Read the tag and
+the message before deciding.
+
+## Signals in a response
+
+| Signal | What it means | What to do |
+|---|---|---|
+| `Pending` with a `runKey` | A long operation (references on a large object, a test run, an export) did not finish inside the soft budget. | Repeat the same call with the same `runKey` and the same parameters. Changing the filters starts a different search. |
+| A timeout on a large configuration | The search had no filter, or the index is still building. | Narrow it: `metadataType` or `fileMask`. For references, `skipBsl=true` or a larger `timeoutSeconds` with a retry. |
+| `BSL model is not available` | Either the semantic model is not built, or the module path or FQN is wrong. | Check the path first. A wrong path produces exactly this message, and the model itself works on very large modules. |
+| `propertyMismatch` with `mismatches` | The object already exists and its properties differ. It is a refusal to overwrite silently, not a failure. | Do not retry the creation. Walk `mismatches` and set each property. |
+| `requiresCascadeForms` with `affectedForms` | Removing the field would change forms. | Review the listed forms, confirm the destructive step, repeat with `cascadeForms=true`. |
+| Names ending in `ApiNotFound`, or `dcsFactoryMethodNotFound` | The installed EDT runtime does not expose the API this operation needs. | Not an implementation defect and not fixable by retrying. Tell the user and offer the equivalent action in the EDT interface. |
+| `kindMismatch` on an export | The output path does not match the object kind. | Match `.epf` and `.erf` to the object. |
+| A tool is disabled or not found | The active preset hides it, or the build does not have it. | Do not work around it. Say which preset change or which build would provide it. |
+
+Tools correct callers on their own: a wrong enumeration value comes back with the valid ones, a
+missing required parameter comes back with an example. Read the message instead of guessing the
+next attempt.
+
+## Stopping instead of looping
+
+One editing cycle is one object or one module until it validates. After two failed attempts at the
+same error with the same approach, change the approach. If no other approach is visible, stop and
+ask. Stopping applies to that approach, not to the task: finish the independent parts and say what
+is left.
+
+## Large configurations
+
+- A project-wide search with no filter times out. Narrow it by `metadataType` or `fileMask` every
+  time.
+- Reach for `get_module_structure` and `read_method_source` first. They work on modules of tens of
+  thousands of lines and return exact method boundaries. Fall back to reading raw files only on an
+  actual model failure, not preemptively because a module looks big.
+- Line numbers from a text search mark the matching line, not the method boundary. Take boundaries
+  from `read_method_source`.
+
+## Synchronization between EDT and the infobase
+
+EDT decides between an incremental and a full upload by comparing the project configuration
+against a stored baseline. If they do not match, or no baseline exists, the upload is full.
+
+`sync_control` operations `status` and `diagnose` are read-only and safe. `suppress` gates only the
+background automatic synchronization, and is reversible; explicit actions such as a manual database
+update are not gated by it.
+
+**`mark_synchronized` and `reseed_baseline` only on an explicit instruction from the user, never on
+your own initiative.** Both make EDT believe the infobase already matches the project. If a real
+difference exists, EDT will silently skip genuine changes. Only the user knows what has not
+changed.
+
+## Things that fail early by design
+
+- In an extension project, a common module created with `privileged=true`, or with `global=true`
+  combined with `server=true`, is rejected up front rather than producing an invalid module.
+- An event subscription handler must be `CommonModule.Name.Method` or `Name.Method`. A bare method
+  name cannot be resolved.
+- Deleting an XDTO package by FQN is not supported; remove it through the file system.
+
+## Validation that looks wrong but is stale
+
+After creating a project and populating it, markers about unknown `String` or `Number` types are
+leftover derived state, not type errors. Revalidation does not clear them. `clean_project` does.
+Checking a freshly built project without a clean pass tells you very little.
+
+## The thick client competes for the infobase
+
+While EDT holds a file infobase, launching a batch Configurator against that same infobase blocks
+and hangs. That is a lock, not a fault. Operations that need the thick client are exposed as
+tools - `update_database`, the configuration and extension exports, external object export - and
+they hand the lock over correctly. Use them instead of starting a Configurator yourself.

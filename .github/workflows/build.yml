@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  # Lets a branch be validated on Linux before it reaches master or a release tag.
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Cache Tycho P2 repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/.cache/tycho
+            ~/.m2/repository/p2
+          key: ${{ runner.os }}-tycho-p2-${{ hashFiles('**/pom.xml', '**/*.target') }}
+          restore-keys: |
+            ${{ runner.os }}-tycho-p2-
+
+      # The test fragment runs inside a real OSGi runtime and this bundle's Activator extends
+      # AbstractUIPlugin, so org.eclipse.ui.workbench activates and SWT/GTK is loaded. On a runner
+      # without an X display that can fail at Display creation, hence xvfb below. GTK itself is
+      # normally present in the image; the fallbacks only cover package renames between releases.
+      - name: Install headless display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          sudo apt-get install -y libgtk-3-0t64 || sudo apt-get install -y libgtk-3-0 || true
+
+      - name: Maven build
+        working-directory: mcp
+        env:
+          MAVEN_OPTS: -Xmx2g -XX:+UseParallelGC
+        run: xvfb-run -a mvn clean verify --batch-mode --no-transfer-progress -T 1C
+
+      - name: Test coverage census
+        run: python3 scripts/test-coverage-audit.py --check
+
+      - name: Publish Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        continue-on-error: true
+        with:
+          files: |
+            mcp/tests/**/target/surefire-reports/*.xml
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep -oP 'Bundle-Version:\s*\K[\d.]+' mcp/bundles/ru.aiedt.mcp.server/META-INF/MANIFEST.MF)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-EDT-${{ steps.version.outputs.version }}
+          path: mcp/repositories/ru.aiedt.mcp.server.repository/target/repository/

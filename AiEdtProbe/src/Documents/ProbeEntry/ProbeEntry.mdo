@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:Document xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="718662fd-2d49-411f-8aa4-7aa352f1afc9">
+  <producedTypes>
+    <objectType typeId="7ece818c-ca93-40db-ac99-992f5d1cd7cd" valueTypeId="b76e975e-bab2-4af6-be2d-f0c771088053"/>
+    <refType typeId="158e2a22-1894-4fdc-aa41-9ec5b172db19" valueTypeId="f8eca143-0a2f-4984-a77d-74e363f8065a"/>
+    <selectionType typeId="4331e748-bf68-4d75-b178-9486d3210d37" valueTypeId="e31192e1-2836-4c99-a695-1439983b5f84"/>
+    <listType typeId="38baa6d7-4245-4aa8-8fd2-f021c5e87b91" valueTypeId="e4b73290-041c-4c6f-b074-9d8460df6c00"/>
+    <managerType typeId="3097d21d-138a-45a8-8a48-f4a0a90cd8f7" valueTypeId="850e9286-77f8-4f7f-a993-915ecdee2e6e"/>
+  </producedTypes>
+  <name>ProbeEntry</name>
+  <synonym>
+    <key>en</key>
+    <value>Probe entry</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Запись стенда</value>
+  </synonym>
+  <registerRecords>InformationRegister.ProbeFacts</registerRecords>
+  <postInPrivilegedMode>true</postInPrivilegedMode>
+  <unpostInPrivilegedMode>true</unpostInPrivilegedMode>
+  <attributes uuid="35f0f601-6fbc-4586-814a-6b66351b7e73">
+    <name>Subject</name>
+    <synonym>
+      <key>ru</key>
+      <value>Subject</value>
+    </synonym>
+    <type>
+      <types>CatalogRef.ProbeItems</types>
+    </type>
+  </attributes>
+  <attributes uuid="24ef0cca-0f62-4adf-b033-29be1b36a9e2">
+    <name>Amount</name>
+    <synonym>
+      <key>ru</key>
+      <value>Amount</value>
+    </synonym>
+    <type>
+      <types>Number</types>
+      <numberQualifiers>
+        <precision>15</precision>
+        <scale>2</scale>
+      </numberQualifiers>
+    </type>
+  </attributes>
+  <attributes uuid="066317c2-acae-4274-acba-d62244843a1d">
+    <name>Комментарий</name>
+    <synonym>
+      <key>ru</key>
+      <value>Комментарий</value>
+    </synonym>
+    <type>
+      <types>String</types>
+      <stringQualifiers/>
+    </type>
+    <multiLine>true</multiLine>
+  </attributes>
+  <forms uuid="450ed976-e3f7-4ba5-ab6b-15e1d0e215f3">
+    <name>DocumentForm</name>
+  </forms>
+</mdclass:Document>

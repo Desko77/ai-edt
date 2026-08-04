@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:Catalog xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="bbc113d5-a5de-4ab0-b296-de3f72988ac4">
+  <producedTypes>
+    <objectType typeId="7c72df6a-869f-4854-a1c5-5a997ac77543" valueTypeId="642330bb-8a07-4547-80ad-19c02bf16279"/>
+    <refType typeId="6e64d2d3-048b-44c6-964f-39bac7db8b9f" valueTypeId="53b17d68-2e6a-4610-8161-104bc544a4b1"/>
+    <selectionType typeId="4d2f3697-9349-467d-b09f-f7fe10ebad4c" valueTypeId="bbe0f993-2db9-4db0-babd-96a75dc1cf4a"/>
+    <listType typeId="6fbc98c0-a4b8-48a5-b1b9-6c2931e8fcee" valueTypeId="14a0a9fc-055c-4621-9659-367dac696cf2"/>
+    <managerType typeId="9276617d-8e78-4c8e-bc83-9f022ad09812" valueTypeId="2cb6eee2-db39-4466-86ae-09c79cdef466"/>
+  </producedTypes>
+  <name>ProbeItems</name>
+  <synonym>
+    <key>en</key>
+    <value>Probe items</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Элементы стенда</value>
+  </synonym>
+  <attributes uuid="3dba6ed5-9b35-40f6-b0ed-fc0f693f7a2a">
+    <name>Note</name>
+    <synonym>
+      <key>ru</key>
+      <value>Note</value>
+    </synonym>
+    <type>
+      <types>String</types>
+      <stringQualifiers>
+        <length>100</length>
+      </stringQualifiers>
+    </type>
+  </attributes>
+  <attributes uuid="2fee7f09-0b66-4d7a-960e-99657b55dab6">
+    <name>Amount</name>
+    <synonym>
+      <key>ru</key>
+      <value>Amount</value>
+    </synonym>
+    <type>
+      <types>Number</types>
+      <numberQualifiers>
+        <precision>15</precision>
+        <scale>2</scale>
+      </numberQualifiers>
+    </type>
+  </attributes>
+  <attributes uuid="f8bc5a14-84a2-4f96-a1ae-5b451254a6c6">
+    <name>Issued</name>
+    <synonym>
+      <key>ru</key>
+      <value>Issued</value>
+    </synonym>
+    <type>
+      <types>Date</types>
+      <dateQualifiers>
+        <dateFractions>Date</dateFractions>
+      </dateQualifiers>
+    </type>
+  </attributes>
+  <attributes uuid="7792f5d8-1e47-40d7-9ded-2d66f0675b7b">
+    <name>Active</name>
+    <synonym>
+      <key>ru</key>
+      <value>Active</value>
+    </synonym>
+    <type>
+      <types>Boolean</types>
+    </type>
+  </attributes>
+  <attributes uuid="1852b056-5329-47aa-b035-7ae1855437b0">
+    <name>State</name>
+    <synonym>
+      <key>ru</key>
+      <value>State</value>
+    </synonym>
+    <type>
+      <types>EnumRef.ProbeState</types>
+    </type>
+  </attributes>
+  <tabularSections uuid="3ad4b7e3-1c93-4798-900a-95f04b2d85fe">
+    <producedTypes>
+      <objectType typeId="3e51d818-7ccb-4402-a0c5-b5905ceaf856" valueTypeId="d8a0a3d8-f0bd-4570-baea-103b6f222085"/>
+      <rowType typeId="c57022dd-4477-4447-a088-1717f2b38c4e" valueTypeId="1226205a-1519-485e-b256-0790897988c8"/>
+    </producedTypes>
+    <name>Lines</name>
+    <attributes uuid="34bcfbfb-4d1a-4368-bab7-77c387a823a8">
+      <name>Parent</name>
+      <synonym>
+        <key>ru</key>
+        <value>Parent</value>
+      </synonym>
+      <type>
+        <types>CatalogRef.ProbeItems</types>
+      </type>
+    </attributes>
+    <attributes uuid="425cfee1-7c89-4acc-90d2-58d7ad38152b">
+      <name>Qty</name>
+      <synonym>
+        <key>ru</key>
+        <value>Qty</value>
+      </synonym>
+      <type>
+        <types>Number</types>
+        <numberQualifiers>
+          <precision>10</precision>
+          <scale>3</scale>
+        </numberQualifiers>
+      </type>
+    </attributes>
+  </tabularSections>
+  <forms uuid="93ad0ecb-5275-45b2-afed-4d4abf6b36f2">
+    <name>ItemForm</name>
+  </forms>
+</mdclass:Catalog>

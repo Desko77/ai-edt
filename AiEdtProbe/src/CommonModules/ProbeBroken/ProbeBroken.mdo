@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:CommonModule xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="48047c8b-5902-48b5-b8a8-5d7ce6930c10">
+  <name>ProbeBroken</name>
+  <synonym>
+    <key>en</key>
+    <value>Deliberately broken module</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Заведомо сломанный модуль</value>
+  </synonym>
+  <server>true</server>
+  <externalConnection>true</externalConnection>
+  <clientOrdinaryApplication>true</clientOrdinaryApplication>
+</mdclass:CommonModule>

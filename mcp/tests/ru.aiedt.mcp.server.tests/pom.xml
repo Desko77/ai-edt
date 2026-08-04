@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+  xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>ru.aiedt.mcp</groupId>
+    <artifactId>tests</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>ru.aiedt.mcp.server.tests</artifactId>
+  <packaging>eclipse-test-plugin</packaging>
+
+  <name>AI-EDT Tests</name>
+
+  <properties>
+    <!--
+      SWT ships as a bare host bundle plus one binary fragment per platform. The host is pulled in
+      transitively by org.eclipse.ui.workbench, the fragment is not, and without it the workbench
+      bundle dies on NoClassDefFoundError: org/eclipse/swt/SWTError while activating - which takes
+      the whole test runtime with it, because this bundle's Activator extends AbstractUIPlugin.
+      The fragment therefore has to be named explicitly, and its name carries the platform.
+    -->
+    <swt.fragment>org.eclipse.swt.gtk.linux.x86_64</swt.fragment>
+  </properties>
+
+  <profiles>
+    <profile>
+      <id>swt-win32</id>
+      <activation>
+        <os><family>windows</family></os>
+      </activation>
+      <properties>
+        <swt.fragment>org.eclipse.swt.win32.win32.x86_64</swt.fragment>
+      </properties>
+    </profile>
+    <profile>
+      <id>swt-macosx</id>
+      <activation>
+        <os><family>mac</family></os>
+      </activation>
+      <properties>
+        <swt.fragment>org.eclipse.swt.cocoa.macosx.x86_64</swt.fragment>
+      </properties>
+    </profile>
+  </profiles>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>tycho-surefire-plugin</artifactId>
+        <version>${tycho.version}</version>
+        <configuration>
+          <!--
+            A real OSGi runtime, but headless: the tests need the platform and EDT bundles to
+            resolve, none of them opens a window. useUIThread stays off so nothing waits on an
+            SWT event loop that is never pumped.
+          -->
+          <useUIHarness>false</useUIHarness>
+          <useUIThread>false</useUIThread>
+          <includes>
+            <include>**/*Test.java</include>
+          </includes>
+          <dependencies>
+            <dependency>
+              <type>eclipse-plugin</type>
+              <artifactId>${swt.fragment}</artifactId>
+              <version>0.0.0</version>
+            </dependency>
+          </dependencies>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

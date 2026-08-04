@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:Enum xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="6b8733c9-9ac5-4abf-b118-1f708f75983b">
+  <producedTypes>
+    <refType typeId="9de0ab4c-8f22-4d40-83f8-ad7ccd298979" valueTypeId="ae5da35c-fc0f-4721-9a55-95435f6b1d6f"/>
+    <listType typeId="c45702a9-bf9b-4a88-b887-9233192f560f" valueTypeId="eaf4cdcc-3d89-40e8-85dd-30ad2396fd24"/>
+    <managerType typeId="4fd69d5d-d919-46bb-a021-c98a53b92c56" valueTypeId="ca5064b4-ed46-4a19-9ffb-fe0b62d5e06a"/>
+  </producedTypes>
+  <name>ProbeState</name>
+  <synonym>
+    <key>en</key>
+    <value>Probe state</value>
+  </synonym>
+  <synonym>
+    <key>ru</key>
+    <value>Состояние стенда</value>
+  </synonym>
+</mdclass:Enum>

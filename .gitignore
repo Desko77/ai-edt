@@ -1,0 +1,52 @@
+# Eclipse IDE files
+**/.project
+**/.classpath
+**/.settings/
+
+# Maven build output
+**/target/
+
+# Temp files
+nulq
+nul
+log.log
+
+# Build script backup
+*.target.bak
+
+# IDE and tools
+.serena/
+.claude/
+
+# Agent context bound to one machine (paths, workspaces, dev ports)
+CLAUDE.local.md
+
+# Live MCP client config: points at a local dev instance, not at the shipped default.
+# The committed template is .mcp.json.example
+.mcp.json
+
+# Internal test protocols naming real customer configurations
+/documents/
+
+# Third-party release notes kept only as local research material
+/docs/rsv-release-notes/
+
+# Test output
+/mcp/tests/ru.aiedt.mcp.server.tests/bin
+/tests/e2e/__pycache__/
+/tests/e2e/*.xml
+
+/source
+
+# Local dev scratch (private paths, build logs, throwaway scripts - never commit)
+/scratchpad/
+/.cache/
+
+# Personal Telegram chat exports (do not commit - private data)
+/docs/edt-rsv-mcp/Telegram/
+
+# External plugin analysis (do not commit - internal scratch)
+/docs/edt-rsv-mcp/
+
+# Generated brainstorming server state (machine-local, not reproducible)
+/.superpowers/

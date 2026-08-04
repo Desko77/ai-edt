@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<form:Form xmlns:form="http://g5.1c.ru/v8/dt/form">
+  <commandBarLocation>Top</commandBarLocation>
+  <horizontalAlign>Left</horizontalAlign>
+  <verticalAlign>Top</verticalAlign>
+  <autoFillCheck>true</autoFillCheck>
+  <scalingMode>Normal</scalingMode>
+</form:Form>

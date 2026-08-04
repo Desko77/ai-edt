@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Cache Tycho P2 repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/.cache/tycho
+            ~/.m2/repository/p2
+          key: ${{ runner.os }}-tycho-p2-${{ hashFiles('**/pom.xml', '**/*.target') }}
+          restore-keys: |
+            ${{ runner.os }}-tycho-p2-
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # tag: v1.26.0 → 1.26.0
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set version from tag
+        working-directory: mcp
+        run: |
+          mvn org.eclipse.tycho:tycho-versions-plugin:4.0.5:set-version \
+            -DnewVersion=${{ steps.version.outputs.version }} \
+            --batch-mode --no-transfer-progress
+
+      # See the note in build.yml: the OSGi test runtime loads SWT/GTK, so give it a display.
+      - name: Install headless display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          sudo apt-get install -y libgtk-3-0t64 || sudo apt-get install -y libgtk-3-0 || true
+
+      - name: Maven build
+        working-directory: mcp
+        env:
+          MAVEN_OPTS: -Xmx2g -XX:+UseParallelGC
+        run: xvfb-run -a mvn clean verify --batch-mode --no-transfer-progress -T 1C
+
+      - name: Collect the distribution archive
+        run: |
+          cp mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-${{ steps.version.outputs.version }}.zip \
+             "$GITHUB_WORKSPACE/"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AI-EDT v${{ steps.version.outputs.version }}
+          files: AI-EDT-*.zip
+          generate_release_notes: true

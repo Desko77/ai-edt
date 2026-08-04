@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="ai-edt-agentic-title ai-edt-agentic-desc">
+  <title id="ai-edt-agentic-title">AI-EDT — agentic development for 1C</title>
+  <desc id="ai-edt-agentic-desc">AI agents use the AI-EDT MCP server to work with 1C:EDT projects, BSL code, metadata, dependencies, and project context.</desc>
+
+  <defs>
+    <linearGradient id="agentic-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="0.52" stop-color="#10182a"/>
+      <stop offset="1" stop-color="#181326"/>
+    </linearGradient>
+
+    <linearGradient id="agentic-agent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#6e8cff"/>
+    </linearGradient>
+
+    <linearGradient id="agentic-mcp" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a371f7"/>
+      <stop offset="1" stop-color="#c084fc"/>
+    </linearGradient>
+
+    <linearGradient id="agentic-1c" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff7b72"/>
+      <stop offset="1" stop-color="#f2cc60"/>
+    </linearGradient>
+
+    <linearGradient id="agentic-flow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#58a6ff"/>
+      <stop offset="0.52" stop-color="#a371f7"/>
+      <stop offset="1" stop-color="#ff7b72"/>
+    </linearGradient>
+
+    <pattern id="agentic-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#8b949e" stroke-opacity=".07"/>
+    </pattern>
+
+    <filter id="agentic-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="agentic-shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="9" result="shadow-blur"/>
+      <feOffset in="shadow-blur" dy="7" result="shadow-offset"/>
+      <feFlood flood-color="#000000" flood-opacity=".30" result="shadow-color"/>
+      <feComposite in="shadow-color" in2="shadow-offset" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <marker id="agentic-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="360" rx="18" fill="url(#agentic-bg)"/>
+  <rect width="1200" height="360" rx="18" fill="url(#agentic-grid)"/>
+  <rect x="1" y="1" width="1198" height="358" rx="17" fill="none" stroke="#30363d"/>
+
+  <!-- Window chrome -->
+  <g transform="translate(72 44)">
+    <circle cx="8" cy="8" r="6" fill="#ff7b72"/>
+    <circle cx="30" cy="8" r="6" fill="#d29922"/>
+    <circle cx="52" cy="8" r="6" fill="#3fb950"/>
+    <path d="M0 29H1056" stroke="#30363d" stroke-opacity=".72"/>
+  </g>
+
+  <!-- Main copy -->
+  <g transform="translate(72 88)">
+    <g font-family="Consolas, Monaco, monospace" font-size="15">
+      <circle cx="6" cy="6" r="5" fill="#3fb950" filter="url(#agentic-glow)"/>
+      <text x="20" y="11" fill="#7ee787">AI agent connected to 1C:EDT via MCP</text>
+    </g>
+
+    <text x="0" y="86" fill="#f0f6fc" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="58" font-weight="750" letter-spacing="-1.3">AI-EDT</text>
+
+    <g transform="translate(242 44)">
+      <rect width="112" height="34" rx="17" fill="#21172e" stroke="#a371f7" stroke-opacity=".72"/>
+      <text x="56" y="23" text-anchor="middle" fill="#c8a5ff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14.5" font-weight="750">MCP SERVER</text>
+    </g>
+
+    <text x="2" y="124" fill="#d0d7de" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="21">Agentic development for 1C:EDT</text>
+    <text x="2" y="154" fill="#8b949e" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15.5">Give AI agents semantic access to BSL code, metadata, and project context</text>
+
+    <g transform="translate(2 184)" font-family="Consolas, Monaco, monospace" font-size="12.6" font-weight="600">
+      <g>
+        <rect width="144" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+        <circle cx="18" cy="18" r="4" fill="#58a6ff"/>
+        <text x="30" y="23" fill="#c9d1d9">PROJECT CONTEXT</text>
+      </g>
+      <g transform="translate(156 0)">
+        <rect width="140" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+        <circle cx="18" cy="18" r="4" fill="#a371f7"/>
+        <text x="30" y="23" fill="#c9d1d9">CODE ANALYSIS</text>
+      </g>
+      <g transform="translate(308 0)">
+        <rect width="130" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+        <circle cx="18" cy="18" r="4" fill="#f2cc60"/>
+        <text x="30" y="23" fill="#c9d1d9">SAFE CHANGES</text>
+      </g>
+      <g transform="translate(450 0)">
+        <rect width="124" height="36" rx="18" fill="#161b22" stroke="#30363d"/>
+        <circle cx="18" cy="18" r="4" fill="#ff7b72"/>
+        <text x="30" y="23" fill="#c9d1d9">VALIDATION</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Agentic architecture -->
+  <g transform="translate(690 78) scale(.86)" font-family="Inter, Segoe UI, Arial, sans-serif">
+    <!-- Flow labels -->
+    <text x="192" y="26" text-anchor="middle" fill="#6e7681" font-size="11.5" font-weight="650">TOOL CALLS</text>
+    <text x="382" y="26" text-anchor="middle" fill="#6e7681" font-size="11.5" font-weight="650">SEMANTIC ACCESS</text>
+
+    <!-- AI agent: principal actor -->
+    <g transform="translate(0 44)" filter="url(#agentic-shadow)">
+      <rect width="184" height="132" rx="22" fill="#111923" stroke="url(#agentic-agent)" stroke-width="2.2"/>
+      <rect x="1" y="1" width="182" height="42" rx="21" fill="#132339"/>
+      <path d="M1 43H183" stroke="#58a6ff" stroke-opacity=".42"/>
+      <circle cx="23" cy="21" r="8" fill="#58a6ff" filter="url(#agentic-glow)"/>
+      <text x="42" y="28" fill="#f0f6fc" font-size="20" font-weight="800">AI AGENT</text>
+      <text x="20" y="72" fill="#d0d7de" font-size="13.5" font-weight="700">Plans · analyzes · changes</text>
+      <text x="20" y="94" fill="#8b949e" font-size="11.7">understands the task and</text>
+      <text x="20" y="111" fill="#8b949e" font-size="11.7">drives the development workflow</text>
+    </g>
+
+    <!-- MCP bridge -->
+    <g transform="translate(222 67)" filter="url(#agentic-shadow)">
+      <rect width="122" height="86" rx="18" fill="#171323" stroke="url(#agentic-mcp)" stroke-width="2"/>
+      <circle cx="22" cy="23" r="7" fill="#a371f7" filter="url(#agentic-glow)"/>
+      <text x="40" y="29" fill="#f0f6fc" font-size="17" font-weight="800">MCP</text>
+      <text x="18" y="55" fill="#d0d7de" font-size="12.2" font-weight="700">AI-EDT server</text>
+      <text x="18" y="73" fill="#8b949e" font-size="10.8">specialized 1C tools</text>
+    </g>
+
+    <!-- 1C environment -->
+    <g transform="translate(382 44)" filter="url(#agentic-shadow)">
+      <rect width="194" height="132" rx="22" fill="#19181f" stroke="url(#agentic-1c)" stroke-width="2.2"/>
+      <rect x="1" y="1" width="192" height="42" rx="21" fill="#28191b"/>
+      <path d="M1 43H193" stroke="#ff7b72" stroke-opacity=".42"/>
+      <circle cx="23" cy="21" r="8" fill="#ff7b72" filter="url(#agentic-glow)"/>
+      <text x="42" y="28" fill="#f0f6fc" font-size="20" font-weight="800">1C:EDT</text>
+      <text x="20" y="72" fill="#d0d7de" font-size="13.5" font-weight="700">Project and configuration</text>
+      <text x="20" y="94" fill="#8b949e" font-size="11.7">BSL code · metadata · modules</text>
+      <text x="20" y="111" fill="#8b949e" font-size="11.7">dependencies · extensions</text>
+    </g>
+
+    <!-- Bidirectional tool/context flow -->
+    <path d="M184 110H220" stroke="#8b949e" stroke-width="2.2" marker-start="url(#agentic-arrow)" marker-end="url(#agentic-arrow)"/>
+    <path d="M344 110H380" stroke="url(#agentic-flow)" stroke-width="3" marker-start="url(#agentic-arrow)" marker-end="url(#agentic-arrow)"/>
+
+    <!-- Capability lane -->
+    <path d="M97 176V202H479V176" fill="none" stroke="#30363d" stroke-width="1.4" stroke-dasharray="5 5"/>
+
+    <g transform="translate(38 210)">
+      <rect width="116" height="38" rx="12" fill="#111923" stroke="#58a6ff" stroke-opacity=".40"/>
+      <circle cx="16" cy="19" r="4" fill="#58a6ff"/>
+      <text x="29" y="24" fill="#c9d1d9" font-size="12" font-weight="650">Understand</text>
+    </g>
+
+    <g transform="translate(164 210)">
+      <rect width="116" height="38" rx="12" fill="#171323" stroke="#a371f7" stroke-opacity=".40"/>
+      <circle cx="16" cy="19" r="4" fill="#a371f7"/>
+      <text x="29" y="24" fill="#c9d1d9" font-size="12" font-weight="650">Navigate</text>
+    </g>
+
+    <g transform="translate(290 210)">
+      <rect width="116" height="38" rx="12" fill="#1c1a12" stroke="#f2cc60" stroke-opacity=".40"/>
+      <circle cx="16" cy="19" r="4" fill="#f2cc60"/>
+      <text x="29" y="24" fill="#c9d1d9" font-size="12" font-weight="650">Modify</text>
+    </g>
+
+    <g transform="translate(416 210)">
+      <rect width="116" height="38" rx="12" fill="#211518" stroke="#ff7b72" stroke-opacity=".40"/>
+      <circle cx="16" cy="19" r="4" fill="#ff7b72"/>
+      <text x="29" y="24" fill="#c9d1d9" font-size="12" font-weight="650">Validate</text>
+    </g>
+  </g>
+</svg>
