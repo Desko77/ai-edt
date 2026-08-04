@@ -56,6 +56,11 @@ jobs:
       - name: Test coverage census
         run: python3 scripts/test-coverage-audit.py --check
 
+      # A catalog that drifts from the code is worse than no catalog: an outside reviewer once read a
+      # stale section of it and filed a security hole the product did not have.
+      - name: Tool catalog census
+        run: python3 scripts/check-tool-catalog.py
+
       - name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
