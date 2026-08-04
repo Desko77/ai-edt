@@ -2,10 +2,10 @@ name: Build
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
-  # Lets a branch be validated on Linux before it reaches master or a release tag.
+    branches: [main]
+  # Lets a branch be validated on Linux before it reaches main or a release tag.
   workflow_dispatch:
 
 jobs:
