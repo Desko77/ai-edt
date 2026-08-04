@@ -57,16 +57,55 @@ jobs:
       - name: Create index.html
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          SITE_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
           cat > _site/index.html <<EOF
           <!DOCTYPE html>
-          <html>
-          <head><title>AI-EDT Update Site</title></head>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>AI-EDT Update Site</title>
+            <style>
+              body { font-family: system-ui, sans-serif; line-height: 1.6; max-width: 42rem;
+                     margin: 3rem auto; padding: 0 1rem; }
+              code, pre { background: #f4f4f4; border-radius: 4px; }
+              pre { padding: .75rem 1rem; overflow-x: auto; user-select: all; }
+              code { padding: .1rem .3rem; }
+              ul { padding-left: 1.2rem; }
+              footer { margin-top: 2.5rem; font-size: .9rem; color: #555; }
+              @media (prefers-color-scheme: dark) {
+                body { background: #0d1117; color: #e6edf3; }
+                code, pre { background: #161b22; }
+                a { color: #58a6ff; }
+                footer { color: #8b949e; }
+              }
+            </style>
+          </head>
           <body>
             <h1>AI-EDT Update Site</h1>
-            <p>Current version: <strong>${VERSION}</strong></p>
-            <p>Use this URL in EDT: <strong>Help → Install New Software...</strong></p>
-            <pre>https://github.com/ (AI-EDT update site TBD)</pre>
-            <p>AI-EDT - 1C AI tools for EDT (based on EDT-MCP by DitriX, AGPL-3.0)</p>
+            <p>MCP server for 1C:EDT, running as a plugin inside a live EDT instance.
+               Current version: <strong>${VERSION}</strong>.</p>
+
+            <h2>Install</h2>
+            <p>In EDT open <strong>Help -&gt; Install New Software...</strong>, press
+               <strong>Add</strong> and paste this address:</p>
+            <pre>${SITE_URL}</pre>
+            <p>Then pick the <strong>AI-EDT</strong> category and follow the wizard. The build is
+               unsigned, so EDT asks you to confirm unsigned content once.</p>
+
+            <h2>Other ways in</h2>
+            <ul>
+              <li><a href="${REPO_URL}#-3-install-into-edt">Ask an AI agent to install it</a> - one
+                  message, no clicking.</li>
+              <li><a href="${REPO_URL}/releases/latest">Latest release</a> - the same repository as a
+                  ZIP, for offline installation through <strong>Add -&gt; Archive</strong>.</li>
+              <li><a href="${REPO_URL}">Source, documentation and issue tracker</a>.</li>
+            </ul>
+
+            <footer>
+              AI-EDT - 1C AI tools for EDT. Based on EDT-MCP by DitriX. AGPL-3.0-or-later.
+            </footer>
           </body>
           </html>
           EOF
