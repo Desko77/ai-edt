@@ -5,7 +5,7 @@ runs. It describes an unattended installation that needs no clicking.
 
 If you are a person: point your agent at this file and ask it to install or update the
 plugin. A prompt you can copy as is sits in the README, under
-[Just ask your agent to install the plugin](../README.en.md#just-ask-your-agent-to-install-the-plugin).
+[Just ask your agent to install the plugin](../README.en.md#-just-ask-your-agent-to-install-the-plugin).
 If you would rather do it yourself, the wizard
 walkthrough is right below it.
 
@@ -22,7 +22,7 @@ nothing, and reports its result as an exit code.
   - the published update site `https://desko77.github.io/ai-edt/`, which needs nothing built
     locally and is the normal choice for a first installation;
   - a local build output, `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
-    If it does not exist yet, build it first - see [Quick start](../README.en.md#2-build).
+    If it does not exist yet, build it first - see [Quick start](../README.en.md#-2-build).
 - The EDT installation directory. It contains `1cedtc.exe`, the console launcher used to run
   the director. Do not use `1cedt.exe` for this - that one opens the IDE.
 - The workspace path of the EDT session you are updating, if any session is running.

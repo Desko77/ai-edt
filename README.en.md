@@ -4,14 +4,18 @@
 
 <img src="docs/assets/readme/ai-edt-hero-agentic.svg" alt="AI-EDT - agentic development for 1C:EDT: an AI agent reaches the project and configuration through an MCP server" width="100%">
 
-[![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.1%2B-58a6ff?style=flat-square)](#requirements)
-[![Java](https://img.shields.io/badge/Java-17-f2cc60?style=flat-square)](#requirements)
-[![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-a371f7?style=flat-square)](#how-it-works)
+[![Build](https://img.shields.io/github/actions/workflow/status/Desko77/ai-edt/build.yml?branch=main&style=flat-square&label=build)](https://github.com/Desko77/ai-edt/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/Desko77/ai-edt?style=flat-square&label=release&color=58a6ff)](https://github.com/Desko77/ai-edt/releases/latest)
+[![Update site](https://img.shields.io/website?url=https%3A%2F%2Fdesko77.github.io%2Fai-edt%2F&style=flat-square&label=update%20site&up_message=online&down_message=offline)](https://desko77.github.io/ai-edt/)
+
+[![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.1%2B-58a6ff?style=flat-square)](#-1-requirements)
+[![Java](https://img.shields.io/badge/Java-17-f2cc60?style=flat-square)](#-1-requirements)
+[![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-a371f7?style=flat-square)](#-how-it-works)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-7ee787?style=flat-square)](LICENSE)
 
 **Give an AI assistant structured access to a 1C project through the services of a live EDT instance.**
 
-[Quick start](#quick-start) · [Capabilities](#what-you-can-do) · [Architecture](#how-it-works) · [Contributing](#contributing)
+[Quick start](#-quick-start) · [Capabilities](#-what-you-can-do) · [Architecture](#-how-it-works) · [Contributing](#-contributing)
 
 </div>
 
@@ -24,7 +28,7 @@ Instead of treating an EDT workspace as a directory of XML and BSL files, an ass
 > [!IMPORTANT]
 > The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
 
-## Why AI-EDT
+## 🎯 Why AI-EDT
 
 A text-only assistant can search files, but it cannot reliably answer questions that depend on the IDE model:
 
@@ -37,21 +41,29 @@ A text-only assistant can search files, but it cannot reliably answer questions 
 
 AI-EDT exposes those operations as purpose-built MCP tools. The result is less guessing, fewer brittle text edits and a workflow that stays inside the same model EDT uses.
 
-## What you can do
+## ⚡ What you can do
 
 | Workflow | What the assistant can do |
 |---|---|
-| **Explore code and metadata** | Search BSL, resolve symbols, find semantic references, inspect call hierarchies, list modules and read object structure. |
-| **Create and edit metadata** | Build catalogs, documents, registers, forms, roles, commands, services and other objects through `edit_metadata`, with preview and batch operations. |
-| **Debug BSL** | Start or attach a debug session, set line and exception breakpoints, inspect variables, evaluate expressions, step and collect profiling data. |
-| **Diagnose a configuration** | Read EDT problems, revalidate objects, inspect dependency graphs, detect query anti-patterns and estimate change impact. |
-| **Build complex artifacts** | Work with DCS, MXL, XDTO, extensions, external objects and external data sources through dedicated workshops. |
-| **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
-| **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
+| 🔍 **Explore code and metadata** | Search BSL, resolve symbols, find semantic references, inspect call hierarchies, list modules and read object structure. |
+| 🏗️ **Create and edit metadata** | Build catalogs, documents, registers, forms, roles, commands, services and other objects through `edit_metadata`, with preview and batch operations. |
+| 🐞 **Debug BSL** | Start or attach a debug session, set line and exception breakpoints, inspect variables, evaluate expressions, step and collect profiling data. |
+| 🩺 **Diagnose a configuration** | Read EDT problems, revalidate objects, inspect dependency graphs, detect query anti-patterns and estimate change impact. |
+| 🧱 **Build complex artifacts** | Work with DCS, MXL, XDTO, extensions, external objects and external data sources through dedicated workshops. |
+| 🧪 **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
+| 🛡️ **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
 
 The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
 
-## A typical agent loop
+### 🧮 Metadata, queries and forms - where a text-only assistant breaks most often
+
+**Metadata is created from a description, not by editing XML.** Telling the assistant what you need is enough: a catalog with these attributes, a document with these register records, a list form for it. The assistant turns that into a plan of `edit_metadata` operations and runs it as one batch instead of a dozen scattered calls. Any step can be run with `dryRun=true` first and reports exactly what it would touch; deletions and other destructive operations take a separate confirmation. Changes go through the EDT model rather than through the text of an `.mdo`, and the objects are revalidated right after they are applied, so a mistake shows up on the spot instead of when an infobase first loads the configuration.
+
+**A query is checked before anyone runs it.** `validate_query` parses the text in the context of the project and returns syntax and semantic errors with line numbers, with a separate mode for DCS queries. Alongside them comes a list of hints for the usual slips: SQL keywords instead of the 1C query language, `УБЫВАНИЕ` where `УБЫВ` belongs. The assistant does not have to start the configuration to find out that a query will not compile.
+
+**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` and looked at through `get_form_screenshot`, while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration.
+
+## 🔄 A typical agent loop
 
 ```mermaid
 flowchart TD
@@ -65,7 +77,7 @@ flowchart TD
     D -- No --> R["Returns the verified result"]
 ```
 
-## How it works
+## 🧩 How it works
 
 ```mermaid
 flowchart TD
@@ -96,9 +108,9 @@ flowchart TD
 
 The endpoint defaults to `http://localhost:12250/mcp`. The plugin is not a standalone headless server: EDT must be running and the target project must be loaded. This is what gives tools access to resolved references, inferred types, current validation markers and live debug state.
 
-## Quick start
+## 🚀 Quick start
 
-### 1. Requirements
+### 📋 1. Requirements
 
 - 1C:EDT **2026.1 or newer**
 - Java / JDK **17**
@@ -106,9 +118,9 @@ The endpoint defaults to `http://localhost:12250/mcp`. The plugin is not a stand
 - An MCP-compatible client
 - Windows for the documented build and installation flow
 
-Optional features require YAxUnit, Vanessa Automation or an Attach debug configuration; see [Optional integrations](#optional-integrations).
+Optional features require YAxUnit, Vanessa Automation or an Attach debug configuration; see [Optional integrations](#-optional-integrations).
 
-### 2. Build
+### 🔨 2. Build
 
 From the repository root:
 
@@ -129,9 +141,9 @@ The generated P2 repository is:
 mcp/repositories/ru.aiedt.mcp.server.repository/target/repository
 ```
 
-### 3. Install into EDT
+### 📦 3. Install into EDT
 
-#### Just ask your agent to install the plugin
+#### 🤖 Just ask your agent to install the plugin
 
 **Installation comes down to one message to an agent: it installs the plugin itself, without a single click.** You need an AI agent with shell access on the machine where EDT is installed.
 
@@ -159,7 +171,7 @@ If the plugin is already installed and you are updating it, replace the first-in
 
 The full recipe, including the rules the agent has to respect around a running IDE, is in [docs/agent-install.md](docs/agent-install.md).
 
-#### Through the EDT user interface
+#### 🖱️ Through the EDT user interface
 
 Both manual routes - the wizard and the command line - install the same feature from the same update site, so building the plugin yourself is optional:
 
@@ -203,7 +215,7 @@ The repository name is arbitrary, for example `AI-EDT`.
 
 After the restart, continue with **4. Start and verify** below.
 
-#### From the command line
+#### ⌨️ From the command line
 
 The Equinox P2 director installs the same feature with no UI. Close the EDT session you are updating first: a running instance keeps the old plugin in memory until it restarts, so the restart is needed anyway, and a session that is itself running a provisioning operation holds the profile lock.
 
@@ -220,7 +232,7 @@ The feature is a p2 singleton, so installing a new version over an existing one 
 
 For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check.
 
-### 4. Start and verify
+### ▶️ 4. Start and verify
 
 Open **Window → Preferences → AI-EDT** and check:
 
@@ -243,7 +255,7 @@ A ready instance returns a response with `status: ok` and `phase: ready`. If the
 
 ![The same control opens a context menu to copy the endpoint address, restart the server or stop it.](docs/assets/screenshots/status-bar-menu.png)
 
-### 5. Connect an AI client
+### 🔗 5. Connect an AI client
 
 #### Claude Code
 
@@ -291,14 +303,14 @@ Create `.vscode/mcp.json`:
 
 Configurations for Claude Desktop, Cline and Antigravity are available in [docs/clients.md](docs/clients.md).
 
-### 5a. Teach the agent how to use the server
+### 🎓 5a. Teach the agent how to use the server
 
 Connecting the server gives the agent the tools. It does not tell the agent which facade to reach
 for, which checks are mandatory after an edit, or what a response means. That is what the bundled
 skill in **[skills/ai-edt](skills/ai-edt)** is for - copy it into the agent's skills directory, see
 [skills/README.md](skills/README.md). It is optional, and an agent works better with it.
 
-### 6. Make the first call
+### 💬 6. Make the first call
 
 Ask the client to list EDT projects or report the EDT version. A successful response should contain structured project information, not “tool unavailable”.
 
@@ -314,7 +326,7 @@ Find all semantic references to Catalog.Products and group them by metadata, for
 
 ![One call returns the object model: attributes with their types, tabular sections and forms.](docs/assets/screenshots/metadata-details.png)
 
-## Tool surface
+## 🧰 Tool surface
 
 AI-EDT uses a facade-first API. A facade accepts an operation discriminator and routes related actions through one stable entry point.
 
@@ -335,7 +347,7 @@ Legacy standalone tool names remain callable as compatibility aliases. The **Can
 
 ![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
 
-## Tool presets and safety
+## 🔐 Tool presets and safety
 
 The **Tools** preference page groups tools by capability and supports these presets:
 
@@ -366,13 +378,13 @@ Additional safety notes:
 - Database deletion, configuration import and synchronization can be disabled independently.
 - Back up an infobase before structural updates that cannot be reverted from Git.
 
-## Debugging client and server code
+## 🐞 Debugging client and server code
 
 The debugger facade supports ordinary client launches and **Attach to 1C:Enterprise Debug Server** configurations. Attach is required for HTTP services, server calls, background jobs, scheduled jobs and code running in `rphost`.
 
 The agent discovers an EDT launch configuration, attaches to the 1C debug server, sets a breakpoint and waits for a suspend event. AI-EDT then returns stable references to the thread, stack and frame so the agent can inspect variables, evaluate expressions, step through the code and resume execution.
 
-## Optional integrations
+## 🔌 Optional integrations
 
 | Integration | What it enables | Required setup |
 |---|---|---|
@@ -381,15 +393,15 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 | **1C debug server** | Debug server-side BSL through Attach. | Start `ragent` with `-debug -http` and create an EDT Attach configuration. |
 | **BSL Language Server** | Additional source review through `code_review`. | Configure the external JAR in AI-EDT preferences. |
 
-## Limitations
+## ⚠️ Limitations
 
 - AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
 - The server is available only while EDT is running.
 - Some semantic tools require project indexing to be complete.
 - The default endpoint has no authentication because it is designed for loopback-only use.
-- The documented installation is source-based until a public update site is published.
+- The update site is published automatically on release. Builds made between releases install from source or from a local P2 repository.
 
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome in the form of reproducible bug reports, focused feature proposals, documentation improvements and pull requests.
 
@@ -415,10 +427,10 @@ scripts/           # development and update automation
 
 Before opening a pull request, build the reactor and describe how the change was verified against a running EDT instance.
 
-## Project origin
+## 📜 Project origin
 
 AI-EDT is an independent product that originated from [EDT-MCP](https://github.com/DitriXNew/EDT-MCP) by DitriX. The project is distributed under AGPL-3.0-or-later; retained notices and the detailed source history are documented in [LICENSE](LICENSE) and [docs/PROVENANCE.md](docs/PROVENANCE.md).
 
-## License
+## ⚖️ License
 
 GNU Affero General Public License v3.0 or later. See [LICENSE](LICENSE).
