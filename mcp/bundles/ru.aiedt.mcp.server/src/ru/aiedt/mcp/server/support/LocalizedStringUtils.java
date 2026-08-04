@@ -156,9 +156,19 @@ public final class LocalizedStringUtils
         {
             return null;
         }
-        // Drop EMF object-identity toString only: a bare "...@deadbeef" tail or
-        // bracketed "[Class@deadbeef]" (>=6 hex digits). Keeps real text such as
-        // "[Архив]" (no @hex) and "user@cafe" (fewer than 6 hex).
+        // An untouched Object.toString() is exactly the class name, '@', and the identity hash in
+        // hex. Comparing against that is exact: it cannot eat real text, and it cannot miss a short
+        // hash. The length rule below could - Integer.toHexString drops leading zeroes, so a hash
+        // under 0x100000 yields five digits or fewer, and CI duly produced "java.lang.Object@5ae15"
+        // and handed it back as if it were a synonym.
+        if (s.equals(o.getClass().getName() + "@" + Integer.toHexString(o.hashCode()))) //$NON-NLS-1$
+        {
+            return null;
+        }
+        // EMF is the case the exact rule does not cover: its generated toString keeps the identity
+        // tail but adds to it, so the shape has to be recognised rather than matched. A bare
+        // "...@deadbeef" tail or a bracketed "[Class@deadbeef]", at 6 hex digits or more - which
+        // keeps real text such as "[Архив]" (no @hex) and "user@cafe" (fewer than 6).
         if (s.matches(".*@[0-9a-fA-F]{6,}$") //$NON-NLS-1$
             || (s.startsWith("[") && s.matches(".*@[0-9a-fA-F]{6,}\\]$"))) //$NON-NLS-1$ //$NON-NLS-2$
         {

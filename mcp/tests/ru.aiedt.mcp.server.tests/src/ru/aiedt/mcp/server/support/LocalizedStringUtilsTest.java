@@ -137,4 +137,23 @@ public class LocalizedStringUtilsTest
         // than throw into the tool that asked.
         assertNull(LocalizedStringUtils.text(new Object()));
     }
+
+    @Test
+    public void anIdentityToStringWithAShortHashYieldsNothingToo()
+    {
+        // The test above used to pass by luck. Object.toString() ends in the identity hash written
+        // by Integer.toHexString, which drops leading zeroes, so a hash below 0x100000 is five hex
+        // digits or fewer - short enough to slip under a length-based filter. CI drew exactly that
+        // and got "java.lang.Object@5ae15" back as if it were an object's name. Pinning the hash
+        // reproduces it on every run instead of one in a few hundred.
+        Object shortHash = new Object()
+        {
+            @Override
+            public int hashCode()
+            {
+                return 0x5ae15;
+            }
+        };
+        assertNull(LocalizedStringUtils.text(shortHash));
+    }
 }
