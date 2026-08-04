@@ -22,7 +22,7 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
 > [!IMPORTANT]
-> AI-EDT currently has no public update site. Installation is from a locally built P2 repository. The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
+> Update site: `https://desko77.github.io/ai-edt/` - point **Help → Install New Software** straight at it instead of building the plugin yourself. Building from source is described below as well. The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
 
 ## Why AI-EDT
 
