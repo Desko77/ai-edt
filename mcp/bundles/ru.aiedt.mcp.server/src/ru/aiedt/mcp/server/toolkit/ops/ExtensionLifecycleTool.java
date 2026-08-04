@@ -20,6 +20,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.ToolGate;
 import com.google.gson.JsonElement;
 
 /**
@@ -147,6 +148,19 @@ public class ExtensionLifecycleTool implements IMcpTool
         }
 
         boolean dryRun = "dryrun".equals(mode);
+
+        // This composite reaches edit_metadata and generate_event_handlers as plain Java calls, which
+        // never pass the router where the active preset is enforced. So it asks the preset itself, and
+        // asks before the first write: that is the only point where a refusal leaves nothing half-done.
+        String gate = ToolGate.gateIfPresetDisabled("edit_metadata"); //$NON-NLS-1$
+        if (gate == null && eventName != null && !eventName.isEmpty())
+        {
+            gate = ToolGate.gateIfPresetDisabled("generate_event_handlers"); //$NON-NLS-1$
+        }
+        if (gate != null)
+        {
+            return finish(steps, stepsOk, start, mode, gate);
+        }
 
         // ---- Step 2: adopt (borrow) ----
         Map<String, Object> adoptStep = new LinkedHashMap<>();

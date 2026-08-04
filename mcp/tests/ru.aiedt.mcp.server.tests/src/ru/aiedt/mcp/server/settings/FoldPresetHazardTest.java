@@ -59,12 +59,19 @@ public class FoldPresetHazardTest
      * gates its debug MODE (debug_yaxunit_tests is the DEBUG-group name a preset disables, reached as a
      * mode and backed today by a deprecated alias) through {@code ToolGate.gateIfPresetDisabled}, so the
      * gate keeps holding once that alias is retired.
+     * <p>
+     * {@code extension_workshop/extension_lifecycle} joined them once the presets that block writing
+     * started disabling that composite: it borrows an object and appends a handler stub, so leaving it
+     * reachable through a facade Code Review keeps enabled would hand back the write the preset had just
+     * taken away. The composite also gates its own two internal calls, which no facade fold can see.
+     * </p>
      */
     private static final Set<String> GATED = Set.of(
         "edit_metadata/delete_metadata_object", "edit_metadata/rename_metadata_object", //$NON-NLS-1$ //$NON-NLS-2$
         "edit_metadata/add_metadata_attribute", //$NON-NLS-1$
         "extension_workshop/install_extension", "extension_workshop/uninstall_extension", //$NON-NLS-1$ //$NON-NLS-2$
         "extension_workshop/list_extension", "extension_workshop/export_extension", //$NON-NLS-1$ //$NON-NLS-2$
+        "extension_workshop/extension_lifecycle", //$NON-NLS-1$
         "yaxunit_tests/debug_yaxunit_tests"); //$NON-NLS-1$
 
     @Test

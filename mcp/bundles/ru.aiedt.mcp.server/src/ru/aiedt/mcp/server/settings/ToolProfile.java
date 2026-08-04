@@ -390,16 +390,39 @@ public enum ToolProfile
     }
 
     /**
+     * The write-capable tools that live in a group every write-blocking preset keeps enabled, so each
+     * such preset has to name them one by one.
+     * <p>
+     * Collected here instead of being repeated per preset, because repeating them is how one goes
+     * missing: {@code extension_lifecycle} borrows an object into an extension and appends a handler
+     * stub, yet it sits in the agent-composites group that Read-only, Debug &amp; Test and Code Review
+     * all leave on, and none of the three named it. All three therefore let a write through.
+     * {@code PresetWriteBlockingTest} now asserts every preset that claims to block writing contains
+     * this whole set.
+     * </p>
+     *
+     * @return the names no write-blocking preset may leave enabled
+     */
+    private static Set<String> writersOutsideWriteGroups()
+    {
+        Set<String> names = new HashSet<>(mutatingFacades());
+        names.add("write_module_source"); //$NON-NLS-1$
+        names.add("generate_event_handlers"); //$NON-NLS-1$
+        names.add("extension_lifecycle"); //$NON-NLS-1$
+        return names;
+    }
+
+    /**
      * @return everything that writes, launches or debugs
      */
     private static Set<String> readOnlyDisabled()
     {
         Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING,
             ToolCategory.CONSTRUCTORS);
-        disabled.add("write_module_source"); //$NON-NLS-1$
-        disabled.add("generate_event_handlers"); //$NON-NLS-1$
+        disabled.addAll(writersOutsideWriteGroups());
+        // Returns a snippet and writes nothing, but a preset this strict is expected to hand back
+        // nothing that reads like generated code either.
         disabled.add("code_template"); //$NON-NLS-1$
-        disabled.addAll(mutatingFacades());
         return disabled;
     }
 
@@ -410,10 +433,8 @@ public enum ToolProfile
     private static Set<String> debugAndTestDisabled()
     {
         Set<String> disabled = toolsOf(ToolCategory.REFACTORING, ToolCategory.CONSTRUCTORS);
-        disabled.add("write_module_source"); //$NON-NLS-1$
-        disabled.add("generate_event_handlers"); //$NON-NLS-1$
         disabled.addAll(destructiveTools());
-        disabled.addAll(mutatingFacades());
+        disabled.addAll(writersOutsideWriteGroups());
         return disabled;
     }
 
@@ -424,8 +445,7 @@ public enum ToolProfile
     private static Set<String> codeReviewDisabled()
     {
         Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING);
-        disabled.add("write_module_source"); //$NON-NLS-1$
-        disabled.addAll(mutatingFacades());
+        disabled.addAll(writersOutsideWriteGroups());
         return disabled;
     }
 

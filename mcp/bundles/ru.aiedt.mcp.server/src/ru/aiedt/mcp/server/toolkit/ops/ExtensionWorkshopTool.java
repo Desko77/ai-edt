@@ -191,7 +191,7 @@ public class ExtensionWorkshopTool implements IMcpTool
             case "export_extension": //$NON-NLS-1$
                 return gatedRoute(op, () -> new ExportExtensionTool().execute(params));
             case "extension_lifecycle": //$NON-NLS-1$
-                return new ExtensionLifecycleTool().execute(params);
+                return gatedRoute(op, () -> new ExtensionLifecycleTool().execute(params));
             case "extension_diff": //$NON-NLS-1$
                 return new ExtensionDiffTool().execute(params);
             case "list_interceptors": //$NON-NLS-1$
