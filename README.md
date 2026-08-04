@@ -54,12 +54,11 @@ AI-EDT предоставляет для этого специализирова
 ## Типичный цикл работы агента
 
 ```mermaid
-flowchart LR
-    Q["Разработчик описывает задачу"] --> S["AI ищет в модели EDT"]
-    S --> C["Читает код, метаданные<br/>и зависимости"]
-    C --> P["Показывает предлагаемые изменения"]
+flowchart TD
+    Q["Разработчик описывает задачу"] --> S["AI исследует модель EDT:<br/>код, метаданные, зависимости"]
+    S --> P["Показывает предлагаемые изменения"]
     P --> E["Изменяет BSL или метаданные"]
-    E --> V["Запускает валидацию EDT<br/>и тесты"]
+    E --> V["Запускает валидацию EDT и тесты"]
     V --> D{"Найдена проблема?"}
     D -- Да --> B["Отлаживает живую сессию 1С"]
     B --> E
@@ -71,29 +70,24 @@ flowchart LR
 ## Как это работает
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph Client["MCP-клиент"]
-        AI["Claude · Cursor<br/>Copilot · Cline · ..."]
+        AI["Claude · Cursor · Copilot · Cline"]
     end
-
     subgraph Plugin["Плагин AI-EDT · внутри процесса EDT"]
-        HTTP["MCP endpoint<br/>Streamable HTTP + SSE"]
-        TOOLS["Фасады инструментов<br/>и мастерские"]
-        GATE["Политика доступа<br/>пресеты и разрешения"]
-        HTTP --> GATE --> TOOLS
+        direction LR
+        HTTP["MCP endpoint<br/>Streamable HTTP + SSE"] --> GATE["Политика доступа<br/>пресеты и разрешения"] --> TOOLS["Фасады<br/>и мастерские"]
     end
-
     subgraph EDT["Службы 1C:EDT"]
-        BM["Семантическая модель<br/>BM-индекс · FQN"]
-        AST["Парсер BSL<br/>Xtext · AST"]
-        CHECKS["Валидация<br/>и маркеры проблем"]
-        DEBUG["Отладчик<br/>клиент + server attach"]
+        direction LR
+        BM["Семантическая<br/>модель"]
+        AST["Парсер BSL"]
+        CHECKS["Валидация"]
+        DEBUG["Отладчик"]
     end
-
     subgraph Runtime["1С:Предприятие"]
-        APP["Клиент · сервер · задания<br/>тесты"]
+        APP["Клиент · сервер · задания · тесты"]
     end
-
     AI <-->|"JSON-RPC · localhost:12250"| HTTP
     TOOLS --> BM
     TOOLS --> AST

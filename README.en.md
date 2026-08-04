@@ -54,12 +54,11 @@ The server exposes more than one hundred operations. Related actions are grouped
 ## A typical agent loop
 
 ```mermaid
-flowchart LR
-    Q["Developer describes a task"] --> S["AI searches the EDT model"]
-    S --> C["Reads code, metadata<br/>and dependencies"]
-    C --> P["Previews the proposed change"]
+flowchart TD
+    Q["Developer describes a task"] --> S["AI explores the EDT model:<br/>code, metadata, dependencies"]
+    S --> P["Previews the proposed change"]
     P --> E["Edits BSL or metadata"]
-    E --> V["Runs EDT validation<br/>and tests"]
+    E --> V["Runs EDT validation and tests"]
     V --> D{"Problem found?"}
     D -- Yes --> B["Debugs the live 1C session"]
     B --> E
@@ -71,29 +70,24 @@ flowchart LR
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph Client["MCP client"]
-        AI["Claude · Cursor<br/>Copilot · Cline · ..."]
+        AI["Claude · Cursor · Copilot · Cline"]
     end
-
     subgraph Plugin["AI-EDT plugin · inside the EDT process"]
-        HTTP["MCP endpoint<br/>Streamable HTTP + SSE"]
-        TOOLS["Tool facades<br/>and workshops"]
-        GATE["Tool policy<br/>presets and permissions"]
-        HTTP --> GATE --> TOOLS
+        direction LR
+        HTTP["MCP endpoint<br/>Streamable HTTP + SSE"] --> GATE["Tool policy<br/>presets and permissions"] --> TOOLS["Facades<br/>and workshops"]
     end
-
     subgraph EDT["1C:EDT services"]
-        BM["Semantic model<br/>BM index · FQN"]
-        AST["BSL parser<br/>Xtext · AST"]
-        CHECKS["Validation<br/>and problem markers"]
-        DEBUG["Debugger<br/>client + server attach"]
+        direction LR
+        BM["Semantic model"]
+        AST["BSL parser"]
+        CHECKS["Validation"]
+        DEBUG["Debugger"]
     end
-
     subgraph Runtime["1C:Enterprise"]
-        APP["Client · server · jobs<br/>tests"]
+        APP["Client · server · jobs · tests"]
     end
-
     AI <-->|"JSON-RPC · localhost:12250"| HTTP
     TOOLS --> BM
     TOOLS --> AST
