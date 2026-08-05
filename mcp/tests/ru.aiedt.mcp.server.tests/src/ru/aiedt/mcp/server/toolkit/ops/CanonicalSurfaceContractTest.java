@@ -34,7 +34,7 @@ import ru.aiedt.mcp.server.settings.ToolProfile;
  * trusting any description string. Most facades reuse the hidden standalone's own registered name as
  * their operation value verbatim: {@code diagnostics}, {@code project_admin}, {@code infobase_admin},
  * {@code config_io}, {@code insights}, {@code security_audit}, {@code workspace_marks},
- * {@code data_access}, {@code docs_lookup} and {@code extension_workshop}'s deploy/inspect operations
+ * {@code docs_lookup} and {@code extension_workshop}'s deploy/inspect operations
  * all do this, so for them "is the standalone name an accepted operation" is a plain string
  * membership check.
  * <p>

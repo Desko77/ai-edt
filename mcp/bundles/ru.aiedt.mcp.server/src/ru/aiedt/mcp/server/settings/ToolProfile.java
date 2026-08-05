@@ -226,7 +226,7 @@ public enum ToolProfile
      * the facade that subsumes it - {@code code_search}, {@code launch_debugger}, {@code yaxunit_tests},
      * {@code extension_workshop}, {@code diagnostics}, {@code project_admin}, {@code infobase_admin},
      * {@code config_io}, {@code insights}, {@code security_audit}, {@code workspace_marks},
-     * {@code data_access}, {@code docs_lookup} or {@code edit_metadata} - stays listed, and every name
+     * {@code docs_lookup} or {@code edit_metadata} - stays listed, and every name
      * here stays callable. {@code edit_metadata} folds in three of its own -
      * {@code delete_metadata_object}, {@code rename_metadata_object}, {@code add_metadata_attribute} -
      * as gate-checked delegated operations (see {@code ToolGate}), the same way the other facades fold
