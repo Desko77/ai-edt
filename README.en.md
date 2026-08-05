@@ -199,6 +199,13 @@ EDT takes that address the same way it takes a local archive.
 **Step 3.** In the **Add Repository** dialog tell EDT where to take the plugin from. Any of these works:
 
 - the **Location** field and the update site `https://desko77.github.io/ai-edt/`;
+- the same field and an address pointing straight into the latest release archive - p2 can read a repository inside a zip over HTTP:
+
+  ```text
+  jar:https://github.com/Desko77/ai-edt/releases/latest/download/AI-EDT-update-site.zip!/
+  ```
+
+  This one always resolves to the newest release and does not depend on the site being published, so it cannot fall behind. Mind the `jar:` prefix and the trailing `!/` - the address does not work without them.
 - **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip` from a local build;
 - **Local** and the folder `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 

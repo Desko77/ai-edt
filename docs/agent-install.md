@@ -18,9 +18,12 @@ nothing, and reports its result as an exit code.
 
 ## Before you start
 
-- A p2 repository to install from. Either works:
+- A p2 repository to install from. Any of these works:
   - the published update site `https://desko77.github.io/ai-edt/`, which needs nothing built
     locally and is the normal choice for a first installation;
+  - the latest release archive read in place, which cannot lag behind a release because it is
+    the release: `jar:https://github.com/Desko77/ai-edt/releases/latest/download/AI-EDT-update-site.zip!/`
+    (the `jar:` prefix and the trailing `!/` are both required);
   - a local build output, `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
     If it does not exist yet, build it first - see [Quick start](../README.en.md#-2-build).
 - The EDT installation directory. It contains `1cedtc.exe`, the console launcher used to run

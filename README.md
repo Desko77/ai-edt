@@ -198,6 +198,13 @@ https://desko77.github.io/ai-edt/
 **Шаг 3.** В диалоге **Добавить репозиторий** укажите, откуда ставить. Подходит любой из вариантов:
 
 - поле **Расположение** и адрес update site `https://desko77.github.io/ai-edt/`;
+- то же поле и адрес прямо на архив последнего релиза - p2 умеет читать репозиторий внутри zip по HTTP:
+
+  ```text
+  jar:https://github.com/Desko77/ai-edt/releases/latest/download/AI-EDT-update-site.zip!/
+  ```
+
+  Этот вариант всегда указывает на свежий выпуск и не зависит от публикации страницы, поэтому отстать от релиза не может. Обратите внимание на префикс `jar:` и завершающие символы `!/` - без них адрес не работает.
 - **Архив...** и файл `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<версия>.zip` из локальной сборки;
 - **Расположение...** и каталог `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 

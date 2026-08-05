@@ -63,6 +63,10 @@ jobs:
         run: |
           cp mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-${{ steps.version.outputs.version }}.zip \
              "$GITHUB_WORKSPACE/"
+          # A second copy under a fixed name, so p2 can be pointed at
+          # releases/latest/download/AI-EDT-update-site.zip and never go stale.
+          cp "$GITHUB_WORKSPACE/AI-EDT-${{ steps.version.outputs.version }}.zip" \
+             "$GITHUB_WORKSPACE/AI-EDT-update-site.zip"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

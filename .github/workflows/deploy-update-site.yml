@@ -48,9 +48,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p _site
+          # Name the versioned archive exactly. A release also carries
+          # AI-EDT-update-site.zip under a fixed name, and --output refuses to
+          # run when the pattern matches more than one asset.
           gh release download "v${{ steps.version.outputs.version }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "AI-EDT-*.zip" \
+            --pattern "AI-EDT-${{ steps.version.outputs.version }}.zip" \
             --output release.zip
           unzip -q release.zip -d _site/
 
@@ -95,6 +98,11 @@ jobs:
             <pre>${SITE_URL}</pre>
             <p>Then pick the <strong>AI-EDT</strong> category and follow the wizard. The build is
                unsigned, so EDT asks you to confirm unsigned content once.</p>
+
+            <p>This page is published from the latest build, which can trail a release by a few
+               minutes. To read the newest release archive directly instead, paste this address
+               in the same field - <code>jar:</code> and the closing <code>!/</code> included:</p>
+            <pre>jar:${REPO_URL}/releases/latest/download/AI-EDT-update-site.zip!/</pre>
 
             <h2>Other ways in</h2>
             <ul>
