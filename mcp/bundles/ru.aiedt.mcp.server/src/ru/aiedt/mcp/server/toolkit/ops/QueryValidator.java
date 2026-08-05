@@ -39,6 +39,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.QueryResultSchema;
 import ru.aiedt.mcp.server.support.UiSync;
 
 /**
@@ -67,7 +68,9 @@ public class QueryValidator
             + "to catch mistakes early. Supports regular queries and DCS (Data Composition System) " //$NON-NLS-1$
             + "queries; also returns a 'hints' array flagging common mistakes (SQL keywords like " //$NON-NLS-1$
             + "SELECT/FROM/WHERE/JOIN/LIMIT/ORDER BY used instead of 1C QL, and wrong keywords like " //$NON-NLS-1$
-            + "УБЫВАНИЕ instead of УБЫВ). The hints array is empty when the query is correct."; //$NON-NLS-1$
+            + "УБЫВАНИЕ instead of УБЫВ). The hints array is empty when the query is correct. " //$NON-NLS-1$
+            + "Pass describeResult=true to also get what the query returns - the columns of each " //$NON-NLS-1$
+            + "result table and their types - instead of reading them off the query text."; //$NON-NLS-1$
     }
 
     @Override
@@ -88,6 +91,14 @@ public class QueryValidator
             .booleanProperty("dcsMode", //$NON-NLS-1$
                 "DCS (Data Composition System) mode. Set to true for queries used in data composition " //$NON-NLS-1$
                     + "schemas. Allows additional DCS-specific syntax. Default: false") //$NON-NLS-1$
+            .booleanProperty("describeResult", //$NON-NLS-1$
+                "Also report what the query returns: one entry per result table with its column " //$NON-NLS-1$
+                    + "names and types, so you do not have to read them off the query text. " //$NON-NLS-1$
+                    + "Temporary-table statements are counted but produce no table, and " //$NON-NLS-1$
+                    + "packageIndex is the real ВыполнитьПакет() position. A column whose type " //$NON-NLS-1$
+                    + "cannot be determined is reported without one rather than guessed. Skipped " //$NON-NLS-1$
+                    + "when the query has errors - describe an invalid query and the answer would " //$NON-NLS-1$
+                    + "describe something you are not going to run. Default: false.") //$NON-NLS-1$
             .booleanProperty("fix", //$NON-NLS-1$
                 "Auto-fix obvious syntax errors: keyword typos (ВЫБРАТ -> ВЫБРАТЬ), empty trailing " //$NON-NLS-1$
                     + "WHERE removal. Conservative - never changes semantics. Returns fixedQuery in " //$NON-NLS-1$
@@ -105,6 +116,8 @@ public class QueryValidator
         boolean dcsMode = JsonUtils.extractBooleanArgument(params, "dcsMode", false); //$NON-NLS-1$
         boolean fix = JsonUtils.extractBooleanArgument(params, "fix", false); //$NON-NLS-1$
         boolean fixedOnly = JsonUtils.extractBooleanArgument(params, "fixedOnly", false); //$NON-NLS-1$
+        boolean describeResult =
+            JsonUtils.extractBooleanArgument(params, "describeResult", false); //$NON-NLS-1$
 
         if (projectName == null || projectName.isEmpty())
         {
@@ -132,7 +145,8 @@ public class QueryValidator
                     .put("fixesApplied", fixResult.fixesApplied) //$NON-NLS-1$
                     .toJson();
             }
-            String validation = validateQuery(project, fixResult.fixedQuery, dcsMode);
+            String validation =
+                validateQuery(project, fixResult.fixedQuery, dcsMode, describeResult);
             try
             {
                 JsonObject obj = JsonParser.parseString(validation).getAsJsonObject();
@@ -159,7 +173,7 @@ public class QueryValidator
             }
         }
 
-        return validateQuery(project, queryText, dcsMode);
+        return validateQuery(project, queryText, dcsMode, describeResult);
     }
 
     private static QueryFixResult applyConservativeFixes(String queryText)
@@ -246,11 +260,12 @@ public class QueryValidator
         return out.toString();
     }
 
-    private String validateQuery(IProject project, String queryText, boolean dcsMode)
+    private String validateQuery(IProject project, String queryText, boolean dcsMode,
+        boolean describeResult)
     {
         try
         {
-            return UiSync.call(() -> doValidateQuery(project, queryText, dcsMode));
+            return UiSync.call(() -> doValidateQuery(project, queryText, dcsMode, describeResult));
         }
         catch (UiSync.UiBusyException e)
         {
@@ -258,7 +273,8 @@ public class QueryValidator
         }
     }
 
-    private String doValidateQuery(IProject project, String queryText, boolean dcsMode)
+    private String doValidateQuery(IProject project, String queryText, boolean dcsMode,
+        boolean describeResult)
     {
         XtextResource resource = null;
         try
@@ -340,7 +356,7 @@ public class QueryValidator
                     offset != null ? offset.intValue() : -1));
             }
 
-            return buildResult(queryText, issues, dcsMode);
+            return buildResult(project, queryText, issues, dcsMode, describeResult);
         }
         catch (IOException e)
         {
@@ -382,7 +398,78 @@ public class QueryValidator
         }
     }
 
-    private String buildResult(String queryText, List<QueryIssue> issues, boolean dcsMode)
+    /**
+     * Adds what the query returns to the reply.
+     * <p>
+     * Only for a query that passed: describing a broken one would report the shape of something the
+     * caller is not going to run, and a caller reading columns off a failed validation is worse off
+     * than one reading none.
+     * </p>
+     * <p>
+     * A failure to describe is reported in the reply rather than raised. The validation result is
+     * the answer to the question that was asked; the schema is an extra, and losing the extra must
+     * not cost the answer.
+     * </p>
+     *
+     * @param result the reply being built
+     * @param project the project the query runs against
+     * @param queryText the query
+     * @param issues what validation found
+     */
+    private static void appendResultSchema(JsonObject result, IProject project, String queryText,
+        List<QueryIssue> issues, boolean dcsMode)
+    {
+        boolean hasErrors = issues.stream().anyMatch(i -> "ERROR".equals(i.severity)); //$NON-NLS-1$
+        if (hasErrors)
+        {
+            result.addProperty("resultSchemaSkipped", //$NON-NLS-1$
+                "the query has errors - fix them and ask again"); //$NON-NLS-1$
+            return;
+        }
+
+        QueryResultSchema.Result described =
+            QueryResultSchema.describe(project, queryText, dcsMode);
+        if (described.error != null)
+        {
+            result.addProperty("resultSchemaError", described.error); //$NON-NLS-1$
+            return;
+        }
+
+        JsonArray tables = new JsonArray();
+        for (QueryResultSchema.ResultTable table : described.tables)
+        {
+            JsonObject tableObj = new JsonObject();
+            tableObj.addProperty("packageIndex", table.packageIndex); //$NON-NLS-1$
+            JsonArray columns = new JsonArray();
+            for (QueryResultSchema.Column column : table.columns)
+            {
+                JsonObject columnObj = new JsonObject();
+                columnObj.addProperty("name", column.name); //$NON-NLS-1$
+                if (!column.types.isEmpty())
+                {
+                    JsonArray types = new JsonArray();
+                    for (String type : column.types)
+                    {
+                        types.add(type);
+                    }
+                    columnObj.add("types", types); //$NON-NLS-1$
+                }
+                columns.add(columnObj);
+            }
+            tableObj.add("columns", columns); //$NON-NLS-1$
+            tables.add(tableObj);
+        }
+        result.add("resultTables", tables); //$NON-NLS-1$
+        if (described.temporaryTables > 0)
+        {
+            // Worth saying out loud: these consume ВыполнитьПакет() slots without returning
+            // anything, which is why the indexes above can have gaps.
+            result.addProperty("temporaryTableStatements", described.temporaryTables); //$NON-NLS-1$
+        }
+    }
+
+    private String buildResult(IProject project, String queryText, List<QueryIssue> issues,
+        boolean dcsMode, boolean describeResult)
     {
         JsonObject result = new JsonObject();
         result.addProperty("success", true); //$NON-NLS-1$
@@ -393,6 +480,11 @@ public class QueryValidator
         result.addProperty("warningCount", //$NON-NLS-1$
             issues.stream().filter(i -> "WARNING".equals(i.severity)).count()); //$NON-NLS-1$
         result.addProperty("infoCount", issues.stream().filter(i -> "INFO".equals(i.severity)).count()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        if (describeResult)
+        {
+            appendResultSchema(result, project, queryText, issues, dcsMode);
+        }
 
         if (!issues.isEmpty())
         {

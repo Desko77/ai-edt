@@ -916,6 +916,32 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * Reads the canonical type names out of a {@code TypeDescription}.
+     * <p>
+     * Exposed for callers that already hold a TypeDescription from somewhere other than a metadata
+     * object - the query result schema gets one straight from
+     * {@code QuerySchemaExpression.getType(...)}. The reflection probes that turn a
+     * {@code TypeItem} into a name live here and are worth reusing rather than repeating.
+     * </p>
+     *
+     * @param typeDescription the description to read, may be <code>null</code>
+     * @return the names, empty when there is nothing resolvable
+     */
+    public static Set<String> readTypeDescriptionNames(Object typeDescription)
+    {
+        if (typeDescription == null)
+        {
+            return new HashSet<>();
+        }
+        EList<?> typesList = readTypesList(typeDescription);
+        if (typesList == null)
+        {
+            return new HashSet<>();
+        }
+        return readCurrentTypeNames(typesList);
+    }
+
+    /**
      * Reads the type-name set currently on a form attribute's {@code valueType}
      * TypeDescription. Returns an empty set when the attribute has no
      * resolvable type. Used by {@code add_form_attribute} to tell whether an
