@@ -20,6 +20,7 @@ import org.eclipse.jface.preference.PreferenceStore;
 import org.junit.Test;
 
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.WorkspacePhase;
 import ru.aiedt.mcp.server.upkeep.ReleaseOffer.State;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep.Schedule;
 import ru.aiedt.mcp.server.upkeep.UpkeepLedger.Work;
@@ -276,6 +277,11 @@ public class ReleaseSweepTest
         // The site is a local directory that does not exist, so this settles without a network
         // request whichever way it goes: unmanaged when p2 does not run this instance, otherwise a
         // failure to read the directory.
+        //
+        // A pass turns back before the check while the workspace is building, which is correct and
+        // is not the branch under test. Drain the build families first, or the last assertion below
+        // fails wherever a build happens to be queued - which on a busy CI runner is a coin toss.
+        quietWorkspace();
         ReleaseSweep sweep = new ReleaseSweep();
         try
         {
@@ -336,6 +342,31 @@ public class ReleaseSweepTest
         sweep.start();
         assertFalse(sweep.isRunning());
         assertFalse(sweep.pending());
+    }
+
+    /**
+     * Waits for the workspace to stop building, so a pass under test is not turned back by the
+     * guard that keeps checks out of the way of a build.
+     * <p>
+     * Bounded rather than joining the job families outright: an unbounded join would trade a
+     * failing test for a hung suite, and every caller here still asserts what it needs afterwards.
+     * </p>
+     */
+    private static void quietWorkspace()
+    {
+        long deadline = System.currentTimeMillis() + 10_000L;
+        while (WorkspacePhase.busy() && System.currentTimeMillis() < deadline)
+        {
+            try
+            {
+                Thread.sleep(50L);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     private static PreferenceStore store(String site, int intervalHours, int startupDelayMinutes)
