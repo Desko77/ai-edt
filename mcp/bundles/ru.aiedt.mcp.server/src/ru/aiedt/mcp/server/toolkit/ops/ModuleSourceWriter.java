@@ -36,6 +36,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExportHelper;
+import ru.aiedt.mcp.server.support.LineDelimiters;
 import ru.aiedt.mcp.server.support.FileMarkers;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
@@ -1020,9 +1021,15 @@ public class ModuleSourceWriter implements IMcpTool
     /**
      * Writes the lines to the file, always terminating the content with a newline and preserving
      * (or adding) a UTF-8 BOM.
+     * <p>
+     * Reading normalises the module to {@code \n} so the editing above can address lines in one
+     * form; this is where that is undone. Joining with {@code \n} and stopping there would convert
+     * every module the plugin touches to LF while its neighbours stay CRLF - see
+     * {@link LineDelimiters}.
+     * </p>
      *
      * @param file target file
-     * @param lines lines to write (joined by {@code \n})
+     * @param lines lines to write, joined with the delimiter the file already uses
      * @param withBom whether to prepend the BOM
      * @param fileExists whether the file already exists (create vs. setContents)
      * @throws Exception on any I/O or workspace failure
@@ -1033,6 +1040,9 @@ public class ModuleSourceWriter implements IMcpTool
         String content = String.join("\n", lines); //$NON-NLS-1$
         if (!content.endsWith("\n")) //$NON-NLS-1$
             content = content + "\n"; //$NON-NLS-1$
+        // Rewrite the assembled text rather than joining with the delimiter directly: a caller can
+        // hand in a line that carries its own breaks, and joining would leave those behind as LF.
+        content = LineDelimiters.rewrite(content, LineDelimiters.of(file));
         byte[] contentBytes = content.getBytes("UTF-8"); //$NON-NLS-1$
         byte[] output;
         if (withBom)

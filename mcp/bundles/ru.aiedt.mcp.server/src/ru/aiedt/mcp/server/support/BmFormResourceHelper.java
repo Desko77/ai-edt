@@ -61,11 +61,21 @@ public final class BmFormResourceHelper
             + " xmlns:form=\"http://g5.1c.ru/v8/dt/form\"/>\n"; //$NON-NLS-1$
 
     /**
-     * Minimal {@code Module.bsl} payload - empty content. EDT accepts a
-     * zero-byte module file but a trailing newline keeps file editors and
-     * git happy.
+     * Minimal {@code Module.bsl} payload. EDT accepts a zero-byte module file, but a trailing line
+     * break keeps file editors and git happy.
+     * <p>
+     * A placeholder module is one line break, and which break it is matters more than its size: a
+     * later write copies whatever ending the file already has, so this seeds the form every write
+     * after it takes. See {@link LineDelimiters}.
+     * </p>
+     *
+     * @param project the project the form belongs to
+     * @return the placeholder contents
      */
-    private static final String EMPTY_MODULE_CONTENT = "\n"; //$NON-NLS-1$
+    private static byte[] emptyModuleContent(IProject project)
+    {
+        return LineDelimiters.forNewContent(project).getBytes(StandardCharsets.UTF_8);
+    }
 
     private BmFormResourceHelper()
     {
@@ -115,7 +125,7 @@ public final class BmFormResourceHelper
             }
             if (!Files.exists(moduleFile))
             {
-                Files.write(moduleFile, EMPTY_MODULE_CONTENT.getBytes(StandardCharsets.UTF_8));
+                Files.write(moduleFile, emptyModuleContent(project));
             }
         }
         catch (IOException ioe)
@@ -178,7 +188,7 @@ public final class BmFormResourceHelper
             Files.createDirectories(formDir);
             if (!Files.exists(moduleFile))
             {
-                Files.write(moduleFile, EMPTY_MODULE_CONTENT.getBytes(StandardCharsets.UTF_8));
+                Files.write(moduleFile, emptyModuleContent(project));
             }
         }
         catch (IOException ioe)

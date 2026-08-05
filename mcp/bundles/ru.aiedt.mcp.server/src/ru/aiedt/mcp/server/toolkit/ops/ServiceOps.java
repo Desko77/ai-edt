@@ -1217,6 +1217,10 @@ final class ServiceOps
             String stubAppend = stub.startsWith("﻿") ? stub.substring(1) : stub; //$NON-NLS-1$
             newContent = existing + sep + stubAppend;
         }
+        // The stub is built with \n and the module it is appended to may be CRLF, so the join above
+        // can leave a mixture. Settle the whole text on one delimiter before it reaches disk.
+        newContent = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(newContent,
+            ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
         byte[] bytes = newContent.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream(bytes);
         if (moduleFile.exists())
@@ -1277,6 +1281,10 @@ final class ServiceOps
             String stubAppend = stub.startsWith("﻿") ? stub.substring(1) : stub; //$NON-NLS-1$
             newContent = existing + sep + stubAppend;
         }
+        // The stub is built with \n and the module it is appended to may be CRLF, so the join above
+        // can leave a mixture. Settle the whole text on one delimiter before it reaches disk.
+        newContent = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(newContent,
+            ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
         byte[] bytes = newContent.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream(bytes);
         if (moduleFile.exists())
@@ -1318,6 +1326,10 @@ final class ServiceOps
             serviceDir.create(true, true, null);
         }
         org.eclipse.core.resources.IFile moduleFile = serviceDir.getFile("Module.bsl"); //$NON-NLS-1$
+        // The stubs above are written with \n for readability; the file gets whatever the module
+        // already uses, or the configured delimiter when it is new.
+        content = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(content,
+            ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
         byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream(bytes);
         if (moduleFile.exists())
@@ -1544,6 +1556,10 @@ final class ServiceOps
             serviceDir.create(true, true, null);
         }
         org.eclipse.core.resources.IFile moduleFile = serviceDir.getFile("Module.bsl"); //$NON-NLS-1$
+        // The stubs above are written with \n for readability; the file gets whatever the module
+        // already uses, or the configured delimiter when it is new.
+        content = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(content,
+            ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
         byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream(bytes);
         if (moduleFile.exists())
