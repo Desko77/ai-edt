@@ -72,9 +72,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     public String getDescription()
     {
         return "Infobase and launch administration - list applications, create / delete an " //$NON-NLS-1$
-            + "infobase, set credentials, create a launch configuration, update the database, " //$NON-NLS-1$
-            + "control EDT<->infobase sync. Operations: get_applications, create_infobase, " //$NON-NLS-1$
-            + "delete_infobase, set_infobase_credentials, create_launch_config, update_database, " //$NON-NLS-1$
+            + "infobase, set credentials, create a launch configuration, start a 1C client from " //$NON-NLS-1$
+            + "one, update the database, control EDT<->infobase sync. Operations: " //$NON-NLS-1$
+            + "get_applications, create_infobase, delete_infobase, set_infobase_credentials, " //$NON-NLS-1$
+            + "create_launch_config, start_client, update_database, " //$NON-NLS-1$
             + "sync_control, help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
             + "getApplications is also accepted); remaining parameters follow the per-operation " //$NON-NLS-1$
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
@@ -92,7 +93,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "get_applications / create_infobase / delete_infobase / " //$NON-NLS-1$
-                    + "set_infobase_credentials / create_launch_config / update_database / " //$NON-NLS-1$
+                    + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
+                    + "update_database / " //$NON-NLS-1$
                     + "sync_control / help (snake_case canonical; camelCase like " //$NON-NLS-1$
                     + "getApplications is also accepted). Pass operation=help without other " //$NON-NLS-1$
                     + "params for the operation catalog.", true) //$NON-NLS-1$
@@ -139,9 +141,15 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "set_infobase_credentials: infobase password (for INFOBASE access). Stored " //$NON-NLS-1$
                     + "encrypted; never logged or returned.") //$NON-NLS-1$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
-                "update_database: exact name of an existing EDT runtime-client launch " //$NON-NLS-1$
-                    + "configuration (preferred over projectName + applicationId - see " //$NON-NLS-1$
+                "update_database / start_client: exact name of an existing EDT runtime-client " //$NON-NLS-1$
+                    + "launch configuration (preferred over projectName + applicationId - see " //$NON-NLS-1$
                     + "list_configurations).") //$NON-NLS-1$
+            .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
+                "start_client: update the infobase before starting, and refuse to start when it " //$NON-NLS-1$
+                    + "cannot be brought up to date (default false).") //$NON-NLS-1$
+            .booleanProperty("allowSecondSession", //$NON-NLS-1$
+                "start_client: start even when this configuration already has a client running " //$NON-NLS-1$
+                    + "(default false - the running one is reported instead).") //$NON-NLS-1$
             .booleanProperty("fullUpdate", //$NON-NLS-1$
                 "update_database: true triggers a full reload; false runs an incremental " //$NON-NLS-1$
                     + "update instead (default false).") //$NON-NLS-1$
@@ -195,7 +203,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         {
             return ToolResult.error("operation is required. Allowed: get_applications / " //$NON-NLS-1$
                 + "create_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
-                + "create_launch_config / update_database / sync_control / help.").toJson(); //$NON-NLS-1$
+                + "create_launch_config / start_client / update_database / sync_control / " //$NON-NLS-1$
+                + "help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
@@ -220,6 +229,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 return new InfobaseCredentialsWriter().execute(params);
             case "create_launch_config": //$NON-NLS-1$
                 return new LaunchConfigCreator().execute(params);
+            case "start_client": //$NON-NLS-1$
+                return new ClientSessionStarter().execute(params);
             case "update_database": //$NON-NLS-1$
                 return new DatabaseUpdater().execute(params);
             case "sync_control": //$NON-NLS-1$
@@ -310,8 +321,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         for (String op : Arrays.asList(
             "get_applications", "create_infobase", //$NON-NLS-1$ //$NON-NLS-2$
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$
-            "create_launch_config", "update_database", //$NON-NLS-1$ //$NON-NLS-2$
-            "sync_control")) //$NON-NLS-1$
+            "create_launch_config", "start_client", //$NON-NLS-1$ //$NON-NLS-2$
+            "update_database", "sync_control")) //$NON-NLS-1$ //$NON-NLS-2$
         {
             m.put(op, op);
         }

@@ -26,7 +26,7 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
 > [!IMPORTANT]
-> The current line targets **1C:EDT 2026.1+**, **Java 17** and Windows.
+> The current line targets **1C:EDT 2026.1+** and **Java 17**. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
 
 ## 🎯 Why AI-EDT
 
@@ -119,8 +119,7 @@ The endpoint defaults to `http://localhost:12250/mcp`. The plugin is not a stand
 - 1C:EDT **2026.1 or newer**
 - Java / JDK **17**
 - Maven **3.9+** to build from source
-- An MCP-compatible client
-- Windows for the documented build and installation flow
+- Any OS that runs 1C:EDT. The plugin is built and fully tested on Linux in CI. Windows is needed only by the helper scripts `build.cmd` and `scripts/edt-selfupdate.ps1`, and the install commands below are written for PowerShell; installing through the p2 director itself is OS-independent
 
 Optional features require YAxUnit, Vanessa Automation or an Attach debug configuration; see [Optional integrations](#-optional-integrations).
 

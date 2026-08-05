@@ -275,9 +275,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("propertyValue", //$NON-NLS-1$
                 "Property value for setObjectProperty (string; coerced to setter type).") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
-                "Type for addObjectAttribute / addTabularSectionAttribute. " //$NON-NLS-1$
+                "Type for addObjectAttribute / addTabularSectionAttribute / setObjectType. " //$NON-NLS-1$
                     + "Primitives: String / Number / Date / Boolean / UUID. " //$NON-NLS-1$
                     + "References: CatalogRef.X / DocumentRef.X / EnumRef.X / DefinedType.X. " //$NON-NLS-1$
+                    + "Composite: list the types comma-separated in one string, " //$NON-NLS-1$
+                    + "e.g. 'CatalogRef.A,DocumentRef.B' - this works when creating the attribute, " //$NON-NLS-1$
+                    + "so there is no need to create it single-typed and widen it afterwards. " //$NON-NLS-1$
                     + "TypeDescription qualifiers (length / precision / fractionDigits / nonNegative / dateFractions / allowedLength) are wired as separate parameters. " //$NON-NLS-1$
                     + "Defaults: Number precision=10 / fractionDigits=0, Date dateFractions=Date, String length=0 (unlimited).") //$NON-NLS-1$
             .booleanProperty("multiLine", //$NON-NLS-1$

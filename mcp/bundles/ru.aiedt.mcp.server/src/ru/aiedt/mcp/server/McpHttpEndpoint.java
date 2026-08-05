@@ -57,6 +57,7 @@ import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
 import ru.aiedt.mcp.server.toolkit.ops.CodeTemplateTool;
 import ru.aiedt.mcp.server.toolkit.ops.CompareConfigurationsTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseCreator;
+import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchConfigCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCreator;
 import ru.aiedt.mcp.server.toolkit.ops.DcsSearchTool;
@@ -948,6 +949,7 @@ public class McpHttpEndpoint
             new InfobaseCredentialsWriter(),
             new InfobaseCreator(),
             new LaunchConfigCreator(),
+            new ClientSessionStarter(),
             new InfobaseRemover(),
             new ListExtensionsTool(),
             new UninstallExtensionTool(),

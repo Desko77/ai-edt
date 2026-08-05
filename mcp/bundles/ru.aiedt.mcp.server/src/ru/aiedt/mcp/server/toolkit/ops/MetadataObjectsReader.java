@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.emf.common.util.EMap;
 import org.eclipse.emf.ecore.EStructuralFeature;
 
@@ -116,14 +117,18 @@ public class MetadataObjectsReader
     public String getDescription()
     {
         return "Lists the metadata objects defined in a 1C configuration. Each row reports Name, Synonym, " //$NON-NLS-1$
-            + "Comment, Type, ObjectModule, and ManagerModule for the object. Filtering by metadata type is supported."; //$NON-NLS-1$
+            + "Comment, Type, ObjectModule, and ManagerModule for the object. Filtering by metadata type is " //$NON-NLS-1$
+            + "supported. Omit projectName to search every open project in the workspace at once - use that " //$NON-NLS-1$
+            + "when you are looking for where an object lives rather than listing one project's contents."; //$NON-NLS-1$
     }
 
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("projectName", "Name of the EDT project to search (mandatory)", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", //$NON-NLS-1$
+                "EDT project to search. Omit it to search every open project in the workspace; " //$NON-NLS-1$
+                    + "results are then grouped per project.") //$NON-NLS-1$
             .stringProperty("metadataType", //$NON-NLS-1$
                 "Restricts results to one metadata type: 'all', 'documents', 'catalogs', 'informationRegisters', " //$NON-NLS-1$
                     + "'accumulationRegisters', 'commonModules', 'enums', 'constants', 'reports', " //$NON-NLS-1$
@@ -158,11 +163,6 @@ public class MetadataObjectsReader
     public String execute(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        if (projectName == null || projectName.isEmpty())
-        {
-            return "Error: the projectName parameter must be provided"; //$NON-NLS-1$
-        }
-
         String metadataTypeArg = JsonUtils.extractStringArgument(params, "metadataType"); //$NON-NLS-1$
         String metadataType = metadataTypeArg == null || metadataTypeArg.isEmpty() ? ALL : metadataTypeArg;
         String nameFilter = JsonUtils.extractStringArgument(params, "nameFilter"); //$NON-NLS-1$
@@ -176,6 +176,11 @@ public class MetadataObjectsReader
         int effectiveLimit = limit;
         try
         {
+            if (projectName == null || projectName.isEmpty())
+            {
+                return UiSync.call(
+                    () -> collectAcrossWorkspace(metadataType, nameFilter, effectiveLimit, language));
+            }
             return UiSync.call(() ->
                 collectAndFormat(projectName, metadataType, nameFilter, effectiveLimit, language));
         }
@@ -183,6 +188,134 @@ public class MetadataObjectsReader
         {
             return "Error: " + TextSuggest.safeMessage(e); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Runs the same collection over every open project and reports them together.
+     * <p>
+     * The reason this exists rather than making the caller loop: asked for one project and given
+     * nothing, a caller reads the empty answer as "no such object anywhere" and stops looking. That
+     * is wrong whenever the object lives in a sibling extension, which in an EDT workspace is most
+     * of the time.
+     * </p>
+     * <p>
+     * A project that cannot be read - closed mid-run, no configuration, an unresolvable model - is
+     * reported by name instead of being dropped, so a missing hit is never mistaken for an absent
+     * object.
+     * </p>
+     *
+     * @param metadataType the type argument, original case
+     * @param nameFilter a name fragment to keep, or <code>null</code>/empty for any
+     * @param limit the most rows to show per project
+     * @param language the requested synonym language, or <code>null</code>
+     * @return the markdown for every project
+     */
+    private static String collectAcrossWorkspace(String metadataType, String nameFilter, int limit,
+        String language)
+    {
+        IProject[] all = ResourcesPlugin.getWorkspace().getRoot().getProjects();
+        List<String> sections = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        List<String> unvisited = new ArrayList<>();
+        int searched = 0;
+        // The limit is a budget for the whole answer, not per project: the schema promises a cap on
+        // rows returned, and handing every project the full limit would multiply it by the project
+        // count - exactly the runaway response the cap exists to prevent.
+        int remaining = limit;
+        for (IProject project : all)
+        {
+            if (!project.exists() || !project.isOpen())
+            {
+                continue;
+            }
+            if (remaining <= 0)
+            {
+                // Stopping silently would read as "searched everywhere, found nothing there".
+                unvisited.add(project.getName());
+                continue;
+            }
+            searched++;
+            String section =
+                collectAndFormat(project.getName(), metadataType, nameFilter, remaining, language);
+            if (section.startsWith("Error:")) //$NON-NLS-1$
+            {
+                skipped.add(project.getName() + " - " + section.substring("Error:".length()).trim()); //$NON-NLS-1$ //$NON-NLS-2$
+                continue;
+            }
+            remaining -= countRows(section);
+            sections.add(section);
+        }
+
+        if (searched == 0)
+        {
+            return "Error: the workspace has no open project to search"; //$NON-NLS-1$
+        }
+
+        StringBuilder out = new StringBuilder();
+        out.append("# Metadata objects across ").append(searched) //$NON-NLS-1$
+            .append(searched == 1 ? " open project" : " open projects").append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (nameFilter != null && !nameFilter.isEmpty())
+        {
+            out.append("Name filter: `").append(nameFilter).append("`\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        for (String section : sections)
+        {
+            out.append(section);
+            if (!section.endsWith("\n")) //$NON-NLS-1$
+            {
+                out.append('\n');
+            }
+            out.append('\n');
+        }
+        if (!skipped.isEmpty() || !unvisited.isEmpty())
+        {
+            // Naming them matters more than the count: a caller that sees "3 projects searched" and
+            // no hit would conclude the object does not exist, when in fact one project never
+            // answered.
+            out.append("## Not searched\n\n"); //$NON-NLS-1$
+            for (String reason : skipped)
+            {
+                out.append("- ").append(reason).append('\n'); //$NON-NLS-1$
+            }
+            for (String name : unvisited)
+            {
+                out.append("- ").append(name) //$NON-NLS-1$
+                    .append(" - the row limit was reached before this project; raise `limit` or " //$NON-NLS-1$
+                        + "narrow `nameFilter` to reach it\n"); //$NON-NLS-1$
+            }
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * Counts the table rows a formatted section reports, so the row budget can be shared between
+     * projects.
+     * <p>
+     * Read off the rendered markdown rather than threaded through the collector: the formatter
+     * already applies its own cap and drops rows, so a count taken before it would over-report and
+     * the budget would run out while rows were still available.
+     * </p>
+     *
+     * @param section the markdown produced for one project
+     * @return the number of data rows in it
+     */
+    private static int countRows(String section)
+    {
+        int rows = 0;
+        for (String line : section.split("\n")) //$NON-NLS-1$
+        {
+            String trimmed = line.trim();
+            // Data rows start with a pipe; the header and its separator do too, so discount them
+            // per table by skipping any row made only of dashes, pipes and colons.
+            if (trimmed.startsWith("|") && !trimmed.replace("|", "").replace("-", "") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                .replace(":", "").trim().isEmpty()) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                rows++;
+            }
+        }
+        // One of the counted rows is the header. Never report a negative consumption.
+        return Math.max(0, rows - 1);
     }
 
     /**

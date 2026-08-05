@@ -120,6 +120,7 @@
 | [`yaxunit_tests`](#yaxunit_tests) | Фасад · Выполнение | Единая точка запуска и отладки тестов YAxUnit. |
 | `vanessa` | Выполнение | Управляет сценариями Vanessa Automation. |
 | `create_launch_config` | Изменение | Создает конфигурацию запуска EDT. |
+| `start_client` | Выполнение | Запускает клиент 1С:Предприятие по конфигурации запуска EDT, без отладчика. |
 | `create_infobase` | Опасно | Создает информационную базу и связывает ее с проектом. |
 | `delete_infobase` | Опасно | Удаляет информационную базу. |
 | `install_extension` | Опасно | Устанавливает расширение в информационную базу. |
@@ -339,7 +340,7 @@
 <details>
 <summary><code>infobase_admin</code> - жизненный цикл информационной базы</summary>
 
-Объединяет `get_applications`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `update_database`, `sync_control` и встроенную справку.
+Объединяет `get_applications`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `update_database`, `sync_control` и встроенную справку.
 </details>
 
 <a id="config_io"></a>

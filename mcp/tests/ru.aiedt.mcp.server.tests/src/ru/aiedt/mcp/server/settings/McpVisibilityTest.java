@@ -56,11 +56,11 @@ public class McpVisibilityTest
         assertFalse("CANONICAL must hide something, or it is just ALL_TOOLS", unlisted.isEmpty()); //$NON-NLS-1$
 
         // The exact membership: 7 from code_search, 16 from launch_debugger, 2 from yaxunit_tests,
-        // 7 from extension_workshop, 6 from diagnostics, 9 from project_admin, 7 from
+        // 7 from extension_workshop, 6 from diagnostics, 9 from project_admin, 8 from
         // infobase_admin, 4 from config_io, 8 from insights, 3 from security_audit, 4 from
         // workspace_marks, 2 from docs_lookup, 3 from edit_metadata. Pinning the
         // size catches an accidental add or drop.
-        assertEquals(78, unlisted.size());
+        assertEquals(79, unlisted.size());
 
         // A standalone from each facade is hidden.
         assertTrue(unlisted.contains("search_in_code")); //$NON-NLS-1$ // code_search
