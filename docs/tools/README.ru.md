@@ -126,6 +126,7 @@
 | `install_extension` | Опасно | Устанавливает расширение в информационную базу. |
 | `uninstall_extension` | Опасно | Удаляет расширение из информационной базы. |
 | `list_extension` | Чтение | Показывает установленные расширения. |
+| `unpack_external_binary` | Изменение | Конвертирует бинарные .epf/.erf в Designer-XML, пригодный для import_configuration_from_xml. |
 | `import_configuration_from_xml` | Опасно | Импортирует XML конфигурации с возможной перезаписью проекта. |
 | `export_configuration_to_xml` | Изменение | Экспортирует конфигурацию в XML. |
 | `export_extension` | Изменение | Экспортирует расширение конфигурации. |

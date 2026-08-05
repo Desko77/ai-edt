@@ -199,6 +199,112 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
+     * Converts a binary external data processor or report ({@code .epf} / {@code .erf}) into
+     * Designer-XML on disk.
+     * <p>
+     * This is the step that was missing between "a customer sent one file" and an EDT project:
+     * {@code import_configuration_from_xml} already turns Designer-XML into a project, but nothing
+     * turned a binary into that XML, so the file had to make a detour through the Designer by hand.
+     * </p>
+     * <p>
+     * The infobase is only a host for the Designer process - the conversion reads the source file
+     * and writes the target directory, and does not touch the infobase's own configuration. It is
+     * still taken through the same disconnect/reconnect as the other thick-client calls, because
+     * the spawned Designer needs the platform lock EDT's agent session holds.
+     * </p>
+     *
+     * @param projectName the project whose runtime and infobase host the Designer
+     * @param applicationId the application, or <code>null</code> to take the project's
+     * @param sourcePath the {@code .epf} / {@code .erf} to read
+     * @param targetPath the directory to write the XML into
+     * @return the outcome, with {@code error} set when it did not happen
+     */
+    public static ExportResult convertExternalToXml(String projectName, String applicationId,
+        String sourcePath, String targetPath)
+    {
+        ExportResult r = new ExportResult();
+        r.outputPath = targetPath;
+
+        java.nio.file.Path source;
+        java.nio.file.Path target;
+        try
+        {
+            source = java.nio.file.Paths.get(sourcePath);
+            target = java.nio.file.Paths.get(targetPath);
+        }
+        catch (java.nio.file.InvalidPathException e)
+        {
+            r.error = "sourcePath or targetPath is not a valid file path: " //$NON-NLS-1$
+                + oneLine(causeChainText(e));
+            r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
+            return r;
+        }
+        if (!java.nio.file.Files.isRegularFile(source))
+        {
+            // Checked before the Designer runs: a missing file otherwise comes back as a runtime
+            // failure, which reads as "the platform is broken" rather than "check the path". The tag
+            // says input, not output - a caller that repairs the target directory over and over
+            // would never find the real problem.
+            r.error = "The source file does not exist: " + source; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INPUT_MISSING.wire();
+            return r;
+        }
+
+        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        if (ctx.error != null)
+        {
+            r.error = ctx.error;
+            r.failureKind = ctx.failureKind;
+            r.infobaseName = ctx.infobaseName;
+            return r;
+        }
+        r.infobaseName = ctx.infobaseName;
+
+        try
+        {
+            java.nio.file.Files.createDirectories(target);
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            r.error = "Cannot create the target directory " + target + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + oneLine(causeChainText(e));
+            r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
+            return r;
+        }
+
+        try
+        {
+            if (ctx.lock != null) ctx.lock.lock();
+            try
+            {
+                boolean disconnected = disconnectForThickClient(ctx);
+                try
+                {
+                    ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args,
+                        source, target);
+                }
+                finally
+                {
+                    if (disconnected)
+                    {
+                        reconnectInfobase(ctx);
+                    }
+                }
+            }
+            finally
+            {
+                if (ctx.lock != null) ctx.lock.unlock();
+            }
+            r.ok = true;
+        }
+        catch (Throwable e)
+        {
+            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+        }
+        return r;
+    }
+
+    /**
      * Exports a named configuration extension from the project's infobase to a
      * {@code .cfe} file on disk (read-only on the infobase - writes only the
      * output file).

@@ -220,7 +220,8 @@ public class CanonicalSurfaceContractTest
         // literally the standalone names they replace, plus help.
         m.put("config_io", Set.of(
             "export_configuration_to_xml", "import_configuration_from_xml", "export_object",
-            "export_common_picture", "export_configuration_to_cf", "help"));
+            "export_common_picture", "export_configuration_to_cf",
+            "unpack_external_binary", "help"));
 
         // insights (InsightsFacadeTool.execute + its OPS catalog): eight operations, all
         // literally the standalone names they replace, plus help.
@@ -324,7 +325,7 @@ public class CanonicalSurfaceContractTest
         // Tripwire 1: exactly how many standalone names CANONICAL currently hides. A change here
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
-        assertEquals(79, ToolProfile.CANONICAL.getUnlistedTools().size());
+        assertEquals(80, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

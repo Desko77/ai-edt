@@ -16,6 +16,7 @@ import org.eclipse.core.resources.IProject;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -84,7 +85,8 @@ public class ConfigIoFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "export_configuration_to_xml / import_configuration_from_xml / export_object / " //$NON-NLS-1$
-                    + "export_common_picture / export_configuration_to_cf / help (snake_case " //$NON-NLS-1$
+                    + "export_common_picture / export_configuration_to_cf / unpack_external_binary / " //$NON-NLS-1$
+                    + "help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like exportObject is also accepted). Pass " //$NON-NLS-1$
                     + "operation=help without other params for the operation catalog.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
@@ -107,6 +109,13 @@ public class ConfigIoFacadeTool implements IMcpTool
             .stringProperty("importPath", //$NON-NLS-1$
                 "import_configuration_from_xml: absolute path to the directory of " //$NON-NLS-1$
                     + "Designer-XML files to import (required for that operation).") //$NON-NLS-1$
+            .stringProperty("sourcePath", //$NON-NLS-1$
+                "unpack_external_binary: absolute path to the .epf or .erf file to convert " //$NON-NLS-1$
+                    + "(required for that operation).") //$NON-NLS-1$
+            .stringProperty("targetPath", //$NON-NLS-1$
+                "unpack_external_binary: directory the XML is written into (required for that " //$NON-NLS-1$
+                    + "operation). Feed it to import_configuration_from_xml as importPath " //$NON-NLS-1$
+                    + "afterwards.")
             .stringProperty("applicationId", //$NON-NLS-1$
                 "export_configuration_to_cf: infobase application id (from get_applications). " //$NON-NLS-1$
                     + "Optional - the project's default infobase is used when omitted.") //$NON-NLS-1$
@@ -180,6 +189,13 @@ public class ConfigIoFacadeTool implements IMcpTool
                 return new ExportObjectTool().execute(params);
             case "export_common_picture": //$NON-NLS-1$
                 return new CommonPictureExporter().execute(params);
+            case "unpack_external_binary": //$NON-NLS-1$
+                // Routed through the gate rather than called straight: a facade delegating in Java
+                // never passes McpRequestRouter, which is where a disabled tool is refused. Without
+                // this, switching the Applications group off would still let this start a Designer
+                // and write files, because config_io itself stays on.
+                return gatedRoute(ExternalBinaryUnpacker.NAME,
+                    () -> new ExternalBinaryUnpacker().execute(params));
             case "export_configuration_to_cf": //$NON-NLS-1$
                 return exportConfigurationCfMarkdown(params);
             default:
@@ -235,13 +251,31 @@ public class ConfigIoFacadeTool implements IMcpTool
         return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * Runs an operation only when the tool behind it is enabled.
+     * <p>
+     * A facade that delegates in Java never passes {@code McpRequestRouter}, and the router is where
+     * a disabled tool is refused. Only the routes added with this are covered; the older ones here
+     * still delegate directly, which is a gap of its own rather than something this introduces.
+     * </p>
+     *
+     * @param op the tool name whose setting decides
+     * @param run what to do when it is enabled
+     * @return the operation's reply, or the refusal
+     */
+    private static String gatedRoute(String op, java.util.function.Supplier<String> run)
+    {
+        String gate = ToolGate.gateOrNull(op);
+        return gate != null ? ToolResult.error(gate).put("operation", op).toJson() : run.get(); //$NON-NLS-1$
+    }
+
     private static Map<String, String> buildOpsCatalog()
     {
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
             "export_configuration_to_xml", "import_configuration_from_xml", //$NON-NLS-1$ //$NON-NLS-2$
             "export_object", "export_common_picture", //$NON-NLS-1$ //$NON-NLS-2$
-            "export_configuration_to_cf")) //$NON-NLS-1$
+            "export_configuration_to_cf", "unpack_external_binary")) //$NON-NLS-1$ //$NON-NLS-2$
         {
             m.put(op, op);
         }

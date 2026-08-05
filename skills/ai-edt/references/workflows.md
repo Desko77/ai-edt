@@ -47,6 +47,12 @@ stale derived state rather than real type errors. Revalidation does not clear th
 2. `validate_query` with the project name. For a data composition query pass `dcsMode=true`.
 3. Fix what it reports, revalidate. The `hints` array flags SQL habits that do not exist in 1C
    query language.
+4. Before writing BSL that reads the result, ask again with `describeResult=true`. It returns each
+   result table with its column names and types, taken from EDT's model rather than from the text -
+   which is how you avoid inventing a column that is not there. A column with no type reported is
+   one whose type could not be determined; it is not a column of unknown-but-guessable type.
+   `packageIndex` counts temporary-table statements too, so it matches the real
+   `ВыполнитьПакет()` position.
 
 Do not batch several queries and validate at the end - a failure then costs a hunt for which one
 broke.

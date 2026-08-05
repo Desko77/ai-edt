@@ -108,7 +108,7 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void totalToolCountIsOneHundredTwenty()
+    public void totalToolCountIsOneHundredTwentyOne()
     {
         // Recounted directly from the group table. F3d facades landed on 118; the 2026-07-28
         // data_access removal dropped execute_query, browse_data and data_access (-3 -> 115) and
@@ -116,11 +116,12 @@ public class ToolCategoryTest
         // create_project and get_outgoing_structures still ungrouped (so the Read-only preset could
         // not switch off the mutating create_project); both were added (+2 -> 118), closing the
         // declared-vs-grouped gap. On 2026-08-03 self_upkeep joined APPLICATIONS (+1 -> 119).
-        // On 2026-08-05 start_client joined APPLICATIONS (+1 -> 120) - it launches a client against
-        // a live infobase, so the group matters: APPLICATIONS is what Read-only switches off.
+        // On 2026-08-05 start_client and unpack_external_binary joined APPLICATIONS (+2 -> 121).
+        // Both reach a live infobase - one launches a client against it, the other runs the
+        // Designer on it - so the group matters: APPLICATIONS is what Read-only switches off.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(120, ToolCategory.getTotalToolCount());
+        assertEquals(121, ToolCategory.getTotalToolCount());
     }
 
     @Test

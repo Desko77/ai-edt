@@ -119,6 +119,7 @@ import ru.aiedt.mcp.server.toolkit.ops.DebugVariablesReader;
 import ru.aiedt.mcp.server.toolkit.ops.DefinitionNavigator;
 import ru.aiedt.mcp.server.toolkit.ops.ImpactAnalysisTool;
 import ru.aiedt.mcp.server.toolkit.ops.ConfigurationXmlImporter;
+import ru.aiedt.mcp.server.toolkit.ops.ExternalBinaryUnpacker;
 import ru.aiedt.mcp.server.toolkit.ops.InstallExtensionTool;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchDebuggerTool;
 import ru.aiedt.mcp.server.toolkit.ops.BreakpointsLister;
@@ -908,6 +909,7 @@ public class McpHttpEndpoint
             new LaunchConfigsLister(),
             new ConfigurationXmlExporter(),
             new ConfigurationXmlImporter(),
+            new ExternalBinaryUnpacker(),
             new YaxunitTestsTool(),
             new YaxunitTestRunner(),
             new BreakpointSetter(),

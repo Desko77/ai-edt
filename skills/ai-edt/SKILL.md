@@ -56,8 +56,8 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `diagnostics` | Project errors, summaries, revalidation, export readiness, check documentation. |
 | `launch_debugger` | The whole debugger: launch and attach, breakpoints, stepping, variables, evaluation, profiling. |
 | `project_admin` | Projects, configurations, subsystems, resync to disk, restarting EDT. |
-| `infobase_admin` | Infobases and launching: applications, create and delete, credentials, database update, sync control. |
-| `config_io` | Import and export of the configuration and of individual artifacts. |
+| `infobase_admin` | Infobases and launching: applications, create and delete, credentials, starting a client, database update, sync control. |
+| `config_io` | Import and export of the configuration and of individual artifacts, including unpacking a binary `.epf` / `.erf` into XML. |
 | `insights` | Metrics, dependency graphs, configuration comparison, impact analysis. |
 | `security_audit` | Role rights, RLS violations, sensitive-data scan. |
 | `docs_lookup` | Platform documentation and an object's built-in help. |
@@ -95,7 +95,9 @@ EDT runtime supports.
    `replace`, which overwrites everything.
 2. **Edit managed forms through `edit_metadata` form operations**, not by hand-writing `.form` XML.
 3. **Validate every query you write or change** with `validate_query`, immediately, not in a batch
-   at the end. For data composition queries pass `dcsMode=true`.
+   at the end. For data composition queries pass `dcsMode=true`. Add `describeResult=true` before
+   you write code against the result: it reports the columns and their types, so you stop reading
+   them off the query text.
 4. **Run `validate_for_export` before writing the configuration into an infobase** and before
    building artifacts. This includes the implicit update that `yaxunit_tests` performs. Findings
    block the operation: fix them first.

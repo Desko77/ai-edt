@@ -54,13 +54,20 @@ form edits are chained with other metadata edits.
 | `create_infobase`, `delete_infobase` | Infobase lifecycle. |
 | `set_infobase_credentials` | Stored credentials for a launch configuration. |
 | `create_launch_config` | A new launch configuration. |
+| `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
 | `update_database` | Writes the configuration into the infobase. Validate for export first. |
 | `sync_control` | Inspects and controls EDT-to-infobase synchronization. See the safety rule in `expected-behavior.md`. |
 
 ## Configuration import and export
 
 `config_io`: `export_configuration_to_xml`, `import_configuration_from_xml`, `export_object`
-(an `.epf` or `.erf`), `export_common_picture`, `export_configuration_to_cf`.
+(an `.epf` or `.erf`), `export_common_picture`, `export_configuration_to_cf`,
+`unpack_external_binary`.
+
+A file that arrives from outside takes two steps, not one: `unpack_external_binary` turns a binary
+`.epf` / `.erf` into Designer-XML, then `import_configuration_from_xml` turns that directory into a
+project. It refuses `.cf` and `.cfe` on purpose - converting one means loading it into an infobase
+and replacing what is there, which is not something to do as a side effect of reading a file.
 
 Operations that drive the thick client run their own designer process. Do not start a batch
 Configurator against an infobase that EDT manages - the two compete for the same lock and the
