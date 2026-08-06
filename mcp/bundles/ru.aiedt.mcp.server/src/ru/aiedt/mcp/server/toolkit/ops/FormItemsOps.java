@@ -382,6 +382,11 @@ final class FormItemsOps
         {
             return ToolResult.error(err.trim()).toJson();
         }
+        String typeErrText = rejectUnsupportedParameterType(type);
+        if (typeErrText != null)
+        {
+            return ToolResult.error(typeErrText).toJson();
+        }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
@@ -496,6 +501,29 @@ final class FormItemsOps
             resp = resp.put("typeApplication", ta); //$NON-NLS-1$
         }
         return resp.toJson();
+    }
+
+    /**
+     * Guards {@code add_form_parameter} against a type the EDT model resolves but
+     * a form parameter cannot carry. {@code Array} is the known case: the type
+     * resolves, the form validates clean, and the parameter is then useless -
+     * across 5789 form parameters of two real configurations it does not occur
+     * once, while {@code ValueList} carries exactly this "pass a list of values
+     * into the form" intent. Refusing costs one retry; writing it costs a form
+     * that only misbehaves once the infobase is updated.
+     *
+     * @param type the requested parameter type, may be {@code null} or empty
+     * @return the refusal text, or {@code null} when the type is acceptable
+     */
+    static String rejectUnsupportedParameterType(String type)
+    {
+        if (type == null || !"Array".equalsIgnoreCase(type.trim())) //$NON-NLS-1$
+        {
+            return null;
+        }
+        return "add_form_parameter: 'Array' is not a usable form-parameter type. " //$NON-NLS-1$
+            + "Use 'ValueList' to pass a collection of values into a form, " //$NON-NLS-1$
+            + "or a reference / primitive type for a single value."; //$NON-NLS-1$
     }
 
     /**

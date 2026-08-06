@@ -203,49 +203,79 @@ final class MiscOps
     // -----------------------------------------------------------------------
 
     /**
-     * 1.40: universal {@code moveItem} - routes by container FQN shape:
-     * <ul>
-     *   <li>{@code Type.Object.Forms.Name.<itemName>} -&gt; form item move
-     *       (delegates to BmFormHelper)</li>
-     *   <li>{@code Type.Object.Templates.Name.<settingName>} -&gt; DCS settings move
-     *       (delegates to BmDcsHelper)</li>
-     *   <li>otherwise -&gt; metadata-collection move (subsystem content order, etc.)</li>
-     * </ul>
+     * Moves a form item into another container of the same form: {@code name} is
+     * the item, {@code parentName} the destination (absent means the form root),
+     * {@code beforeName} an optional sibling to land in front of. The form is
+     * taken from {@code formFqn}, or from {@code containerFqn} when only that is
+     * given.
+     * <p>
+     * Only the form scope moves anything. DCS settings and metadata collections
+     * have their own ordered-collection operations, and this returns an error
+     * naming them rather than a success that moved nothing - the shape this
+     * operation had before, which left rebuilding a form the one editing job that
+     * had to go around the plugin.
      */
     String opMoveItem(Map<String, String> params)
     {
         String containerFqn = JsonUtils.extractStringArgument(params, "containerFqn"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
         String itemName = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
-        if (containerFqn == null || containerFqn.isEmpty() || itemName == null || itemName.isEmpty())
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        final String target = formFqn != null && !formFqn.isEmpty() ? formFqn : containerFqn;
+        if (target == null || target.isEmpty() || itemName == null || itemName.isEmpty())
         {
-            return ToolResult.error("moveItem requires containerFqn and name parameters.").toJson(); //$NON-NLS-1$
+            return ToolResult.error("move_item requires name plus formFqn (or containerFqn) " //$NON-NLS-1$
+                + "naming the form that holds it.").toJson(); //$NON-NLS-1$
         }
-        String position = JsonUtils.extractStringArgument(params, "position"); //$NON-NLS-1$
-        String hint;
-        if (containerFqn.contains(".Forms.") || containerFqn.contains(".Form."))
+        if (target.contains(".Template") || target.contains(".DCS")) //$NON-NLS-1$ //$NON-NLS-2$
         {
-            hint = "Use edit_form operation=moveItem (form-context move) for items inside a form.";
+            return ToolResult.error("move_item works inside a form. For a composition schema " //$NON-NLS-1$
+                + "use dcs_workshop (moveSchemaParameter / moveSettingsItem).").toJson(); //$NON-NLS-1$
         }
-        else if (containerFqn.contains(".Template") || containerFqn.contains(".DCS"))
+        if (!target.contains(".Forms.") && !target.contains(".Form.") //$NON-NLS-1$ //$NON-NLS-2$
+            && !target.startsWith("CommonForm.")) //$NON-NLS-1$
         {
-            hint = "Use dcs_workshop move-style ops (moveSchemaParameter / moveSettingsItem) for DCS scope.";
+            return ToolResult.error("move_item works inside a form, and '" + target //$NON-NLS-1$
+                + "' is not one. To reorder the content of a metadata object use the " //$NON-NLS-1$
+                + "typed operation for that collection.").toJson(); //$NON-NLS-1$
         }
-        else
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName"); //$NON-NLS-1$
+        if (!err.isEmpty())
         {
-            hint = "Universal moveItem for metadata-collection context (e.g. subsystem content reorder) "
-                + "lands in 1.40 final - tracked by Iter 1.6.";
+            return ToolResult.error(err.trim()).toJson();
         }
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("containerFqn", containerFqn);
-        data.put("itemName", itemName);
-        if (position != null)
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
         {
-            data.put("position", position);
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
-        data.put("hint", hint);
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+
+        final BmFormHelper fHelper = helper;
+        final String fItemName = itemName;
+        final String parentName = JsonUtils.extractStringArgument(params, "parentName"); //$NON-NLS-1$
+        final String beforeName = JsonUtils.extractStringArgument(params, "beforeName"); //$NON-NLS-1$
+        final boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        final String[] moved = { null };
+
+        String result = fHelper.executeFormOperation(project, target, dryRun, (tx, form) -> {
+            moved[0] = fHelper.moveItemToContainer(form, fItemName, parentName, beforeName);
+            return moved[0];
+        });
+
+        if (result == null || result.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return EditMetadataTool.formatFormResult(result, "move_item", target); //$NON-NLS-1$
+        }
         return ToolResult.success()
-            .put("message", "moveItem context analyzed - delegating to specialized helper")
-            .put("moveItemRouting", data)
+            .put("operation", "move_item") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("formFqn", target) //$NON-NLS-1$
+            .put("name", fItemName) //$NON-NLS-1$
+            .put("message", result) //$NON-NLS-1$
             .toJson();
     }
 

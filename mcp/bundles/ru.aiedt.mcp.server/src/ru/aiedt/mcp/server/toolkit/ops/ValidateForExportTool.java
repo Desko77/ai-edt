@@ -79,6 +79,24 @@ public class ValidateForExportTool implements IMcpTool
     private static final Pattern FORM_HANDLERS_BLOCK =
         Pattern.compile("<handlers>(.*?)</handlers>", Pattern.DOTALL); //$NON-NLS-1$
 
+    /**
+     * A usual group's ext-info block - scopes the Auto check to the two properties whose platform
+     * enum has no Auto literal. The same tag names carry a legitimate Auto elsewhere on a form
+     * (a button's representation, a table's search-on-input), so the scope is what keeps this
+     * check free of false positives.
+     */
+    private static final Pattern FORM_USUAL_GROUP_EXTINFO =
+        Pattern.compile("<extInfo xsi:type=\"form:UsualGroupExtInfo\">(.*?)</extInfo>", //$NON-NLS-1$
+            Pattern.DOTALL);
+
+    /** A usual group's {@code <group>} or {@code <representation>} set to Auto. */
+    private static final Pattern FORM_GROUP_AUTO =
+        Pattern.compile("<(group|representation)>Auto</\\1>"); //$NON-NLS-1$
+
+    /** A table's {@code <rowSelectionMode>} set to Auto. The tag exists only on a table. */
+    private static final Pattern FORM_ROW_SELECTION_AUTO =
+        Pattern.compile("<rowSelectionMode>Auto</rowSelectionMode>"); //$NON-NLS-1$
+
     /** A leaf FormField item block - scopes the check-box detection to one field. */
     private static final Pattern FORM_FIELD_BLOCK =
         Pattern.compile("<items xsi:type=\"form:FormField\">(.*?)</items>", Pattern.DOTALL); //$NON-NLS-1$
@@ -521,6 +539,38 @@ public class ValidateForExportTool implements IMcpTool
                     + "SymbolicNameService.generateSymbolicName (null event target); add " //$NON-NLS-1$
                     + "<event>EventName</event> (e.g. OnChange) naming the handled event."); //$NON-NLS-1$
             }
+        }
+
+        // An enum value the EDT model accepts and the infobase does not. EDT declares an AUTO
+        // literal for a usual group's grouping and representation and for a table's row
+        // selection; the XDTO schema of the infobase declares none of the three. So the form
+        // validates clean, sits there, and the import fails with an XDTO property mismatch that
+        // names the property but not the element carrying it. Static detection is the only cheap
+        // warning: nothing else in the toolchain objects.
+        Matcher gx = FORM_USUAL_GROUP_EXTINFO.matcher(content);
+        while (gx.find())
+        {
+            Matcher ga = FORM_GROUP_AUTO.matcher(gx.group(1));
+            while (ga.find())
+            {
+                add(findings, checkFilterLower, relPath, fqn,
+                    "form-auto-value-rejected-by-infobase", "ERROR", //$NON-NLS-1$ //$NON-NLS-2$
+                    lineOf(content, gx.start(1) + ga.start()),
+                    "usual group <" + ga.group(1) + "> is Auto, which the infobase XDTO schema " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "does not accept - the import fails on this property. Use Vertical / " //$NON-NLS-1$
+                    + "HorizontalIfPossible / AlwaysHorizontal for <group>, and for " //$NON-NLS-1$
+                    + "<representation> either None / WeakSeparation / NormalSeparation / " //$NON-NLS-1$
+                    + "StrongSeparation or no element at all."); //$NON-NLS-1$
+            }
+        }
+
+        Matcher rs = FORM_ROW_SELECTION_AUTO.matcher(content);
+        while (rs.find())
+        {
+            add(findings, checkFilterLower, relPath, fqn,
+                "form-auto-value-rejected-by-infobase", "ERROR", lineOf(content, rs.start()), //$NON-NLS-1$ //$NON-NLS-2$
+                "table <rowSelectionMode> is Auto, which the infobase XDTO schema does not " //$NON-NLS-1$
+                + "accept - the import fails on this property. Use Row or Cell."); //$NON-NLS-1$
         }
 
         // CheckBoxField bound to a String/Date form attribute. A check box needs a Boolean

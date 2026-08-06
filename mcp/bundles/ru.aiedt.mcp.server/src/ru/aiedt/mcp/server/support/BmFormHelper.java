@@ -36,6 +36,58 @@ import ru.aiedt.mcp.server.Activator;
  */
 public class BmFormHelper
 {
+    /**
+     * Behaviour properties a wizard-created table carries, applied by
+     * {@link #applyTableRenderDefaults}. Values are text; setScalarProperty
+     * coerces to boolean / int / enum.
+     * <p>
+     * The list is bounded by what the infobase accepts, which is narrower than
+     * what the EDT model accepts. Two rules follow from that, and both were paid
+     * for in broken imports:
+     * <ul>
+     * <li>no {@code Auto} where the platform enum has no such literal -
+     * {@code TableRowSelectionMode} declares AUTO, the XDTO schema does not, and
+     * the mismatch surfaces only when the infobase is updated;</li>
+     * <li>no property newer than the compatibility mode of the configuration
+     * being edited - {@code autoMaxCardHeight} and
+     * {@code showCommandBarNeedDereferenced} were removed for that reason.</li>
+     * </ul>
+     * Measured over 5419 forms of two real configurations, every pair below
+     * occurs as written and {@code rowSelectionMode} is never anything but
+     * {@code Row}. Check a new entry the same way before adding it: EDT
+     * validation stays green either way, so it proves nothing here.
+     */
+    static final String[][] TABLE_RENDER_DEFAULTS = {
+        {"changeRowSet", "true"}, {"changeRowOrder", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"autoMaxWidth", "true"}, {"autoMaxHeight", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"autoMaxRowsCount", "true"}, {"selectionMode", "MultiRow"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"rowSelectionMode", "Row"}, {"header", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"headerHeight", "1"}, {"footerHeight", "1"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"horizontalScrollBar", "AutoUse"}, {"verticalScrollBar", "AutoUse"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"horizontalLines", "true"}, {"verticalLines", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"autoInsertNewRow", "true"}, {"searchOnInput", "Auto"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"initialListView", "Auto"}, {"horizontalStretch", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"verticalStretch", "true"}, {"enableStartDrag", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"enableDrag", "true"}, {"fileDragMode", "AsFileRef"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    };
+
+    /**
+     * Grouping properties a usual group carries, so the property palette is not
+     * blank where the editor shows a value.
+     * <p>
+     * Same constraint as {@link #TABLE_RENDER_DEFAULTS}: {@code FormChildrenGroup}
+     * declares AUTO and the platform does not accept it, so {@code group} takes
+     * the value the corpus overwhelmingly uses. {@code representation} is absent
+     * from this list on purpose - the platform enum has no Auto either, and an
+     * editor-created group carries no representation at all (2376 of 3192 groups
+     * measured), so the right move is to leave the property untouched.
+     */
+    static final String[][] USUAL_GROUP_DEFAULTS = {
+        {"group", "Vertical"}, {"behavior", "Auto"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"showLeftMargin", "true"}, {"united", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {"throughAlign", "Auto"}, {"currentRowUse", "Auto"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    };
+
     // EDT form model classes (loaded via reflection)
     private Class<?> txIface;           // com._1c.g5.v8.bm.core.IBmTransaction
     private Class<?> ffClass;           // com._1c.g5.v8.dt.form.model.FormFactory
@@ -536,8 +588,19 @@ public class BmFormHelper
      * InputField column also fills the InputFieldExtInfo (chooseType / typeDomainEnabled
      * / textEdit). Call ONLY when the field's parent is a Table. Best-effort: a property
      * absent on the runtime field type is skipped silently (never fails the op).
+     * <p>
+     * A hyperlink column is wired differently from a standalone hyperlink label.
+     * {@code LabelFieldExtInfo.hyperlink} alone renders a plain cell: the text is
+     * there, but there is no underline, no hand cursor and no click affordance.
+     * Inside a table the platform reads three FormField-level properties instead -
+     * {@code readOnly}, {@code editMode = EnterOnInput} and {@code cellHyperlink} -
+     * so {@code hyperlink} on a column applies those as well.
+     *
+     * @param field     the freshly created column field
+     * @param fieldType the field kind, e.g. {@code InputField} or {@code LabelField}
+     * @param hyperlink whether the caller asked for a hyperlink column
      */
-    public void applyTableColumnDefaults(Object field, String fieldType)
+    public void applyTableColumnDefaults(Object field, String fieldType, boolean hyperlink)
     {
         if (field == null)
         {
@@ -550,10 +613,15 @@ public class BmFormHelper
             setScalarProperty(cm, "autoFill", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         // Column-level display / edit properties (apply to any column field type).
-        setScalarProperty(field, "editMode", "Enter"); //$NON-NLS-1$ //$NON-NLS-2$
+        setScalarProperty(field, "editMode", hyperlink ? "EnterOnInput" : "Enter"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         setScalarProperty(field, "showInHeader", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         setScalarProperty(field, "headerHorizontalAlign", "Left"); //$NON-NLS-1$ //$NON-NLS-2$
         setScalarProperty(field, "showInFooter", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (hyperlink)
+        {
+            setScalarProperty(field, "readOnly", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+            setScalarProperty(field, "cellHyperlink", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         // ExtInfo defaults. Designer auto-sizes every column (LabelField and InputField alike);
         // an InputField column additionally needs the type-choice trio or the cell is not editable.
         Object extInfo = null;
@@ -727,6 +795,16 @@ public class BmFormHelper
      * absent on the current runtime is skipped, never fatal. Call right after
      * {@link #createTable}, before columns are generated, so the command bar /
      * context menu ids precede the column ids (as the wizard assigns them).
+     * <p>
+     * The default set is bounded by what the infobase accepts, not by what the
+     * EDT model accepts - the two differ. {@code TableRowSelectionMode} declares
+     * an AUTO literal that the XDTO schema rejects on import, and
+     * {@code autoMaxCardHeight} / {@code showCommandBarNeedDereferenced} are
+     * newer than the compatibility mode of a typical configuration. Measured
+     * over 5419 forms of two real configurations: {@code rowSelectionMode} only
+     * ever holds {@code Row}, and neither of the other two tags occurs once.
+     * Adding a property here means checking it against a real configuration
+     * first; EDT validation stays green either way.
      *
      * @param table     the freshly created {@code form:Table}
      * @param tableName the table name (used to name the auto command bar / menu)
@@ -737,24 +815,8 @@ public class BmFormHelper
         {
             return;
         }
-        // Scalar behaviour defaults, mirroring a wizard-created table. Values
-        // are strings; setScalarProperty coerces to boolean / int / enum.
-        String[][] defaults = {
-            {"changeRowSet", "true"}, {"changeRowOrder", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"autoMaxWidth", "true"}, {"autoMaxHeight", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"autoMaxRowsCount", "true"}, {"selectionMode", "MultiRow"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"rowSelectionMode", "Auto"}, {"header", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"headerHeight", "1"}, {"footerHeight", "1"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"horizontalScrollBar", "AutoUse"}, {"verticalScrollBar", "AutoUse"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"horizontalLines", "true"}, {"verticalLines", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"autoInsertNewRow", "true"}, {"searchOnInput", "Auto"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"initialListView", "Auto"}, {"horizontalStretch", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"verticalStretch", "true"}, {"enableStartDrag", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"enableDrag", "true"}, {"fileDragMode", "AsFileRef"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            {"autoMaxCardHeight", "true"}, {"showCommandBarNeedDereferenced", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        };
         int skipped = 0;
-        for (String[] pair : defaults)
+        for (String[] pair : TABLE_RENDER_DEFAULTS)
         {
             if (setScalarProperty(table, pair[0], pair[1]) != null)
             {
@@ -764,7 +826,7 @@ public class BmFormHelper
         if (skipped > 0)
         {
             Activator.logWarning("applyTableRenderDefaults: " + skipped + " of " //$NON-NLS-1$ //$NON-NLS-2$
-                + defaults.length + " table defaults not applied on this runtime"); //$NON-NLS-1$
+                + TABLE_RENDER_DEFAULTS.length + " table defaults not applied on this runtime"); //$NON-NLS-1$
         }
         // The command bar and context menu are containment children a wizard
         // table always carries; both have dedicated best-effort helpers.
@@ -2481,6 +2543,224 @@ public class BmFormHelper
     }
 
     /**
+     * Moves an existing form item into another container on the same form,
+     * optionally before a named sibling. The item keeps its identity, id, data
+     * path, title and every other property - only its parent changes.
+     * <p>
+     * Moving to a different container is one list insertion: a containment list
+     * takes the item away from whatever container currently holds it, including
+     * an auto command bar or a context menu. Naming the container the item is
+     * already in reorders it there instead, which the list has to do itself -
+     * see {@link #reorderWithin}. On top of that come the refusals: moving an
+     * item into itself or into one of its own children would detach a subtree
+     * from the form, and a target that holds no items at all cannot receive one.
+     *
+     * @param form       the form owning both the item and the target container
+     * @param itemName   the name of the item to move
+     * @param targetName the name of the destination container, or {@code null} /
+     *                       empty to move the item to the form root
+     * @param beforeName the name of the sibling to insert before, or {@code null}
+     *                       to append at the end of the destination
+     * @return a short description of what moved where
+     * @throws Exception if the model rejects the insertion
+     */
+    public String moveItemToContainer(Object form, String itemName, String targetName,
+        String beforeName) throws Exception
+    {
+        Object item = findItemByName(form, itemName);
+        if (item == null)
+        {
+            throw new RuntimeException("Form item not found: " + itemName); //$NON-NLS-1$
+        }
+        boolean toRoot = targetName == null || targetName.isEmpty();
+        Object target = toRoot ? form : findItemByName(form, targetName);
+        if (target == null)
+        {
+            throw new RuntimeException("Target container not found: " + targetName); //$NON-NLS-1$
+        }
+        if (target == item)
+        {
+            throw new RuntimeException("Cannot move '" + itemName + "' into itself."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (isInsideOf(target, item))
+        {
+            throw new RuntimeException("Cannot move '" + itemName + "' into '" + targetName //$NON-NLS-1$ //$NON-NLS-2$
+                + "': the target is inside the item being moved."); //$NON-NLS-1$
+        }
+        if (!containerIface.isInstance(target))
+        {
+            throw new RuntimeException("'" + targetName + "' holds no items, so it cannot " //$NON-NLS-1$ //$NON-NLS-2$
+                + "receive one. Group, page, command bar and table can; a field cannot."); //$NON-NLS-1$
+        }
+        String from = describeParentOf(item);
+        Object items = containerIface.getMethod("getItems").invoke(target); //$NON-NLS-1$
+        int currentIndex = (Integer)items.getClass().getMethod("indexOf", Object.class) //$NON-NLS-1$
+            .invoke(items, item);
+        if (currentIndex >= 0)
+        {
+            // The item is already here, so this is a reorder rather than a move. It has to go
+            // through the list's own move: a containment list holds no duplicates, so indexed add
+            // throws on an element it already has and plain add quietly does nothing - which would
+            // report a reorder that never happened.
+            reorderWithin(items, item, currentIndex, beforeName);
+            return "moved '" + itemName + "' within " + from; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (beforeName != null && !beforeName.isEmpty())
+        {
+            addToContainerBefore(target, item, beforeName);
+        }
+        else
+        {
+            addToContainer(target, item);
+        }
+        return "moved '" + itemName + "' from " + from + " to " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + (toRoot ? "the form root" : "'" + targetName + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * Reorders an item that already sits in this list, placing it in front of a
+     * named sibling or at the end.
+     *
+     * @param items        the container's item list
+     * @param item         the item to reposition
+     * @param currentIndex where the item sits now
+     * @param beforeName   the sibling to land in front of, or {@code null} for the end
+     * @throws Exception if the list refuses the move
+     */
+    private void reorderWithin(Object items, Object item, int currentIndex, String beforeName)
+        throws Exception
+    {
+        int size = (Integer)items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
+        int wanted = size - 1;
+        if (beforeName != null && !beforeName.isEmpty())
+        {
+            int siblingIndex = indexOfNamed(items, beforeName, size);
+            wanted = siblingIndex >= 0 ? siblingIndex : size - 1;
+        }
+        int targetIndex = reorderTargetIndex(currentIndex, wanted);
+        if (targetIndex == currentIndex)
+        {
+            return;
+        }
+        items.getClass().getMethod("move", Integer.TYPE, Object.class) //$NON-NLS-1$
+            .invoke(items, targetIndex, item);
+    }
+
+    /**
+     * Converts "put it where that sibling stands" into the index the list move
+     * expects. A move does not shorten the list, so an item travelling forwards
+     * lands one place earlier than the slot it aimed at - everything between the
+     * two positions has already shifted back by one.
+     *
+     * @param currentIndex where the item sits now
+     * @param wantedIndex  the index of the sibling it should precede
+     * @return the index to pass to the list move
+     */
+    static int reorderTargetIndex(int currentIndex, int wantedIndex)
+    {
+        return wantedIndex > currentIndex ? wantedIndex - 1 : wantedIndex;
+    }
+
+    /**
+     * Finds the position of a named element in a container's item list.
+     *
+     * @param items the item list
+     * @param name  the element name to look for
+     * @param size  the list size, already read by the caller
+     * @return the index, or -1 when no element carries that name
+     * @throws Exception if the list cannot be read
+     */
+    private int indexOfNamed(Object items, String name, int size) throws Exception
+    {
+        for (int i = 0; i < size; i++)
+        {
+            Object existing = items.getClass().getMethod("get", Integer.TYPE).invoke(items, i); //$NON-NLS-1$
+            try
+            {
+                if (name.equals(namedIface.getMethod("getName").invoke(existing))) //$NON-NLS-1$
+                {
+                    return i;
+                }
+            }
+            catch (Exception e)
+            {
+                // An unnamed element cannot be the anchor - keep looking.
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Tells whether {@code node} sits anywhere below {@code possibleAncestor} in
+     * the containment tree.
+     *
+     * @param node            the node to test
+     * @param possibleAncestor the container to test against
+     * @return true when node is possibleAncestor or one of its descendants
+     */
+    static boolean isInsideOf(Object node, Object possibleAncestor)
+    {
+        Object current = node;
+        while (current != null)
+        {
+            if (current == possibleAncestor)
+            {
+                return true;
+            }
+            current = eContainerOf(current);
+        }
+        return false;
+    }
+
+    /**
+     * Names the container an item currently sits in, for a human-readable move
+     * report.
+     *
+     * @param item the item whose parent to describe
+     * @return the parent name, or a fallback phrase when it has none
+     */
+    private String describeParentOf(Object item)
+    {
+        Object parent = eContainerOf(item);
+        if (parent == null)
+        {
+            return "the form root"; //$NON-NLS-1$
+        }
+        try
+        {
+            String name = (String)namedIface.getMethod("getName").invoke(parent); //$NON-NLS-1$
+            if (name != null && !name.isEmpty())
+            {
+                return "'" + name + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        catch (Exception e)
+        {
+            // An unnamed parent (the form itself, an auto command bar) - fall through.
+        }
+        return "the form root"; //$NON-NLS-1$
+    }
+
+    /**
+     * Reflective {@code EObject.eContainer()} - this helper deliberately holds no
+     * compile-time dependency on the EDT form model.
+     *
+     * @param obj the model object
+     * @return its container, or {@code null} when it has none or the call fails
+     */
+    private static Object eContainerOf(Object obj)
+    {
+        try
+        {
+            return obj.getClass().getMethod("eContainer").invoke(obj); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * Links a button to a command by setting the button's commandName property.
      *
      * @param button the button object
@@ -3575,39 +3855,27 @@ public class BmFormHelper
         return maxId;
     }
 
+    /**
+     * Sets {@code FormField.type} from a caller-supplied field kind, accepting the
+     * spellings a caller reasonably uses: the literal ({@code LabelField}), the
+     * Java constant ({@code LABEL_FIELD}) and the short form ({@code Label}).
+     * <p>
+     * The short form has to work because {@link #setFieldExtInfo} accepts it - it
+     * matches on a substring. When the two disagree the field ends up with a
+     * label's ext-info and an input field's type, which serializes as a form the
+     * model reads one way and the platform another.
+     */
     private void setFieldType(Object field, String fieldType) throws Exception
     {
         Class<?> fieldTypeClass = Class.forName("com._1c.g5.v8.dt.form.model.ManagedFormFieldType"); //$NON-NLS-1$
+        String wanted = normalizeFieldKind(fieldType);
         Object matched = null;
-
-        // Try direct match first
         for (Object constant : fieldTypeClass.getEnumConstants())
         {
-            String name = constant.toString();
-            if (fieldType.equalsIgnoreCase(name)
-                || fieldType.replace("Field", "").equalsIgnoreCase( //$NON-NLS-1$ //$NON-NLS-2$
-                    name.replace("_FIELD", "").replace("_", ""))) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            if (wanted.equals(normalizeFieldKind(constant.toString())))
             {
                 matched = constant;
                 break;
-            }
-        }
-
-        // Try constructed name
-        if (matched == null)
-        {
-            String constructed = fieldType.toUpperCase().replace("FIELD", "_FIELD"); //$NON-NLS-1$ //$NON-NLS-2$
-            if (!constructed.endsWith("_FIELD")) //$NON-NLS-1$
-            {
-                constructed = constructed + "_FIELD"; //$NON-NLS-1$
-            }
-            for (Object constant : fieldTypeClass.getEnumConstants())
-            {
-                if (constant.toString().equals(constructed))
-                {
-                    matched = constant;
-                    break;
-                }
             }
         }
 
@@ -3615,6 +3883,24 @@ public class BmFormHelper
         {
             formFieldIface.getMethod("setType", fieldTypeClass).invoke(field, matched); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Reduces a field-kind spelling to its comparable core: lower case, no
+     * underscores, no trailing {@code field}. So {@code Label}, {@code LabelField}
+     * and {@code LABEL_FIELD} all reduce to {@code label}.
+     *
+     * @param fieldKind the spelling to reduce, never {@code null}
+     * @return the normalized form
+     */
+    static String normalizeFieldKind(String fieldKind)
+    {
+        String s = fieldKind.replace("_", "").toLowerCase(); //$NON-NLS-1$ //$NON-NLS-2$
+        if (s.length() > "field".length() && s.endsWith("field")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            s = s.substring(0, s.length() - "field".length()); //$NON-NLS-1$
+        }
+        return s;
     }
 
     private void setFieldExtInfo(Object field, String fieldType) throws Exception
@@ -3790,16 +4076,10 @@ public class BmFormHelper
         else
         {
             extInfo = ffClass.getMethod("createUsualGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
-            // Editor parity: populate the 7 UsualGroup grouping defaults so the
-            // grouping (<group>) property and behaviour are not blank in the
-            // property palette. Best-effort; each is skipped if absent here.
-            setScalarProperty(extInfo, "group", "Auto"); //$NON-NLS-1$ //$NON-NLS-2$
-            setScalarProperty(extInfo, "behavior", "Auto"); //$NON-NLS-1$ //$NON-NLS-2$
-            setScalarProperty(extInfo, "representation", "Auto"); //$NON-NLS-1$ //$NON-NLS-2$
-            setScalarProperty(extInfo, "showLeftMargin", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-            setScalarProperty(extInfo, "united", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-            setScalarProperty(extInfo, "throughAlign", "Auto"); //$NON-NLS-1$ //$NON-NLS-2$
-            setScalarProperty(extInfo, "currentRowUse", "Auto"); //$NON-NLS-1$ //$NON-NLS-2$
+            for (String[] pair : USUAL_GROUP_DEFAULTS)
+            {
+                setScalarProperty(extInfo, pair[0], pair[1]);
+            }
         }
 
         if (extInfo != null)

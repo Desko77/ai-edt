@@ -503,8 +503,11 @@ public class EditMetadataTool implements IMcpTool
                 "Child kind for adopt_child: Form / Attribute / TabularSection / Template / Command / Dimension / Resource. " //$NON-NLS-1$
                     + "Russian aliases accepted (Форма / Реквизит / ТабличнаяЧасть / Макет / Команда / Измерение / Ресурс).") //$NON-NLS-1$
             .stringProperty("containerFqn", //$NON-NLS-1$
-                "FQN of the form-item container for move_item / remove_item - the item " //$NON-NLS-1$
-                    + "(group / table / command bar) that holds the target named by `name`.") //$NON-NLS-1$
+                "For remove_item: FQN of the form-item container - the item (group / table / " //$NON-NLS-1$
+                    + "command bar) that holds the target named by `name`. For move_item: the " //$NON-NLS-1$
+                    + "form FQN, accepted as an alias of formFqn; the destination container is " //$NON-NLS-1$
+                    + "parentName (omit it to move the item to the form root) and beforeName " //$NON-NLS-1$
+                    + "places it in front of a named sibling.") //$NON-NLS-1$
             // ---- Form-operation parameters (add_field / add_button / add_table /
             //      add_decoration / add_dynamic_list_table / set_property / ...) ----
             .stringProperty("itemName", //$NON-NLS-1$
@@ -1851,7 +1854,8 @@ public class EditMetadataTool implements IMcpTool
             .append(BmDcsHelper.isAvailable()).append("\n"); //$NON-NLS-1$
         sb.append("Rights API present (for setRoleRight)? ") //$NON-NLS-1$
             .append(ru.aiedt.mcp.server.support.BmRightsHelper.isAvailable()).append("\n"); //$NON-NLS-1$
-        sb.append("Common group (2): implemented in 1.40 (universal moveItem/removeItem with FQN routing).\n"); //$NON-NLS-1$
+        sb.append("Common group (2): move_item moves a form item between containers; " //$NON-NLS-1$
+            + "remove_item routes by FQN shape to the typed remove operation.\n"); //$NON-NLS-1$
         sb.append("\nDefensive layers (1.40):\n"); //$NON-NLS-1$
         sb.append("- 3.8.1 EventSubscription handler auto-prefix CommonModule.\n"); //$NON-NLS-1$
         sb.append("- 3.8.2 Extension CommonModule guards (privileged, global+server).\n"); //$NON-NLS-1$
