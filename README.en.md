@@ -8,8 +8,8 @@
 [![Release](https://img.shields.io/github/v/release/Desko77/ai-edt?style=flat-square&label=release&color=58a6ff)](https://github.com/Desko77/ai-edt/releases/latest)
 [![Update site](https://img.shields.io/website?url=https%3A%2F%2Fdesko77.github.io%2Fai-edt%2F&style=flat-square&label=update%20site&up_message=online&down_message=offline)](https://desko77.github.io/ai-edt/)
 
-[![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.1.2_%7C_2026.2.0-58a6ff?style=flat-square)](#-1-requirements)
-[![Java](https://img.shields.io/badge/Java-17-f2cc60?style=flat-square)](#-1-requirements)
+[![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.2_%7C_2026.1-58a6ff?style=flat-square)](#-1-requirements)
+[![Java](https://img.shields.io/badge/Java-25_%7C_17-f2cc60?style=flat-square)](#-1-requirements)
 [![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-a371f7?style=flat-square)](#-how-it-works)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-7ee787?style=flat-square)](LICENSE)
 
@@ -26,7 +26,7 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
 > [!IMPORTANT]
-> The current line runs on **1C:EDT 2026.1.2** and **2026.2.0** and needs **Java 17**. Supported versions are listed by name - the full list, and why earlier ones will not do, is in [Requirements](#-1-requirements). It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
+> The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
 
 ## 🎯 Why AI-EDT
 
@@ -118,30 +118,14 @@ The endpoint defaults to `http://localhost:12250/mcp`. The plugin is not a stand
 
 ### 📋 1. Requirements
 
-- 1C:EDT - specific versions, see the list below
-- Java / JDK **17**
+- 1C:EDT
+  - **2026.2**
+  - **2026.1**
+- Java / JDK
+  - **25** - for 1C:EDT 2026.2
+  - **17** - for 1C:EDT 2026.1
 - Maven **3.9+** to build from source
 - Any OS that runs 1C:EDT. The plugin is built and fully tested on Linux in CI. Windows is needed only by the helper scripts `build.cmd` and `scripts/edt-selfupdate.ps1`, and the install commands below are written for PowerShell; installing through the p2 director itself is OS-independent
-
-#### Supported 1C:EDT versions
-
-- **2026.1.2**
-- **2026.2.0**
-
-The versions are named one by one; the list has no floor. "2026.1 and newer" would promise something
-about releases that do not exist yet, and about earlier builds of the same line that nobody has checked.
-A version joins the list once compatibility has been provided and verified: listed means checked.
-Anything absent from the list counts as unsupported, even if it is formally newer than what is there.
-
-Earlier builds of the 2026.1 line, 2026.1.0 among them, have not been checked. The plugin needs
-`dt.metadata.common` 4.0, `dt.metadata.mdclass` 12.0 and `dt.metadata.mdclass.util` 6.0, and in the
-current 2026.1 those packages are at exactly those versions - there is no margin, so an earlier build of
-the line may not do.
-
-On 2025.2 and earlier the plugin will not install. The same three packages are below what it needs
-(`dt.metadata.common` 3.14, `dt.metadata.mdclass` 11.0, `dt.metadata.mdclass.util` 5.18), and 2025.1
-additionally has no `dt.platform.services.core.infobases.sync.v2`. The p2 installer reports this as
-"Missing requirement".
 
 Optional features require YAxUnit, Vanessa Automation or an Attach debug configuration; see [Optional integrations](#-optional-integrations).
 
