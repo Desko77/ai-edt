@@ -260,6 +260,32 @@ public final class BmInfobaseExtensionHelper
         }
         r.infobaseName = ctx.infobaseName;
 
+        // "Empty before, not empty after" only proves this conversion wrote the
+        // output if nobody else can write into the directory in between. Two calls
+        // naming the same targetPath would otherwise both find it empty, run one
+        // after the other, and the second would accept the first one's files as its
+        // own. The infobase lock does not help - the two calls may be aimed at
+        // different infobases - so the destination itself is what gets locked, and
+        // it stays locked across the check, the conversion and the verification.
+        java.util.concurrent.locks.ReentrantLock targetLock = lockForTarget(target);
+        targetLock.lock();
+        try
+        {
+        // The destination has to start out empty, and for two reasons. It is what
+        // makes "something is here afterwards" mean "this conversion wrote it" -
+        // otherwise a silent no-op is indistinguishable from success as long as an
+        // earlier attempt left files behind. And a directory holding the output of
+        // two different binaries is not a valid import source anyway.
+        if (!isEmptyDirectory(target))
+        {
+            r.error = "The target directory is not empty: " + target //$NON-NLS-1$
+                + ". Point targetPath at a new or empty directory - mixing this output with " //$NON-NLS-1$
+                + "what is already there would make the result impossible to import and " //$NON-NLS-1$
+                + "impossible to tell apart from a conversion that wrote nothing."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
+            return r;
+        }
+
         try
         {
             java.nio.file.Files.createDirectories(target);
@@ -295,6 +321,23 @@ public final class BmInfobaseExtensionHelper
             {
                 if (ctx.lock != null) ctx.lock.unlock();
             }
+            // A conversion that returns without writing anything is a failure that
+            // announces itself nowhere else: the Designer is a separate process, and
+            // a silent no-op here is indistinguishable from success until the caller
+            // hands the empty directory to the import and gets a project with nothing
+            // in it. The destination was empty on the way in, so anything found now
+            // is this conversion's own output.
+            if (isEmptyDirectory(target))
+            {
+                r.error = "The conversion reported no error but wrote nothing to " + targetPath //$NON-NLS-1$
+                    + ". The file may not be an external data processor or report, or the " //$NON-NLS-1$
+                    + "Designer may have exited before writing. Check that sourcePath is an " //$NON-NLS-1$
+                    + ".epf or .erf built by a platform version this installation has."; //$NON-NLS-1$
+                // Same classification the export paths use for "returned, but the
+                // output is not there", so a caller branches on one tag either way.
+                r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+                return r;
+            }
             r.ok = true;
         }
         catch (Throwable e)
@@ -302,6 +345,78 @@ public final class BmInfobaseExtensionHelper
             classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
+        }
+        finally
+        {
+            targetLock.unlock();
+        }
+    }
+
+    /** One lock per conversion destination, so two calls cannot share a directory. */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+        java.util.concurrent.locks.ReentrantLock> TARGET_LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Returns the lock guarding a conversion destination. The key has to identify
+     * the directory rather than the spelling of its path: on Windows and macOS the
+     * same folder can be written two ways that differ only in case, and either
+     * side can be reached through a symbolic link. Two keys for one directory
+     * would hand out two locks and leave the race the lock exists to prevent.
+     * <p>
+     * So the real path is resolved when it exists, and the key is lowercased.
+     * Lowercasing can merge two genuinely distinct directories on a case-sensitive
+     * filesystem; that costs a little serialization and nothing else, whereas
+     * missing a collision costs correctness.
+     *
+     * @param target the destination directory
+     * @return the lock to hold for the whole check-convert-verify sequence
+     */
+    private static java.util.concurrent.locks.ReentrantLock lockForTarget(java.nio.file.Path target)
+    {
+        String key;
+        try
+        {
+            key = target.toRealPath().toString();
+        }
+        catch (java.io.IOException | RuntimeException notThereYet)
+        {
+            // A destination that does not exist yet has no real path - the
+            // normalized absolute one is the best identity available.
+            try
+            {
+                key = target.toAbsolutePath().normalize().toString();
+            }
+            catch (RuntimeException e)
+            {
+                key = target.toString();
+            }
+        }
+        return TARGET_LOCKS.computeIfAbsent(key.toLowerCase(java.util.Locale.ROOT),
+            k -> new java.util.concurrent.locks.ReentrantLock());
+    }
+
+    /**
+     * Tells whether a directory holds nothing, treating an unreadable or absent
+     * one as empty - both mean the conversion produced no usable output.
+     *
+     * @param dir the directory to inspect
+     * @return true when it contains no entries
+     */
+    static boolean isEmptyDirectory(java.nio.file.Path dir)
+    {
+        if (dir == null || !java.nio.file.Files.isDirectory(dir))
+        {
+            return true;
+        }
+        try (java.util.stream.Stream<java.nio.file.Path> entries = java.nio.file.Files.list(dir))
+        {
+            return !entries.findAny().isPresent();
+        }
+        catch (java.io.IOException e)
+        {
+            return true;
+        }
     }
 
     /**

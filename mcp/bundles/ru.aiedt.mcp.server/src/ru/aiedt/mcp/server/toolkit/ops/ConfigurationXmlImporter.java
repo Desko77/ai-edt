@@ -13,9 +13,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 
+import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
 import ru.aiedt.mcp.server.Activator;
@@ -158,14 +160,29 @@ public class ConfigurationXmlImporter implements IMcpTool
             return ToolResult.error("Import failed: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
 
+        // importProject returns void, so "it did not throw" is not evidence that a
+        // project appeared. It can decline the sources and return normally, and
+        // reporting success then sends the caller looking for an object that was
+        // never created - with nothing in the reply to suggest where it went.
+        IProject imported = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        if (imported == null || !imported.exists())
+        {
+            return ToolResult.error("The import reported no error but no project '" + projectName //$NON-NLS-1$
+                + "' appeared in the workspace. The sources at " + in //$NON-NLS-1$
+                + " were most likely not recognised as a configuration, an extension or an " //$NON-NLS-1$
+                + "external-object folder. Check that the directory is the root of a Designer " //$NON-NLS-1$
+                + "XML dump, and pass projectNature explicitly if auto-detection is the problem.") //$NON-NLS-1$
+                .toJson();
+        }
+
         // The CLI import leaves the new project without triggering EDT's project
         // lifecycle (setRefreshProject(false)), so other tools see no DtProject
         // until it is reopened. Kick the lifecycle: close -> open -> refresh.
         String lifecycleNote = null;
         try
         {
-            IProject created = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
-            if (created != null && created.exists())
+            IProject created = imported;
+            if (created.exists())
             {
                 NullProgressMonitor mon = new NullProgressMonitor();
                 if (created.isOpen())
@@ -183,6 +200,23 @@ public class ConfigurationXmlImporter implements IMcpTool
             Activator.logWarning("import_configuration_from_xml: " + lifecycleNote); //$NON-NLS-1$
         }
 
+        // Existence is not enough. The CLI sets the project up before it runs the
+        // import operation, so the folder is there whether or not anything landed
+        // in it - measured on the 2026.x implementation, where setUpProject returns
+        // the IProject ahead of createImportOperation. Sources are what the caller
+        // came for, so sources are what gets checked.
+        if (!hasImportedSources(imported))
+        {
+            return ToolResult.error("Project '" + projectName + "' was created but no sources " //$NON-NLS-1$ //$NON-NLS-2$
+                + "were imported into it - its src folder is missing or empty. The import " //$NON-NLS-1$
+                + "operation accepted the call and brought nothing across, which usually means " //$NON-NLS-1$
+                + "the files at " + in + " are not a Designer XML dump of a configuration, an " //$NON-NLS-1$ //$NON-NLS-2$
+                + "extension or an external object. Delete the empty project before retrying.") //$NON-NLS-1$
+                .put("projectName", projectName) //$NON-NLS-1$
+                .put("importPath", in.toString()) //$NON-NLS-1$
+                .toJson();
+        }
+
         ToolResult tool = ToolResult.success()
             .put("operation", "import_configuration_from_xml") //$NON-NLS-1$ //$NON-NLS-2$
             .put("projectName", projectName) //$NON-NLS-1$
@@ -192,5 +226,30 @@ public class ConfigurationXmlImporter implements IMcpTool
             tool.put("lifecycleNote", lifecycleNote); //$NON-NLS-1$
         }
         return tool.toJson();
+    }
+
+    /**
+     * Tells whether an imported project actually received sources. An EDT project
+     * keeps them under {@code src}; a project the CLI set up and then imported
+     * nothing into has that folder missing or empty.
+     *
+     * @param project the project the import was told to create
+     * @return true when the project holds at least one source entry
+     */
+    private static boolean hasImportedSources(IProject project)
+    {
+        try
+        {
+            IFolder src = project.getFolder("src"); //$NON-NLS-1$
+            return src.exists() && src.members().length > 0;
+        }
+        catch (CoreException e)
+        {
+            // Unreadable is not provably empty, so do not turn a readable project
+            // into a failure on the strength of a filesystem hiccup.
+            Activator.logWarning("import_configuration_from_xml: cannot inspect src of " //$NON-NLS-1$
+                + project.getName() + ": " + e.getMessage()); //$NON-NLS-1$
+            return true;
+        }
     }
 }
