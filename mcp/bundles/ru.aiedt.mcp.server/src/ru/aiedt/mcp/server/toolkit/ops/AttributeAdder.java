@@ -88,6 +88,10 @@ public class AttributeAdder implements IMcpTool
                 "Fully qualified name of the parent object (for example 'Catalog.Products' or 'Document.SalesOrder'). Type names may be given in Russian.",
                 true)
             .stringProperty("attributeName", "Name to assign to the new attribute (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("synonym", //$NON-NLS-1$
+                "Synonym for the new attribute - what a user reads on a form or in a report. " //$NON-NLS-1$
+                    + "Omitted means generated from the name the way the editor does it " //$NON-NLS-1$
+                    + "(DocumentCurrency becomes 'Document currency'), never left blank.") //$NON-NLS-1$
             .build();
     }
 
@@ -128,7 +132,8 @@ public class AttributeAdder implements IMcpTool
         display.syncExec(() -> {
             try
             {
-                resultRef.set(executeInternal(projectName, parentFqn, attributeName));
+                resultRef.set(executeInternal(projectName, parentFqn, attributeName,
+                    JsonUtils.extractStringArgument(params, "synonym"))); //$NON-NLS-1$
             }
             catch (Exception e)
             {
@@ -139,7 +144,8 @@ public class AttributeAdder implements IMcpTool
         return resultRef.get();
     }
 
-    private String executeInternal(String projectName, String parentFqn, String attributeName)
+    private String executeInternal(String projectName, String parentFqn, String attributeName,
+        String synonym)
     {
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -210,6 +216,10 @@ public class AttributeAdder implements IMcpTool
 
         long parentBmId = ((IBmObject)parentObject).bmGetId();
         final String normalizedParentFqn = parentFqn;
+        // The synonym is best-effort by design, so its outcome has to reach the
+        // caller: an attribute created with no synonym is still a half-done job,
+        // and reporting a bare success would hide it.
+        final EditMetadataTool.SynonymResult[] synonymOut = { null };
 
         try
         {
@@ -256,6 +266,12 @@ public class AttributeAdder implements IMcpTool
                     }
 
                     newAttribute.setName(attributeName);
+                    // An attribute with no synonym shows its technical name wherever a
+                    // user reads it. The editor fills one in from the name and every
+                    // attribute of a reference configuration has one, so this tool
+                    // stopped being the exception.
+                    synonymOut[0] = EditMetadataTool.applyMdObjectSynonym(newAttribute, synonym,
+                        attributeName, project);
                     newAttribute.setUuid(UUID.randomUUID());
                     addAttribute(parent, newAttribute);
                     return null;
@@ -294,12 +310,27 @@ public class AttributeAdder implements IMcpTool
             }
         }
 
-        return ToolResult.success()
+        ToolResult ok = ToolResult.success()
             .put("parentFqn", normalizedParentFqn) //$NON-NLS-1$
             .put("attributeName", attributeName) //$NON-NLS-1$
             .put("message", //$NON-NLS-1$
-                "Attribute '" + attributeName + "' was created on " + normalizedParentFqn)
-            .toJson();
+                "Attribute '" + attributeName + "' was created on " + normalizedParentFqn);
+        // Same tag names the edit_metadata operations use, so a caller reads one
+        // vocabulary whichever route it took to create the attribute.
+        EditMetadataTool.SynonymResult sr = synonymOut[0];
+        if (sr != null && sr.applied)
+        {
+            ok.put("synonym", sr.value) //$NON-NLS-1$
+                .put("synonymApplied", true); //$NON-NLS-1$
+        }
+        else if (sr != null && sr.error != null)
+        {
+            Map<String, Object> reason = new LinkedHashMap<>();
+            reason.put("reason", sr.error); //$NON-NLS-1$
+            ok.put("synonymApplied", false) //$NON-NLS-1$
+                .put("synonymNotSet", reason); //$NON-NLS-1$
+        }
+        return ok.toJson();
     }
 
     private boolean supportsAttributes(MdObject obj)

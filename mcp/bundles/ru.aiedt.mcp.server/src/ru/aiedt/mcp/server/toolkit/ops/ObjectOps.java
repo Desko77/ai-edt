@@ -1475,6 +1475,12 @@ final class ObjectOps
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
+        // A tabular section is a titled object like any other - 181 of the 182 in a
+        // reference configuration carry a synonym - so an omitted one is generated
+        // from the name rather than left blank.
+        final String tsSynonym = JsonUtils.extractStringArgument(params, "synonym"); //$NON-NLS-1$
+        AtomicReference<EditMetadataTool.SynonymResult> tsSynonymRef =
+            new AtomicReference<>(EditMetadataTool.SynonymResult.skipped());
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
@@ -1512,9 +1518,11 @@ final class ObjectOps
                         + "MdClassPackage EClass lookup)."); //$NON-NLS-1$
                 }
                 ts.setName(name);
+                tsSynonymRef.set(EditMetadataTool.applyMdObjectSynonym(ts, tsSynonym, name, project));
                 tcs.add(ts);
                 return name;
             });
+        EditMetadataTool.addSynonymTags(r, tsSynonymRef.get());
         return EditMetadataTool.formatResult(r, "add_tabular_section"); //$NON-NLS-1$
     }
     String opRemoveTabularSection(Map<String, String> params)

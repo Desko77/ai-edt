@@ -504,6 +504,11 @@ final class SpecializedOps
         String recalculationName = JsonUtils.extractStringArgument(params, "recalculationName"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         String registerDimension = JsonUtils.extractStringArgument(params, "registerDimension"); //$NON-NLS-1$
+        // Same treatment as every other named child, for consistency: this kind is
+        // too rare to measure in a reference configuration, but it is an MdObject
+        // with a synonym and there is no reason for it to be the one left blank.
+        final String recalcDimSynonym = JsonUtils.extractStringArgument(params, "synonym"); //$NON-NLS-1$
+        final EditMetadataTool.SynonymResult[] recalcDimSynOut = { null };
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
@@ -573,6 +578,8 @@ final class SpecializedOps
                         + "MdClassFactory.createRecalculationDimension() unavailable."); //$NON-NLS-1$
                 }
                 dim.setName(name);
+                recalcDimSynOut[0] = EditMetadataTool.applyMdObjectSynonym(dim, recalcDimSynonym,
+                    name, project);
                 java.lang.reflect.Method setter =
                     EditMetadataTool.findSingleArgSetter(dim.getClass(), "setRegisterDimension"); //$NON-NLS-1$
                 if (setter == null)
@@ -591,6 +598,7 @@ final class SpecializedOps
             idem.put("name", name); //$NON-NLS-1$
             r.tags.put("idempotentSkip", idem); //$NON-NLS-1$
         }
+        EditMetadataTool.addSynonymTags(r, recalcDimSynOut[0]);
         return EditMetadataTool.formatResult(r, "add_recalculation_dimension"); //$NON-NLS-1$
     }
 
@@ -908,6 +916,11 @@ final class SpecializedOps
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
+        // The synonym is what a user reads in a choice list, and every one of the
+        // 437 enum values in a reference configuration has one. Omitted means
+        // generated from the name, not left blank.
+        final String valueSynonym = JsonUtils.extractStringArgument(params, "synonym"); //$NON-NLS-1$
+        final EditMetadataTool.SynonymResult[] valueSynOut = { null };
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
         if (project == null || !project.exists())
@@ -933,9 +946,12 @@ final class SpecializedOps
                         + "lookup both unavailable."); //$NON-NLS-1$
                 }
                 value.setName(name);
+                valueSynOut[0] = EditMetadataTool.applyMdObjectSynonym(value, valueSynonym, name,
+                    project);
                 values.add(value);
                 return name;
             });
+        EditMetadataTool.addSynonymTags(r, valueSynOut[0]);
         return EditMetadataTool.formatResult(r, "add_enum_value"); //$NON-NLS-1$
     }
 
