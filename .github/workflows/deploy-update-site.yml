@@ -92,6 +92,13 @@ jobs:
             <p>MCP server for 1C:EDT, running as a plugin inside a live EDT instance.
                Current version: <strong>${VERSION}</strong>.</p>
 
+            <h2>Supported 1C:EDT versions</h2>
+            <p>Listed by name, not as a floor: <strong>2026.1.2</strong> and
+               <strong>2026.2.0</strong>. A version is added here once compatibility has been
+               provided and verified. On 2025.2 and earlier the install is refused with
+               <em>Missing requirement</em> - several platform packages are older there than the
+               plugin needs.</p>
+
             <h2>Install</h2>
             <p>In EDT open <strong>Help -&gt; Install New Software...</strong>, press
                <strong>Add</strong> and paste this address:</p>
