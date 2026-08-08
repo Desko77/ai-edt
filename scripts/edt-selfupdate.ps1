@@ -17,7 +17,9 @@
        -CloseTimeoutSec (e.g. a dialog is up), the script aborts and leaves everything
        as-is for you to resolve.
     3. Run the Equinox p2 director (1cedtc.exe) to install/update the feature from the
-       local build repository into the shared p2 profile/bundle-pool. No elevation - the
+       chosen repository - the local build or the one published with a release - into
+       the shared p2 profile/bundle-pool. Installing something older than what is
+       already running is refused unless -AllowDowngrade. No elevation - the
        EDT install lives under %LOCALAPPDATA% and the pool under %USERPROFILE%\.p2.
     4. Relaunch the dev session with the captured arguments (unless -NoRestart).
     5. Poll the MCP /health endpoint, on the port discovered from the dev workspace's
@@ -35,14 +37,36 @@
 
 .EXAMPLE
   pwsh -NoProfile -File scripts\edt-selfupdate.ps1
+  Local build when this working copy has one, otherwise the latest release.
+
+.EXAMPLE
+  pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -WorkspaceMatch SSL_Demo -Source release
+  The published build, whatever is in target\. Add -ReleaseTag v0.2.1 to pin a version.
+
+.EXAMPLE
+  pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -Source local
+  The build in this working copy, and an error rather than a download if there is none.
 #>
 [CmdletBinding()]
 param(
     # Substring identifying the target workspace in the 1cedt.exe -data argument.
     # Empty matches any workspace, which is enough when a single session is running.
     [string]$WorkspaceMatch = '',
-    # P2 repository to install from. Defaults to the local Maven/Tycho build output.
+    # P2 repository to install from. Given explicitly it wins over -Source.
     [string]$RepoPath,
+    # Where the plugin comes from when -RepoPath is not given:
+    #   local   - the Maven/Tycho build output in this working copy
+    #   release - the p2 repository published with a GitHub release
+    #   auto    - the local build when it exists, the release otherwise
+    [ValidateSet('auto', 'local', 'release')]
+    [string]$Source = 'auto',
+    # Which release to take with -Source release: 'latest' or a tag such as v0.2.1.
+    [string]$ReleaseTag = 'latest',
+    # Repository the release is downloaded from.
+    [string]$Repo = 'Desko77/ai-edt',
+    # Install a bundle older than the one already running. Off by default, because
+    # a local build is 0.1.0.<timestamp> and would otherwise quietly replace a release.
+    [switch]$AllowDowngrade,
     # Feature installable-unit id to install/update.
     [string]$FeatureIU = 'ru.aiedt.mcp.server.feature.feature.group',
     # Max seconds to wait for the graceful close before aborting (never kills).
@@ -68,26 +92,196 @@ function Write-Warn2($m) { Write-Host "[selfupdate] WARN: $m" -ForegroundColor Y
 function Write-Err2($m) { Write-Host "[selfupdate] ERROR: $m" -ForegroundColor Red }
 
 # ---------------------------------------------------------------------------
-# 0. Resolve and validate the local P2 repository
+# 0. Resolve and validate the P2 repository (local build or published release)
 # ---------------------------------------------------------------------------
-if (-not $RepoPath) {
-    $RepoPath = Join-Path $PSScriptRoot '..\mcp\repositories\ru.aiedt.mcp.server.repository\target\repository'
+
+# Compares two bundle versions. A local build is 0.1.0.<timestamp>, a release is
+# 0.2.1 - so the numeric part decides first and the qualifier only breaks ties
+# between builds of the same version. [version] cannot be used: the timestamp
+# qualifier overflows Int32.
+function Compare-BundleVersion([string]$a, [string]$b) {
+    $pa = $a -split '\.'; $pb = $b -split '\.'
+    for ($i = 0; $i -lt 3; $i++) {
+        $na = 0; $nb = 0
+        [void][int]::TryParse($pa[$i], [ref]$na)
+        [void][int]::TryParse($pb[$i], [ref]$nb)
+        if ($na -ne $nb) { if ($na -gt $nb) { return 1 } else { return -1 } }
+    }
+    $qa = if ($pa.Count -gt 3) { $pa[3] } else { '' }
+    $qb = if ($pb.Count -gt 3) { $pb[3] } else { '' }
+    # One side without a qualifier is not an older build - it is a version reported
+    # without one. The server does exactly that (major.minor.micro), so comparing a
+    # local 0.1.0.<timestamp> against it by qualifier would call every local build
+    # newer, and a release against itself older. Qualifiers only separate builds of
+    # the same version when both carry one.
+    if (-not $qa -or -not $qb) { return 0 }
+    return [string]::Compare($qa, $qb, [StringComparison]::Ordinal)
 }
+
+# Every call this script makes to its own server goes through here. Deliberately
+# not Invoke-WebRequest / Invoke-RestMethod: those honour the system proxy, and a
+# proxy that cannot reach localhost turns a healthy server into a generic
+# HttpRequestException. That once disabled the downgrade check silently, and the
+# same trap sits under the /health poll - so both use this.
+#
+# Returns Answered (the listener replied at all, whatever the status) and Body.
+function Invoke-LocalHttp([string]$url) {
+    $result = @{ Answered = $false; Body = $null }
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($url)
+        $req.Proxy = $null
+        $req.Timeout = 5000
+        $resp = $req.GetResponse()
+        $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+        $result.Body = $reader.ReadToEnd()
+        $reader.Close(); $resp.Close()
+        $result.Answered = $true
+    } catch [System.Net.WebException] {
+        # A status code means the listener is there; only a connection failure does not.
+        if ($_.Exception.Response) { $result.Answered = $true }
+    } catch {
+        # Anything else counts as no answer.
+    }
+    return $result
+}
+
+# Asks the running server what plugin version it is.
+function Get-RunningPluginVersion([int]$port) {
+    $r = Invoke-LocalHttp "http://localhost:$port/mcp"
+    if ($r.Body) {
+        $m = [regex]::Match($r.Body, '"version"\s*:\s*"([^"]+)"')
+        if ($m.Success) { return $m.Groups[1].Value }
+    }
+    return $null
+}
+
+# What the installation currently provisions, for when the server does not answer.
+#
+# Read from bundles.info - the list the configurator actually loads - and not from
+# the bundle pool. The pool keeps every version ever downloaded, including the
+# 3.1.0.* line this product carried before the renumbering, so its maximum is a
+# historical artefact: taking it would refuse every install rather than only a
+# downgrade. The install's own plugins directory is the fallback, and it holds
+# what was provisioned rather than an archive.
+function Get-InstalledPluginVersion([string]$installDir) {
+    $cfg = Join-Path $installDir 'configuration\org.eclipse.equinox.simpleconfigurator\bundles.info'
+    if (Test-Path -LiteralPath $cfg) {
+        foreach ($line in (Get-Content -LiteralPath $cfg)) {
+            $m = [regex]::Match($line, '^ru\.aiedt\.mcp\.server,([^,]+),')
+            if ($m.Success) { return $m.Groups[1].Value }
+        }
+    }
+    $best = $null
+    $dir = Join-Path $installDir 'plugins'
+    if (Test-Path -LiteralPath $dir) {
+        foreach ($f in (Get-ChildItem -LiteralPath $dir -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
+            $m = [regex]::Match($f.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
+            if ($m.Success -and (-not $best -or (Compare-BundleVersion $m.Groups[1].Value $best) -gt 0)) {
+                $best = $m.Groups[1].Value
+            }
+        }
+    }
+    return $best
+}
+
+# Validates a p2 repository and picks the bundle it offers. One place, so the
+# release picked up as a fallback goes through exactly the checks the first
+# repository did - an unvalidated second path is how a fallback quietly becomes
+# the unchecked one.
+#
+# Highest by version, not by name: sorting strings puts 0.9 above 0.10 and orders
+# timestamp qualifiers by text.
+function Resolve-RepoBundle([string]$repoPath) {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoPath 'content.jar'))) {
+        Write-Err2 "Not a P2 repository (no content.jar): $repoPath"
+        exit 2
+    }
+    $jar = $null
+    $version = $null
+    foreach ($cand in (Get-ChildItem -LiteralPath (Join-Path $repoPath 'plugins') -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
+        $mc = [regex]::Match($cand.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
+        if (-not $mc.Success) { continue }
+        if (-not $jar -or (Compare-BundleVersion $mc.Groups[1].Value $version) -gt 0) {
+            $jar = $cand
+            $version = $mc.Groups[1].Value
+        }
+    }
+    # PSCustomObject rather than a hashtable: both return intact from a function,
+    # but this one leaves no room to wonder how an older host treats it, and the
+    # 5.1 this script promises to run on cannot be exercised from here.
+    return [PSCustomObject]@{ Jar = $jar; Version = $version }
+}
+
+# Downloads the p2 repository published with a release and unpacks it. The asset
+# name is fixed by release.yml, so 'latest' keeps working without a tag.
+function Get-ReleaseRepo([string]$repo, [string]$tag) {
+    $asset = 'AI-EDT-update-site.zip'
+    $url = if ($tag -and $tag -ne 'latest') {
+        "https://github.com/$repo/releases/download/$tag/$asset"
+    } else {
+        "https://github.com/$repo/releases/latest/download/$asset"
+    }
+    $dest = Join-Path $env:TEMP ("aiedt-selfupdate-" + $tag)
+    if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    $zip = Join-Path $dest $asset
+    Write-Step "Downloading $tag from $repo..."
+    Write-Note "  $url"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+    } catch {
+        Write-Err2 "Download failed: $($_.Exception.Message)"
+        Write-Err2 "No network, or the release carries no $asset. Build locally and pass -Source local."
+        exit 2
+    }
+    Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+    Remove-Item -LiteralPath $zip -Force
+    return $dest
+}
+
+$localRepo = Join-Path $PSScriptRoot '..\mcp\repositories\ru.aiedt.mcp.server.repository\target\repository'
+$hasLocal = Test-Path -LiteralPath (Join-Path $localRepo 'content.jar')
+
+if ($RepoPath) {
+    # An explicit path wins over -Source: the caller already said where to look.
+    $sourceLabel = 'explicit path'
+} elseif ($Source -eq 'release') {
+    $RepoPath = Get-ReleaseRepo $Repo $ReleaseTag
+    $sourceLabel = "release $ReleaseTag"
+} elseif ($Source -eq 'local') {
+    if (-not $hasLocal) {
+        Write-Err2 "No local build at $localRepo - run the Maven build, or use -Source release."
+        exit 2
+    }
+    $RepoPath = $localRepo
+    $sourceLabel = 'local build'
+} else {
+    # auto: whatever is at hand. A local build means someone is iterating on the
+    # code and wants that; without one, the published release is the only sane
+    # answer - a fresh clone has nothing to install.
+    if ($hasLocal) {
+        $RepoPath = $localRepo
+        $sourceLabel = 'local build (auto)'
+    } else {
+        $RepoPath = Get-ReleaseRepo $Repo $ReleaseTag
+        $sourceLabel = "release $ReleaseTag (auto, no local build)"
+    }
+}
+
 try {
     $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 } catch {
     Write-Err2 "Repo path not found: $RepoPath (build the plugin first)"
     exit 2
 }
-if (-not (Test-Path -LiteralPath (Join-Path $RepoPath 'content.jar'))) {
-    Write-Err2 "Not a P2 repository (no content.jar): $RepoPath"
-    exit 2
-}
 $repoUrl = ([System.Uri]$RepoPath).AbsoluteUri   # file:///E:/.../repository
-$builtJar = Get-ChildItem -LiteralPath (Join-Path $RepoPath 'plugins') -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue |
-    Sort-Object Name | Select-Object -Last 1
+$repoInfo = Resolve-RepoBundle $RepoPath
+$builtJar = $repoInfo.Jar
 Write-Step "Repo: $RepoPath"
-if ($builtJar) { Write-Note "Built bundle: $($builtJar.Name)" }
+Write-Note "  source: $sourceLabel"
+$repoVersion = $repoInfo.Version
+if ($builtJar) { Write-Note "  bundle: $($builtJar.Name)" }
 
 # ---------------------------------------------------------------------------
 # 1. Locate the single target 1cedt.exe (dev workspace), capture relaunch info
@@ -171,6 +365,78 @@ Write-Note "  director launcher: $cedtc"
 if ($javaExe) { Write-Note "  director VM: $javaExe" }
 Write-Note "  MCP port: $McpPort"
 
+# A local build always carries 0.1.0.<timestamp>, whatever the released version
+# is - the poms keep 0.1.0-SNAPSHOT and only the tag build rewrites it. So
+# installing a local build over a release silently moves the session backwards,
+# and the only visible sign is a plugin that lost the fixes it just shipped.
+# Ask the running server what it is before closing it.
+# What is in place now. The server answers with major.minor.micro and the disk
+# carries the qualifier too, so the two are not interchangeable: take whichever
+# is higher, and on a tie the qualified one, because only that can tell two
+# builds of the same version apart.
+$fromServer = Get-RunningPluginVersion $McpPort
+$fromDisk = Get-InstalledPluginVersion $installDir
+$currentVersion = $null
+if ($fromServer -and $fromDisk) {
+    $c = Compare-BundleVersion $fromDisk $fromServer
+    $currentVersion = if ($c -gt 0) { $fromDisk } elseif ($c -lt 0) { $fromServer } else { $fromDisk }
+} elseif ($fromServer) {
+    $currentVersion = $fromServer
+} else {
+    $currentVersion = $fromDisk
+}
+if ($currentVersion) {
+    Write-Note ("  installed: {0} (server: {1}, disk: {2})" -f $currentVersion,
+        $(if ($fromServer) { $fromServer } else { 'no answer' }),
+        $(if ($fromDisk) { $fromDisk } else { 'not found' }))
+} else {
+    Write-Note "  installed: nothing found - treating this as a first install"
+}
+
+# Refuses to move the session backwards, and switches auto to the release when the
+# local build it picked turns out to be the older one - a stale target\ directory
+# is the normal state after a release, and the default run must not die on it.
+# Returns the repository to install from.
+function Confirm-NotADowngrade {
+    if (-not $script:repoVersion) {
+        # content.jar is there but no bundle name parses. Nothing can be compared,
+        # and a check that cannot run must not pass silently - that is how the
+        # downgrade this exists to stop got through the first time.
+        Write-Err2 "Cannot read a plugin version out of $script:RepoPath - refusing to install blind."
+        if (-not $AllowDowngrade) {
+            Write-Err2 "Pass -AllowDowngrade to install it anyway."
+            exit 3
+        }
+        return
+    }
+    if (-not $currentVersion) { return }
+    if ((Compare-BundleVersion $script:repoVersion $currentVersion) -ge 0) { return }
+    if ($AllowDowngrade) {
+        Write-Warn2 "$script:repoVersion is older than $currentVersion - proceeding, -AllowDowngrade was given."
+        return
+    }
+    if ($Source -eq 'auto' -and $script:sourceLabel -like 'local build*') {
+        Write-Warn2 "The local build $script:repoVersion is older than $currentVersion - switching to the release."
+        $script:RepoPath = (Resolve-Path -LiteralPath (Get-ReleaseRepo $Repo $ReleaseTag)).Path
+        $script:sourceLabel = "release $ReleaseTag (auto, local build was older)"
+        $script:repoUrl = ([System.Uri]$script:RepoPath).AbsoluteUri
+        # The release goes through the same validation the first repository did,
+        # then through this same check - a fallback nobody re-checks is the one
+        # that ships whatever it happens to contain.
+        $info = Resolve-RepoBundle $script:RepoPath
+        $script:builtJar = $info.Jar
+        $script:repoVersion = $info.Version
+        Write-Note "  now installing: $script:repoVersion from $script:RepoPath"
+        Confirm-NotADowngrade
+        return
+    }
+    Write-Err2 "$script:repoVersion is OLDER than the installed $currentVersion - refusing to downgrade."
+    Write-Err2 "A local build is 0.1.0.<timestamp> regardless of the release it was cut from."
+    Write-Err2 "Use -Source release for the published build, or -AllowDowngrade to install this one anyway."
+    exit 3
+}
+Confirm-NotADowngrade
+
 # ---------------------------------------------------------------------------
 # 2. Graceful close ONLY this session (never force-kill)
 # ---------------------------------------------------------------------------
@@ -244,9 +510,18 @@ if ($javaExe) { $dirArgs = @('-vm', $javaExe) + $dirArgs }
 
 Write-Step "Running p2 director..."
 Write-Note ("  {0} {1}" -f $cedtc, ($dirArgs -join ' '))
-$dirOut = & $cedtc @dirArgs 2>&1
-$dirExit = $LASTEXITCODE
-$dirOut | ForEach-Object { Write-Note "  | $_" }
+# $ErrorActionPreference is Stop for the whole script, so a launcher that throws
+# rather than returning an exit code would end the run right here - with the IDE
+# already closed and nothing to relaunch it. Failing the update is acceptable;
+# leaving someone without an IDE is not.
+$dirExit = 1
+try {
+    $dirOut = & $cedtc @dirArgs 2>&1
+    $dirExit = $LASTEXITCODE
+    $dirOut | ForEach-Object { Write-Note "  | $_" }
+} catch {
+    Write-Err2 "Director did not run: $($_.Exception.Message)"
+}
 
 $updateOk = ($dirExit -eq 0)
 if ($updateOk) {
@@ -282,14 +557,10 @@ $healthUrl = "http://localhost:$McpPort/health"
 $deadline = (Get-Date).AddSeconds($HealthTimeoutSec)
 $healthy = $false
 while ((Get-Date) -lt $deadline) {
-    try {
-        $resp = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
-        if ($resp.StatusCode -eq 200) { $healthy = $true; break }
-    } catch {
-        # Any HTTP response (even 401 when bearer auth is enabled) means the listener
-        # is alive - treat that as up. Only a connection failure keeps us waiting.
-        if ($_.Exception.Response) { $healthy = $true; break }
-    }
+    $probe = Invoke-LocalHttp $healthUrl
+    # Any HTTP answer, even 401 when bearer auth is on, means the listener is alive.
+    # Only a connection failure keeps us waiting.
+    if ($probe.Answered) { $healthy = $true; break }
     Start-Sleep -Seconds 3
 }
 if ($healthy) {
@@ -298,11 +569,12 @@ if ($healthy) {
     $phaseDeadline = (Get-Date).AddSeconds($HealthTimeoutSec)
     $phase = "unknown"
     while ((Get-Date) -lt $phaseDeadline) {
-        try {
-            $r = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
-            $phase = ($r.Content | ConvertFrom-Json).phase
+        $r = Invoke-LocalHttp $healthUrl
+        if ($r.Body) {
+            $m = [regex]::Match($r.Body, '"phase"\s*:\s*"([^"]+)"')
+            if ($m.Success) { $phase = $m.Groups[1].Value }
             if ($phase -eq "ready") { break }
-        } catch { }
+        }
         Start-Sleep -Seconds 3
     }
     if ($phase -eq "ready") {
