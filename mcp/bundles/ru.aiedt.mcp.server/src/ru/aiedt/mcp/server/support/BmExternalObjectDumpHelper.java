@@ -298,8 +298,18 @@ public final class BmExternalObjectDumpHelper
         }
     }
 
-    /** Maps a dump failure cause chain to an actionable message + tag. */
-    private static void classifyFailure(DumpInvocation r, Throwable cause)
+    /**
+     * Maps a dump failure cause chain to an actionable message + tag.
+     * <p>
+     * Package-visible so the classification can be tested against a cause chain directly: it turns
+     * on prose the platform writes in the IDE's language, which is precisely the kind of matching
+     * that stops working without anyone noticing.
+     * </p>
+     *
+     * @param r the invocation being classified, not <code>null</code>
+     * @param cause the failure, whose whole cause chain is read
+     */
+    static void classifyFailure(DumpInvocation r, Throwable cause)
     {
         String chain = causeChainText(cause);
         String lower = chain.toLowerCase(Locale.ROOT);
@@ -316,9 +326,14 @@ public final class BmExternalObjectDumpHelper
                 + "is required. Underlying: " + firstLine(chain); //$NON-NLS-1$
             return;
         }
+        // The Russian wording is matched too, because the platform speaks the language the IDE runs
+        // in: on a Russian EDT every one of the English markers above misses, both actionable
+        // diagnoses collapse into the generic "could not be built" below, and the agent is told to
+        // look at the build when what it actually needs is an infobase.
         if (lower.contains("no developing infobase") //$NON-NLS-1$
             || lower.contains("developing infobase applications") //$NON-NLS-1$
-            || lower.contains("developing application with an infobase")) //$NON-NLS-1$
+            || lower.contains("developing application with an infobase") //$NON-NLS-1$
+            || lower.contains("\u0440\u0430\u0437\u0440\u0430\u0431\u0430\u0442\u044b\u0432\u0430\u0435\u043c\u044b\u0445 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0439 \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439 \u0431\u0430\u0437\u044b")) //$NON-NLS-1$
         {
             r.failureKind = ErrorTags.NO_INFOBASE.wire();
             r.error = "The external object's base configuration has no developing " //$NON-NLS-1$
