@@ -34,6 +34,11 @@ class Config:
     host: str = "localhost"
     port: int = 12250
     project: str = "AiEdtProbe"
+    # The write phase creates projects and edits forms, so it never runs by
+    # accident: a suite pointed at somebody's working session must stay
+    # read-only unless the caller says otherwise.
+    write_phase: bool = False
+    scratch_project: str = "AiEdtE2EScratch"
 
     @property
     def base_url(self) -> str:
@@ -168,6 +173,24 @@ class TestRunner:
         self._test("get_applications", self.test_get_applications)
         self._test("get_form_screenshot", self.test_get_form_screenshot)
 
+        # Phase 6: The paths that reach the infobase and the disk. Off by default -
+        # these create a project, edit a form and build a binary. Every check here
+        # exists because the headless suite cannot see it: it runs without an
+        # infobase, so an operation that reports success while producing nothing
+        # looks identical to one that worked.
+        if self.config.write_phase:
+            self._section("Infobase & Write Path")
+            self._test("create_project_really_creates", self.test_create_project_really_creates)
+            self._test("table_defaults_are_infobase_safe", self.test_table_defaults_are_infobase_safe)
+            self._test("export_object_refuses_without_output", self.test_export_object_refuses_without_output)
+            self._test("import_external_object_refuses_a_non_binary",
+                       self.test_import_external_object_refuses_a_non_binary)
+            self._test("unpack_refuses_a_used_directory", self.test_unpack_refuses_a_used_directory)
+            self._test("marker_corrections_answers", self.test_marker_corrections_answers)
+            self._test("scratch_project_removed", self.test_scratch_project_removed)
+        else:
+            print("\n--- Infobase & Write Path (skipped: pass --write to run) ---")
+
         # Summary
         self._print_summary()
         return all(r.passed for r in self.results)
@@ -281,9 +304,14 @@ class TestRunner:
         tools = resp["result"].get("tools", [])
         assert len(tools) > 0, "No tools registered"
         names = [t["name"] for t in tools]
-        # Verify core tools exist
-        for tool in ["get_edt_version", "list_projects", "get_metadata_objects"]:
+        # What tools/list advertises is the canonical surface, not everything that
+        # answers: a tool a facade absorbed stays callable but is deliberately not
+        # listed. Asserting a hidden alias here failed against a correct server.
+        for tool in ["get_edt_version", "project_admin", "get_metadata_objects"]:
             assert tool in names, f"Missing tool: {tool}"
+        # And the other half of that contract: absorbed names still answer.
+        absorbed = self._call("list_projects", {})
+        self._assert_success(absorbed, "an absorbed alias must stay callable")
 
     def test_invalid_method(self):
         resp = send_jsonrpc(self.config.mcp_url, "nonexistent/method",
@@ -470,6 +498,120 @@ class TestRunner:
 # MCP error codes (mirrored from Java)
 # ──────────────────────────────────────────────────────────────────────────────
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Infobase and write-path tests
+    #
+    # These assert the postcondition, not the reply. Every one of them covers a
+    # case where the server answered success and produced nothing - the failure
+    # this project keeps rediscovering, and the one a headless run cannot catch.
+    # ──────────────────────────────────────────────────────────────────────
+
+    def test_create_project_really_creates(self):
+        """A created project has to exist afterwards, not just be reported."""
+        self._call("delete_project", {"projectName": self.config.scratch_project,
+                                      "confirm": True}, timeout=180)
+        resp = self._call("create_project", {"projectName": self.config.scratch_project,
+                                             "version": "8.3.21"}, timeout=300)
+        self._assert_success(resp, "create_project")
+        listed = self._get_result_text(self._call("list_projects", {}, timeout=120))
+        assert self.config.scratch_project in listed, \
+            "create_project reported success but the project is not in the workspace"
+
+    def test_table_defaults_are_infobase_safe(self):
+        """A generated table must not carry values the infobase rejects.
+
+        These passed EDT validation and broke both the infobase import and the
+        .epf build, so validation being clean proves nothing here - the values
+        themselves are what has to be checked.
+        """
+        owner = f"Catalog.{self.config.scratch_project}Item"
+        # Each step is checked on its own. Asserting only the end state makes a
+        # failure anywhere upstream read as "add_table lied", which sends the next
+        # person to the wrong place.
+        made = self._get_result_text(
+            self._call("edit_metadata", {"projectName": self.config.scratch_project,
+                                         "operation": "create_object", "objectType": "Catalog",
+                                         "name": f"{self.config.scratch_project}Item"}, timeout=180))
+        assert '"success": false' not in made, f"create_object failed: {made[:300]}"
+        formed = self._get_result_text(
+            self._call("edit_metadata", {"projectName": self.config.scratch_project,
+                                         "operation": "create_form", "ownerFqn": owner,
+                                         "formName": "ФормаЭлемента"}, timeout=240))
+        assert '"success": false' not in formed, f"create_form failed: {formed[:300]}"
+        form_fqn = f"{owner}.Form.ФормаЭлемента.Form"
+        added = self._get_result_text(
+            self._call("edit_metadata", {"projectName": self.config.scratch_project,
+                                         "operation": "add_table", "formFqn": form_fqn,
+                                         "name": "E2ETable"}, timeout=180))
+        assert '"success": false' not in added, f"add_table failed: {added[:300]}"
+        # get_form_structure addresses a form by path, not by the BM FQN add_table takes.
+        form_path = f"{owner}.Forms.ФормаЭлемента"
+        # The shape lives in structuredContent; the text content is just "Done".
+        structure = json.dumps(self._get_structured_content(
+            self._call("get_form_structure", {"projectName": self.config.scratch_project,
+                                              "formPath": form_path}, timeout=180)),
+            ensure_ascii=False)
+        assert structure, "get_form_structure returned nothing"
+        assert "E2ETable" in structure, "add_table reported success but the table is not on the form"
+        for rejected in ("rowSelectionMode>Auto", "autoMaxCardHeight",
+                         "showCommandBarNeedDereferenced"):
+            assert rejected not in structure, \
+                f"the table carries {rejected}, which the infobase refuses on import"
+
+    def test_export_object_refuses_without_output(self):
+        """Building a binary from a project that has none must fail, not report success."""
+        resp = self._call("config_io", {"operation": "export_object",
+                                        "projectName": self.config.scratch_project,
+                                        "objectFqn": "ExternalDataProcessor.NotThere",
+                                        "outputPath": "%TEMP%/aiedt-e2e-nothing.epf"}, timeout=300)
+        text = self._get_result_text(resp).lower()
+        assert "success\": true" not in text.replace(" ", ""), \
+            "export_object reported success for an object that does not exist"
+
+    def test_import_external_object_refuses_a_non_binary(self):
+        """An import that imports nothing has to say so."""
+        resp = self._call("external_object_workshop",
+                          {"operation": "import_external_object",
+                           "targetProjectName": self.config.scratch_project,
+                           "inputPath": "%TEMP%/aiedt-e2e-not-a-binary.epf"}, timeout=300)
+        text = self._get_result_text(resp)
+        assert "\"success\": true" not in text, \
+            "import_external_object reported success without importing anything"
+
+    def test_unpack_refuses_a_used_directory(self):
+        """The conversion needs an empty destination, or 'not empty after' proves nothing."""
+        resp = self._call("unpack_external_binary",
+                          {"projectName": self.config.project,
+                           "sourcePath": "%TEMP%/aiedt-e2e-missing.epf",
+                           "targetPath": "%TEMP%"}, timeout=300)
+        text = self._get_result_text(resp)
+        assert "\"success\": true" not in text, \
+            "unpack reported success against a missing source and a used directory"
+
+    def test_marker_corrections_answers(self):
+        """Corrections resolve a check id the way the error report prints it.
+
+        A marker carries a short local uid while the report prints the symbolic
+        id, so this is the call that proves the two are reconciled rather than
+        compared directly - which matched nothing.
+        """
+        resp = self._call("marker_corrections",
+                          {"projectName": self.config.project, "operation": "list",
+                           "checkId": "common-module-type"}, timeout=180)
+        text = self._get_result_text(resp)
+        assert "Unknown tool" not in text and text, (
+            "marker_corrections is not on this server - the write phase has to run against a "
+            "build made from the same commit, not an older installed plugin")
+        assert "Unknown operation" not in text, "the list operation was not recognised"
+
+    def test_scratch_project_removed(self):
+        """Leave the workspace as it was found."""
+        resp = self._call("delete_project", {"projectName": self.config.scratch_project,
+                                             "confirm": True}, timeout=180)
+        self._assert_success(resp, "delete_project")
+
+
+
 class McpConstants:
     ERROR_PARSE = -32700
     ERROR_INVALID_REQUEST = -32600
@@ -517,9 +659,17 @@ def main():
                         help="Seconds to wait for server to become available (0=no wait)")
     parser.add_argument("--junit-xml", default=None,
                         help="Write JUnit XML report to file")
+    parser.add_argument("--write", action="store_true",
+                        default=os.environ.get("E2E_WRITE", "") not in ("", "0", "false"),
+                        help="Also run the infobase and write-path phase. It creates and deletes "
+                             "a scratch project and edits a form, so it is off by default.")
+    parser.add_argument("--scratch-project", default=os.environ.get("E2E_SCRATCH_PROJECT",
+                                                                    "AiEdtE2EScratch"),
+                        help="Name of the throwaway project the write phase creates")
     args = parser.parse_args()
 
-    config = Config(host=args.host, port=args.port, project=args.project)
+    config = Config(host=args.host, port=args.port, project=args.project,
+                    write_phase=args.write, scratch_project=args.scratch_project)
 
     if args.wait > 0:
         if not wait_for_server(config.health_url, args.wait):
