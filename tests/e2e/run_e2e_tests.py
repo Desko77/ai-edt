@@ -17,7 +17,9 @@ Environment variables:
 import argparse
 import json
 import os
+import re
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -39,6 +41,16 @@ class Config:
     # read-only unless the caller says otherwise.
     write_phase: bool = False
     scratch_project: str = "AiEdtE2EScratch"
+
+    @property
+    def scratch_external_project(self) -> str:
+        """Container project for the external-object checks.
+
+        Derived rather than configurable: it always has to be created next to the
+        scratch project and deleted with it, so a second knob would only let the
+        two drift apart.
+        """
+        return self.scratch_project + "Ext"
 
     @property
     def base_url(self) -> str:
@@ -114,6 +126,16 @@ class TestResult:
     duration_ms: float = 0
     message: str = ""
     response: dict = field(default_factory=dict)
+    skipped: bool = False
+
+
+class SkipTest(Exception):
+    """Raised when a check has no data to run against.
+
+    A check that finds nothing to assert on must not report a pass: the two are
+    indistinguishable in a summary, and "green" then means "we never looked".
+    Every skip carries the reason and is printed and counted separately.
+    """
 
 
 class TestRunner:
@@ -182,12 +204,18 @@ class TestRunner:
             self._section("Infobase & Write Path")
             self._test("create_project_really_creates", self.test_create_project_really_creates)
             self._test("table_defaults_are_infobase_safe", self.test_table_defaults_are_infobase_safe)
-            self._test("export_object_refuses_without_output", self.test_export_object_refuses_without_output)
+            self._test("external_object_project_really_creates",
+                       self.test_external_object_project_really_creates)
+            self._test("export_object_reports_the_file_it_wrote",
+                       self.test_export_object_reports_the_file_it_wrote)
+            self._test("export_object_refuses_a_missing_object",
+                       self.test_export_object_refuses_a_missing_object)
             self._test("import_external_object_refuses_a_non_binary",
                        self.test_import_external_object_refuses_a_non_binary)
-            self._test("unpack_refuses_a_used_directory", self.test_unpack_refuses_a_used_directory)
-            self._test("marker_corrections_answers", self.test_marker_corrections_answers)
-            self._test("scratch_project_removed", self.test_scratch_project_removed)
+            self._test("unpack_refuses_a_missing_source", self.test_unpack_refuses_a_missing_source)
+            self._test("marker_corrections_resolves_a_reported_check",
+                       self.test_marker_corrections_resolves_a_reported_check)
+            self._test("scratch_projects_removed", self.test_scratch_projects_removed)
         else:
             print("\n--- Infobase & Write Path (skipped: pass --write to run) ---")
 
@@ -206,6 +234,12 @@ class TestRunner:
             result = TestResult(name=name, passed=True, duration_ms=duration_ms)
             self.results.append(result)
             print(f"  PASS  {name} ({duration_ms:.0f}ms)")
+        except SkipTest as e:
+            duration_ms = (time.time() - start) * 1000
+            result = TestResult(name=name, passed=True, duration_ms=duration_ms,
+                                message=str(e), skipped=True)
+            self.results.append(result)
+            print(f"  SKIP  {name} ({duration_ms:.0f}ms): {e}")
         except AssertionError as e:
             duration_ms = (time.time() - start) * 1000
             result = TestResult(name=name, passed=False, duration_ms=duration_ms,
@@ -220,15 +254,24 @@ class TestRunner:
             print(f"  ERROR {name} ({duration_ms:.0f}ms): {e}")
 
     def _print_summary(self):
-        passed = sum(1 for r in self.results if r.passed)
+        skipped = sum(1 for r in self.results if r.skipped)
+        passed = sum(1 for r in self.results if r.passed and not r.skipped)
         failed = sum(1 for r in self.results if not r.passed)
         total = len(self.results)
         total_time = sum(r.duration_ms for r in self.results)
 
         print(f"\n{'='*70}")
-        print(f"  Results: {passed}/{total} passed, {failed} failed ")
+        print(f"  Results: {passed}/{total} passed, {failed} failed, {skipped} skipped ")
         print(f"  Total time: {total_time/1000:.1f}s")
         print(f"{'='*70}")
+
+        if skipped > 0:
+            # Printed on its own: a skip means a path was NOT covered this run, and
+            # burying that in the pass count is how a suite starts lying.
+            print(f"\n  Skipped (no data to assert on):")
+            for r in self.results:
+                if r.skipped:
+                    print(f"    - {r.name}: {r.message}")
 
         if failed > 0:
             print(f"\n  Failed tests:")
@@ -258,6 +301,24 @@ class TestRunner:
     def _call(self, tool_name: str, args: dict | None = None, timeout: int = 120) -> dict:
         return call_tool(self.config.mcp_url, tool_name, args, self.session_id, timeout)
 
+    def _call_until_done(self, tool_name: str, args: dict | None = None, timeout: int = 120,
+                         tries: int = 6, wait_s: int = 10) -> dict:
+        """Calls a tool that may answer `Pending` and waits for the real answer.
+
+        Thick-client work runs in the background and the first reply can be a
+        placeholder. Asserting on that placeholder would test the queue, not the
+        operation, so the same call is repeated - which is how the server's own
+        resume contract works - until a final payload arrives.
+        """
+        resp = self._call(tool_name, args, timeout)
+        for _ in range(tries - 1):
+            squeezed = "".join(self._get_result_text(resp).split())
+            if '"status":"Pending"' not in squeezed:
+                return resp
+            time.sleep(wait_s)
+            resp = self._call(tool_name, args, timeout)
+        return resp
+
     def _get_result_text(self, resp: dict) -> str:
         """Extract text content from tool call result."""
         result = resp.get("result", {})
@@ -272,6 +333,47 @@ class TestRunner:
     def _get_structured_content(self, resp: dict) -> Any:
         """Extract structuredContent from tool call result."""
         return resp.get("result", {}).get("structuredContent")
+
+    def _payload(self, resp: dict) -> str:
+        """Everything the server said, whichever channel it used.
+
+        Some tools answer with the JSON in the text content, others put it in
+        structuredContent and leave the text as "Done". Reading only the text
+        makes an assertion pass against the word "Done" while testing nothing -
+        which is exactly how the first version of the write phase went green
+        without reaching the code it named.
+        """
+        parts = [self._get_result_text(resp)]
+        structured = self._get_structured_content(resp)
+        if structured is not None:
+            parts.append(json.dumps(structured, ensure_ascii=False))
+        return "\n".join(p for p in parts if p)
+
+    @staticmethod
+    def _squeeze(text: str) -> str:
+        """Whitespace-free copy, so `"success": true` and `"success":true` match alike."""
+        return "".join(text.split())
+
+    def _assert_refused(self, resp: dict, msg: str) -> str:
+        """The operation must NOT claim success. Returns the payload for further checks."""
+        payload = self._payload(resp)
+        assert payload, f"{msg}: the server said nothing at all"
+        assert '"success":true' not in self._squeeze(payload), f"{msg}: {payload[:400]}"
+        return payload
+
+    def _assert_did(self, resp: dict, msg: str) -> str:
+        """The operation must claim success; returns its payload."""
+        payload = self._payload(resp)
+        squeezed = self._squeeze(payload)
+        assert '"success":false' not in squeezed and not squeezed.startswith("Error:"), \
+            f"{msg}: {payload[:400]}"
+        return payload
+
+    def _scratch_dir(self) -> str:
+        """A real directory for binaries this run writes. Created on demand."""
+        path = os.path.join(tempfile.gettempdir(), "aiedt-e2e")
+        os.makedirs(path, exist_ok=True)
+        return path
 
     # ──────────────────────────────────────────────────────────────────────
     # Protocol Tests
@@ -510,9 +612,18 @@ class TestRunner:
         """A created project has to exist afterwards, not just be reported."""
         self._call("delete_project", {"projectName": self.config.scratch_project,
                                       "confirm": True}, timeout=180)
+        # Same trap as the external project below: a leftover of the same name makes
+        # create answer alreadyExists, and the listing would then confirm a project
+        # this run never created.
+        listed_before = self._get_result_text(self._call("list_projects", {}, timeout=120))
+        assert self.config.scratch_project not in listed_before, (
+            f"'{self.config.scratch_project}' is still in the workspace after delete_project, so a "
+            "create cannot be told apart from what was already there - remove it and re-run")
         resp = self._call("create_project", {"projectName": self.config.scratch_project,
                                              "version": "8.3.21"}, timeout=300)
         self._assert_success(resp, "create_project")
+        assert '"alreadyExists":true' not in self._squeeze(self._payload(resp)), \
+            "create_project found the project already there, so nothing was created"
         listed = self._get_result_text(self._call("list_projects", {}, timeout=120))
         assert self.config.scratch_project in listed, \
             "create_project reported success but the project is not in the workspace"
@@ -558,57 +669,177 @@ class TestRunner:
             assert rejected not in structure, \
                 f"the table carries {rejected}, which the infobase refuses on import"
 
-    def test_export_object_refuses_without_output(self):
-        """Building a binary from a project that has none must fail, not report success."""
-        resp = self._call("config_io", {"operation": "export_object",
-                                        "projectName": self.config.scratch_project,
-                                        "objectFqn": "ExternalDataProcessor.NotThere",
-                                        "outputPath": "%TEMP%/aiedt-e2e-nothing.epf"}, timeout=300)
-        text = self._get_result_text(resp).lower()
-        assert "success\": true" not in text.replace(" ", ""), \
-            "export_object reported success for an object that does not exist"
+    def test_external_object_project_really_creates(self):
+        """The container for the binary tests, and a postcondition in its own right.
+
+        Creation used to take the project handle when the manager refused, and a
+        handle exists whether or not anything was created - so it answered success
+        with no project behind it.
+        """
+        ext = self.config.scratch_external_project
+        self._call("delete_project", {"projectName": ext, "confirm": True}, timeout=180)
+        # A project left behind by an interrupted run would make create answer
+        # alreadyExists, and the listing below would then confirm a project this run
+        # never made - the check would pass without creating anything.
+        listed_before = self._get_result_text(self._call("list_projects", {}, timeout=120))
+        assert ext not in listed_before, (
+            f"'{ext}' is still in the workspace after delete_project, so a create cannot be "
+            "distinguished from what was already there - remove it and re-run")
+        resp = self._call("external_object_workshop",
+                          {"operation": "create", "kind": "ExternalDataProcessor", "name": ext,
+                           "parentProjectName": self.config.scratch_project}, timeout=600)
+        payload = self._assert_did(resp, "external_object_workshop create")
+        assert '"alreadyExists":true' not in self._squeeze(payload), (
+            f"create found the project already there, so nothing was created: {payload[:400]}")
+        listed = self._get_result_text(self._call("list_projects", {}, timeout=120))
+        assert ext in listed, \
+            "the workshop reported a created project that is not in the workspace"
+
+    # A build needs a platform runtime and, for a project with a base configuration,
+    # an infobase behind it. Where the workspace has neither, the operation is
+    # unavailable rather than broken, and the check says so instead of turning the
+    # environment into a red test. Matched on the server's own tags, not on the
+    # message: the message comes from the platform in whatever language the IDE
+    # runs in, and matching translated prose is how a check quietly stops firing.
+    # Any other failure stays a failure - that is what this check is here for.
+    BUILD_UNAVAILABLE = ("runtimeNotFound", "noInfobase")
+
+    def test_export_object_reports_the_file_it_wrote(self):
+        """Success must mean a non-empty binary, and failure must leave nothing.
+
+        The dump call returns nothing, so the tool used to report success straight
+        after it. The runner sits on the same machine as the server, so the file on
+        disk is what gets asserted - not the reply. Both directions are checked
+        because in a workspace without a platform only the failing one is reachable,
+        and "reported failure, wrote nothing" is the half that regressed.
+        """
+        out = os.path.join(self._scratch_dir(), "aiedt-e2e-export.epf")
+        if os.path.exists(out):
+            os.remove(out)
+        # objectName is omitted on purpose: a fresh workshop project holds exactly
+        # one root object, and the tool resolves it. Passing a parameter name the
+        # operation does not take is what made the earlier version test nothing.
+        resp = self._call_until_done("config_io",
+                                     {"operation": "export_object",
+                                      "projectName": self.config.scratch_external_project,
+                                      "outputPath": out}, timeout=600)
+        payload = self._payload(resp)
+        unavailable = [tag for tag in self.BUILD_UNAVAILABLE if f'"{tag}"' in payload]
+        if unavailable:
+            # The refusal itself is still asserted: a build that could not run must
+            # not leave a partial file where the next step would pick it up.
+            assert not os.path.exists(out), \
+                "export_object reported a failed build and still left a file behind"
+            raise SkipTest(f"this workspace cannot build a binary ({unavailable[0]}), so only the "
+                           "failure path was covered")
+        self._assert_did(resp, "export_object")
+        assert os.path.isfile(out), "export_object reported success but wrote no file"
+        assert os.path.getsize(out) > 0, "export_object reported success but the file is empty"
+        os.remove(out)
+
+    def test_export_object_refuses_a_missing_object(self):
+        """Building a binary from an object that does not exist must fail as such.
+
+        The reason matters: this workspace refuses a build for environmental
+        reasons too, and a check that accepts any refusal would pass without ever
+        exercising object resolution.
+        """
+        out = os.path.join(self._scratch_dir(), "aiedt-e2e-nothing.epf")
+        if os.path.exists(out):
+            os.remove(out)
+        resp = self._call_until_done("config_io",
+                                     {"operation": "export_object",
+                                      "projectName": self.config.scratch_external_project,
+                                      "objectName": "NoSuchObjectE2E", "outputPath": out},
+                                     timeout=600)
+        payload = self._assert_refused(
+            resp, "export_object reported success for an object that does not exist")
+        assert "objectResolutionFailed" in payload, (
+            "export_object refused, but not because the object is missing - so object resolution "
+            f"was never reached: {payload[:400]}")
+        assert not os.path.exists(out), "export_object refused and still left a file behind"
 
     def test_import_external_object_refuses_a_non_binary(self):
-        """An import that imports nothing has to say so."""
-        resp = self._call("external_object_workshop",
-                          {"operation": "import_external_object",
-                           "targetProjectName": self.config.scratch_project,
-                           "inputPath": "%TEMP%/aiedt-e2e-not-a-binary.epf"}, timeout=300)
-        text = self._get_result_text(resp)
-        assert "\"success\": true" not in text, \
-            "import_external_object reported success without importing anything"
+        """An import that imports nothing has to say so.
 
-    def test_unpack_refuses_a_used_directory(self):
-        """The conversion needs an empty destination, or 'not empty after' proves nothing."""
-        resp = self._call("unpack_external_binary",
-                          {"projectName": self.config.project,
-                           "sourcePath": "%TEMP%/aiedt-e2e-missing.epf",
-                           "targetPath": "%TEMP%"}, timeout=300)
-        text = self._get_result_text(resp)
-        assert "\"success\": true" not in text, \
-            "unpack reported success against a missing source and a used directory"
-
-    def test_marker_corrections_answers(self):
-        """Corrections resolve a check id the way the error report prints it.
-
-        A marker carries a short local uid while the report prints the symbolic
-        id, so this is the call that proves the two are reconciled rather than
-        compared directly - which matched nothing.
+        The input is a real file with the right extension and the wrong content, so
+        the call gets past every argument check and into the import itself.
         """
+        bogus = os.path.join(self._scratch_dir(), "aiedt-e2e-not-a-binary.epf")
+        with open(bogus, "w", encoding="utf-8") as handle:
+            handle.write("this is text, not a 1C external data processor\n")
+        resp = self._call_until_done("external_object_workshop",
+                                     {"operation": "import_external_object",
+                                      "targetProjectName": self.config.scratch_external_project,
+                                      "inputPath": bogus}, timeout=600)
+        payload = self._assert_refused(
+            resp, "import_external_object reported success without importing anything")
+        for wrong_gate in ("notExternalProject", "inputMissing"):
+            assert wrong_gate not in payload, (
+                f"the import stopped at {wrong_gate}, so this run did not reach the import "
+                f"itself: {payload[:400]}")
+        # Two refusals are both correct and both mean the import ran: the restorer
+        # threw, or it returned normally and added nothing - which is the case the
+        # before/after snapshot was added to catch, and it carries a tag instead of
+        # that message.
+        reached_the_import = ("import external object failed" in payload
+                              or "outputMissing" in payload)
+        assert reached_the_import, f"the refusal did not come from the import: {payload[:400]}"
+        os.remove(bogus)
+
+    def test_unpack_refuses_a_missing_source(self):
+        """No source binary means a refusal, not an empty conversion reported as done."""
+        resp = self._call_until_done("unpack_external_binary",
+                                     {"projectName": self.config.project,
+                                      "sourcePath": os.path.join(self._scratch_dir(),
+                                                                 "aiedt-e2e-missing.epf"),
+                                      "targetPath": self._scratch_dir()}, timeout=600)
+        payload = self._assert_refused(resp, "unpack reported success against a missing source")
+        assert "inputMissing" in payload, (
+            f"unpack refused for some other reason than the missing source: {payload[:400]}")
+
+    def test_marker_corrections_resolves_a_reported_check(self):
+        """A check id printed by the error report has to resolve to its findings.
+
+        A marker carries a short local uid while the report prints the symbolic id.
+        Comparing the two directly matched nothing, which is invisible from the
+        outside: the tool answers "no finding" either way. So the id is taken from
+        the report itself, and "no finding" for it is then a failure.
+        """
+        # scope=project, because the default scope covers only what this session has
+        # touched - which for a fresh session is nothing, and an empty report would
+        # skip this check every single run.
+        report = self._get_result_text(
+            self._call("diagnostics", {"operation": "get_project_errors",
+                                       "projectName": self.config.project,
+                                       "compact": True, "scope": "project"}, timeout=300))
+        printed = re.findall(r"^\|\s*`([^`]+)`\s*\|", report, re.MULTILINE)
+        # Xtext parser diagnostics are not EDT checks and carry no corrections, so
+        # they are not what this reconciliation is about.
+        check_ids = [c for c in printed if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", c)]
+        if not check_ids:
+            raise SkipTest(f"'{self.config.project}' reports no EDT check findings (only "
+                           f"{len(printed)} non-check diagnostics), so there is no id to resolve - "
+                           "point --project at a project that has some")
+        check_id = check_ids[0]
         resp = self._call("marker_corrections",
                           {"projectName": self.config.project, "operation": "list",
-                           "checkId": "common-module-type"}, timeout=180)
-        text = self._get_result_text(resp)
-        assert "Unknown tool" not in text and text, (
+                           "checkId": check_id}, timeout=180)
+        payload = self._payload(resp)
+        assert payload and "Unknown tool" not in payload, (
             "marker_corrections is not on this server - the write phase has to run against a "
             "build made from the same commit, not an older installed plugin")
-        assert "Unknown operation" not in text, "the list operation was not recognised"
+        assert "Unknown operation" not in payload, "the list operation was not recognised"
+        assert "No finding of check" not in payload, (
+            f"the error report lists '{check_id}' but marker_corrections finds no marker for it - "
+            f"the short uid and the symbolic id are not being reconciled: {payload[:400]}")
 
-    def test_scratch_project_removed(self):
+    def test_scratch_projects_removed(self):
         """Leave the workspace as it was found."""
-        resp = self._call("delete_project", {"projectName": self.config.scratch_project,
-                                             "confirm": True}, timeout=180)
-        self._assert_success(resp, "delete_project")
+        for name in (self.config.scratch_external_project, self.config.scratch_project):
+            self._assert_success(
+                self._call("delete_project", {"projectName": name, "confirm": True}, timeout=180),
+                f"delete_project {name}")
 
 
 
@@ -694,6 +925,7 @@ def write_junit_xml(results: list[TestResult], path: str):
         "name": "EDT-MCP-E2E",
         "tests": str(len(results)),
         "failures": str(sum(1 for r in results if not r.passed)),
+        "skipped": str(sum(1 for r in results if r.skipped)),
         "time": f"{sum(r.duration_ms for r in results)/1000:.3f}"
     })
 
@@ -703,7 +935,9 @@ def write_junit_xml(results: list[TestResult], path: str):
             "classname": "e2e",
             "time": f"{r.duration_ms/1000:.3f}"
         })
-        if not r.passed:
+        if r.skipped:
+            SubElement(tc, "skipped", {"message": r.message})
+        elif not r.passed:
             fail = SubElement(tc, "failure", {"message": r.message})
             fail.text = r.message
 
