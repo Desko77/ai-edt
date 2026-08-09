@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.toolkit.mdreport;
 
+import java.util.Set;
+
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 /**
@@ -14,8 +16,9 @@ import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
  * The name is a leftover and says more than it should. There is no registry: nothing registers, nothing
  * is looked up, and there is no second formatter to choose between - every metadata object of every type
  * is written by the same code, because that code reads the model rather than knowing the types. What is
- * left is this one method, and it is kept exactly as it is because the tools that answer
- * {@code get_metadata_details} and {@code ai_context} call it by name.
+ * left is one method, kept exactly as it is because the tools that answer {@code get_metadata_details}
+ * and {@code ai_context} call it by name, and the wider overload beside it that narrows an answer down
+ * to the sections a caller asked for.
  * </p>
  * <p>
  * That makes this class the whole of the package's surface. Everything behind it is package private and
@@ -43,5 +46,26 @@ public final class MetadataFormatterHub
     public static String format(MdObject object, boolean full, String language)
     {
         return MetadataFormatter.format(object, full, language);
+    }
+
+    /**
+     * Describes part of a metadata object in markdown, or says what its parts are.
+     *
+     * @param object the object; may be <code>null</code>, which is reported rather than thrown
+     * @param full <code>true</code> to dump every property the model holds and widen the attribute
+     *            tables, <code>false</code> for the name, the synonym and the comment
+     * @param language which language to prefer out of a synonym; may be <code>null</code> or unknown, in
+     *            which case whichever synonym the object carries is used
+     * @param sections the section headings to keep, matched without regard to case, spaces, hyphens or
+     *            underscores; <code>null</code> or empty returns every section
+     * @param outline <code>true</code> to answer with the section map alone - each section against the
+     *            number of rows it holds - so a caller can pick a part before reading it
+     * @return the markdown, never <code>null</code>. It opens at heading level 2: the callers put it under
+     *         a heading of their own, so it must not open one
+     */
+    public static String format(MdObject object, boolean full, String language, Set<String> sections,
+        boolean outline)
+    {
+        return MetadataFormatter.format(object, full, language, sections, outline);
     }
 }

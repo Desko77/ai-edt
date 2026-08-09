@@ -12,6 +12,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.emf.common.util.EMap;
 import org.eclipse.emf.ecore.EObject;
@@ -142,12 +143,38 @@ final class MetadataFormatter
      */
     static String format(MdObject object, boolean full, String language)
     {
+        return format(object, full, language, null, false);
+    }
+
+    /**
+     * Writes an object out, or the part of it that was asked for.
+     * <p>
+     * A large object is the reason this exists: a document with a hundred attributes, a dozen tabular
+     * sections and twenty forms is one answer that an agent has to read whole to find one attribute.
+     * The outline says what the object is made of, and the section list fetches one part.
+     * </p>
+     *
+     * @param object the metadata object; may be <code>null</code>
+     * @param full <code>true</code> to dump every property the model holds and widen the attribute
+     *            tables, <code>false</code> for the name, the synonym and the comment
+     * @param language which language to prefer out of a synonym; may be <code>null</code> or unknown, in
+     *            which case the first synonym there is wins
+     * @param sections the section headings to keep; <code>null</code> or empty writes every section
+     * @param outline <code>true</code> to answer with the section map alone - what the object holds and
+     *            how much of it - and no section bodies
+     * @return the markdown, never <code>null</code>. It opens at heading level 2: both callers put it
+     *         under a heading of their own
+     */
+    static String format(MdObject object, boolean full, String language, Set<String> sections,
+        boolean outline)
+    {
         if (object == null)
         {
             return NULL_OBJECT_ERROR;
         }
 
         MarkdownWriter out = new MarkdownWriter();
+        out.selectSections(sections, outline);
         // The MODEL name of the type - Catalog, InformationRegister - never the name of the Java class
         // that implements it.
         out.mainHeader(object.eClass().getName(), object.getName());
@@ -164,7 +191,33 @@ final class MetadataFormatter
         appendContainmentSections(out, object, full, language);
         appendSubsystems(out, object);
 
-        return out.toString();
+        return out.toString() + unknownSectionNote(out);
+    }
+
+    /**
+     * Says so when a section was asked for that this object does not have.
+     * <p>
+     * Without this the answer to a mistyped section name is an object with nothing in it, which reads
+     * exactly like an object that IS empty. The names that do exist are listed, because the caller
+     * clearly does not know them.
+     * </p>
+     *
+     * @param out the writer that did the formatting, not <code>null</code>
+     * @return the note, or an empty string when every asked-for section was found
+     */
+    private static String unknownSectionNote(MarkdownWriter out)
+    {
+        Set<String> missing = out.unmatchedSelectors();
+        if (missing.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        StringBuilder note = new StringBuilder("\n### Sections not found\n\n"); //$NON-NLS-1$
+        note.append("Asked for, and this object has no such section: ") //$NON-NLS-1$
+            .append(String.join(", ", missing)).append(".\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        note.append("It has: ").append(String.join(", ", out.sectionMap().keySet())) //$NON-NLS-1$ //$NON-NLS-2$
+            .append(".\n"); //$NON-NLS-1$
+        return note.toString();
     }
 
     /**

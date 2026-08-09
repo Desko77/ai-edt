@@ -6,9 +6,11 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 
@@ -69,6 +71,15 @@ public class MetadataDetailsReader
                     + "work too (e.g. '\u0421\u043F\u0440\u0430\u0432\u043E\u0447\u043D\u0438\u043A.\u041D\u043E\u043C\u0435\u043D\u043A\u043B\u0430\u0442\u0443\u0440\u0430'). Required.", true) //$NON-NLS-1$
             .booleanProperty("full", //$NON-NLS-1$
                 "true returns every property, false returns just the key facts. Default: false") //$NON-NLS-1$
+            .booleanProperty("outline", //$NON-NLS-1$
+                "true answers with the object's section map alone - every section against how many rows " //$NON-NLS-1$
+                    + "it holds - and no content. Ask this first about a large object, then pull the one " //$NON-NLS-1$
+                    + "section you need with 'sections'. Default: false") //$NON-NLS-1$
+            .stringArrayProperty("sections", //$NON-NLS-1$
+                "Return only these sections, e.g. ['Attributes'] or ['Tabular Sections','Forms']. Case, " //$NON-NLS-1$
+                    + "spaces, hyphens and underscores are ignored, so 'tabularSections' also works. " //$NON-NLS-1$
+                    + "A name the object has no section for is reported, together with the names it does " //$NON-NLS-1$
+                    + "have. Omit for the whole object.", false) //$NON-NLS-1$
             .stringProperty("language", //$NON-NLS-1$
                 "Language code for synonyms (e.g. 'en', 'ru'). Falls back to the configuration's " //$NON-NLS-1$
                     + "default when omitted.") //$NON-NLS-1$
@@ -103,10 +114,15 @@ public class MetadataDetailsReader
 
         boolean full = "true".equalsIgnoreCase(JsonUtils.extractStringArgument(params, "full")); //$NON-NLS-1$ //$NON-NLS-2$
         String language = JsonUtils.extractStringArgument(params, "language"); //$NON-NLS-1$
+        List<String> requested = JsonUtils.extractArrayArgument(params, "sections"); //$NON-NLS-1$
+        Set<String> sections = requested == null || requested.isEmpty() ? null
+            : new LinkedHashSet<>(requested);
+        boolean outline = JsonUtils.extractBooleanArgument(params, "outline", false); //$NON-NLS-1$
+        View view = new View(sections, outline);
 
         try
         {
-            return UiSync.call(() -> describe(projectName, objectFqns, full, language));
+            return UiSync.call(() -> describe(projectName, objectFqns, full, language, view));
         }
         catch (Exception e)
         {
@@ -121,10 +137,11 @@ public class MetadataDetailsReader
      * @param objectFqns the FQNs to describe
      * @param full whether to dump every property
      * @param language the requested synonym language, or <code>null</code>
+     * @param view which sections to write, and whether to write only their names and sizes
      * @return the markdown, or an {@code Error:} line
      */
     private static String describe(String projectName, List<String> objectFqns, boolean full,
-        String language)
+        String language, View view)
     {
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -142,7 +159,7 @@ public class MetadataDetailsReader
 
         if (ExternalProjectResolver.isExternalProject(project))
         {
-            return describeExternal(project, projectName, objectFqns, full, language);
+            return describeExternal(project, projectName, objectFqns, full, language, view);
         }
 
         Configuration configuration = configurationProvider.getConfiguration(project);
@@ -156,10 +173,33 @@ public class MetadataDetailsReader
         builder.append("# Metadata Object Details: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         for (String fqn : objectFqns)
         {
-            builder.append(formatObjectDetails(configuration, fqn, full, effectiveLanguage));
+            builder.append(formatObjectDetails(configuration, fqn, full, effectiveLanguage, view));
             builder.append(SECTION_SEPARATOR);
         }
         return builder.toString();
+    }
+
+    /**
+     * How much of an object the caller wants.
+     * <p>
+     * Carried as one value rather than two parameters because it travels through every describe method
+     * unchanged, and a pair of unrelated-looking arguments threaded through four signatures is how they
+     * end up passed in the wrong order.
+     * </p>
+     */
+    private static final class View
+    {
+        /** The sections asked for, or <code>null</code> for all of them. */
+        final Set<String> sections;
+
+        /** Whether only the section map was asked for. */
+        final boolean outline;
+
+        View(Set<String> sections, boolean outline)
+        {
+            this.sections = sections;
+            this.outline = outline;
+        }
     }
 
     /**
@@ -170,10 +210,11 @@ public class MetadataDetailsReader
      * @param objectFqns the FQNs to describe
      * @param full whether to dump every property
      * @param language the requested synonym language, or <code>null</code>
+     * @param view which sections to write, and whether to write only their names and sizes
      * @return the markdown
      */
     private static String describeExternal(IProject project, String projectName, List<String> objectFqns,
-        boolean full, String language)
+        boolean full, String language, View view)
     {
         String effectiveLanguage = language != null && !language.isEmpty() ? language : DEFAULT_LANGUAGE;
         String rootFqn = ExternalProjectResolver.getRootFqn(project);
@@ -194,7 +235,8 @@ public class MetadataDetailsReader
             }
             else
             {
-                builder.append(MetadataFormatterHub.format(object, full, effectiveLanguage));
+                builder.append(MetadataFormatterHub.format(object, full, effectiveLanguage,
+                    view.sections, view.outline));
             }
             builder.append(SECTION_SEPARATOR);
         }
@@ -208,10 +250,11 @@ public class MetadataDetailsReader
      * @param fqn the fully qualified name
      * @param full whether to dump every property
      * @param language the synonym language
+     * @param view which sections to write, and whether to write only their names and sizes
      * @return the object's markdown, or a {@code **Error:**} line
      */
     private static String formatObjectDetails(Configuration configuration, String fqn, boolean full,
-        String language)
+        String language, View view)
     {
         String[] parts = fqn.split("\\."); //$NON-NLS-1$
         if (parts.length < 2)
@@ -231,7 +274,7 @@ public class MetadataDetailsReader
         {
             return "**Error:** no such object: " + fqn + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return MetadataFormatterHub.format(object, full, language);
+        return MetadataFormatterHub.format(object, full, language, view.sections, view.outline);
     }
 
     /**

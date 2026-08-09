@@ -6,6 +6,12 @@
 
 package ru.aiedt.mcp.server.toolkit.mdreport;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+
 /**
  * The markdown a metadata answer is made of, down to the byte.
  * <p>
@@ -39,6 +45,130 @@ final class MarkdownWriter
     private final StringBuilder out = new StringBuilder();
 
     /**
+     * The sections asked for, normalized, or <code>null</code> when the whole object was asked for.
+     */
+    private Set<String> wanted;
+
+    /** Whether only the section map is wanted, with no section bodies. */
+    private boolean outlineOnly;
+
+    /** The section being written, by its heading; <code>null</code> before the first one opens. */
+    private String currentSection;
+
+    /** Whether what is being written now belongs to a section that was asked for. */
+    private boolean sectionWanted = true;
+
+    /** Every section seen, in the order seen, against the number of rows it holds. */
+    private final Map<String, Integer> sectionRows = new LinkedHashMap<>();
+
+    /** Which of the asked-for names have been seen. A name never seen is a caller's mistake. */
+    private final Set<String> matched = new LinkedHashSet<>();
+
+    /**
+     * Narrows what gets written.
+     * <p>
+     * Sections are counted whether or not they are written, because the count is the whole point of the
+     * outline and because a caller who asked for one section still deserves to be told what else is
+     * there. Call before writing anything.
+     * </p>
+     *
+     * @param sections the section headings to keep, matched case- and space-insensitively; <code>null</code>
+     *            or empty keeps every section
+     * @param outline <code>true</code> to write no section bodies at all and answer with the section map
+     */
+    void selectSections(Set<String> sections, boolean outline)
+    {
+        Set<String> normalized = sections == null ? null : normalizeAll(sections);
+        // A selection that normalizes away to nothing - [" "], ["---"] - is not a selection of
+        // nothing, it is a caller who selected nothing usable. Suppressing every section for it
+        // would answer with a bare object header and no hint that anything was dropped, so it is
+        // read as "no selection given" instead: too much is recoverable, silence is not.
+        this.wanted = normalized == null || normalized.isEmpty() ? null : normalized;
+        this.outlineOnly = outline;
+    }
+
+    /**
+     * The asked-for section names that no section answered to.
+     *
+     * @return the unmatched names, normalized; empty when everything asked for was found
+     */
+    Set<String> unmatchedSelectors()
+    {
+        if (wanted == null)
+        {
+            return Collections.emptySet();
+        }
+        Set<String> missing = new LinkedHashSet<>(wanted);
+        missing.removeAll(matched);
+        return missing;
+    }
+
+    /**
+     * Every section this object turned out to have, against how many rows each holds.
+     *
+     * @return the section map in the order the sections were written, never <code>null</code>
+     */
+    Map<String, Integer> sectionMap()
+    {
+        return Collections.unmodifiableMap(sectionRows);
+    }
+
+    /**
+     * Whether the writer is currently letting output through.
+     *
+     * @return <code>false</code> while inside a section that was not asked for, or in outline mode
+     */
+    private boolean writing()
+    {
+        return sectionWanted && !outlineOnly;
+    }
+
+    private static Set<String> normalizeAll(Set<String> names)
+    {
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String name : names)
+        {
+            if (name == null)
+            {
+                continue;
+            }
+            String key = normalize(name);
+            // Checked AFTER normalizing, not before: normalizing strips the separators, so a name
+            // made only of them survives a blank test and then matches no section ever written.
+            if (!key.isEmpty())
+            {
+                normalized.add(key);
+            }
+        }
+        return normalized;
+    }
+
+    /**
+     * Reduces a heading to what a caller can be expected to type.
+     * <p>
+     * The headings come from the model's own feature names run through a title-caser, so
+     * {@code tabularSections} reaches the wire as "Tabular Sections". Asking for it back in any of the
+     * three spellings has to work, or the parameter is a guessing game.
+     * </p>
+     *
+     * @param name a heading or a caller's selector
+     * @return the comparable form
+     */
+    private static String normalize(String name)
+    {
+        StringBuilder squeezed = new StringBuilder(name.length());
+        for (int index = 0; index < name.length(); index++)
+        {
+            char character = name.charAt(index);
+            if (!Character.isWhitespace(character) && character != '_' && character != '-')
+            {
+                squeezed.append(Character.toLowerCase(character));
+            }
+        }
+        return squeezed.toString();
+    }
+
+    /**
      * Writes the heading the whole answer hangs off.
      * <p>
      * The name is written as it comes, unescaped: a nameless object shows up as the four characters
@@ -61,6 +191,18 @@ final class MarkdownWriter
      */
     void sectionHeader(String title)
     {
+        currentSection = title;
+        sectionRows.putIfAbsent(title, Integer.valueOf(0));
+        String key = normalize(title);
+        sectionWanted = wanted == null || wanted.contains(key);
+        if (wanted != null && wanted.contains(key))
+        {
+            matched.add(key);
+        }
+        if (!writing())
+        {
+            return;
+        }
         out.append("\n### ").append(title).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
@@ -71,6 +213,10 @@ final class MarkdownWriter
      */
     void subsectionHeader(String title)
     {
+        if (!writing())
+        {
+            return;
+        }
         out.append("\n#### ").append(title).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
@@ -81,6 +227,10 @@ final class MarkdownWriter
      */
     void tableHeader(String... headers)
     {
+        if (!writing())
+        {
+            return;
+        }
         out.append("| "); //$NON-NLS-1$
         for (int column = 0; column < headers.length; column++)
         {
@@ -106,6 +256,16 @@ final class MarkdownWriter
      */
     void row(String... cells)
     {
+        if (currentSection != null)
+        {
+            // Counted even when suppressed: the count is what the outline answers with, and it has to
+            // be the same number whether or not the body was asked for.
+            sectionRows.merge(currentSection, Integer.valueOf(1), Integer::sum);
+        }
+        if (!writing())
+        {
+            return;
+        }
         out.append("| "); //$NON-NLS-1$
         for (int column = 0; column < cells.length; column++)
         {
@@ -125,6 +285,14 @@ final class MarkdownWriter
      */
     void bullet(String text)
     {
+        if (currentSection != null)
+        {
+            sectionRows.merge(currentSection, Integer.valueOf(1), Integer::sum);
+        }
+        if (!writing())
+        {
+            return;
+        }
         out.append("- ").append(text).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
@@ -135,6 +303,10 @@ final class MarkdownWriter
      */
     void literal(String text)
     {
+        if (!writing())
+        {
+            return;
+        }
         out.append(text);
     }
 
@@ -143,6 +315,10 @@ final class MarkdownWriter
      */
     void blankLine()
     {
+        if (!writing())
+        {
+            return;
+        }
         out.append("\n"); //$NON-NLS-1$
     }
 
@@ -170,6 +346,34 @@ final class MarkdownWriter
     @Override
     public String toString()
     {
-        return out.toString();
+        if (!outlineOnly)
+        {
+            return out.toString();
+        }
+        return out.toString() + outlineTable();
+    }
+
+    /**
+     * Renders the section map: what this object is made of and how big each part is.
+     * <p>
+     * This is the whole answer in outline mode. It exists so an agent can find out that an object has
+     * eighty attributes and four forms without reading eighty rows to learn it, and then ask for the
+     * one part it needs.
+     * </p>
+     *
+     * @return the table, opening with its own heading
+     */
+    private String outlineTable()
+    {
+        StringBuilder table = new StringBuilder();
+        table.append("\n### Sections\n\n"); //$NON-NLS-1$
+        table.append("| Section | Rows |\n|---|---|\n"); //$NON-NLS-1$
+        for (Map.Entry<String, Integer> entry : sectionRows.entrySet())
+        {
+            table.append("| ").append(entry.getKey()).append(" | ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(entry.getValue()).append(" |\n"); //$NON-NLS-1$
+        }
+        table.append("\nAsk for one with sections=[\"<name>\"].\n"); //$NON-NLS-1$
+        return table.toString();
     }
 }
