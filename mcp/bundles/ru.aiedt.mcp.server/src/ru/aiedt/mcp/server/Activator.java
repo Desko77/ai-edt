@@ -38,6 +38,7 @@ import com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport;
 import com._1c.g5.v8.dt.validation.marker.IMarkerManager;
 import com.e1c.g5.dt.applications.IApplicationManager;
 import com.e1c.g5.v8.dt.check.ICheckScheduler;
+import com.e1c.g5.v8.dt.check.qfix.IFixManager;
 import com.e1c.g5.v8.dt.check.settings.ICheckRepository;
 
 import ru.aiedt.mcp.server.folders.IClusterManager;
@@ -107,6 +108,8 @@ public class Activator
     private ServiceTracker<ICheckScheduler, ICheckScheduler> checkSchedulerTracker;
 
     private ServiceTracker<ICheckRepository, ICheckRepository> checkRepositoryTracker;
+
+    private ServiceTracker<IFixManager, IFixManager> fixManagerTracker;
 
     private ServiceTracker<IBmModelManager, IBmModelManager> bmModelManagerTracker;
 
@@ -324,6 +327,17 @@ public class Activator
     public ICheckRepository getCheckRepository()
     {
         return service(checkRepositoryTracker);
+    }
+
+    /**
+     * Returns the manager that applies EDT's own corrections to a validation
+     * finding - the same fixes the IDE offers on a marker.
+     *
+     * @return the service, or <code>null</code> when EDT does not offer it
+     */
+    public IFixManager getFixManager()
+    {
+        return service(fixManagerTracker);
     }
 
     /**
@@ -649,6 +663,7 @@ public class Activator
         markerManagerTracker = openTracker(context, IMarkerManager.class);
         checkSchedulerTracker = openTracker(context, ICheckScheduler.class);
         checkRepositoryTracker = openTracker(context, ICheckRepository.class);
+        fixManagerTracker = openTracker(context, IFixManager.class);
         bmModelManagerTracker = openTracker(context, IBmModelManager.class);
         derivedDataManagerProviderTracker = openTracker(context, IDerivedDataManagerProvider.class);
         servicesOrchestratorTracker = openTracker(context, IServicesOrchestrator.class);
@@ -688,6 +703,7 @@ public class Activator
         markerManagerTracker = closeTracker(markerManagerTracker);
         checkSchedulerTracker = closeTracker(checkSchedulerTracker);
         checkRepositoryTracker = closeTracker(checkRepositoryTracker);
+        fixManagerTracker = closeTracker(fixManagerTracker);
         bmModelManagerTracker = closeTracker(bmModelManagerTracker);
         derivedDataManagerProviderTracker = closeTracker(derivedDataManagerProviderTracker);
         servicesOrchestratorTracker = closeTracker(servicesOrchestratorTracker);

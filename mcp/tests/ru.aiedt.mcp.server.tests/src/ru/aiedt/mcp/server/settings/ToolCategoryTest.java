@@ -108,7 +108,7 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void totalToolCountIsOneHundredTwentyOne()
+    public void totalToolCountIsOneHundredTwentyTwo()
     {
         // Recounted directly from the group table. F3d facades landed on 118; the 2026-07-28
         // data_access removal dropped execute_query, browse_data and data_access (-3 -> 115) and
@@ -117,11 +117,13 @@ public class ToolCategoryTest
         // not switch off the mutating create_project); both were added (+2 -> 118), closing the
         // declared-vs-grouped gap. On 2026-08-03 self_upkeep joined APPLICATIONS (+1 -> 119).
         // On 2026-08-05 start_client and unpack_external_binary joined APPLICATIONS (+2 -> 121).
+        // On 2026-08-09 marker_corrections joined REFACTORING (+1 -> 122): it reads like a
+        // diagnostic but writes to the sources, so it sits where Read-only can switch it off.
         // Both reach a live infobase - one launches a client against it, the other runs the
         // Designer on it - so the group matters: APPLICATIONS is what Read-only switches off.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(121, ToolCategory.getTotalToolCount());
+        assertEquals(122, ToolCategory.getTotalToolCount());
     }
 
     @Test
@@ -214,12 +216,14 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void refactoringHoldsRenameDeleteAddAttribute()
+    public void refactoringHoldsTheToolsThatEditMetadata()
     {
         List<String> refactoring = ToolCategory.REFACTORING.getToolNames();
-        assertEquals(3, refactoring.size());
+        assertEquals(4, refactoring.size());
         assertTrue(refactoring.contains("rename_metadata_object")); //$NON-NLS-1$
         assertTrue(refactoring.contains("delete_metadata_object")); //$NON-NLS-1$
         assertTrue(refactoring.contains("add_metadata_attribute")); //$NON-NLS-1$
+        // Applying EDT's own correction changes the sources like any other edit here.
+        assertTrue(refactoring.contains("marker_corrections")); //$NON-NLS-1$
     }
 }
