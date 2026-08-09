@@ -831,7 +831,79 @@ public class BmFormHelper
         // The command bar and context menu are containment children a wizard
         // table always carries; both have dedicated best-effort helpers.
         getOrCreateAutoCommandBar(table, tableName);
-        ensureContextMenu(table);
+        Object tableMenu = ensureContextMenu(table);
+        if (tableMenu != null)
+        {
+            setScalarProperty(tableMenu, "autoFill", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        applyTableAdditions(table, tableName);
+    }
+
+    /**
+     * Adds the three additions a table carries in every reference form: the search
+     * string, the view status and the search control. All 669 tables of a reference
+     * configuration have all three; a table without them is missing the search and
+     * status strip a user expects above a list.
+     * <p>
+     * Each one is a form item in its own right - name, id, tooltip, context menu -
+     * pointing back at the table through {@code source}, and typed by its own
+     * ext-info. Best-effort throughout: a runtime without one of these classes
+     * skips it rather than failing the table.
+     *
+     * @param table     the freshly created table
+     * @param tableName the table name, which prefixes the addition names
+     */
+    private void applyTableAdditions(Object table, String tableName)
+    {
+        // The fourth column is the addition's own type. Without it every addition
+        // keeps the enum's first literal, so the view-status and search-control
+        // ones would carry their specialized ext-info under a search-string type -
+        // a form that disagrees with itself.
+        String[][] additions = {
+            { "setSearchStringAddition", "createSearchStringAdditionExtInfo", "SearchString", "SearchStringAddition" }, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            { "setViewStatusAddition", "createViewStatusAdditionExtInfo", "ViewStatus", "ViewStatusAddition" }, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            { "setSearchControlAddition", "createSearchControlAdditionExtInfo", "SearchControl", "SearchControlAddition" }, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        };
+        Class<?> containerIfaceLocal;
+        Class<?> additionClass;
+        Class<?> additionExtInfoClass;
+        Class<?> additionSourceClass;
+        try
+        {
+            containerIfaceLocal = Class.forName("com._1c.g5.v8.dt.form.model.AdditionContainer"); //$NON-NLS-1$
+            additionClass = Class.forName("com._1c.g5.v8.dt.form.model.Addition"); //$NON-NLS-1$
+            additionExtInfoClass = Class.forName("com._1c.g5.v8.dt.form.model.AdditionExtInfo"); //$NON-NLS-1$
+            additionSourceClass = Class.forName("com._1c.g5.v8.dt.form.model.AdditionSource"); //$NON-NLS-1$
+        }
+        catch (ClassNotFoundException e)
+        {
+            Activator.logWarning("Table additions unavailable on this runtime: " + e.getMessage()); //$NON-NLS-1$
+            return;
+        }
+        for (String[] spec : additions)
+        {
+            try
+            {
+                Object addition = ffClass.getMethod("createAddition").invoke(formFactory); //$NON-NLS-1$
+                setBasicProperties(addition, tableName + spec[2], nextId());
+                createExtendedTooltip(addition, tableName + spec[2]
+                    + "\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u043d\u0430\u044f\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0430", nextId()); //$NON-NLS-1$
+                Object menu = ensureContextMenu(addition);
+                if (menu != null)
+                {
+                    setScalarProperty(menu, "autoFill", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                additionClass.getMethod("setSource", additionSourceClass).invoke(addition, table); //$NON-NLS-1$
+                setScalarProperty(addition, "type", spec[3]); //$NON-NLS-1$
+                Object extInfo = ffClass.getMethod(spec[1]).invoke(formFactory);
+                additionClass.getMethod("setExtInfo", additionExtInfoClass).invoke(addition, extInfo); //$NON-NLS-1$
+                containerIfaceLocal.getMethod(spec[0], additionClass).invoke(table, addition);
+            }
+            catch (Exception e)
+            {
+                Activator.logWarning("Table addition " + spec[2] + " not applied: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
     }
 
     /**

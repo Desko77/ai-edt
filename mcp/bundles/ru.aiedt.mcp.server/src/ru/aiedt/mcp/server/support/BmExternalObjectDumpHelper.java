@@ -267,6 +267,21 @@ public final class BmExternalObjectDumpHelper
                 Path.class, IProgressMonitor.class);
             Path out = Paths.get(outputPath);
             dumpM.invoke(dumper, project, object, out, (IProgressMonitor) null);
+            // The dumper returns void, so "it did not throw" says nothing about a
+            // file having appeared. Its siblings in this plugin check their output
+            // and report outputMissing; this one reported success and left the
+            // caller to discover the absence later, with the operation that failed
+            // several steps behind. An empty file counts as no file: the platform
+            // creates one before writing into it.
+            java.io.File written = out.toFile();
+            if (!written.isFile() || written.length() == 0L)
+            {
+                r.error = "The dump reported no error but no file was written to " + outputPath //$NON-NLS-1$
+                    + ". The object may not be buildable, or the platform may have exited before " //$NON-NLS-1$
+                    + "writing - check the project for validation errors first."; //$NON-NLS-1$
+                r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+                return r;
+            }
             r.ok = true;
             return r;
         }

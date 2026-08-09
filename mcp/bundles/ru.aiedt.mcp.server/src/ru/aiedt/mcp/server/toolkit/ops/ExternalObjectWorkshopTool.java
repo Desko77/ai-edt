@@ -141,15 +141,23 @@ public class ExternalObjectWorkshopTool implements IMcpTool
             {
                 message = message + " " + res.hint; //$NON-NLS-1$
             }
-            return ToolResult.error(message).toJson();
+            ToolResult err = ToolResult.error(message);
+            if (res.failureKind != null)
+            {
+                err.put(res.failureKind, Boolean.TRUE);
+            }
+            return err.toJson();
         }
+        // Name what arrived rather than asserting that something did: the caller
+        // gets the object it can now address, not a promise to go and look.
         return ToolResult.success()
             .put("operation", "import_external_object") //$NON-NLS-1$ //$NON-NLS-2$
             .put("targetProject", targetProjectName) //$NON-NLS-1$
             .put("inputPath", inputPath) //$NON-NLS-1$
-            .put("message", "Imported into '" + targetProjectName //$NON-NLS-1$ //$NON-NLS-2$
-                + "'. The object is added to the container; refresh the project (clean_project / re-open " //$NON-NLS-1$
-                + "in EDT) to see it, and rebuild binaries with export_object.") //$NON-NLS-1$
+            .put("importedObject", res.importedObjectFqn) //$NON-NLS-1$
+            .put("message", "Imported " + res.importedObjectFqn + " into '" + targetProjectName //$NON-NLS-1$ //$NON-NLS-2$
+                + "'. Run clean_project if the editor still shows the old contents, and rebuild " //$NON-NLS-1$
+                + "binaries with export_object.") //$NON-NLS-1$
             .toJson();
     }
 

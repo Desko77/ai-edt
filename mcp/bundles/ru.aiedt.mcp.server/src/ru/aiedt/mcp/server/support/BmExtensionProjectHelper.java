@@ -189,7 +189,15 @@ public final class BmExtensionProjectHelper
                 // Fall back to the workspace handle for the requested name.
                 created = ResourcesPlugin.getWorkspace().getRoot().getProject(newName);
             }
-            r.createdProjectName = created != null ? created.getName() : newName;
+            // A handle exists whether or not a project does, so it cannot carry the
+            // verdict - success has to come from the workspace.
+            if (created == null || !created.exists())
+            {
+                r.error = "The project manager reported no error but no project '" + newName //$NON-NLS-1$
+                    + "' exists in the workspace."; //$NON-NLS-1$
+                return r;
+            }
+            r.createdProjectName = created.getName();
             r.ok = true;
         }
         catch (Exception t)

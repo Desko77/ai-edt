@@ -147,7 +147,17 @@ public final class BmConfigurationProjectHelper
             {
                 created = ResourcesPlugin.getWorkspace().getRoot().getProject(name);
             }
-            r.createdProjectName = created != null ? created.getName() : name;
+            // getProject hands back a handle whether or not anything exists behind
+            // it, so the fallback above cannot stand in for a result: reporting
+            // success off it says a project was created when none was. Ask the
+            // workspace instead of the handle.
+            if (created == null || !created.exists())
+            {
+                r.error = "The project manager reported no error but no project '" + name //$NON-NLS-1$
+                    + "' exists in the workspace."; //$NON-NLS-1$
+                return r;
+            }
+            r.createdProjectName = created.getName();
             r.version = version.toString();
             r.ok = true;
         }

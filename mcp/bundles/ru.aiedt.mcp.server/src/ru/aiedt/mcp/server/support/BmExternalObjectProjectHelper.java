@@ -135,7 +135,15 @@ public final class BmExternalObjectProjectHelper
             {
                 created = ResourcesPlugin.getWorkspace().getRoot().getProject(name);
             }
-            r.createdProjectName = created != null ? created.getName() : name;
+            // A handle exists whether or not a project does, so it cannot carry the
+            // verdict - success has to come from the workspace.
+            if (created == null || !created.exists())
+            {
+                r.error = "The project manager reported no error but no project '" + name //$NON-NLS-1$
+                    + "' exists in the workspace."; //$NON-NLS-1$
+                return r;
+            }
+            r.createdProjectName = created.getName();
             r.kind = isReport ? ExternalProjectResolver.KIND_EXTERNAL_REPORT
                 : ExternalProjectResolver.KIND_EXTERNAL_DATA_PROCESSOR;
             r.rootFqn = r.kind + "." + name; //$NON-NLS-1$
@@ -157,6 +165,49 @@ public final class BmExternalObjectProjectHelper
         public String hint;
         public String targetProject;
         public String inputPath;
+        /** FQN of the object that appeared in the container - the evidence the import happened,
+         *  in the form every other operation accepts. */
+        public String importedObjectFqn;
+        public String failureKind;
+    }
+
+    /**
+     * Names of the external objects a container holds, read from disk. The import
+     * is verified by comparing this before and after: the restorer says nothing
+     * about what it did, and the object's name is not knowable from the binary's
+     * file name.
+     *
+     * @param container the external-object container project
+     * @return the object names currently in it, empty when none or unreadable
+     */
+    private static java.util.Set<String> listExternalObjectDirs(IProject container)
+    {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (String collection : new String[] { "ExternalDataProcessors", "ExternalReports" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            java.io.File dir = new java.io.File(container.getLocation().toFile(),
+                "src" + java.io.File.separator + collection); //$NON-NLS-1$
+            java.io.File[] entries = dir.listFiles();
+            if (entries == null)
+            {
+                continue;
+            }
+            // The directory is named in the plural, the FQN every other operation
+            // takes is singular. Returning the directory key would hand the caller
+            // an identifier it cannot then pass to get_metadata_details or
+            // edit_metadata - a name that looks addressable and is not.
+            String kind = "ExternalDataProcessors".equals(collection) //$NON-NLS-1$
+                ? ExternalProjectResolver.KIND_EXTERNAL_DATA_PROCESSOR
+                : ExternalProjectResolver.KIND_EXTERNAL_REPORT;
+            for (java.io.File e : entries)
+            {
+                if (e.isDirectory())
+                {
+                    names.add(kind + "." + e.getName()); //$NON-NLS-1$
+                }
+            }
+        }
+        return names;
     }
 
     /**
@@ -245,7 +296,36 @@ public final class BmExternalObjectProjectHelper
             java.nio.file.Path tempXmlDir = java.nio.file.Files.createTempDirectory("xml-ext-obj-"); //$NON-NLS-1$
             try
             {
+                // What the container holds before the import, so afterwards the
+                // question "did anything arrive" has an answer. restore() returns
+                // void, and taking that for success reported an import that never
+                // happened: the reply said the object was added, get_metadata_objects
+                // returned the same list as before, and nothing was on disk.
+                java.util.Set<String> before = listExternalObjectDirs(target);
                 restorer.restore(target, binary.toPath(), tempXmlDir, new NullProgressMonitor());
+                try
+                {
+                    target.refreshLocal(org.eclipse.core.resources.IResource.DEPTH_INFINITE,
+                        new NullProgressMonitor());
+                }
+                catch (Exception refreshFailed)
+                {
+                    // The comparison below reads the filesystem, so a stale workspace
+                    // view would only make this stricter, never laxer.
+                }
+                java.util.Set<String> after = listExternalObjectDirs(target);
+                after.removeAll(before);
+                if (after.isEmpty())
+                {
+                    r.error = "The import reported no error but nothing was added to '" //$NON-NLS-1$
+                        + targetProjectName + "'. The file may not be an external data processor " //$NON-NLS-1$
+                        + "or report, or it may have been built by a platform version this " //$NON-NLS-1$
+                        + "installation does not have. Importing it through the EDT UI reports " //$NON-NLS-1$
+                        + "the reason."; //$NON-NLS-1$
+                    r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+                    return r;
+                }
+                r.importedObjectFqn = after.iterator().next();
                 r.ok = true;
             }
             finally
