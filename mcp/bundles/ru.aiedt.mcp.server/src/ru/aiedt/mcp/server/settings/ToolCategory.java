@@ -154,7 +154,9 @@ public enum ToolCategory
         "add_metadata_attribute", //$NON-NLS-1$
         // Reads like a diagnostic and writes like an editor: applying a correction
         // changes the sources, so it belongs where Read-only can switch it off.
-        "marker_corrections"), //$NON-NLS-1$
+        "marker_corrections", //$NON-NLS-1$
+        // Creates a whole object in the target project - as plainly a write as a rename.
+        "copy_object"), //$NON-NLS-1$
 
     /** The builders: they write metadata, forms, schemas and spreadsheets. */
     CONSTRUCTORS("constructors", "Builders & Workshops", //$NON-NLS-1$ //$NON-NLS-2$

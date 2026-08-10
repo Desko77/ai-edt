@@ -85,6 +85,7 @@ import ru.aiedt.mcp.server.toolkit.ops.ExtensionWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.ExternalDataSourceWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.ExternalObjectWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.MarkerCorrectionTool;
+import ru.aiedt.mcp.server.toolkit.ops.ObjectCopier;
 import ru.aiedt.mcp.server.toolkit.ops.ReferenceLocator;
 import ru.aiedt.mcp.server.toolkit.ops.OutgoingStructuresReader;
 import ru.aiedt.mcp.server.toolkit.ops.FindRlsViolationsTool;
@@ -972,6 +973,7 @@ public class McpHttpEndpoint
             new ExtensionWorkshopTool(),
             new ExternalObjectWorkshopTool(),
             new MarkerCorrectionTool(),
+            new ObjectCopier(),
             new ExternalDataSourceWorkshopTool(),
             new ProjectCreator(),
             new DependencyGraphTool(),
