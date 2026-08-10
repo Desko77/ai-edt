@@ -6,9 +6,11 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -150,6 +152,15 @@ public class LaunchDebuggerTool implements IMcpTool
                 .toJson();
         }
         action = JsonUtils.normalizeOperationToken(action);
+        // Same rule as the other facades: reaching a tool through here is still reaching that tool.
+        // Keyed on the folded tool's name, which for most actions is the action itself and for the
+        // rest is what CANONICAL_NAMES says - this facade renamed several of them, and gating the
+        // shorter spelling would leave the longer one an open door.
+        String presetGate = ToolGate.gateIfPresetDisabled(canonicalName(action));
+        if (presetGate != null)
+        {
+            return ToolResult.error(presetGate).put("action", action).toJson(); //$NON-NLS-1$
+        }
         switch (action)
         {
             case "launch": //$NON-NLS-1$
@@ -222,6 +233,42 @@ public class LaunchDebuggerTool implements IMcpTool
                         + "evaluate / start_profiling / get_profiling_results / debug_status / help.") //$NON-NLS-1$
                     .toJson();
         }
+    }
+
+    /**
+     * The actions this facade spells differently from the tool they reach, against that tool's name.
+     * <p>
+     * Every other action is already the tool's name. This map exists because a preset switches a tool
+     * off by name, and an action that goes by a shorter one would otherwise walk past the decision.
+     * </p>
+     */
+    private static final Map<String, String> CANONICAL_NAMES = canonicalNames();
+
+    private static Map<String, String> canonicalNames()
+    {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("launch", DebugSessionStarter.NAME); //$NON-NLS-1$
+        m.put("add_breakpoint", "set_breakpoint"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("get_state", DebugStateReader.NAME); //$NON-NLS-1$
+        m.put("terminate", LaunchTerminator.NAME); //$NON-NLS-1$
+        m.put("evaluate", "evaluate_expression"); //$NON-NLS-1$ //$NON-NLS-2$
+        // The three directions are one tool with a mode, so they answer to its name.
+        m.put("step_over", DebugStepper.NAME); //$NON-NLS-1$
+        m.put("step_into", DebugStepper.NAME); //$NON-NLS-1$
+        m.put("step_out", DebugStepper.NAME); //$NON-NLS-1$
+        return Collections.unmodifiableMap(m);
+    }
+
+    /**
+     * Returns the name a preset would know this action by.
+     *
+     * @param action the action asked for, already normalized; may be <code>null</code>
+     * @return the folded tool's name, or the action itself when the two are the same
+     */
+    static String canonicalName(String action)
+    {
+        String mapped = action == null ? null : CANONICAL_NAMES.get(action);
+        return mapped != null ? mapped : action;
     }
 
     /**

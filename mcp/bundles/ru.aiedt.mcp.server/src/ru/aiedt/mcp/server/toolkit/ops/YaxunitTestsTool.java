@@ -19,6 +19,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.GitHubReleaseResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.ToolGate;
@@ -146,19 +147,21 @@ public class YaxunitTestsTool implements IMcpTool
                 .toJson();
         }
 
-        // Preset gate: mode=debug launches a debugger through YaxunitDebugRunner. When the active
-        // preset disabled the debug_yaxunit_tests capability (the Editing preset switches the whole
-        // DEBUG group off, for one), reject before the install pre-step and the launch - so debug mode
-        // cannot slip past the preset through this facade. debug_yaxunit_tests is the DEBUG-group name a
-        // preset gates, reached here as a MODE (backed today by a deprecated debug_yaxunit_tests alias);
-        // gate on preset membership, not gateOrNull, so it stays correct once that alias is retired.
-        if ("debug".equals(mode)) //$NON-NLS-1$
+        // Preset gate, for BOTH modes and before the install pre-step. Each mode reaches a tool of
+        // its own - debug_yaxunit_tests through the debugger, run_yaxunit_tests through the runner -
+        // and neither is named after the mode, so the mode is translated before the preset is asked.
+        // Gate on preset membership rather than gateOrNull, so this stays correct once the standalone
+        // aliases are retired and the names live only in the group table.
+        //
+        // Placed here rather than at the dispatch below because the install pre-step writes to the
+        // infobase: gating after it would let a switched-off call install or update the engine and
+        // only then be refused, which is a write the preset exists to prevent.
+        String folded = "debug".equals(mode) //$NON-NLS-1$
+            ? YaxunitDebugRunner.NAME : YaxunitTestRunner.NAME;
+        String presetGate = ToolGate.gateIfPresetDisabled(folded);
+        if (presetGate != null)
         {
-            String gate = ToolGate.gateIfPresetDisabled("debug_yaxunit_tests"); //$NON-NLS-1$
-            if (gate != null)
-            {
-                return ToolResult.error(gate).put("operation", NAME).toJson(); //$NON-NLS-1$
-            }
+            return ToolResult.error(presetGate).put("operation", NAME).put("mode", mode).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         // updateBeforeLaunch handling - delegate already triggers it when

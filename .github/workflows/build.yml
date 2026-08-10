@@ -61,6 +61,12 @@ jobs:
       - name: Tool catalog census
         run: python3 scripts/check-tool-catalog.py
 
+      # A facade that delegates without asking whether a preset switched the tool off lets the whole
+      # preset be walked around by calling the facade instead. It is structural, so it is counted
+      # here rather than in the suite, which cannot read the sources from inside the OSGi runtime.
+      - name: Facade gate census
+        run: python3 scripts/check-facade-gates.py
+
       - name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()

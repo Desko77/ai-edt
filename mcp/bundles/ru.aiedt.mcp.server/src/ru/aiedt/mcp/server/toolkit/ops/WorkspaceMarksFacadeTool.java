@@ -13,6 +13,7 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
@@ -119,6 +120,15 @@ public class WorkspaceMarksFacadeTool implements IMcpTool
             return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
                 + "'. Allowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
                 + " / help.").toJson(); //$NON-NLS-1$
+        }
+        // One gate for every operation this facade folds in. Reaching a tool through a facade is
+        // still reaching that tool, and a preset that switched it off means it. Keyed on the
+        // operation name because that IS the folded tool's name; an operation with no tool of its
+        // own is in nobody's disabled set and passes straight through.
+        String presetGate = ToolGate.gateIfPresetDisabled(operation);
+        if (presetGate != null)
+        {
+            return ToolResult.error(presetGate).put("operation", operation).toJson(); //$NON-NLS-1$
         }
         switch (operation)
         {

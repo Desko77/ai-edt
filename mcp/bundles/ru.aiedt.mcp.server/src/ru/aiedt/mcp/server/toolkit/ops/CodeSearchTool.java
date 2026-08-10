@@ -6,9 +6,11 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -195,6 +197,14 @@ public class CodeSearchTool implements IMcpTool
                 + "content_assist / outgoing_structures / help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
+        // Same rule as the other facades: reaching a tool through here is still reaching that tool,
+        // and a preset switched it off by ITS name. This facade named its operations after the job
+        // rather than the tool, so the name has to be translated back before the question is asked.
+        String presetGate = ToolGate.gateIfPresetDisabled(foldedToolName(operation));
+        if (presetGate != null)
+        {
+            return ToolResult.error(presetGate).put("operation", operation).toJson(); //$NON-NLS-1$
+        }
         switch (operation)
         {
             case "text_search": //$NON-NLS-1$
@@ -327,6 +337,43 @@ public class CodeSearchTool implements IMcpTool
             }
         }
         return rewritten;
+    }
+
+    /**
+     * Each operation against the tool it reaches, because none of them share a name.
+     * <p>
+     * The operations here are named after the job - {@code text_search}, {@code object_references} -
+     * while a preset knows the tools that do it: {@code search_in_code}, {@code find_references}.
+     * Asking the preset about the operation name would always come back "not switched off".
+     * </p>
+     */
+    private static final Map<String, String> FOLDED_TOOLS = foldedTools();
+
+    private static Map<String, String> foldedTools()
+    {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("text_search", "search_in_code"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("object_references", ReferenceLocator.NAME); //$NON-NLS-1$
+        // Method references are a text search with the query rewritten, so they answer to that tool.
+        m.put("method_references", "search_in_code"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("resolve_symbol", "go_to_definition"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("call_hierarchy", CallHierarchyReader.NAME); //$NON-NLS-1$
+        m.put("symbol_info", SymbolInfoReader.NAME); //$NON-NLS-1$
+        m.put("content_assist", "get_content_assist"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("outgoing_structures", "get_outgoing_structures"); //$NON-NLS-1$ //$NON-NLS-2$
+        return Collections.unmodifiableMap(m);
+    }
+
+    /**
+     * Returns the name a preset would know an operation's tool by.
+     *
+     * @param operation the operation asked for, already normalized; may be <code>null</code>
+     * @return the folded tool's name, or the operation itself when it reaches no tool of its own
+     */
+    static String foldedToolName(String operation)
+    {
+        String mapped = operation == null ? null : FOLDED_TOOLS.get(operation);
+        return mapped != null ? mapped : operation;
     }
 
     private static String buildHelp(String topic)
