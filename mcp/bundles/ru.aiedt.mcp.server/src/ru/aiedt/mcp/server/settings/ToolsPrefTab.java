@@ -167,6 +167,14 @@ public class ToolsPrefTab
         ToolSettingsStore store = ToolSettingsStore.getInstance();
         store.setDisabledTools(disabledTools);
         store.setUnlistedTools(unlistedTools);
+        // The combo shows which preset the ticks amount to, and that is what gets recorded, so a
+        // preset chosen here survives a version that adds tools: without it the store would keep the
+        // names alone, and anything added later would be in nobody's list and default to switched on.
+        ToolProfile chosen = ToolProfile.matchPreset(disabledTools, unlistedTools);
+        if (chosen != ToolProfile.CUSTOM)
+        {
+            store.applyPreset(chosen);
+        }
 
         ToolParamSettings parameters = ToolParamSettings.getInstance();
         for (Map.Entry<String, Integer> entry : pendingValues.entrySet())

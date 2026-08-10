@@ -69,7 +69,45 @@ public final class ToolSettingsStore
         {
             return Collections.emptySet();
         }
+        ToolProfile preset = activePreset(store);
+        if (preset != null && preset.getDisabledTools() != null)
+        {
+            return preset.getDisabledTools();
+        }
         return parseDisabledTools(store.getString(PrefKeys.PREF_DISABLED_TOOLS));
+    }
+
+    /**
+     * Returns the preset in force, or <code>null</code> when the selection is hand-picked.
+     * <p>
+     * Worked out on every read rather than cached, for the same reason the name sets are: the
+     * preference page has to take effect on the next request without anything being told to refresh.
+     * </p>
+     * <p>
+     * A stored name this version does not know - a preset removed since it was chosen - is treated as
+     * hand-picked, which falls back to the names that were written down when it was applied. That is
+     * the closest thing to what the user asked for that this version can still honour.
+     * </p>
+     *
+     * @param store the preference store, not <code>null</code>
+     * @return the active preset, or <code>null</code> for a hand-picked selection
+     */
+    private static ToolProfile activePreset(IPreferenceStore store)
+    {
+        String stored = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        if (stored == null || stored.trim().isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            ToolProfile preset = ToolProfile.valueOf(stored.trim());
+            return preset == ToolProfile.CUSTOM ? null : preset;
+        }
+        catch (IllegalArgumentException unknownPreset)
+        {
+            return null;
+        }
     }
 
     /**
@@ -86,6 +124,10 @@ public final class ToolSettingsStore
             return;
         }
         store.setValue(PrefKeys.PREF_DISABLED_TOOLS, serializeDisabledTools(disabledTools));
+        // Naming the tools directly is what makes a selection hand-picked. applyPreset writes the
+        // preset back afterwards; every other caller here is a checkbox, and a ticked checkbox must
+        // not be overruled by a preset that would work its answer out from the groups.
+        store.setValue(PrefKeys.PREF_TOOL_PRESET, ""); //$NON-NLS-1$
     }
 
     /**
@@ -107,6 +149,11 @@ public final class ToolSettingsStore
         {
             return Collections.emptySet();
         }
+        ToolProfile preset = activePreset(store);
+        if (preset != null && preset.getUnlistedTools() != null)
+        {
+            return preset.getUnlistedTools();
+        }
         return parseDisabledTools(store.getString(PrefKeys.PREF_UNLISTED_TOOLS));
     }
 
@@ -125,6 +172,7 @@ public final class ToolSettingsStore
             return;
         }
         store.setValue(PrefKeys.PREF_UNLISTED_TOOLS, serializeDisabledTools(unlistedTools));
+        store.setValue(PrefKeys.PREF_TOOL_PRESET, ""); //$NON-NLS-1$
     }
 
     /**
@@ -246,6 +294,36 @@ public final class ToolSettingsStore
         }
         setDisabledTools(preset.getDisabledTools());
         setUnlistedTools(preset.getUnlistedTools());
+        // Written last, because both setters above clear it: the choice outlives the names it
+        // resolves to today, so a tool that only exists in a later version still lands on the side of
+        // the choice the user made rather than defaulting to on.
+        IPreferenceStore store = store();
+        if (store != null)
+        {
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, preset.name());
+        }
+    }
+
+    /**
+     * Returns the preset in force, or {@link ToolProfile#CUSTOM} for a hand-picked selection.
+     * <p>
+     * Answers from the recorded choice when there is one. Where there is not - a selection made
+     * before the choice was recorded, or ticked by hand - the sets themselves are matched against the
+     * presets, which is how the preference page has always worked out what to show.
+     * </p>
+     *
+     * @return the active preset, never <code>null</code>
+     */
+    public ToolProfile getActivePreset()
+    {
+        IPreferenceStore store = store();
+        if (store == null)
+        {
+            return ToolProfile.CUSTOM;
+        }
+        ToolProfile recorded = activePreset(store);
+        return recorded != null ? recorded
+            : ToolProfile.matchPreset(getDisabledTools(), getUnlistedTools());
     }
 
     /**

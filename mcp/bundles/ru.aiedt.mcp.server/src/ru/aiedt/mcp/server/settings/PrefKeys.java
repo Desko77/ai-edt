@@ -79,6 +79,22 @@ public final class PrefKeys
      */
     public static final String PREF_UNLISTED_TOOLS = "mcpUnlistedTools"; //$NON-NLS-1$
 
+    /**
+     * Which preset is in force, by its enum constant name; empty when the choice is hand-picked.
+     * <p>
+     * Without this, applying a preset only ever wrote down the names it covered at the time, and a
+     * tool added by a later version was in nobody's list - so an upgrade quietly switched it on for
+     * everyone, including the people who had chosen the strictest preset precisely to keep such
+     * things off. Recording the choice instead of its outcome lets the sets be worked out afresh
+     * against the tools that exist now.
+     * </p>
+     * <p>
+     * The name sets are still written alongside it: they are what a hand-picked selection is made of,
+     * and they remain the answer whenever this is empty or names a preset this version no longer has.
+     * </p>
+     */
+    public static final String PREF_TOOL_PRESET = "mcpToolPreset"; //$NON-NLS-1$
+
     /** How many heavy (expensive) tools may run at once before further ones get a retryable 503. */
     public static final String PREF_HEAVY_TOOL_LIMIT = "mcpHeavyToolLimit"; //$NON-NLS-1$
 
