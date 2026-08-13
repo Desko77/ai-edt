@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.McpHistory;
+import ru.aiedt.mcp.server.support.HeapHeadroom;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -38,9 +39,11 @@ public class SelfStatusTool
     public String getDescription()
     {
         return "Server self-diagnostics: per-tool duration percentiles (p50/p95/p99), call " //$NON-NLS-1$
-            + "counts and success/failure counts over the recent-call history, plus per Pending " //$NON-NLS-1$
+            + "counts and success/failure counts over the recent-call history, per Pending " //$NON-NLS-1$
             + "domain the count of async operations still running and the count tracked (running " //$NON-NLS-1$
-            + "plus completed-but-not-yet-collected). Read-only, takes no arguments."; //$NON-NLS-1$
+            + "plus completed-but-not-yet-collected), and the heap EDT still holds after a " //$NON-NLS-1$
+            + "collection against the share at which expensive tools start being refused - check " //$NON-NLS-1$
+            + "it when pacing a long series of expensive calls. Read-only, takes no arguments."; //$NON-NLS-1$
     }
 
     @Override
@@ -63,7 +66,32 @@ public class SelfStatusTool
             .put("historyCapacity", McpHistory.CAPACITY) //$NON-NLS-1$
             .put("tools", McpHistory.perToolStats()) //$NON-NLS-1$
             .put("pending", pendingCounts()) //$NON-NLS-1$
+            .put("heap", heapReading()) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * How much of the heap is still held after a collection, and how much of it may be held before
+     * expensive tools are turned away.
+     * <p>
+     * Here because an agent pacing a long series of expensive calls has no other way to see the heap
+     * filling up: without it, the first news of trouble is the server going quiet altogether.
+     * </p>
+     *
+     * @return the reading, as held megabytes, the ceiling, the share in use and the refusal threshold
+     */
+    private static Map<String, Object> heapReading()
+    {
+        HeapHeadroom.Reading reading = HeapHeadroom.current();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("heldMb", reading.getRetainedMegabytes()); //$NON-NLS-1$
+        m.put("liveMb", reading.getLiveMegabytes()); //$NON-NLS-1$
+        m.put("ceilingMb", reading.getCeilingMegabytes()); //$NON-NLS-1$
+        m.put("percent", reading.getPercentUsed()); //$NON-NLS-1$
+        m.put("livePercent", reading.getLivePercent()); //$NON-NLS-1$
+        m.put("measuredAfterCollection", reading.isTrustworthy()); //$NON-NLS-1$
+        m.put("refusalPercent", HeapHeadroom.refusalPercent()); //$NON-NLS-1$
+        return m;
     }
 
     /**

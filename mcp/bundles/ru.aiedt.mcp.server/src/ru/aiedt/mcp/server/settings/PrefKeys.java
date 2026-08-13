@@ -98,6 +98,21 @@ public final class PrefKeys
     /** How many heavy (expensive) tools may run at once before further ones get a retryable 503. */
     public static final String PREF_HEAVY_TOOL_LIMIT = "mcpHeavyToolLimit"; //$NON-NLS-1$
 
+    /**
+     * The share of the heap, as a percentage, that may still be held after a collection before heavy
+     * tools are turned away with a retryable 503.
+     * <p>
+     * The concurrency limit above bounds how many expensive tools run at once, which does nothing for a
+     * single agent calling one after another: that series is never concurrent and still walks the heap
+     * to its ceiling. Past the ceiling it is not the call that fails but the JVM, and with it the
+     * workbench and this server - so the agent loses the whole session rather than one answer.
+     * </p>
+     * <p>
+     * A value outside 1..99 switches the guard off.
+     * </p>
+     */
+    public static final String PREF_HEAP_REFUSAL_PERCENT = "mcpHeapRefusalPercent"; //$NON-NLS-1$
+
     /** Whether the opt-in debug trace file is written. Off by default; a developer turns it on. */
     public static final String PREF_DEBUG_LOG_ENABLED = "mcpDebugLogEnabled"; //$NON-NLS-1$
 
@@ -213,6 +228,14 @@ public final class PrefKeys
 
     /** Shipped heavy-tool concurrency limit: a few at once, enough for parallel agents without a stampede. */
     public static final int DEFAULT_HEAVY_TOOL_LIMIT = 3;
+
+    /**
+     * Shipped heap guard: heavy tools are refused once more than this share of the heap survives a
+     * collection. Set high enough that ordinary work on a large configuration is never touched - EDT
+     * holds a great deal of a large model quite legitimately - and low enough to leave the headroom one
+     * expensive call needs. On the 4 GB heap EDT ships with, this keeps roughly 300 MB in reserve.
+     */
+    public static final int DEFAULT_HEAP_REFUSAL_PERCENT = 92;
 
     /** Shipped debug trace: off, so nothing is written until a developer asks for it. */
     public static final boolean DEFAULT_DEBUG_LOG_ENABLED = false;

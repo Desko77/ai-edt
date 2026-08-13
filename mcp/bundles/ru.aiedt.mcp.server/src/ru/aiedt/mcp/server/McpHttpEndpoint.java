@@ -171,6 +171,7 @@ import ru.aiedt.mcp.server.toolkit.ops.InsightsFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.SecurityAuditFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.WorkspaceMarksFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.DocsLookupFacadeTool;
+import ru.aiedt.mcp.server.support.HeapHeadroom;
 import ru.aiedt.mcp.server.support.HeavyTools;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.WorkspacePhase;
@@ -317,6 +318,11 @@ public class McpHttpEndpoint
 
     private static final String MSG_HEAVY_BUSY =
         "A heavy tool is already running at the concurrency limit; retry shortly"; //$NON-NLS-1$
+
+    private static final String MSG_HEAP_EXHAUSTED =
+        "Refused to start an expensive tool: EDT has too little heap left, and starting it would " //$NON-NLS-1$
+            + "likely end the whole session rather than this one call. Give the workbench a moment, " //$NON-NLS-1$
+            + "run fewer expensive calls in a row, or restart EDT with a larger -Xmx. Heap: "; //$NON-NLS-1$
 
     private static final String MSG_SSE_OVERLOADED = "Server overloaded"; //$NON-NLS-1$
 
@@ -497,6 +503,15 @@ public class McpHttpEndpoint
             payload.addProperty("sseActive", sse.getActiveCount()); //$NON-NLS-1$
         }
         payload.addProperty("heavyAvailable", heavyPermits.availablePermits()); //$NON-NLS-1$
+        // Reported so a monitor watching a long run can see the heap filling up, rather than learning
+        // of it when the workbench dies and this endpoint stops answering.
+        HeapHeadroom.Reading heap = HeapHeadroom.current();
+        payload.addProperty("heapHeldMb", heap.getRetainedMegabytes()); //$NON-NLS-1$
+        payload.addProperty("heapLiveMb", heap.getLiveMegabytes()); //$NON-NLS-1$
+        payload.addProperty("heapCeilingMb", heap.getCeilingMegabytes()); //$NON-NLS-1$
+        payload.addProperty("heapPercent", heap.getPercentUsed()); //$NON-NLS-1$
+        payload.addProperty("heapLivePercent", heap.getLivePercent()); //$NON-NLS-1$
+        payload.addProperty("heapRefusalPercent", HeapHeadroom.refusalPercent()); //$NON-NLS-1$
         RunningToolCall active = getActiveToolCall();
         if (active != null)
         {
@@ -1322,6 +1337,22 @@ public class McpHttpEndpoint
             String toolName = readToolName(header);
             Semaphore permits = heavyPermits;
             boolean heavy = HeavyTools.isHeavy(toolName);
+            if (heavy)
+            {
+                // The concurrency limit below bounds how many heavy tools run together, which never
+                // fires for one agent calling them in a row - and a long enough row walks the shared
+                // heap to its ceiling. What breaks then is not this call but the JVM, taking the
+                // workbench and this server with it, so the agent loses every later call as well.
+                HeapHeadroom.Reading heap = HeapHeadroom.current();
+                if (HeapHeadroom.refusesWork(heap, HeapHeadroom.refusalPercent()))
+                {
+                    Activator.logInfo("Heavy tool '" + toolName + "' refused: " + heap.describe()); //$NON-NLS-1$ //$NON-NLS-2$
+                    exchange.getResponseHeaders().add(HEADER_RETRY_AFTER, RETRY_AFTER_SECONDS);
+                    sendBody(exchange, HTTP_UNAVAILABLE,
+                        JsonUtils.buildSimpleError(MSG_HEAP_EXHAUSTED + heap.describe()));
+                    return ToolCallOutcome.answered();
+                }
+            }
             if (heavy && !permits.tryAcquire())
             {
                 // At the heavy-tool limit: turn this one away at once, freeing the request thread,
@@ -1619,6 +1650,34 @@ public class McpHttpEndpoint
     }
 
     /**
+     * The answer given when even describing the error is beyond the JVM. Built once, at class load,
+     * because the path that needs it runs when there may be no memory left to build anything.
+     */
+    private static final Exception STOPPED_WITHOUT_DETAIL =
+        new IllegalStateException("The tool was stopped by an error"); //$NON-NLS-1$
+
+    /**
+     * Turns whatever stopped a tool into a failure the agent can be told about.
+     *
+     * @param stopped what came out of the tool
+     * @return the failure to report
+     */
+    private static Exception describeStop(Throwable stopped)
+    {
+        try
+        {
+            Activator.logError("MCP tool call stopped by an error", stopped); //$NON-NLS-1$
+            return new IllegalStateException("The tool was stopped by " + stopped, stopped); //$NON-NLS-1$
+        }
+        catch (Throwable cannotDescribe)
+        {
+            // Logging and describing both need memory, and the commonest reason to be here is that
+            // there is none. Say the little that was prepared in advance rather than nothing at all.
+            return STOPPED_WITHOUT_DETAIL;
+        }
+    }
+
+    /**
      * A tool call running on its own thread, and whatever it comes back with.
      */
     private final class ToolExecution
@@ -1656,6 +1715,14 @@ public class McpHttpEndpoint
             catch (Exception e)
             {
                 failure = e;
+            }
+            catch (Throwable stopped)
+            {
+                // An Error is not an Exception: without this it would leave both the document and the
+                // failure empty, and the request thread reads that pair as a notification - so a call
+                // the heap killed would be answered "202 Accepted, nothing to say" and the agent would
+                // record a success. Recorded as a failure instead, so the agent is told what happened.
+                failure = describeStop(stopped);
             }
             finally
             {

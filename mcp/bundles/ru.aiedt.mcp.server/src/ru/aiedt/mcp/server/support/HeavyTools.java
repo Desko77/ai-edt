@@ -64,6 +64,10 @@ public final class HeavyTools
         "yaxunit_tests", //$NON-NLS-1$
         "run_yaxunit_tests", //$NON-NLS-1$
         "debug_yaxunit_tests", //$NON-NLS-1$
+        // One call opens the file in its editor, resolves the whole visible scope and can hand back
+        // thousands of proposals; a long series of them once walked EDT's heap to its ceiling. Named
+        // here as well as under the facade, so calling the old standalone name is guarded too.
+        "get_content_assist", //$NON-NLS-1$
         "code_search"))); //$NON-NLS-1$
 
     private HeavyTools()

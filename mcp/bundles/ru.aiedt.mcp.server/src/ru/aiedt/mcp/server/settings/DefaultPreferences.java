@@ -31,6 +31,7 @@ public class DefaultPreferences
 
         store.setDefault(PrefKeys.PREF_PORT, PrefKeys.DEFAULT_PORT);
         store.setDefault(PrefKeys.PREF_HEAVY_TOOL_LIMIT, PrefKeys.DEFAULT_HEAVY_TOOL_LIMIT);
+        store.setDefault(PrefKeys.PREF_HEAP_REFUSAL_PERCENT, PrefKeys.DEFAULT_HEAP_REFUSAL_PERCENT);
         store.setDefault(PrefKeys.PREF_DEBUG_LOG_ENABLED, PrefKeys.DEFAULT_DEBUG_LOG_ENABLED);
         store.setDefault(PrefKeys.PREF_MAX_RESPONSE_BYTES, PrefKeys.DEFAULT_MAX_RESPONSE_BYTES);
         store.setDefault(PrefKeys.PREF_AUTO_START, PrefKeys.DEFAULT_AUTO_START);

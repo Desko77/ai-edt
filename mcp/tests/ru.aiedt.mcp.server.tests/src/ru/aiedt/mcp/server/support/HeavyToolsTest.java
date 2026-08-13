@@ -27,6 +27,8 @@ public class HeavyToolsTest
         assertTrue(HeavyTools.isHeavy("vanessa")); //$NON-NLS-1$
         assertTrue("the code_search facade delegates to heavy searches", //$NON-NLS-1$
             HeavyTools.isHeavy("code_search")); //$NON-NLS-1$
+        assertTrue("the old standalone name reaches the same expensive work as the facade", //$NON-NLS-1$
+            HeavyTools.isHeavy("get_content_assist")); //$NON-NLS-1$
     }
 
     @Test
