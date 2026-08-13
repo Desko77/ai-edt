@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.Set;
 
@@ -508,5 +509,38 @@ public class MetadataTypeCatalogTest
     public void levenshteinOneSubstitution()
     {
         assertEquals(1, MetadataTypeCatalog.levenshtein("cat", "cot"));
+    }
+
+    @Test
+    public void theRegistryNamesTheXdtoCollectionTheWayTheTypeReads()
+    {
+        // The model spells this one around the acronym - the collection is xDTOPackages, because the
+        // accessor is getXDTOPackages - while the registry writes it as the type reads. The lookup
+        // reconciles the two by falling back to a case-insensitive match; if this registry entry is
+        // ever "corrected" to the model's spelling, that fallback stops being exercised and the next
+        // acronym collection breaks silently instead.
+        assertEquals("xdtoPackages", MetadataTypeCatalog.getConfigReferenceName("XDTOPackage")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("xdtoPackages", MetadataTypeCatalog.getConfigReferenceName("ПакетXDTO")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void everyCollectionNameDiffersFromTheOthersEvenIgnoringCase()
+    {
+        // The lookup falls back to a case-insensitive match, so two entries differing only in case
+        // would make which one answers a matter of iteration order.
+        java.util.Map<String, String> seen = new java.util.HashMap<>();
+        for (String type : MetadataTypeCatalog.getAllEnglishSingularNames())
+        {
+            String reference = MetadataTypeCatalog.getConfigReferenceName(type);
+            if (reference == null)
+            {
+                continue;
+            }
+            String previous = seen.put(reference.toLowerCase(java.util.Locale.ROOT), reference);
+            if (previous != null && !previous.equals(reference))
+            {
+                fail("two collections differ only in case: " + previous + " and " + reference); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
     }
 }

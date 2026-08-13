@@ -494,22 +494,56 @@ public final class MetadataTypeCatalog
         {
             return null;
         }
+        EReference match = findReference(config, referenceName);
+        if (match == null)
+        {
+            return null;
+        }
+        Object value = config.eGet(match);
+        if (!(value instanceof EList))
+        {
+            return null;
+        }
+        @SuppressWarnings("unchecked")
+        List<? extends MdObject> objects = (List<? extends MdObject>)value;
+        return objects;
+    }
+
+    /**
+     * Finds the configuration's collection by name, exactly if it can and otherwise ignoring case.
+     * <p>
+     * The names in this registry are written the way the type reads - {@code xdtoPackages} - while the
+     * model spells a few of them around an acronym: the XDTO packages are held under
+     * {@code xDTOPackages}, because the accessor is {@code getXDTOPackages}. An exact-only match left
+     * that collection unreachable, so an XDTO package could be created and then neither listed, nor
+     * described, nor deleted - it existed on disk and in the configuration, and every reader answered
+     * "no such object".
+     * </p>
+     * <p>
+     * Exact match is tried first and wins, so nothing that resolved before resolves differently now.
+     * Two collections differing only in case would be a contradiction in the model itself.
+     * </p>
+     *
+     * @param config the configuration, not <code>null</code>
+     * @param referenceName the collection name this registry expects
+     * @return the reference, or <code>null</code> when the model has no such collection
+     */
+    private static EReference findReference(Configuration config, String referenceName)
+    {
+        EReference insensitive = null;
         for (EReference reference : config.eClass().getEAllReferences())
         {
-            if (!referenceName.equals(reference.getName()))
+            String name = reference.getName();
+            if (referenceName.equals(name))
             {
-                continue;
+                return reference;
             }
-            Object value = config.eGet(reference);
-            if (!(value instanceof EList))
+            if (insensitive == null && referenceName.equalsIgnoreCase(name))
             {
-                return null;
+                insensitive = reference;
             }
-            @SuppressWarnings("unchecked")
-            List<? extends MdObject> objects = (List<? extends MdObject>)value;
-            return objects;
         }
-        return null;
+        return insensitive;
     }
 
     /**
