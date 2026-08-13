@@ -24,12 +24,6 @@ import java.util.List;
  */
 public class ToolCallResult
 {
-    /**
-     * Stands in for the payload when the payload is structured. Any short string would do; clients
-     * that ignore structured output show this one.
-     */
-    private static final String STRUCTURED_PLACEHOLDER = "Done"; //$NON-NLS-1$
-
     private final List<ContentItem> content = new ArrayList<>();
 
     private Object structuredContent;
@@ -53,15 +47,24 @@ public class ToolCallResult
     }
 
     /**
-     * Builds a structured result: the real payload as a JSON tree, plus a placeholder text block.
+     * Builds a structured result: the real payload as a JSON tree, and beside it the line a client
+     * that renders only content will show.
+     * <p>
+     * The summary is a parameter rather than a constant because it has to come from the payload. It
+     * used to be the word "Done" for every structured answer, which meant a client reading content -
+     * and the agent driving it - was told nothing, including when the answer was a refusal explaining
+     * what to fix.
+     * </p>
      *
      * @param structuredContent the payload, already parsed; serialized by its runtime type
+     * @param summary the line for the text block; must say something, and callers get it from
+     *            {@code PayloadSummary}
      * @return the result
      */
-    public static ToolCallResult json(Object structuredContent)
+    public static ToolCallResult json(Object structuredContent, String summary)
     {
         ToolCallResult result = new ToolCallResult();
-        result.content.add(ContentItem.text(STRUCTURED_PLACEHOLDER));
+        result.content.add(ContentItem.text(summary == null || summary.isEmpty() ? "Done" : summary)); //$NON-NLS-1$
         result.structuredContent = structuredContent;
         return result;
     }

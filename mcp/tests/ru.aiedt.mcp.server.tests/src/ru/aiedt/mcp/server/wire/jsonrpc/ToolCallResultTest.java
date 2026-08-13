@@ -41,13 +41,24 @@ public class ToolCallResultTest
     }
 
     @Test
-    public void jsonFactoryKeepsThePayloadAndAddsAPlaceholderBlock()
+    public void jsonFactoryKeepsThePayloadAndCarriesTheSummaryBeside()
     {
         JsonElement payload = JsonParser.parseString("{\"count\":42}");
-        ToolCallResult result = ToolCallResult.json(payload);
+        ToolCallResult result = ToolCallResult.json(payload, "counted 42");
 
-        assertEquals("Done", result.getContent().get(0).getText());
+        assertEquals("counted 42", result.getContent().get(0).getText());
         assertEquals(payload, result.getStructuredContent());
+    }
+
+    @Test
+    public void jsonFactoryRefusesToShipAnEmptyTextBlock()
+    {
+        // MCP requires the content array, and a client that renders only content has to be given
+        // something. A caller that passes nothing gets the old placeholder rather than a blank.
+        JsonElement payload = JsonParser.parseString("{\"count\":42}");
+
+        assertEquals("Done", ToolCallResult.json(payload, null).getContent().get(0).getText());
+        assertEquals("Done", ToolCallResult.json(payload, "").getContent().get(0).getText());
     }
 
     @Test
@@ -89,14 +100,14 @@ public class ToolCallResultTest
     }
 
     @Test
-    public void jsonResultSerializesStructuredContentAndPlaceholder()
+    public void jsonResultSerializesStructuredContentAndItsSummary()
     {
         JsonElement payload = JsonParser.parseString("{\"ok\":true}");
-        String json = GsonHolder.toJson(ToolCallResult.json(payload));
+        String json = GsonHolder.toJson(ToolCallResult.json(payload, "ok=true"));
         JsonObject document = JsonParser.parseString(json).getAsJsonObject();
 
         assertNotNull(document.get("structuredContent"));
-        assertEquals("Done",
+        assertEquals("ok=true",
             document.getAsJsonArray("content").get(0).getAsJsonObject().get("text").getAsString());
     }
 

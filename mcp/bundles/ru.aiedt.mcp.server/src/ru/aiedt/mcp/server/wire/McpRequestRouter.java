@@ -598,7 +598,7 @@ public class McpRequestRouter
         JsonObject payload = asJsonObject(result);
         if (payload != null)
         {
-            return ToolCallResult.json(payload);
+            return ToolCallResult.json(payload, PayloadSummary.of(payload));
         }
         return ToolCallResult.resourceBlob(embeddedUri(tool, arguments), MIME_PNG, result);
     }
@@ -627,7 +627,7 @@ public class McpRequestRouter
         // Plain-text mode hands the client text instead of a tree, but the text is still the JSON
         // document: the signal was folded into the payload, so what the client reads still parses.
         return plainTextMode ? ToolCallResult.text(GsonHolder.toJson(payload))
-            : ToolCallResult.json(payload);
+            : ToolCallResult.json(payload, PayloadSummary.of(payload));
     }
 
     /**
