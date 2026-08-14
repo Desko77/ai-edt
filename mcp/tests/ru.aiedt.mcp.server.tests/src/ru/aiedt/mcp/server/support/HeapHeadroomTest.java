@@ -49,11 +49,51 @@ public class HeapHeadroomTest
     @Test
     public void aFullHeapRefusesWork()
     {
-        HeapHeadroom.Reading full = new HeapHeadroom.Reading(3800L * MB, 3900L * MB, 4096L * MB, true);
+        HeapHeadroom.Reading full = new HeapHeadroom.Reading(3950L * MB, 3990L * MB, 4096L * MB, true);
         assertTrue(full.isTrustworthy());
-        assertEquals(92, full.getPercentUsed());
-        assertEquals(95, full.getLivePercent());
+        assertEquals(96, full.getPercentUsed());
+        assertEquals(97, full.getLivePercent());
+        assertEquals(146, full.getFreeMegabytes());
         assertTrue(HeapHeadroom.refusesWork(full, 92));
+    }
+
+    @Test
+    public void aLargeConfigurationIsNotRefusedForBeingLarge()
+    {
+        // The numbers of a live stand, taken while it sat idle and answered normally: a configuration
+        // of ERP size on the 4 GB heap EDT ships with. The share alone turned every heavy tool away
+        // here - 92% against a threshold of 92 - on a workbench with 309 MB to work with. The heap
+        // that actually died had 6 MB. This case is why the guard also looks at what is left.
+        HeapHeadroom.Reading large = new HeapHeadroom.Reading(3787L * MB, 3815L * MB, 4096L * MB, true);
+        assertEquals(92, large.getPercentUsed());
+        assertEquals(93, large.getLivePercent());
+        assertEquals(309, large.getFreeMegabytes());
+        assertFalse("a large model held after collection is not an exhausted heap", //$NON-NLS-1$
+            HeapHeadroom.refusesWork(large, 92));
+    }
+
+    @Test
+    public void theRoomLeftIsTheOtherBoundary()
+    {
+        HeapHeadroom.Reading atFloor = new HeapHeadroom.Reading(3840L * MB, 3860L * MB, 4096L * MB, true);
+        assertEquals(256, atFloor.getFreeMegabytes());
+        assertFalse("exactly the floor is still room enough", HeapHeadroom.refusesWork(atFloor, 92)); //$NON-NLS-1$
+
+        HeapHeadroom.Reading belowFloor = new HeapHeadroom.Reading(3841L * MB, 3860L * MB, 4096L * MB, true);
+        assertEquals(255, belowFloor.getFreeMegabytes());
+        assertTrue("one megabyte under it is not", HeapHeadroom.refusesWork(belowFloor, 92)); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aSmallHeapIsNotRefusedForBeingSmall()
+    {
+        // On a small heap the absolute floor is most of the heap, so it would fire on a JVM with
+        // nothing wrong with it. The share is what keeps that from happening.
+        HeapHeadroom.Reading small = new HeapHeadroom.Reading(300L * MB, 320L * MB, 512L * MB, true);
+        assertEquals(58, small.getPercentUsed());
+        assertEquals(212, small.getFreeMegabytes());
+        assertFalse("under a quarter gigabyte free, but only 58% used", //$NON-NLS-1$
+            HeapHeadroom.refusesWork(small, 92));
     }
 
     @Test
@@ -65,12 +105,13 @@ public class HeapHeadroomTest
     }
 
     @Test
-    public void theThresholdIsTheBoundary()
+    public void theShareIsOneBoundary()
     {
-        HeapHeadroom.Reading exactly = new HeapHeadroom.Reading(3686L * MB, 3686L * MB, 4096L * MB, true);
-        assertEquals(89, exactly.getPercentUsed());
-        assertTrue("at the threshold is already too full", HeapHeadroom.refusesWork(exactly, 89)); //$NON-NLS-1$
-        assertFalse("one percent below it is not", HeapHeadroom.refusesWork(exactly, 90)); //$NON-NLS-1$
+        HeapHeadroom.Reading exactly = new HeapHeadroom.Reading(3900L * MB, 3900L * MB, 4096L * MB, true);
+        assertEquals(95, exactly.getPercentUsed());
+        assertEquals(196, exactly.getFreeMegabytes());
+        assertTrue("at the threshold is already too full", HeapHeadroom.refusesWork(exactly, 95)); //$NON-NLS-1$
+        assertFalse("one percent above it is not", HeapHeadroom.refusesWork(exactly, 96)); //$NON-NLS-1$
     }
 
     @Test
@@ -132,6 +173,8 @@ public class HeapHeadroomTest
         assertTrue(held, held.contains("after a collection")); //$NON-NLS-1$
         assertTrue("the refusal has to say what is occupied now, not only what survived", //$NON-NLS-1$
             held.contains("3900 MB")); //$NON-NLS-1$
+        assertTrue("and how much room is left, which is what the decision turns on", //$NON-NLS-1$
+            held.contains("296 MB left to work with")); //$NON-NLS-1$
 
         String unsupported = new HeapHeadroom.Reading(3800L * MB, 3800L * MB, 4096L * MB, false).describe();
         assertTrue("a figure that may not be acted on says so", //$NON-NLS-1$

@@ -509,6 +509,7 @@ public class McpHttpEndpoint
         payload.addProperty("heapHeldMb", heap.getRetainedMegabytes()); //$NON-NLS-1$
         payload.addProperty("heapLiveMb", heap.getLiveMegabytes()); //$NON-NLS-1$
         payload.addProperty("heapCeilingMb", heap.getCeilingMegabytes()); //$NON-NLS-1$
+        payload.addProperty("heapFreeMb", heap.getFreeMegabytes()); //$NON-NLS-1$
         payload.addProperty("heapPercent", heap.getPercentUsed()); //$NON-NLS-1$
         payload.addProperty("heapLivePercent", heap.getLivePercent()); //$NON-NLS-1$
         payload.addProperty("heapRefusalPercent", HeapHeadroom.refusalPercent()); //$NON-NLS-1$

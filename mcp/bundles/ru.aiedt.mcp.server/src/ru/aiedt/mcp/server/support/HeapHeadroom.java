@@ -43,6 +43,24 @@ public final class HeapHeadroom
 
     private static final int FULL_PERCENT = 100;
 
+    /**
+     * How little room may be left before an expensive call is turned away, whatever the share says.
+     * <p>
+     * A share is the wrong unit for "is there room for one more call", and shipping it alone was a
+     * mistake caught on a live stand: a configuration of ERP size holds 3787 MB of a 4096 MB heap
+     * while sitting idle and perfectly usable - 92%, which turned every heavy tool away on a stand
+     * that had 309 MB to work with. The heap that actually died had 6 MB. What separates those two is
+     * not the proportion, which is nearly the same, but how much is left in absolute terms.
+     * </p>
+     * <p>
+     * Both conditions are required, and each covers what the other gets wrong. The share alone
+     * refuses a large configuration that is merely large. This floor alone would refuse a small heap
+     * for being small - on {@code -Xmx512m} a quarter gigabyte free is half the heap and entirely
+     * healthy - so it only ever applies once the share agrees the heap is nearly full.
+     * </p>
+     */
+    private static final long MIN_FREE_MEGABYTES = 256L;
+
     private HeapHeadroom()
     {
     }
@@ -151,6 +169,19 @@ public final class HeapHeadroom
         }
 
         /**
+         * What is left to work with, measured against what survives collection rather than against
+         * the moment's occupancy - garbage still counts as room, because collecting it is what the
+         * next allocation will do.
+         *
+         * @return free megabytes, never negative
+         */
+        public long getFreeMegabytes()
+        {
+            long free = (ceilingBytes - retainedBytes) / BYTES_PER_MEGABYTE;
+            return free < 0L ? 0L : free;
+        }
+
+        /**
          * The reading in words, for a log line or a refusal an agent has to act on.
          *
          * @return a description such as {@code 3890 MB of 4096 MB (94%) still held after a collection}
@@ -159,7 +190,8 @@ public final class HeapHeadroom
         {
             return getRetainedMegabytes() + " MB of " + getCeilingMegabytes() + " MB (" + getPercentUsed() //$NON-NLS-1$ //$NON-NLS-2$
                 + "%) still held" + (afterCollection ? " after a collection" : " (no post-collection figure)") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                + ", " + getLiveMegabytes() + " MB (" + getLivePercent() + "%) occupied now"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + ", " + getLiveMegabytes() + " MB (" + getLivePercent() + "%) occupied now, " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + getFreeMegabytes() + " MB left to work with"; //$NON-NLS-1$
         }
     }
 
@@ -254,6 +286,13 @@ public final class HeapHeadroom
      * both by history and by what is in it right now.
      * </p>
      *
+     * <p>
+     * A third condition joins them: there must also be less than {@link #MIN_FREE_MEGABYTES} left in
+     * absolute terms. A share says how full the heap is relative to itself, which is not the same
+     * question as whether there is room for one more call - and on a large configuration the two
+     * answers differ enough to matter.
+     * </p>
+     *
      * @param reading the current reading
      * @param thresholdPercent the share of the heap that may be held before work is refused; a value
      *            outside 1..99 switches the guard off
@@ -269,7 +308,11 @@ public final class HeapHeadroom
         {
             return false;
         }
-        return reading.getPercentUsed() >= thresholdPercent && reading.getLivePercent() >= thresholdPercent;
+        if (reading.getPercentUsed() < thresholdPercent || reading.getLivePercent() < thresholdPercent)
+        {
+            return false;
+        }
+        return reading.getFreeMegabytes() < MIN_FREE_MEGABYTES;
     }
 
     /**

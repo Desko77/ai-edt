@@ -87,6 +87,7 @@ public class SelfStatusTool
         m.put("heldMb", reading.getRetainedMegabytes()); //$NON-NLS-1$
         m.put("liveMb", reading.getLiveMegabytes()); //$NON-NLS-1$
         m.put("ceilingMb", reading.getCeilingMegabytes()); //$NON-NLS-1$
+        m.put("freeMb", reading.getFreeMegabytes()); //$NON-NLS-1$
         m.put("percent", reading.getPercentUsed()); //$NON-NLS-1$
         m.put("livePercent", reading.getLivePercent()); //$NON-NLS-1$
         m.put("measuredAfterCollection", reading.isTrustworthy()); //$NON-NLS-1$
