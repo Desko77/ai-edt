@@ -325,6 +325,7 @@ public enum ToolProfile
             "generate_health_snapshot", //$NON-NLS-1$
             "impact_analysis", //$NON-NLS-1$
             "object_summary", //$NON-NLS-1$
+            "describe_db_tables", //$NON-NLS-1$
             "semantic_metadata_search", //$NON-NLS-1$
 
             // security_audit covers these

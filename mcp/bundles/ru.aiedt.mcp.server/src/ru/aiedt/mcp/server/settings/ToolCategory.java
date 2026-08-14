@@ -60,6 +60,7 @@ public enum ToolCategory
         "get_metadata_details", //$NON-NLS-1$
         "find_references", //$NON-NLS-1$
         "object_summary", //$NON-NLS-1$
+        "describe_db_tables", //$NON-NLS-1$
         "semantic_metadata_search", //$NON-NLS-1$
         "list_subsystems", //$NON-NLS-1$
         "dcs_search", //$NON-NLS-1$

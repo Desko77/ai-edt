@@ -83,6 +83,7 @@
 | `get_metadata_details` | Чтение | Возвращает реквизиты, табличные части, формы и другие свойства объектов. У крупного объекта можно спросить только состав (`outline`) или один раздел (`sections`). |
 | `find_references` | Чтение | Ищет семантические ссылки на объект в метаданных, формах, ролях и BSL. |
 | `object_summary` | Чтение | Формирует компактную сводку по объекту конфигурации. |
+| `describe_db_tables` | Чтение | Перечисляет таблицы базы данных, в которые превращается объект, и поля каждой: основную, по одной на табличную часть, виртуальные таблицы регистра с параметрами, таблицу изменений. Имена на двух языках, готовые к подстановке после `ИЗ`. |
 | `semantic_metadata_search` | Чтение | Ищет объекты по смысловому описанию, а не только по имени. |
 | `list_subsystems` | Чтение | Показывает подсистемы и их состав. |
 | `dcs_search` | Чтение | Ищет элементы и выражения в схемах компоновки данных. |
@@ -357,7 +358,7 @@
 <details>
 <summary><code>insights</code> - аналитика конфигурации</summary>
 
-Операции: `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `semantic_metadata_search`, `help`.
+Операции: `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help`.
 
 Все операции только читают проект.
 </details>

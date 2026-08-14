@@ -70,7 +70,8 @@ public class QueryValidator
             + "SELECT/FROM/WHERE/JOIN/LIMIT/ORDER BY used instead of 1C QL, and wrong keywords like " //$NON-NLS-1$
             + "УБЫВАНИЕ instead of УБЫВ). The hints array is empty when the query is correct. " //$NON-NLS-1$
             + "Pass describeResult=true to also get what the query returns - the columns of each " //$NON-NLS-1$
-            + "result table and their types - instead of reading them off the query text."; //$NON-NLS-1$
+            + "result table and their types - instead of reading them off the query text; an " //$NON-NLS-1$
+            + "asterisk is expanded into the fields it stands for."; //$NON-NLS-1$
     }
 
     @Override
@@ -94,6 +95,9 @@ public class QueryValidator
             .booleanProperty("describeResult", //$NON-NLS-1$
                 "Also report what the query returns: one entry per result table with its column " //$NON-NLS-1$
                     + "names and types, so you do not have to read them off the query text. " //$NON-NLS-1$
+                    + "SELECT * and T.* are expanded into the fields they stand for, named in " //$NON-NLS-1$
+                    + "the language the query names its tables in. To list the tables and " //$NON-NLS-1$
+                    + "fields of an object without writing a query, use describe_db_tables. " //$NON-NLS-1$
                     + "Temporary-table statements are counted but produce no table, and " //$NON-NLS-1$
                     + "packageIndex is the real ВыполнитьПакет() position. A column whose type " //$NON-NLS-1$
                     + "cannot be determined is reported without one rather than guessed. Skipped " //$NON-NLS-1$

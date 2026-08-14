@@ -108,7 +108,7 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void totalToolCountIsOneHundredTwentyThree()
+    public void totalToolCountIsOneHundredTwentyFour()
     {
         // Recounted directly from the group table. F3d facades landed on 118; the 2026-07-28
         // data_access removal dropped execute_query, browse_data and data_access (-3 -> 115) and
@@ -123,9 +123,11 @@ public class ToolCategoryTest
         // Designer on it - so the group matters: APPLICATIONS is what Read-only switches off.
         // On 2026-08-10 copy_object joined REFACTORING (+1 -> 123): it creates a whole object
         // in the target project, which is as plainly a write as a rename.
+        // On 2026-08-14 describe_db_tables joined CODE_INTELLIGENCE (+1 -> 124): it reads the
+        // tables the platform derives from an object and writes nothing.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(123, ToolCategory.getTotalToolCount());
+        assertEquals(124, ToolCategory.getTotalToolCount());
     }
 
     @Test

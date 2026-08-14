@@ -18,7 +18,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
- * Unified configuration-insight facade with eight operations.
+ * Unified configuration-insight facade with nine operations.
  *
  * <p>Collapses the read-only analysis and reporting tools under one name:
  * <ul>
@@ -67,14 +67,14 @@ public class InsightsFacadeTool implements IMcpTool
     {
         return "Configuration insight and analysis - metrics, dependency graph, config " //$NON-NLS-1$
             + "comparison, query anti-patterns, health snapshot, impact analysis, object " //$NON-NLS-1$
-            + "summary, semantic metadata search. Operations: project_metrics, " //$NON-NLS-1$
-            + "dependency_graph, compare_configurations, detect_query_anti_patterns, " //$NON-NLS-1$
-            + "generate_health_snapshot, impact_analysis, object_summary, " //$NON-NLS-1$
-            + "semantic_metadata_search, help. Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
-            + "camelCase like projectMetrics is also accepted); remaining parameters follow " //$NON-NLS-1$
-            + "the per-operation contracts (call operation=help for the catalog). All eight " //$NON-NLS-1$
-            + "operations are read-only. The standalone tools remain available for " //$NON-NLS-1$
-            + "back-compat."; //$NON-NLS-1$
+            + "summary, database tables of an object, semantic metadata search. Operations: " //$NON-NLS-1$
+            + "project_metrics, dependency_graph, compare_configurations, " //$NON-NLS-1$
+            + "detect_query_anti_patterns, generate_health_snapshot, impact_analysis, " //$NON-NLS-1$
+            + "object_summary, describe_db_tables, semantic_metadata_search, help. Pass " //$NON-NLS-1$
+            + "operation=<name> (snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
+            + "accepted); remaining parameters follow the per-operation contracts (call " //$NON-NLS-1$
+            + "operation=help for the catalog). All nine operations are read-only. The " //$NON-NLS-1$
+            + "standalone tools remain available for back-compat."; //$NON-NLS-1$
     }
 
     @Override
@@ -84,7 +84,8 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("operation", //$NON-NLS-1$
                 "project_metrics / dependency_graph / compare_configurations / " //$NON-NLS-1$
                     + "detect_query_anti_patterns / generate_health_snapshot / " //$NON-NLS-1$
-                    + "impact_analysis / object_summary / semantic_metadata_search / help " //$NON-NLS-1$
+                    + "impact_analysis / object_summary / describe_db_tables / " //$NON-NLS-1$
+                    + "semantic_metadata_search / help " //$NON-NLS-1$
                     + "(snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
                     + "accepted). Pass operation=help without other params for the operation " //$NON-NLS-1$
                     + "catalog.", true) //$NON-NLS-1$
@@ -167,6 +168,9 @@ public class InsightsFacadeTool implements IMcpTool
             .booleanProperty("includeReferences", //$NON-NLS-1$
                 "object_summary: run find_references (skipBsl=true) to count metadata " //$NON-NLS-1$
                     + "back-references (default true).") //$NON-NLS-1$
+            .booleanProperty("includeFields", //$NON-NLS-1$
+                "describe_db_tables: include the fields and virtual-table parameters " //$NON-NLS-1$
+                    + "(default true). Pass false for table names and field counts alone.") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
                 "semantic_metadata_search: free-text query, matched case-insensitively " //$NON-NLS-1$
                     + "against name, synonym and comment of every object. Required for that " //$NON-NLS-1$
@@ -202,7 +206,7 @@ public class InsightsFacadeTool implements IMcpTool
             return ToolResult.error("operation is required. Allowed: project_metrics / " //$NON-NLS-1$
                 + "dependency_graph / compare_configurations / detect_query_anti_patterns / " //$NON-NLS-1$
                 + "generate_health_snapshot / impact_analysis / object_summary / " //$NON-NLS-1$
-                + "semantic_metadata_search / help.").toJson(); //$NON-NLS-1$
+                + "describe_db_tables / semantic_metadata_search / help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
@@ -240,6 +244,8 @@ public class InsightsFacadeTool implements IMcpTool
                 return new ImpactAnalysisTool().execute(params);
             case "object_summary": //$NON-NLS-1$
                 return new ObjectSummaryTool().execute(params);
+            case "describe_db_tables": //$NON-NLS-1$
+                return new DbTablesReader().execute(params);
             case "semantic_metadata_search": //$NON-NLS-1$
                 return new SemanticMetadataSearchTool().execute(params);
             default:
@@ -268,6 +274,8 @@ public class InsightsFacadeTool implements IMcpTool
                 + "change (deep find_references plus a severity tier).\n"); //$NON-NLS-1$
             sb.append("- **object_summary** - metadata+modules+methods summary for one " //$NON-NLS-1$
                 + "object.\n"); //$NON-NLS-1$
+            sb.append("- **describe_db_tables** - the database tables one object turns into " //$NON-NLS-1$
+                + "and the fields of each, in both languages.\n"); //$NON-NLS-1$
             sb.append("- **semantic_metadata_search** - free-text search over object " //$NON-NLS-1$
                 + "names, synonyms and comments.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the " //$NON-NLS-1$
@@ -291,6 +299,8 @@ public class InsightsFacadeTool implements IMcpTool
             sb.append("| Is it safe to delete/rename/modify this object | " //$NON-NLS-1$
                 + "impact_analysis |\n"); //$NON-NLS-1$
             sb.append("| Everything about one object in one call | object_summary |\n"); //$NON-NLS-1$
+            sb.append("| What may I select from this object, and which fields | " //$NON-NLS-1$
+                + "describe_db_tables |\n"); //$NON-NLS-1$
             sb.append("| Find an object by what it is, not what it is called | " //$NON-NLS-1$
                 + "semantic_metadata_search |\n"); //$NON-NLS-1$
             return sb.toString();
@@ -305,7 +315,8 @@ public class InsightsFacadeTool implements IMcpTool
             "project_metrics", "dependency_graph", //$NON-NLS-1$ //$NON-NLS-2$
             "compare_configurations", "detect_query_anti_patterns", //$NON-NLS-1$ //$NON-NLS-2$
             "generate_health_snapshot", "impact_analysis", //$NON-NLS-1$ //$NON-NLS-2$
-            "object_summary", "semantic_metadata_search")) //$NON-NLS-1$ //$NON-NLS-2$
+            "object_summary", "describe_db_tables", //$NON-NLS-1$ //$NON-NLS-2$
+            "semantic_metadata_search")) //$NON-NLS-1$
         {
             m.put(op, op);
         }

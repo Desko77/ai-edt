@@ -60,6 +60,7 @@ import ru.aiedt.mcp.server.toolkit.ops.InfobaseCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchConfigCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCreator;
+import ru.aiedt.mcp.server.toolkit.ops.DbTablesReader;
 import ru.aiedt.mcp.server.toolkit.ops.DcsSearchTool;
 import ru.aiedt.mcp.server.toolkit.ops.DcsWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.DebugSessionStarter;
@@ -1009,6 +1010,7 @@ public class McpHttpEndpoint
             new ListInterceptorsTool(),
             new FindDeadCodeTool(),
             new ObjectSummaryTool(),
+            new DbTablesReader(),
             new SemanticMetadataSearchTool(),
             new DiagnosticsFacadeTool(),
             new ProjectAdminFacadeTool(),

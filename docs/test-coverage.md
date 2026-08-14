@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 73 | a test class named after it |
+| direct | 75 | a test class named after it |
 | exercised | 54 | reached by some other test |
 | tool-sweep | 87 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 50 | needs a display or an extension point |
 | workspace-bound | 67 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **331** | across 111 test classes |
+| **total** | **333** | across 113 test classes |
 
 ## untested (0)
 
@@ -345,7 +345,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (73)
+## direct (75)
 
 **(root)**
 - OperatorSignal
@@ -364,6 +364,7 @@ _none_
 
 **support**
 - BslCommentParseHelper
+- DbViewSurvey
 - DependencyGraphBuilder
 - EventStubGenerator
 - FormBaseSetup
@@ -410,6 +411,7 @@ _none_
 - AiContextTool
 - BslSyntaxValidator
 - ClientSessionStarter
+- DbTablesReader
 - DiffModuleTool
 - EditFormTool
 - EditMetadataTool

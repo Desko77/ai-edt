@@ -114,6 +114,6 @@ public class ToolRegistrationTest
 
         // Tripwire on the surface size: this list is the single place tools are declared, so a change
         // here is a deliberate add or drop, updated on purpose, not an accident.
-        assertEquals(123, declared.size());
+        assertEquals(124, declared.size());
     }
 }

@@ -26,10 +26,11 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool.ResponseType;
  * Live equivalence - that operation=X on the facade produces the same result as calling the
  * standalone X directly - is verified separately, against a running EDT workspace.
  * <p>
- * Unlike {@code infobase_admin}'s sync_control, none of the eleven standalones absorbed here
+ * Unlike {@code infobase_admin}'s sync_control, none of the twelve standalones absorbed here
  * (project_metrics, dependency_graph, compare_configurations, detect_query_anti_patterns,
- * generate_health_snapshot, impact_analysis, object_summary, semantic_metadata_search,
- * audit_role_rights, find_rls_violations, sensitive_data_scan) declares its own {@code operation}
+ * generate_health_snapshot, impact_analysis, object_summary, describe_db_tables,
+ * semantic_metadata_search, audit_role_rights, find_rls_violations, sensitive_data_scan) declares
+ * its own {@code operation}
  * or {@code action}-as-selector parameter that would collide with this facade's routing
  * {@code operation} - {@code impact_analysis}'s {@code action} is a free-form recommendation hint,
  * not a sub-operation switch, and {@code audit_role_rights}'s {@code mode} is a different key
@@ -107,6 +108,7 @@ public class FacadeF3cTest
         assertTrue(result.contains("generate_health_snapshot")); //$NON-NLS-1$
         assertTrue(result.contains("impact_analysis")); //$NON-NLS-1$
         assertTrue(result.contains("object_summary")); //$NON-NLS-1$
+        assertTrue(result.contains("describe_db_tables")); //$NON-NLS-1$
         assertTrue(result.contains("semantic_metadata_search")); //$NON-NLS-1$
         assertTrue(result.contains("help")); //$NON-NLS-1$
     }
@@ -126,6 +128,7 @@ public class FacadeF3cTest
         assertTrue(result.contains("generate_health_snapshot")); //$NON-NLS-1$
         assertTrue(result.contains("impact_analysis")); //$NON-NLS-1$
         assertTrue(result.contains("object_summary")); //$NON-NLS-1$
+        assertTrue(result.contains("describe_db_tables")); //$NON-NLS-1$
         assertTrue(result.contains("semantic_metadata_search")); //$NON-NLS-1$
         assertFalse(result.contains("operation is required")); //$NON-NLS-1$
     }
