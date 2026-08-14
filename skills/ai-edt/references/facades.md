@@ -12,7 +12,7 @@ parameters of one. When this file and the server disagree, the server is right.
 | Facade | Operations |
 |---|---|
 | `code_search` | `text_search`, `object_references`, `method_references`, `resolve_symbol`, `call_hierarchy`, `symbol_info`, `content_assist`, `outgoing_structures`, `help` |
-| `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `semantic_metadata_search`, `help` |
+| `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help` |
 | `security_audit` | `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help` |
 | `docs_lookup` | `get_platform_documentation`, `get_object_help`, `help` |
 | `workspace_marks` | `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks`, `help` |

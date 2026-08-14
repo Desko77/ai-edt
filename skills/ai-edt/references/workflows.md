@@ -43,16 +43,23 @@ stale derived state rather than real type errors. Revalidation does not clear th
 
 ## Write a query
 
-1. Write it.
-2. `validate_query` with the project name. For a data composition query pass `dcsMode=true`.
-3. Fix what it reports, revalidate. The `hints` array flags SQL habits that do not exist in 1C
+1. Ask what you may select from. `insights operation=describe_db_tables` lists the tables an object
+   turns into and the fields of each - the main table, one per tabular section, a register's virtual
+   tables with their parameters - named in both languages, ready to write after `ИЗ`. This is the
+   half validation cannot cover: validation rejects a field you invented, and says nothing about a
+   field you never thought to ask for.
+2. Write it.
+3. `validate_query` with the project name. For a data composition query pass `dcsMode=true`.
+4. Fix what it reports, revalidate. The `hints` array flags SQL habits that do not exist in 1C
    query language.
-4. Before writing BSL that reads the result, ask again with `describeResult=true`. It returns each
+5. Before writing BSL that reads the result, ask again with `describeResult=true`. It returns each
    result table with its column names and types, taken from EDT's model rather than from the text -
    which is how you avoid inventing a column that is not there. A column with no type reported is
    one whose type could not be determined; it is not a column of unknown-but-guessable type.
    `packageIndex` counts temporary-table statements too, so it matches the real
-   `ВыполнитьПакет()` position.
+   `ВыполнитьПакет()` position. An asterisk is expanded into the fields it stands for, named in the
+   language the query is written in; a star over a nested query or a temporary table stays as one
+   column, because there is no table of the model behind it.
 
 Do not batch several queries and validate at the end - a failure then costs a hunt for which one
 broke.

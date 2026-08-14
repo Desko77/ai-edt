@@ -97,7 +97,8 @@ EDT runtime supports.
 3. **Validate every query you write or change** with `validate_query`, immediately, not in a batch
    at the end. For data composition queries pass `dcsMode=true`. Add `describeResult=true` before
    you write code against the result: it reports the columns and their types, so you stop reading
-   them off the query text.
+   them off the query text. Before writing the query, `insights operation=describe_db_tables` tells
+   you which tables the object has and what may be selected from each.
 4. **Run `validate_for_export` before writing the configuration into an infobase** and before
    building artifacts. This includes the implicit update that `yaxunit_tests` performs. Findings
    block the operation: fix them first.
