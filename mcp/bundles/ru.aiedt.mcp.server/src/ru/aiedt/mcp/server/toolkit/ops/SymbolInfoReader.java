@@ -20,7 +20,9 @@ import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.jface.text.BadLocationException;
+import org.eclipse.jface.text.Document;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.IRegion;
 import org.eclipse.jface.text.ITextHover;
@@ -59,6 +61,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
+import ru.aiedt.mcp.server.support.BslHoverAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ReflectionAccess;
 
@@ -192,23 +195,14 @@ public class SymbolInfoReader
             return "Error: No such file: " + relativePath.toString() + " within project " + projectName; //$NON-NLS-1$ //$NON-NLS-2$
         }
 
-        AtomicReference<String> resultRef = new AtomicReference<>();
-        AtomicBoolean editorPathUnavailable = new AtomicBoolean();
-        Display display = PlatformUI.getWorkbench().getDisplay();
-        display.syncExec(() -> {
-            try
-            {
-                resultRef.set(executeOnUiThread(file, line, column, filePath, editorPathUnavailable));
-            }
-            catch (Exception e)
-            {
-                Activator.logError("Failed to retrieve symbol info", e); //$NON-NLS-1$
-                resultRef.set("Error: " + e.getMessage()); //$NON-NLS-1$
-            }
-        });
-        String result = resultRef.get();
+        // Answered without an editor and without the UI thread. The hover this returns is the same
+        // text the environment shows on a mouse-over, but asked of the language's hover service
+        // directly - so a survey walking hundreds of positions no longer opens a tab, takes the
+        // focus, or makes the workbench pause under whoever is typing in it.
+        AtomicBoolean modelPathUnavailable = new AtomicBoolean();
+        String result = readWithoutEditor(project, file, line, column, filePath, modelPathUnavailable);
 
-        if (result == null || editorPathUnavailable.get())
+        if (result == null || modelPathUnavailable.get())
         {
             String emfResult = getSymbolInfoViaEmf(project, filePath, line, column);
             if (emfResult != null)
@@ -235,125 +229,90 @@ public class SymbolInfoReader
     }
 
     /**
-     * Runs the resolution on the UI thread by opening the file in a BSL editor, reading the hover and
-     * the EMF element at the offset.
+     * Resolves the symbol without an editor: the module's model is loaded through the same
+     * BM-aware resource set the rest of the plugin reads BSL with, and the hover is asked of the
+     * language's hover service directly.
+     * <p>
+     * The editor was never the point - it was only a way to reach a parsed module and a hover. Both
+     * are available without it, and doing it this way costs the person working in EDT nothing: no
+     * tab opens, no focus moves, and nothing runs on the thread that draws their window.
+     * </p>
      *
+     * @param project the project the module belongs to
      * @param file the workspace file
      * @param line the 1-based line
      * @param column the 1-based column
-     * @param filePath the {@code src/}-relative file path, for error messages
-     * @param editorPathUnavailable raised when no editor could be reached at all, which is the
-     *            caller's signal to retry the same question against the metadata model
+     * @param filePath the {@code src/}-relative file path
+     * @param modelPathUnavailable raised when the module model could not be reached at all, which is
+     *            the caller's signal to retry the same question against the metadata model
      * @return the resolved info, or an error string
-     * @throws Exception when the editor or document cannot be reached
      */
-    private String executeOnUiThread(IFile file, int line, int column, String filePath,
-        AtomicBoolean editorPathUnavailable) throws Exception
+    private String readWithoutEditor(IProject project, IFile file, int line, int column, String filePath,
+        AtomicBoolean modelPathUnavailable)
     {
-        IWorkbenchWindow window = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
-        if (window == null)
-        {
-            editorPathUnavailable.set(true);
-            return "Error: symbol lookup needs an open EDT window, and none is active"; //$NON-NLS-1$
-        }
-        IWorkbenchPage page = window.getActivePage();
-        if (page == null)
-        {
-            editorPathUnavailable.set(true);
-            return "Error: symbol lookup needs an active editor page, and none is available"; //$NON-NLS-1$
-        }
-
-        IEditorInput editorInput = new FileEditorInput(file);
-        boolean wasAlreadyOpen = page.findEditor(editorInput) != null;
-
-        // Opened, not activated. Activating makes this editor the active part, and the workbench
-        // title follows the active part - so a survey walking a few hundred positions turned the
-        // title of the user's window into a flicker of module names while the editor area sat empty,
-        // because each one was opened, made active, and closed again. Nothing here needs focus: the
-        // source viewer and its document exist as soon as the editor is opened.
-        IEditorPart editorPart = IDE.openEditor(page, file, false);
-        if (editorPart == null)
-        {
-            editorPathUnavailable.set(true);
-            return "Error: EDT declined to open an editor for this file"; //$NON-NLS-1$
-        }
-
+        String text;
         try
         {
-            XtextEditor xtextEditor = editorPart.getAdapter(XtextEditor.class);
-            if (xtextEditor == null)
-            {
-                return "Error: The file is not a BSL module (no Xtext editor available)"; //$NON-NLS-1$
-            }
-
-            ISourceViewer sourceViewer = xtextEditor.getInternalSourceViewer();
-            if (sourceViewer == null)
-            {
-                return "Error: Unable to obtain the source viewer"; //$NON-NLS-1$
-            }
-
-            IDocument document = sourceViewer.getDocument();
-            if (document == null)
-            {
-                return "Error: Unable to obtain the document"; //$NON-NLS-1$
-            }
-
-            int offset;
-            try
-            {
-                int lineOffset = document.getLineOffset(line - 1);
-                offset = lineOffset + column - 1;
-                if (offset < 0 || offset > document.getLength())
-                {
-                    return "Error: The position falls outside the document bounds"; //$NON-NLS-1$
-                }
-            }
-            catch (BadLocationException e)
-            {
-                return "Error: Line number is invalid: " + line; //$NON-NLS-1$
-            }
-
-            if (!hasTokenAtPosition(document, offset, line))
-            {
-                return "There is no symbol at this position."; //$NON-NLS-1$
-            }
-
-            String hoverResult = tryGetHoverInfo(sourceViewer, offset);
-            if (hoverResult != null && !hoverResult.isEmpty())
-            {
-                return hoverResult;
-            }
-
-            IXtextDocument xtextDocument = xtextEditor.getDocument();
-            if (xtextDocument != null)
-            {
-                String eobjectResult = xtextDocument.readOnly(new IUnitOfWork<String, XtextResource>()
-                {
-                    @Override
-                    public String exec(XtextResource resource) throws Exception
-                    {
-                        if (resource == null)
-                        {
-                            return null;
-                        }
-                        return resolveEObjectInfo(resource, offset);
-                    }
-                });
-                if (eobjectResult != null && !eobjectResult.isEmpty())
-                {
-                    return eobjectResult;
-                }
-            }
-
-            return "No symbol could be resolved at this position.\n"; //$NON-NLS-1$
+            text = BslModuleAccess.readFileText(file);
         }
-        finally
+        catch (Exception e)
         {
-            if (!wasAlreadyOpen)
+            modelPathUnavailable.set(true);
+            return "Error: the module could not be read: " + e.getMessage(); //$NON-NLS-1$
+        }
+
+        // A Document here is the plain text model of jface.text, not a widget - it is used for the
+        // line arithmetic only, and nothing about it reaches the screen.
+        IDocument document = new Document(text);
+        int offset;
+        try
+        {
+            offset = document.getLineOffset(line - 1) + column - 1;
+        }
+        catch (BadLocationException e)
+        {
+            return "Error: Line number is invalid: " + line; //$NON-NLS-1$
+        }
+        if (offset < 0 || offset > document.getLength())
+        {
+            return "Error: The position falls outside the document bounds"; //$NON-NLS-1$
+        }
+        if (!hasTokenAtPosition(document, offset, line))
+        {
+            return "There is no symbol at this position."; //$NON-NLS-1$
+        }
+
+        Module module = BslModuleAccess.loadModule(project, filePath);
+        Resource resource = module == null ? null : module.eResource();
+        if (!(resource instanceof XtextResource))
+        {
+            modelPathUnavailable.set(true);
+            return null;
+        }
+        XtextResource xtextResource = (XtextResource)resource;
+
+        EObject element = null;
+        EObjectAtOffsetHelper offsetHelper = getOffsetHelper();
+        if (offsetHelper != null)
+        {
+            element = offsetHelper.resolveElementAt(xtextResource, offset);
+        }
+        String hoverHtml = BslHoverAccess.hoverHtml(element, offset);
+        if (hoverHtml != null)
+        {
+            String markdown = cleanHtmlToMarkdown(hoverHtml);
+            if (markdown != null && !markdown.isEmpty())
             {
-                page.closeEditor(editorPart, false);
+                return markdown;
             }
         }
+
+        String described = resolveEObjectInfo(xtextResource, offset);
+        if (described != null && !described.isEmpty())
+        {
+            return described;
+        }
+        return "No symbol could be resolved at this position.\n"; //$NON-NLS-1$
     }
 
     /**
