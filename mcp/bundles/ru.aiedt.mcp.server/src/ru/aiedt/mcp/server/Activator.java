@@ -49,6 +49,7 @@ import ru.aiedt.mcp.server.labels.MarkerManager;
 import ru.aiedt.mcp.server.labels.ui.MarkerFilterController;
 import ru.aiedt.mcp.server.workbench.NavigatorToolbarTweaker;
 import ru.aiedt.mcp.server.support.DebugLog;
+import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
 
@@ -805,6 +806,16 @@ public class Activator
                 catch (RuntimeException e)
                 {
                     // The workbench is going; the widgets may be gone already.
+                }
+                try
+                {
+                    // Content assist keeps a hidden widget to pin its bookkeeping to. Left behind, it
+                    // holds a shell and this bundle's classloader across every plugin update.
+                    OffScreenWidget.dispose();
+                }
+                catch (RuntimeException e)
+                {
+                    // As above.
                 }
             });
         }

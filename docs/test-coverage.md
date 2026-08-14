@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 73 | a test class named after it |
-| exercised | 53 | reached by some other test |
+| exercised | 54 | reached by some other test |
 | tool-sweep | 87 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 48 | needs a display or an extension point |
+| ui-bound | 50 | needs a display or an extension point |
 | workspace-bound | 67 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **328** | across 110 test classes |
+| **total** | **331** | across 111 test classes |
 
 ## untested (0)
 
@@ -104,7 +104,7 @@ _none_
 - SpecializedOps
 - TemplateOps
 
-## ui-bound (48)
+## ui-bound (50)
 
 **(root)**
 - McpAutoStart
@@ -166,8 +166,10 @@ _none_
 **support**
 - ApplicationUpdater
 - BslHoverAccess
+- BslProposalAccess
 - DebugLog
 - EditorImageCapture
+- OffScreenWidget
 - UiSync
 
 **workbench**
@@ -267,7 +269,7 @@ _none_
 - VanessaTool
 - XdtoWorkshopTool
 
-## exercised (53)
+## exercised (54)
 
 **(root)**
 - Activator
@@ -302,6 +304,7 @@ _none_
 - ErrorTags
 - JUnitRunOutcome
 - MetadataGuards
+- OffScreenTextViewer
 - PendingWorkRegistry
 - ProjectResolver
 
