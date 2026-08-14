@@ -370,7 +370,7 @@ public class ContentAssistReader
             if (extendedDocumentation)
             {
                 String documentation = proposal.getAdditionalProposalInfo();
-                if (documentation != null && !documentation.isEmpty())
+                if (documentation != null && !documentation.isEmpty() && !isObjectDump(documentation))
                 {
                     item.addProperty("documentation", cleanHtmlToMarkdown(documentation, copyDown)); //$NON-NLS-1$
                 }
@@ -385,6 +385,53 @@ public class ContentAssistReader
         root.addProperty("returnedProposals", Integer.valueOf(returned)); //$NON-NLS-1$
         root.add("proposals", items); //$NON-NLS-1$
         return GsonHolder.toJson(root);
+    }
+
+    /**
+     * Tells whether a documentation string is really a model object that printed itself.
+     * <p>
+     * Some proposals have no documentation to give and hand back the element instead, which arrives
+     * as Java's default rendering - {@code ProposalElementImpl@2194540c}, or a function's whole
+     * internal state trailing after it. That is of no use to any caller, and for a function it puts
+     * the model's insides on the wire. An answer with no documentation is the honest one.
+     * </p>
+     *
+     * @param text the documentation the proposal returned
+     * @return <code>true</code> when the text is an object rendering rather than documentation
+     */
+    static boolean isObjectDump(String text)
+    {
+        if (text == null)
+        {
+            return false;
+        }
+        int at = text.indexOf('@');
+        if (at <= 0)
+        {
+            return false;
+        }
+        for (int i = 0; i < at; i++)
+        {
+            char c = text.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '.' && c != '_' && c != '$')
+            {
+                return false;
+            }
+        }
+        // A default rendering continues with the identity hash; anything else here is real text that
+        // merely happens to contain an at-sign, such as an address in a comment.
+        int digits = 0;
+        for (int i = at + 1; i < text.length(); i++)
+        {
+            char c = text.charAt(i);
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+            {
+                digits++;
+                continue;
+            }
+            break;
+        }
+        return digits > 0;
     }
 
     /**
