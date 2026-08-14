@@ -225,7 +225,10 @@ public class ContentAssistReader
         IEditorPart editorPart;
         try
         {
-            editorPart = IDE.openEditor(page, file, true);
+            // Opened, not activated - see SymbolInfoReader for why: an activated editor becomes the
+            // active part and drags the workbench title along with it, so a long series of calls
+            // leaves the user watching module names flicker past in their window title.
+            editorPart = IDE.openEditor(page, file, false);
         }
         catch (PartInitException e)
         {

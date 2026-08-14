@@ -266,7 +266,12 @@ public class SymbolInfoReader
         IEditorInput editorInput = new FileEditorInput(file);
         boolean wasAlreadyOpen = page.findEditor(editorInput) != null;
 
-        IEditorPart editorPart = IDE.openEditor(page, file, true);
+        // Opened, not activated. Activating makes this editor the active part, and the workbench
+        // title follows the active part - so a survey walking a few hundred positions turned the
+        // title of the user's window into a flicker of module names while the editor area sat empty,
+        // because each one was opened, made active, and closed again. Nothing here needs focus: the
+        // source viewer and its document exist as soon as the editor is opened.
+        IEditorPart editorPart = IDE.openEditor(page, file, false);
         if (editorPart == null)
         {
             editorPathUnavailable.set(true);
