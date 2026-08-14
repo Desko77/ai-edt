@@ -181,6 +181,27 @@ public class SchemaComposer
     }
 
     /**
+     * Declares an array parameter whose entries are not all of one type.
+     * <p>
+     * Used where a caller may spell an entry more than one way - a compact string or an object with
+     * named fields, say. Declaring the items as strings there would advertise one spelling while the
+     * description promises two, and a client that enforces the schema would reject the very form the
+     * description told it to send.
+     * </p>
+     *
+     * @param name the parameter name
+     * @param description what the parameter means, including which spellings are accepted
+     * @return this builder
+     */
+    public SchemaComposer arrayProperty(String name, String description)
+    {
+        Map<String, Object> definition = new LinkedHashMap<>();
+        definition.put(KEY_TYPE, TYPE_ARRAY);
+        definition.put(KEY_DESCRIPTION, description);
+        return addProperty(name, definition, false);
+    }
+
+    /**
      * Renders the schema.
      * <p>
      * {@code properties} and {@code required} are always present, empty if nothing was declared.

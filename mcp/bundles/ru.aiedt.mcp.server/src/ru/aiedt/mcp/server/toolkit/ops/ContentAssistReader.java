@@ -10,27 +10,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.jface.text.BadLocationException;
+import org.eclipse.jface.text.Document;
 import org.eclipse.jface.text.IDocument;
-import org.eclipse.jface.text.TextUtilities;
-import org.eclipse.jface.text.contentassist.IContentAssistant;
-import org.eclipse.jface.text.contentassist.IContentAssistProcessor;
 import org.eclipse.jface.text.contentassist.ICompletionProposal;
-import org.eclipse.jface.text.source.ISourceViewer;
-import org.eclipse.swt.widgets.Display;
-import org.eclipse.ui.IEditorPart;
-import org.eclipse.ui.IWorkbenchPage;
-import org.eclipse.ui.IWorkbenchWindow;
-import org.eclipse.ui.PartInitException;
-import org.eclipse.ui.PlatformUI;
-import org.eclipse.ui.ide.IDE;
-import org.eclipse.ui.part.FileEditorInput;
-import org.eclipse.xtext.ui.editor.XtextEditor;
-import org.eclipse.xtext.ui.editor.XtextSourceViewer;
+import org.eclipse.xtext.resource.XtextResource;
+
+import com._1c.g5.v8.dt.bsl.model.Module;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -44,15 +34,22 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BslProposalAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
 /**
- * Asks the editor what could be typed at a position and reports the completion proposals as JSON.
+ * Asks the language what could be typed at a position and reports the completion proposals as JSON.
  * <p>
- * The file is opened in its Xtext editor, the editor's own content assistant is asked for proposals
- * at the offset, and the results are filtered, paged and optionally documented. An editor that this
- * call opened is closed again on the way out, so repeated calls do not leave a trail of tabs; one
- * that was already open is left as it was found.
+ * No editor is involved. The module's model is read through the plugin's usual BM-aware resource set,
+ * its cross-references are resolved so that member proposals after a dot know what they are members of,
+ * and the language's own proposal provider is asked directly. Nothing opens, nothing takes focus, and
+ * nothing runs on the thread that draws the workbench.
+ * </p>
+ * <p>
+ * The answer is about the module as saved. Unsaved edits sitting in someone's open editor are not
+ * seen - and deliberately so: the text could be taken from the live buffer without an editor, but the
+ * model could not, and answering about new text against an old parse is worse than answering about
+ * the saved module consistently.
  * </p>
  */
 public class ContentAssistReader
@@ -173,31 +170,32 @@ public class ContentAssistReader
                 + " within project " + projectName).toJson(); //$NON-NLS-1$
         }
 
-        int line0 = line;
-        int column0 = column;
-        int limit0 = limit;
-        int offset0 = offset;
-        AtomicReference<String> holder = new AtomicReference<>();
-        Display display = PlatformUI.getWorkbench().getDisplay();
-        display.syncExec(() -> {
-            try
-            {
-                holder.set(executeOnUiThread(file, line0, column0, limit0, offset0, contains,
-                    extendedDocumentation));
-            }
-            catch (Exception e)
-            {
-                Activator.logError("get_content_assist tool failed", e); //$NON-NLS-1$
-                holder.set(ToolResult.error("Unhandled exception: " + e.getMessage()).toJson()); //$NON-NLS-1$
-            }
-        });
-        return holder.get();
+        try
+        {
+            return collectProposals(project, file, filePath, line, column, limit, offset, contains,
+                extendedDocumentation);
+        }
+        catch (Exception e)
+        {
+            Activator.logError("get_content_assist tool failed", e); //$NON-NLS-1$
+            return ToolResult.error("Unhandled exception: " + e.getMessage()).toJson(); //$NON-NLS-1$
+        }
     }
 
     /**
-     * Runs the editor-bound part on the UI thread.
+     * Answers the question without an editor: the module's model is loaded through the same BM-aware
+     * resource set the rest of the plugin reads BSL with, and the language's own proposal provider is
+     * asked directly.
+     * <p>
+     * What the editor contributed was a viewer and a document. Both are supplied without a screen -
+     * see {@link ru.aiedt.mcp.server.support.BslProposalAccess} - so a survey walking hundreds of
+     * positions no longer opens a tab, moves the caret, or takes a turn on the thread that draws the
+     * window of whoever is working in the same EDT.
+     * </p>
      *
-     * @param file the BSL file
+     * @param project the project the module belongs to
+     * @param file the workspace file
+     * @param filePath the {@code src/}-relative file path
      * @param line the 1-based line
      * @param column the 1-based column
      * @param limit how many proposals to keep
@@ -205,118 +203,52 @@ public class ContentAssistReader
      * @param contains the comma-separated substring filter, or <code>null</code>
      * @param extendedDocumentation attaches each proposal's help text when set
      * @return the JSON answer
-     * @throws Exception when the editor cannot be opened
+     * @throws Exception when the module cannot be read
      */
-    private String executeOnUiThread(IFile file, int line, int column, int limit, int offset,
-        String contains, boolean extendedDocumentation) throws Exception
+    private String collectProposals(IProject project, IFile file, String filePath, int line, int column,
+        int limit, int offset, String contains, boolean extendedDocumentation) throws Exception
     {
-        IWorkbenchWindow window = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
-        if (window == null)
-        {
-            return ToolResult.error("There is no active workbench window").toJson(); //$NON-NLS-1$
-        }
-        IWorkbenchPage page = window.getActivePage();
-        if (page == null)
-        {
-            return ToolResult.error("There is no active workbench page").toJson(); //$NON-NLS-1$
-        }
+        String text = BslModuleAccess.readFileText(file);
 
-        boolean wasAlreadyOpen = page.findEditor(new FileEditorInput(file)) != null;
-        IEditorPart editorPart;
+        // A Document here is the plain text model of jface.text, not a widget - line arithmetic only.
+        IDocument lines = new Document(text);
+        int position;
         try
         {
-            // Opened, not activated - see SymbolInfoReader for why: an activated editor becomes the
-            // active part and drags the workbench title along with it, so a long series of calls
-            // leaves the user watching module names flicker past in their window title.
-            editorPart = IDE.openEditor(page, file, false);
+            position = lines.getLineOffset(line - 1) + column - 1;
         }
-        catch (PartInitException e)
+        catch (BadLocationException e)
         {
-            return ToolResult.error("Unable to open an editor for the file").toJson(); //$NON-NLS-1$
+            return ToolResult.error("Line number is invalid: " + line).toJson(); //$NON-NLS-1$
         }
-        if (editorPart == null)
+        if (position < 0 || position > lines.getLength())
         {
-            return ToolResult.error("Unable to open an editor for the file").toJson(); //$NON-NLS-1$
+            return ToolResult.error("The position falls outside the document bounds").toJson(); //$NON-NLS-1$
         }
 
+        Module module = BslModuleAccess.loadModule(project, filePath);
+        Resource resource = module == null ? null : module.eResource();
+        if (!(resource instanceof XtextResource))
+        {
+            return ToolResult.error("The file is not a BSL module, or its model is not built yet").toJson(); //$NON-NLS-1$
+        }
+        XtextResource xtextResource = (XtextResource)resource;
+
+        // What can be typed after a dot depends on the type of what precedes it, and types arrive with
+        // the module's cross-references. The editor resolved them by having the module open.
+        BslModuleAccess.resolveCrossReferences(xtextResource);
+
+        ICompletionProposal[] proposals;
         try
         {
-            if (!(editorPart instanceof XtextEditor))
-            {
-                return ToolResult.error("The file is not a BSL module (no Xtext editor available)").toJson(); //$NON-NLS-1$
-            }
-            XtextEditor xtextEditor = (XtextEditor)editorPart;
-            ISourceViewer sourceViewer = xtextEditor.getInternalSourceViewer();
-            if (sourceViewer == null)
-            {
-                return ToolResult.error("Unable to obtain the source viewer").toJson(); //$NON-NLS-1$
-            }
-            IDocument document = sourceViewer.getDocument();
-            if (document == null)
-            {
-                return ToolResult.error("Unable to obtain the document").toJson(); //$NON-NLS-1$
-            }
-
-            int position;
-            try
-            {
-                position = document.getLineOffset(line - 1) + column - 1;
-            }
-            catch (BadLocationException e)
-            {
-                return ToolResult.error("Line number is invalid: " + line).toJson(); //$NON-NLS-1$
-            }
-            if (position < 0 || position > document.getLength())
-            {
-                return ToolResult.error("The position falls outside the document bounds").toJson(); //$NON-NLS-1$
-            }
-
-            if (!(sourceViewer instanceof XtextSourceViewer))
-            {
-                return ToolResult.error("Source viewer is not an XtextSourceViewer instance").toJson(); //$NON-NLS-1$
-            }
-
-            xtextEditor.selectAndReveal(position, 0);
-
-            IContentAssistant assistant =
-                xtextEditor.getXtextSourceViewerConfiguration().getContentAssistant(sourceViewer);
-            if (assistant == null)
-            {
-                return ToolResult.error("No content assistant is available").toJson(); //$NON-NLS-1$
-            }
-            String partitioning =
-                xtextEditor.getXtextSourceViewerConfiguration().getConfiguredDocumentPartitioning(sourceViewer);
-            String contentType;
-            try
-            {
-                contentType = TextUtilities.getContentType(document, partitioning, position, true);
-            }
-            catch (BadLocationException e)
-            {
-                contentType = IDocument.DEFAULT_CONTENT_TYPE;
-            }
-            IContentAssistProcessor processor = assistant.getContentAssistProcessor(contentType);
-            if (processor == null)
-            {
-                return ToolResult.error("No content-assist processor registered for content type: " //$NON-NLS-1$
-                    + contentType).toJson();
-            }
-
-            ICompletionProposal[] proposals = processor.computeCompletionProposals(sourceViewer, position);
-            if (proposals == null)
-            {
-                proposals = new ICompletionProposal[0];
-            }
-            return formatProposals(file, line, column, proposals, limit, offset, contains,
-                extendedDocumentation);
+            proposals = BslProposalAccess.proposalsAt(text, xtextResource, position);
         }
-        finally
+        catch (IllegalStateException e)
         {
-            if (!wasAlreadyOpen)
-            {
-                page.closeEditor(editorPart, false);
-            }
+            return ToolResult.error(e.getMessage()).toJson();
         }
+        return formatProposals(file, line, column, proposals, limit, offset, contains,
+            extendedDocumentation);
     }
 
     /**

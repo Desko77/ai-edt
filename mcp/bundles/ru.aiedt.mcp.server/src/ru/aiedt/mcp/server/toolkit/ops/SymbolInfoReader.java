@@ -8,6 +8,8 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -36,7 +38,6 @@ import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.part.FileEditorInput;
-import org.eclipse.xtext.linking.lazy.LazyLinkingResource;
 import org.eclipse.xtext.nodemodel.ICompositeNode;
 import org.eclipse.xtext.nodemodel.ILeafNode;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
@@ -45,8 +46,12 @@ import org.eclipse.xtext.resource.IResourceServiceProvider;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.editor.XtextEditor;
 import org.eclipse.xtext.ui.editor.model.IXtextDocument;
-import org.eclipse.xtext.util.CancelIndicator;
 import org.eclipse.xtext.util.concurrent.IUnitOfWork;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 
 import com._1c.g5.v8.dt.bsl.model.DynamicFeatureAccess;
 import com._1c.g5.v8.dt.bsl.model.FormalParam;
@@ -66,7 +71,6 @@ import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.BslHoverAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ReflectionAccess;
-import ru.aiedt.mcp.server.support.ToolCallScope;
 
 /**
  * Reports type and hover information for the symbol at a given position in a BSL module. Two
@@ -83,7 +87,12 @@ public class SymbolInfoReader
     private static final String DESCRIPTION =
         "Back-compat alias of `code_search` `operation=symbol_info`; prefer the facade for new prompts. " //$NON-NLS-1$
             + "Reports type and hover details for the symbol located at a given line and column in a BSL module. " //$NON-NLS-1$
-            + "Includes resolved types, method signatures, and any available documentation."; //$NON-NLS-1$
+            + "Includes resolved types, method signatures, and any available documentation. " //$NON-NLS-1$
+            + "Answers about the module as saved - unsaved editor changes are not seen. " //$NON-NLS-1$
+            + "Pass positions to ask about several places in one call."; //$NON-NLS-1$
+
+    /** How many positions one call answers; beyond this the caller is asked to split the batch. */
+    static final int POSITIONS_MAX = 1000;
 
     /** A dummy {@code .bsl} URI, used only to look up the BSL language services from the Xtext registry. */
     private static final URI BSL_LOOKUP_URI = URI.createURI("dummy.bsl"); //$NON-NLS-1$
@@ -117,8 +126,15 @@ public class SymbolInfoReader
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("filePath", "Path to the BSL module relative to the project's src folder, e.g. 'CommonModules/MyModule/Module.bsl'", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("line", "Line number, counting from 1", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("column", "Column number, counting from 1", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("line", "Line number, counting from 1. Not needed when positions is given.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("column", "Column number, counting from 1. Not needed when positions is given.") //$NON-NLS-1$ //$NON-NLS-2$
+            .arrayProperty("positions", //$NON-NLS-1$
+                "Several positions in the same module, answered in one call and reported in the "
+                    + "order given. Each entry is either \"line:column\" or {\"line\":N,\"column\":M}. "
+                    + "The module is loaded and its cross-references resolved once for the whole "
+                    + "batch, which is the expensive part - so a batch costs about what a single "
+                    + "call costs. A position with no symbol yields its own note rather than "
+                    + "failing the call.")
             .booleanProperty("computeTypes", //$NON-NLS-1$
                 "Resolve the module's cross-references first so the answer names the type of the "
                     + "symbol (default true). Set false to skip that step when only the name and "
@@ -129,6 +145,10 @@ public class SymbolInfoReader
     @Override
     public String getResultFileName(Map<String, String> params)
     {
+        if (JsonUtils.extractStringArgument(params, "positions") != null) //$NON-NLS-1$
+        {
+            return "symbol-info-batch.md"; //$NON-NLS-1$
+        }
         String line = JsonUtils.extractStringArgument(params, "line"); //$NON-NLS-1$
         String column = JsonUtils.extractStringArgument(params, "column"); //$NON-NLS-1$
         return "symbol-info-" + (line != null ? line : "0") + "-" + //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -152,6 +172,23 @@ public class SymbolInfoReader
             return "Error: filePath parameter is missing"; //$NON-NLS-1$
         }
 
+        boolean computeTypes = !"false".equalsIgnoreCase(
+            JsonUtils.extractStringArgument(params, "computeTypes")); //$NON-NLS-1$
+
+        List<int[]> positions;
+        try
+        {
+            positions = parsePositions(JsonUtils.extractStringArgument(params, "positions")); //$NON-NLS-1$
+        }
+        catch (IllegalArgumentException e)
+        {
+            return "Error: " + e.getMessage(); //$NON-NLS-1$
+        }
+        if (positions != null)
+        {
+            return getSymbolInfoAt(projectName, filePath, positions, computeTypes);
+        }
+
         int line;
         int column;
         try
@@ -169,8 +206,6 @@ public class SymbolInfoReader
             return "Error: line and column must both be at least 1"; //$NON-NLS-1$
         }
 
-        boolean computeTypes = !"false".equalsIgnoreCase(
-            JsonUtils.extractStringArgument(params, "computeTypes")); //$NON-NLS-1$
         return getSymbolInfo(projectName, filePath, line, column, computeTypes);
     }
 
@@ -239,6 +274,216 @@ public class SymbolInfoReader
     }
 
     /**
+     * Answers several positions in one module, in the order they were given.
+     * <p>
+     * The saving is not in the round trips - each answer is small - but in the preparation. Reading the
+     * module and resolving its cross-references is what costs, and it costs the same whether one
+     * position is asked about or three hundred. A survey that walks a module position by position pays
+     * that once here instead of once per position.
+     * </p>
+     * <p>
+     * A position that resolves to nothing gets its own note. Nothing about one position is allowed to
+     * cost the caller the answers to the others.
+     * </p>
+     *
+     * @param projectName the project name
+     * @param filePath the {@code src/}-relative file path
+     * @param positions the positions, each a line and a column counting from 1
+     * @param computeTypes resolves the module's cross-references, without which no type is named
+     * @return the Markdown report, one section per position
+     */
+    private String getSymbolInfoAt(String projectName, String filePath, List<int[]> positions,
+        boolean computeTypes)
+    {
+        IWorkspace workspace = ResourcesPlugin.getWorkspace();
+        IProject project = workspace.getRoot().getProject(projectName);
+        if (project == null || !project.exists())
+        {
+            return "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+        }
+        if (!project.isOpen())
+        {
+            return "Error: Project is not open: " + projectName; //$NON-NLS-1$
+        }
+
+        IPath relativePath = new Path("src").append(filePath); //$NON-NLS-1$
+        IFile file = project.getFile(relativePath);
+        if (!file.exists())
+        {
+            return "Error: No such file: " + relativePath.toString() + " within project " + projectName; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        AtomicBoolean modelPathUnavailable = new AtomicBoolean();
+        ModuleUnderQuestion module = open(project, file, filePath, computeTypes, modelPathUnavailable);
+        if (module.failure != null)
+        {
+            return module.failure;
+        }
+
+        // Falling back to the metadata model costs a module load and a file read per position, which
+        // is exactly what a batch exists to avoid. When the model is not built the fallback cannot
+        // answer any position, so that is settled once here rather than a thousand times in the loop.
+        if (module.resource == null && BslModuleAccess.loadModule(project, filePath) == null)
+        {
+            return "Error: the module model is not available yet - the project may still be " //$NON-NLS-1$
+                + "building. Nothing was asked position by position, because the answer would be " //$NON-NLS-1$
+                + "the same for all " + positions.size() + " of them."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        StringBuilder body = new StringBuilder();
+        for (int[] position : positions)
+        {
+            String answer = module.resource == null ? null : module.answerAt(position[0], position[1]);
+            if (answer == null)
+            {
+                answer = getSymbolInfoViaEmf(project, filePath, position[0], position[1]);
+            }
+            if (answer == null)
+            {
+                answer = "Error: Unable to retrieve symbol info"; //$NON-NLS-1$
+            }
+            body.append("## ").append(position[0]).append(":").append(position[1]).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            body.append(answer.trim()).append("\n\n"); //$NON-NLS-1$
+        }
+
+        YamlFrontMatter fm = YamlFrontMatter.create()
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("module", filePath) //$NON-NLS-1$
+            .put("positions", positions.size()); //$NON-NLS-1$
+        return fm.wrapContent(body.toString().trim());
+    }
+
+    /**
+     * Reads the positions argument, accepting either spelling a caller might reach for.
+     * <p>
+     * A JSON array of objects is the shape a program sends; a list of {@code "line:column"} tokens is
+     * what a person types. Both are read, because refusing one of them would teach the caller a
+     * spelling rather than answer the question.
+     * </p>
+     *
+     * @param raw the argument as it arrived, or <code>null</code>
+     * @return the positions, or <code>null</code> when the argument was not given
+     * @throws IllegalArgumentException when the argument is given but cannot be read
+     */
+    static List<int[]> parsePositions(String raw)
+    {
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        String value = raw.trim();
+        List<int[]> positions = new ArrayList<>();
+        if (value.startsWith("[")) //$NON-NLS-1$
+        {
+            JsonElement parsed;
+            try
+            {
+                parsed = JsonParser.parseString(value);
+            }
+            catch (JsonParseException e)
+            {
+                throw new IllegalArgumentException("positions is not valid JSON: " + e.getMessage()); //$NON-NLS-1$
+            }
+            if (!parsed.isJsonArray())
+            {
+                throw new IllegalArgumentException("positions must be an array"); //$NON-NLS-1$
+            }
+            for (JsonElement element : parsed.getAsJsonArray())
+            {
+                positions.add(readPosition(element));
+            }
+        }
+        else
+        {
+            for (String token : value.split(",")) //$NON-NLS-1$
+            {
+                if (!token.trim().isEmpty())
+                {
+                    positions.add(readPair(token.trim()));
+                }
+            }
+        }
+
+        if (positions.isEmpty())
+        {
+            throw new IllegalArgumentException("positions is empty"); //$NON-NLS-1$
+        }
+        if (positions.size() > POSITIONS_MAX)
+        {
+            throw new IllegalArgumentException("positions holds " + positions.size() //$NON-NLS-1$
+                + " entries; at most " + POSITIONS_MAX + " are answered in one call"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return positions;
+    }
+
+    /**
+     * @param element one entry of the positions array
+     * @return the line and column
+     * @throws IllegalArgumentException when the entry is not a position
+     */
+    private static int[] readPosition(JsonElement element)
+    {
+        if (element.isJsonObject())
+        {
+            JsonObject object = element.getAsJsonObject();
+            if (!object.has("line") || !object.has("column")) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                throw new IllegalArgumentException("a position needs both line and column"); //$NON-NLS-1$
+            }
+            return checked(object.get("line").getAsInt(), object.get("column").getAsInt()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (element.isJsonArray() && element.getAsJsonArray().size() == 2)
+        {
+            return checked(element.getAsJsonArray().get(0).getAsInt(),
+                element.getAsJsonArray().get(1).getAsInt());
+        }
+        if (element.isJsonPrimitive())
+        {
+            return readPair(element.getAsString().trim());
+        }
+        throw new IllegalArgumentException("a position is either a line:column pair or {line, column}"); //$NON-NLS-1$
+    }
+
+    /**
+     * @param token a {@code "line:column"} pair
+     * @return the line and column
+     * @throws IllegalArgumentException when the token is not such a pair
+     */
+    private static int[] readPair(String token)
+    {
+        int separator = token.indexOf(':');
+        if (separator < 0)
+        {
+            throw new IllegalArgumentException(token + " is not a line:column pair"); //$NON-NLS-1$
+        }
+        try
+        {
+            return checked(Integer.parseInt(token.substring(0, separator).trim()),
+                Integer.parseInt(token.substring(separator + 1).trim()));
+        }
+        catch (NumberFormatException e)
+        {
+            throw new IllegalArgumentException(token + " is not a line:column pair"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * @param line the 1-based line
+     * @param column the 1-based column
+     * @return the pair
+     * @throws IllegalArgumentException when either number is below 1
+     */
+    private static int[] checked(int line, int column)
+    {
+        if (line < 1 || column < 1)
+        {
+            throw new IllegalArgumentException("line and column must both be at least 1, got " //$NON-NLS-1$
+                + line + ":" + column); //$NON-NLS-1$
+        }
+        return new int[] {line, column};
+    }
+
+    /**
      * Resolves the symbol without an editor: the module's model is loaded through the same
      * BM-aware resource set the rest of the plugin reads BSL with, and the hover is asked of the
      * language's hover service directly.
@@ -260,6 +505,37 @@ public class SymbolInfoReader
     private String readWithoutEditor(IProject project, IFile file, int line, int column, String filePath,
         boolean computeTypes, AtomicBoolean modelPathUnavailable)
     {
+        ModuleUnderQuestion module = open(project, file, filePath, computeTypes, modelPathUnavailable);
+        if (module.failure != null)
+        {
+            return module.failure;
+        }
+        if (module.resource == null)
+        {
+            return null;
+        }
+        return module.answerAt(line, column);
+    }
+
+    /**
+     * Reads a module once so that any number of positions can be asked of it.
+     * <p>
+     * Both halves of the preparation cost something, and the second one costs a lot: the text has to be
+     * read off disk, and the module's cross-references have to be resolved before any type can be
+     * named. Neither depends on which position is asked about, so both are done once here and reused.
+     * </p>
+     *
+     * @param project the project the module belongs to
+     * @param file the workspace file
+     * @param filePath the {@code src/}-relative file path
+     * @param computeTypes resolves the cross-references, without which no type is named
+     * @param modelPathUnavailable raised when the module model could not be reached at all, which is
+     *            the caller's signal to retry the same question against the metadata model
+     * @return the opened module, which may carry a failure instead of a resource
+     */
+    private ModuleUnderQuestion open(IProject project, IFile file, String filePath, boolean computeTypes,
+        AtomicBoolean modelPathUnavailable)
+    {
         String text;
         try
         {
@@ -268,104 +544,110 @@ public class SymbolInfoReader
         catch (Exception e)
         {
             modelPathUnavailable.set(true);
-            return "Error: the module could not be read: " + e.getMessage(); //$NON-NLS-1$
+            return ModuleUnderQuestion.failed("Error: the module could not be read: " + e.getMessage()); //$NON-NLS-1$
         }
 
         // A Document here is the plain text model of jface.text, not a widget - it is used for the
         // line arithmetic only, and nothing about it reaches the screen.
         IDocument document = new Document(text);
-        int offset;
-        try
-        {
-            offset = document.getLineOffset(line - 1) + column - 1;
-        }
-        catch (BadLocationException e)
-        {
-            return "Error: Line number is invalid: " + line; //$NON-NLS-1$
-        }
-        if (offset < 0 || offset > document.getLength())
-        {
-            return "Error: The position falls outside the document bounds"; //$NON-NLS-1$
-        }
-        if (!hasTokenAtPosition(document, offset, line))
-        {
-            return "There is no symbol at this position."; //$NON-NLS-1$
-        }
 
         Module module = BslModuleAccess.loadModule(project, filePath);
         Resource resource = module == null ? null : module.eResource();
         if (!(resource instanceof XtextResource))
         {
             modelPathUnavailable.set(true);
-            return null;
+            return new ModuleUnderQuestion(this, document, null);
         }
         XtextResource xtextResource = (XtextResource)resource;
 
         if (computeTypes)
         {
-            resolveModuleCrossReferences(xtextResource);
+            BslModuleAccess.resolveCrossReferences(xtextResource);
         }
-
-        EObject element = null;
-        EObjectAtOffsetHelper offsetHelper = getOffsetHelper();
-        if (offsetHelper != null)
-        {
-            element = offsetHelper.resolveElementAt(xtextResource, offset);
-        }
-        String hoverHtml = BslHoverAccess.hoverHtml(element, offset);
-        if (hoverHtml != null)
-        {
-            String markdown = cleanHtmlToMarkdown(hoverHtml);
-            if (markdown != null && !markdown.isEmpty())
-            {
-                return markdown;
-            }
-        }
-
-        String described = resolveEObjectInfo(xtextResource, offset);
-        if (described != null && !described.isEmpty())
-        {
-            return described;
-        }
-        return "No symbol could be resolved at this position.\n"; //$NON-NLS-1$
+        return new ModuleUnderQuestion(this, document, xtextResource);
     }
 
     /**
-     * Resolves the module's cross-references, which is the step that puts types on its variables.
-     * <p>
-     * A variable's type is nowhere in the parse tree. The hover reads it from the type state that the
-     * BSL resource installs while resolving its own cross-references - the work an open editor used
-     * to do on our behalf. Resolving the EMF proxies instead is not the same step and leaves the
-     * hover answering with a bare name, which is what shipped in 0.2.10 and did not work.
-     * </p>
-     * <p>
-     * The call is synchronous off the display thread, and asynchronous on it. This runs on a request
-     * thread, so it is the synchronous one - and it is genuinely expensive, which is why the caller
-     * can decline it, why the tool is counted among the heavy ones, and why an operator interrupt
-     * reaches into it.
-     * </p>
-     *
-     * @param resource the module's resource
+     * A module read once, ready to answer about any position in it.
      */
-    private void resolveModuleCrossReferences(XtextResource resource)
+    private static final class ModuleUnderQuestion
     {
-        if (!(resource instanceof LazyLinkingResource))
+        private final SymbolInfoReader reader;
+
+        private final IDocument document;
+
+        private final XtextResource resource;
+
+        private final String failure;
+
+        ModuleUnderQuestion(SymbolInfoReader reader, IDocument document, XtextResource resource)
         {
-            return;
+            this.reader = reader;
+            this.document = document;
+            this.resource = resource;
+            this.failure = null;
         }
-        ToolCallScope scope = ToolCallScope.current();
-        CancelIndicator cancelled =
-            scope == null ? CancelIndicator.NullImpl : () -> scope.cancellation().isCancelled();
-        try
+
+        private ModuleUnderQuestion(String failure)
         {
-            // Dispatches to the BSL resource's own override, which installs the type state.
-            ((LazyLinkingResource)resource).resolveLazyCrossReferences(cancelled);
+            this.reader = null;
+            this.document = null;
+            this.resource = null;
+            this.failure = failure;
         }
-        catch (RuntimeException e)
+
+        static ModuleUnderQuestion failed(String failure)
         {
-            // The name and the execution contexts still answer without this, so a failure here makes
-            // the reply thinner rather than absent.
-            Activator.logWarning("Could not resolve the module's cross-references: " + e.getMessage()); //$NON-NLS-1$
+            return new ModuleUnderQuestion(failure);
+        }
+
+        /**
+         * @param line the 1-based line
+         * @param column the 1-based column
+         * @return the resolved info for that position, or an error string
+         */
+        String answerAt(int line, int column)
+        {
+            int offset;
+            try
+            {
+                offset = this.document.getLineOffset(line - 1) + column - 1;
+            }
+            catch (BadLocationException e)
+            {
+                return "Error: Line number is invalid: " + line; //$NON-NLS-1$
+            }
+            if (offset < 0 || offset > this.document.getLength())
+            {
+                return "Error: The position falls outside the document bounds"; //$NON-NLS-1$
+            }
+            if (!this.reader.hasTokenAtPosition(this.document, offset, line))
+            {
+                return "There is no symbol at this position."; //$NON-NLS-1$
+            }
+
+            EObject element = null;
+            EObjectAtOffsetHelper offsetHelper = this.reader.getOffsetHelper();
+            if (offsetHelper != null)
+            {
+                element = offsetHelper.resolveElementAt(this.resource, offset);
+            }
+            String hoverHtml = BslHoverAccess.hoverHtml(element, offset);
+            if (hoverHtml != null)
+            {
+                String markdown = this.reader.cleanHtmlToMarkdown(hoverHtml);
+                if (markdown != null && !markdown.isEmpty())
+                {
+                    return markdown;
+                }
+            }
+
+            String described = this.reader.resolveEObjectInfo(this.resource, offset);
+            if (described != null && !described.isEmpty())
+            {
+                return described;
+            }
+            return "No symbol could be resolved at this position.\n"; //$NON-NLS-1$
         }
     }
 

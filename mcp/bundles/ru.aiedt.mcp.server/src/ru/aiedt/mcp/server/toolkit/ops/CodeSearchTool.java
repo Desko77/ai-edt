@@ -111,6 +111,11 @@ public class CodeSearchTool implements IMcpTool
                 "1-based line for symbol_info / content_assist.") //$NON-NLS-1$
             .integerProperty("column", //$NON-NLS-1$
                 "1-based column for symbol_info / content_assist.") //$NON-NLS-1$
+            .arrayProperty("positions", //$NON-NLS-1$
+                "symbol_info: several positions in the same module, answered in one call and "
+                    + "reported in the order given. Each entry is either \"line:column\" or "
+                    + "{\"line\":N,\"column\":M}. The module is prepared once for the whole batch, "
+                    + "which is where the cost is - so a batch costs about what one call costs.")
             .stringProperty("contains", //$NON-NLS-1$
                 "content_assist: keep only proposals whose name contains this substring.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$

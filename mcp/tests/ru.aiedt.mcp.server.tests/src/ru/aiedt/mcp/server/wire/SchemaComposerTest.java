@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.wire;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -93,6 +94,20 @@ public class SchemaComposerTest
         var items = JsonParser.parseString(schema).getAsJsonObject()
             .getAsJsonObject("properties").getAsJsonObject("targets").getAsJsonObject("items");
         assertEquals("string", items.get("type").getAsString());
+    }
+
+    @Test
+    public void anArrayOfMixedFormsDoesNotPromiseOneTypeOfItem()
+    {
+        String schema = SchemaComposer.object()
+            .arrayProperty("positions", "either a compact pair or an object")
+            .build();
+
+        var property = JsonParser.parseString(schema).getAsJsonObject()
+            .getAsJsonObject("properties").getAsJsonObject("positions");
+        assertEquals("array", property.get("type").getAsString());
+        assertFalse("declaring items as strings would reject the object form the description offers",
+            property.has("items"));
     }
 
     @Test

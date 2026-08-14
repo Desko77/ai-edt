@@ -25,9 +25,11 @@ import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.xtext.linking.lazy.LazyLinkingResource;
 import org.eclipse.xtext.nodemodel.ICompositeNode;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 import org.eclipse.xtext.resource.IResourceServiceProvider;
+import org.eclipse.xtext.util.CancelIndicator;
 
 import com._1c.g5.v8.dt.bm.xtext.BmAwareResourceSetProvider;
 import com._1c.g5.v8.dt.bsl.model.FormalParam;
@@ -37,6 +39,7 @@ import com._1c.g5.v8.dt.bsl.model.Module;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.ToolCallScope;
 
 /**
  * The one place that turns a module reference into a file, loads its BSL model, reads its bytes, and
@@ -181,6 +184,45 @@ public final class BslModuleAccess
         {
             Activator.logError("Failed to load BSL module from " + uri, e); //$NON-NLS-1$
             return null;
+        }
+    }
+
+    /**
+     * Resolves a module's cross-references, which is the step that puts types on its contents.
+     * <p>
+     * A variable's type is nowhere in the parse tree. It is installed by the BSL resource while it
+     * resolves its own cross-references - the work an open editor used to do on our behalf. Resolving
+     * the EMF proxies instead is not the same step: that was tried, shipped, and left the hover
+     * answering with a bare name.
+     * </p>
+     * <p>
+     * The call is synchronous off the display thread and asynchronous on it. Tools run on a request
+     * thread, so it is the synchronous one - and it is genuinely expensive, which is why the callers
+     * let it be declined, count themselves among the heavy tools, and let an operator interrupt reach
+     * into it.
+     * </p>
+     *
+     * @param resource the module's resource; anything else is ignored
+     */
+    public static void resolveCrossReferences(Resource resource)
+    {
+        if (!(resource instanceof LazyLinkingResource))
+        {
+            return;
+        }
+        ToolCallScope scope = ToolCallScope.current();
+        CancelIndicator cancelled =
+            scope == null ? CancelIndicator.NullImpl : () -> scope.cancellation().isCancelled();
+        try
+        {
+            // Dispatches to the BSL resource's own override, which installs the type state.
+            ((LazyLinkingResource)resource).resolveLazyCrossReferences(cancelled);
+        }
+        catch (RuntimeException e)
+        {
+            // The names still answer without this, so a failure here makes the reply thinner rather
+            // than absent.
+            Activator.logWarning("Could not resolve the module's cross-references: " + e.getMessage()); //$NON-NLS-1$
         }
     }
 
