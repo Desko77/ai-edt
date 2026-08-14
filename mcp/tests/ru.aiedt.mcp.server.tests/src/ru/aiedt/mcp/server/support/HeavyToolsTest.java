@@ -29,6 +29,8 @@ public class HeavyToolsTest
             HeavyTools.isHeavy("code_search")); //$NON-NLS-1$
         assertTrue("the old standalone name reaches the same expensive work as the facade", //$NON-NLS-1$
             HeavyTools.isHeavy("get_content_assist")); //$NON-NLS-1$
+        assertTrue("naming a type resolves the whole module, which is not a cheap read", //$NON-NLS-1$
+            HeavyTools.isHeavy("get_symbol_info")); //$NON-NLS-1$
     }
 
     @Test

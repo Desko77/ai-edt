@@ -21,7 +21,6 @@ import org.eclipse.core.runtime.Path;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
-import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.Document;
 import org.eclipse.jface.text.IDocument;
@@ -37,6 +36,7 @@ import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.part.FileEditorInput;
+import org.eclipse.xtext.linking.lazy.LazyLinkingResource;
 import org.eclipse.xtext.nodemodel.ICompositeNode;
 import org.eclipse.xtext.nodemodel.ILeafNode;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
@@ -45,6 +45,7 @@ import org.eclipse.xtext.resource.IResourceServiceProvider;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.editor.XtextEditor;
 import org.eclipse.xtext.ui.editor.model.IXtextDocument;
+import org.eclipse.xtext.util.CancelIndicator;
 import org.eclipse.xtext.util.concurrent.IUnitOfWork;
 
 import com._1c.g5.v8.dt.bsl.model.DynamicFeatureAccess;
@@ -65,6 +66,7 @@ import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.BslHoverAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ReflectionAccess;
+import ru.aiedt.mcp.server.support.ToolCallScope;
 
 /**
  * Reports type and hover information for the symbol at a given position in a BSL module. Two
@@ -299,14 +301,9 @@ public class SymbolInfoReader
         }
         XtextResource xtextResource = (XtextResource)resource;
 
-        // The type is not in the parse tree - it is installed when the module's cross-references are
-        // resolved, which the editor used to do on our behalf. Without this the hover still answers,
-        // but with the name and no type: a survey measuring BSL types against the environment went
-        // from 635 answers carrying a type out of 635 to 3 out of 840. This is the step that costs,
-        // so it is the step a caller can decline.
         if (computeTypes)
         {
-            EcoreUtil.resolveAll(xtextResource);
+            resolveModuleCrossReferences(xtextResource);
         }
 
         EObject element = null;
@@ -331,6 +328,45 @@ public class SymbolInfoReader
             return described;
         }
         return "No symbol could be resolved at this position.\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * Resolves the module's cross-references, which is the step that puts types on its variables.
+     * <p>
+     * A variable's type is nowhere in the parse tree. The hover reads it from the type state that the
+     * BSL resource installs while resolving its own cross-references - the work an open editor used
+     * to do on our behalf. Resolving the EMF proxies instead is not the same step and leaves the
+     * hover answering with a bare name, which is what shipped in 0.2.10 and did not work.
+     * </p>
+     * <p>
+     * The call is synchronous off the display thread, and asynchronous on it. This runs on a request
+     * thread, so it is the synchronous one - and it is genuinely expensive, which is why the caller
+     * can decline it, why the tool is counted among the heavy ones, and why an operator interrupt
+     * reaches into it.
+     * </p>
+     *
+     * @param resource the module's resource
+     */
+    private void resolveModuleCrossReferences(XtextResource resource)
+    {
+        if (!(resource instanceof LazyLinkingResource))
+        {
+            return;
+        }
+        ToolCallScope scope = ToolCallScope.current();
+        CancelIndicator cancelled =
+            scope == null ? CancelIndicator.NullImpl : () -> scope.cancellation().isCancelled();
+        try
+        {
+            // Dispatches to the BSL resource's own override, which installs the type state.
+            ((LazyLinkingResource)resource).resolveLazyCrossReferences(cancelled);
+        }
+        catch (RuntimeException e)
+        {
+            // The name and the execution contexts still answer without this, so a failure here makes
+            // the reply thinner rather than absent.
+            Activator.logWarning("Could not resolve the module's cross-references: " + e.getMessage()); //$NON-NLS-1$
+        }
     }
 
     /**

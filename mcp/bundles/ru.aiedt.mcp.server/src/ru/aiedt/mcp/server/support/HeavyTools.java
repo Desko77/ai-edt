@@ -68,6 +68,10 @@ public final class HeavyTools
         // thousands of proposals; a long series of them once walked EDT's heap to its ceiling. Named
         // here as well as under the facade, so calling the old standalone name is guarded too.
         "get_content_assist", //$NON-NLS-1$
+        // Naming a symbol's type means resolving the whole module's cross-references, the same work
+        // that filled the heap twice. Named here as well as under the facade, so calling the old
+        // standalone name is guarded too.
+        "get_symbol_info", //$NON-NLS-1$
         "code_search"))); //$NON-NLS-1$
 
     private HeavyTools()
