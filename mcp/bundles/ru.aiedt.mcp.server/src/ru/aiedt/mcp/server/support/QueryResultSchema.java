@@ -654,6 +654,59 @@ public final class QueryResultSchema
     }
 
     /**
+     * The query with its comments and string literals blanked out.
+     * <p>
+     * Only the opening keyword decides the language, and a keyword of the other language inside a
+     * comment or a literal sits earlier in the text often enough to matter - a Russian query under
+     * a line of English notes would otherwise be answered in English. Characters are replaced by
+     * spaces rather than removed so nothing else shifts.
+     * </p>
+     *
+     * @param queryText the query as written
+     * @return the same text with everything that is not code blanked
+     */
+    private static String onlyCode(String queryText)
+    {
+        char[] out = queryText.toCharArray();
+        boolean inString = false;
+        boolean inComment = false;
+        for (int i = 0; i < out.length; i++)
+        {
+            char c = out[i];
+            if (inComment)
+            {
+                if (c == '\n' || c == '\r')
+                {
+                    inComment = false;
+                }
+                else
+                {
+                    out[i] = ' ';
+                }
+            }
+            else if (inString)
+            {
+                out[i] = ' ';
+                if (c == '"')
+                {
+                    inString = false;
+                }
+            }
+            else if (c == '"')
+            {
+                inString = true;
+                out[i] = ' ';
+            }
+            else if (c == '/' && i + 1 < out.length && out[i + 1] == '/')
+            {
+                inComment = true;
+                out[i] = ' ';
+            }
+        }
+        return new String(out);
+    }
+
+    /**
      * Whether the query is written in Russian.
      * <p>
      * It decides which of a field's two names an expanded asterisk is reported under, because that
@@ -668,7 +721,7 @@ public final class QueryResultSchema
      */
     private static boolean writtenInRussian(String queryText)
     {
-        String upper = queryText.toUpperCase();
+        String upper = onlyCode(queryText).toUpperCase();
         int russian = upper.indexOf("ВЫБРАТЬ"); //$NON-NLS-1$
         int english = upper.indexOf("SELECT"); //$NON-NLS-1$
         if (russian < 0 && english < 0)

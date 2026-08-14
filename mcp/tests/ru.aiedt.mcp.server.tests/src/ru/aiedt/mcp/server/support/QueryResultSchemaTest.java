@@ -71,6 +71,18 @@ public class QueryResultSchemaTest
     }
 
     @Test
+    public void theValidatorSaysTheAsteriskIsExpanded()
+    {
+        // Same reason as below: a capability nobody is told about is one nobody uses, and this one
+        // changes what the answer to an existing call looks like.
+        QueryValidator validator = new QueryValidator();
+        assertTrue("the parameter must say the asterisk is expanded", //$NON-NLS-1$
+            validator.getInputSchema().contains("expanded into the fields")); //$NON-NLS-1$
+        assertTrue("it must point at where to get a table's fields without a query", //$NON-NLS-1$
+            validator.getInputSchema().contains("describe_db_tables")); //$NON-NLS-1$
+    }
+
+    @Test
     public void theValidatorAdvertisesTheOption()
     {
         // An agent picks tools by their descriptions. A capability nobody is told about is one

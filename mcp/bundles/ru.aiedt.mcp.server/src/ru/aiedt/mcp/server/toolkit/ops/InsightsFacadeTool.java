@@ -98,7 +98,8 @@ public class InsightsFacadeTool implements IMcpTool
                     + "from target).") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
                 "FQN of the object in question, e.g. 'Catalog.Products'. Russian type names " //$NON-NLS-1$
-                    + "supported. Required for impact_analysis and object_summary; used by " //$NON-NLS-1$
+                    + "supported. Required for impact_analysis, object_summary and " //$NON-NLS-1$
+                    + "describe_db_tables; used by " //$NON-NLS-1$
                     + "dependency_graph when scope=object and by compare_configurations when " //$NON-NLS-1$
                     + "scope=objectFqn.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
