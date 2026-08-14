@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 73 | a test class named after it |
-| exercised | 56 | reached by some other test |
+| exercised | 53 | reached by some other test |
 | tool-sweep | 87 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
 | workspace-bound | 67 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **331** | across 111 test classes |
+| **total** | **328** | across 110 test classes |
 
 ## untested (0)
 
@@ -267,7 +267,7 @@ _none_
 - VanessaTool
 - XdtoWorkshopTool
 
-## exercised (56)
+## exercised (53)
 
 **(root)**
 - Activator
@@ -299,14 +299,11 @@ _none_
 - BmFormHelper
 - BmInfobaseExtensionHelper
 - BmReferencesHelper
-- BslProposalAccess
 - ErrorTags
 - JUnitRunOutcome
 - MetadataGuards
-- OffScreenTextViewer
 - PendingWorkRegistry
 - ProjectResolver
-- ReadOnlyModuleDocument
 
 **toolkit**
 - IMcpTool
