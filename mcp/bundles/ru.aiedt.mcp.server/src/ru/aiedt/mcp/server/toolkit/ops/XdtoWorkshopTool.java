@@ -23,6 +23,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.BmXdtoHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
@@ -299,7 +300,82 @@ public class XdtoWorkshopTool implements IMcpTool
                 }
                 return null;
             }, c.dryRun);
-        return result(err, "set_namespace", c, "namespace"); //$NON-NLS-1$ //$NON-NLS-2$
+        StringBuilder note = new StringBuilder();
+        if (err == null && namespace != null)
+        {
+            err = applyNamespaceToMetadataObject(c, namespace, note);
+        }
+        String what = note.length() == 0 ? "namespace" : "namespace (" + note + ")"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return result(err, "set_namespace", c, what); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes the namespace onto the package's metadata object as well as into its schema.
+     * <p>
+     * The value lives in two places that have to agree: {@code targetNamespace} in
+     * {@code Package.xdto}, which the schema above carries, and {@code namespace} on the
+     * {@code XDTOPackage} object itself. Writing only the schema leaves the object's own attribute
+     * empty, EDT keeps reporting that the package has no namespace, and the answer says the namespace
+     * was applied - which is true of one file and false of the other. Every package of the
+     * demonstration configuration that declares a namespace carries it in both places.
+     * </p>
+     *
+     * @param c the resolved call context
+     * @param namespace the namespace URI to write
+     * @param note collects anything the caller should be told about an outcome that is still a
+     *            success - a preview that would adopt first, or a disk flush that has not confirmed
+     * @return <code>null</code> when the object was updated, otherwise what went wrong
+     */
+    private static String applyNamespaceToMetadataObject(Ctx c, String namespace, StringBuilder note)
+    {
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(c.project,
+            "XDTOPackage." + c.packageName, c.dryRun, (tx, owner) -> { //$NON-NLS-1$
+                String problem = BmObjectHelper.setProperty(owner, "namespace", namespace); //$NON-NLS-1$
+                if (problem != null)
+                {
+                    // Returning it would only make it the message of a successful write. Thrown, it
+                    // aborts the transaction and comes back as the failure it is.
+                    throw new IllegalStateException(problem);
+                }
+                return null;
+            });
+        if (r == null)
+        {
+            return "the schema was written, but the package object was not reachable"; //$NON-NLS-1$
+        }
+        if (!r.ok)
+        {
+            if (c.dryRun && r.tags.containsKey("wouldAutoBorrow")) //$NON-NLS-1$
+            {
+                // A preview in an extension whose package is still inherited. Nothing was written
+                // anywhere - the schema mutation was a preview too - and a real run adopts the
+                // package and then writes both. Calling that a failure would condemn an operation
+                // that works.
+                note.append("a real run would adopt the inherited package first"); //$NON-NLS-1$
+                return null;
+            }
+            return "the schema was written, but the package object kept its own namespace: " //$NON-NLS-1$
+                + (r.error == null ? "no reason given" : r.error); //$NON-NLS-1$
+        }
+        Object exportWarning = r.tags.get("forceExportWarning"); //$NON-NLS-1$
+        if (exportWarning != null)
+        {
+            // The write committed to the model, but the .mdo on disk was not rewritten. The two
+            // places the namespace lives are exactly what this operation is here to keep in step, so
+            // a success would be a claim about a file that still holds the old value.
+            return "the namespace is set in the model, but the package .mdo on disk was not " //$NON-NLS-1$
+                + "rewritten (" + exportWarning + "). The file still carries the old value: re-run " //$NON-NLS-1$ //$NON-NLS-2$
+                + "the operation, or resync_to_disk the package, before committing or building."; //$NON-NLS-1$
+        }
+        if (Boolean.TRUE.equals(r.tags.get("diskFlushPending"))) //$NON-NLS-1$
+        {
+            // Not a failure: the export was accepted, only its confirmation outlasted the wait
+            // budget, which a large configuration does routinely. Worth saying so the caller does
+            // not read the .mdo a second later and conclude nothing happened.
+            note.append("disk flush not confirmed yet; resync_to_disk if the .mdo still shows the " //$NON-NLS-1$
+                + "old value"); //$NON-NLS-1$
+        }
+        return null;
     }
 
     private String opRead(Map<String, String> params)

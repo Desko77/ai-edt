@@ -297,7 +297,21 @@ public class QueryValidator
             ResourceSet resourceSet = resourceSetProvider.get(project);
             URI resourceUri = URI.createPlatformResourceURI(
                 "/" + project.getName() + "/mcp_validate_query_" + System.currentTimeMillis() + ".qldcs", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            resource = (XtextResource)resourceSet.createResource(resourceUri);
+            // Held as a plain Resource until the kind is known: casting the call itself would let a
+            // ClassCastException escape with the resource already in the set and the field still
+            // null, so the finally below would have nothing to clean up and the set would keep it
+            // for the life of the project.
+            Resource created = resourceSet.createResource(resourceUri);
+            if (!(created instanceof XtextResource))
+            {
+                if (created != null)
+                {
+                    resourceSet.getResources().remove(created);
+                }
+                return ToolResult.error("Error: the query resource is not an Xtext resource (" //$NON-NLS-1$
+                    + (created == null ? "nothing was created" : created.getClass().getName()) + ")").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            resource = (XtextResource)created;
 
             if (resource instanceof QlDcsResource)
             {

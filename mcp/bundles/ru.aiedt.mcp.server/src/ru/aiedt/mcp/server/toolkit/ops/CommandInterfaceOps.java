@@ -665,8 +665,16 @@ final class CommandInterfaceOps
         BmExportHelper.Result exp = BmExportHelper.forceExportAndWait(mgr, project, ciFqn);
         if (exp == null || !exp.forceExportOk)
         {
-            r.tags.put("commandInterfaceExportWarning", //$NON-NLS-1$
-                (exp != null && exp.error != null) ? exp.error : "forceExport not ok"); //$NON-NLS-1$
+            String reason = (exp != null && exp.error != null) ? exp.error : "forceExport not ok"; //$NON-NLS-1$
+            r.tags.put("commandInterfaceExportWarning", reason); //$NON-NLS-1$
+            // The command interface changed in the model but never reached CommandInterface.cmi on
+            // disk. A success here would send the caller on to a commit or a build over a file that
+            // does not carry the change - and the visibility they just set would be missing from
+            // everything downstream, with nothing to say why. Same reasoning as sync_export.
+            r.ok = false;
+            r.error = "the command interface changed in the model but was not written to disk (" //$NON-NLS-1$
+                + reason + "). The visibility is not in CommandInterface.cmi yet, so do not commit or " //$NON-NLS-1$
+                + "build on it: re-run the operation, or restart EDT if it keeps failing."; //$NON-NLS-1$
         }
     }
 }
