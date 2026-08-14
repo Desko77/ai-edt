@@ -21,6 +21,7 @@ import org.eclipse.core.runtime.Path;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.Document;
 import org.eclipse.jface.text.IDocument;
@@ -116,6 +117,10 @@ public class SymbolInfoReader
             .stringProperty("filePath", "Path to the BSL module relative to the project's src folder, e.g. 'CommonModules/MyModule/Module.bsl'", true) //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("line", "Line number, counting from 1", true) //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("column", "Column number, counting from 1", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("computeTypes", //$NON-NLS-1$
+                "Resolve the module's cross-references first so the answer names the type of the "
+                    + "symbol (default true). Set false to skip that step when only the name and "
+                    + "documentation are wanted and the module is large.")
             .build();
     }
 
@@ -162,7 +167,9 @@ public class SymbolInfoReader
             return "Error: line and column must both be at least 1"; //$NON-NLS-1$
         }
 
-        return getSymbolInfo(projectName, filePath, line, column);
+        boolean computeTypes = !"false".equalsIgnoreCase(
+            JsonUtils.extractStringArgument(params, "computeTypes")); //$NON-NLS-1$
+        return getSymbolInfo(projectName, filePath, line, column, computeTypes);
     }
 
     /**
@@ -175,7 +182,8 @@ public class SymbolInfoReader
      * @param column the 1-based column
      * @return the Markdown report, with front matter on non-error results
      */
-    private String getSymbolInfo(String projectName, String filePath, int line, int column)
+    private String getSymbolInfo(String projectName, String filePath, int line, int column,
+        boolean computeTypes)
     {
         IWorkspace workspace = ResourcesPlugin.getWorkspace();
         IProject project = workspace.getRoot().getProject(projectName);
@@ -200,7 +208,7 @@ public class SymbolInfoReader
         // directly - so a survey walking hundreds of positions no longer opens a tab, takes the
         // focus, or makes the workbench pause under whoever is typing in it.
         AtomicBoolean modelPathUnavailable = new AtomicBoolean();
-        String result = readWithoutEditor(project, file, line, column, filePath, modelPathUnavailable);
+        String result = readWithoutEditor(project, file, line, column, filePath, computeTypes, modelPathUnavailable);
 
         if (result == null || modelPathUnavailable.get())
         {
@@ -248,7 +256,7 @@ public class SymbolInfoReader
      * @return the resolved info, or an error string
      */
     private String readWithoutEditor(IProject project, IFile file, int line, int column, String filePath,
-        AtomicBoolean modelPathUnavailable)
+        boolean computeTypes, AtomicBoolean modelPathUnavailable)
     {
         String text;
         try
@@ -290,6 +298,16 @@ public class SymbolInfoReader
             return null;
         }
         XtextResource xtextResource = (XtextResource)resource;
+
+        // The type is not in the parse tree - it is installed when the module's cross-references are
+        // resolved, which the editor used to do on our behalf. Without this the hover still answers,
+        // but with the name and no type: a survey measuring BSL types against the environment went
+        // from 635 answers carrying a type out of 635 to 3 out of 840. This is the step that costs,
+        // so it is the step a caller can decline.
+        if (computeTypes)
+        {
+            EcoreUtil.resolveAll(xtextResource);
+        }
 
         EObject element = null;
         EObjectAtOffsetHelper offsetHelper = getOffsetHelper();

@@ -115,6 +115,10 @@ public class CodeSearchTool implements IMcpTool
                 "content_assist: keep only proposals whose name contains this substring.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
                 "content_assist: skip this many proposals (paging, with limit).") //$NON-NLS-1$
+            .booleanProperty("computeTypes", //$NON-NLS-1$
+                "symbol_info: resolve the module's cross-references first so the answer names "
+                    + "the type of the symbol (default true). Set false to skip that step when "
+                    + "only the name and documentation are wanted.")
             .booleanProperty("extendedDocumentation", //$NON-NLS-1$
                 "content_assist: include the full doc string for each proposal. Default: false.") //$NON-NLS-1$
             .stringProperty("symbol", //$NON-NLS-1$
