@@ -19,8 +19,10 @@ import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EReference;
 
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalDataSource;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.metadata.mdclass.Subsystem;
+import com._1c.g5.v8.dt.metadata.mdclass.Table;
 
 /**
  * What a 1C metadata type is called, in every spelling it answers to.
@@ -41,6 +43,9 @@ import com._1c.g5.v8.dt.metadata.mdclass.Subsystem;
  */
 public final class MetadataTypeCatalog
 {
+    /** The segment that separates an external data source from one of its tables in an FQN. */
+    private static final String EXTERNAL_TABLE_SEGMENT = "Table"; //$NON-NLS-1$
+
     /**
      * The metadata types this plugin knows, and their names.
      * <p>
@@ -628,6 +633,45 @@ public final class MetadataTypeCatalog
             level = found.getSubsystems();
         }
         return found;
+    }
+
+    /**
+     * Resolves {@code ExternalDataSource.<source>.Table.<table>} against the configuration.
+     * <p>
+     * A table of an external data source is a metadata object like any other and has database
+     * tables of its own, but its address is four segments rather than two, so it cannot be found by
+     * a type and a name the way everything else is. This walks the two levels instead, the same way
+     * {@link #findNestedSubsystem} walks a containment tree that a flat lookup cannot reach.
+     * </p>
+     *
+     * @param config the configuration; may be <code>null</code>
+     * @param fqn the four-segment FQN; may be <code>null</code>
+     * @return the table, or <code>null</code> when this is not such an FQN or a segment is missing
+     */
+    public static MdObject findExternalDataSourceTable(Configuration config, String fqn)
+    {
+        if (config == null || fqn == null)
+        {
+            return null;
+        }
+        String[] segs = fqn.split("\\."); //$NON-NLS-1$
+        if (segs.length != 4 || !EXTERNAL_TABLE_SEGMENT.equalsIgnoreCase(segs[2]))
+        {
+            return null;
+        }
+        MdObject source = findObject(config, segs[0], segs[1]);
+        if (!(source instanceof ExternalDataSource))
+        {
+            return null;
+        }
+        for (Table table : ((ExternalDataSource)source).getTables())
+        {
+            if (table != null && segs[3].equalsIgnoreCase(table.getName()))
+            {
+                return table;
+            }
+        }
+        return null;
     }
 
     /**

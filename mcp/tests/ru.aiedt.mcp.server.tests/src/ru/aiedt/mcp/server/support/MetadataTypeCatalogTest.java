@@ -524,6 +524,27 @@ public class MetadataTypeCatalogTest
     }
 
     @Test
+    public void anExternalTableFqnOfTheWrongShapeIsNotMistakenForOne()
+    {
+        // Only the guards are reachable without a loaded configuration, and they are the part worth
+        // pinning: this runs in front of the ordinary two-segment lookup, so anything it claims by
+        // mistake never reaches the lookup that would have resolved it.
+        assertNull(MetadataTypeCatalog.findExternalDataSourceTable(null, "ExternalDataSource.S.Table.T")); //$NON-NLS-1$
+        assertNull(MetadataTypeCatalog.findExternalDataSourceTable(null, null));
+    }
+
+    @Test
+    public void theTypeOfAFourSegmentFqnIsStillNormalized()
+    {
+        // The Russian spelling has to survive normalization intact past the first segment, or the
+        // four-segment lookup never sees an address it recognizes.
+        assertEquals("ExternalDataSource.Src.Table.Orders", //$NON-NLS-1$
+            MetadataTypeCatalog.normalizeFqn("ВнешнийИсточникДанных.Src.Table.Orders")); //$NON-NLS-1$
+        assertEquals("ExternalDataSource.Src.Table.Orders", //$NON-NLS-1$
+            MetadataTypeCatalog.normalizeFqn("ExternalDataSources.Src.Table.Orders")); //$NON-NLS-1$
+    }
+
+    @Test
     public void everyCollectionNameDiffersFromTheOthersEvenIgnoringCase()
     {
         // The lookup falls back to a case-insensitive match, so two entries differing only in case

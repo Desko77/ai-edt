@@ -68,9 +68,10 @@ public class DbTablesReader implements IMcpTool
                 "EDT project name. Required.", true) //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
                 "FQN of the object (e.g. 'Catalog.Products', 'AccumulationRegister.Sales'). " //$NON-NLS-1$
-                    + "Russian type names supported. An object that has no database tables is " //$NON-NLS-1$
-                    + "answered with a reason rather than an empty list, which would read as a " //$NON-NLS-1$
-                    + "loss.", true) //$NON-NLS-1$
+                    + "A table of an external data source takes its own four-segment address, " //$NON-NLS-1$
+                    + "'ExternalDataSource.Src.Table.Orders'. Russian type names supported. An " //$NON-NLS-1$
+                    + "object that has no database tables is answered with a reason rather than " //$NON-NLS-1$
+                    + "an empty list, which would read as a loss.", true) //$NON-NLS-1$
             .booleanProperty("includeFields", //$NON-NLS-1$
                 "Include the fields and virtual-table parameters. Default: true. Pass false for " //$NON-NLS-1$
                     + "the table names and field counts alone, which is much smaller on an " //$NON-NLS-1$
@@ -109,15 +110,11 @@ public class DbTablesReader implements IMcpTool
         {
             return ToolResult.error("Configuration not loaded for: " + projectName).toJson(); //$NON-NLS-1$
         }
-        String[] parts = objectFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
-        {
-            return ToolResult.error("Expected two-segment FQN like 'Catalog.Products'.").toJson(); //$NON-NLS-1$
-        }
-        MdObject object = MetadataTypeCatalog.findObject(configuration, parts[0], parts[1]);
+        MdObject object = resolveObject(configuration, objectFqn);
         if (object == null)
         {
-            return ToolResult.error("No such object: " + objectFqn).toJson(); //$NON-NLS-1$
+            return ToolResult.error("No such object: " + objectFqn //$NON-NLS-1$
+                + ". Expected 'Catalog.Products' or 'ExternalDataSource.Src.Table.Orders'.").toJson(); //$NON-NLS-1$
         }
 
         DbViewSurvey.Survey survey = DbViewSurvey.of(object);
@@ -137,5 +134,32 @@ public class DbTablesReader implements IMcpTool
         }
         body.put("tables", tables); //$NON-NLS-1$
         return ToolResult.success().put("dbTables", body).toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * Finds the object an FQN names, in either of the two shapes an FQN can take here.
+     * <p>
+     * Nearly every metadata object is a type and a name. A table of an external data source is four
+     * segments - the source, then the table - and it has database tables of its own just as a
+     * catalog does, so it belongs here rather than being turned away for the shape of its address.
+     * </p>
+     *
+     * @param configuration the configuration to look in
+     * @param objectFqn the FQN, already normalized
+     * @return the object, or <code>null</code> when nothing of that name exists
+     */
+    private static MdObject resolveObject(Configuration configuration, String objectFqn)
+    {
+        MdObject external = MetadataTypeCatalog.findExternalDataSourceTable(configuration, objectFqn);
+        if (external != null)
+        {
+            return external;
+        }
+        String[] parts = objectFqn.split("\\.", 2); //$NON-NLS-1$
+        if (parts.length != 2 || parts[1].isEmpty())
+        {
+            return null;
+        }
+        return MetadataTypeCatalog.findObject(configuration, parts[0], parts[1]);
     }
 }

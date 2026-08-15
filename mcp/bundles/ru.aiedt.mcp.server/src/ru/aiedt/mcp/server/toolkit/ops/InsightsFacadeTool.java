@@ -101,7 +101,10 @@ public class InsightsFacadeTool implements IMcpTool
                     + "supported. Required for impact_analysis, object_summary and " //$NON-NLS-1$
                     + "describe_db_tables; used by " //$NON-NLS-1$
                     + "dependency_graph when scope=object and by compare_configurations when " //$NON-NLS-1$
-                    + "scope=objectFqn.") //$NON-NLS-1$
+                    + "scope=objectFqn. describe_db_tables also takes the four-segment address " //$NON-NLS-1$
+                    + "of a table of an external data source, " //$NON-NLS-1$
+                    + "'ExternalDataSource.Src.Table.Orders'; the other operations expect the " //$NON-NLS-1$
+                    + "two-segment form.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "project_metrics: project / subsystem (default project). dependency_graph: " //$NON-NLS-1$
                     + "project / subsystem / object / module (default project). " //$NON-NLS-1$
