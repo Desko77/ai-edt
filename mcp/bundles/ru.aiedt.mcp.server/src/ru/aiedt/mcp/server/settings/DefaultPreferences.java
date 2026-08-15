@@ -58,6 +58,15 @@ public class DefaultPreferences
         // only supplies the value for a key that was never stored.
         store.setDefault(PrefKeys.PREF_UNLISTED_TOOLS,
             ToolSettingsStore.serializeDisabledTools(ToolProfile.CANONICAL.getUnlistedTools()));
+        store.setDefault(PrefKeys.PREF_HISTORY_ENABLED, PrefKeys.DEFAULT_HISTORY_ENABLED);
+        store.setDefault(PrefKeys.PREF_HISTORY_DEPTH, PrefKeys.DEFAULT_HISTORY_DEPTH);
+        store.setDefault(PrefKeys.PREF_HISTORY_ARG_CHARS, PrefKeys.DEFAULT_HISTORY_ARG_CHARS);
+        store.setDefault(PrefKeys.PREF_HISTORY_RESULT_CHARS,
+            PrefKeys.DEFAULT_HISTORY_RESULT_CHARS);
+        store.setDefault(PrefKeys.PREF_HISTORY_FILE_ENABLED,
+            PrefKeys.DEFAULT_HISTORY_FILE_ENABLED);
+        store.setDefault(PrefKeys.PREF_HISTORY_FILE_REDACT,
+            PrefKeys.DEFAULT_HISTORY_FILE_REDACT);
         store.setDefault(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
             PrefKeys.DEFAULT_MARKERS_SHOW_IN_NAVIGATOR);
         store.setDefault(PrefKeys.PREF_MARKERS_DECORATION_STYLE,

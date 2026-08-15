@@ -143,6 +143,8 @@ public class McpStatusBarItem
 
     private Menu popupMenu;
 
+    private McpHistoryDialog historyDialog;
+
     private Thread updateThread;
 
     /** Last width the trim row was told about; -1 until the strip has been laid out once. */
@@ -232,6 +234,13 @@ public class McpStatusBarItem
         {
             popupMenu.dispose();
         }
+        // The history window outlives the menu that opened it - it is modeless - so it has to be
+        // taken down with the indicator rather than left behind pointing at a disposed parent.
+        if (historyDialog != null && historyDialog.getShell() != null && !historyDialog.getShell().isDisposed())
+        {
+            historyDialog.close();
+        }
+        historyDialog = null;
         super.dispose();
     }
 
@@ -723,6 +732,10 @@ public class McpStatusBarItem
 
         addUpkeepItems(popupMenu);
 
+        // What the agent has been doing is the question this indicator raises in the first place -
+        // it shows the last call and nothing before it. This is the rest of the answer.
+        addPushItem(popupMenu, "Call history...", e -> openHistory()); //$NON-NLS-1$
+
         // The endpoint is the one thing here that gets typed into another program, so offer it as
         // something to take rather than something to read off the screen and retype.
         final int endpointPort = port;
@@ -889,6 +902,25 @@ public class McpStatusBarItem
      * @param type  the kind of signal
      * @param title the dialog title
      */
+    /**
+     * Shows the call history, raising the window that is already up rather than opening a second.
+     * <p>
+     * The dialog is modeless and does not block, so it is kept here instead of being forgotten at
+     * the end of the call: without this, every visit to the menu would stack another copy of the
+     * same list on screen.
+     * </p>
+     */
+    private void openHistory()
+    {
+        if (historyDialog != null && historyDialog.getShell() != null && !historyDialog.getShell().isDisposed())
+        {
+            historyDialog.getShell().setActive();
+            return;
+        }
+        historyDialog = new McpHistoryDialog(container.getShell());
+        historyDialog.open();
+    }
+
     private void sendSignal(OperatorSignal.SignalType type, String title)
     {
         McpHttpEndpoint server = Activator.getDefault() != null ? Activator.getDefault().getMcpServer() : null;

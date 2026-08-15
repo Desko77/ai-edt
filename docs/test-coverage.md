@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 77 | a test class named after it |
-| exercised | 54 | reached by some other test |
+| direct | 80 | a test class named after it |
+| exercised | 55 | reached by some other test |
 | tool-sweep | 87 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 50 | needs a display or an extension point |
+| ui-bound | 49 | needs a display or an extension point |
 | workspace-bound | 67 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **335** | across 115 test classes |
+| **total** | **338** | across 119 test classes |
 
 ## untested (0)
 
@@ -104,7 +104,7 @@ _none_
 - SpecializedOps
 - TemplateOps
 
-## ui-bound (50)
+## ui-bound (49)
 
 **(root)**
 - McpAutoStart
@@ -156,7 +156,6 @@ _none_
 - ExpandTreeCommand
 
 **settings**
-- DefaultPreferences
 - GeneralPrefTab
 - MarkerSettingsMigration
 - McpAuth
@@ -269,7 +268,7 @@ _none_
 - VanessaTool
 - XdtoWorkshopTool
 
-## exercised (54)
+## exercised (55)
 
 **(root)**
 - Activator
@@ -293,6 +292,7 @@ _none_
 - MarkerStore
 
 **settings**
+- DefaultPreferences
 - PrefKeys
 
 **support**
@@ -345,7 +345,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (77)
+## direct (80)
 
 **(root)**
 - OperatorSignal
@@ -357,6 +357,7 @@ _none_
 - SessionChangeTracker
 
 **settings**
+- HistorySettings
 - ToolCategory
 - ToolParamSettings
 - ToolProfile
@@ -375,6 +376,7 @@ _none_
 - GitHubReleaseResolver
 - HeapHeadroom
 - HeavyTools
+- HistoryJournal
 - JUnitReportFormatter
 - JUnitXmlReader
 - LegacyStorageMigration
@@ -445,4 +447,7 @@ _none_
 
 **wire/jsonrpc**
 - ToolCallResult
+
+**workbench**
+- McpHistoryDialog
 

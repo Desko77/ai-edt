@@ -22,6 +22,7 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.McpHistory;
 import ru.aiedt.mcp.server.McpHttpEndpoint;
 import ru.aiedt.mcp.server.OperatorSignal;
+import ru.aiedt.mcp.server.settings.HistorySettings;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.wire.jsonrpc.InitializeResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcRequest;
@@ -65,6 +66,15 @@ public class McpRequestRouter
 
     /** Echoed when the client's id cannot be determined; clients tolerate it, a null id would vanish. */
     private static final Object FALLBACK_REQUEST_ID = Integer.valueOf(1);
+
+    /** Smallest per-argument extent in a history summary, however small the budget. */
+    private static final int MIN_VALUE_CHARS = 80;
+
+    /** Numerator of the share of the history budget one argument value may take. */
+    private static final int VALUE_SHARE_NUMERATOR = 2;
+
+    /** Denominator of that share. Two fifths: long values stay readable, short ones stay visible. */
+    private static final int VALUE_SHARE_DENOMINATOR = 5;
 
     private static final String EMBEDDED_URI_PREFIX = "embedded://"; //$NON-NLS-1$
 
@@ -430,13 +440,18 @@ public class McpRequestRouter
             {
                 server.setCurrentToolName(null);
             }
-            String resultSummary = success ? result
-                : "exception: " + (error != null ? error : "RuntimeException"); //$NON-NLS-1$ //$NON-NLS-2$
-            // A tool that returned {success:false} is a logical failure for the stats, even
-            // though it did not throw (tools report failure via the result, not an exception).
-            boolean logicalSuccess = success && !looksFailed(result);
-            McpHistory.record(tool.getName(), summarizeArgs(arguments), resultSummary,
-                System.currentTimeMillis() - start, logicalSuccess);
+            HistorySettings history = HistorySettings.current();
+            if (history.isEnabled())
+            {
+                String resultSummary = success ? result
+                    : "exception: " + (error != null ? error : "RuntimeException"); //$NON-NLS-1$ //$NON-NLS-2$
+                // A tool that returned {success:false} is a logical failure for the stats, even
+                // though it did not throw (tools report failure via the result, not an exception).
+                boolean logicalSuccess = success && !looksFailed(result);
+                ArgSummary args = summarizeArgs(arguments, history.argChars());
+                McpHistory.record(tool.getName(), args.text, args.cut, resultSummary,
+                    System.currentTimeMillis() - start, logicalSuccess);
+            }
         }
     }
 
@@ -481,14 +496,29 @@ public class McpRequestRouter
             PendingExecutor.DEFAULT_SOFT_TIMEOUT_MS, () -> tool.execute(arguments), null);
     }
 
-    /** Flattens a tool's arguments into a short {@code k=v; k=v} summary for the history buffer. */
-    private static String summarizeArgs(Map<String, String> arguments)
+    /**
+     * Flattens a tool's arguments into a {@code k=v; k=v} summary for the history buffer.
+     * <p>
+     * Both caps come from the budget the history is keeping, because both decide what a person
+     * afterwards gets to see. They used to be fixed at 80 and 250 here, in front of the buffer's own
+     * limit - so raising that limit would have bought nothing: the text had already been cut before
+     * it arrived. A single argument may take {@link #VALUE_SHARE_DENOMINATOR}ths of the budget, so
+     * that one long value still leaves room for the arguments after it to be seen.
+     * </p>
+     *
+     * @param arguments what the tool was called with
+     * @param budget how many characters of this the history keeps
+     * @return the summary and whether anything was left out of it
+     */
+    private static ArgSummary summarizeArgs(Map<String, String> arguments, int budget)
     {
         if (arguments == null || arguments.isEmpty())
         {
-            return ""; //$NON-NLS-1$
+            return new ArgSummary("", false); //$NON-NLS-1$
         }
+        int perValue = Math.max(MIN_VALUE_CHARS, budget * VALUE_SHARE_NUMERATOR / VALUE_SHARE_DENOMINATOR);
         StringBuilder sb = new StringBuilder();
+        boolean cut = false;
         for (Map.Entry<String, String> e : arguments.entrySet())
         {
             if (sb.length() > 0)
@@ -500,22 +530,49 @@ public class McpRequestRouter
             if (v != null && isSensitiveArgKey(e.getKey()))
             {
                 // Never leak credentials (set_infobase_credentials.password, tokens, ...) into
-                // the in-memory history buffer.
+                // the in-memory history buffer, nor into the journal file fed from it. A masked
+                // value is not a shortened one: nothing was lost that the reader could have had.
                 sb.append("***"); //$NON-NLS-1$
+            }
+            else if (v == null)
+            {
+                sb.append("null"); //$NON-NLS-1$
+            }
+            else if (v.length() > perValue)
+            {
+                // Cap each value so a huge argument (source code, long JSON) does not build an
+                // unbounded temporary string before the whole-summary cap applies. This shortening
+                // happens INSIDE the summary, so the finished string can still come out under the
+                // budget - which is why it has to be reported rather than inferred from the length.
+                sb.append(v, 0, perValue).append("..."); //$NON-NLS-1$
+                cut = true;
             }
             else
             {
-                // Cap each value so a huge argument (source code, long JSON) does not build an
-                // unbounded temporary string before the 250-char summary cap applies.
-                sb.append(v == null ? "null" : (v.length() > 80 ? v.substring(0, 80) + "..." : v)); //$NON-NLS-1$ //$NON-NLS-2$
+                sb.append(v);
             }
-            if (sb.length() > 250)
+            if (sb.length() > budget)
             {
                 sb.append("..."); //$NON-NLS-1$
+                cut = true;
                 break;
             }
         }
-        return sb.toString();
+        return new ArgSummary(sb.toString(), cut);
+    }
+
+    /** A flattened argument list and whether anything was left out of it. */
+    private static final class ArgSummary
+    {
+        final String text;
+
+        final boolean cut;
+
+        ArgSummary(String text, boolean cut)
+        {
+            this.text = text;
+            this.cut = cut;
+        }
     }
 
     /** Argument keys whose values must not be recorded (credentials, tokens, secrets). */

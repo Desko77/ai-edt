@@ -99,6 +99,18 @@ public class GeneralPrefTab
 
     private Combo markerStyleCombo;
 
+    private Button historyEnabledCheck;
+
+    private Spinner historyDepthSpinner;
+
+    private Spinner historyArgSpinner;
+
+    private Spinner historyResultSpinner;
+
+    private Button historyFileCheck;
+
+    private Button historyRedactCheck;
+
     private Button upkeepEnabledCheck;
 
     private Text upkeepSiteText;
@@ -144,6 +156,7 @@ public class GeneralPrefTab
         createExternalToolsSection();
         createNetworkAndSecuritySection();
         createNavigatorMarkersSection();
+        createCallHistorySection();
         createUpdatesSection();
         createServerControlSection();
 
@@ -221,6 +234,12 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_BIND_ALL_INTERFACES, bindAllCheck.getSelection());
         store.setValue(PrefKeys.PREF_AUTH_ENABLED, authEnabledCheck.getSelection());
         store.setValue(PrefKeys.PREF_AUTH_TOKEN, authTokenText.getText().trim());
+        store.setValue(PrefKeys.PREF_HISTORY_ENABLED, historyEnabledCheck.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_DEPTH, historyDepthSpinner.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_ARG_CHARS, historyArgSpinner.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_RESULT_CHARS, historyResultSpinner.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_FILE_ENABLED, historyFileCheck.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_FILE_REDACT, historyRedactCheck.getSelection());
         writeUpkeep();
         store.setValue(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR, showMarkersCheck.getSelection());
         MarkerSettingsMigration.mirrorToLegacyKey(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
@@ -288,6 +307,12 @@ public class GeneralPrefTab
         upkeepNotifyCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_UPKEEP_NOTIFY_POPUP));
         upkeepAllowLocalCheck.setSelection(
             store.getDefaultBoolean(PrefKeys.PREF_UPKEEP_ALLOW_LOCAL_SITE));
+        historyEnabledCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_HISTORY_ENABLED));
+        historyDepthSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_HISTORY_DEPTH));
+        historyArgSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_HISTORY_ARG_CHARS));
+        historyResultSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_HISTORY_RESULT_CHARS));
+        historyFileCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_HISTORY_FILE_ENABLED));
+        historyRedactCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_HISTORY_FILE_REDACT));
         showMarkersCheck.setSelection(
             store.getDefaultBoolean(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR));
         selectMarkerStyle(store.getDefaultString(PrefKeys.PREF_MARKERS_DECORATION_STYLE));
@@ -334,6 +359,72 @@ public class GeneralPrefTab
         autoStartCheck.setText("Start the server when EDT opens"); //$NON-NLS-1$
         autoStartCheck.setLayoutData(span(section, 3));
         autoStartCheck.setSelection(store.getBoolean(PrefKeys.PREF_AUTO_START));
+    }
+
+    /**
+     * How much of each tool call is remembered.
+     * <p>
+     * The two character counts are worth spelling out on the page rather than leaving to a tooltip:
+     * they are the difference between a history that says which tools ran and one that shows what
+     * they answered, and the shipped values are set for the first of those.
+     * </p>
+     */
+    private void createCallHistorySection()
+    {
+        Composite section = section("Call history"); //$NON-NLS-1$
+
+        historyEnabledCheck = new Button(section, SWT.CHECK);
+        historyEnabledCheck.setText("Record tool calls"); //$NON-NLS-1$
+        historyEnabledCheck.setLayoutData(span(section, 3));
+        historyEnabledCheck.setSelection(store.getBoolean(PrefKeys.PREF_HISTORY_ENABLED));
+
+        historyDepthSpinner = historyRow(section, "Calls kept:", PrefKeys.PREF_HISTORY_DEPTH, //$NON-NLS-1$
+            1, PrefKeys.MAX_HISTORY_DEPTH);
+        historyArgSpinner = historyRow(section, "Characters of the request kept:", //$NON-NLS-1$
+            PrefKeys.PREF_HISTORY_ARG_CHARS, 0, PrefKeys.MAX_HISTORY_CHARS);
+        historyResultSpinner = historyRow(section, "Characters of the response kept:", //$NON-NLS-1$
+            PrefKeys.PREF_HISTORY_RESULT_CHARS, 0, PrefKeys.MAX_HISTORY_CHARS);
+
+        // Said here rather than left to be discovered in the history window: the three numbers above
+        // are bounded by their product, so a deep buffer with long extents gets less than it asked.
+        Label budgetNote = new Label(section, SWT.WRAP);
+        budgetNote.setText("The buffer as a whole is bounded: character counts that do not fit " //$NON-NLS-1$
+            + "alongside the chosen number of calls are scaled down. The counts in force are shown " //$NON-NLS-1$
+            + "in the Call history window."); //$NON-NLS-1$
+        budgetNote.setLayoutData(span(section, 3));
+
+        historyFileCheck = new Button(section, SWT.CHECK);
+        historyFileCheck.setText("Also append every call to a file, so it survives a restart"); //$NON-NLS-1$
+        historyFileCheck.setLayoutData(span(section, 3));
+        historyFileCheck.setSelection(store.getBoolean(PrefKeys.PREF_HISTORY_FILE_ENABLED));
+
+        historyRedactCheck = new Button(section, SWT.CHECK);
+        historyRedactCheck.setText("Mask personal data in that file"); //$NON-NLS-1$
+        historyRedactCheck.setLayoutData(span(section, 3));
+        historyRedactCheck.setSelection(store.getBoolean(PrefKeys.PREF_HISTORY_FILE_REDACT));
+    }
+
+    /**
+     * One labelled number in the history section.
+     *
+     * @param section the section body
+     * @param label what the number means
+     * @param key the preference to read
+     * @param min lowest offered
+     * @param max highest offered
+     * @return the spinner, so it can be written back and reset
+     */
+    private Spinner historyRow(Composite section, String label, String key, int min, int max)
+    {
+        Label caption = new Label(section, SWT.NONE);
+        caption.setText(label);
+
+        Spinner spinner = new Spinner(section, SWT.BORDER);
+        spinner.setMinimum(min);
+        spinner.setMaximum(max);
+        spinner.setSelection(store.getInt(key));
+        spacer(section);
+        return spinner;
     }
 
     private void createExternalToolsSection()

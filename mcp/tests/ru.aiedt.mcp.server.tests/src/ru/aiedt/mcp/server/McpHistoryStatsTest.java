@@ -153,12 +153,13 @@ public class McpHistoryStatsTest
     @Test
     public void theLastCallSurvivesTheBufferFillingUp()
     {
-        for (int i = 0; i < McpHistory.CAPACITY + 5; i++)
+        int depth = McpHistory.capacity();
+        for (int i = 0; i < depth + 5; i++)
         {
             McpHistory.record("tool_" + i, "", "", 1L, true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
 
         // Eviction takes from the front; the newest entry must never be the one dropped.
-        assertEquals("tool_" + (McpHistory.CAPACITY + 4), McpHistory.lastCall().toolName); //$NON-NLS-1$
+        assertEquals("tool_" + (depth + 4), McpHistory.lastCall().toolName); //$NON-NLS-1$
     }
 }

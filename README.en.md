@@ -450,6 +450,16 @@ What it honestly is and is not:
 - It lowers the risk of a leak into a cloud model. It does not replace deciding what an assistant
   should be shown in the first place.
 
+### Call history
+
+Every tool call is recorded: what ran, with which arguments, what came back, how long it took. Open it from the AI-EDT status bar indicator, **Call history**. The window is modeless, so the agent keeps working while you read.
+
+Settings live in **Window -> Preferences -> AI-EDT**, section **Call history**: whether to record at all, how many calls to keep, how many characters of the request and of the response to keep. The shipped values answer "which tools ran" rather than "what exactly did they answer" - raise the character counts if you need the full response, since they are what decides what you get to see.
+
+Depth and extent are bounded together: the buffer as a whole stays inside a memory budget, and character counts that do not fit alongside the chosen depth are scaled down proportionally. The counts actually in force are shown in the history window header, so a reduction is visible rather than silent. The shipped values come nowhere near the budget.
+
+A separate setting appends every call to a file in the plugin state location, so the record survives an EDT restart. Off by default. The file is size-bounded and rotates. Infobase passwords never reach it: argument values under a `password`, `token` or `secret` style key are replaced with `***` before anything is recorded. Personal data in the file is masked - that can be switched off, but it is on by default, because the file outlives the session and travels attached to a bug report.
+
 ### Other measures
 
 - Metadata refactoring tools provide preview/confirm workflows.

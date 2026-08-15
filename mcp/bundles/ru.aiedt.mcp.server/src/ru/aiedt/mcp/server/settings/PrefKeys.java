@@ -124,6 +124,42 @@ public final class PrefKeys
      */
     public static final String PREF_MAX_RESPONSE_BYTES = "mcpMaxResponseBytes"; //$NON-NLS-1$
 
+    // ---- call history --------------------------------------------------------------------------
+    //
+    // What the agent did, kept so a person can read it back. The shipped values reproduce the
+    // behaviour these settings were carved out of, so an existing workspace notices nothing until
+    // someone changes one.
+
+    /** Whether tool calls are recorded at all. */
+    public static final String PREF_HISTORY_ENABLED = "mcpHistoryEnabled"; //$NON-NLS-1$
+
+    /** How many calls are kept. The oldest is dropped once the buffer is this long. */
+    public static final String PREF_HISTORY_DEPTH = "mcpHistoryDepth"; //$NON-NLS-1$
+
+    /** How much of a call's arguments is kept, in characters. */
+    public static final String PREF_HISTORY_ARG_CHARS = "mcpHistoryArgChars"; //$NON-NLS-1$
+
+    /** How much of a call's response is kept, in characters. */
+    public static final String PREF_HISTORY_RESULT_CHARS = "mcpHistoryResultChars"; //$NON-NLS-1$
+
+    /**
+     * Whether each call is also appended to a file in the plugin state location, so the record
+     * survives a restart. Off by default: the in-memory buffer costs nothing and writes nothing.
+     */
+    public static final String PREF_HISTORY_FILE_ENABLED = "mcpHistoryFileEnabled"; //$NON-NLS-1$
+
+    /**
+     * Whether the file is masked for personal data on the way out.
+     * <p>
+     * On by default, and deliberately not tied to {@link #PREF_PII_REDACT_ENABLED}. That one governs
+     * what an agent is shown - a live answer, read once, by the person who asked for it. This governs
+     * a file that outlives the session and gets attached to a bug report. Arguments carry infobase
+     * passwords and responses carry whatever the configuration holds, so what is written down is
+     * masked unless someone deliberately says otherwise.
+     * </p>
+     */
+    public static final String PREF_HISTORY_FILE_REDACT = "mcpHistoryFileRedact"; //$NON-NLS-1$
+
     /** Whether markers are painted onto metadata objects in the Navigator. */
     public static final String PREF_MARKERS_SHOW_IN_NAVIGATOR = "markers.showInNavigator"; //$NON-NLS-1$
 
@@ -282,6 +318,51 @@ public final class PrefKeys
 
     /** Shipped disabled set: empty - every tool is on. */
     public static final String DEFAULT_DISABLED_TOOLS = ""; //$NON-NLS-1$
+
+    /** Shipped recording: on. The buffer is small, and an unrecorded session cannot be reviewed. */
+    public static final boolean DEFAULT_HISTORY_ENABLED = true;
+
+    /** Shipped depth: the 200 calls the buffer held before the depth was settable. */
+    public static final int DEFAULT_HISTORY_DEPTH = 200;
+
+    /** Shipped argument extent, in characters. */
+    public static final int DEFAULT_HISTORY_ARG_CHARS = 200;
+
+    /**
+     * Shipped response extent, in characters. Enough to tell one answer from another, which is what
+     * the buffer was built for; someone reading responses in earnest raises it.
+     */
+    public static final int DEFAULT_HISTORY_RESULT_CHARS = 300;
+
+    /** Largest depth offered. Past this the buffer stops being a recent-calls list. */
+    public static final int MAX_HISTORY_DEPTH = 5000;
+
+    /** Largest extent offered, in characters, for arguments and for responses alike. */
+    public static final int MAX_HISTORY_CHARS = 200000;
+
+    /**
+     * Most characters the whole buffer may hold, across every call in it.
+     * <p>
+     * The depth and the two extents are settable one at a time, and each is reasonable on its own -
+     * but their product is not. Both maxima at the greatest depth would ask for two billion
+     * characters, some four gigabytes of {@code char}, which does not fail as a rejected setting; it
+     * fails as the IDE running out of heap, taking the session and this server with it. So the
+     * extents are brought down together to fit inside this, and what they came down to is shown in
+     * the history window rather than left to be discovered.
+     * </p>
+     * <p>
+     * Eight million characters is roughly sixteen megabytes of {@code char} at the very worst, which
+     * an IDE that routinely holds a configuration model can spare. The shipped settings use about a
+     * hundred thousand, so nothing ordinary comes near this.
+     * </p>
+     */
+    public static final int MAX_HISTORY_TOTAL_CHARS = 8_000_000;
+
+    /** Shipped file journal: off. */
+    public static final boolean DEFAULT_HISTORY_FILE_ENABLED = false;
+
+    /** Shipped masking of the file journal: on. */
+    public static final boolean DEFAULT_HISTORY_FILE_REDACT = true;
 
     /** Shipped marker decoration: on. */
     public static final boolean DEFAULT_MARKERS_SHOW_IN_NAVIGATOR = true;

@@ -63,7 +63,7 @@ public class SelfStatusTool
     {
         return ToolResult.success()
             .put("historySize", McpHistory.size()) //$NON-NLS-1$
-            .put("historyCapacity", McpHistory.CAPACITY) //$NON-NLS-1$
+            .put("historyCapacity", McpHistory.capacity()) //$NON-NLS-1$
             .put("tools", McpHistory.perToolStats()) //$NON-NLS-1$
             .put("pending", pendingCounts()) //$NON-NLS-1$
             .put("heap", heapReading()) //$NON-NLS-1$

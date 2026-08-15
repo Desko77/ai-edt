@@ -61,7 +61,7 @@ public final class McpHistoryReader implements IMcpTool
     public String execute(Map<String, String> params)
     {
         Integer limitRaw = JsonUtils.extractIntegerArgument(params, "limit"); //$NON-NLS-1$
-        int limit = (limitRaw != null && limitRaw > 0) ? Math.min(limitRaw, McpHistory.CAPACITY) : 50;
+        int limit = (limitRaw != null && limitRaw > 0) ? Math.min(limitRaw, McpHistory.capacity()) : 50;
         boolean includeStats = JsonUtils.extractBooleanArgument(params, "includeStats", true); //$NON-NLS-1$
         boolean clear = JsonUtils.extractBooleanArgument(params, "clear", false); //$NON-NLS-1$
         ToolResult result = ToolResult.success()

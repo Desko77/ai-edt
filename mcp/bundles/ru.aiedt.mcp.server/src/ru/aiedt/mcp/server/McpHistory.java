@@ -12,47 +12,132 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.settings.HistorySettings;
+import ru.aiedt.mcp.server.support.HistoryJournal;
+
 /**
- * Bounded in-memory ring buffer of recent MCP tool calls, for observability: the
- * {@code get_mcp_history} tool surfaces what filled the agent's context (which tools
- * ran, with what arguments, how long, success/failure) so a long session can be
- * inspected instead of guessed. Always on; capped at {@link #CAPACITY} entries, oldest
- * evicted; in-memory only (never persisted). Thread-safe.
+ * Bounded in-memory ring buffer of recent MCP tool calls, for observability: which tools ran, with
+ * what arguments, how long, success or failure. Two readers exist - the {@code get_mcp_history} tool,
+ * for an agent, and the call-history dialog, for a person. Thread-safe.
+ * <p>
+ * How much is kept - whether at all, how many calls, how many characters of the arguments and of the
+ * response - comes from {@link HistorySettings}, read afresh on each call so a change takes effect on
+ * the next one without a restart. The shipped values are the ones this buffer had before any of it
+ * was settable, so a workspace that never touches the settings behaves exactly as before.
+ * </p>
+ * <p>
+ * The buffer itself is memory only and goes with the session. Surviving a restart is what the
+ * optional {@link HistoryJournal} file is for.
+ * </p>
  */
 public final class McpHistory
 {
-    /** Maximum number of recent calls kept. */
-    public static final int CAPACITY = 200;
-
-    private static final int ARG_LIMIT = 200;
-    private static final int RESULT_LIMIT = 300;
-
     private static final Deque<Record> RING = new ArrayDeque<>();
 
     private McpHistory()
     {
     }
 
-    /** Truncates a value to {@code limit} chars, appending an ellipsis when cut. */
+    /**
+     * Truncates a value to {@code limit} chars, appending an ellipsis when cut.
+     * <p>
+     * A limit of zero keeps nothing, and keeping nothing means an empty string. Appending the
+     * ellipsis there would store three characters for a setting that asked for none, and the reader
+     * would be shown a value where the answer is that they chose not to keep one.
+     * </p>
+     *
+     * @param value the text, or <code>null</code>
+     * @param limit how many characters to keep
+     * @return the kept text
+     */
     public static String truncate(String value, int limit)
     {
         if (value == null)
         {
             return null;
         }
+        if (limit <= 0)
+        {
+            return ""; //$NON-NLS-1$
+        }
         return value.length() <= limit ? value : value.substring(0, limit) + "..."; //$NON-NLS-1$
     }
 
-    /** Records one tool call (called from the dispatch path after the tool ran). */
-    public static synchronized void record(String toolName, String argSummary, String resultSummary,
+    /**
+     * Records one tool call whose arguments arrived whole.
+     *
+     * @param toolName the tool that ran
+     * @param argSummary its arguments, already flattened and with credentials masked
+     * @param resultSummary what it answered, in full - this is where the response is cut to size
+     * @param durationMs how long it took
+     * @param success whether it worked
+     */
+    public static void record(String toolName, String argSummary, String resultSummary, long durationMs,
+        boolean success)
+    {
+        record(toolName, argSummary, false, resultSummary, durationMs, success);
+    }
+
+    /**
+     * Records one tool call (called from the dispatch path after the tool ran).
+     *
+     * @param toolName the tool that ran
+     * @param argSummary its arguments, already flattened and with credentials masked
+     * @param argsAlreadyCut whether flattening the arguments shortened any of them - the caller has
+     *            to say so, because a summary that lost a long value inside it can still come out
+     *            shorter than the extent, and comparing lengths here would then call it whole
+     * @param resultSummary what it answered, in full - this is where the response is cut to size
+     * @param durationMs how long it took
+     * @param success whether it worked
+     */
+    public static void record(String toolName, String argSummary, boolean argsAlreadyCut, String resultSummary,
         long durationMs, boolean success)
     {
-        RING.addLast(new Record(toolName, truncate(argSummary, ARG_LIMIT), truncate(resultSummary, RESULT_LIMIT),
-            System.currentTimeMillis(), durationMs, success));
-        while (RING.size() > CAPACITY)
+        HistorySettings settings = HistorySettings.current();
+        if (!settings.isEnabled())
+        {
+            return;
+        }
+        Record entry = new Record(toolName, truncate(argSummary, settings.argChars()),
+            truncate(resultSummary, settings.resultChars()), System.currentTimeMillis(), durationMs, success,
+            argsAlreadyCut || (argSummary != null && argSummary.length() > settings.argChars()),
+            resultSummary == null ? 0 : resultSummary.length());
+        add(entry, settings.depth());
+        if (settings.isFileEnabled())
+        {
+            // Outside the lock: the journal touches the disk, and holding the buffer while it does
+            // would stall every other tool call behind one slow write.
+            HistoryJournal.append(entry.toMap(), settings.isFileRedacted());
+        }
+    }
+
+    /**
+     * Adds an entry and brings the buffer down to the depth in force.
+     * <p>
+     * Trimming here rather than at the moment the setting changes is what makes a reduced depth take
+     * effect without anything having to notice the change: the buffer shrinks as calls arrive.
+     * </p>
+     *
+     * @param entry the call to keep
+     * @param depth how many calls may be kept
+     */
+    private static synchronized void add(Record entry, int depth)
+    {
+        RING.addLast(entry);
+        while (RING.size() > depth)
         {
             RING.removeFirst();
         }
+    }
+
+    /**
+     * How many calls the buffer is currently allowed to hold.
+     *
+     * @return the depth in force
+     */
+    public static int capacity()
+    {
+        return HistorySettings.current().depth();
     }
 
     /**
@@ -123,7 +208,7 @@ public final class McpHistory
         }
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("buffered", RING.size()); //$NON-NLS-1$
-        s.put("capacity", CAPACITY); //$NON-NLS-1$
+        s.put("capacity", capacity()); //$NON-NLS-1$
         s.put("success", ok); //$NON-NLS-1$
         s.put("failure", fail); //$NON-NLS-1$
         s.put("totalDurationMs", totalMs); //$NON-NLS-1$
@@ -148,8 +233,7 @@ public final class McpHistory
      * ran, a map with {@code count}, {@code p50Ms} / {@code p95Ms} / {@code p99Ms}
      * (nearest-rank percentiles of its call durations), {@code maxMs},
      * {@code successCount} and {@code failCount}. Used by the {@code self_status}
-     * diagnostic tool. The window is whatever the ring currently holds (up to
-     * {@link #CAPACITY}).
+     * diagnostic tool. The window is whatever the ring currently holds.
      *
      * @return tool name -> its stat map, iteration order matching first appearance
      */
@@ -202,7 +286,7 @@ public final class McpHistory
         {
             return 0;
         }
-        int idx = (int) Math.ceil(p / 100.0 * sortedAsc.length) - 1;
+        int idx = (int)Math.ceil(p / 100.0 * sortedAsc.length) - 1;
         if (idx < 0)
         {
             idx = 0;
@@ -222,9 +306,11 @@ public final class McpHistory
         final long timestamp;
         final long durationMs;
         final boolean success;
+        final boolean argsCut;
+        final int resultFullChars;
 
         Record(String toolName, String argSummary, String resultSummary, long timestamp, long durationMs,
-            boolean success)
+            boolean success, boolean argsCut, int resultFullChars)
         {
             this.toolName = toolName;
             this.argSummary = argSummary;
@@ -232,6 +318,8 @@ public final class McpHistory
             this.timestamp = timestamp;
             this.durationMs = durationMs;
             this.success = success;
+            this.argsCut = argsCut;
+            this.resultFullChars = resultFullChars;
         }
 
         Map<String, Object> toMap()
@@ -243,6 +331,11 @@ public final class McpHistory
             m.put("timestamp", timestamp); //$NON-NLS-1$
             m.put("durationMs", durationMs); //$NON-NLS-1$
             m.put("success", success); //$NON-NLS-1$
+            // Whether what is stored is the whole thing. Without this a reader cannot tell a short
+            // answer from a long one cut down to the same size, and would read the settings as
+            // having no effect while they were quietly deciding what they see.
+            m.put("argsCut", argsCut); //$NON-NLS-1$
+            m.put("resultChars", resultFullChars); //$NON-NLS-1$
             return m;
         }
     }
