@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -81,6 +82,19 @@ public class BmBinaryImportHelperTest
             BmBinaryImportHelper.toXml(missing, null, null, null, Paths.get("C:/aiedt-tests-out")); //$NON-NLS-1$
         assertNotNull("a missing file must be reported, not thrown", r.error); //$NON-NLS-1$
         assertNull("nothing may be created for input that cannot work", r.stagingInfobaseName); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anInfobaseThatWasNeverCreatedIsNotReportedAsLeftBehind()
+    {
+        // Measured on 2026-08-15: a .cf the installed platform will not read fails at creation, and
+        // the reply still named a staging infobase to go and delete. There was none - the name is
+        // picked before anything exists. A caller acting on that hunts for a ghost.
+        BmBinaryImportHelper.XmlResult r = BmBinaryImportHelper.toXml(
+            Paths.get("C:/aiedt-tests-no-such-file.cf"), null, null, null, //$NON-NLS-1$
+            Paths.get("C:/aiedt-tests-out")); //$NON-NLS-1$
+        assertFalse("nothing was created, so nothing can be left behind", r.stagingCreated); //$NON-NLS-1$
+        assertFalse(r.stagingRemoved);
     }
 
     @Test

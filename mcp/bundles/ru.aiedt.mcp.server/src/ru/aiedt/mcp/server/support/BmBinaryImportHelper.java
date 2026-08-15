@@ -86,6 +86,16 @@ public final class BmBinaryImportHelper
         /** The staging infobase's name, for a message about an orphan left behind. */
         public String stagingInfobaseName;
 
+        /**
+         * Whether the staging infobase was ever created.
+         * <p>
+         * Told apart from {@link #stagingRemoved} because a name is picked before anything exists.
+         * Without the distinction a failure to CREATE one reads as a failure to clean one up, and
+         * the caller is sent looking for an infobase that was never there.
+         * </p>
+         */
+        public boolean stagingCreated;
+
         /** Whether the staging infobase was removed again. */
         public boolean stagingRemoved;
 
@@ -214,11 +224,16 @@ public final class BmBinaryImportHelper
                 infobaseName, stagingDir.resolve("ib").toString(), platform, seed, null); //$NON-NLS-1$
             if (!create.ok)
             {
-                r.error = "The staging infobase could not be created: " + create.error; //$NON-NLS-1$
+                r.error = "The staging infobase could not be created: " + create.error //$NON-NLS-1$
+                    + ". The platform used was " //$NON-NLS-1$
+                    + (platform == null || platform.isBlank() ? "the newest installed" : platform) //$NON-NLS-1$
+                    + " - a configuration built for an older platform is refused by a newer one, " //$NON-NLS-1$
+                    + "so name the version the file was built for in the platform parameter."; //$NON-NLS-1$
                 r.failureKind = create.failureKind;
                 return r;
             }
             created = true;
+            r.stagingCreated = true;
 
             Staging staging = resolveStaging(infobaseName, platform);
             if (staging.error != null)

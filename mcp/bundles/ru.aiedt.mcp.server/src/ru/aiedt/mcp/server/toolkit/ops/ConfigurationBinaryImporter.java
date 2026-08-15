@@ -303,10 +303,12 @@ public class ConfigurationBinaryImporter implements IMcpTool
      */
     private static void addStagingFacts(ToolResult result, BmBinaryImportHelper.XmlResult staged)
     {
-        if (staged.stagingInfobaseName != null && !staged.stagingRemoved)
+        if (staged.stagingCreated && !staged.stagingRemoved)
         {
-            // Only said when it is still there. A staging infobase that was cleaned up is an
-            // implementation detail; one that survived is something to go and delete.
+            // Said only about an infobase that exists. One that was cleaned up is an implementation
+            // detail, and one that was never created is nothing at all - claiming either sends the
+            // caller hunting for something that is not there, which is how a clear failure turns
+            // into a confusing one.
             result.put("stagingInfobaseLeftBehind", staged.stagingInfobaseName); //$NON-NLS-1$
         }
         if (staged.designerLog != null)
