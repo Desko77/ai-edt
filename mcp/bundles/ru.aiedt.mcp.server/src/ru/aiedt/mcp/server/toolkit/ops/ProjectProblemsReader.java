@@ -96,8 +96,9 @@ public class ProjectProblemsReader
             + "NONE). A typo such as 'ERORR' raises a clear error instead of silently returning everything. " //$NON-NLS-1$
             + "Scope (default 'session') limits the scan to files touched in the current MCP session - " //$NON-NLS-1$
             + "handy right after write_module_source / edit_metadata. Each finding carries the " //$NON-NLS-1$
-            + "line it sits on where the check reports one; the cell is empty for a finding on " //$NON-NLS-1$
-            + "an object as a whole. scope=object needs 'objects'; " //$NON-NLS-1$
+            + "line it sits on where the check reports one, or @<character offset> where the " //$NON-NLS-1$
+            + "check gives only that; the cell is empty for a finding on an object as a whole. " //$NON-NLS-1$
+            + "scope=object needs 'objects'; " //$NON-NLS-1$
             + "scope=project / scope=all scan everything (scope=project auto-summarizes past 200 markers). " //$NON-NLS-1$
             + "Results can be filtered to specific objects by FQN (e.g. 'Document.SalesOrder', 'Catalog.Products'). " //$NON-NLS-1$
             + "Russian type names work too (e.g. '\u0414\u043E\u043A\u0443\u043C\u0435\u043D\u0442.\u041F\u0440\u0438\u0445\u043E\u0434\u043D\u0430\u044F\u041D\u0430\u043A\u043B\u0430\u0434\u043D\u0430\u044F', " //$NON-NLS-1$
@@ -490,6 +491,28 @@ public class ProjectProblemsReader
     }
 
     /**
+     * What the position column shows for one finding.
+     * <p>
+     * The line when the check reported one. Some checks give an exact character offset and no
+     * line at all; throwing that away would leave the column empty next to a finding whose place
+     * is known exactly, so the offset is printed instead, marked with {@code @} so the two can
+     * never be read as the same number. Nothing at all means the finding has no place inside a
+     * file - it is about the object as a whole.
+     * </p>
+     *
+     * @param error the row
+     * @return the cell text, possibly empty
+     */
+    private static String positionCell(ErrorInfo error)
+    {
+        if (error.line >= 0)
+        {
+            return Integer.toString(error.line);
+        }
+        return error.charStart >= 0 ? "@" + error.charStart : ""; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Maps an EDT marker to a report row.
      *
      * @param marker the marker
@@ -767,7 +790,7 @@ public class ProjectProblemsReader
                 error.checkId != null && !error.checkId.isEmpty() ? error.checkId : error.checkCode;
             builder.append("| ").append(MarkdownTableHelper.escapeForTable(error.message)) //$NON-NLS-1$
                 .append(" | ").append(MarkdownTableHelper.escapeForTable(error.objectPresentation)) //$NON-NLS-1$
-                .append(" | ").append(error.line >= 0 ? Integer.toString(error.line) : "") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(" | ").append(positionCell(error)) //$NON-NLS-1$
                 .append(" | ").append(error.severityNative) //$NON-NLS-1$
                 .append(" | `").append(displayCheckId).append("` | ") //$NON-NLS-1$ //$NON-NLS-2$
                 .append(error.hasDocumentation ? "true" : "false") //$NON-NLS-1$ //$NON-NLS-2$
