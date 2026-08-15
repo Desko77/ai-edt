@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 
@@ -75,6 +76,9 @@ public final class QueryResultSchema
 {
     /** How a qualified asterisk ends, as it is written. */
     private static final String ALL_FIELDS = ".*"; //$NON-NLS-1$
+
+    /** Model feature holding the table a multi-part source really stands on. */
+    private static final String COMPUTED_DB_VIEW = "computeDbView"; //$NON-NLS-1$
 
     /** One column of a result table. */
     public static final class Column
@@ -588,7 +592,43 @@ public final class QueryResultSchema
             return null;
         }
         AbstractQuerySchemaTable table = ((QuerySchemaTable)source).getTable();
-        return table == null ? null : table.getTableDbView();
+        if (table == null)
+        {
+            return null;
+        }
+        DbViewElement named = table.getTableDbView();
+        return named != null ? named : computedDbView(table);
+    }
+
+    /**
+     * The table a multi-part source stands on, which is not the one it is asked for by name.
+     * <p>
+     * A source written in several parts - a tabular section ({@code Справочник.X.ТабЧасть}) or a
+     * virtual table ({@code РегистрСведений.X.СрезПоследних}) - carries NOTHING under
+     * {@code tableDbView}, and reading only that made the asterisk over either of them expand to a
+     * placeholder. The table is under {@code computeDbView} instead, already the right kind:
+     * a tabular section arrives as the field-table of its owner and a virtual table as its select
+     * definition, both with their fields on them. So this needs no knowledge of where such tables
+     * keep their composition - only of which feature to read.
+     * </p>
+     * <p>
+     * Read reflectively through the model rather than through a typed getter: the feature belongs to
+     * a sub-type of the query model, and naming that type here would tie this file to a class the
+     * environment is free to rename between releases, for one accessor.
+     * </p>
+     *
+     * @param table the source table
+     * @return the model element, or <code>null</code> when there is no such feature or it is empty
+     */
+    private static DbViewElement computedDbView(AbstractQuerySchemaTable table)
+    {
+        EStructuralFeature feature = table.eClass().getEStructuralFeature(COMPUTED_DB_VIEW);
+        if (feature == null)
+        {
+            return null;
+        }
+        Object value = table.eGet(feature);
+        return value instanceof DbViewElement ? (DbViewElement)value : null;
     }
 
     /**
