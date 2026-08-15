@@ -21,6 +21,8 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 
+import com._1c.g5.v8.dt.validation.marker.IExtraInfoMap;
+import com._1c.g5.v8.dt.validation.marker.StandardExtraInfo;
 import com._1c.g5.v8.dt.validation.marker.IMarkerManager;
 import com._1c.g5.v8.dt.validation.marker.Marker;
 import com._1c.g5.v8.dt.validation.marker.MarkerSeverity;
@@ -93,7 +95,9 @@ public class ProjectProblemsReader
             + "or the concrete EDT levels themselves (ERRORS, BLOCKER, CRITICAL, MAJOR, MINOR, TRIVIAL, " //$NON-NLS-1$
             + "NONE). A typo such as 'ERORR' raises a clear error instead of silently returning everything. " //$NON-NLS-1$
             + "Scope (default 'session') limits the scan to files touched in the current MCP session - " //$NON-NLS-1$
-            + "handy right after write_module_source / edit_metadata. scope=object needs 'objects'; " //$NON-NLS-1$
+            + "handy right after write_module_source / edit_metadata. Each finding carries the " //$NON-NLS-1$
+            + "line it sits on where the check reports one; the cell is empty for a finding on " //$NON-NLS-1$
+            + "an object as a whole. scope=object needs 'objects'; " //$NON-NLS-1$
             + "scope=project / scope=all scan everything (scope=project auto-summarizes past 200 markers). " //$NON-NLS-1$
             + "Results can be filtered to specific objects by FQN (e.g. 'Document.SalesOrder', 'Catalog.Products'). " //$NON-NLS-1$
             + "Russian type names work too (e.g. '\u0414\u043E\u043A\u0443\u043C\u0435\u043D\u0442.\u041F\u0440\u0438\u0445\u043E\u0434\u043D\u0430\u044F\u041D\u0430\u043A\u043B\u0430\u0434\u043D\u0430\u044F', " //$NON-NLS-1$
@@ -106,7 +110,11 @@ public class ProjectProblemsReader
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("projectName", "Restrict results to this project (optional)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", //$NON-NLS-1$
+                "Restrict results to this project (optional). Also accepted as 'project'. " //$NON-NLS-1$
+                    + "Omitted, the answer covers the whole workspace - and a workspace where a " //$NON-NLS-1$
+                    + "configuration and its extension carry the same object names is exactly " //$NON-NLS-1$
+                    + "where that matters.") //$NON-NLS-1$
             .stringProperty("severity", //$NON-NLS-1$
                 "Severity filter. Group levels (recommended): ERROR (the default - " //$NON-NLS-1$
                     + "ERRORS+BLOCKER+CRITICAL+MAJOR), WARNING (adds MINOR), INFO (adds TRIVIAL), ALL " //$NON-NLS-1$
@@ -147,6 +155,13 @@ public class ProjectProblemsReader
     public String execute(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        if (projectName == null || projectName.isEmpty())
+        {
+            // "project" is what a caller reaches for, and an unrecognised name was simply dropped:
+            // the answer then covered the whole workspace and looked like a filtered one. Measured
+            // on the demo stand - 3 findings under projectName, 32 under project.
+            projectName = JsonUtils.extractStringArgument(params, "project"); //$NON-NLS-1$
+        }
         String severity = JsonUtils.extractStringArgument(params, "severity"); //$NON-NLS-1$
         String checkId = JsonUtils.extractStringArgument(params, "checkId"); //$NON-NLS-1$
         List<String> objects = parseObjectsList(JsonUtils.extractStringArgument(params, "objects")); //$NON-NLS-1$
@@ -488,8 +503,31 @@ public class ProjectProblemsReader
         boolean hasDocumentation = CheckDocReader.hasCheckDocumentation(resolvedCheckId);
         MarkerSeverity severity = marker.getSeverity();
         String severityNative = severity != null ? severity.name() : MarkerSeverity.NONE.name();
+        // The position lives in the marker's extra info, not on the marker itself. Without it a
+        // module with eight findings of one check can only be compared by count - which tells a
+        // caller that its own rule is wrong somewhere, and nothing about where.
+        int line = -1;
+        int charStart = -1;
+        int charEnd = -1;
+        try
+        {
+            IExtraInfoMap extra = marker.getExtraInfo();
+            if (extra != null)
+            {
+                line = extra.getIntOrDefault(StandardExtraInfo.TEXT_LINE, -1);
+                charStart = extra.getIntOrDefault(StandardExtraInfo.TEXT_OFFSET, -1);
+                int length = extra.getIntOrDefault(StandardExtraInfo.TEXT_LENGTH, -1);
+                charEnd = charStart >= 0 && length >= 0 ? charStart + length : -1;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            // A marker whose extra info will not read is still worth reporting without a position;
+            // losing the finding entirely would be the worse trade.
+            line = -1;
+        }
         return new ErrorInfo(checkCode, resolvedCheckId, hasDocumentation, marker.getMessage(),
-            marker.getObjectPresentation(), severityNative);
+            marker.getObjectPresentation(), severityNative, line, charStart, charEnd);
     }
 
     /**
@@ -574,8 +612,13 @@ public class ProjectProblemsReader
                     continue;
                 }
                 boolean hasDocumentation = CheckDocReader.hasCheckDocumentation(sourceId);
+                // An Eclipse marker keeps its position in the standard attributes rather than in
+                // extra info; -1 is what getAttribute answers when the attribute is absent, which
+                // is the same "no position" the EDT path reports.
                 collected.add(new ErrorInfo(sourceId, null, hasDocumentation, message, presentation,
-                    mapped.name()));
+                    mapped.name(), marker.getAttribute(IMarker.LINE_NUMBER, -1),
+                    marker.getAttribute(IMarker.CHAR_START, -1),
+                    marker.getAttribute(IMarker.CHAR_END, -1)));
             }
         }
     }
@@ -716,14 +759,15 @@ public class ProjectProblemsReader
             builder.append("+ (capped at ").append(limit).append(")"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         builder.append("\n\n"); //$NON-NLS-1$
-        builder.append("| Message | Where | Severity | Check | Docs |\n"); //$NON-NLS-1$
-        builder.append("|-------------|----------|----------|------------|----------|\n"); //$NON-NLS-1$
+        builder.append("| Message | Where | Line | Severity | Check | Docs |\n"); //$NON-NLS-1$
+        builder.append("|-------------|----------|------|----------|------------|----------|\n"); //$NON-NLS-1$
         for (ErrorInfo error : errors)
         {
             String displayCheckId =
                 error.checkId != null && !error.checkId.isEmpty() ? error.checkId : error.checkCode;
             builder.append("| ").append(MarkdownTableHelper.escapeForTable(error.message)) //$NON-NLS-1$
                 .append(" | ").append(MarkdownTableHelper.escapeForTable(error.objectPresentation)) //$NON-NLS-1$
+                .append(" | ").append(error.line >= 0 ? Integer.toString(error.line) : "") //$NON-NLS-1$ //$NON-NLS-2$
                 .append(" | ").append(error.severityNative) //$NON-NLS-1$
                 .append(" | `").append(displayCheckId).append("` | ") //$NON-NLS-1$ //$NON-NLS-2$
                 .append(error.hasDocumentation ? "true" : "false") //$NON-NLS-1$ //$NON-NLS-2$
@@ -871,8 +915,32 @@ public class ProjectProblemsReader
 
         private final String severityNative;
 
+        /**
+         * The line the finding sits on, or {@code -1} when it has none.
+         * <p>
+         * Not every finding has one: a check that fires on an object as a whole has nothing to
+         * point at inside a module. Absent is reported as an empty cell rather than as line zero,
+         * because a caller reconciling its own findings against ours would otherwise read the
+         * zero as a real position and go looking at the top of the file.
+         * </p>
+         */
+        private final int line;
+
+        /** Character offset of the finding, or {@code -1}. */
+        private final int charStart;
+
+        /** Character offset just past the finding, or {@code -1}. */
+        private final int charEnd;
+
         ErrorInfo(String checkCode, String checkId, boolean hasDocumentation, String message,
             String objectPresentation, String severityNative)
+        {
+            this(checkCode, checkId, hasDocumentation, message, objectPresentation, severityNative,
+                -1, -1, -1);
+        }
+
+        ErrorInfo(String checkCode, String checkId, boolean hasDocumentation, String message,
+            String objectPresentation, String severityNative, int line, int charStart, int charEnd)
         {
             this.checkCode = checkCode;
             this.checkId = checkId;
@@ -880,6 +948,9 @@ public class ProjectProblemsReader
             this.message = message;
             this.objectPresentation = objectPresentation;
             this.severityNative = severityNative;
+            this.line = line;
+            this.charStart = charStart;
+            this.charEnd = charEnd;
         }
     }
 
