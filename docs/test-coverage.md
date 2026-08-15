@@ -6,10 +6,10 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 80 | a test class named after it |
-| exercised | 55 | reached by some other test |
-| tool-sweep | 87 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 49 | needs a display or an extension point |
-| workspace-bound | 67 | drives a live EDT project or debug session |
+| exercised | 40 | reached by some other test |
+| tool-sweep | 98 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 51 | needs a display or an extension point |
+| workspace-bound | 69 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
 | **total** | **338** | across 119 test classes |
 
@@ -17,7 +17,7 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 _none_
 
-## workspace-bound (67)
+## workspace-bound (69)
 
 **folders**
 - IClusterChangeObserver
@@ -76,9 +76,11 @@ _none_
 - FileMarkers
 - LaunchConfigAccess
 - MetadataDiffEngine
+- MetadataGuards
 - PictureValidator
 - ProjectMetricsCollector
 - ProjectReadinessGate
+- ProjectResolver
 - ProjectScopeResolver
 - ProjectStateGuard
 - QlValidator
@@ -104,9 +106,10 @@ _none_
 - SpecializedOps
 - TemplateOps
 
-## ui-bound (49)
+## ui-bound (51)
 
 **(root)**
+- Activator
 - McpAutoStart
 
 **folders/handlers**
@@ -156,6 +159,7 @@ _none_
 - ExpandTreeCommand
 
 **settings**
+- DefaultPreferences
 - GeneralPrefTab
 - MarkerSettingsMigration
 - McpAuth
@@ -177,7 +181,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (87)
+## tool-sweep (98)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -188,8 +192,11 @@ _none_
 - BreakpointSetter
 - BreakpointsLister
 - BslCodeReviewTool
+- CallHierarchyReader
 - CheckDocReader
+- CodeSearchTool
 - CodeTemplateTool
+- CodeTextSearcher
 - CommonPictureExporter
 - CompareConfigurationsTool
 - ConfigurationInfoReader
@@ -204,12 +211,14 @@ _none_
 - DebugStepper
 - DebugVariableWriter
 - DebugVariablesReader
+- DefinitionNavigator
 - DependencyGraphTool
 - DetectQueryAntiPatternsTool
 - DiskResynchronizer
 - EdtVersionReader
 - ExportExtensionTool
 - ExportObjectTool
+- ExpressionEvaluator
 - ExtensionDiffTool
 - ExtensionLifecycleTool
 - ExternalDataSourceWorkshopTool
@@ -245,6 +254,7 @@ _none_
 - MxlWorkshopTool
 - ObjectSummaryTool
 - ObjectsRevalidator
+- OutgoingStructuresReader
 - PlatformDocReader
 - ProblemSummaryReader
 - ProfilingResultsReader
@@ -254,12 +264,15 @@ _none_
 - ProjectMetricsTool
 - ProjectRemover
 - ProjectsLister
+- ReferenceLocator
 - RestartEdtTool
 - RunToLineTool
 - SelfStatusTool
 - SemanticMetadataSearchTool
 - SensitiveDataScanTool
 - SetExceptionBreakpointTool
+- SuspendWaiter
+- SyncControlTool
 - TaggedObjectsReader
 - TagsReader
 - TasksReader
@@ -267,11 +280,12 @@ _none_
 - ValidateForExportTool
 - VanessaTool
 - XdtoWorkshopTool
+- YaxunitDebugRunner
+- YaxunitTestsTool
 
-## exercised (55)
+## exercised (40)
 
 **(root)**
-- Activator
 - McpHistory
 - McpHttpEndpoint
 - RunningToolCall
@@ -292,7 +306,6 @@ _none_
 - MarkerStore
 
 **settings**
-- DefaultPreferences
 - PrefKeys
 
 **support**
@@ -303,40 +316,27 @@ _none_
 - BmReferencesHelper
 - ErrorTags
 - JUnitRunOutcome
-- MetadataGuards
 - OffScreenTextViewer
 - PendingWorkRegistry
-- ProjectResolver
 
 **toolkit**
 - IMcpTool
 
 **toolkit/ops**
-- CallHierarchyReader
-- CodeSearchTool
-- CodeTextSearcher
 - ConfigIoFacadeTool
 - ContentAssistReader
-- DefinitionNavigator
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
-- ExpressionEvaluator
 - FormCommandInterfaceOps
 - FormItemsOps
 - InfobaseAdminFacadeTool
 - InsightsFacadeTool
 - LaunchDebuggerTool
-- OutgoingStructuresReader
 - ProjectAdminFacadeTool
 - ProjectProblemsReader
-- ReferenceLocator
 - SecurityAuditFacadeTool
-- SuspendWaiter
 - SymbolInfoReader
-- SyncControlTool
 - WorkspaceMarksFacadeTool
-- YaxunitDebugRunner
-- YaxunitTestsTool
 
 **wire/jsonrpc**
 - InitializeResult

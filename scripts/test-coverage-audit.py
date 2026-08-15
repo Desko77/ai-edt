@@ -5,7 +5,10 @@ The point is a full census rather than a spot check: each class in the plugin bu
 exactly one bucket, and the buckets have to add up to the total. A class counts as
 
   direct          - a test class named after it exists (FooTest for Foo);
-  exercised       - no test of its own, but some test constructs or names it;
+  exercised       - no test of its own, but some test constructs or names it IN CODE. Comments and
+                    string literals in the test sources do not count: a class mentioned only in a
+                    sentence explaining something else is not being tested by that sentence, and
+                    counting it was quietly inflating this bucket;
   tool-sweep      - an IMcpTool the server registers. Its declaration - name, description, schema,
                     required parameters - is checked for every registered tool at once by
                     McpToolSchemaContractTest, which walks the registry instead of naming classes;
@@ -85,6 +88,30 @@ def read(path):
         return handle.read()
 
 
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+LINE_COMMENT = re.compile(r"//[^\n]*")
+STRING_LITERAL = re.compile(r'"(\\.|[^"\\\n])*"')
+
+
+def code_only(text):
+    """Strips comments and string literals, leaving the part of a test that actually runs.
+
+    A class name in a javadoc paragraph, in a //-note or inside an assertion message is prose about
+    the code, not use of it. Searching the raw text counted all three as coverage, which made the
+    census report a wider suite than exists. Block comments go first so that a // inside one cannot
+    be mistaken for the start of a line comment.
+
+    A file containing a text block is left alone: the single-line string pattern would mis-parse it
+    and start stripping code. Counting too much for one file is a known overstatement; stripping
+    real code would be an invisible understatement, and this census exists to be trusted.
+    """
+    if '"""' in text:
+        return text
+    text = BLOCK_COMMENT.sub(" ", text)
+    text = LINE_COMMENT.sub(" ", text)
+    return STRING_LITERAL.sub('""', text)
+
+
 def registered_tools():
     """The tool classes the server instantiates, which is exactly what the registry sweep walks."""
     if not os.path.exists(REGISTRATION):
@@ -112,7 +139,7 @@ def classify(path, text, test_names, test_blob, swept):
 def audit():
     test_files = sorted(java_files(TESTS))
     test_names = {os.path.splitext(os.path.basename(p))[0] for p in test_files}
-    test_blob = "\n".join(read(p) for p in test_files)
+    test_blob = "\n".join(code_only(read(p)) for p in test_files)
 
     swept = registered_tools()
     buckets = {"direct": [], "exercised": [], "tool-sweep": [], "ui-bound": [],
