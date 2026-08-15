@@ -34,6 +34,10 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
  *   <li>{@code import_configuration_from_xml} - import a configuration from
  *       Designer-XML files into a NEW EDT project (delegates to
  *       {@link ConfigurationXmlImporter}; MUTATING, creates a project)</li>
+ *   <li>{@code import_configuration_from_binary} - import a {@code .cf} or
+ *       {@code .cfe} into a NEW EDT project through a staging infobase
+ *       (delegates to {@link ConfigurationBinaryImporter}; MUTATING, creates a
+ *       project)</li>
  *   <li>{@code export_object} - build an external data processor / report DT
  *       project into a binary .epf / .erf file (delegates to
  *       {@link ExportObjectTool}; may reply Pending with a runKey)</li>
@@ -67,12 +71,14 @@ public class ConfigIoFacadeTool implements IMcpTool
     public String getDescription()
     {
         return "Configuration import / export - round-trip the configuration to XML, dump it to a " //$NON-NLS-1$
-            + ".cf, export an object to an .epf/.erf, export a common picture. Operations: " //$NON-NLS-1$
-            + "export_configuration_to_xml, import_configuration_from_xml, export_object, " //$NON-NLS-1$
+            + ".cf, import a .cf or .cfe someone sent you, export an object to an .epf/.erf, " //$NON-NLS-1$
+            + "export a common picture. Operations: export_configuration_to_xml, " //$NON-NLS-1$
+            + "import_configuration_from_xml, import_configuration_from_binary, export_object, " //$NON-NLS-1$
             + "export_common_picture, export_configuration_to_cf, help. Pass operation=<name> " //$NON-NLS-1$
             + "(snake_case canonical; camelCase like exportObject is also accepted); remaining " //$NON-NLS-1$
             + "parameters follow the per-operation contracts (call operation=help for the catalog). " //$NON-NLS-1$
-            + "import_configuration_from_xml mutates the workspace (creates a project) and " //$NON-NLS-1$
+            + "import_configuration_from_xml and import_configuration_from_binary mutate " //$NON-NLS-1$
+            + "the workspace (each creates a project) and " //$NON-NLS-1$
             + "export_object may reply with a Pending status and a runKey to resume - the " //$NON-NLS-1$
             + "facade only routes, it adds no dryRun. export_configuration_to_cf dumps the " //$NON-NLS-1$
             + "infobase's current configuration (run update_database first to capture project " //$NON-NLS-1$
@@ -84,7 +90,8 @@ public class ConfigIoFacadeTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "export_configuration_to_xml / import_configuration_from_xml / export_object / " //$NON-NLS-1$
+                "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
+                    + "import_configuration_from_binary / export_object / " //$NON-NLS-1$
                     + "export_common_picture / export_configuration_to_cf / unpack_external_binary / " //$NON-NLS-1$
                     + "help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like exportObject is also accepted). Pass " //$NON-NLS-1$
@@ -92,11 +99,26 @@ public class ConfigIoFacadeTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
+            .stringProperty("binaryPath", //$NON-NLS-1$
+                "import_configuration_from_binary: absolute path to the .cf or .cfe to " //$NON-NLS-1$
+                    + "import. Required for that operation.") //$NON-NLS-1$
+            .stringProperty("platform", //$NON-NLS-1$
+                "import_configuration_from_binary: platform version for the staging infobase " //$NON-NLS-1$
+                    + "(e.g. 8.3.24). Omit for the newest installed.") //$NON-NLS-1$
+            .stringProperty("extensionName", //$NON-NLS-1$
+                "import_configuration_from_binary, .cfe only: the name to load the extension " //$NON-NLS-1$
+                    + "under. Omit to take it from the file name.") //$NON-NLS-1$
+            .stringProperty("baseConfigurationPath", //$NON-NLS-1$
+                "import_configuration_from_binary, .cfe only: a .cf to load into the staging " //$NON-NLS-1$
+                    + "infobase first, so the extension has the configuration it borrows from.") //$NON-NLS-1$
+            .stringProperty("keepXmlPath", //$NON-NLS-1$
+                "import_configuration_from_binary: keep the intermediate Designer-XML here " //$NON-NLS-1$
+                    + "instead of in a temporary directory that is deleted.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name. Required for export_configuration_to_xml, export_object and " //$NON-NLS-1$
-                    + "export_common_picture. For import_configuration_from_xml this is instead " //$NON-NLS-1$
-                    + "the name of the NEW project to create (required; must not already " //$NON-NLS-1$
-                    + "exist).") //$NON-NLS-1$
+                    + "export_common_picture. For import_configuration_from_xml and " //$NON-NLS-1$
+                    + "import_configuration_from_binary this is instead the name of the NEW " //$NON-NLS-1$
+                    + "project to create (required; must not already exist).") //$NON-NLS-1$
             .stringProperty("outputPath", //$NON-NLS-1$
                 "Absolute output path (required for export_configuration_to_xml, " //$NON-NLS-1$
                     + "export_object, export_common_picture and export_configuration_to_cf). " //$NON-NLS-1$
@@ -166,7 +188,8 @@ public class ConfigIoFacadeTool implements IMcpTool
         {
             return ToolResult.error("operation is required. Allowed: " //$NON-NLS-1$
                 + "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
-                + "export_object / export_common_picture / export_configuration_to_cf / help.").toJson(); //$NON-NLS-1$
+                + "import_configuration_from_binary / export_object / export_common_picture / " //$NON-NLS-1$
+                + "export_configuration_to_cf / help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
@@ -194,6 +217,13 @@ public class ConfigIoFacadeTool implements IMcpTool
                 return new ConfigurationXmlExporter().execute(params);
             case "import_configuration_from_xml": //$NON-NLS-1$
                 return new ConfigurationXmlImporter().execute(params);
+            case "import_configuration_from_binary": //$NON-NLS-1$
+                // Gated rather than called straight, for the same reason as
+                // unpack_external_binary: this one starts a Designer and creates an
+                // infobase, and a facade delegating in Java never passes the router where a
+                // disabled tool is refused.
+                return gatedRoute(ConfigurationBinaryImporter.NAME,
+                    () -> new ConfigurationBinaryImporter().execute(params));
             case "export_object": //$NON-NLS-1$
                 return new ExportObjectTool().execute(params);
             case "export_common_picture": //$NON-NLS-1$
@@ -225,6 +255,10 @@ public class ConfigIoFacadeTool implements IMcpTool
             sb.append("- **import_configuration_from_xml** - import a configuration from " //$NON-NLS-1$
                 + "Designer-XML files into a NEW EDT project. Rejects a pre-existing project " //$NON-NLS-1$
                 + "name. MUTATING (creates a project).\n"); //$NON-NLS-1$
+            sb.append("- **import_configuration_from_binary** - import a .cf or .cfe into a " //$NON-NLS-1$
+                + "NEW EDT project, through a staging infobase that is created and deleted " //$NON-NLS-1$
+                + "here. Never touches an existing project's infobase. Runs the thick client; " //$NON-NLS-1$
+                + "minutes on a large configuration. MUTATING (creates a project).\n"); //$NON-NLS-1$
             sb.append("- **export_object** - build an external data processor / report DT " //$NON-NLS-1$
                 + "project into a binary .epf / .erf file. May reply Pending with a runKey.\n"); //$NON-NLS-1$
             sb.append("- **export_common_picture** - export a CommonPicture's image bytes to " //$NON-NLS-1$
@@ -249,6 +283,8 @@ public class ConfigIoFacadeTool implements IMcpTool
                 + "export_configuration_to_xml |\n"); //$NON-NLS-1$
             sb.append("| Load a configuration from XML into a brand-new project | " //$NON-NLS-1$
                 + "import_configuration_from_xml |\n"); //$NON-NLS-1$
+            sb.append("| Somebody sent me the configuration or extension as one .cf/.cfe file | " //$NON-NLS-1$
+                + "import_configuration_from_binary |\n"); //$NON-NLS-1$
             sb.append("| Build an external data processor / report into .epf/.erf | " //$NON-NLS-1$
                 + "export_object |\n"); //$NON-NLS-1$
             sb.append("| Pull a CommonPicture's image bytes out to a file | " //$NON-NLS-1$
@@ -283,6 +319,7 @@ public class ConfigIoFacadeTool implements IMcpTool
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
             "export_configuration_to_xml", "import_configuration_from_xml", //$NON-NLS-1$ //$NON-NLS-2$
+            "import_configuration_from_binary", //$NON-NLS-1$
             "export_object", "export_common_picture", //$NON-NLS-1$ //$NON-NLS-2$
             "export_configuration_to_cf", "unpack_external_binary")) //$NON-NLS-1$ //$NON-NLS-2$
         {

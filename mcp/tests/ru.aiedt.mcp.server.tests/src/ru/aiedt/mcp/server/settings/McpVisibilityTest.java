@@ -60,7 +60,7 @@ public class McpVisibilityTest
         // infobase_admin, 5 from config_io, 8 from insights, 3 from security_audit, 4 from
         // workspace_marks, 2 from docs_lookup, 3 from edit_metadata. Pinning the
         // size catches an accidental add or drop.
-        assertEquals(81, unlisted.size());
+        assertEquals(82, unlisted.size());
 
         // A standalone from each facade is hidden.
         assertTrue(unlisted.contains("search_in_code")); //$NON-NLS-1$ // code_search

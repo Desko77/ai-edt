@@ -49,7 +49,7 @@ public class FoldPresetHazardTest
         "yaxunit_tests", //$NON-NLS-1$
         List.of("run_yaxunit_tests", "debug_yaxunit_tests"), //$NON-NLS-1$ //$NON-NLS-2$
         "config_io", //$NON-NLS-1$
-        List.of("unpack_external_binary"), //$NON-NLS-1$
+        List.of("unpack_external_binary", "import_configuration_from_binary"), //$NON-NLS-1$
         "launch_debugger", //$NON-NLS-1$
         List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
             "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
@@ -75,7 +75,8 @@ public class FoldPresetHazardTest
         "extension_workshop/list_extension", "extension_workshop/export_extension", //$NON-NLS-1$ //$NON-NLS-2$
         "extension_workshop/extension_lifecycle", //$NON-NLS-1$
         "yaxunit_tests/debug_yaxunit_tests", //$NON-NLS-1$
-        "config_io/unpack_external_binary"); //$NON-NLS-1$
+        "config_io/unpack_external_binary", //$NON-NLS-1$
+        "config_io/import_configuration_from_binary"); //$NON-NLS-1$
 
     @Test
     public void everyCrossPresetFoldHazardIsGateChecked()

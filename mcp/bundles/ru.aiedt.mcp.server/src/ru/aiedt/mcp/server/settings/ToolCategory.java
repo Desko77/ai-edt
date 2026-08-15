@@ -100,6 +100,7 @@ public enum ToolCategory
         "list_extension", //$NON-NLS-1$
         "import_configuration_from_xml", //$NON-NLS-1$
         "unpack_external_binary", //$NON-NLS-1$
+        "import_configuration_from_binary", //$NON-NLS-1$
         "export_configuration_to_xml", //$NON-NLS-1$
         "export_extension", //$NON-NLS-1$
         "set_infobase_credentials", //$NON-NLS-1$

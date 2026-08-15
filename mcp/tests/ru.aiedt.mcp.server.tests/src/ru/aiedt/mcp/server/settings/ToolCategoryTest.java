@@ -108,7 +108,7 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void totalToolCountIsOneHundredTwentyFour()
+    public void totalToolCountIsOneHundredTwentyFive()
     {
         // Recounted directly from the group table. F3d facades landed on 118; the 2026-07-28
         // data_access removal dropped execute_query, browse_data and data_access (-3 -> 115) and
@@ -125,9 +125,11 @@ public class ToolCategoryTest
         // in the target project, which is as plainly a write as a rename.
         // On 2026-08-14 describe_db_tables joined CODE_INTELLIGENCE (+1 -> 124): it reads the
         // tables the platform derives from an object and writes nothing.
+        // On 2026-08-15 import_configuration_from_binary joined APPLICATIONS (+1 -> 125): it
+        // creates an infobase and a project, so Read-only has to be able to switch it off.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(124, ToolCategory.getTotalToolCount());
+        assertEquals(125, ToolCategory.getTotalToolCount());
     }
 
     @Test

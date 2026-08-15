@@ -312,6 +312,7 @@ public enum ToolProfile
 
             // config_io covers these
             "unpack_external_binary", //$NON-NLS-1$
+            "import_configuration_from_binary", //$NON-NLS-1$
             "export_configuration_to_xml", //$NON-NLS-1$
             "import_configuration_from_xml", //$NON-NLS-1$
             "export_object", //$NON-NLS-1$

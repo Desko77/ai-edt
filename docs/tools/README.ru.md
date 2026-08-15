@@ -130,6 +130,7 @@
 | `list_extension` | Чтение | Показывает установленные расширения. |
 | `unpack_external_binary` | Изменение | Конвертирует бинарные .epf/.erf в Designer-XML, пригодный для import_configuration_from_xml. |
 | `import_configuration_from_xml` | Опасно | Импортирует XML конфигурации с возможной перезаписью проекта. |
+| `import_configuration_from_binary` | Опасно | Импортирует присланный одним файлом `.cf` или `.cfe` в НОВЫЙ проект. Бинарник загружается во временную информационную базу, выгружается оттуда в Designer-XML и импортируется из него; временная база удаляется. Чужую информационную базу не трогает. |
 | `export_configuration_to_xml` | Изменение | Экспортирует конфигурацию в XML. |
 | `export_extension` | Изменение | Экспортирует расширение конфигурации. |
 | `set_infobase_credentials` | Опасно | Изменяет сохраненные учетные данные подключения к ИБ. |
@@ -351,7 +352,7 @@
 <details>
 <summary><code>config_io</code> - импорт и экспорт</summary>
 
-Объединяет `export_configuration_to_xml`, `import_configuration_from_xml`, `export_object` и `export_common_picture`.
+Объединяет `export_configuration_to_xml`, `import_configuration_from_xml`, `import_configuration_from_binary`, `export_object` и `export_common_picture`.
 </details>
 
 <a id="insights"></a>
