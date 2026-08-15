@@ -93,6 +93,31 @@ public class ConfigurationBinaryImporterTest
     }
 
     @Test
+    public void theSlowHalfIsResumable()
+    {
+        // Measured at 50 s for a 157 MB configuration - past any short client timeout. A caller
+        // that stops waiting must be able to come back for the answer rather than start again.
+        String schema = new ConfigurationBinaryImporter().getInputSchema();
+        assertTrue("the caller has to be able to resume", schema.contains("\"runKey\"")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("and to choose how long to wait inline", //$NON-NLS-1$
+            schema.contains("\"timeoutSeconds\"")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anUnknownRunKeySaysWhereToLookRatherThanJustNo()
+    {
+        // The work outlives the waiting. Telling a caller only "not found" invites them to start
+        // the whole staging run again over a project that may already be there.
+        Map<String, String> params = new HashMap<>();
+        params.put("runKey", "aiedt-tests-no-such-run-key"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigurationBinaryImporter().execute(params);
+        assertTrue("the answer must name the key it could not find, got: " + result, //$NON-NLS-1$
+            result.contains("aiedt-tests-no-such-run-key")); //$NON-NLS-1$
+        assertTrue("and point at the workspace before a retry, got: " + result, //$NON-NLS-1$
+            result.contains("workspace")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aMissingFileIsReportedBeforeAnythingIsCreated()
     {
         Map<String, String> params = new HashMap<>();

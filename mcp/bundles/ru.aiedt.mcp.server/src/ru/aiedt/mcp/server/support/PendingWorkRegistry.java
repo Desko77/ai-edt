@@ -72,6 +72,18 @@ public final class PendingWorkRegistry
         new PendingWorkRegistry("find_references", "find-references-async"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * Async backend for {@code import_configuration_from_binary} staging runs.
+     * <p>
+     * Its own instance rather than {@link #GENERIC}, which is reserved for reads: this one creates
+     * an infobase and a project. Coalescing two identical calls is right here - the second would
+     * only fail on the taken project name - but a completed entry is dropped before a fresh submit
+     * rather than replayed, because the workspace may have moved on since.
+     * </p>
+     */
+    public static final PendingWorkRegistry IMPORT_BINARY = new PendingWorkRegistry(
+        "import_configuration_from_binary", "import-binary-async"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * Shared async backend for the slow read-only analysis tools that are wrapped
      * generically (see {@code GenericPending}) rather than each hand-rolling their
      * own registry. The runKey embeds the tool name, so distinct tools never

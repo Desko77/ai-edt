@@ -22,6 +22,8 @@ import org.eclipse.core.runtime.CoreException;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
+import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.GsonHolder;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -42,6 +44,14 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 public class ConfigurationBinaryImporter implements IMcpTool
 {
     public static final String NAME = "import_configuration_from_binary"; //$NON-NLS-1$
+
+    /** How long the call waits inline before handing back a runKey. */
+    private static final int DEFAULT_TIMEOUT_SECONDS = 30;
+
+    /** Clamp on {@code timeoutSeconds}, matching the other Pending-backed tools. */
+    private static final int MIN_TIMEOUT_SECONDS = 5;
+
+    private static final int MAX_TIMEOUT_SECONDS = 120;
 
     @Override
     public String getName()
@@ -85,6 +95,14 @@ public class ConfigurationBinaryImporter implements IMcpTool
                 "Write the intermediate Designer-XML here and keep it, instead of using a " //$NON-NLS-1$
                     + "temporary directory that is deleted. The directory must be empty or " //$NON-NLS-1$
                     + "absent. Useful for inspecting what was actually staged.") //$NON-NLS-1$
+            .integerProperty("timeoutSeconds", //$NON-NLS-1$
+                "How long to wait inline before returning Pending with a runKey. Default 30, " //$NON-NLS-1$
+                    + "clamped to 5-120. The work continues either way.") //$NON-NLS-1$
+            .stringProperty("runKey", //$NON-NLS-1$
+                "Resume an import that came back Pending. Pass the runKey from that reply; " //$NON-NLS-1$
+                    + "other parameters are ignored. Re-calling with the same parameters " //$NON-NLS-1$
+                    + "produces the same key and resumes the same run rather than starting " //$NON-NLS-1$
+                    + "a second one.") //$NON-NLS-1$
             .build();
     }
 
@@ -97,6 +115,12 @@ public class ConfigurationBinaryImporter implements IMcpTool
     @Override
     public String execute(Map<String, String> params)
     {
+        String resumeKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if (resumeKey != null && !resumeKey.isEmpty())
+        {
+            return resume(resumeKey, params);
+        }
+
         String binaryPath = JsonUtils.extractStringArgument(params, "binaryPath"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String platform = JsonUtils.extractStringArgument(params, "platform"); //$NON-NLS-1$
@@ -187,6 +211,116 @@ public class ConfigurationBinaryImporter implements IMcpTool
                 + "nothing.").put(ErrorTags.OUTPUT_DIRECTORY_ERROR.wire(), true).toJson(); //$NON-NLS-1$
         }
 
+        // Everything above is cheap and stays in front of the dispatch: a bad call must never
+        // start a Designer, and a Pending reply for a call that was doomed anyway would hide the
+        // reason behind a runKey. Everything below is the part that takes real time - measured at
+        // 50 s for a 157 MB configuration, which is past any short client timeout - so it runs on
+        // a worker and the call comes back with a key.
+        final Path finalBinary = binary;
+        final Path finalBase = base;
+        final Path finalXmlDir = xmlDir;
+        final boolean finalKeepXml = keepXml;
+        final String finalProjectName = projectName;
+        final String finalPlatform = platform;
+        final String finalExtensionName = extensionName;
+        final BmBinaryImportHelper.BinaryKind finalKind = kind;
+
+        String runKey = PendingWorkRegistry.computeRunKey(NAME, finalProjectName,
+            finalBinary.toString());
+        long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
+            MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
+
+        PendingWorkRegistry registry = PendingWorkRegistry.IMPORT_BINARY;
+        registry.pruneExpired();
+        PendingWorkRegistry.PendingEntry prior = registry.get(runKey);
+        if (prior != null && prior.isDone())
+        {
+            // A fresh submit of a finished-but-never-collected run must do the work again: the
+            // workspace has moved on since, and replaying "the project was created" for a project
+            // somebody has deleted in the meantime would be a lie with a timestamp on it.
+            registry.remove(runKey);
+        }
+        PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
+            () -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
+                finalExtensionName, finalBase, finalXmlDir, finalKeepXml));
+
+        String done = entry.await(timeoutMs);
+        if (done != null)
+        {
+            registry.remove(runKey);
+            return done;
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("projectName", finalProjectName) //$NON-NLS-1$
+            .put("binaryPath", finalBinary.toString()) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("waitedMs", timeoutMs) //$NON-NLS-1$
+            .put("hint", "The import is still staging. Call this tool again with runKey=\"" //$NON-NLS-1$ //$NON-NLS-2$
+                + runKey + "\" - or with the same parameters, which produce the same key - to " //$NON-NLS-1$
+                + "keep waiting. The project appears when it finishes, whether or not anyone " //$NON-NLS-1$
+                + "is still waiting.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Resumes an import that came back Pending.
+     *
+     * @param runKey the key from that reply
+     * @param params the call's parameters, read for the wait
+     * @return the finished result, or another Pending reply
+     */
+    private String resume(String runKey, Map<String, String> params)
+    {
+        PendingWorkRegistry registry = PendingWorkRegistry.IMPORT_BINARY;
+        registry.pruneExpired();
+        PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
+        if (entry == null)
+        {
+            return ToolResult.error("runKey not found - the import either finished and its " //$NON-NLS-1$
+                + "result was already collected, or it was abandoned long enough to be evicted. " //$NON-NLS-1$
+                + "Check whether the project is in the workspace before starting over: the work " //$NON-NLS-1$
+                + "continues even when nobody waits for it.") //$NON-NLS-1$
+                .put("operation", NAME) //$NON-NLS-1$
+                .put("runKey", runKey) //$NON-NLS-1$
+                .toJson();
+        }
+        long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
+            MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
+        String done = entry.await(timeoutMs);
+        if (done != null)
+        {
+            registry.remove(runKey);
+            return done;
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("waitedMs", timeoutMs) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The part that takes time: stage the binary into an infobase, dump its XML, import that.
+     *
+     * @param binary the .cf or .cfe
+     * @param kind which of the two it is
+     * @param projectName the project to create
+     * @param platform the platform version for the staging infobase, or <code>null</code>
+     * @param extensionName the name to load an extension under, or <code>null</code>
+     * @param base a .cf to seed the staging infobase with, or <code>null</code>
+     * @param xmlDir where the intermediate XML goes
+     * @param keepXml whether that directory is the caller's and must survive
+     * @return the reply JSON
+     */
+    private String stageAndImport(Path binary, BmBinaryImportHelper.BinaryKind kind,
+        String projectName, String platform, String extensionName, Path base, Path xmlDir,
+        boolean keepXml)
+    {
         try
         {
             BmBinaryImportHelper.XmlResult staged =
