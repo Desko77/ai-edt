@@ -79,7 +79,8 @@ public class ConfigIoFacadeTool implements IMcpTool
             + "parameters follow the per-operation contracts (call operation=help for the catalog). " //$NON-NLS-1$
             + "import_configuration_from_xml and import_configuration_from_binary mutate " //$NON-NLS-1$
             + "the workspace (each creates a project) and " //$NON-NLS-1$
-            + "export_object may reply with a Pending status and a runKey to resume - the " //$NON-NLS-1$
+            + "export_object and import_configuration_from_binary may reply with a Pending " //$NON-NLS-1$
+            + "status and a runKey to resume - the " //$NON-NLS-1$
             + "facade only routes, it adds no dryRun. export_configuration_to_cf dumps the " //$NON-NLS-1$
             + "infobase's current configuration (run update_database first to capture project " //$NON-NLS-1$
             + "changes). The standalone tools remain available for back-compat."; //$NON-NLS-1$
@@ -157,10 +158,13 @@ public class ConfigIoFacadeTool implements IMcpTool
                     + "when the project contains more than one external object.") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "export_object: soft timeout in seconds before returning a Pending JSON with " //$NON-NLS-1$
-                    + "a runKey (default 30, range 5-120, clamped).") //$NON-NLS-1$
+                    + "a runKey (default 30, range 5-120, clamped). " //$NON-NLS-1$
+                    + "import_configuration_from_binary: the same, for its staging run.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
-                "export_object: resumes a previously-issued Pending export by its runKey; " //$NON-NLS-1$
-                    + "other params are ignored once runKey is supplied.") //$NON-NLS-1$
+                "export_object and import_configuration_from_binary: resumes a previously " //$NON-NLS-1$
+                    + "issued Pending run by its runKey; other params are ignored once runKey " //$NON-NLS-1$
+                    + "is supplied. Still pass operation - the facade needs it to know which " //$NON-NLS-1$
+                    + "run you are collecting.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "export_common_picture: CommonPicture name, either 'CommonPicture.<Name>' or " //$NON-NLS-1$
                     + "the bare '<Name>' (required for that operation).") //$NON-NLS-1$
@@ -257,8 +261,9 @@ public class ConfigIoFacadeTool implements IMcpTool
                 + "name. MUTATING (creates a project).\n"); //$NON-NLS-1$
             sb.append("- **import_configuration_from_binary** - import a .cf or .cfe into a " //$NON-NLS-1$
                 + "NEW EDT project, through a staging infobase that is created and deleted " //$NON-NLS-1$
-                + "here. Never touches an existing project's infobase. Runs the thick client; " //$NON-NLS-1$
-                + "minutes on a large configuration. MUTATING (creates a project).\n"); //$NON-NLS-1$
+                + "here. Never touches an existing project's infobase. Runs the thick client " //$NON-NLS-1$
+                + "and may reply Pending with a runKey (50 s measured on 157 MB). MUTATING " //$NON-NLS-1$
+                + "(creates a project).\n"); //$NON-NLS-1$
             sb.append("- **export_object** - build an external data processor / report DT " //$NON-NLS-1$
                 + "project into a binary .epf / .erf file. May reply Pending with a runKey.\n"); //$NON-NLS-1$
             sb.append("- **export_common_picture** - export a CommonPicture's image bytes to " //$NON-NLS-1$

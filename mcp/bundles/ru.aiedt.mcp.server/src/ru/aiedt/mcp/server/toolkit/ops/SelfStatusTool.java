@@ -109,8 +109,11 @@ public class SelfStatusTool
         totalRunning += putDomain(m, "export_object", PendingWorkRegistry.EXPORT); //$NON-NLS-1$
         totalRunning += putDomain(m, "find_references", PendingWorkRegistry.REFERENCES); //$NON-NLS-1$
         totalRunning += putDomain(m, "generic", PendingWorkRegistry.GENERIC); //$NON-NLS-1$
+        totalRunning += putDomain(m, "import_configuration_from_binary", //$NON-NLS-1$
+            PendingWorkRegistry.IMPORT_BINARY);
         totalTracked = PendingWorkRegistry.UPDATE.size() + PendingWorkRegistry.EXPORT.size()
-            + PendingWorkRegistry.REFERENCES.size() + PendingWorkRegistry.GENERIC.size();
+            + PendingWorkRegistry.REFERENCES.size() + PendingWorkRegistry.GENERIC.size()
+            + PendingWorkRegistry.IMPORT_BINARY.size();
         m.put("totalRunning", totalRunning); //$NON-NLS-1$
         m.put("totalTracked", totalTracked); //$NON-NLS-1$
         return m;

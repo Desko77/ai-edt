@@ -99,10 +99,10 @@ public class ConfigurationBinaryImporter implements IMcpTool
                 "How long to wait inline before returning Pending with a runKey. Default 30, " //$NON-NLS-1$
                     + "clamped to 5-120. The work continues either way.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
-                "Resume an import that came back Pending. Pass the runKey from that reply; " //$NON-NLS-1$
-                    + "other parameters are ignored. Re-calling with the same parameters " //$NON-NLS-1$
-                    + "produces the same key and resumes the same run rather than starting " //$NON-NLS-1$
-                    + "a second one.") //$NON-NLS-1$
+                "Resume an import that came back Pending. Pass the runKey from that reply and " //$NON-NLS-1$
+                    + "nothing else - this is the only way to collect the result. Repeating the " //$NON-NLS-1$
+                    + "original parameters starts a fresh submission instead, and is refused " //$NON-NLS-1$
+                    + "once the project exists.") //$NON-NLS-1$
             .build();
     }
 
@@ -191,24 +191,31 @@ public class ConfigurationBinaryImporter implements IMcpTool
             }
         }
 
-        Path xmlDir;
+        // Checked here, created later. Making the directory in front of the dispatch leaked one
+        // per poll: a second call with the same parameters finds the run already going, drops its
+        // own lambda - and the lambda was the only thing that would have deleted the directory it
+        // had just made.
         boolean keepXml = keepXmlPath != null && !keepXmlPath.isEmpty();
-        try
+        Path keepDir = null;
+        if (keepXml)
         {
-            xmlDir = keepXml ? Paths.get(keepXmlPath).toAbsolutePath().normalize()
-                : Files.createTempDirectory("aiedt-import-xml-"); //$NON-NLS-1$
-        }
-        catch (InvalidPathException | IOException e)
-        {
-            return ToolResult.error("Cannot prepare the intermediate XML directory: " //$NON-NLS-1$
-                + e.getMessage()).put(ErrorTags.OUTPUT_DIRECTORY_ERROR.wire(), true).toJson();
-        }
-        if (keepXml && !isEmptyOrAbsent(xmlDir))
-        {
-            return ToolResult.error("keepXmlPath must be an empty or absent directory: " + xmlDir //$NON-NLS-1$
-                + ". Mixing this dump with what is already there would make the result " //$NON-NLS-1$
-                + "impossible to import and impossible to tell apart from a dump that wrote " //$NON-NLS-1$
-                + "nothing.").put(ErrorTags.OUTPUT_DIRECTORY_ERROR.wire(), true).toJson(); //$NON-NLS-1$
+            try
+            {
+                keepDir = Paths.get(keepXmlPath).toAbsolutePath().normalize();
+            }
+            catch (InvalidPathException e)
+            {
+                return ToolResult.error("keepXmlPath is not a valid path: " + e.getMessage()) //$NON-NLS-1$
+                    .put(ErrorTags.OUTPUT_DIRECTORY_ERROR.wire(), true).toJson();
+            }
+            if (!isEmptyOrAbsent(keepDir))
+            {
+                return ToolResult.error("keepXmlPath must be an empty or absent directory: " //$NON-NLS-1$
+                    + keepDir + ". Mixing this dump with what is already there would make the " //$NON-NLS-1$
+                    + "result impossible to import and impossible to tell apart from a dump " //$NON-NLS-1$
+                    + "that wrote nothing.").put(ErrorTags.OUTPUT_DIRECTORY_ERROR.wire(), true) //$NON-NLS-1$
+                    .toJson();
+            }
         }
 
         // Everything above is cheap and stays in front of the dispatch: a bad call must never
@@ -218,15 +225,21 @@ public class ConfigurationBinaryImporter implements IMcpTool
         // a worker and the call comes back with a key.
         final Path finalBinary = binary;
         final Path finalBase = base;
-        final Path finalXmlDir = xmlDir;
-        final boolean finalKeepXml = keepXml;
+        final Path finalKeepDir = keepDir;
         final String finalProjectName = projectName;
         final String finalPlatform = platform;
         final String finalExtensionName = extensionName;
         final BmBinaryImportHelper.BinaryKind finalKind = kind;
 
+        // Every option that changes what the run DOES is part of its identity. Keyed on the
+        // project and the binary alone, a second call naming a different base configuration or a
+        // different extension name would silently ride along on the first run and be told it
+        // succeeded - having imported something else.
         String runKey = PendingWorkRegistry.computeRunKey(NAME, finalProjectName,
-            finalBinary.toString());
+            finalBinary.toString(), finalPlatform == null ? "" : finalPlatform, //$NON-NLS-1$
+            finalExtensionName == null ? "" : finalExtensionName, //$NON-NLS-1$
+            finalBase == null ? "" : finalBase.toString(), //$NON-NLS-1$
+            finalKeepDir == null ? "" : finalKeepDir.toString()); //$NON-NLS-1$
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
@@ -242,7 +255,7 @@ public class ConfigurationBinaryImporter implements IMcpTool
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
-                finalExtensionName, finalBase, finalXmlDir, finalKeepXml));
+                finalExtensionName, finalBase, finalKeepDir));
 
         String done = entry.await(timeoutMs);
         if (done != null)
@@ -258,10 +271,12 @@ public class ConfigurationBinaryImporter implements IMcpTool
             .put("binaryPath", finalBinary.toString()) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
             .put("waitedMs", timeoutMs) //$NON-NLS-1$
-            .put("hint", "The import is still staging. Call this tool again with runKey=\"" //$NON-NLS-1$ //$NON-NLS-2$
-                + runKey + "\" - or with the same parameters, which produce the same key - to " //$NON-NLS-1$
-                + "keep waiting. The project appears when it finishes, whether or not anyone " //$NON-NLS-1$
-                + "is still waiting.") //$NON-NLS-1$
+            .put("hint", "The import is still staging. Come back for it with runKey=\"" //$NON-NLS-1$ //$NON-NLS-2$
+                + runKey + "\" - through the facade that is config_io " //$NON-NLS-1$
+                + "operation=import_configuration_from_binary runKey=\"" + runKey + "\". Poll " //$NON-NLS-1$ //$NON-NLS-2$
+                + "by the key, not by repeating the parameters: a repeat is a fresh submission " //$NON-NLS-1$
+                + "and will be refused once the project exists. The project appears when the " //$NON-NLS-1$
+                + "import finishes, whether or not anyone is still waiting.") //$NON-NLS-1$
             .toJson();
     }
 
@@ -313,14 +328,24 @@ public class ConfigurationBinaryImporter implements IMcpTool
      * @param platform the platform version for the staging infobase, or <code>null</code>
      * @param extensionName the name to load an extension under, or <code>null</code>
      * @param base a .cf to seed the staging infobase with, or <code>null</code>
-     * @param xmlDir where the intermediate XML goes
-     * @param keepXml whether that directory is the caller's and must survive
+     * @param keepDir the caller's directory for the intermediate XML, or <code>null</code> for
+     *            a temporary one that is deleted afterwards
      * @return the reply JSON
      */
     private String stageAndImport(Path binary, BmBinaryImportHelper.BinaryKind kind,
-        String projectName, String platform, String extensionName, Path base, Path xmlDir,
-        boolean keepXml)
+        String projectName, String platform, String extensionName, Path base, Path keepDir)
     {
+        boolean keepXml = keepDir != null;
+        Path xmlDir;
+        try
+        {
+            xmlDir = keepXml ? keepDir : Files.createTempDirectory("aiedt-import-xml-"); //$NON-NLS-1$
+        }
+        catch (IOException e)
+        {
+            return ToolResult.error("Cannot prepare the intermediate XML directory: " //$NON-NLS-1$
+                + e.getMessage()).put(ErrorTags.OUTPUT_DIRECTORY_ERROR.wire(), true).toJson();
+        }
         try
         {
             BmBinaryImportHelper.XmlResult staged =
