@@ -14,13 +14,16 @@ import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.wire.GsonHolder;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -207,12 +210,15 @@ public class ConfigurationBinaryImporter implements IMcpTool
             importParams.put("projectName", projectName); //$NON-NLS-1$
             String imported = new ConfigurationXmlImporter().execute(importParams);
 
-            IProject created = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
-            if (created == null || !created.exists())
+            // Asked of the import itself, not of the workspace. The XML import sets the project up
+            // before it brings anything across, so the folder exists whether or not the import
+            // then worked - reading success off "a project is there" would report an empty shell
+            // as a finished job, which is the one answer worse than a failure.
+            if (!succeeded(imported, projectName))
             {
-                // The XML import already says exactly what went wrong and how to check it, so its
-                // answer travels back unchanged rather than being replaced by a vaguer one of our
-                // own. The dump behind it goes the way the caller asked: a temporary one is still
+                // Its answer already says exactly what went wrong and how to check it, so it
+                // travels back unchanged rather than being replaced by a vaguer one of our own.
+                // The dump behind it goes the way the caller asked: a temporary one is still
                 // deleted, because a path in the system temp directory that nobody was told about
                 // is litter, not evidence. Pass keepXmlPath to look at what was staged.
                 return imported;
@@ -241,6 +247,51 @@ public class ConfigurationBinaryImporter implements IMcpTool
             {
                 deleteTree(xmlDir);
             }
+        }
+    }
+
+    /**
+     * Whether the XML import actually imported something.
+     * <p>
+     * The import's own verdict is the answer, because it is the only party that knows whether the
+     * sources arrived - it checks that itself and refuses a project it created but could not fill.
+     * When its reply cannot be read, the same evidence it uses is checked here rather than assumed:
+     * a project with sources under {@code src}.
+     * </p>
+     *
+     * @param reply what the XML import answered
+     * @param projectName the project it was told to create
+     * @return <code>true</code> when there is a project with sources in it
+     */
+    private static boolean succeeded(String reply, String projectName)
+    {
+        try
+        {
+            Map<?, ?> parsed = GsonHolder.fromJson(reply, Map.class);
+            Object success = parsed == null ? null : parsed.get("success"); //$NON-NLS-1$
+            if (success instanceof Boolean)
+            {
+                return (Boolean)success;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("the XML import's answer could not be read, falling back to " //$NON-NLS-1$
+                + "inspecting the project: " + e.getMessage()); //$NON-NLS-1$
+        }
+        IProject created = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        if (created == null || !created.exists())
+        {
+            return false;
+        }
+        try
+        {
+            IFolder sources = created.getFolder("src"); //$NON-NLS-1$
+            return sources.exists() && sources.members().length > 0;
+        }
+        catch (CoreException e)
+        {
+            return false;
         }
     }
 

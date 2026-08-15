@@ -36,6 +36,7 @@ public final class HeavyTools
         "export_object", //$NON-NLS-1$
         "export_configuration_to_xml", //$NON-NLS-1$
         "import_configuration_from_xml", //$NON-NLS-1$
+        "import_configuration_from_binary", //$NON-NLS-1$
         "export_extension", //$NON-NLS-1$
         "install_extension", //$NON-NLS-1$
         "uninstall_extension", //$NON-NLS-1$

@@ -31,6 +31,8 @@ public class HeavyToolsTest
             HeavyTools.isHeavy("get_content_assist")); //$NON-NLS-1$
         assertTrue("naming a type resolves the whole module, which is not a cheap read", //$NON-NLS-1$
             HeavyTools.isHeavy("get_symbol_info")); //$NON-NLS-1$
+        assertTrue("staging a binary creates an infobase and runs the Designer twice", //$NON-NLS-1$
+            HeavyTools.isHeavy("import_configuration_from_binary")); //$NON-NLS-1$
     }
 
     @Test
