@@ -111,9 +111,12 @@ Supporting scripts:
 - **McpToolCatalog** (`toolkit/McpToolCatalog.java`) - thread-safe registry singleton. Registration
   and enablement are separate questions: a tool is registered at startup and may still be switched
   off by preferences. Each tool owns a capability id; a duplicate capability is a programming error.
-- **Tool implementations** live in `toolkit/ops/`. There are 119 callable tool names. Under the
-  default Canonical preset `tools/list` advertises 41 of them: the facades plus the tools no facade
-  covers. The remaining 78 are hidden but still callable as backward-compatible aliases.
+- **Tool implementations** live in `toolkit/ops/`. There are 125 callable tool names (the count
+  `scripts/check-tool-catalog.py` reconciles between `ToolCategory` and the catalog). Under the
+  default Canonical preset `tools/list` advertises 43 of them: the facades plus the tools no facade
+  covers. The rest stay hidden but callable as backward-compatible aliases. These three numbers go
+  stale on every tool added - read them off the script and a live `tools/list` rather than trusting
+  what is written here.
 - **Facades** - `code_search`, `launch_debugger`, `edit_metadata`, `diagnostics`, `project_admin`,
   `infobase_admin`, `config_io`, `insights`, `security_audit`, `docs_lookup`, `workspace_marks`,
   `extension_workshop`, `yaxunit_tests` and others expose many operations behind one tool name.

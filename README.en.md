@@ -56,6 +56,8 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🧱 **Build complex artifacts** | Work with DCS, MXL, XDTO, extensions, external objects and external data sources through dedicated workshops. |
 | 🧪 **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
 | 🛡️ **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
+| 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. |
+| 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
 
 The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
 
@@ -292,7 +294,7 @@ Open **Window → Preferences → AI-EDT** and check:
 3. **Plain text mode** for clients that do not support MCP resources;
 4. the active tool preset.
 
-![The General page controls transport, compatibility mode and server lifecycle.](docs/assets/screenshots/preferences-general.png)
+![The General page controls transport, external tools, network security, call history, updates and the server lifecycle.](docs/assets/screenshots/preferences-general.png)
 
 Then check the health endpoint:
 
@@ -454,6 +456,10 @@ What it honestly is and is not:
 
 Every tool call is recorded: what ran, with which arguments, what came back, how long it took. Open it from the AI-EDT status bar indicator, **Call history**. The window is modeless, so the agent keeps working while you read.
 
+![The call history window: the list with its tool and failure filters, and the request and response of the selected call below it.](docs/assets/screenshots/call-history.png)
+
+The header says how many calls are kept and at how many characters of request and response, and the label above the response pane says how much of it survived: `Response (303 of 1957 characters)`. A cut record therefore cannot be mistaken for a short answer.
+
 Settings live in **Window -> Preferences -> AI-EDT**, section **Call history**: whether to record at all, how many calls to keep, how many characters of the request and of the response to keep. The shipped values answer "which tools ran" rather than "what exactly did they answer" - raise the character counts if you need the full response, since they are what decides what you get to see.
 
 Depth and extent are bounded together: the buffer as a whole stays inside a memory budget, and character counts that do not fit alongside the chosen depth are scaled down proportionally. The counts actually in force are shown in the history window header, so a reduction is visible rather than silent. The shipped values come nowhere near the budget.
@@ -499,7 +505,9 @@ Start with:
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) - build process, code style and contribution rules (currently in Russian);
 - [SECURITY.md](SECURITY.md) - private vulnerability reporting and the threat model (currently in Russian);
-- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history.
+- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history;
+- [CHANGELOG.md](CHANGELOG.md) - one line per release with a link to its details (in Russian, as the
+  release notes are).
 
 Repository layout:
 
