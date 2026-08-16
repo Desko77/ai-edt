@@ -1,6 +1,6 @@
 ---
 name: ai-edt
-description: "1C:Enterprise development through the AI-EDT MCP server - BSL analysis and editing, metadata and managed forms, query validation, project diagnostics, debugging, infobase updates and unit tests. Use when the project is a 1C:EDT workspace: BSL modules, .mdo metadata, 1C queries, managed forms. Not for 1C 7.7 sources and not for Configurator-format exports without an EDT project."
+description: "1C:Enterprise development through the AI-EDT MCP server - BSL analysis and editing, metadata and managed forms, query validation, project diagnostics, debugging, infobase updates and unit tests. Use when the project is a 1C:EDT workspace: BSL modules, .mdo metadata, 1C queries, managed forms. Also use when all you have is a delivered .cf or .cfe with no project yet - it becomes one. Not for 1C 7.7 sources."
 ---
 
 # AI-EDT
@@ -20,14 +20,22 @@ than all of them.
 - Managed forms: structure, a screenshot of the WYSIWYG editor, editing without hand-written XML.
 - 1C queries: syntax and semantic validation before anything runs.
 - Project problems, infobase updates, YAxUnit tests, debugging and profiling.
+- **A configuration or extension delivered as one binary file.** A `.cf` becomes a project in a
+  single call (`config_io operation=import_configuration_from_binary`), with no project needed
+  beforehand. A `.cfe` the same way, but an extension that borrows from its base configuration
+  needs `baseConfigurationPath` pointing at the matching `.cf` - without it the extension is staged
+  against an empty infobase, which only carries an extension that adopts nothing.
+
+  An `.epf` or `.erf` is different: `unpack_external_binary` needs an existing project to name,
+  because it takes the platform runtime and the host infobase from it. It is two steps, and it is
+  not a way in from nothing.
 
 For BSL and 1C metadata this server beats grep-style search: it answers from the model.
 
 ## When not to use it
 
 - **1C 7.7** sources (`.1s`, `.ert`, `1Cv7.MD`). The EDT model does not cover them.
-- **Ordinary (non-managed) forms and Configurator-format exports without an EDT project.** The
-  catalogue assumes managed forms and an EDT workspace.
+- **Ordinary (non-managed) forms.** The form operations assume managed forms.
 - **Data in a running infobase, outside a suspended debug session.** Use an HTTP route into the
   running 1C application instead.
 - **EDT is not running.** The tools are unavailable. Say so instead of falling back to editing

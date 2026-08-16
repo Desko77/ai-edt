@@ -21,7 +21,7 @@ parameters of one. When this file and the server disagree, the server is right.
 
 | Operation | Notes |
 |---|---|
-| `get_project_errors` | Problems for a project, filterable by object, severity and check. |
+| `get_project_errors` | Problems for a project, filterable by object, severity and check. Each finding carries the line it sits on where the check reports one. |
 | `get_problem_summary` | Aggregated counts instead of a full listing. |
 | `revalidate_objects` | Recomputes problems for the given objects. Run this after edits, before reading errors. |
 | `clean_project` | Full rebuild of derived state. The remedy when validation results look stale rather than wrong. |
@@ -60,14 +60,20 @@ form edits are chained with other metadata edits.
 
 ## Configuration import and export
 
-`config_io`: `export_configuration_to_xml`, `import_configuration_from_xml`, `export_object`
-(an `.epf` or `.erf`), `export_common_picture`, `export_configuration_to_cf`,
-`unpack_external_binary`.
+`config_io`: `export_configuration_to_xml`, `import_configuration_from_xml`,
+`import_configuration_from_binary`, `export_object` (an `.epf` or `.erf`), `export_common_picture`,
+`export_configuration_to_cf`, `unpack_external_binary`.
 
-A file that arrives from outside takes two steps, not one: `unpack_external_binary` turns a binary
+An external processor or report takes two steps, not one: `unpack_external_binary` turns a binary
 `.epf` / `.erf` into Designer-XML, then `import_configuration_from_xml` turns that directory into a
-project. It refuses `.cf` and `.cfe` on purpose - converting one means loading it into an infobase
-and replacing what is there, which is not something to do as a side effect of reading a file.
+project.
+
+A whole configuration or extension delivered as one `.cf` or `.cfe` takes a single call:
+`import_configuration_from_binary`. It does not touch any infobase of yours - it creates a
+temporary one of its own, loads the binary there, exports XML and imports that, then removes it.
+EDT cannot read binary formats at all, so this detour is the only route; the platform can read
+them, but only into an infobase. On a large configuration the call takes minutes and returns a
+`runKey` to collect the result with, rather than holding the connection.
 
 Operations that drive the thick client run their own designer process. Do not start a batch
 Configurator against an infobase that EDT manages - the two compete for the same lock and the
@@ -90,6 +96,27 @@ Names differ from the former standalone tools: `set_breakpoint` is `action=add_b
 infobase update - which is why `validate_for_export` matters here too.
 
 `vanessa` drives scenario UI tests from the outside and complements the unit tests.
+
+## Tools that stand on their own
+
+Not every tool belongs to a facade. These are called by name.
+
+| Tool | Use it for |
+|---|---|
+| `get_metadata_objects` | The objects of a configuration, filtered by type and name. Omit `projectName` to search every open project at once - useful when you are looking for where an object lives. |
+| `get_metadata_details` | One object in depth: attributes, tabular sections, forms, modules. |
+| `get_command_interface` | The command interface of a subsystem: what it shows and in what order. |
+| `generate_event_handlers` | Handler stubs for the events of an OBJECT module - catalogs, documents, registers. Not for form handlers: those come from the form operations of `edit_metadata`. Read the stub before relying on it; the parameter lists come from a table here, not from the platform. |
+| `copy_object` | Copies an object into another project as its own, not adopted; forms, modules and presentation travel with it. |
+| `find_dead_code` | Exported methods nobody calls. |
+| `dcs_search` | Finds data composition schemas by what is inside them. |
+| `code_template` | Ready code patterns instead of writing a familiar shape from memory. |
+| `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. |
+| `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
+| `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |
+
+Two more are reached through a facade rather than by name, because the Canonical preset hides
+them: `extension_workshop operation=list_interceptors` and `project_admin operation=self_upkeep`.
 
 ## Constructors
 
