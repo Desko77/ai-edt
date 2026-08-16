@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 80 | a test class named after it |
-| exercised | 40 | reached by some other test |
-| tool-sweep | 98 | declaration checked by the registry-wide contract sweep |
+| direct | 81 | a test class named after it |
+| exercised | 41 | reached by some other test |
+| tool-sweep | 97 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 51 | needs a display or an extension point |
 | workspace-bound | 69 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **338** | across 119 test classes |
+| **total** | **339** | across 121 test classes |
 
 ## untested (0)
 
@@ -181,7 +181,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (98)
+## tool-sweep (97)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -226,7 +226,6 @@ _none_
 - FindDeadCodeTool
 - FindRlsViolationsTool
 - FormScreenshotGrabber
-- GenerateEventHandlersTool
 - GenerateHealthSnapshotTool
 - GetCommandInterfaceTool
 - GetFormStructureTool
@@ -283,7 +282,7 @@ _none_
 - YaxunitDebugRunner
 - YaxunitTestsTool
 
-## exercised (40)
+## exercised (41)
 
 **(root)**
 - McpHistory
@@ -329,6 +328,7 @@ _none_
 - DocsLookupFacadeTool
 - FormCommandInterfaceOps
 - FormItemsOps
+- GenerateEventHandlersTool
 - InfobaseAdminFacadeTool
 - InsightsFacadeTool
 - LaunchDebuggerTool
@@ -345,7 +345,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (80)
+## direct (81)
 
 **(root)**
 - OperatorSignal
@@ -369,6 +369,7 @@ _none_
 - DbViewSurvey
 - DependencyGraphBuilder
 - EventStubGenerator
+- FailureShape
 - FormBaseSetup
 - FormEventRegistry
 - GenericPending
