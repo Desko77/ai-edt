@@ -67,6 +67,13 @@ jobs:
       - name: Facade gate census
         run: python3 scripts/check-facade-gates.py
 
+      # Only the half of the EDT census that changes when WE commit: a class reached by name must be
+      # registered, or nothing will ever check it against a release. The other half - does the class
+      # still exist - changes when 1C publishes and runs weekly in its own workflow, because it
+      # downloads EDT bundles and this must not depend on the network.
+      - name: EDT reflection registry
+        run: python3 scripts/check-edt-api.py --registry-only
+
       - name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()

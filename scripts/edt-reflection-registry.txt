@@ -1,0 +1,188 @@
+# Reflective targets: what this plugin reaches by NAME at run time, where neither the compiler nor
+# the bytecode pass can see it. Verified by scripts/check-edt-api.py against every release we claim
+# to support.
+#
+# Mostly generated from the sources - the class a lookup is made on is followed through the variable
+# it was put into, the same way the audit of 2026-08-06 did it by hand - and then kept here so the
+# pairing survives and can be checked. The script fails when the sources reach an EDT class or
+# member this file does not list, so the list cannot quietly fall behind the code.
+#
+# Three kinds of line:
+#
+#   <class> [member,member]   a type we depend on. Absence is a finding and fails the check.
+#   probe <class>             one spelling among several tried in turn at run time, beside a path
+#                             that is compiled and works. Absence is ordinary - that is what probing
+#                             is for - so it is counted and shown, never failed.
+#   id <string>               not a class at all: a project nature, a launch-configuration attribute
+#                             key or value, a component or runtime type, a language id. Written like
+#                             a class name by convention. It cannot be looked for in a jar, so it is
+#                             recorded and NOT checked - a gap this census states rather than hides.
+#                             Answering it needs the extension registry inside the bundles, which is
+#                             a different tool.
+#
+# Known dead branch, kept visible on purpose:
+#   com._1c.g5.v8.dt.mcore.LocalString resolves in NO supported release, and McoreFactory has no
+#   createLocalString either, so the LocalString wrapping in BmObjectHelper never fires. It is
+#   guarded and harmless, but the protection it looks like it gives is not there. Measured
+#   2026-08-16 by this census - which is the sort of thing it exists to find.
+
+com._1c.g5.v8.bm.core.IBmTransaction getTopObjectByFqn,getTopObjectIterator
+com._1c.g5.v8.bm.integration.IBmSingleNamespaceTask
+id com._1c.g5.v8.dt.bsl.Bsl
+com._1c.g5.v8.dt.bsl.bm.ui.refactoring.BslBmRenameRefactoringProvider
+com._1c.g5.v8.dt.bsl.bm.ui.refactoring.BslTextSearchRefactoringSupplier
+com._1c.g5.v8.dt.bsl.bm.ui.refactoring.ConfigurationObjectRenameElementContext
+com._1c.g5.v8.dt.bsl.model.Method
+com._1c.g5.v8.dt.bsl.ui.internal.BslActivator
+com._1c.g5.v8.dt.cli.api.workspace.IExportConfigurationFilesApi
+com._1c.g5.v8.dt.cli.api.workspace.IImportConfigurationFilesApi
+com._1c.g5.v8.dt.common.PreferenceUtils getLineSeparator
+id com._1c.g5.v8.dt.core.V8ConfigurationNature
+id com._1c.g5.v8.dt.core.V8ExtensionNature
+id com._1c.g5.v8.dt.core.V8ExternalObjectsNature
+com._1c.g5.v8.dt.core.filesystem.IQualifiedNameFilePathConverter
+com._1c.g5.v8.dt.core.platform.IBmModelManager getDtProject
+com._1c.g5.v8.dt.core.platform.IDtProject
+com._1c.g5.v8.dt.core.platform.IExtensionProject
+com._1c.g5.v8.dt.core.platform.IResourceLookup
+com._1c.g5.v8.dt.core.platform.management.IDtHostResourceManager
+com._1c.g5.v8.dt.core.resource.IDtProjectAware setDtProject
+com._1c.g5.v8.dt.dcs.model.core.DcsFactory
+com._1c.g5.v8.dt.dcs.model.schema.DataCompositionSchema
+com._1c.g5.v8.dt.dcs.model.schema.DcsFactory
+com._1c.g5.v8.dt.dcs.model.settings.DcsFactory
+com._1c.g5.v8.dt.dcs.util.DcsV8Serializer runtimeVersionSupport,serializeXML
+probe com._1c.g5.v8.dt.debug.bsl.model.BslLineBreakpoint
+id com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID
+id com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_INFOBASE_ALIAS
+id com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_URL
+id com._1c.g5.v8.dt.debug.core.ATTR_PROJECT_NAME
+id com._1c.g5.v8.dt.debug.core.ATTR_RUNTIME_INSTALLATION_USE_AUTO
+id com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER
+probe com._1c.g5.v8.dt.debug.core.BslLineBreakpoint
+id com._1c.g5.v8.dt.debug.core.LocalRuntime
+id com._1c.g5.v8.dt.debug.core.RemoteRuntime
+id com._1c.g5.v8.dt.debug.core.RuntimeProcessFactory
+probe com._1c.g5.v8.dt.debug.core.model.BslLineBreakpoint
+com._1c.g5.v8.dt.debug.core.model.breakpoints.BslLineBreakpointDebugModel$Condition
+probe com._1c.g5.v8.dt.form.FormFactory
+com._1c.g5.v8.dt.form.generator.FormType
+com._1c.g5.v8.dt.form.generator.IFormFieldGenerator
+com._1c.g5.v8.dt.form.generator.IFormGenerator
+probe com._1c.g5.v8.dt.form.layout.service.ITemplateLayoutService
+com._1c.g5.v8.dt.form.layout.service.NativeRenderService
+com._1c.g5.v8.dt.form.model.AbstractDataPath getSegments
+com._1c.g5.v8.dt.form.model.Addition setExtInfo,setSource
+com._1c.g5.v8.dt.form.model.AdditionContainer
+com._1c.g5.v8.dt.form.model.AdditionExtInfo
+com._1c.g5.v8.dt.form.model.AdditionSource
+com._1c.g5.v8.dt.form.model.Button getCommandName,setCommandName,setRepresentation,setType
+com._1c.g5.v8.dt.form.model.DataItem getDataPath,setDataPath
+com._1c.g5.v8.dt.form.model.Decoration setAutoMaxHeight,setAutoMaxWidth,setExtInfo,setType
+com._1c.g5.v8.dt.form.model.DecorationExtInfo
+com._1c.g5.v8.dt.form.model.DefaultRepresentation
+com._1c.g5.v8.dt.form.model.ExtendedTooltip
+com._1c.g5.v8.dt.form.model.ExtendedTooltipHolder setExtendedTooltip
+com._1c.g5.v8.dt.form.model.FieldExtInfo
+com._1c.g5.v8.dt.form.model.Form getAttributes,getFormCommands,getParameters
+com._1c.g5.v8.dt.form.model.FormCommand getId,setId,setRepresentation
+com._1c.g5.v8.dt.form.model.FormFactory createAddition,createAutoCommandBar,createButton,createButtonGroupExtInfo,createCalendarFieldExtInfo,createChartFieldExtInfo,createCheckBoxFieldExtInfo,createColumnGroupExtInfo,createCommandBarExtInfo,createCommandHandler,createContextMenu,createDataPath,createDecoration,createDendrogramFieldExtInfo,createExtendedTooltip,createFlowchartFieldExtInfo,createFormAttribute,createFormCommand,createFormCommandHandlerContainer,createFormField,createFormGroup,createFormParameter,createFormattedDocFieldExtInfo,createGanttChartFieldExtInfo,createGeographicalMapFieldExtInfo,createHtmlFieldExtInfo,createImageFieldExtInfo,createInputFieldExtInfo,createLabelDecorationExtInfo,createLabelFieldExtInfo,createPDFDocumentFieldExtInfo,createPageGroupExtInfo,createPagesGroupExtInfo,createPeriodFieldExtInfo,createPictureDecorationExtInfo,createPlannerFieldExtInfo,createPopupGroupExtInfo,createProgressBarFieldExtInfo,createRadioButtonsFieldExtInfo,createSpreadSheetDocFieldExtInfo,createTable,createTextDocFieldExtInfo,createTrackBarFieldExtInfo,createUsualGroupExtInfo,eINSTANCE
+com._1c.g5.v8.dt.form.model.FormField setExtInfo,setType
+com._1c.g5.v8.dt.form.model.FormGroup setExtInfo,setType
+com._1c.g5.v8.dt.form.model.FormItem getId,setId
+com._1c.g5.v8.dt.form.model.FormItemContainer getItems
+com._1c.g5.v8.dt.form.model.GroupExtInfo
+com._1c.g5.v8.dt.form.model.ItemHorizontalAlignment
+com._1c.g5.v8.dt.form.model.LabelDecorationExtInfo setHorizontalAlign
+com._1c.g5.v8.dt.form.model.ManagedFormButtonType
+com._1c.g5.v8.dt.form.model.ManagedFormDecorationType get
+com._1c.g5.v8.dt.form.model.ManagedFormFieldType
+com._1c.g5.v8.dt.form.model.ManagedFormGroupType
+com._1c.g5.v8.dt.form.model.PageGroupExtInfo
+com._1c.g5.v8.dt.form.model.Table
+com._1c.g5.v8.dt.form.model.Titled getTitle
+com._1c.g5.v8.dt.form.model.Visible setEnabled,setUserVisible,setVisible
+com._1c.g5.v8.dt.form.service.FormItemInformationService
+com._1c.g5.v8.dt.form.ui.editor.FormEditor getActiveFormEditorPage
+com._1c.g5.v8.dt.internal.debug.core.model.breakpoints.BslExceptionBreakpoint
+com._1c.g5.v8.dt.internal.debug.core.model.breakpoints.BslLineBreakpoint
+com._1c.g5.v8.dt.internal.debug.core.model.breakpoints.BslRunToLineBreakpoint
+com._1c.g5.v8.dt.internal.form.FormPlugin getDefault,getInjector
+com._1c.g5.v8.dt.internal.md.extension.MdExtensionPlugin getDefault,getInjector
+com._1c.g5.v8.dt.internal.platform.services.core.PlatformServicesCore getDefault,getInjector
+com._1c.g5.v8.dt.internal.search.core.SearchCorePlugin
+id com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_AUTO_SELECT
+id com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_TYPE
+id com._1c.g5.v8.dt.launching.core.ATTR_LAUNCH_USER_USE_INFOBASE_ACCESS
+id com._1c.g5.v8.dt.launching.core.ATTR_STARTUP_OPTION
+id com._1c.g5.v8.dt.launching.core.RuntimeClient
+com._1c.g5.v8.dt.lcore.refactoring.CustomSourceFileChange
+com._1c.g5.v8.dt.lcore.refactoring.FullTextSearchSourceFileChange
+com._1c.g5.v8.dt.mcore.ButtonRepresentation
+com._1c.g5.v8.dt.mcore.Command
+com._1c.g5.v8.dt.mcore.DateFractions
+probe com._1c.g5.v8.dt.mcore.LocalString
+probe com._1c.g5.v8.dt.mcore.MCoreFactory
+com._1c.g5.v8.dt.mcore.McoreFactory eINSTANCE
+com._1c.g5.v8.dt.mcore.McorePackage$Literals
+com._1c.g5.v8.dt.mcore.NamedElement getName,setName
+com._1c.g5.v8.dt.mcore.TypeItem
+com._1c.g5.v8.dt.mcore.util.McoreUtil
+com._1c.g5.v8.dt.md.IExternalPropertyManagerRegistry
+com._1c.g5.v8.dt.md.MdPlugin getDefault,getInjector
+probe com._1c.g5.v8.dt.md.SpreadsheetDocument
+probe com._1c.g5.v8.dt.md.adopt.IMdAdoptObjectsService
+com._1c.g5.v8.dt.md.copy.IModelObjectCopySupport
+probe com._1c.g5.v8.dt.md.extension.IMdAdoptObjectsService
+probe com._1c.g5.v8.dt.md.extension.adopt.IMdAdoptObjectsService
+com._1c.g5.v8.dt.md.extension.adopt.IModelObjectAdopter
+com._1c.g5.v8.dt.metadata.common.CommonFactory eINSTANCE
+probe com._1c.g5.v8.dt.metadata.extension.IMdAdoptObjectsService
+com._1c.g5.v8.dt.metadata.mdclass.AdjustableBoolean setCommon
+com._1c.g5.v8.dt.metadata.mdclass.BasicForm getForm
+com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory createAdjustableBoolean,createStandardAttribute,eINSTANCE
+com._1c.g5.v8.dt.metadata.mdclass.ScriptVariant
+com._1c.g5.v8.dt.metadata.mdclass.TransferDirection
+com._1c.g5.v8.dt.metadata.mdclass.util.MdClassUtil
+com._1c.g5.v8.dt.moxel.MoxelFactory
+com._1c.g5.v8.dt.moxel.SpreadsheetDocument
+com._1c.g5.v8.dt.navigator.adapters.CollectionNavigatorAdapterBase
+com._1c.g5.v8.dt.platform.IEObjectProvider
+com._1c.g5.v8.dt.platform.IEObjectProvider$Registry
+probe com._1c.g5.v8.dt.platform.pictures.PlatformPictures
+probe com._1c.g5.v8.dt.platform.pictures.StandardPictures
+id com._1c.g5.v8.dt.platform.services.core.componentTypes.ThinClient
+com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumper dump
+id com._1c.g5.v8.dt.platform.services.core.runtimeType.EnterprisePlatform
+com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport
+com._1c.g5.v8.dt.platform.version.Version LATEST
+com._1c.g5.v8.dt.profiling.core.ILineProfilingResult getFrequency,getLine,getLineNo,getMethodSignature,getModuleName,getPercentage
+com._1c.g5.v8.dt.profiling.core.IProfileTarget
+com._1c.g5.v8.dt.profiling.core.IProfilingResult getName,getProfilingResults,getTotalDurability
+com._1c.g5.v8.dt.profiling.core.IProfilingService getResults,toggleProfiling
+com._1c.g5.v8.dt.profiling.core.IProfilingTimeHolder getDurability,getPureDurability
+com._1c.g5.v8.dt.ql.dcs.resource.QlDcsResource addOptions,setPreComputeAnnounceAlias
+com._1c.g5.v8.dt.rights.model.ObjectRights
+com._1c.g5.v8.dt.rights.model.RightsFactory
+com._1c.g5.v8.dt.rights.model.RoleDescription
+com._1c.g5.v8.dt.rights.model.util.IRightsConstants RIGHT_DEPEND_HIERARHY
+com._1c.g5.v8.dt.rights.model.util.RightName getByName,getName
+com._1c.g5.v8.dt.search.core.ISearchResultCollector
+com._1c.g5.v8.dt.search.core.SearchIn
+com._1c.g5.v8.dt.search.core.SimpleSearchResultCollector
+com._1c.g5.v8.dt.search.core.TextSearchScopeSettings
+com._1c.g5.v8.dt.search.core.TextSearcher
+com._1c.g5.v8.dt.search.core.refactoring.ITextSearchRefactoringSupplier
+com._1c.g5.v8.dt.search.core.refactoring.TextSearchRefactoringParticipantFactory
+com._1c.g5.v8.dt.search.core.refactoring.TextSearchRefactoringResultCollector
+com._1c.g5.v8.dt.search.core.text.ITextSearchIndexProvider
+com._1c.g5.v8.dt.search.core.text.TextSearchFileMatch
+com._1c.g5.v8.dt.search.core.text.TextSearchModelMatch
+probe com._1c.g5.v8.dt.spreadsheet.layout.ISpreadsheetLayoutService
+probe com._1c.g5.v8.dt.spreadsheet.model.SpreadsheetDocument
+probe com._1c.g5.v8.dt.spreadsheet.model.SpreadsheetFactory
+probe com._1c.g5.v8.dt.template.layout.ITemplateLayoutService
+probe com._1c.g5.v8.dt.template.model.SpreadsheetDocument
+probe com._1c.g5.v8.dt.template.model.TemplateFactory
+probe com._1c.g5.v8.dt.ui.platform.PlatformPictures
+com._1c.g5.wiring.ServiceAccess get
