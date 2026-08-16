@@ -166,10 +166,23 @@ public class GenerateEventHandlersTool implements IMcpTool
         return tr.toJson();
     }
 
-    private String renderEvent(EventDef def, boolean full)
+    /**
+     * Renders one handler as it belongs in an object module.
+     * <p>
+     * Without a compilation directive. These events live in the object module, which is server-side
+     * by nature and where {@code &НаСервере} is not merely redundant but not allowed - it belongs to
+     * form and command modules. The stub used to carry it, which made every generated handler
+     * refuse to compile where it was inserted. Measured against the demo configuration: none of its
+     * object modules carries a directive.
+     * </p>
+     *
+     * @param def the event
+     * @param full whether to write the typical body rather than a marker
+     * @return the handler text
+     */
+    static String renderEvent(EventDef def, boolean full)
     {
         StringBuilder sb = new StringBuilder();
-        sb.append("&НаСервере\n"); //$NON-NLS-1$
         sb.append("Процедура ").append(def.name).append("(").append(def.signature).append(")\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         if (full && def.fullBody != null)
         {
@@ -239,7 +252,7 @@ public class GenerateEventHandlersTool implements IMcpTool
         return value != null && !value.isEmpty() ? value : fallback;
     }
 
-    private static class EventDef
+    static class EventDef
     {
         final String name;
         final String signature;
@@ -253,6 +266,20 @@ public class GenerateEventHandlersTool implements IMcpTool
         }
     }
 
+    /**
+     * The event table, exposed for a test.
+     *
+     * <p>Package-visible because a wrong parameter list is not visible anywhere else: the stub is
+     * written into a module and only fails when the platform calls it, which is far from here.</p>
+     *
+     * @param kind the metadata kind family
+     * @return its events, or <code>null</code> when the kind has no table
+     */
+    static List<EventDef> eventsFor(String kind)
+    {
+        return EVENTS_BY_KIND.get(kind);
+    }
+
     private static Map<String, List<EventDef>> buildEventsByKind()
     {
         Map<String, List<EventDef>> map = new LinkedHashMap<>();
@@ -264,12 +291,23 @@ public class GenerateEventHandlersTool implements IMcpTool
         writable.add(new EventDef("ОбработкаЗаполнения", "ДанныеЗаполнения, СтандартнаяОбработка", null)); //$NON-NLS-1$ //$NON-NLS-2$
         writable.add(new EventDef("ПриКопировании", "ОбъектКопирования", null)); //$NON-NLS-1$ //$NON-NLS-2$
         map.put("Catalog", writable); //$NON-NLS-1$
-        // Documents have additional posting events (set below as docExtra).
-        List<EventDef> docExtra = new ArrayList<>(writable);
-        docExtra.add(new EventDef("ОбработкаПроведения", "Отказ, РежимПроведения", //$NON-NLS-1$ //$NON-NLS-2$
+        // Documents share most of these but not all: the platform calls a document's ПередЗаписью
+        // with three arguments, not one, because writing a document also decides its posting. A
+        // stub copied from the catalogue declares one parameter and does not match the call - the
+        // handler is inserted, compiles nowhere near the point of use, and fails when the document
+        // is written. So the event is replaced rather than inherited.
+        List<EventDef> docEvents = new ArrayList<>();
+        for (EventDef event : writable)
+        {
+            docEvents.add("ПередЗаписью".equals(event.name) //$NON-NLS-1$
+                ? new EventDef("ПередЗаписью", "Отказ, РежимЗаписи, РежимПроведения", //$NON-NLS-1$ //$NON-NLS-2$
+                    "    Если ЭтоНовый() Тогда\n        // Логика для нового документа\n    КонецЕсли;\n") //$NON-NLS-1$
+                : event);
+        }
+        docEvents.add(new EventDef("ОбработкаПроведения", "Отказ, РежимПроведения", //$NON-NLS-1$ //$NON-NLS-2$
             "    Движения.Записать();\n")); //$NON-NLS-1$
-        docExtra.add(new EventDef("ОбработкаУдаленияПроведения", "Отказ", null)); //$NON-NLS-1$ //$NON-NLS-2$
-        map.put("Document", docExtra); //$NON-NLS-1$
+        docEvents.add(new EventDef("ОбработкаУдаленияПроведения", "Отказ", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        map.put("Document", docEvents); //$NON-NLS-1$
         // Registers
         List<EventDef> regEvents = new ArrayList<>();
         regEvents.add(new EventDef("ПередЗаписью", "Отказ, Замещение", null)); //$NON-NLS-1$ //$NON-NLS-2$
