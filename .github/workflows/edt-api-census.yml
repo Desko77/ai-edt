@@ -5,22 +5,25 @@ name: EDT API census
 # the target platform, so a member dropped by a later release fails at run time, on a user's
 # machine, in whichever operation reached it.
 #
-# On a schedule rather than on every push: the answer changes when 1C publishes a release, not when
-# we commit, and each run downloads EDT bundles over the network. Paying that on every pull request
-# would buy a repeated answer and tie every build to somebody else's website being up.
+# Its own workflow rather than a step in the build, deliberately. It is the one check here that
+# talks to somebody else's website, and a failure to reach edt.1c.ru says nothing about the change
+# being built. Kept apart, an outage reddens this and leaves the build alone, and the two signals
+# stay readable.
 #
-# The cost of that choice, stated rather than left to be discovered: a change that calls something
-# present in the release we compile against but absent from another supported one is not caught
-# until the next scheduled run - it can merge first. The ordinary build carries only the half that
-# needs no network (is every name-reached class and member registered), so this is the half that
-# lags. Moving it earlier is a decision waiting on one fact: whether edt.1c.ru answers from a GitHub
-# runner at all. The first run of this workflow settles that, and this comment should be revisited
-# with the answer.
+# Runs on every push to main as well as weekly. Weekly answers "has 1C removed something since",
+# which is the question that changes on their schedule. On push answers "does what we just wrote
+# exist in the OTHER supported release" - a call present in the release we compile against and
+# absent from another would otherwise sit in main until the next Monday.
+#
+# Measured on a runner 2026-08-16: edt.1c.ru answers, and a cold census of two releases takes about
+# nine minutes, most of it downloading bundles. The bundle cache below is what keeps a warm run
+# short; this is why the check is not in the ordinary build, which must stay quick and offline.
 
 on:
+  push:
+    branches: [main]
   schedule:
-    # Weekly. A release of EDT is noticed within days, which is soon enough to act before anyone
-    # upgrades into it.
+    # Weekly, so a release of EDT is noticed within days even when nothing is being committed.
     - cron: "17 5 * * 1"
   workflow_dispatch:
     inputs:
