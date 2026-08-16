@@ -121,7 +121,11 @@ public final class ProfilingResultsReader implements IMcpTool
 
             Method getResultName = profilingResultClass.getMethod("getName"); //$NON-NLS-1$
             Method getTotalDurability = profilingResultClass.getMethod("getTotalDurability"); //$NON-NLS-1$
-            Method getProfilingResults = profilingResultClass.getMethod("get_profiling_results"); //$NON-NLS-1$
+            // The interface declares getProfilingResults; the name that stood here was this tool's
+            // own MCP operation name, which no Java method has ever answered to. It threw only
+            // after the "any results at all" check above, so the tool worked precisely while there
+            // was nothing to report and failed the moment there was.
+            Method getProfilingResults = profilingResultClass.getMethod("getProfilingResults"); //$NON-NLS-1$
             Method getLineNo = lineResultClass.getMethod("getLineNo"); //$NON-NLS-1$
             Method getFrequency = lineResultClass.getMethod("getFrequency"); //$NON-NLS-1$
             Method getModuleName = lineResultClass.getMethod("getModuleName"); //$NON-NLS-1$
