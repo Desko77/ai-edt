@@ -67,6 +67,12 @@ jobs:
       - name: Facade gate census
         run: python3 scripts/check-facade-gates.py
 
+      # The README tells users to install the skill, so a skill that has fallen behind the code
+      # teaches an agent that a capability is absent. That has happened twice: a removed facade left
+      # described, and an import stated as refused months after it was built.
+      - name: Skill coverage census
+        run: python3 scripts/check-skill-coverage.py
+
       # Only the half of the EDT census that needs no network: a class or member reached by name
       # must be registered, or nothing will ever check it against a release. Whether it still exists
       # in each supported release is answered by the census workflow, which runs on the same push
