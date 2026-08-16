@@ -30,6 +30,7 @@ import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcResponse;
 import ru.aiedt.mcp.server.wire.jsonrpc.ToolCallResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.ToolsListResult;
 import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.FailureShape;
 import ru.aiedt.mcp.server.support.GenericPending;
 import ru.aiedt.mcp.server.support.MutatorIdempotency;
 import ru.aiedt.mcp.server.support.MutatorIdempotencyStore;
@@ -447,7 +448,7 @@ public class McpRequestRouter
                     : "exception: " + (error != null ? error : "RuntimeException"); //$NON-NLS-1$ //$NON-NLS-2$
                 // A tool that returned {success:false} is a logical failure for the stats, even
                 // though it did not throw (tools report failure via the result, not an exception).
-                boolean logicalSuccess = success && !looksFailed(result);
+                boolean logicalSuccess = success && !FailureShape.looksFailed(result);
                 ArgSummary args = summarizeArgs(arguments, history.argChars());
                 McpHistory.record(tool.getName(), args.text, args.cut, resultSummary,
                     System.currentTimeMillis() - start, logicalSuccess);
@@ -586,14 +587,6 @@ public class McpRequestRouter
         return lc.contains("password") || lc.contains("passwd") || lc.contains("pwd") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             || lc.contains("token") || lc.contains("secret") || lc.contains("apikey") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             || lc.contains("credential") || lc.contains("authorization"); //$NON-NLS-1$ //$NON-NLS-2$
-    }
-
-    /** A tool result that carries {@code success:false} is a logical failure for history stats. */
-    private static boolean looksFailed(String result)
-    {
-        return result != null
-            && (result.contains("\"success\":false") //$NON-NLS-1$
-                || result.contains("\"success\": false")); //$NON-NLS-1$
     }
 
     /**

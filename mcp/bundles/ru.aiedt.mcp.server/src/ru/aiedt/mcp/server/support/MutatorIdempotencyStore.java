@@ -154,33 +154,16 @@ public final class MutatorIdempotencyStore
     }
 
     /**
-     * Whether a mutator result reads as a failure (evict, allow retry) rather than a
-     * success (cache, replay). Conservative on purpose: only well-known failure shapes
-     * count, because a false positive (a success read as a failure) would evict and let
-     * a retry mutate twice, while a false negative merely makes a failed op need a fresh
-     * operationId. Covers the JSON {@code success:false} body, a leading {@code Error:}
-     * string, {@code write_module_source}'s "Failed while writing", and
-     * {@code edit_form}'s yaml {@code status: error}.
+     * Whether a mutator result reads as a failure (evict, allow retry) rather than a success
+     * (cache, replay).
+     *
+     * @param result the tool's answer
+     * @return whether it reads as a failure
+     * @see FailureShape
      */
     static boolean looksFailed(String result)
     {
-        if (result == null)
-        {
-            return true;
-        }
-        if (result.contains("\"success\":false") || result.contains("\"success\": false")) //$NON-NLS-1$ //$NON-NLS-2$
-        {
-            return true;
-        }
-        if (result.stripLeading().startsWith("Error:")) //$NON-NLS-1$
-        {
-            return true;
-        }
-        if (result.contains("Failed while writing")) //$NON-NLS-1$
-        {
-            return true;
-        }
-        return result.contains("status: error"); //$NON-NLS-1$
+        return FailureShape.looksFailed(result);
     }
 
     /** Drops completed-success entries older than the TTL. In-flight entries are kept. */
