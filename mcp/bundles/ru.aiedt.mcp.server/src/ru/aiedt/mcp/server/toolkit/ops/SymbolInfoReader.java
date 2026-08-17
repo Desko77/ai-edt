@@ -331,6 +331,11 @@ public class SymbolInfoReader
         }
 
         StringBuilder body = new StringBuilder();
+        String typeNote = module.typeStateNote();
+        if (typeNote != null)
+        {
+            body.append(typeNote);
+        }
         for (int[] position : positions)
         {
             String answer = module.resource == null ? null : module.answerAt(position[0], position[1]);
@@ -514,7 +519,17 @@ public class SymbolInfoReader
         {
             return null;
         }
-        return module.answerAt(line, column);
+        String answer = module.answerAt(line, column);
+        String typeNote = module.typeStateNote();
+        if (typeNote == null || answer == null || answer.startsWith("Error:")) //$NON-NLS-1$
+        {
+            // An error is recognised by its leading "Error:", and the caller above acts on
+            // that. Prefixing the note would move it off the front and turn a rejected
+            // position into an ordinary-looking answer - and the note is about types, which
+            // is beside the point when the position itself was never valid.
+            return answer;
+        }
+        return typeNote + answer;
     }
 
     /**
@@ -556,15 +571,16 @@ public class SymbolInfoReader
         if (!(resource instanceof XtextResource))
         {
             modelPathUnavailable.set(true);
-            return new ModuleUnderQuestion(this, document, null);
+            return new ModuleUnderQuestion(this, document, null, BslModuleAccess.TypeState.NO_MODEL);
         }
         XtextResource xtextResource = (XtextResource)resource;
 
+        BslModuleAccess.TypeState typeState = BslModuleAccess.TypeState.READY;
         if (computeTypes)
         {
-            BslModuleAccess.resolveCrossReferences(xtextResource);
+            typeState = BslModuleAccess.resolveCrossReferences(xtextResource);
         }
-        return new ModuleUnderQuestion(this, document, xtextResource);
+        return new ModuleUnderQuestion(this, document, xtextResource, typeState);
     }
 
     /**
@@ -580,12 +596,16 @@ public class SymbolInfoReader
 
         private final String failure;
 
-        ModuleUnderQuestion(SymbolInfoReader reader, IDocument document, XtextResource resource)
+        private final BslModuleAccess.TypeState typeState;
+
+        ModuleUnderQuestion(SymbolInfoReader reader, IDocument document, XtextResource resource,
+            BslModuleAccess.TypeState typeState)
         {
             this.reader = reader;
             this.document = document;
             this.resource = resource;
             this.failure = null;
+            this.typeState = typeState;
         }
 
         private ModuleUnderQuestion(String failure)
@@ -594,6 +614,23 @@ public class SymbolInfoReader
             this.document = null;
             this.resource = null;
             this.failure = failure;
+            this.typeState = BslModuleAccess.TypeState.READY;
+        }
+
+        /**
+         * A line to hand the caller when the types behind this answer are not trustworthy.
+         * <p>
+         * Without it, a position whose type had not been computed read exactly like a
+         * position that has no type, and the same point could answer differently between
+         * two runs with nothing to say which reading was real.
+         * </p>
+         *
+         * @return the note, or <code>null</code> when the types are complete
+         */
+        String typeStateNote()
+        {
+            String reason = this.typeState == null ? null : this.typeState.reason();
+            return reason == null ? null : "**Types:** " + reason + "\n\n"; //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         static ModuleUnderQuestion failed(String failure)

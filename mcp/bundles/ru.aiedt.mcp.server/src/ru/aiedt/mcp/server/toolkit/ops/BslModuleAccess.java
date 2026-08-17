@@ -204,11 +204,11 @@ public final class BslModuleAccess
      *
      * @param resource the module's resource; anything else is ignored
      */
-    public static void resolveCrossReferences(Resource resource)
+    public static TypeState resolveCrossReferences(Resource resource)
     {
         if (!(resource instanceof LazyLinkingResource))
         {
-            return;
+            return TypeState.NO_MODEL;
         }
         ToolCallScope scope = ToolCallScope.current();
         CancelIndicator cancelled =
@@ -223,6 +223,48 @@ public final class BslModuleAccess
             // The names still answer without this, so a failure here makes the reply thinner rather
             // than absent.
             Activator.logWarning("Could not resolve the module's cross-references: " + e.getMessage()); //$NON-NLS-1$
+            return TypeState.FAILED;
+        }
+        // Resolution is interruptible and stops where it is, leaving the type state partly
+        // installed. The names still answer, so the reply looked ordinary - a position whose
+        // type had not been reached read exactly like a position that has no type. Callers
+        // comparing runs saw the same point answer differently and had no way to tell which
+        // reading was the real one. Say which happened instead.
+        return cancelled.isCanceled() ? TypeState.INTERRUPTED : TypeState.READY;
+    }
+
+    /**
+     * What became of the type state a module's answers depend on.
+     */
+    public enum TypeState
+    {
+        /** Cross-references resolved; a missing type means there is none. */
+        READY,
+        /** Resolution was interrupted partway; a missing type may simply not have been reached. */
+        INTERRUPTED,
+        /** Resolution threw; types are unavailable for this module. */
+        FAILED,
+        /** The module has no resolvable model at all. */
+        NO_MODEL;
+
+        /**
+         * @return the reason to hand the caller, or <code>null</code> when types are trustworthy
+         */
+        public String reason()
+        {
+            switch (this)
+            {
+            case INTERRUPTED:
+                return "type computation was interrupted partway, so a position without a type " //$NON-NLS-1$
+                    + "here may simply not have been reached - ask again to get a full answer"; //$NON-NLS-1$
+            case FAILED:
+                return "type computation failed for this module, so no position carries a type " //$NON-NLS-1$
+                    + "in this answer"; //$NON-NLS-1$
+            case NO_MODEL:
+                return "this module has no resolvable model, so no position carries a type"; //$NON-NLS-1$
+            default:
+                return null;
+            }
         }
     }
 
