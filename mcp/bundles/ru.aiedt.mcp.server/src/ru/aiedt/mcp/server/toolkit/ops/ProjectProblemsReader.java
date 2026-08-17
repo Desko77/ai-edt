@@ -297,10 +297,13 @@ public class ProjectProblemsReader
                 long total = countProjectMarkers(markerManager, projectName);
                 if (total > PROJECT_SUMMARY_THRESHOLD)
                 {
-                    return "# Too Many Project Markers\n\n**Total markers in project:** " + total //$NON-NLS-1$
-                        + "\n**Returned:** " + collected.size() + " (capped)\n\nNarrow the scope: pass " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "`objects=[...]`, `checkId=...`, or `scope=session` to see only this session's " //$NON-NLS-1$
-                        + "changes."; //$NON-NLS-1$
+                    // This used to RETURN here, so an overflowing project answered with the
+                    // header alone - "Returned: 300" above an empty page, while the 300 rows
+                    // sat collected and were thrown away. Finding out which checks fire on a
+                    // large configuration then took one call per object. The warning belongs
+                    // in front of the rows, not instead of them.
+                    return capNotice(total, collected.size()) + formatMarkers(collected,
+                        resolvedScope, projectName, severity, objects, limit);
                 }
             }
             return formatMarkers(collected, resolvedScope, projectName, severity, objects, limit);
@@ -808,6 +811,24 @@ public class ProjectProblemsReader
      * @param scanCap the collection cap, for the "cap reached" note
      * @return the markdown
      */
+    /**
+     * The banner that goes in front of a capped project listing: what the project holds, what
+     * came back, and the two cheaper ways to ask.
+     *
+     * @param total markers the project holds in all
+     * @param returned markers this answer carries
+     * @return a markdown block ending in a blank line, ready to prefix the listing
+     */
+    static String capNotice(long total, int returned)
+    {
+        return "# Too Many Project Markers\n\n**Total markers in project:** " + total //$NON-NLS-1$
+            + "\n**Returned below:** " + returned + " (capped)\n\nFor the whole picture ask for a " //$NON-NLS-1$ //$NON-NLS-2$
+            + "summary instead: `compact=true` groups every marker by check id, and it scans up to " //$NON-NLS-1$
+            + COMPACT_SCAN_CAP + " markers regardless of `limit` - so those counts are exact for a " //$NON-NLS-1$
+            + "project up to that size. To narrow instead, pass `objects=[...]`, `checkId=...`, or " //$NON-NLS-1$
+            + "`scope=session` for this session's changes only.\n\n"; //$NON-NLS-1$
+    }
+
     private static String formatCompact(List<ErrorInfo> errors, String resolvedScope, String projectName,
         int scanCap)
     {
