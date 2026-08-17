@@ -256,6 +256,16 @@ public class MetadataDetailsReader
     private static String formatObjectDetails(Configuration configuration, String fqn, boolean full,
         String language, View view)
     {
+        // The configuration root is an MdObject like any other, but it lives in no
+        // collection, so the Type.Name lookup below could never find it and the answer
+        // was "no such object" for the one object every project certainly has. Asking
+        // the model about the root - its name, synonym, default language, mobile and
+        // interface properties - meant reading the .mdo by hand instead.
+        String rootAnswer = configurationRootDetails(configuration, fqn, full, language, view);
+        if (rootAnswer != null)
+        {
+            return rootAnswer;
+        }
         String[] parts = fqn.split("\\."); //$NON-NLS-1$
         if (parts.length < 2)
         {
@@ -275,6 +285,67 @@ public class MetadataDetailsReader
             return "**Error:** no such object: " + fqn + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
         }
         return MetadataFormatterHub.format(object, full, language, view.sections, view.outline);
+    }
+
+    /**
+     * Answers for the configuration root, which no collection holds.
+     * <p>
+     * Accepts {@code Configuration} on its own and {@code Configuration.<name>}, in
+     * English or Russian. A name that does not match is refused by NAME rather than
+     * silently formatting the only configuration there is - the caller who spelled it
+     * wrong is otherwise told about an object they did not ask for.
+     * </p>
+     *
+     * @param configuration the project's configuration (non-null)
+     * @param fqn the requested FQN
+     * @param full whether the caller asked for the full view
+     * @param language the requested language, or <code>null</code>
+     * @param view the requested sections
+     * @return the formatted root, an error naming the mismatch, or <code>null</code> when
+     *         {@code fqn} does not address the root at all
+     */
+    /**
+     * Reads an FQN as a request for the configuration root.
+     *
+     * @param fqn the requested FQN (nullable)
+     * @return the name asked for, {@code ""} when the root was addressed without one, or
+     *         <code>null</code> when this FQN is about some other object
+     */
+    static String rootRequestName(String fqn)
+    {
+        if (fqn == null)
+        {
+            return null;
+        }
+        String trimmed = fqn.trim();
+        int dot = trimmed.indexOf('.');
+        String head = dot < 0 ? trimmed : trimmed.substring(0, dot);
+        if (!"Configuration".equalsIgnoreCase(head) && !"Конфигурация".equalsIgnoreCase(head)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return null;
+        }
+        return dot < 0 ? "" : trimmed.substring(dot + 1).trim(); //$NON-NLS-1$
+    }
+
+    private static String configurationRootDetails(Configuration configuration, String fqn,
+        boolean full, String language, View view)
+    {
+        String asked = rootRequestName(fqn);
+        if (asked == null)
+        {
+            return null;
+        }
+        String actual = configuration.getName();
+        // Case-insensitive like every other FQN lookup here - the collection search matches
+        // object names with equalsIgnoreCase, and a root that alone insisted on exact case
+        // would be a rule nobody could guess from the other objects.
+        if (!asked.isEmpty() && !asked.equalsIgnoreCase(actual))
+        {
+            return "**Error:** no such configuration: " + asked //$NON-NLS-1$
+                + ". This project's configuration is named " + actual //$NON-NLS-1$
+                + " - ask for Configuration." + actual + " or just Configuration.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return MetadataFormatterHub.format(configuration, full, language, view.sections, view.outline);
     }
 
     /**
