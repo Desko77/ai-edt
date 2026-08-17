@@ -68,6 +68,32 @@ public class ToolResult
     }
 
     /**
+     * Turns an already-assembled successful result into a failed one, keeping every
+     * member added so far.
+     * <p>
+     * For the case a mutation cannot express any other way: the write happened, but it
+     * did not achieve what was asked - an attribute created without the type requested
+     * for it, say. Rebuilding the result would lose the fields that tell the caller what
+     * WAS done, and those are exactly what they need to put it right. {@code success}
+     * keeps its leading position because the backing map is insertion-ordered and this
+     * replaces the value rather than re-adding the key.
+     * </p>
+     *
+     * @param message what went wrong, in terms the calling agent can act on; a
+     *            <code>null</code> message leaves the {@code error} key out
+     * @return this result, now reading <code>{"success":false,"error":"..."}</code>
+     */
+    public ToolResult demote(String message)
+    {
+        data.put(KEY_SUCCESS, Boolean.FALSE);
+        if (message != null)
+        {
+            data.put(KEY_ERROR, message);
+        }
+        return this;
+    }
+
+    /**
      * Adds a string member.
      *
      * @param key the member name

@@ -41,6 +41,7 @@ import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.TypeApplication;
 
 /**
  * Objects cluster of {@code edit_metadata}: top-object create/remove, scalar and
@@ -1286,23 +1287,11 @@ final class ObjectOps
         // Surface type-application outcome so the caller sees whether `type`
         // actually landed on the new attribute. Without this the caller has
         // to rely on a follow-up get_metadata_details / disk read.
+        String typeFailure = null;
         if (type != null && !type.isEmpty() && !idempotentSkipFlag[0])
         {
-            Map<String, Object> typeApply = new LinkedHashMap<>();
-            typeApply.put("requested", type); //$NON-NLS-1$
-            typeApply.put("applied", typeAppliedFlag[0]); //$NON-NLS-1$
-            if (!typeResolved.isEmpty())
-            {
-                typeApply.put("resolved", typeResolved); //$NON-NLS-1$
-            }
-            if (!typeUnresolved.isEmpty())
-            {
-                typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
-            }
-            if (typeApplyErrorRef[0] != null)
-            {
-                typeApply.put("error", typeApplyErrorRef[0]); //$NON-NLS-1$
-            }
+            Map<String, Object> typeApply = TypeApplication.tag(type, typeAppliedFlag[0],
+                typeResolved, typeUnresolved, typeApplyErrorRef[0]);
             // Non-fatal typo guard: isKnownTypeShape accepts any capitalized ASCII
             // word as a primitive, so a mistyped type ("Stirng", "Numer") is applied
             // as an unresolved type while "applied" reads true. Surface a warning so
@@ -1320,6 +1309,11 @@ final class ObjectOps
                 typeApply.put("warning", lenWarn); //$NON-NLS-1$
             }
             r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+            if (r.ok && TypeApplication.failed(typeAppliedFlag[0], typeUnresolved))
+            {
+                typeFailure = TypeApplication.failureMessage("attribute '" + name + "'", //$NON-NLS-1$ //$NON-NLS-2$
+                    type, typeApplyErrorRef[0], dryRun, typeAppliedFlag[0]);
+            }
         }
         // Surface synonym outcome (auto-generated value, explicit value, or
         // setter failure). Skip on idempotent existing-attribute case to avoid
@@ -1327,6 +1321,15 @@ final class ObjectOps
         if (!idempotentSkipFlag[0])
         {
             EditMetadataTool.addSynonymTags(r, synonymRef.get());
+        }
+        // After the synonym tags, never before: addSynonymTags itself returns early on a
+        // failed result, and the synonym IS committed - an unapplied type does not roll
+        // the write back. Demoting any earlier dropped the record of what is actually on
+        // disk from the very answer meant to help fix it.
+        if (typeFailure != null)
+        {
+            r.ok = false;
+            r.error = typeFailure;
         }
         return EditMetadataTool.formatResult(r, "add_object_attribute"); //$NON-NLS-1$
     }
@@ -1802,27 +1805,21 @@ final class ObjectOps
         // landed on the new tabular-section attribute (mirror add_object_attribute).
         if (type != null && !type.isEmpty())
         {
-            Map<String, Object> typeApply = new LinkedHashMap<>();
-            typeApply.put("requested", type); //$NON-NLS-1$
-            typeApply.put("applied", tcTypeAppliedFlag[0]); //$NON-NLS-1$
-            if (!tcTypeResolved.isEmpty())
-            {
-                typeApply.put("resolved", tcTypeResolved); //$NON-NLS-1$
-            }
-            if (!tcTypeUnresolved.isEmpty())
-            {
-                typeApply.put("unresolved", tcTypeUnresolved); //$NON-NLS-1$
-            }
-            if (tcTypeApplyErrorRef[0] != null)
-            {
-                typeApply.put("error", tcTypeApplyErrorRef[0]); //$NON-NLS-1$
-            }
+            Map<String, Object> typeApply = TypeApplication.tag(type, tcTypeAppliedFlag[0],
+                tcTypeResolved, tcTypeUnresolved, tcTypeApplyErrorRef[0]);
             String tcLenWarn = BmDefinedTypeHelper.stringLengthRestructureWarning(type, tcQualifiers);
             if (tcLenWarn != null)
             {
                 typeApply.put("warning", tcLenWarn); //$NON-NLS-1$
             }
             r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+            if (r.ok && TypeApplication.failed(tcTypeAppliedFlag[0], tcTypeUnresolved))
+            {
+                r.ok = false;
+                r.error = TypeApplication.failureMessage(
+                    "tabular section attribute '" + name + "'", type, //$NON-NLS-1$ //$NON-NLS-2$
+                    tcTypeApplyErrorRef[0], dryRun, tcTypeAppliedFlag[0]);
+            }
         }
         return EditMetadataTool.formatResult(r, "add_tabular_section_attribute"); //$NON-NLS-1$
     }

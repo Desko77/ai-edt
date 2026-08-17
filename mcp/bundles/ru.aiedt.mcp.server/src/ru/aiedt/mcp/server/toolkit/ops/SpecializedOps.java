@@ -34,6 +34,7 @@ import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.TypeApplication;
 
 /**
  * Specialized cluster of {@code edit_metadata}: register fields / enum values /
@@ -841,24 +842,17 @@ final class SpecializedOps
             }
             r.tags.put("idempotentSkip", idem); //$NON-NLS-1$
         }
+        String typeFailure = null;
         if (type != null && !type.isEmpty() && !idempotentSkipFlag[0])
         {
-            Map<String, Object> typeApply = new LinkedHashMap<>();
-            typeApply.put("requested", type); //$NON-NLS-1$
-            typeApply.put("applied", typeAppliedFlag[0]); //$NON-NLS-1$
-            if (!typeResolved.isEmpty())
+            r.tags.put("typeApplication", //$NON-NLS-1$
+                TypeApplication.tag(type, typeAppliedFlag[0], typeResolved, typeUnresolved,
+                    typeApplyErrorRef[0]));
+            if (r.ok && TypeApplication.failed(typeAppliedFlag[0], typeUnresolved))
             {
-                typeApply.put("resolved", typeResolved); //$NON-NLS-1$
+                typeFailure = TypeApplication.failureMessage("register field '" + name + "'", //$NON-NLS-1$ //$NON-NLS-2$
+                    type, typeApplyErrorRef[0], dryRun, typeAppliedFlag[0]);
             }
-            if (!typeUnresolved.isEmpty())
-            {
-                typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
-            }
-            if (typeApplyErrorRef[0] != null)
-            {
-                typeApply.put("error", typeApplyErrorRef[0]); //$NON-NLS-1$
-            }
-            r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
         }
         // Surface feature-prop outcome only on a successful (or idempotent-success,
         // which also sets r.ok) result - never claim appliedProperties on an error
@@ -874,6 +868,15 @@ final class SpecializedOps
             {
                 r.tags.put("failedProperties", failedFeatureProps); //$NON-NLS-1$
             }
+        }
+        // Demoted only after the tags above are attached. An unapplied type does not roll
+        // the write back - the field, its synonym and its properties are already committed -
+        // so flipping the verdict any earlier would have hidden exactly the record of what
+        // IS on disk, which is what the caller needs to put it right.
+        if (typeFailure != null)
+        {
+            r.ok = false;
+            r.error = typeFailure;
         }
         return EditMetadataTool.formatResult(r, opLabel);
     }

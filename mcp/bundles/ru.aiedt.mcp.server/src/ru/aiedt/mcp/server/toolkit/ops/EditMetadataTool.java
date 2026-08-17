@@ -801,14 +801,27 @@ public class EditMetadataTool implements IMcpTool
                 skippedCount++;
             }
         }
-        return ToolResult.success()
+        ToolResult batchResult = ToolResult.success()
             .put("batch", true) //$NON-NLS-1$
             .put("ok", okCount) //$NON-NLS-1$
             .put("fail", failCount) //$NON-NLS-1$
             .put("skipped", skippedCount) //$NON-NLS-1$
             .put("stoppedOnError", stoppedAt >= 0) //$NON-NLS-1$
-            .put("batchResults", results) //$NON-NLS-1$
-            .toJson();
+            .put("batchResults", results); //$NON-NLS-1$
+        // The batch used to answer success:true whatever happened inside it - including
+        // ok:0, fail:6, every single operation rejected. A caller reading the top-level
+        // flag was told the edit went through when nothing had. The flag now means what
+        // it says: every operation succeeded. The counts and batchResults[] still carry
+        // the detail, so a partial run remains fully inspectable - it just no longer
+        // passes for a clean one.
+        if (failCount > 0)
+        {
+            batchResult = batchResult.demote(failCount + " of " //$NON-NLS-1$
+                + (okCount + failCount + skippedCount)
+                + " operations failed - see batchResults[] for each. Operations are NOT " //$NON-NLS-1$
+                + "rolled back: the ones that succeeded are already applied."); //$NON-NLS-1$
+        }
+        return batchResult.toJson();
         }
         finally
         {

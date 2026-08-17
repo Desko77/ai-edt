@@ -29,6 +29,7 @@ import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.TypeApplication;
 
 /**
  * Form-item cluster of {@code edit_metadata}: add/remove form attributes / parameters /
@@ -237,22 +238,15 @@ final class FormItemsOps
         {
             // Surface whether `type` actually landed on the new attribute so
             // the caller does not need a follow-up get_form_structure.
-            Map<String, Object> typeApply = new LinkedHashMap<>();
-            typeApply.put("requested", typeFinal); //$NON-NLS-1$
-            typeApply.put("applied", typeAppliedFlag[0]); //$NON-NLS-1$
-            if (!typeResolved.isEmpty())
+            response = response.put("typeApplication", //$NON-NLS-1$
+                TypeApplication.tag(typeFinal, typeAppliedFlag[0], typeResolved,
+                    typeUnresolved, typeApplyErrorRef[0]));
+            if (TypeApplication.failed(typeAppliedFlag[0], typeUnresolved))
             {
-                typeApply.put("resolved", typeResolved); //$NON-NLS-1$
+                response = response.demote(TypeApplication.failureMessage(
+                    "form attribute '" + attributeName + "'", typeFinal, //$NON-NLS-1$ //$NON-NLS-2$
+                    typeApplyErrorRef[0], formDryRun, typeAppliedFlag[0]));
             }
-            if (!typeUnresolved.isEmpty())
-            {
-                typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
-            }
-            if (typeApplyErrorRef[0] != null)
-            {
-                typeApply.put("error", typeApplyErrorRef[0]); //$NON-NLS-1$
-            }
-            response = response.put("typeApplication", typeApply); //$NON-NLS-1$
         }
         return response.toJson();
     }
@@ -483,22 +477,14 @@ final class FormItemsOps
         }
         else if (fType != null && !fType.isEmpty())
         {
-            Map<String, Object> ta = new LinkedHashMap<>();
-            ta.put("requested", fType); //$NON-NLS-1$
-            ta.put("applied", typeApplied[0]); //$NON-NLS-1$
-            if (!typeResolved.isEmpty())
+            resp = resp.put("typeApplication", //$NON-NLS-1$
+                TypeApplication.tag(fType, typeApplied[0], typeResolved, typeUnresolved,
+                    typeErr[0]));
+            if (TypeApplication.failed(typeApplied[0], typeUnresolved))
             {
-                ta.put("resolved", typeResolved); //$NON-NLS-1$
+                resp = resp.demote(TypeApplication.failureMessage(
+                    "form parameter '" + fName + "'", fType, typeErr[0], dryRun, typeApplied[0])); //$NON-NLS-1$ //$NON-NLS-2$
             }
-            if (!typeUnresolved.isEmpty())
-            {
-                ta.put("unresolved", typeUnresolved); //$NON-NLS-1$
-            }
-            if (typeErr[0] != null)
-            {
-                ta.put("error", typeErr[0]); //$NON-NLS-1$
-            }
-            resp = resp.put("typeApplication", ta); //$NON-NLS-1$
         }
         return resp.toJson();
     }

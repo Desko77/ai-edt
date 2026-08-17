@@ -118,4 +118,43 @@ public class ToolResultTest
         assertTrue(json.contains("1"));
         assertTrue(json.contains("3"));
     }
+
+    @Test
+    public void demoteTurnsAnAssembledSuccessIntoAFailureKeepingItsFields()
+    {
+        // For a write that happened but did not do what was asked. The fields describing
+        // what WAS done are exactly what the caller needs to put it right, so they stay.
+        String json = ToolResult.success()
+            .put("operation", "add_form_attribute")
+            .put("attributeName", "Дерево")
+            .demote("type 'ДеревоЗначений' was not applied")
+            .toJson();
+
+        assertTrue(json.contains("\"success\": false") || json.contains("\"success\":false"));
+        // Matched without the apostrophes: Gson escapes them by default, so a phrase
+        // carrying quotes never appears verbatim in the serialized form.
+        assertTrue(json.contains("was not applied"));
+        assertTrue(json.contains("ДеревоЗначений"));
+        assertTrue(json.contains("add_form_attribute"));
+        assertTrue(json.contains("Дерево"));
+    }
+
+    @Test
+    public void demoteLeavesSuccessLeadingTheAnswer()
+    {
+        // The backing map is insertion-ordered and demote replaces the value rather than
+        // re-adding the key, so a reader still meets the verdict first.
+        String json = ToolResult.success().put("operation", "batch").demote("2 of 3 failed").toJson();
+
+        assertTrue(json.indexOf("success") < json.indexOf("operation"));
+    }
+
+    @Test
+    public void demoteWithoutAMessageStillFlipsTheVerdict()
+    {
+        String json = ToolResult.success().demote(null).toJson();
+
+        assertTrue(json.contains("\"success\": false") || json.contains("\"success\":false"));
+        assertFalse(json.contains("error"));
+    }
 }
