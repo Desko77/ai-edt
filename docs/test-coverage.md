@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 81 | a test class named after it |
-| exercised | 41 | reached by some other test |
-| tool-sweep | 97 | declaration checked by the registry-wide contract sweep |
+| direct | 83 | a test class named after it |
+| exercised | 42 | reached by some other test |
+| tool-sweep | 96 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 51 | needs a display or an extension point |
-| workspace-bound | 69 | drives a live EDT project or debug session |
+| workspace-bound | 68 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **339** | across 121 test classes |
+| **total** | **340** | across 125 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (69)
+## workspace-bound (68)
 
 **folders**
 - IClusterChangeObserver
@@ -45,7 +45,6 @@ _none_
 - BmCommonFormPostCreate
 - BmCommonModuleGuards
 - BmDcsHelper
-- BmDefinedTypeHelper
 - BmEventSubscriptionHelper
 - BmExportHelper
 - BmExtensionHelper
@@ -181,7 +180,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (97)
+## tool-sweep (96)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -242,7 +241,6 @@ _none_
 - ListExtensionsTool
 - ListInterceptorsTool
 - McpHistoryReader
-- MetadataDetailsReader
 - MetadataObjectDeleter
 - MetadataObjectRenamer
 - MetadataObjectsReader
@@ -282,7 +280,7 @@ _none_
 - YaxunitDebugRunner
 - YaxunitTestsTool
 
-## exercised (41)
+## exercised (42)
 
 **(root)**
 - McpHistory
@@ -332,6 +330,7 @@ _none_
 - InfobaseAdminFacadeTool
 - InsightsFacadeTool
 - LaunchDebuggerTool
+- MetadataDetailsReader
 - ProjectAdminFacadeTool
 - ProjectProblemsReader
 - SecurityAuditFacadeTool
@@ -345,7 +344,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (81)
+## direct (83)
 
 **(root)**
 - OperatorSignal
@@ -365,6 +364,7 @@ _none_
 
 **support**
 - BmBinaryImportHelper
+- BmDefinedTypeHelper
 - BslCommentParseHelper
 - DbViewSurvey
 - DependencyGraphBuilder
@@ -401,6 +401,7 @@ _none_
 - TimeoutArgs
 - ToolCallScope
 - ToolGate
+- TypeApplication
 - WorkspacePhase
 - YamlFrontMatter
 - YaxunitHelp
