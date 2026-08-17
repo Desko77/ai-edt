@@ -477,7 +477,8 @@ public final class BmDefinedTypeHelper
                 return r;
             }
         }
-        return setTypesOnDescription(typeDesc, project, config, typeFqns, qualifierOptions, attr);
+        return setTypesOnDescription(typeDesc, project, config,
+            normalizeFormCollectionFqns(typeFqns), qualifierOptions, attr);
     }
 
     /**
@@ -2878,6 +2879,80 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * Russian names of the collection types a FORM attribute may carry, mapped to
+     * their English canonical form. Deliberately NOT part of
+     * {@link #RU_PRIMITIVE_TO_EN}: that map feeds every carrier, and an object
+     * attribute typed ValueTable is invalid metadata. Worse, the object path's
+     * typo warning inspects the ORIGINAL token, so a Cyrillic spelling normalized
+     * in the shared path would be applied without even the warning the English
+     * spelling gets. Applied only by {@link #setFormAttributeTypes}.
+     * <p>
+     * Three names, chosen by counting a real configuration rather than by
+     * recollection: across the demo configuration's forms ValueTable appears 295
+     * times as an attribute type, ValueList 282 and ValueTree 83, while Array,
+     * Structure, Map and FixedArray appear zero times - the platform does not
+     * accept those as form attribute types, so translating their Russian names
+     * would only help a caller write something the platform rejects.
+     * </p>
+     */
+    private static final Map<String, String> RU_FORM_COLLECTION_TO_EN;
+    static
+    {
+        Map<String, String> m = new HashMap<>();
+        m.put("деревозначений", "ValueTree"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("таблицазначений", "ValueTable"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("списокзначений", "ValueList"); //$NON-NLS-1$ //$NON-NLS-2$
+        RU_FORM_COLLECTION_TO_EN = m;
+    }
+
+    /**
+     * Maps the Russian name of a form-attribute collection type to its English
+     * canonical form, leaving every other token alone. Each element may be a
+     * comma-joined composite, so the mapping runs per comma-separated part and the
+     * element is rebuilt in its original shape - the caller downstream splits on
+     * commas itself and must see exactly what it would have seen before.
+     *
+     * @param typeFqns requested type tokens (nullable).
+     * @return a new list with Russian collection names translated, or {@code typeFqns}
+     *         itself when there is nothing to translate.
+     */
+    // Package-visible for BmDefinedTypeHelperTest: which carrier gets these aliases is
+    // the whole point of the split, and a test is the only thing that keeps them here.
+    static List<String> normalizeFormCollectionFqns(List<String> typeFqns)
+    {
+        if (typeFqns == null || typeFqns.isEmpty())
+        {
+            return typeFqns;
+        }
+        List<String> out = new ArrayList<>(typeFqns.size());
+        boolean changed = false;
+        for (String raw : typeFqns)
+        {
+            if (raw == null || raw.indexOf(',') < 0)
+            {
+                String en = raw == null ? null
+                    : RU_FORM_COLLECTION_TO_EN.get(raw.trim().toLowerCase(Locale.ROOT));
+                changed |= en != null;
+                out.add(en != null ? en : raw);
+                continue;
+            }
+            StringBuilder rebuilt = new StringBuilder();
+            for (String part : raw.split(",")) //$NON-NLS-1$
+            {
+                String en = RU_FORM_COLLECTION_TO_EN.get(part.trim().toLowerCase(Locale.ROOT));
+                changed |= en != null;
+                if (rebuilt.length() > 0)
+                {
+                    rebuilt.append(','); // $NON-NLS-1$
+                }
+                rebuilt.append(en != null ? en : part);
+            }
+            out.add(rebuilt.toString());
+        }
+        return changed ? out : typeFqns;
+    }
+
+    /**
      * Maps a bare Russian primitive type name to its English canonical form (via
      * {@link #RU_PRIMITIVE_TO_EN}); returns any other token (dotted reference /
      * defined types, English names, unknown words) unchanged. Applied to each
@@ -2888,7 +2963,9 @@ public final class BmDefinedTypeHelper
      * @return the English primitive name when {@code fqn} is a Russian primitive,
      *         otherwise {@code fqn} unchanged.
      */
-    private static String normalizePrimitiveFqn(String fqn)
+    // Package-visible for BmDefinedTypeHelperTest: the map shipped without a test,
+    // and what it must NOT map matters as much as what it must.
+    static String normalizePrimitiveFqn(String fqn)
     {
         if (fqn == null || fqn.indexOf('.') >= 0)
         {
