@@ -71,6 +71,18 @@
               <artifactId>${swt.fragment}</artifactId>
               <version>0.0.0</version>
             </dependency>
+            <!--
+              One platform-version bundle, named because nothing requires it. The platform
+              type register is filled by IEObjectProviderExtension contributions, and those
+              live in the per-version bundles; without one in the launch the registry hands
+              out an empty provider that answers null to every name - which reads exactly
+              like "no such type" and would make a check built on it reject everything.
+            -->
+            <dependency>
+              <type>eclipse-plugin</type>
+              <artifactId>com._1c.g5.v8.dt.platform_v8.3.22</artifactId>
+              <version>0.0.0</version>
+            </dependency>
           </dependencies>
         </configuration>
       </plugin>
