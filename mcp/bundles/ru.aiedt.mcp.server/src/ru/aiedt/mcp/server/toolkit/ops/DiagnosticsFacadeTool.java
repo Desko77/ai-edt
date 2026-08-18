@@ -105,6 +105,11 @@ public class DiagnosticsFacadeTool implements IMcpTool
             .booleanProperty("compact", //$NON-NLS-1$
                 "get_project_errors: fold the result into grouped per-check / per-location " //$NON-NLS-1$
                     + "counts instead of one row per marker.") //$NON-NLS-1$
+            .booleanProperty("extraInfo", //$NON-NLS-1$
+                "get_project_errors: add an 'Extra' column with whatever the check attached " //$NON-NLS-1$
+                    + "to the marker beyond its position. Most findings carry nothing there; " //$NON-NLS-1$
+                    + "reach for it when the message alone does not say what the check " //$NON-NLS-1$
+                    + "objected to.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "get_project_errors: cap on results (default 100, max 1000). " //$NON-NLS-1$
                     + "validate_for_export: cap on findings (default 500).") //$NON-NLS-1$

@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 83 | a test class named after it |
+| direct | 84 | a test class named after it |
 | exercised | 42 | reached by some other test |
 | tool-sweep | 96 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 51 | needs a display or an extension point |
 | workspace-bound | 68 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **340** | across 125 test classes |
+| **total** | **341** | across 130 test classes |
 
 ## untested (0)
 
@@ -344,7 +344,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (83)
+## direct (84)
 
 **(root)**
 - OperatorSignal
@@ -390,6 +390,7 @@ _none_
 - MutatorIdempotency
 - MutatorIdempotencyStore
 - PendingExecutor
+- PlatformTypeNames
 - QueryAntiPatternRules
 - QueryResultSchema
 - ReflectionAccess

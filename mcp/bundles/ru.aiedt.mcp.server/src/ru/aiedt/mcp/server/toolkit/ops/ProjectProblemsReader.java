@@ -149,6 +149,11 @@ public class ProjectProblemsReader
                     + "table (location, count). Aggregates across up to 5000 markers and " //$NON-NLS-1$
                     + "bypasses the scope=project past-200 summarizer. Best when a flat list would be " //$NON-NLS-1$
                     + "unreadable.") //$NON-NLS-1$
+            .booleanProperty("extraInfo", //$NON-NLS-1$
+                "If true (default false), adds an 'Extra' column carrying whatever the check " //$NON-NLS-1$
+                    + "attached to the marker beyond its position - model feature ids, and any " //$NON-NLS-1$
+                    + "custom keys the check chose to record. Most findings carry nothing here; " //$NON-NLS-1$
+                    + "use it when a message alone does not say what the check objected to.") //$NON-NLS-1$
             .build();
     }
 
@@ -170,6 +175,7 @@ public class ProjectProblemsReader
         String fileFilter = JsonUtils.extractStringArgument(params, "fileFilter"); //$NON-NLS-1$
         boolean waitForRefresh = JsonUtils.extractBooleanArgument(params, "waitForRefresh", true); //$NON-NLS-1$
         boolean compact = JsonUtils.extractBooleanArgument(params, "compact", false); //$NON-NLS-1$
+        boolean extraInfo = JsonUtils.extractBooleanArgument(params, "extraInfo", false); //$NON-NLS-1$
 
         if (projectName != null && !projectName.isEmpty())
         {
@@ -192,11 +198,11 @@ public class ProjectProblemsReader
         limit = Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, limit));
 
         return getProjectErrors(projectName, severity, checkId, objects, limit, resolvedScope, fileFilter,
-            waitForRefresh, compact);
+            waitForRefresh, compact, extraInfo);
     }
 
     /**
-     * The full nine-argument entry point.
+     * The full entry point.
      *
      * @param projectName the project to restrict to, or <code>null</code>/empty for all
      * @param severity the severity filter argument
@@ -207,11 +213,12 @@ public class ProjectProblemsReader
      * @param fileFilter a presentation substring to keep, or <code>null</code>/empty for any
      * @param waitForRefresh whether to poll after an empty first read
      * @param compact whether to fold the result into grouped counts
+     * @param extraInfo whether to carry each marker's non-positional extra info
      * @return the markdown report, or a {@code # Error} document
      */
     public static String getProjectErrors(String projectName, String severity, String checkId,
         List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh,
-        boolean compact)
+        boolean compact, boolean extraInfo)
     {
         try
         {
@@ -261,7 +268,7 @@ public class ProjectProblemsReader
 
             int collectLimit = compact ? Math.max(limit, COMPACT_SCAN_CAP) : limit;
 
-            List<ErrorInfo> collected = collectMarkers(markerManager, checkRepository, filter, collectLimit);
+            List<ErrorInfo> collected = collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
             if (collected.isEmpty() && waitForRefresh)
             {
                 for (int attempt = 0; attempt < REFRESH_ATTEMPTS; attempt++)
@@ -275,7 +282,7 @@ public class ProjectProblemsReader
                         Thread.currentThread().interrupt();
                         break;
                     }
-                    collected = collectMarkers(markerManager, checkRepository, filter, collectLimit);
+                    collected = collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
                     if (!collected.isEmpty())
                     {
                         break;
@@ -290,7 +297,8 @@ public class ProjectProblemsReader
 
             if (compact)
             {
-                return formatCompact(collected, resolvedScope, projectName, collectLimit);
+                return formatCompact(collected, resolvedScope, projectName, severity, checkId, objects,
+                    collectLimit);
             }
             if ("project".equals(resolvedScope) && collected.size() >= limit) //$NON-NLS-1$
             {
@@ -303,10 +311,10 @@ public class ProjectProblemsReader
                     // large configuration then took one call per object. The warning belongs
                     // in front of the rows, not instead of them.
                     return capNotice(total, collected.size()) + formatMarkers(collected,
-                        resolvedScope, projectName, severity, objects, limit);
+                        resolvedScope, projectName, severity, checkId, objects, limit, extraInfo);
                 }
             }
-            return formatMarkers(collected, resolvedScope, projectName, severity, objects, limit);
+            return formatMarkers(collected, resolvedScope, projectName, severity, checkId, objects, limit, extraInfo);
         }
         catch (Exception e)
         {
@@ -330,7 +338,7 @@ public class ProjectProblemsReader
     {
         String scope = objects != null && !objects.isEmpty() ? "object" : "all"; //$NON-NLS-1$ //$NON-NLS-2$
         return getProjectErrors(projectName, severity, checkId, objects == null ? new ArrayList<>() : objects,
-            limit, scope, null, false, false);
+            limit, scope, null, false, false, false);
     }
 
     /**
@@ -350,7 +358,7 @@ public class ProjectProblemsReader
         List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh)
     {
         return getProjectErrors(projectName, severity, checkId, objects, limit, scope, fileFilter,
-            waitForRefresh, false);
+            waitForRefresh, false, false);
     }
 
     /**
@@ -390,6 +398,119 @@ public class ProjectProblemsReader
             // Not a JSON array; leave the list empty.
         }
         return result;
+    }
+
+    /**
+     * The answer for a query that matched nothing, naming every filter that was in
+     * force when it matched nothing.
+     * <p>
+     * Every filter, including the ones the caller did not set. An empty answer is a
+     * claim about the project, and it is only true within the filters that produced it;
+     * omitting one turns "nothing at this severity" into "nothing", which is how a check
+     * with live findings came to be recorded as a check that does not fire.
+     * </p>
+     *
+     * @param resolvedScope the scope actually used.
+     * @param projectName the project filter, or <code>null</code>/empty for none.
+     * @param severity the severity argument as given, <code>null</code> for the default.
+     * @param checkId the check filter, or <code>null</code>/empty for none.
+     * @param objects the object filter; never <code>null</code>.
+     * @return the markdown.
+     */
+    // Package-visible for ProjectProblemsSeverityNoticeTest: the compact path once
+    // reached this with the filters stripped, and told a caller who had asked for ALL
+    // that the default was in force. A test is what keeps the two paths saying the same
+    // thing.
+    static String nothingFoundMessage(String resolvedScope, String projectName, String severity,
+        String checkId, List<String> objects)
+    {
+        StringBuilder builder = new StringBuilder("# Nothing Found\n\n"); //$NON-NLS-1$
+        if (resolvedScope != null && !resolvedScope.isEmpty())
+        {
+            builder.append("Scope: **").append(resolvedScope).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (projectName != null && !projectName.isEmpty())
+        {
+            builder.append("Project: **").append(projectName).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // Named whether or not it was passed. The severity filter is the one that
+        // silently empties an answer: it defaults to the ERROR group, and a check
+        // reporting MINOR - which most style and doc-comment checks do - then reads
+        // as "not firing" rather than "filtered out". Leaving the default unstated
+        // is what let that be mistaken for a missing feature.
+        builder.append("Severity: ").append(describeSeverityFilter(severity)).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (checkId != null && !checkId.isEmpty())
+        {
+            builder.append("Check: `").append(checkId).append("`\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (objects != null && !objects.isEmpty())
+        {
+            builder.append("Objects: ").append(String.join(", ", objects)).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        builder.append("\nNothing matches the given criteria."); //$NON-NLS-1$
+        if (!isEveryLevel(severity))
+        {
+            // Only severity is worth suggesting. compact=true builds on the same
+            // filter, so it would come back just as empty - offering it as a way
+            // round the severity filter would send the caller in a circle.
+            builder.append(" Findings below that level are excluded - pass severity=ALL " //$NON-NLS-1$
+                + "to see every level."); //$NON-NLS-1$
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Spells out the severity filter actually in force, for an answer that came back
+     * empty.
+     * <p>
+     * The default is a filter like any other, and it is the one that catches people
+     * out: most style, module-structure and doc-comment checks report MINOR, which the
+     * ERROR group drops. An empty answer that lists scope, project and objects but not
+     * the severity reads as "this check does not fire here" - and has been taken to
+     * mean the filter was broken, or the check unavailable, when the findings were
+     * sitting there one argument away.
+     * </p>
+     *
+     * @param severity the severity argument as given, possibly <code>null</code>.
+     * @return a phrase naming the level and what it leaves out.
+     */
+    // Package-visible for ProjectProblemsReaderTest: the exact levels each group covers
+    // is the content of the message, so it is what a test has to hold.
+    static String describeSeverityFilter(String severity)
+    {
+        String requested =
+            severity == null || severity.isEmpty() ? null : severity.trim().toUpperCase(Locale.ROOT);
+        if (requested == null)
+        {
+            return "**ERROR** (the default - BLOCKER, CRITICAL, MAJOR, ERRORS; " //$NON-NLS-1$
+                + "MINOR and TRIVIAL are NOT included)"; //$NON-NLS-1$
+        }
+        switch (requested)
+        {
+        case "ERROR": //$NON-NLS-1$
+            return "**ERROR** (BLOCKER, CRITICAL, MAJOR, ERRORS; " //$NON-NLS-1$
+                + "MINOR and TRIVIAL are NOT included)"; //$NON-NLS-1$
+        case "WARNING": //$NON-NLS-1$
+            return "**WARNING** (the ERROR group plus MINOR; TRIVIAL is NOT included)"; //$NON-NLS-1$
+        case "INFO": //$NON-NLS-1$
+            return "**INFO** (the ERROR group plus MINOR and TRIVIAL)"; //$NON-NLS-1$
+        case "ALL": //$NON-NLS-1$
+            return "**ALL** (no severity filter)"; //$NON-NLS-1$
+        default:
+            return "**" + requested + "** (that native level alone)"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Whether the severity argument lets every level through, i.e. whether an empty
+     * answer still has a severity filter left to blame.
+     *
+     * @param severity the severity argument as given, possibly <code>null</code>.
+     * @return <code>true</code> only for ALL.
+     */
+    static boolean isEveryLevel(String severity)
+    {
+        return severity != null && "ALL".equalsIgnoreCase(severity.trim()); //$NON-NLS-1$
     }
 
     /**
@@ -475,10 +596,11 @@ public class ProjectProblemsReader
      * @param checkRepository the check repository, for resolving short ids
      * @param filter the predicate
      * @param collectLimit the most to collect
+     * @param extraInfo whether each row should carry the marker's non-positional extra info
      * @return the collected rows
      */
     private static List<ErrorInfo> collectMarkers(IMarkerManager markerManager,
-        ICheckRepository checkRepository, Filter filter, int collectLimit)
+        ICheckRepository checkRepository, Filter filter, int collectLimit, boolean extraInfo)
     {
         List<ErrorInfo> result = new ArrayList<>();
         // The check-id filter runs on the mapped row, not the raw marker: only the
@@ -486,7 +608,7 @@ public class ProjectProblemsReader
         // report prints is what keeps the filter and the grouped view in step.
         markerManager.markers()
             .filter(filter::matchesEdt)
-            .map(marker -> toErrorInfo(marker, checkRepository))
+            .map(marker -> toErrorInfo(marker, checkRepository, extraInfo))
             .filter(error -> filter.matchesCheckIdentity(error.checkId, error.checkCode))
             .limit(collectLimit)
             .forEach(result::add);
@@ -522,7 +644,8 @@ public class ProjectProblemsReader
      * @param checkRepository the check repository, for resolving the short id
      * @return the row
      */
-    private static ErrorInfo toErrorInfo(Marker marker, ICheckRepository checkRepository)
+    private static ErrorInfo toErrorInfo(Marker marker, ICheckRepository checkRepository,
+        boolean withExtraInfo)
     {
         String checkCode = marker.getCheckId();
         String resolvedCheckId = resolveCheckId(checkRepository, checkCode, marker.getProject());
@@ -535,6 +658,7 @@ public class ProjectProblemsReader
         int line = -1;
         int charStart = -1;
         int charEnd = -1;
+        String extraRendered = null;
         try
         {
             IExtraInfoMap extra = marker.getExtraInfo();
@@ -544,6 +668,10 @@ public class ProjectProblemsReader
                 charStart = extra.getIntOrDefault(StandardExtraInfo.TEXT_OFFSET, -1);
                 int length = extra.getIntOrDefault(StandardExtraInfo.TEXT_LENGTH, -1);
                 charEnd = charStart >= 0 && length >= 0 ? charStart + length : -1;
+                if (withExtraInfo)
+                {
+                    extraRendered = renderExtraInfo(extra);
+                }
             }
         }
         catch (RuntimeException e)
@@ -553,7 +681,63 @@ public class ProjectProblemsReader
             line = -1;
         }
         return new ErrorInfo(checkCode, resolvedCheckId, hasDocumentation, marker.getMessage(),
-            marker.getObjectPresentation(), severityNative, line, charStart, charEnd);
+            marker.getObjectPresentation(), severityNative, line, charStart, charEnd, extraRendered);
+    }
+
+    /**
+     * Renders what a check attached to its marker beyond the position already shown in
+     * its own columns.
+     * <p>
+     * The map is the check's, not ours: past the standard keys it may hold anything the
+     * check chose to record. That is the point of surfacing it - when a message says
+     * only "property (method) of object not found", whatever the check kept about WHAT
+     * it failed to find is the difference between reproducing its rule and guessing at
+     * it. Nothing is interpreted here; the entries are handed over as they were written.
+     * </p>
+     * <p>
+     * The three position keys are left out because the line and offset columns already
+     * carry them, and repeating them in every row would bury the rare entry that is
+     * actually worth reading.
+     * </p>
+     *
+     * @param extra the marker's extra info; an {@code IExtraInfoMap} is a
+     *            {@code Map<String, String>}, and a plain map serves just as well.
+     * @return {@code key=value} pairs joined by "; ", ordered by key, or
+     *         <code>null</code> when nothing is left after the position keys.
+     */
+    // Package-visible for ProjectProblemsExtraInfoTest.
+    static String renderExtraInfo(Map<String, String> extra)
+    {
+        if (extra == null || extra.isEmpty())
+        {
+            return null;
+        }
+        List<String> rendered = new ArrayList<>();
+        for (Map.Entry<String, String> entry : extra.entrySet())
+        {
+            String key = entry.getKey();
+            if (key == null || isPositionKey(key))
+            {
+                continue;
+            }
+            rendered.add(key + "=" + entry.getValue()); //$NON-NLS-1$
+        }
+        if (rendered.isEmpty())
+        {
+            return null;
+        }
+        // Sorted so two runs over the same marker read the same way - a caller diffing
+        // our answer against its own must not see a change that is only map ordering.
+        rendered.sort(null);
+        return String.join("; ", rendered); //$NON-NLS-1$
+    }
+
+    /** Whether this key is one the line / offset columns already report. */
+    private static boolean isPositionKey(String key)
+    {
+        return key.equals(StandardExtraInfo.TEXT_LINE.getKey())
+            || key.equals(StandardExtraInfo.TEXT_OFFSET.getKey())
+            || key.equals(StandardExtraInfo.TEXT_LENGTH.getKey());
     }
 
     /**
@@ -644,7 +828,10 @@ public class ProjectProblemsReader
                 collected.add(new ErrorInfo(sourceId, null, hasDocumentation, message, presentation,
                     mapped.name(), marker.getAttribute(IMarker.LINE_NUMBER, -1),
                     marker.getAttribute(IMarker.CHAR_START, -1),
-                    marker.getAttribute(IMarker.CHAR_END, -1)));
+                    marker.getAttribute(IMarker.CHAR_END, -1),
+                    // A plain Eclipse problem marker carries no EDT extra info: the map
+                    // belongs to the validation model, and these come from under it.
+                    null));
             }
         }
     }
@@ -747,34 +934,18 @@ public class ProjectProblemsReader
      * @param resolvedScope the scope, for the header
      * @param projectName the project filter, for the empty message
      * @param severity the severity argument, for the empty message
+     * @param checkId the check filter, for the empty message
      * @param objects the object filter, for the empty message
      * @param limit the limit, for the "limited" note
+     * @param extraInfo whether to carry the per-marker extra info column
      * @return the markdown
      */
     private static String formatMarkers(List<ErrorInfo> errors, String resolvedScope, String projectName,
-        String severity, List<String> objects, int limit)
+        String severity, String checkId, List<String> objects, int limit, boolean extraInfo)
     {
         if (errors.isEmpty())
         {
-            StringBuilder builder = new StringBuilder("# Nothing Found\n\n"); //$NON-NLS-1$
-            if (resolvedScope != null && !resolvedScope.isEmpty())
-            {
-                builder.append("Scope: **").append(resolvedScope).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-            if (projectName != null && !projectName.isEmpty())
-            {
-                builder.append("Project: **").append(projectName).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-            if (severity != null && !severity.isEmpty())
-            {
-                builder.append("Severity: ").append(severity).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-            if (!objects.isEmpty())
-            {
-                builder.append("Objects: ").append(String.join(", ", objects)).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            }
-            builder.append("\nNothing matches the given criteria."); //$NON-NLS-1$
-            return builder.toString();
+            return nothingFoundMessage(resolvedScope, projectName, severity, checkId, objects);
         }
 
         StringBuilder builder = new StringBuilder("# Configuration Issues\n\n"); //$NON-NLS-1$
@@ -785,8 +956,10 @@ public class ProjectProblemsReader
             builder.append("+ (capped at ").append(limit).append(")"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         builder.append("\n\n"); //$NON-NLS-1$
-        builder.append("| Message | Where | Line | Severity | Check | Docs |\n"); //$NON-NLS-1$
-        builder.append("|-------------|----------|------|----------|------------|----------|\n"); //$NON-NLS-1$
+        builder.append("| Message | Where | Line | Severity | Check | Docs |"); //$NON-NLS-1$
+        builder.append(extraInfo ? " Extra |\n" : "\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.append("|-------------|----------|------|----------|------------|----------|"); //$NON-NLS-1$
+        builder.append(extraInfo ? "-------|\n" : "\n"); //$NON-NLS-1$ //$NON-NLS-2$
         for (ErrorInfo error : errors)
         {
             String displayCheckId =
@@ -796,8 +969,13 @@ public class ProjectProblemsReader
                 .append(" | ").append(positionCell(error)) //$NON-NLS-1$
                 .append(" | ").append(error.severityNative) //$NON-NLS-1$
                 .append(" | `").append(displayCheckId).append("` | ") //$NON-NLS-1$ //$NON-NLS-2$
-                .append(error.hasDocumentation ? "true" : "false") //$NON-NLS-1$ //$NON-NLS-2$
-                .append(" |\n"); //$NON-NLS-1$
+                .append(error.hasDocumentation ? "true" : "false"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (extraInfo)
+            {
+                builder.append(" | ").append(error.extra == null ? "" //$NON-NLS-1$ //$NON-NLS-2$
+                    : MarkdownTableHelper.escapeForTable(error.extra));
+            }
+            builder.append(" |\n"); //$NON-NLS-1$
         }
         return builder.toString();
     }
@@ -830,11 +1008,15 @@ public class ProjectProblemsReader
     }
 
     private static String formatCompact(List<ErrorInfo> errors, String resolvedScope, String projectName,
-        int scanCap)
+        String severity, String checkId, List<String> objects, int scanCap)
     {
         if (errors.isEmpty())
         {
-            return formatMarkers(errors, resolvedScope, projectName, null, new ArrayList<>(), 0);
+            // The filters have to travel with the empty answer. Dropping them here told a
+            // caller who had passed severity=ALL that the default ERROR filter was in
+            // force and advised passing ALL - an empty answer lying about why it is empty,
+            // which is the very fault this message exists to cure.
+            return formatMarkers(errors, resolvedScope, projectName, severity, checkId, objects, 0, false);
         }
 
         Map<String, Integer> checkCounts = new HashMap<>();
@@ -976,16 +1158,25 @@ public class ProjectProblemsReader
         /** Character offset just past the finding, or {@code -1}. */
         private final int charEnd;
 
+        /**
+         * What the check attached to the marker beyond its position, already rendered,
+         * or {@code null} - which is both "the caller did not ask" and "there was
+         * nothing". The two need not be told apart: neither puts anything in the row.
+         */
+        private final String extra;
+
         ErrorInfo(String checkCode, String checkId, boolean hasDocumentation, String message,
             String objectPresentation, String severityNative)
         {
             this(checkCode, checkId, hasDocumentation, message, objectPresentation, severityNative,
-                -1, -1, -1);
+                -1, -1, -1, null);
         }
 
         ErrorInfo(String checkCode, String checkId, boolean hasDocumentation, String message,
-            String objectPresentation, String severityNative, int line, int charStart, int charEnd)
+            String objectPresentation, String severityNative, int line, int charStart, int charEnd,
+            String extra)
         {
+            this.extra = extra;
             this.checkCode = checkCode;
             this.checkId = checkId;
             this.hasDocumentation = hasDocumentation;
