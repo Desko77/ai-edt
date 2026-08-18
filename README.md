@@ -7,6 +7,7 @@
 [![Сборка](https://img.shields.io/github/actions/workflow/status/Desko77/ai-edt/build.yml?branch=main&style=flat-square&label=%D1%81%D0%B1%D0%BE%D1%80%D0%BA%D0%B0)](https://github.com/Desko77/ai-edt/actions/workflows/build.yml)
 [![Релиз](https://img.shields.io/github/v/release/Desko77/ai-edt?style=flat-square&label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=58a6ff)](https://github.com/Desko77/ai-edt/releases/latest)
 [![Update site](https://img.shields.io/website?url=https%3A%2F%2Fdesko77.github.io%2Fai-edt%2F&style=flat-square&label=update%20site&up_message=online&down_message=offline)](https://desko77.github.io/ai-edt/)
+[![Telegram](https://img.shields.io/badge/Telegram-%D1%87%D0%B0%D1%82-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/AI_EDT_1c)
 
 [![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.2_%7C_2026.1-58a6ff?style=flat-square)](#-1-требования)
 [![Java](https://img.shields.io/badge/Java-25_%7C_17-f2cc60?style=flat-square)](#-1-требования)
@@ -371,6 +372,8 @@ curl.exe http://localhost:12250/health
 
 ![Один вызов возвращает модель объекта: реквизиты с типами, табличные части и формы.](docs/assets/screenshots/metadata-details.png)
 
+Не заработало или непонятно - спрашивайте в [группе Telegram](https://t.me/AI_EDT_1c).
+
 ## 🧰 Набор инструментов
 
 В основе API AI-EDT лежат фасады. Фасад принимает дискриминатор операции и направляет родственные действия через единую стабильную точку входа.
@@ -482,7 +485,7 @@ curl.exe http://localhost:12250/health
 
 ## 🤝 Участие в разработке
 
-Проект принимает воспроизводимые сообщения об ошибках, сфокусированные предложения возможностей, улучшения документации и pull request.
+Проект принимает воспроизводимые сообщения об ошибках, сфокусированные предложения возможностей, улучшения документации и pull request. Баги и предложения - в [Issues](https://github.com/Desko77/ai-edt/issues), вопросы и живое обсуждение - в [группе Telegram](https://t.me/AI_EDT_1c).
 
 Начните с документов:
 

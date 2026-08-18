@@ -7,6 +7,7 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/Desko77/ai-edt/build.yml?branch=main&style=flat-square&label=build)](https://github.com/Desko77/ai-edt/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Desko77/ai-edt?style=flat-square&label=release&color=58a6ff)](https://github.com/Desko77/ai-edt/releases/latest)
 [![Update site](https://img.shields.io/website?url=https%3A%2F%2Fdesko77.github.io%2Fai-edt%2F&style=flat-square&label=update%20site&up_message=online&down_message=offline)](https://desko77.github.io/ai-edt/)
+[![Telegram](https://img.shields.io/badge/Telegram-chat-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/AI_EDT_1c)
 
 [![1C:EDT](https://img.shields.io/badge/1C%3AEDT-2026.2_%7C_2026.1-58a6ff?style=flat-square)](#-1-requirements)
 [![Java](https://img.shields.io/badge/Java-25_%7C_17-f2cc60?style=flat-square)](#-1-requirements)
@@ -379,6 +380,8 @@ Find all semantic references to Catalog.Products and group them by metadata, for
 
 ![One call returns the object model: attributes with their types, tabular sections and forms.](docs/assets/screenshots/metadata-details.png)
 
+If something does not work or is unclear, ask in the [Telegram group](https://t.me/AI_EDT_1c) - the group speaks Russian.
+
 ## 🧰 Tool surface
 
 AI-EDT uses a facade-first API. A facade accepts an operation discriminator and routes related actions through one stable entry point.
@@ -499,7 +502,7 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 
 ## 🤝 Contributing
 
-Contributions are welcome in the form of reproducible bug reports, focused feature proposals, documentation improvements and pull requests.
+Contributions are welcome in the form of reproducible bug reports, focused feature proposals, documentation improvements and pull requests. Bugs and proposals go to [Issues](https://github.com/Desko77/ai-edt/issues); questions and live discussion go to the [Telegram group](https://t.me/AI_EDT_1c) - the group speaks Russian.
 
 Start with:
 
