@@ -95,22 +95,23 @@ public class CanonicalSurfaceContractTest
             "step_over", "step_into", "step_out", "step", "resume", "terminate",
             "terminate_launch", "evaluate", "start_profiling", "get_profiling_results", "help"));
 
-        // edit_metadata (EditMetadataTool.buildRegistry): a single-source registry map, 159
+        // edit_metadata (EditMetadataTool.buildRegistry): a single-source registry map, 160
         // operations across the class's own ten OP_GROUP_ORDER groups, plus help handled
         // separately before the registry lookup. Three of them - delete_metadata_object,
         // rename_metadata_object, add_metadata_attribute - are gate-checked delegations to the
         // standalone tool of the same name (ToolGate.gateOrNull) and DO participate in the coverage
         // check below, reached the same literal-name-match way as diagnostics / project_admin / etc.
-        // The remaining ~156 have no standalone counterpart and are listed anyway because this
+        // The remaining ~157 have no standalone counterpart and are listed anyway because this
         // snapshot is meant to catch a silent drop from ANY of the 14 facades, not only the ones
         // Canonical currently depends on.
         m.put("edit_metadata", Set.of(
-            // Objects (20)
+            // Objects (21)
             "create_object", "set_object_property", "add_object_attribute",
             "remove_object_attribute", "add_tabular_section", "remove_tabular_section",
             "add_tabular_section_attribute", "remove_tabular_section_attribute",
             "add_object_reference", "remove_object_reference", "set_object_reference",
-            "clear_object_reference", "set_object_type", "remove_object", "sync_export",
+            "clear_object_reference", "set_object_type", "extend_object_type", "remove_object",
+            "sync_export",
             "set_help", "remove_help", "delete_metadata_object", "rename_metadata_object",
             "add_metadata_attribute",
             // Specialized (29)

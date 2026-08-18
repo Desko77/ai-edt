@@ -2003,6 +2003,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "set_object_reference", "Objects", "scalar ref, e.g. ChartOfAccounts.extDimensionTypes", p -> objectOps.opSetObjectReference(p, true));
         reg(m, "clear_object_reference", "Objects", "", p -> objectOps.opSetObjectReference(p, false));
         reg(m, "set_object_type", "Objects", "Constant / SessionParameter", p -> objectOps.opSetObjectType(p));
+        reg(m, "extend_object_type", "Objects", "adds types to an ADOPTED object, marked Extended; set_object_type writes nothing there", p -> objectOps.opExtendObjectType(p));
         reg(m, "remove_object", "Objects", "", p -> objectOps.opRemoveObject(p));
         reg(m, "sync_export", "Objects", "", p -> specializedOps.opSyncExport(p));
         reg(m, "set_help", "Objects", "author Help/<lang>.html + <help> ref; format=html|markdown|text", p -> specializedOps.opSetHelp(p, false));

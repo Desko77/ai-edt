@@ -1997,7 +1997,7 @@ public final class BmDefinedTypeHelper
      * </ol>
      * Returns {@code null} when none of the above resolves.
      */
-    private static Object createTypeItem(String fqn, IProject project, Configuration config)
+    static Object createTypeItem(String fqn, IProject project, Configuration config)
     {
         if (fqn == null || fqn.isEmpty())
         {
@@ -2731,6 +2731,32 @@ public final class BmDefinedTypeHelper
         return names;
     }
 
+    /**
+     * The platform name of a single type, for callers holding one type rather than a
+     * whole composition - notably the extension side, where each type sits in its own
+     * {@code TypeExtension} entry instead of in a {@code TypeDescription} list.
+     *
+     * @param typeItem the type to name, possibly null.
+     * @return its name, or null when it has none.
+     */
+    static String readTypeNameOf(Object typeItem)
+    {
+        return typeItem == null ? null : readTypeName(typeItem);
+    }
+
+    /**
+     * Attaches the empty qualifier element a primitive needs to validate, to any object
+     * that names its qualifiers the way a TypeDescription does - which the extension's
+     * own composition block also does.
+     *
+     * @param typeDesc the carrier of the qualifiers.
+     * @param requested the type names just added.
+     */
+    static void attachPrimitiveQualifiers(Object typeDesc, List<String> requested)
+    {
+        applyPrimitiveQualifiers(typeDesc, requested, null);
+    }
+
     private static String readTypeName(Object typeItem)
     {
         ensureClassProbeDone();
@@ -3013,7 +3039,7 @@ public final class BmDefinedTypeHelper
      *            <code>null</code>.
      * @return whether the type may be applied.
      */
-    private static boolean isAcceptableType(String fqn, IProject project, Configuration config)
+    static boolean isAcceptableType(String fqn, IProject project, Configuration config)
     {
         if (fqn == null || fqn.isEmpty())
         {

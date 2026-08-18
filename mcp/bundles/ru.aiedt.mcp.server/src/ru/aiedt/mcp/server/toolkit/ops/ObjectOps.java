@@ -32,6 +32,7 @@ import ru.aiedt.mcp.server.support.BmCommonFormPostCreate;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
+import ru.aiedt.mcp.server.support.BmExtensionTypeHelper;
 import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmFormResourceHelper;
@@ -982,6 +983,126 @@ final class ObjectOps
         }
         r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
         return EditMetadataTool.formatResult(r, "set_object_type"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds types to an object an extension has adopted, leaving the inherited ones alone.
+     * <p>
+     * An adopted object keeps its types in the extension block rather than in a type
+     * property of its own, so setting a type there writes to nothing: measured on a clean
+     * probe, {@code set_object_type} on an adopted DefinedType answered
+     * {@code applied:true} and the file did not change. This writes where the types
+     * actually live, marks each added one {@code Extended}, and reports the inherited ones
+     * it left untouched.
+     * </p>
+     * <p>
+     * Addresses the object itself ({@code DefinedType.Name}) or an adopted child
+     * ({@code Catalog.Name.Attribute.Other}), and refuses a type whose name the platform
+     * does not know, so a misspelling cannot reach the model.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, type (one name or a comma-separated list),
+     *            optional dryRun.
+     * @return the tool result, carrying what was added, what was already there, and which
+     *         extension block was written.
+     */
+    String opExtendObjectType(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(type, "type"); //$NON-NLS-1$
+        if (!err.isEmpty())
+        {
+            return ToolResult.error(err.trim()).toJson();
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+
+        final String[] segs = MetadataTypeCatalog.normalizeFqn(ownerFqn).split("\\."); //$NON-NLS-1$
+        final boolean childTarget = segs.length > 2 && BmObjectHelper.isChildKind(segs[2]);
+        final String topFqn = childTarget ? segs[0] + "." + segs[1] : ownerFqn; //$NON-NLS-1$
+
+        IConfigurationProvider cfgProvider = Activator.getDefault().getConfigurationProvider();
+        final Configuration config = cfgProvider != null ? cfgProvider.getConfiguration(project) : null;
+        final BmExtensionTypeHelper.ExtendResult[] outcome = { null };
+
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, topFqn, dryRun,
+            (tx, owner) -> {
+                if (config == null)
+                {
+                    throw new RuntimeException("Configuration unavailable - type not resolved"); //$NON-NLS-1$
+                }
+                MdObject target = owner;
+                if (childTarget)
+                {
+                    org.eclipse.emf.ecore.EObject child =
+                        BmObjectHelper.resolveChildByPath(owner, segs, 2);
+                    if (child == null)
+                    {
+                        throw new RuntimeException("Child element not found: " //$NON-NLS-1$
+                            + String.join(".", java.util.Arrays.copyOfRange(segs, 2, segs.length)) //$NON-NLS-1$
+                            + " in " + topFqn); //$NON-NLS-1$
+                    }
+                    if (!(child instanceof MdObject))
+                    {
+                        throw new RuntimeException("Target is not a typed metadata object: " //$NON-NLS-1$
+                            + child.eClass().getName());
+                    }
+                    target = (MdObject)child;
+                }
+                BmExtensionTypeHelper.ExtendResult ext = BmExtensionTypeHelper.extendTypes(
+                    target, project, config, Collections.singletonList(type));
+                outcome[0] = ext;
+                if (!ext.ok)
+                {
+                    throw new RuntimeException(ext.error != null ? ext.error
+                        : "type not extended"); //$NON-NLS-1$
+                }
+                return ownerFqn;
+            });
+
+        if (outcome[0] != null)
+        {
+            BmExtensionTypeHelper.ExtendResult ext = outcome[0];
+            Map<String, Object> tag = new LinkedHashMap<>();
+            tag.put("requested", type); //$NON-NLS-1$
+            // A preview rolls the transaction back, so nothing was written however far the pass
+            // got. Reporting its intent as a change is how a dry run reads as a done deal.
+            tag.put("mutated", ext.mutated && !dryRun); //$NON-NLS-1$
+            if (!ext.added.isEmpty())
+            {
+                tag.put(dryRun ? "wouldAdd" : "added", ext.added); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (!ext.alreadyPresent.isEmpty())
+            {
+                tag.put("alreadyPresent", ext.alreadyPresent); //$NON-NLS-1$
+            }
+            if (!ext.unresolved.isEmpty())
+            {
+                tag.put("unresolved", ext.unresolved); //$NON-NLS-1$
+            }
+            if (ext.blockKind != null)
+            {
+                tag.put("extensionBlock", ext.blockKind); //$NON-NLS-1$
+            }
+            if (ext.propertyState != null)
+            {
+                // Reported, never set. On the shape measured live the composition alone
+                // carries the override and this stays unset; writing it on a guess is how
+                // a half-applied change would look applied.
+                tag.put("blockTypeState", ext.propertyState); //$NON-NLS-1$
+            }
+            r.tags.put("typeExtension", tag); //$NON-NLS-1$
+        }
+        return EditMetadataTool.formatResult(r, "extend_object_type"); //$NON-NLS-1$
     }
     String opAddObjectAttribute(Map<String, String> params)
     {
