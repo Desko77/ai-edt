@@ -137,4 +137,68 @@ public class BmDefinedTypeHelperTest
         assertFalse(BmDefinedTypeHelper.isUnrecognizedPrimitive("String")); //$NON-NLS-1$
         assertFalse(BmDefinedTypeHelper.isUnrecognizedPrimitive("CatalogRef.Валюты")); //$NON-NLS-1$
     }
+
+    @Test
+    public void theRegisterDecidesABareNameWhenItCan()
+    {
+        // A name no hand-written allowlist held, accepted because the platform says so.
+        assertTrue(BmDefinedTypeHelper.isAcceptableBareName("StandardPeriod", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.KNOWN));
+        // And the typo this whole change exists for.
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName("Stirng", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.UNKNOWN));
+    }
+
+    @Test
+    public void theOldPrimitivesSurviveARegisterThatDoesNotListThem()
+    {
+        // Arbitrary and Null are names the language has and the register need not
+        // carry. They were accepted before there was a register to ask, and a verdict
+        // of UNKNOWN must not be what takes them away.
+        assertTrue(BmDefinedTypeHelper.isAcceptableBareName("Arbitrary", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.UNKNOWN));
+        assertTrue(BmDefinedTypeHelper.isAcceptableBareName("Null", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.UNKNOWN));
+        // The floor is a floor, not a bypass: it holds the names it always held.
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName("ValueTable", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.UNKNOWN));
+    }
+
+    @Test
+    public void withNoRegisterToAskTheOldRuleStands()
+    {
+        // A runtime without the version bundle must keep working exactly as before -
+        // typo and all. Rejecting here would refuse every type in the language.
+        assertTrue(BmDefinedTypeHelper.isAcceptableBareName("Stirng", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.CANNOT_TELL));
+        assertTrue(BmDefinedTypeHelper.isAcceptableBareName("StandardPeriod", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.CANNOT_TELL));
+        // The old rule's own limits are unchanged: lower case was never a type name.
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName("stirng", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.CANNOT_TELL));
+    }
+
+    @Test
+    public void theRegisterDoesNotGetToReopenTheRussianDoor()
+    {
+        // The platform register answers to Russian type names too, so asking it first
+        // made "ДеревоЗначений" acceptable on an OBJECT attribute - where a value tree
+        // is not valid metadata, and where the ASCII-only shape rule had been the thing
+        // refusing it. Measured on the stand: the unit tests were green and the stand
+        // said applied:true.
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName("ДеревоЗначений", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.KNOWN));
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName("Строка", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.KNOWN));
+        // What the form path sends instead, having translated it first, still passes.
+        assertTrue(BmDefinedTypeHelper.isAcceptableBareName("ValueTree", //$NON-NLS-1$
+            PlatformTypeNames.Verdict.KNOWN));
+    }
+
+    @Test
+    public void anEmptyNameIsNoName()
+    {
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName(null, PlatformTypeNames.Verdict.KNOWN));
+        assertFalse(BmDefinedTypeHelper.isAcceptableBareName("", PlatformTypeNames.Verdict.KNOWN)); //$NON-NLS-1$
+    }
 }

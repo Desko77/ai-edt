@@ -564,4 +564,30 @@ public class MetadataTypeCatalogTest
             }
         }
     }
+
+    @Test
+    public void aReferenceTypePrefixIsNotAlwaysAMetadataTypeName()
+    {
+        // Type-name validation refuses a reference type whose target is missing from the
+        // configuration - but only for a prefix that names a collection it can search.
+        // Stripping "Ref" does not always leave one: both of these are legal reference
+        // types, and ExternalDataSourceCubeDimensionTableRef is used on attributes in
+        // the demo configuration this is developed against. Treating "no such
+        // collection" as "no such object" would refuse them.
+        assertNull(MetadataTypeCatalog.getConfigReferenceName("ExternalDataSourceCubeDimensionTable")); //$NON-NLS-1$
+        assertNull(MetadataTypeCatalog.getConfigReferenceName("BusinessProcessRoutePoint")); //$NON-NLS-1$
+
+        // The prefixes that DO name a collection, which is what makes a miss meaningful.
+        assertNotNull(MetadataTypeCatalog.getConfigReferenceName("Catalog")); //$NON-NLS-1$
+        assertNotNull(MetadataTypeCatalog.getConfigReferenceName("Document")); //$NON-NLS-1$
+        assertNotNull(MetadataTypeCatalog.getConfigReferenceName("BusinessProcess")); //$NON-NLS-1$
+        assertNotNull(MetadataTypeCatalog.getConfigReferenceName("DefinedType")); //$NON-NLS-1$
+
+        // The Russian spelling resolves to the same collection, which is what lets the
+        // type gate check ОпределяемыйТип.X exactly as it checks DefinedType.X. Without
+        // it the same name would be checked or waved through depending on the language
+        // it was written in.
+        assertEquals(MetadataTypeCatalog.getConfigReferenceName("DefinedType"), //$NON-NLS-1$
+            MetadataTypeCatalog.getConfigReferenceName("ОпределяемыйТип")); //$NON-NLS-1$
+    }
 }

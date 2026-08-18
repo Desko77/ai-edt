@@ -1292,11 +1292,14 @@ final class ObjectOps
         {
             Map<String, Object> typeApply = TypeApplication.tag(type, typeAppliedFlag[0],
                 typeResolved, typeUnresolved, typeApplyErrorRef[0]);
-            // Non-fatal typo guard: isKnownTypeShape accepts any capitalized ASCII
-            // word as a primitive, so a mistyped type ("Stirng", "Numer") is applied
-            // as an unresolved type while "applied" reads true. Surface a warning so
-            // the caller is not silently left with an unknown-type attribute.
-            if (BmDefinedTypeHelper.isUnrecognizedPrimitive(type))
+            // Last-resort typo guard, for the one runtime where the platform type
+            // register cannot be reached: there the old shape rule stands, which
+            // accepts any capitalized ASCII word, so a mistyped type ("Stirng",
+            // "Numer") IS applied as an unresolved type while "applied" reads true.
+            // Where the register answers, such a name is rejected outright and never
+            // gets here - hence the guard on typeApplied: warning about a name that
+            // was refused would contradict the refusal.
+            if (typeAppliedFlag[0] && BmDefinedTypeHelper.isUnrecognizedPrimitive(type))
             {
                 typeApply.put("unrecognizedType", "'" + type //$NON-NLS-1$ //$NON-NLS-2$
                     + "' is not a recognized primitive (String / Number / Date / Boolean / " //$NON-NLS-1$

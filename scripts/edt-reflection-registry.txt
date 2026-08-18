@@ -124,7 +124,7 @@ com._1c.g5.v8.dt.mcore.DateFractions
 probe com._1c.g5.v8.dt.mcore.LocalString
 probe com._1c.g5.v8.dt.mcore.MCoreFactory
 com._1c.g5.v8.dt.mcore.McoreFactory eINSTANCE
-com._1c.g5.v8.dt.mcore.McorePackage$Literals
+com._1c.g5.v8.dt.mcore.McorePackage$Literals TYPE_ITEM
 com._1c.g5.v8.dt.mcore.NamedElement getName,setName
 com._1c.g5.v8.dt.mcore.TypeItem
 com._1c.g5.v8.dt.mcore.util.McoreUtil
@@ -147,8 +147,8 @@ com._1c.g5.v8.dt.metadata.mdclass.util.MdClassUtil
 com._1c.g5.v8.dt.moxel.MoxelFactory
 com._1c.g5.v8.dt.moxel.SpreadsheetDocument
 com._1c.g5.v8.dt.navigator.adapters.CollectionNavigatorAdapterBase
-com._1c.g5.v8.dt.platform.IEObjectProvider
-com._1c.g5.v8.dt.platform.IEObjectProvider$Registry
+com._1c.g5.v8.dt.platform.IEObjectProvider getEObjectDescription,getProxy
+com._1c.g5.v8.dt.platform.IEObjectProvider$Registry INSTANCE,get
 probe com._1c.g5.v8.dt.platform.pictures.PlatformPictures
 probe com._1c.g5.v8.dt.platform.pictures.StandardPictures
 id com._1c.g5.v8.dt.platform.services.core.componentTypes.ThinClient

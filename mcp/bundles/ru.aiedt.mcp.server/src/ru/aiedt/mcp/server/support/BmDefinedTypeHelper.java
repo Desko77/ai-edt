@@ -130,39 +130,18 @@ public final class BmDefinedTypeHelper
         Configuration config, List<String> typeFqns,
         QualifierOptions qualifierOptions)
     {
-        IProject project = null;
-        if (dtProject != null)
-        {
-            try
-            {
-                Method getProject = dtProject.getClass().getMethod("getWorkspaceProject"); //$NON-NLS-1$
-                Object p = getProject.invoke(dtProject);
-                if (p instanceof IProject)
-                {
-                    project = (IProject) p;
-                }
-            }
-            catch (Exception ignored)
-            {
-                // try fallback name
-            }
-            if (project == null)
-            {
-                try
-                {
-                    Method getProject = dtProject.getClass().getMethod("getProject"); //$NON-NLS-1$
-                    Object p = getProject.invoke(dtProject);
-                    if (p instanceof IProject)
-                    {
-                        project = (IProject) p;
-                    }
-                }
-                catch (Exception ignored)
-                {
-                    // give up
-                }
-            }
-        }
+        // Called on the INTERFACE, not looked up by name on the implementation.
+        // getWorkspaceProject() was reached reflectively here for years, through
+        // dtProject.getClass() - an internal, non-public implementation class, so
+        // getMethod found the public method and invoke refused it with
+        // IllegalAccessException. That was caught and discarded, leaving project
+        // null and every project-dependent step below silently degraded: primitive
+        // types quietly fell back to the unresolved:/ proxy instead of resolving to
+        // real platform types, and the type-name check could not run at all.
+        // Measured 2026-08-18 on EDT 2026.2 - the rejection of a mistyped name
+        // worked for reference types (which need only the configuration) and never
+        // fired for bare names (which need the project).
+        IProject project = dtProject == null ? null : dtProject.getWorkspaceProject();
         return setTypes(definedType, project, config, typeFqns, qualifierOptions);
     }
 
@@ -304,7 +283,7 @@ public final class BmDefinedTypeHelper
         List<String> requested = new ArrayList<>();
         for (String fqn : expandedFqns)
         {
-            if (isKnownTypeShape(fqn, config))
+            if (isAcceptableType(fqn, project, config))
             {
                 requested.add(fqn);
             }
@@ -315,7 +294,11 @@ public final class BmDefinedTypeHelper
         }
         if (!r.unresolved.isEmpty())
         {
-            r.error = "Some types could not be resolved: " + String.join(", ", r.unresolved);
+            // No trailing period: callers append their own sentence after this one.
+            r.error = "Some types could not be resolved: " + String.join(", ", r.unresolved)
+                + ". Check the spelling against the platform's own type names (String, Number, "
+                + "ValueTable, StandardPeriod and the rest); for a reference type, check that the "
+                + "object it names exists in this configuration";
             return r;
         }
 
@@ -490,11 +473,11 @@ public final class BmDefinedTypeHelper
      * value-types whose produced-type feature names are <b>inconsistent</b>
      * across register kinds (InformationRegister exposes {@code recordType},
      * Sequence {@code recordSetType}, Constant {@code valueManagerType}), and
-     * the attribute-tuned {@link #isKnownTypeShape} rejects {@code *RecordSet}
+     * the attribute-tuned {@link #isAcceptableType} rejects {@code *RecordSet}
      * outright. This method therefore resolves each source FQN by its
      * <b>serialized produced-type name</b> (content-based) rather than by
      * feature-name heuristic. It is deliberately isolated from the object /
-     * form-attribute type path: it changes none of {@code isKnownTypeShape},
+     * form-attribute type path: it changes none of {@code isAcceptableType},
      * {@code stripTypeKindSuffix}, {@code pickProducedTypeForKind} or
      * {@code createTypeItem}, so the 20+ attribute callers are unaffected.
      *
@@ -2837,17 +2820,16 @@ public final class BmDefinedTypeHelper
     }
 
     /**
-     * Best-effort check that the FQN looks like a valid type reference.
-     * Accepts {@code <Type>Ref.<Name>} (CatalogRef, DocumentRef, EnumRef, etc.)
-     * and a small set of primitive type names.
-     */
-    /**
-     * Recognized bare (no-dot) platform primitive type names. {@link #isKnownTypeShape}
-     * accepts ANY capitalized ASCII word as a primitive shape, so a typo like
-     * {@code "Stirng"} passes and is materialized into an unresolved-type proxy that
-     * the tool otherwise reports as applied. This allowlist backs
-     * {@link #isUnrecognizedPrimitive} so callers can surface a warning without
-     * changing the resolution behaviour. Lower-cased for locale-independent lookup.
+     * The bare (no-dot) platform primitive type names accepted before there was a
+     * register to ask.
+     * <p>
+     * It no longer decides anything on its own: {@link #isAcceptableBareName} puts
+     * the name to the platform's type register and this list stands underneath as a
+     * floor, for the names the language has and the register need not carry
+     * ({@code Arbitrary}, {@code Null}). It still backs
+     * {@link #isUnrecognizedPrimitive}, which is the only signal left when no
+     * register can be reached. Lower-cased for locale-independent lookup.
+     * </p>
      */
     private static final Set<String> KNOWN_PRIMITIVE_NAMES = new HashSet<>(Arrays.asList(
         "string", "number", "date", "boolean", "uuid", "valuestorage", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
@@ -2855,12 +2837,12 @@ public final class BmDefinedTypeHelper
 
     /**
      * Russian platform primitive type names mapped to their English canonical
-     * form. Bare-name type resolution runs through {@link #isKnownTypeShape},
-     * whose shape regex is ASCII-only, so a VALID Russian primitive ("Строка",
-     * "Число") failed to resolve (reported unresolved) while an ASCII typo
-     * ("Stirng") slipped through as an unresolved proxy. {@link #normalizePrimitiveFqn}
-     * maps these to English before shape validation so RU and EN primitive names
-     * behave identically. Keys are lower-cased for locale-independent lookup.
+     * form. Bare names are matched against the platform register, which spells its
+     * vocabulary in English, and the shape rule behind it is ASCII-only either way -
+     * so a VALID Russian primitive ("Строка", "Число") failed to resolve while an
+     * ASCII typo ("Stirng") went through. {@link #normalizePrimitiveFqn} maps these
+     * to English before the name is checked, so RU and EN primitive names behave
+     * identically. Keys are lower-cased for locale-independent lookup.
      */
     private static final Map<String, String> RU_PRIMITIVE_TO_EN;
     static
@@ -2977,11 +2959,17 @@ public final class BmDefinedTypeHelper
 
     /**
      * True when {@code fqn} is a bare (no-dot, no-comma) capitalized-ASCII token that
-     * is NOT a recognized platform primitive - i.e. a probable typo that
-     * {@link #isKnownTypeShape} lets through as a valid primitive shape. Reference
-     * types (dotted), composite types (comma), defined types, and non-ASCII / Russian
+     * is not one of the primitives in {@link #KNOWN_PRIMITIVE_NAMES}. Reference types
+     * (dotted), composite types (comma), defined types, and non-ASCII / Russian
      * tokens all return {@code false} (the last are already rejected as unresolved).
-     * Intended for a non-fatal caller warning; it does not change what gets created.
+     * <p>
+     * A warning, not a decision: it does not change what gets created. Since
+     * {@link #isAcceptableBareName} started putting bare names to the platform
+     * register, a typo is normally REJECTED outright and never reaches here. This
+     * remains the only signal in the one case the register cannot answer - a runtime
+     * without the version bundle - where the old shape rule still lets a typo
+     * through.
+     * </p>
      *
      * @param fqn the requested type token.
      * @return {@code true} when the token looks like a mistyped primitive.
@@ -3004,7 +2992,25 @@ public final class BmDefinedTypeHelper
         return !KNOWN_PRIMITIVE_NAMES.contains(s.toLowerCase(Locale.ROOT));
     }
 
-    private static boolean isKnownTypeShape(String fqn, Configuration config)
+    /**
+     * True when {@code fqn} names a type that may be applied.
+     * <p>
+     * Each half of the name is put to whoever actually knows: a bare name to the
+     * platform's own type register, a {@code <Kind>Ref.<Name>} to the
+     * configuration. Neither is asked to guess. When the authority for a name
+     * cannot answer - no register in this runtime, no configuration to hand -
+     * the old shape rule stands, because the alternative is rejecting valid
+     * types over our own inability to check them.
+     * </p>
+     *
+     * @param fqn a single (already comma-split, already primitive-normalized) token.
+     * @param project the project whose runtime version selects the type register;
+     *            may be <code>null</code>.
+     * @param config the configuration reference types are looked up in; may be
+     *            <code>null</code>.
+     * @return whether the type may be applied.
+     */
+    private static boolean isAcceptableType(String fqn, IProject project, Configuration config)
     {
         if (fqn == null || fqn.isEmpty())
         {
@@ -3014,16 +3020,131 @@ public final class BmDefinedTypeHelper
         if (parts.length == 1)
         {
             // primitive: String / Number / Date / Boolean / UUID / ...
-            return parts[0].matches("[A-Z][A-Za-z]+"); //$NON-NLS-1$
+            return isAcceptableBareName(parts[0], PlatformTypeNames.check(parts[0], project));
         }
         if (parts[0].endsWith("Ref") || parts[0].endsWith("Object")) //$NON-NLS-1$ //$NON-NLS-2$
         {
-            return parts[1] != null && !parts[1].isEmpty();
+            if (parts[1] == null || parts[1].isEmpty())
+            {
+                return false;
+            }
+            return referenceTargetExists(parts[0], parts[1], project, config);
         }
-        if (parts[0].equals("DefinedType") || parts[0].equals("ОпределяемыйТип")) //$NON-NLS-1$ //$NON-NLS-2$
+        if (parts[0].equals("DefinedType")) //$NON-NLS-1$
+        {
+            return referenceTargetExists(parts[0], parts[1], project, config);
+        }
+        if (parts[0].equals("ОпределяемыйТип")) //$NON-NLS-1$
+        {
+            // Checked exactly like the English spelling. Left unconditional, the gate
+            // would wave through a defined type that does not exist when its kind was
+            // written in Russian and refuse the very same name written in English.
+            return referenceTargetExists("DefinedType", parts[1], project, config); //$NON-NLS-1$
+        }
+        return false;
+    }
+
+    /**
+     * Whether a bare type name may be applied, deciding by the platform's own
+     * register of type names rather than by the shape of the word.
+     * <p>
+     * The shape rule accepted any capitalized ASCII word, which is how
+     * {@code "Stirng"} came to be written onto attributes and reported as
+     * applied. An allowlist cannot take over: {@code DynamicList},
+     * {@code SpreadsheetDocument}, {@code StandardPeriod} and
+     * {@code TypeDescription} are all legal and none is a primitive - one demo
+     * configuration alone uses 41 distinct bare type names.
+     * </p>
+     * <p>
+     * {@link #KNOWN_PRIMITIVE_NAMES} stays underneath as a floor rather than
+     * being replaced: {@code Arbitrary} and {@code Null} are names the language
+     * has and the register need not carry, and a name we have always accepted
+     * must not start failing because the register spells its vocabulary
+     * differently.
+     * </p>
+     *
+     * @param name a bare (no-dot) type name.
+     * @param verdict what the platform register was able to say about it.
+     * @return whether the name may be applied.
+     */
+    // Package-visible for BmDefinedTypeHelperTest: taking the verdict rather than
+    // fetching it is what makes the CANNOT_TELL branch testable, and that branch is
+    // the one standing between a missing version bundle and a rejection of every
+    // type in the language.
+    static boolean isAcceptableBareName(String name, PlatformTypeNames.Verdict verdict)
+    {
+        if (name == null || !name.matches("[A-Z][A-Za-z]+")) //$NON-NLS-1$
+        {
+            // The ASCII gate comes FIRST and the register does not get to overrule it.
+            // The register answers to Russian type names as readily as to English ones,
+            // so consulting it first quietly re-opened a door that was deliberately
+            // shut: "ДеревоЗначений" became acceptable on an OBJECT attribute, where a
+            // value tree is not valid metadata at all and where the ASCII-only shape
+            // rule had been what refused it. Russian names that ARE legal arrive here
+            // already translated - primitives by normalizePrimitiveFqn for every
+            // carrier, collection types by normalizeFormCollectionFqns on the form path
+            // alone - so nothing legitimate is turned away by this.
+            // Caught on the stand 2026-08-18, after the unit tests passed.
+            return false;
+        }
+        switch (verdict)
+        {
+        case KNOWN:
+            return true;
+        case UNKNOWN:
+            return isAllowlistedPrimitive(name);
+        default:
+            // No usable register here - the old rule, typo and all.
+            return true;
+        }
+    }
+
+    /** The bare names accepted before there was a register to ask, kept as a floor. */
+    private static boolean isAllowlistedPrimitive(String name)
+    {
+        return name.matches("[A-Z][A-Za-z]+") //$NON-NLS-1$
+            && KNOWN_PRIMITIVE_NAMES.contains(name.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * Whether the object a reference type points at exists in the configuration.
+     * <p>
+     * {@link #createFromProducedTypes} already asks this exact question to build
+     * the type, and on a miss falls back to the {@code unresolved:/} proxy - which
+     * is how {@code CatalogRef.NoSuchCatalog} ends up written into the .mdo as a
+     * dangling reference while the answer reads applied. Here the miss is acted on
+     * instead of discarded.
+     * </p>
+     * <p>
+     * <b>Except in an extension</b>, whose configuration holds only the objects it
+     * adopted - measured at 10 of the base configuration's 107 catalogs in the
+     * workspace this was written against. A reference to a base-configuration
+     * object that the extension never adopted is perfectly legal, so a miss there
+     * says nothing at all, and rejecting on it would have refused 97 of those 107.
+     * </p>
+     */
+    private static boolean referenceTargetExists(String kind, String name, IProject project,
+        Configuration config)
+    {
+        String typePrefix = stripTypeKindSuffix(kind);
+        if (config == null || typePrefix == null)
+        {
+            // Nothing to check against; unchanged from before.
+            return true;
+        }
+        if (MetadataTypeCatalog.getObjects(config, typePrefix) == null)
+        {
+            // Stripping the kind suffix does not always leave a metadata type name.
+            // ExternalDataSourceCubeDimensionTableRef is in live use in the demo
+            // configuration and strips to a word no metadata collection answers to;
+            // so does BusinessProcessRoutePointRef. There is nothing to look the name
+            // up in, and refusing on that would refuse types that work.
+            return true;
+        }
+        if (MetadataTypeCatalog.findObject(config, typePrefix, name) != null)
         {
             return true;
         }
-        return false;
+        return BmCommonModuleGuards.isExtensionProject(project);
     }
 }
