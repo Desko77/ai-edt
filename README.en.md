@@ -59,6 +59,7 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🛡️ **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
 | 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. |
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
+| 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
 
 The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
 

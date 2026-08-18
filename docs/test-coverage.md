@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 85 | a test class named after it |
-| exercised | 42 | reached by some other test |
+| direct | 86 | a test class named after it |
+| exercised | 43 | reached by some other test |
 | tool-sweep | 96 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 51 | needs a display or an extension point |
 | workspace-bound | 68 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **342** | across 131 test classes |
+| **total** | **344** | across 133 test classes |
 
 ## untested (0)
 
@@ -280,7 +280,7 @@ _none_
 - YaxunitDebugRunner
 - YaxunitTestsTool
 
-## exercised (42)
+## exercised (43)
 
 **(root)**
 - McpHistory
@@ -307,6 +307,7 @@ _none_
 
 **support**
 - BmConfigurationProjectHelper
+- BmExtensionTypeHelper
 - BmExternalObjectDumpHelper
 - BmFormHelper
 - BmInfobaseExtensionHelper
@@ -344,7 +345,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (85)
+## direct (86)
 
 **(root)**
 - OperatorSignal
@@ -378,6 +379,7 @@ _none_
 - HeapHeadroom
 - HeavyTools
 - HistoryJournal
+- InstanceRegistry
 - JUnitReportFormatter
 - JUnitXmlReader
 - LegacyStorageMigration

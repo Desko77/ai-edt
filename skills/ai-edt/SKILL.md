@@ -30,6 +30,17 @@ than all of them.
   because it takes the platform runtime and the host infobase from it. It is two steps, and it is
   not a way in from nothing.
 
+- **Working inside an extension.** Borrowing (`extension_workshop operation=borrow_object` /
+  `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
+  extend the one it came from, and says so on the response; call borrow again on an object
+  borrowed by an older build and it repairs the link in place. Do not hand-edit the `.mdo` for
+  this.
+
+  To widen the type of something the extension has adopted, use
+  `edit_metadata operation=extend_object_type` - **not** `set_object_type`. Setting a type
+  replaces a composition the adopted object does not have; extending adds an entry marked
+  `Extended` where an adopted object really keeps its types, and leaves the inherited ones alone.
+
 For BSL and 1C metadata this server beats grep-style search: it answers from the model.
 
 ## When not to use it
