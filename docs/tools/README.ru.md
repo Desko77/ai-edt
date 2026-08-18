@@ -115,6 +115,7 @@
 | Инструмент | Режим | Назначение |
 |---|---|---|
 | `get_applications` | Чтение | Показывает приложения и информационные базы проекта. |
+| `read_event_log` | Чтение | Читает журнал регистрации файловой информационной базы: кто входил, что проводилось, что платформа отвергла. |
 | `list_configurations` | Чтение | Возвращает клиентские и Attach-конфигурации запуска EDT. |
 | `update_database` | Опасно | Обновляет конфигурацию информационной базы. |
 | `debug_launch` | Выполнение | Запускает клиент или подключается к серверу отладки 1С. |
@@ -345,7 +346,7 @@
 <details>
 <summary><code>infobase_admin</code> - жизненный цикл информационной базы</summary>
 
-Объединяет `get_applications`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `update_database`, `sync_control` и встроенную справку.
+Объединяет `get_applications`, `read_event_log`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `update_database`, `sync_control` и встроенную справку.
 </details>
 
 <a id="config_io"></a>

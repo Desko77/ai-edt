@@ -85,6 +85,7 @@ public enum ToolCategory
         "Infobase lifecycle, database update, sync control, launch, testing, " //$NON-NLS-1$
             + "extension deployment, EDT restart", //$NON-NLS-1$
         "get_applications", //$NON-NLS-1$
+        "read_event_log", //$NON-NLS-1$
         "list_configurations", //$NON-NLS-1$
         "update_database", //$NON-NLS-1$
         "debug_launch", //$NON-NLS-1$

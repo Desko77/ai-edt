@@ -30,6 +30,12 @@ than all of them.
   because it takes the platform runtime and the host infobase from it. It is two steps, and it is
   not a way in from nothing.
 
+- **What actually happened in the infobase.** `infobase_admin operation=read_event_log` reads the
+  event log of a FILE infobase - logins, postings, configuration updates, errors the platform
+  raised - filtered by `from` / `to` / `event` / `user` / `severity`. This is the only route here to
+  runtime facts rather than configuration; a server infobase and the single-file SQLite form of the
+  log are both refused by name rather than answered with an empty list.
+
 - **Working inside an extension.** Borrowing (`extension_workshop operation=borrow_object` /
   `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
   extend the one it came from, and says so on the response; call borrow again on an object

@@ -23,6 +23,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *
  * <p>Collapses the infobase-lifecycle and launch-target tools under one name:
  * <ul>
+ *   <li>{@code read_event_log} - what actually happened in a file infobase</li>
  *   <li>{@code get_applications} - a project's applications, the infobase
  *       launch targets (delegates to {@link ApplicationsReader})</li>
  *   <li>{@code create_infobase} - create a FILE infobase and register it in
@@ -75,7 +76,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         return "Infobase and launch administration - list applications, create / delete an " //$NON-NLS-1$
             + "infobase, set credentials, create a launch configuration, start a 1C client from " //$NON-NLS-1$
             + "one, update the database, control EDT<->infobase sync. Operations: " //$NON-NLS-1$
-            + "get_applications, create_infobase, delete_infobase, set_infobase_credentials, " //$NON-NLS-1$
+            + "get_applications, read_event_log, create_infobase, delete_infobase, " //$NON-NLS-1$
+            + "set_infobase_credentials, " //$NON-NLS-1$
             + "create_launch_config, start_client, update_database, " //$NON-NLS-1$
             + "sync_control, help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
             + "getApplications is also accepted); remaining parameters follow the per-operation " //$NON-NLS-1$
@@ -93,7 +95,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "get_applications / create_infobase / delete_infobase / " //$NON-NLS-1$
+                "get_applications / read_event_log / create_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
                     + "update_database / " //$NON-NLS-1$
                     + "sync_control / help (snake_case canonical; camelCase like " //$NON-NLS-1$
@@ -204,6 +206,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         if (operation == null || operation.isBlank())
         {
             return ToolResult.error("operation is required. Allowed: get_applications / " //$NON-NLS-1$
+                + "read_event_log / " //$NON-NLS-1$
                 + "create_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
                 + "create_launch_config / start_client / update_database / sync_control / " //$NON-NLS-1$
                 + "help.").toJson(); //$NON-NLS-1$
@@ -232,6 +235,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         {
             case "get_applications": //$NON-NLS-1$
                 return new ApplicationsReader().execute(params);
+            case "read_event_log": //$NON-NLS-1$
+                return new EventLogTool().execute(params);
             case "create_infobase": //$NON-NLS-1$
                 return new InfobaseCreator().execute(params);
             case "delete_infobase": //$NON-NLS-1$
@@ -330,7 +335,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
-            "get_applications", "create_infobase", //$NON-NLS-1$ //$NON-NLS-2$
+            "get_applications", "read_event_log", //$NON-NLS-1$ //$NON-NLS-2$
+            "create_infobase", //$NON-NLS-1$
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$
             "create_launch_config", "start_client", //$NON-NLS-1$ //$NON-NLS-2$
             "update_database", "sync_control")) //$NON-NLS-1$ //$NON-NLS-2$

@@ -73,6 +73,7 @@ import ru.aiedt.mcp.server.toolkit.ops.ProjectRemover;
 import ru.aiedt.mcp.server.toolkit.ops.DependencyGraphTool;
 import ru.aiedt.mcp.server.toolkit.ops.DetectQueryAntiPatternsTool;
 import ru.aiedt.mcp.server.toolkit.ops.DiffModuleTool;
+import ru.aiedt.mcp.server.toolkit.ops.EventLogTool;
 import ru.aiedt.mcp.server.toolkit.ops.EditFormTool;
 import ru.aiedt.mcp.server.toolkit.ops.EditMetadataTool;
 import ru.aiedt.mcp.server.toolkit.ops.ExpressionEvaluator;
@@ -944,6 +945,7 @@ public class McpHttpEndpoint
             new SelfStatusTool(),
             new SelfUpkeepTool(),
             new ApplicationsReader(),
+            new EventLogTool(),
             new DatabaseUpdater(),
             new DebugSessionStarter(),
             new LaunchConfigsLister(),

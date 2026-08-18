@@ -209,13 +209,14 @@ public class CanonicalSurfaceContractTest
             "create_project", "delete_project", "resync_to_disk", "restart_edt",
             "self_upkeep", "list_subsystems", "help"));
 
-        // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): eight operations,
+        // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): nine operations,
         // all literally the standalone names they replace, plus help. sync_control's own inner
         // action travels as a separate "syncOperation" parameter and is not part of this
         // vocabulary.
         m.put("infobase_admin", Set.of(
-            "get_applications", "create_infobase", "delete_infobase", "set_infobase_credentials",
-            "create_launch_config", "start_client", "update_database", "sync_control", "help"));
+            "get_applications", "read_event_log", "create_infobase", "delete_infobase",
+            "set_infobase_credentials", "create_launch_config", "start_client", "update_database",
+            "sync_control", "help"));
 
         // config_io (ConfigIoFacadeTool.execute + its OPS catalog): four operations, all
         // literally the standalone names they replace, plus help.

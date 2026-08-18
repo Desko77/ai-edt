@@ -108,7 +108,7 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void totalToolCountIsOneHundredTwentyFive()
+    public void totalToolCountIsOneHundredTwentySix()
     {
         // Recounted directly from the group table. F3d facades landed on 118; the 2026-07-28
         // data_access removal dropped execute_query, browse_data and data_access (-3 -> 115) and
@@ -127,9 +127,12 @@ public class ToolCategoryTest
         // tables the platform derives from an object and writes nothing.
         // On 2026-08-15 import_configuration_from_binary joined APPLICATIONS (+1 -> 125): it
         // creates an infobase and a project, so Read-only has to be able to switch it off.
+        // On 2026-08-19 read_event_log joined APPLICATIONS (+1 -> 126): it reads a file beside
+        // the infobase and writes nothing, but it belongs with the infobase group because that
+        // is what a preset limiting access to a live base is expected to cover.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(125, ToolCategory.getTotalToolCount());
+        assertEquals(126, ToolCategory.getTotalToolCount());
     }
 
     @Test
