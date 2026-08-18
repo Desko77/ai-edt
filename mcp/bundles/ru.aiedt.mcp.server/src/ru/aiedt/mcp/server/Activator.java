@@ -636,6 +636,11 @@ public class Activator
      *
      * @return <code>true</code> when there is no UI to talk to
      */
+    public static boolean isHeadlessRuntime()
+    {
+        return isHeadless();
+    }
+
     private static boolean isHeadless()
     {
         if (TRUE.equals(System.getProperty(PROP_UI_TESTSUITE)))

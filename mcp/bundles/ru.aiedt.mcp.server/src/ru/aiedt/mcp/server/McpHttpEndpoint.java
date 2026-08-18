@@ -514,6 +514,18 @@ public class McpHttpEndpoint
         payload.addProperty("heapFreeMb", heap.getFreeMegabytes()); //$NON-NLS-1$
         payload.addProperty("heapPercent", heap.getPercentUsed()); //$NON-NLS-1$
         payload.addProperty("heapLivePercent", heap.getLivePercent()); //$NON-NLS-1$
+        // A modal dialog stops the workbench, and from out here that is indistinguishable from a
+        // hung server - the call that raised it never returns and nothing says why. Reported so a
+        // monitor, or an agent that stopped getting answers, can tell a question from a hang.
+        ru.aiedt.mcp.server.support.ModalDialogWatch.Reading workbench =
+            ru.aiedt.mcp.server.support.ModalDialogWatch.current();
+        payload.addProperty("uiResponding", workbench.isUiResponding()); //$NON-NLS-1$
+        payload.addProperty("blockedByDialog", workbench.isBlocked()); //$NON-NLS-1$
+        String dialogNote = workbench.describe();
+        if (dialogNote != null)
+        {
+            payload.addProperty("workbenchNote", dialogNote); //$NON-NLS-1$
+        }
         payload.addProperty("heapRefusalPercent", HeapHeadroom.refusalPercent()); //$NON-NLS-1$
         RunningToolCall active = getActiveToolCall();
         if (active != null)

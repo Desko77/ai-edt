@@ -11,6 +11,7 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.McpHistory;
 import ru.aiedt.mcp.server.support.HeapHeadroom;
+import ru.aiedt.mcp.server.support.ModalDialogWatch;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -67,7 +68,39 @@ public class SelfStatusTool
             .put("tools", McpHistory.perToolStats()) //$NON-NLS-1$
             .put("pending", pendingCounts()) //$NON-NLS-1$
             .put("heap", heapReading()) //$NON-NLS-1$
+            .put("workbench", workbenchReading()) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * Whether the workbench is sitting on a dialog waiting for a person.
+     * <p>
+     * A modal dialog stops EDT dead, and from the outside that is indistinguishable from a
+     * hung server: the call that raised it never returns and nothing says why. The one met
+     * in practice is Eclipse's own secure-storage prompt, which several EDT instances on
+     * one machine raise at each other over their shared keyring. Told apart here, so an
+     * agent can stop waiting and say what is actually wanted instead of reporting a
+     * timeout.
+     * </p>
+     *
+     * @return whether the UI answered, whether it is blocked, and what the dialog says
+     */
+    private static Map<String, Object> workbenchReading()
+    {
+        ModalDialogWatch.Reading reading = ModalDialogWatch.current();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("uiResponding", reading.isUiResponding()); //$NON-NLS-1$
+        m.put("blockedByDialog", reading.isBlocked()); //$NON-NLS-1$
+        if (reading.isBlocked())
+        {
+            m.put("dialogs", reading.getDialogs()); //$NON-NLS-1$
+        }
+        String note = reading.describe();
+        if (note != null)
+        {
+            m.put("note", note); //$NON-NLS-1$
+        }
+        return m;
     }
 
     /**
