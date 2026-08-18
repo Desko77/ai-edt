@@ -457,3 +457,27 @@ _none_
 **workbench**
 - McpHistoryDialog
 
+## Depth
+
+Width says every class is touched. Depth says how hard. Below: for each class with a test
+of its own, how many test methods that test carries. A class resting on one test is as
+covered as one resting on thirty by the buckets above, and that is the blind spot this
+closes.
+
+| Test methods | Classes |
+|---:|---:|
+| 1 | 0 |
+| 2 | 0 |
+| 3-4 | 10 |
+| 5-8 | 28 |
+| 9-16 | 35 |
+| 17+ | 13 |
+
+1470 test methods across 133 test classes; 86 classes have a test of their own, median 9 methods each.
+
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 86 of 344 classes have one: 96 are covered by the registry-wide contract sweep and 68 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+
+### Resting on 2 test method(s) or fewer (0)
+
+_none_
+

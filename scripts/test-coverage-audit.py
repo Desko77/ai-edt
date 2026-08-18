@@ -23,8 +23,15 @@ exactly one bucket, and the buckets have to add up to the total. A class counts 
 Nested and package-private helper types living inside another file are attributed to that file, so
 the census counts compilation units, not every declared type.
 
+The buckets answer WIDTH - is every class touched by something - and say nothing about how hard.
+A class with one test is in the same bucket as a class with thirty, so a suite could be complete by
+this census and thin everywhere. The second half of the report answers DEPTH: for every class that
+has a test of its own, how many test methods that test carries, and which classes rest on one or
+two. Depth is reported, not gated: a threshold on tests-per-class would be a number picked out of
+the air, while the list of the thinnest is a work queue anyone can read.
+
 Usage:
-    python3 scripts/test-coverage-audit.py [--out FILE] [--check]
+    python3 scripts/test-coverage-audit.py [--out FILE] [--check] [--thin N]
 
 --check exits non-zero while the untested bucket is not empty, which makes the gap a build failure
 rather than a note somebody has to remember.
@@ -112,6 +119,19 @@ def code_only(text):
     return STRING_LITERAL.sub('""', text)
 
 
+TEST_METHOD = re.compile(r"@Test\b")
+
+
+def test_method_count(text):
+    """How many test methods a test class carries, ignoring the ones only talked about.
+
+    Counted on the stripped source for the same reason the census is: an @Test written inside a
+    javadoc example is documentation, and counting it would inflate exactly the number this is
+    here to keep honest.
+    """
+    return len(TEST_METHOD.findall(code_only(text)))
+
+
 def registered_tools():
     """The tool classes the server instantiates, which is exactly what the registry sweep walks."""
     if not os.path.exists(REGISTRATION):
@@ -140,6 +160,8 @@ def audit():
     test_files = sorted(java_files(TESTS))
     test_names = {os.path.splitext(os.path.basename(p))[0] for p in test_files}
     test_blob = "\n".join(code_only(read(p)) for p in test_files)
+    methods_per_test = {os.path.splitext(os.path.basename(p))[0]: test_method_count(read(p))
+                        for p in test_files}
 
     swept = registered_tools()
     buckets = {"direct": [], "exercised": [], "tool-sweep": [], "ui-bound": [],
@@ -149,10 +171,68 @@ def audit():
         bucket, simple = classify(path, read(path), test_names, test_blob, swept)
         package = os.path.dirname(rel[len("ru/aiedt/mcp/server/"):]) or "(root)"
         buckets[bucket].append((package, simple, rel))
-    return buckets, len(test_files)
+    return buckets, len(test_files), methods_per_test
 
 
-def write_report(buckets, test_count, out_path):
+def depth_rows(buckets, methods_per_test):
+    """Each directly-tested class against the number of test methods standing behind it."""
+    rows = []
+    for package, simple, _rel in buckets["direct"]:
+        rows.append((methods_per_test.get(simple + "Test", 0), package, simple))
+    return sorted(rows)
+
+
+def depth_section(buckets, methods_per_test, thin):
+    """The depth half of the report: the distribution, and the thinnest named."""
+    rows = depth_rows(buckets, methods_per_test)
+    total_methods = sum(methods_per_test.values())
+    lines = [
+        "## Depth",
+        "",
+        "Width says every class is touched. Depth says how hard. Below: for each class with a test",
+        "of its own, how many test methods that test carries. A class resting on one test is as",
+        "covered as one resting on thirty by the buckets above, and that is the blind spot this",
+        "closes.",
+        "",
+        "| Test methods | Classes |",
+        "|---:|---:|",
+    ]
+    banding = [(1, "1"), (2, "2"), (4, "3-4"), (8, "5-8"), (16, "9-16"), (10 ** 9, "17+")]
+    lower = 0
+    for upper, label in banding:
+        count = sum(1 for methods, _p, _s in rows if lower < methods <= upper)
+        lines.append("| %s | %d |" % (label, count))
+        lower = upper
+    without = sum(1 for methods, _p, _s in rows if methods == 0)
+    if without:
+        lines.append("| none found | %d |" % without)
+    median = rows[len(rows) // 2][0] if rows else 0
+    lines += [
+        "",
+        "%d test methods across %d test classes; %d classes have a test of their own, median %d "
+        "methods each." % (total_methods, len(methods_per_test), len(rows), median),
+        "",
+        "Read the total against the width table, not on its own. Where a class has a named test it "
+        "is not thin, but only %d of %d classes have one: %d are covered by the registry-wide "
+        "contract sweep and %d need a live EDT project, so their assurance comes from live "
+        "verification rather than from this number. Comparing the total with another suite compares "
+        "how much is unit-testable as much as how much is tested."
+        % (len(rows), sum(len(v) for v in buckets.values()), len(buckets["tool-sweep"]),
+           len(buckets["workspace-bound"])),
+        "",
+    ]
+    thinnest = [(methods, package, simple) for methods, package, simple in rows if methods <= thin]
+    lines += ["### Resting on %d test method(s) or fewer (%d)" % (thin, len(thinnest)), ""]
+    if not thinnest:
+        lines += ["_none_", ""]
+    else:
+        for methods, package, simple in thinnest:
+            lines.append("- %s/%s - %d" % (package, simple, methods))
+        lines.append("")
+    return lines
+
+
+def write_report(buckets, test_count, out_path, methods_per_test=None, thin=2):
     total = sum(len(v) for v in buckets.values())
     lines = [
         "# Test coverage census",
@@ -188,6 +268,8 @@ def write_report(buckets, test_count, out_path):
                 lines.append("**%s**" % package)
             lines.append("- %s" % simple)
         lines.append("")
+    if methods_per_test is not None:
+        lines += depth_section(buckets, methods_per_test, thin)
     with open(out_path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines).replace("\n\n\n", "\n\n") + "\n")
 
@@ -198,21 +280,28 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help="exit non-zero while anything sits in the untested bucket")
     parser.add_argument("--json", action="store_true", help="print the counters as JSON")
+    parser.add_argument("--thin", type=int, default=2,
+                        help="name the classes resting on this many test methods or fewer")
     args = parser.parse_args()
 
-    buckets, test_count = audit()
+    buckets, test_count, methods_per_test = audit()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    write_report(buckets, test_count, args.out)
+    write_report(buckets, test_count, args.out, methods_per_test, args.thin)
 
     counters = {name: len(rows) for name, rows in buckets.items()}
     counters["total"] = sum(counters.values())
     counters["test_classes"] = test_count
+    counters["test_methods"] = sum(methods_per_test.values())
+    rows = depth_rows(buckets, methods_per_test)
+    counters["median_methods_per_direct_class"] = rows[len(rows) // 2][0] if rows else 0
+    counters["thin_direct_classes"] = sum(1 for m, _p, _s in rows if m <= args.thin)
     if args.json:
         print(json.dumps(counters, indent=2))
     else:
         for name in ("direct", "exercised", "tool-sweep", "ui-bound", "workspace-bound",
-                     "untested", "total", "test_classes"):
-            print("%-14s %d" % (name, counters[name]))
+                     "untested", "total", "test_classes", "test_methods",
+                     "median_methods_per_direct_class", "thin_direct_classes"):
+            print("%-32s %d" % (name, counters[name]))
         print("\nreport written to %s" % args.out)
 
     if args.check and buckets["untested"]:
