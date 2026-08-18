@@ -107,12 +107,13 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "create_launch_config and sync_control; optional association target for " //$NON-NLS-1$
                     + "create_infobase; optional dissociation target for delete_infobase; " //$NON-NLS-1$
                     + "required for update_database when launchConfigurationName is not " //$NON-NLS-1$
-                    + "supplied.") //$NON-NLS-1$
+                    + "supplied - on its own it is enough, applicationId may be omitted.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application (infobase) id from get_applications. Optional for " //$NON-NLS-1$
-                    + "set_infobase_credentials when the project has a single application; " //$NON-NLS-1$
-                    + "required for update_database when launchConfigurationName is not " //$NON-NLS-1$
-                    + "supplied.") //$NON-NLS-1$
+                    + "set_infobase_credentials when the project has a single application, and " //$NON-NLS-1$
+                    + "for update_database, which falls back to the project's default application " //$NON-NLS-1$
+                    + "and - for an extension project, which has no infobase of its own - to the " //$NON-NLS-1$
+                    + "default of the configuration it extends.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "Infobase name. Required for create_infobase (the new infobase's name) and " //$NON-NLS-1$
                     + "delete_infobase (the infobase to remove).") //$NON-NLS-1$

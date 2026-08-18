@@ -13,6 +13,7 @@ import java.util.Map;
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.core.platform.IExtensionProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -80,6 +81,57 @@ public final class BmCommonModuleGuards
         {
             Activator.logWarning("isExtensionProject probe failed: " + e.getMessage()); //$NON-NLS-1$
             return false;
+        }
+    }
+
+    /**
+     * The configuration project an extension project extends, which is where its infobase
+     * lives.
+     * <p>
+     * An extension project has no infobase of its own. Anything that looks for one on the
+     * extension itself finds nothing and reports it as an absent application - which reads
+     * as "this cannot be done" rather than "ask the parent". That answer cost a working
+     * route: getting an extension's current code into the infobase became a hand-run cycle
+     * of exporting what the infobase already had, unpacking it, substituting the module,
+     * packing it again and installing the result.
+     * </p>
+     * <p>
+     * Called on the interface. {@code getParentProject()} is declared by
+     * {@link com._1c.g5.v8.dt.core.platform.IDependentProject}, which
+     * {@link IExtensionProject} extends, so no lookup by name is needed - and a lookup by
+     * name here would be the shape that fails silently on a non-public implementation.
+     * </p>
+     *
+     * @param project the project to ask about; may be <code>null</code>.
+     * @return the parent configuration project, or <code>null</code> when this is not an
+     *         extension project or the parent cannot be determined.
+     */
+    public static IProject parentProjectOf(IProject project)
+    {
+        if (project == null || !project.isOpen())
+        {
+            return null;
+        }
+        try
+        {
+            Activator activator = Activator.getDefault();
+            IV8ProjectManager projectManager =
+                activator == null ? null : activator.getV8ProjectManager();
+            if (projectManager == null)
+            {
+                return null;
+            }
+            IV8Project v8Project = projectManager.getProject(project);
+            if (v8Project instanceof IExtensionProject)
+            {
+                return ((IExtensionProject)v8Project).getParentProject();
+            }
+            return null;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("parentProjectOf probe failed: " + e.getMessage()); //$NON-NLS-1$
+            return null;
         }
     }
 

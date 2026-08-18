@@ -8,9 +8,11 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -35,6 +37,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
@@ -77,7 +80,9 @@ public class DatabaseUpdater implements IMcpTool
         return "Back-compat alias of `infobase_admin` `operation=update_database`; prefer the facade for new prompts. " //$NON-NLS-1$
             + "Push the current configuration into an application's infobase. " //$NON-NLS-1$
             + "Point it at the target either with launchConfigurationName (preferred; " //$NON-NLS-1$
-            + "see list_configurations) or with projectName + applicationId (see get_applications). " //$NON-NLS-1$
+            + "see list_configurations) or with projectName alone, optionally naming an applicationId. " //$NON-NLS-1$
+            + "For an extension project - which has no infobase of its own - the infobase of the " //$NON-NLS-1$
+            + "configuration it extends is updated, which is what carries the extension's code into it. " //$NON-NLS-1$
             + "Handles both a full update (complete reload) and an incremental update (changes only). " //$NON-NLS-1$
             + "A slow full / restructure run replies with a Pending status and a runKey instead of blocking - " //$NON-NLS-1$
             + "call this tool again passing that runKey to keep waiting (cancel=true plus the runKey stops tracking)."; //$NON-NLS-1$
@@ -91,7 +96,9 @@ public class DatabaseUpdater implements IMcpTool
                 "Exact name of an existing EDT runtime-client launch configuration (preferred - obtain it via list_configurations)") //$NON-NLS-1$
             .stringProperty("projectName", "Name of the EDT project (required when launchConfigurationName is not supplied)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "Application identifier obtained from get_applications (required when launchConfigurationName is not supplied)") //$NON-NLS-1$
+                "Application identifier from get_applications. Optional: omitted, the project's default " //$NON-NLS-1$
+                    + "application is used, and for an extension project - which has no infobase of its own - " //$NON-NLS-1$
+                    + "the default of the configuration it extends. The response says which was updated.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
@@ -159,11 +166,10 @@ public class DatabaseUpdater implements IMcpTool
             {
                 return ToolResult.error("projectName is required unless launchConfigurationName is supplied").toJson(); //$NON-NLS-1$
             }
-            if (applicationId == null || applicationId.isEmpty())
-            {
-                return ToolResult.error("applicationId is required unless launchConfigurationName is supplied. " //$NON-NLS-1$
-                    + "Look it up via get_applications or list_configurations.").toJson(); //$NON-NLS-1$
-            }
+            // applicationId may be omitted. An extension project has no application of its own,
+            // so demanding one left the caller with nothing to look up - get_applications on the
+            // extension answers "none" - and the parent-infobase route below unreachable through
+            // the door an agent actually walks through.
         }
 
         // A launch configuration name fixes the project + applicationId pair, so prefer it.
@@ -276,6 +282,34 @@ public class DatabaseUpdater implements IMcpTool
 
 
     /**
+     * The application to update when the caller named none.
+     * <p>
+     * Asking for the default rather than "the only one" on purpose: a project with several
+     * applications already has an answer to this question, and picking a different one here
+     * would update an infobase nobody asked about.
+     * </p>
+     *
+     * @param appManager the application manager.
+     * @param project the project to ask about.
+     * @return the default application, or empty when the project has none.
+     */
+    private static Optional<IApplication> defaultApplication(IApplicationManager appManager, IProject project)
+    {
+        try
+        {
+            return appManager.getDefaultApplication(project);
+        }
+        catch (Exception e)
+        {
+            // Reported rather than swallowed: without it the caller is told there is no
+            // application, which is a different thing from "could not be asked".
+            Activator.logWarning("Could not resolve the default application for " //$NON-NLS-1$
+                + project.getName() + ": " + e.getMessage()); //$NON-NLS-1$
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Builds the Pending body returned when the wait budget runs out before the update finishes.
      *
      * @param runKey the key to resume with
@@ -312,15 +346,17 @@ public class DatabaseUpdater implements IMcpTool
      * </p>
      *
      * @param projectName the project
-     * @param applicationId the application id
+     * @param requestedApplicationId the application id, or null/empty to resolve the default -
+     *            the project's own, else the one belonging to the configuration it extends
      * @param fullUpdate full vs incremental
      * @param autoRestructure whether EDT may restructure
      * @param autoFreeClients whether to free held clients first
      * @return a JSON result body
      */
-    private String updateDatabase(String projectName, String applicationId, boolean fullUpdate,
+    private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients)
     {
+        String applicationId = requestedApplicationId;
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
         try
@@ -337,11 +373,51 @@ public class DatabaseUpdater implements IMcpTool
                 return ToolResult.error("The IApplicationManager service is currently unavailable").toJson(); //$NON-NLS-1$
             }
 
-            Optional<IApplication> appOpt = appManager.getApplication(project, applicationId);
+            // An extension project has no infobase of its own - it shares the one belonging
+            // to the configuration it extends, and updating that infobase is what carries
+            // the extension's code into it. Asked of the extension alone, this answered "no
+            // application found", which reads as "cannot be done" and sent callers down a
+            // hand-run export / unpack / substitute / repack / install cycle to get an
+            // extension's current module into the base.
+            boolean named = applicationId != null && !applicationId.isEmpty();
+            Optional<IApplication> appOpt =
+                named ? appManager.getApplication(project, applicationId) : defaultApplication(appManager, project);
+            IProject infobaseProject = project;
+            boolean viaParent = false;
             if (!appOpt.isPresent())
             {
-                return ToolResult.error("No application found for: " + applicationId //$NON-NLS-1$
-                    + ". Call get_applications to list valid application IDs.").toJson(); //$NON-NLS-1$
+                IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+                if (parent != null && parent.exists() && parent.isOpen())
+                {
+                    Optional<IApplication> parentApp =
+                        named ? appManager.getApplication(parent, applicationId)
+                            : defaultApplication(appManager, parent);
+                    if (parentApp.isPresent())
+                    {
+                        appOpt = parentApp;
+                        infobaseProject = parent;
+                        viaParent = true;
+                    }
+                }
+            }
+            if (!appOpt.isPresent())
+            {
+                return ToolResult.error(named
+                    ? "No application found for: " + applicationId //$NON-NLS-1$
+                        + ". Call get_applications to list valid application IDs." //$NON-NLS-1$
+                    : "No application to update: " + projectName + " has none, and neither does the " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "configuration it extends (if it extends one). Call get_applications to see " //$NON-NLS-1$
+                        + "what is available, or name a launchConfigurationName.").toJson(); //$NON-NLS-1$
+            }
+            if (!named)
+            {
+                applicationId = appOpt.get().getId();
+            }
+            if (viaParent)
+            {
+                Activator.logInfo("update_database: " + project.getName() //$NON-NLS-1$
+                    + " is an extension project and has no infobase; updating the one of its " //$NON-NLS-1$
+                    + "parent, " + infobaseProject.getName()); //$NON-NLS-1$
             }
 
             IApplication application = appOpt.get();
@@ -391,7 +467,14 @@ public class DatabaseUpdater implements IMcpTool
             // terminate() is async, so each stop is waited out (bounded) before the update runs.
             if (autoFreeClients)
             {
-                freedClients = freeClientsForApplication(applicationId, projectName);
+                // The launches to free belong to whoever owns the infobase. For an extension
+                // routed to its parent that is the parent's name, and filtering by the
+                // extension's would have quietly freed nothing on the very path this fallback
+                // opened. Both names are accepted: an extension can carry its own launch too.
+                Set<String> ownerNames = new LinkedHashSet<>();
+                ownerNames.add(projectName);
+                ownerNames.add(infobaseProject.getName());
+                freedClients = freeClientsForApplication(applicationId, ownerNames);
                 if (appManager.getUpdateState(application) == ApplicationUpdateState.BEING_UPDATED)
                 {
                     ToolResult busy = ToolResult.error("The application flipped to BEING_UPDATED while " //$NON-NLS-1$
@@ -415,6 +498,18 @@ public class DatabaseUpdater implements IMcpTool
                 .put("stateBefore", stateBefore.name()) //$NON-NLS-1$
                 .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                 .put("updateComplete", updateComplete); //$NON-NLS-1$
+
+            if (viaParent)
+            {
+                // Said out loud: the infobase that moved is not the one named in the call.
+                // A bare success here would leave a caller believing the extension project
+                // has an infobase of its own.
+                result.put("infobaseProject", infobaseProject.getName()); //$NON-NLS-1$
+                result.put("viaParentProject", "This is an extension project and has no " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "infobase of its own. The infobase of the configuration it extends (" //$NON-NLS-1$
+                    + infobaseProject.getName() + ") was updated, which is what carries the " //$NON-NLS-1$
+                    + "extension's current code into the base."); //$NON-NLS-1$
+            }
 
             if (updateComplete)
             {
@@ -527,10 +622,11 @@ public class DatabaseUpdater implements IMcpTool
      * waits (bounded) for the launch to actually die before returning.
      *
      * @param applicationId the application whose clients to free
-     * @param projectName the owning project
+     * @param projectNames the projects whose launches count as ours to free
      * @return one row per launch that was considered, saying what happened
      */
-    private static List<Map<String, Object>> freeClientsForApplication(String applicationId, String projectName)
+    private static List<Map<String, Object>> freeClientsForApplication(String applicationId,
+        Set<String> projectNames)
     {
         List<Map<String, Object>> freed = new ArrayList<>();
         DebugPlugin debugPlugin = DebugPlugin.getDefault();
@@ -560,7 +656,8 @@ public class DatabaseUpdater implements IMcpTool
             {
                 continue;
             }
-            if (!projectName.equals(LaunchConfigAccess.readAttribute(cfg, LaunchConfigAccess.ATTR_PROJECT_NAME, ""))) //$NON-NLS-1$
+            if (!projectNames.contains(
+                LaunchConfigAccess.readAttribute(cfg, LaunchConfigAccess.ATTR_PROJECT_NAME, ""))) //$NON-NLS-1$
             {
                 continue;
             }

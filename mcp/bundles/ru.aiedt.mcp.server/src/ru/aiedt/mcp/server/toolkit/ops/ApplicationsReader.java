@@ -24,6 +24,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
 
@@ -111,6 +112,25 @@ public class ApplicationsReader
         try
         {
             List<IApplication> applications = applicationManager.getApplications(project);
+            // An extension has no infobase of its own; it shares the one belonging to the
+            // configuration it extends. Answering a bare "no applications" here was true and
+            // useless - the infobase its code goes into does exist, and the caller had no way
+            // from here to find out which one it is.
+            IProject infobaseOwner = project;
+            boolean viaParent = false;
+            if (applications == null || applications.isEmpty())
+            {
+                IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+                if (parent != null && parent.exists() && parent.isOpen())
+                {
+                    applications = applicationManager.getApplications(parent);
+                    if (applications != null && !applications.isEmpty())
+                    {
+                        infobaseOwner = parent;
+                        viaParent = true;
+                    }
+                }
+            }
             if (applications == null || applications.isEmpty())
             {
                 return ToolResult.success()
@@ -131,15 +151,24 @@ public class ApplicationsReader
                 .put("project", name) //$NON-NLS-1$
                 .put("applications", array) //$NON-NLS-1$
                 .put("count", array.size()); //$NON-NLS-1$
+            if (viaParent)
+            {
+                result.put("infobaseProject", infobaseOwner.getName()); //$NON-NLS-1$
+                result.put("note", name + " is an extension and has no infobase of its own. These " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "belong to " + infobaseOwner.getName() + ", the configuration it extends - " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "update_database on the extension goes to one of them."); //$NON-NLS-1$
+            }
 
+            final IProject defaultOwner = infobaseOwner;
             try
             {
-                applicationManager.getDefaultApplication(project)
+                applicationManager.getDefaultApplication(defaultOwner)
                     .ifPresent(application -> result.put("defaultApplicationId", application.getId())); //$NON-NLS-1$
             }
             catch (ApplicationException e)
             {
-                Activator.logError("Failed to resolve the default application for " + name, e); //$NON-NLS-1$
+                Activator.logError("Failed to resolve the default application for " //$NON-NLS-1$
+                    + defaultOwner.getName(), e);
             }
 
             return result.toJson();
