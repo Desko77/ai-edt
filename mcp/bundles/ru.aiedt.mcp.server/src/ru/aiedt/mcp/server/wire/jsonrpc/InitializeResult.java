@@ -25,13 +25,14 @@ public class InitializeResult
      * @param serverName the server name
      * @param serverVersion the plugin version
      * @param author the attribution string
+     * @param title how a person tells this server from the others running beside it
      */
     public InitializeResult(String protocolVersion, String serverName, String serverVersion,
-        String author)
+        String author, String title)
     {
         this.protocolVersion = protocolVersion;
         this.capabilities = new Capabilities();
-        this.serverInfo = new ServerInfo(serverName, serverVersion, author);
+        this.serverInfo = new ServerInfo(serverName, serverVersion, author, title);
     }
 
     /**
@@ -102,18 +103,34 @@ public class InitializeResult
 
         private final String author;
 
+        private final String title;
+
         /**
          * Creates the identity.
          *
          * @param name the server name
          * @param version the plugin version
          * @param author the attribution string; a non-standard member that clients ignore
+         * @param title the display name, which names the workspace this server has open -
+         *            with several EDTs running, the server name alone is the same everywhere
+         *            and tells a client nothing about which one it reached
          */
-        public ServerInfo(String name, String version, String author)
+        public ServerInfo(String name, String version, String author, String title)
         {
             this.name = name;
             this.version = version;
             this.author = author;
+            this.title = title;
+        }
+
+        /**
+         * Returns the display name.
+         *
+         * @return the title
+         */
+        public String getTitle()
+        {
+            return title;
         }
 
         /**

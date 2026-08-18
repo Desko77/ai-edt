@@ -31,6 +31,28 @@ public class McpServerMetaTest
             ISO_DATE.matcher(McpServerMeta.PROTOCOL_VERSION).matches());
     }
 
+    /**
+     * The advertised revision has to be one the server will actually agree to. Drifting apart
+     * would mean answering a handshake with a revision the list says we do not implement.
+     */
+    @Test
+    public void theAdvertisedRevisionIsOnTheSupportedList()
+    {
+        assertTrue("PROTOCOL_VERSION is not among SUPPORTED_PROTOCOL_VERSIONS", //$NON-NLS-1$
+            McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS.contains(McpServerMeta.PROTOCOL_VERSION));
+    }
+
+    /** Every supported revision looks like one, since the shape is checked before the list. */
+    @Test
+    public void everySupportedRevisionLooksLikeOne()
+    {
+        for (String revision : McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS)
+        {
+            assertTrue("not shaped like a revision: " + revision, //$NON-NLS-1$
+                ISO_DATE.matcher(revision).matches());
+        }
+    }
+
     @Test
     public void jsonRpcDialectIsTwoPointZero()
     {

@@ -26,6 +26,30 @@ public final class McpServerMeta
     /** MCP revision advertised when the client does not ask for a specific one. */
     public static final String PROTOCOL_VERSION = "2025-11-25"; //$NON-NLS-1$
 
+    /**
+     * Revisions this server will agree to when a client asks for one.
+     * <p>
+     * The four listed differ, for the traffic that actually crosses this wire, only in
+     * optional additions: the handshake, the tool catalogue and the tool call keep the same
+     * shape throughout, and what the later revisions add on top is announced through
+     * capabilities rather than assumed. So agreeing to an older one costs nothing and keeps
+     * a client pinned to it working.
+     * </p>
+     * <p>
+     * Agreeing to a revision NOT on this list is different, and is what this list exists to
+     * stop: any string shaped like a date used to be echoed back as agreed, so a client
+     * asking for a revision that does not exist was told the server implements it. A
+     * negotiation whose answer is always yes is not a negotiation - it is a claim made
+     * without looking, of exactly the kind this project keeps finding and removing.
+     * </p>
+     */
+    public static final java.util.Set<String> SUPPORTED_PROTOCOL_VERSIONS =
+        java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(java.util.Arrays.asList(
+            "2025-11-25", //$NON-NLS-1$
+            "2025-06-18", //$NON-NLS-1$
+            "2025-03-26", //$NON-NLS-1$
+            "2024-11-05"))); //$NON-NLS-1$
+
     /** Value of {@code serverInfo.name} in the initialize result. */
     public static final String SERVER_NAME = "ai-edt-mcp-server"; //$NON-NLS-1$
 

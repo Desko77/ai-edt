@@ -31,7 +31,7 @@ public class HandshakeDtoTest
     @Test
     public void initializeResultExposesRevisionIdentityAndToolsCapability()
     {
-        InitializeResult result = new InitializeResult("2025-11-25", "srv", "3.1.0", "AI-EDT");
+        InitializeResult result = new InitializeResult("2025-11-25", "srv", "3.1.0", "AI-EDT", "AI-EDT @ Demo");
 
         assertEquals("2025-11-25", result.getProtocolVersion());
         assertNotNull(result.getCapabilities());
@@ -43,18 +43,19 @@ public class HandshakeDtoTest
     public void serverInfoAccessorsReturnConstructorValues()
     {
         InitializeResult.ServerInfo info =
-            new InitializeResult("d", "named-server", "2.0.0", "An Author").getServerInfo();
+            new InitializeResult("d", "named-server", "2.0.0", "An Author", "A Title").getServerInfo();
 
         assertEquals("named-server", info.getName());
         assertEquals("2.0.0", info.getVersion());
         assertEquals("An Author", info.getAuthor());
+        assertEquals("A Title", info.getTitle());
     }
 
     @Test
     public void initializeResultSerializesToExpectedMembers()
     {
         InitializeResult result = new InitializeResult(
-            McpServerMeta.PROTOCOL_VERSION, "srv", "1.0", "Author");
+            McpServerMeta.PROTOCOL_VERSION, "srv", "1.0", "Author", "AI-EDT @ Demo");
         JsonObject document = JsonParser.parseString(GsonHolder.toJson(result)).getAsJsonObject();
 
         assertEquals(McpServerMeta.PROTOCOL_VERSION,
@@ -64,12 +65,15 @@ public class HandshakeDtoTest
         assertEquals("srv", info.get("name").getAsString());
         assertEquals("1.0", info.get("version").getAsString());
         assertEquals("Author", info.get("author").getAsString());
+        // On the wire because one machine runs several of these and the name is the same on
+        // all of them; the title is the only member that says which workspace answered.
+        assertEquals("AI-EDT @ Demo", info.get("title").getAsString());
     }
 
     @Test
     public void toolsCapabilitySerializesToAnEmptyObject()
     {
-        InitializeResult result = new InitializeResult("v", "s", "1", "a");
+        InitializeResult result = new InitializeResult("v", "s", "1", "a", "t");
         JsonObject document = JsonParser.parseString(GsonHolder.toJson(result)).getAsJsonObject();
 
         JsonObject tools = document.getAsJsonObject("capabilities").getAsJsonObject("tools");
@@ -81,7 +85,7 @@ public class HandshakeDtoTest
     public void initializeResultWrappedInAResponseStaysJsonRpcCompliant()
     {
         String json = GsonHolder.toJson(JsonRpcResponse.success(1,
-            new InitializeResult("2025-11-25", "s", "1.0", "a")));
+            new InitializeResult("2025-11-25", "s", "1.0", "a", "t")));
         JsonObject document = JsonParser.parseString(json).getAsJsonObject();
 
         assertEquals("2.0", document.get("jsonrpc").getAsString());

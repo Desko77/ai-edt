@@ -175,6 +175,7 @@ import ru.aiedt.mcp.server.toolkit.ops.WorkspaceMarksFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.DocsLookupFacadeTool;
 import ru.aiedt.mcp.server.support.HeapHeadroom;
 import ru.aiedt.mcp.server.support.HeavyTools;
+import ru.aiedt.mcp.server.support.InstanceRegistry;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.WorkspacePhase;
 
@@ -474,6 +475,9 @@ public class McpHttpEndpoint
         }
         httpServers = servers;
         running = true;
+        // Announced only once a listener is actually up: a record naming a port nothing answers
+        // on is worse than no record, because it reads as a server that is refusing.
+        InstanceRegistry.announce(serverPort);
     }
 
     /**
@@ -527,6 +531,9 @@ public class McpHttpEndpoint
             payload.addProperty("workbenchNote", dialogNote); //$NON-NLS-1$
         }
         payload.addProperty("heapRefusalPercent", HeapHeadroom.refusalPercent()); //$NON-NLS-1$
+        // Which EDT this is. With several running, a port number alone does not say, and an agent
+        // that was handed one earlier has no way to notice it now belongs to a different workspace.
+        payload.addProperty("instance", InstanceRegistry.selfTitle()); //$NON-NLS-1$
         RunningToolCall active = getActiveToolCall();
         if (active != null)
         {
@@ -659,6 +666,7 @@ public class McpHttpEndpoint
         // have created them before it threw.
         requestPool = shutdown(requestPool);
         ssePool = shutdown(ssePool);
+        InstanceRegistry.withdraw();
         if (wasRunning)
         {
             Activator.logInfo("MCP server stopped"); //$NON-NLS-1$

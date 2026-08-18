@@ -261,8 +261,11 @@ public class McpRequestRouter
     /**
      * Answers the handshake.
      * <p>
-     * A revision the client asks for is granted as long as it looks like a revision at all. There is
-     * no allow-list: refusing an unknown one makes older clients give up, and agreeing costs nothing.
+     * A revision the client asks for is granted when this server actually implements it, and
+     * otherwise answered with the one it does implement - which is the client's cue to decide
+     * whether it can still talk to us. Being shaped like a date is not enough: agreeing to
+     * anything that looked like one meant a client asking for a revision nobody has ever
+     * published was told we implement it.
      * </p>
      *
      * @param request the initialize request
@@ -271,11 +274,12 @@ public class McpRequestRouter
     private static InitializeResult buildInitializeResult(JsonRpcRequest request)
     {
         String requested = request.getStringParam(PARAM_PROTOCOL_VERSION);
-        String revision = requested != null && MCP_REVISION.matcher(requested).matches() ? requested
-            : McpServerMeta.PROTOCOL_VERSION;
+        String revision = requested != null && MCP_REVISION.matcher(requested).matches()
+            && McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS.contains(requested) ? requested
+                : McpServerMeta.PROTOCOL_VERSION;
 
         return new InitializeResult(revision, McpServerMeta.SERVER_NAME, McpServerMeta.PLUGIN_VERSION,
-            McpServerMeta.AUTHOR);
+            McpServerMeta.AUTHOR, ru.aiedt.mcp.server.support.InstanceRegistry.selfTitle());
     }
 
     /**

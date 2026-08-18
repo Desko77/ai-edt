@@ -80,6 +80,53 @@ public class McpRequestRouterTest
         assertEquals("2025-06-18", result.get("protocolVersion").getAsString());
     }
 
+    /**
+     * A revision nobody has published is answered with the one this server implements, not
+     * agreed to.
+     * <p>
+     * Any string shaped like a date used to come straight back as the agreed revision, so a
+     * client asking for {@code 1999-01-01} was told this server speaks it. That is not a
+     * negotiation - it is a claim made without looking, and the client has no way to find out
+     * otherwise until something it expects is missing.
+     * </p>
+     */
+    @Test
+    public void initializeRefusesARevisionItDoesNotImplement()
+    {
+        String params = "{\"protocolVersion\":\"1999-01-01\"}"; //$NON-NLS-1$
+        JsonObject result = send(request(1, McpServerMeta.METHOD_INITIALIZE, params))
+            .getAsJsonObject("result");
+
+        assertEquals(McpServerMeta.PROTOCOL_VERSION, result.get("protocolVersion").getAsString());
+    }
+
+    /** Every revision on the supported list is agreed to, so a client pinned to one keeps working. */
+    @Test
+    public void initializeAgreesToEveryRevisionItClaimsToSupport()
+    {
+        for (String revision : McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS)
+        {
+            String params = "{\"protocolVersion\":\"" + revision + "\"}"; //$NON-NLS-1$ //$NON-NLS-2$
+            JsonObject result = send(request(1, McpServerMeta.METHOD_INITIALIZE, params))
+                .getAsJsonObject("result");
+
+            assertEquals("a supported revision was not agreed to", //$NON-NLS-1$
+                revision, result.get("protocolVersion").getAsString());
+        }
+    }
+
+    /** The server names itself by the workspace it has open, for a machine running several. */
+    @Test
+    public void initializeCarriesATitleThatNamesThisInstance()
+    {
+        JsonObject serverInfo = send(request(1, McpServerMeta.METHOD_INITIALIZE, null))
+            .getAsJsonObject("result").getAsJsonObject("serverInfo");
+
+        assertNotNull("serverInfo carries no title", serverInfo.get("title")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the title does not name the product: " + serverInfo.get("title"), //$NON-NLS-1$ //$NON-NLS-2$
+            serverInfo.get("title").getAsString().startsWith("AI-EDT")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Test
     public void initializeFallsBackToItsOwnRevisionWhenNoneWasAskedFor()
     {

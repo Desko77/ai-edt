@@ -11,6 +11,7 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.McpHistory;
 import ru.aiedt.mcp.server.support.HeapHeadroom;
+import ru.aiedt.mcp.server.support.InstanceRegistry;
 import ru.aiedt.mcp.server.support.ModalDialogWatch;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -44,7 +45,10 @@ public class SelfStatusTool
             + "domain the count of async operations still running and the count tracked (running " //$NON-NLS-1$
             + "plus completed-but-not-yet-collected), and the heap EDT still holds after a " //$NON-NLS-1$
             + "collection against the share at which expensive tools start being refused - check " //$NON-NLS-1$
-            + "it when pacing a long series of expensive calls. Read-only, takes no arguments."; //$NON-NLS-1$
+            + "it when pacing a long series of expensive calls. Also lists every AI-EDT server " //$NON-NLS-1$
+            + "running on this machine with its port, workspace and open projects, so the right " //$NON-NLS-1$
+            + "EDT can be addressed without opening preference files one workspace at a time. " //$NON-NLS-1$
+            + "Read-only, takes no arguments."; //$NON-NLS-1$
     }
 
     @Override
@@ -69,6 +73,7 @@ public class SelfStatusTool
             .put("pending", pendingCounts()) //$NON-NLS-1$
             .put("heap", heapReading()) //$NON-NLS-1$
             .put("workbench", workbenchReading()) //$NON-NLS-1$
+            .put("instances", InstanceRegistry.live()) //$NON-NLS-1$
             .toJson();
     }
 
