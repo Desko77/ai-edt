@@ -28,6 +28,9 @@ import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
+import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.extension.MdObjectExtension;
+import com._1c.g5.v8.dt.metadata.mdclass.extension.type.MdPropertyState;
 import ru.aiedt.mcp.server.Activator;
 
 /**
@@ -243,7 +246,7 @@ public final class BmExtensionHelper
      * </ul>
      */
     private static BorrowResult attemptBorrowViaAdopter(IProject extension,
-        String baseProjectName, String targetFqn)
+        String baseProjectName, String targetFqn, String childKind)
     {
         BorrowResult r = new BorrowResult();
         r.discoveredApi = "com._1c.g5.v8.dt.md.extension.adopt.IModelObjectAdopter"; //$NON-NLS-1$
@@ -316,7 +319,18 @@ public final class BmExtensionHelper
             {
                 okTag.put("returned", result.getClass().getSimpleName()); //$NON-NLS-1$
             }
+            LinkageOutcome linkage =
+                completeExtensionLinkage(extension, result, source, childKind, targetFqn);
+            reportLinkage(linkage, okTag);
             r.tags.put("borrowed", okTag); //$NON-NLS-1$
+            if (!linkage.complete)
+            {
+                // The adopt is committed and the object is in the extension; only the link
+                // is missing. Reporting success here would hand back exactly the working-looking
+                // dead extension this method exists to prevent.
+                r.error = linkageErrorMessage(targetFqn, extension, linkage);
+                return r;
+            }
             r.ok = true;
             return r;
         }
@@ -327,8 +341,8 @@ public final class BmExtensionHelper
                 : cause.getClass().getSimpleName();
             if (msg != null && msg.toLowerCase().contains("already")) //$NON-NLS-1$
             {
-                return resolveAlreadyException(extension, targetFqn, msg,
-                    "IModelObjectAdopter.adoptAndAttach", r); //$NON-NLS-1$
+                return resolveAlreadyException(extension, baseProjectName, targetFqn, childKind,
+                    msg, "IModelObjectAdopter.adoptAndAttach", r); //$NON-NLS-1$
             }
             Map<String, Object> tag = new LinkedHashMap<>();
             tag.put("targetFqn", targetFqn); //$NON-NLS-1$
@@ -338,6 +352,585 @@ public final class BmExtensionHelper
             r.error = "adoptAndAttach failed: " + msg; //$NON-NLS-1$
             return r;
         }
+    }
+
+    /**
+     * What a linkage pass found: what it wrote, whether the object really extends
+     * afterwards, and - kept apart from that - whether the pass ever got to look.
+     * <p>
+     * The three states are deliberately distinct. "Wrote nothing because everything
+     * was already in place" and "wrote nothing because the object was not there" both
+     * used to come back as an empty list and got reported as success; that is the
+     * defect this whole repair exists to remove, reproduced one level up.
+     * </p>
+     */
+    private static final class LinkageOutcome
+    {
+        /** True only when the link was read back off the object after the pass. */
+        boolean complete;
+
+        /** True once the pass actually had the object in hand. */
+        boolean checked;
+
+        /** What this pass wrote. Empty when the link was already in place. */
+        final List<String> written = new java.util.ArrayList<>();
+
+        /** Why the link is not in place. Null when {@link #complete}. */
+        String problem;
+
+        /** Set when the write landed in the model but not yet in the file. */
+        String flushNote;
+    }
+
+    /**
+     * Writes the link that makes an adopted object actually extend the one it was
+     * adopted from, and then reads it back.
+     * <p>
+     * {@code adoptAndAttach} puts the object into the extension and stops there. What it
+     * leaves out is the whole point of adopting: the {@code .mdo} comes back without
+     * {@code extendedConfigurationObject} on the root, without
+     * {@code <extendedConfigurationObject>Checked</extendedConfigurationObject>} in the
+     * extension block, and - for a module - without {@code <module>Extended</module>}.
+     * Such an extension does not extend anything, and <b>nothing says so</b>: measured on
+     * a clean probe, borrowing a common module returned success and
+     * {@code get_project_errors severity=ALL} then reported zero findings. Whoever wrote
+     * the module afterwards had a working-looking project and dead code.
+     * </p>
+     * <p>
+     * The two properties that apply to every kind - the base object's uuid and Checked -
+     * are written for any adopted object. {@code module=Extended} is written only when a
+     * MODULE was asked for and the extension block is a common module's; for other kinds
+     * the module flag lives under a different property, so it is reported as not applied
+     * rather than guessed at.
+     * </p>
+     * <p>
+     * Anything already set is left alone: EDT may fill some of this itself on a runtime
+     * that behaves differently, and overwriting its answer would be the opposite of the
+     * repair.
+     * </p>
+     *
+     * @param extension the extension project the object now lives in.
+     * @param adopted what {@code adoptAndAttach} returned.
+     * @param source the base object it was adopted from.
+     * @param childKind what the caller asked to borrow ({@code Module} for a module).
+     * @param targetFqn the object as the caller named it, for flushing what was written.
+     * @return what the pass wrote and whether the object extends afterwards.
+     */
+    private static LinkageOutcome completeExtensionLinkage(IProject extension, Object adopted,
+        Object source, String childKind, String targetFqn)
+    {
+        LinkageOutcome outcome = new LinkageOutcome();
+        final String moduleKind = moduleKindOf(childKind);
+        if (!(adopted instanceof MdObject) || !(adopted instanceof IBmObject))
+        {
+            outcome.problem = adopted == null
+                ? "the adopter returned nothing to link" //$NON-NLS-1$
+                : "the adopted object is a " + adopted.getClass().getSimpleName() //$NON-NLS-1$
+                    + ", not a metadata object in the object model"; //$NON-NLS-1$
+            return outcome;
+        }
+        if (!(source instanceof MdObject) || ((MdObject)source).getUuid() == null)
+        {
+            outcome.problem = "the base object carries no uuid, so there is nothing to link to"; //$NON-NLS-1$
+            return outcome;
+        }
+        final java.util.UUID sourceUuid = ((MdObject)source).getUuid();
+        final long bmId = ((IBmObject)adopted).bmGetId();
+        try
+        {
+            IBmModelManager modelManager = Activator.getDefault().getBmModelManager();
+            IBmModel model = modelManager == null ? null : modelManager.getModel(extension);
+            if (model == null)
+            {
+                outcome.problem = "no object model for " + extension.getName(); //$NON-NLS-1$
+                return outcome;
+            }
+            LinkageOutcome applied =
+                model.execute(new AbstractBmTask<LinkageOutcome>("completeExtensionLinkage") //$NON-NLS-1$
+                {
+                    @Override
+                    public LinkageOutcome execute(IBmTransaction tx,
+                        org.eclipse.core.runtime.IProgressMonitor pm)
+                    {
+                        return applyLinkage(tx.getObjectById(bmId), sourceUuid, moduleKind);
+                    }
+                });
+            if (applied != null)
+            {
+                flushLinkage(extension, targetFqn, applied);
+                return applied;
+            }
+            outcome.problem = "the object model ran the linkage task and returned nothing"; //$NON-NLS-1$
+            return outcome;
+        }
+        catch (Exception e)
+        {
+            // Said out loud rather than swallowed: without this link the extension does
+            // not extend, and a silent failure here is the exact defect being repaired.
+            outcome.problem = e.getClass().getSimpleName() + ": " + e.getMessage(); //$NON-NLS-1$
+            Activator.logWarning("completeExtensionLinkage failed for " //$NON-NLS-1$
+                + extension.getName() + ": " + outcome.problem); //$NON-NLS-1$
+            return outcome;
+        }
+    }
+
+    /**
+     * Runs the same linkage pass over an object that is ALREADY in the extension,
+     * addressed by FQN instead of by what an adopter just returned.
+     * <p>
+     * Needed because a borrow that landed before this repair existed - or one whose
+     * linkage failed halfway - is otherwise unreachable: the second call short-circuits
+     * on "already borrowed" and the caller is left hand-editing the {@code .mdo}, which
+     * is the thing this plugin exists to stop. Calling borrow again now repairs it.
+     * </p>
+     *
+     * @param extension the extension project holding the adopted object.
+     * @param baseProjectName base configuration, or empty to derive it from the parent.
+     * @param targetFqn the object to check, as the caller named it.
+     * @param childKind what the caller asked to borrow ({@code Module} for a module).
+     * @return what the pass wrote and whether the object extends afterwards.
+     */
+    private static LinkageOutcome repairExtensionLinkage(IProject extension, String baseProjectName,
+        String targetFqn, String childKind)
+    {
+        LinkageOutcome outcome = new LinkageOutcome();
+        final String moduleKind = moduleKindOf(childKind);
+        try
+        {
+            Object extProject = resolveExtensionProject(extension);
+            boolean explicitBase = baseProjectName != null && !baseProjectName.isEmpty();
+            IProject baseProject = explicitBase
+                ? org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot()
+                    .getProject(baseProjectName)
+                : (extProject == null ? null : deriveParentProject(extProject));
+            if (baseProject == null || !baseProject.exists())
+            {
+                outcome.problem =
+                    "could not reach the base configuration to read the uuid to link to"; //$NON-NLS-1$
+                return outcome;
+            }
+            Object source = resolveSourceEObject(baseProject, targetFqn);
+            if (!(source instanceof MdObject) || ((MdObject)source).getUuid() == null)
+            {
+                outcome.problem = targetFqn + " does not resolve to a uuid-carrying object in " //$NON-NLS-1$
+                    + baseProject.getName();
+                return outcome;
+            }
+            final java.util.UUID sourceUuid = ((MdObject)source).getUuid();
+            Object held = resolveInExtension(extension, normalizeFqnSafely(targetFqn));
+            if (!(held instanceof IBmObject))
+            {
+                outcome.problem = held == null
+                    ? "the extension does not hold " + targetFqn + " in a form this can link" //$NON-NLS-1$ //$NON-NLS-2$
+                    : "what the extension holds under that name is a " //$NON-NLS-1$
+                        + held.getClass().getSimpleName() + ", which the object model does not track"; //$NON-NLS-1$
+                return outcome;
+            }
+            final long bmId = ((IBmObject)held).bmGetId();
+            IBmModelManager modelManager = Activator.getDefault().getBmModelManager();
+            IBmModel model = modelManager == null ? null : modelManager.getModel(extension);
+            if (model == null)
+            {
+                outcome.problem = "no object model for " + extension.getName(); //$NON-NLS-1$
+                return outcome;
+            }
+            LinkageOutcome applied =
+                model.execute(new AbstractBmTask<LinkageOutcome>("repairExtensionLinkage") //$NON-NLS-1$
+                {
+                    @Override
+                    public LinkageOutcome execute(IBmTransaction tx,
+                        org.eclipse.core.runtime.IProgressMonitor pm)
+                    {
+                        return applyLinkage(tx.getObjectById(bmId), sourceUuid, moduleKind);
+                    }
+                });
+            if (applied != null)
+            {
+                flushLinkage(extension, targetFqn, applied);
+                return applied;
+            }
+            outcome.problem = "the object model ran the linkage task and returned nothing"; //$NON-NLS-1$
+            return outcome;
+        }
+        catch (Exception e)
+        {
+            outcome.problem = e.getClass().getSimpleName() + ": " + e.getMessage(); //$NON-NLS-1$
+            Activator.logWarning("repairExtensionLinkage failed for " + targetFqn //$NON-NLS-1$
+                + " in " + extension.getName() + ": " + outcome.problem); //$NON-NLS-1$ //$NON-NLS-2$
+            return outcome;
+        }
+    }
+
+    /**
+     * Reads the caller's {@code childKind} as a module kind, or nothing when a module was not
+     * what was asked for.
+     *
+     * @param childKind what the caller asked to borrow.
+     * @return the module kind, or null.
+     */
+    private static String moduleKindOf(String childKind)
+    {
+        if (childKind == null)
+        {
+            return null;
+        }
+        String kind = childKind.trim();
+        return kind.toLowerCase().endsWith("module") ? kind : null; //$NON-NLS-1$
+    }
+
+    /**
+     * Finds what the extension holds under a name, the same way the attach check finds it.
+     * <p>
+     * They have to agree, and they did not. The attach check reaches a form and a child through
+     * the model tree; this reached only a top object, so a form or an attribute borrowed by an
+     * older build passed the check, found nothing to repair, and came back a success that had
+     * repaired nothing - the very defect the repair exists to remove, reproduced by the repair.
+     * </p>
+     * <p>
+     * Measured live: a form borrowed into an extension is not a top object there at all, under
+     * either spelling. Only the tree finds it.
+     * </p>
+     *
+     * @param extension the extension project.
+     * @param normalized the FQN, already normalized.
+     * @return the object, or null when the extension does not hold it.
+     */
+    private static Object resolveInExtension(IProject extension, String normalized)
+    {
+        EObject viaBm = resolveViaBmTransaction(extension, normalized);
+        if (viaBm instanceof MdObject)
+        {
+            return viaBm;
+        }
+        EObject viaTree = resolveViaEmfFallback(extension, normalized);
+        if (viaTree instanceof MdObject)
+        {
+            return viaTree;
+        }
+        // A form also answers under a .Form suffix, but with the form's CONTENT rather than its
+        // metadata entry; the entry is the one that carries the link, and it is that object's
+        // container.
+        if (looksLikeFormMetadataFqn(normalized))
+        {
+            EObject withSuffix = resolveViaBmTransaction(extension, normalized + ".Form"); //$NON-NLS-1$
+            if (withSuffix != null)
+            {
+                EObject entry = ensureMdObjectForForm(withSuffix);
+                if (entry instanceof MdObject)
+                {
+                    return entry;
+                }
+            }
+        }
+        return viaBm != null ? viaBm : viaTree;
+    }
+
+    /**
+     * Writes the missing halves of the link onto an object already attached to a
+     * transaction, then reads them back off it.
+     * <p>
+     * The read-back is the point. Trusting the setters is how the original defect
+     * stayed invisible: a pass that writes and never looks cannot tell a runtime that
+     * refused the property from one that accepted it.
+     * </p>
+     *
+     * @param inTx the object as the transaction holds it, or null when it is not there.
+     * @param sourceUuid uuid of the base object being extended.
+     * @param wantModule true when the caller asked for a module override.
+     * @return what was written and whether the object extends afterwards.
+     */
+    private static LinkageOutcome applyLinkage(Object inTx, java.util.UUID sourceUuid,
+        String moduleKind)
+    {
+        LinkageOutcome outcome = new LinkageOutcome();
+        if (!(inTx instanceof MdObject))
+        {
+            outcome.problem = inTx == null
+                ? "the object is not in the extension's object model" //$NON-NLS-1$
+                : "the extension holds a " + inTx.getClass().getSimpleName() //$NON-NLS-1$
+                    + " under that name, not a metadata object"; //$NON-NLS-1$
+            return outcome;
+        }
+        outcome.checked = true;
+        MdObject object = (MdObject)inTx;
+        java.util.UUID current = object.getExtendedConfigurationObject();
+        if (current == null)
+        {
+            object.setExtendedConfigurationObject(sourceUuid);
+            outcome.written.add("extendedConfigurationObject=" + sourceUuid); //$NON-NLS-1$
+        }
+        else if (!current.equals(sourceUuid))
+        {
+            // Pointing at the wrong object is worse than pointing at nothing, and it is not ours
+            // to overwrite: whatever put it there knew something we do not. Named, not corrected.
+            outcome.problem = "the object is linked to " + current + ", not to " + sourceUuid //$NON-NLS-1$ //$NON-NLS-2$
+                + " which is the uuid of the base object it was adopted from. It extends " //$NON-NLS-1$
+                + "something else, or it was adopted from a different configuration."; //$NON-NLS-1$
+            return outcome;
+        }
+        Object block = object.getExtension();
+        if (!(block instanceof MdObjectExtension))
+        {
+            outcome.problem = block == null
+                ? "the object carries no extension block" //$NON-NLS-1$
+                : "the extension block is a " + block.getClass().getSimpleName() //$NON-NLS-1$
+                    + ", which has no extendedConfigurationObject to set"; //$NON-NLS-1$
+            return outcome;
+        }
+        MdObjectExtension ext = (MdObjectExtension)block;
+        if (ext.getExtendedConfigurationObject() != MdPropertyState.CHECKED)
+        {
+            ext.setExtendedConfigurationObject(MdPropertyState.CHECKED);
+            outcome.written.add("extension.extendedConfigurationObject=Checked"); //$NON-NLS-1$
+        }
+        org.eclipse.emf.ecore.EStructuralFeature moduleFeature = moduleFeatureFor(ext, moduleKind);
+        if (moduleKind != null && moduleFeature == null)
+        {
+            outcome.problem = "a " + moduleKind + " was asked for, but a " + ext.eClass().getName() //$NON-NLS-1$ //$NON-NLS-2$
+                + " has no such module to override. It keeps " + moduleFeatureNames(ext) //$NON-NLS-1$
+                + " - name one of those as moduleType."; //$NON-NLS-1$
+            return outcome;
+        }
+        if (moduleFeature != null && ext.eGet(moduleFeature) != MdPropertyState.EXTENDED)
+        {
+            ext.eSet(moduleFeature, MdPropertyState.EXTENDED);
+            outcome.written.add("extension." + moduleFeature.getName() + "=Extended"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (object.getExtendedConfigurationObject() == null)
+        {
+            outcome.problem = "extendedConfigurationObject did not stay on the object"; //$NON-NLS-1$
+            return outcome;
+        }
+        if (ext.getExtendedConfigurationObject() != MdPropertyState.CHECKED)
+        {
+            outcome.problem =
+                "the extension block's extendedConfigurationObject did not become Checked"; //$NON-NLS-1$
+            return outcome;
+        }
+        if (moduleFeature != null && ext.eGet(moduleFeature) != MdPropertyState.EXTENDED)
+        {
+            outcome.problem = "the module flag did not become Extended, so the module does not " //$NON-NLS-1$
+                + "override the base one"; //$NON-NLS-1$
+            return outcome;
+        }
+        outcome.complete = true;
+        return outcome;
+    }
+
+    /**
+     * The property that says "this extension overrides that module", for the module asked for.
+     * <p>
+     * Each kind of object keeps its own: a common module has {@code module}, a catalog has
+     * {@code objectModule} and {@code managerModule}, a register has {@code recordSetModule}. Only
+     * the common module was ever set, so borrowing an object module reported success and left the
+     * override unwritten - the module sat in the extension and the base one kept running.
+     * </p>
+     *
+     * @param ext the extension block.
+     * @param moduleKind what the caller asked to borrow, or null when it was not a module.
+     * @return the feature to set, or null when this block has no such module.
+     */
+    private static org.eclipse.emf.ecore.EStructuralFeature moduleFeatureFor(MdObjectExtension ext,
+        String moduleKind)
+    {
+        if (moduleKind == null)
+        {
+            return null;
+        }
+        String kind = moduleKind.trim();
+        // A bare "Module" is what borrow_module sends when the caller named no moduleType. It only
+        // means something where the object has exactly one module - a common module.
+        String name = "Module".equalsIgnoreCase(kind) ? "module" //$NON-NLS-1$ //$NON-NLS-2$
+            : Character.toLowerCase(kind.charAt(0)) + kind.substring(1);
+        // ValueModule is what the borrow argument calls it; the model calls it valueManagerModule.
+        if ("valueModule".equals(name)) //$NON-NLS-1$
+        {
+            name = "valueManagerModule"; //$NON-NLS-1$
+        }
+        org.eclipse.emf.ecore.EStructuralFeature feature = ext.eClass().getEStructuralFeature(name);
+        return feature != null && feature.getEType().getInstanceClass() == MdPropertyState.class
+            ? feature : null;
+    }
+
+    /**
+     * The module properties this block does have, for an error that can be acted on.
+     *
+     * @param ext the extension block.
+     * @return their names, or a note that it has none.
+     */
+    private static String moduleFeatureNames(MdObjectExtension ext)
+    {
+        List<String> names = new java.util.ArrayList<>();
+        for (org.eclipse.emf.ecore.EStructuralFeature feature : ext.eClass().getEAllStructuralFeatures())
+        {
+            if (feature.getName().toLowerCase().endsWith("module") //$NON-NLS-1$
+                && feature.getEType().getInstanceClass() == MdPropertyState.class)
+            {
+                names.add(feature.getName());
+            }
+        }
+        return names.isEmpty() ? "no modules at all" : String.join(", ", names); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Writes what the linkage pass changed out to the {@code .mdo}.
+     * <p>
+     * The model is not the file. On the fresh-adopt path the EDT adopter exports right after
+     * it runs, so the link written beside it went to disk with it; the repair path has no such
+     * companion, and measured live it left the model correct and the file untouched - a caller
+     * reading the {@code .mdo}, or exporting a {@code .cfe} before the workspace got round to
+     * saving, would have seen the old state while being told the new one.
+     * </p>
+     * <p>
+     * Only run when something was written: exporting an object nothing changed on is pure cost.
+     * A failure is reported on the outcome rather than thrown, because the model IS correct at
+     * that point and the honest answer is "written, not yet saved".
+     * </p>
+     *
+     * @param extension the extension project holding the object.
+     * @param targetFqn the object as the caller named it.
+     * @param outcome the pass whose writes need flushing.
+     */
+    private static void flushLinkage(IProject extension, String targetFqn, LinkageOutcome outcome)
+    {
+        if (outcome == null || outcome.written.isEmpty() || targetFqn == null)
+        {
+            return;
+        }
+        try
+        {
+            IBmModelManager manager = Activator.getDefault().getBmModelManager();
+            // The top object, not the child: a form's or an attribute's link is written into the
+            // file of the object that owns it, and asking to export the child's own name exported
+            // nothing and reported a failure over a link that had in fact been saved.
+            BmExportHelper.Result exported =
+                BmExportHelper.forceExportAndWait(manager, extension, topObjectFqn(targetFqn));
+            if (exported == null || !exported.isOk())
+            {
+                outcome.flushNote = "the link is written in the model but the .mdo is not saved " //$NON-NLS-1$
+                    + "yet - read it after the workspace settles, or force a resync before " //$NON-NLS-1$
+                    + "exporting the extension."; //$NON-NLS-1$
+            }
+            else if (exported.syncFlushPending)
+            {
+                outcome.flushNote = "the link is written and the save is running, but it did not " //$NON-NLS-1$
+                    + "confirm within the wait - check the .mdo before exporting the extension."; //$NON-NLS-1$
+            }
+        }
+        catch (Exception e)
+        {
+            outcome.flushNote = "the link is written in the model but saving it to the .mdo " //$NON-NLS-1$
+                + "failed: " + e.getClass().getSimpleName() + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The object whose file holds a link, given the name the caller used.
+     *
+     * @param targetFqn the object or child, as the caller named it.
+     * @return the owning top object's FQN.
+     */
+    private static String topObjectFqn(String targetFqn)
+    {
+        String normalized = normalizeFqnSafely(targetFqn);
+        String[] segs = normalized.split("\\."); //$NON-NLS-1$
+        return segs.length > 2 ? segs[0] + "." + segs[1] : normalized; //$NON-NLS-1$
+    }
+
+    /**
+     * Puts the outcome of a linkage pass on the response tag, in the words the caller
+     * needs: what was written, or what stopped it, or that there was nothing to do.
+     *
+     * @param outcome the pass to report.
+     * @param okTag the tag being built for the response.
+     */
+    private static void reportLinkage(LinkageOutcome outcome, Map<String, Object> okTag)
+    {
+        if (outcome.complete)
+        {
+            okTag.put("extensionLinkage", outcome.written.isEmpty() //$NON-NLS-1$
+                ? "already in place - nothing to write" : outcome.written); //$NON-NLS-1$
+        }
+        else
+        {
+            okTag.put("extensionLinkageFailed", outcome.problem); //$NON-NLS-1$
+            if (!outcome.written.isEmpty())
+            {
+                okTag.put("extensionLinkagePartial", outcome.written); //$NON-NLS-1$
+            }
+        }
+        if (outcome.flushNote != null)
+        {
+            okTag.put("extensionLinkageNotSaved", outcome.flushNote); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The sentence a caller gets when an object sits in the extension without the link
+     * that makes it extend. Shared so the fresh-adopt and already-borrowed paths cannot
+     * describe the same condition two different ways.
+     *
+     * @param targetFqn the object concerned.
+     * @param extension the extension project holding it.
+     * @param outcome the pass that found the problem.
+     * @return the error sentence.
+     */
+    private static String linkageErrorMessage(String targetFqn, IProject extension,
+        LinkageOutcome outcome)
+    {
+        String problem = outcome.problem == null ? "no reason was recorded" : outcome.problem.trim(); //$NON-NLS-1$
+        while (problem.endsWith(".")) //$NON-NLS-1$
+        {
+            problem = problem.substring(0, problem.length() - 1);
+        }
+        return targetFqn + " is in " + extension.getName() //$NON-NLS-1$
+            + ", but the link that makes the extension extend it is not written: " //$NON-NLS-1$
+            + problem + ". The extension overrides nothing in this state. Nothing here needs " //$NON-NLS-1$
+            + "undoing - fix what is named above and call borrow again to retry just the link."; //$NON-NLS-1$
+    }
+
+    /**
+     * Finishes an idempotent "it is already there" answer.
+     * <p>
+     * Attached is not the same as linked. A borrow that landed before the linkage repair
+     * existed is attached and does not extend, and the short-circuit above used to hand
+     * that back as success - leaving the caller nothing to do but edit the {@code .mdo}
+     * by hand. So the link is repaired here, and a confirmed-unlinked object is reported
+     * as the failure it is. An object the pass could not examine at all (a borrowed child
+     * that is no BM top object, a model not yet up) keeps the idempotent success and says
+     * on the tag that the link was not verified.
+     * </p>
+     *
+     * @param extension the extension project holding the object.
+     * @param baseProjectName base configuration, or empty to derive it from the parent.
+     * @param targetFqn the object the caller asked for.
+     * @param childKind what the caller asked to borrow ({@code Module} for a module).
+     * @param r the result being built.
+     * @return the same result, settled.
+     */
+    private static BorrowResult settleAlreadyBorrowed(IProject extension, String baseProjectName,
+        String targetFqn, String childKind, BorrowResult r)
+    {
+        r.alreadyBorrowed = true;
+        Map<String, Object> tag = new LinkedHashMap<>();
+        tag.put("targetFqn", targetFqn); //$NON-NLS-1$
+        LinkageOutcome linkage =
+            repairExtensionLinkage(extension, baseProjectName, targetFqn, childKind);
+        reportLinkage(linkage, tag);
+        if (!linkage.complete && !linkage.checked)
+        {
+            tag.put("extensionLinkageUnverified", //$NON-NLS-1$
+                "the object is attached, but the link could not be examined - read the .mdo " //$NON-NLS-1$
+                    + "before relying on the override."); //$NON-NLS-1$
+        }
+        r.tags.put("alreadyBorrowed", tag); //$NON-NLS-1$
+        if (!linkage.complete && linkage.checked)
+        {
+            r.error = linkageErrorMessage(targetFqn, extension, linkage);
+            return r;
+        }
+        r.ok = true;
+        return r;
     }
 
     /**
@@ -796,12 +1389,7 @@ public final class BmExtensionHelper
         // partialBorrowDetected via resolveAlreadyException.
         if (isAttachedInExtension(extension, targetFqn))
         {
-            r.alreadyBorrowed = true;
-            Map<String, Object> tag = new LinkedHashMap<>();
-            tag.put("targetFqn", targetFqn); //$NON-NLS-1$
-            r.tags.put("alreadyBorrowed", tag); //$NON-NLS-1$
-            r.ok = true;
-            return r;
+            return settleAlreadyBorrowed(extension, baseProjectName, targetFqn, childKind, r);
         }
         // 1.42.3: try the EDT 2026.1 IModelObjectAdopter contract first.
         // adoptAndAttach(EObject source, IExtensionProject ext, IProgressMonitor)
@@ -812,7 +1400,7 @@ public final class BmExtensionHelper
         if ("com._1c.g5.v8.dt.md.extension.adopt.IModelObjectAdopter".equals(r.discoveredApi)) //$NON-NLS-1$
         {
             BorrowResult viaAdopter = attemptBorrowViaAdopter(extension, baseProjectName,
-                targetFqn);
+                targetFqn, childKind);
             if (viaAdopter.ok || (viaAdopter.error != null && !viaAdopter.adoptServiceNotFound))
             {
                 // Either succeeded, already-borrowed, or failed for a
@@ -894,7 +1482,24 @@ public final class BmExtensionHelper
                 {
                     okTag.put("returned", result.toString()); //$NON-NLS-1$
                 }
+                // This older service hands back no model object, so the link is written by
+                // FQN instead. Same rule as the adopter path: confirmed unlinked is a failure,
+                // unexaminable is a success that says so.
+                LinkageOutcome linkage = repairExtensionLinkage(extension, baseProjectName,
+                    targetFqn, childKind);
+                reportLinkage(linkage, okTag);
+                if (!linkage.complete && !linkage.checked)
+                {
+                    okTag.put("extensionLinkageUnverified", //$NON-NLS-1$
+                        "the object is in the extension, but the link could not be examined - " //$NON-NLS-1$
+                            + "read the .mdo before relying on the override."); //$NON-NLS-1$
+                }
                 r.tags.put("borrowed", okTag); //$NON-NLS-1$
+                if (!linkage.complete && linkage.checked)
+                {
+                    r.error = linkageErrorMessage(targetFqn, extension, linkage);
+                    return r;
+                }
                 r.ok = true;
                 return r;
             }
@@ -905,7 +1510,8 @@ public final class BmExtensionHelper
                     : cause.getClass().getSimpleName();
                 if (msg != null && msg.toLowerCase().contains("already")) //$NON-NLS-1$
                 {
-                    return resolveAlreadyException(extension, targetFqn, msg, null, r);
+                    return resolveAlreadyException(extension, baseProjectName, targetFqn,
+                        childKind, msg, null, r);
                 }
                 Map<String, Object> tag = new LinkedHashMap<>();
                 tag.put("targetFqn", targetFqn); //$NON-NLS-1$
@@ -1106,17 +1712,12 @@ public final class BmExtensionHelper
      * stale leftovers (orphan Forms/&lt;name&gt;/ folder, missing Form.form,
      * parent .mdo without the child entry).
      */
-    private static BorrowResult resolveAlreadyException(IProject extension, String targetFqn,
-        String edtMessage, String invocationApi, BorrowResult r)
+    private static BorrowResult resolveAlreadyException(IProject extension, String baseProjectName,
+        String targetFqn, String childKind, String edtMessage, String invocationApi, BorrowResult r)
     {
         if (isAttachedInExtension(extension, targetFqn))
         {
-            r.alreadyBorrowed = true;
-            Map<String, Object> tag = new LinkedHashMap<>();
-            tag.put("targetFqn", targetFqn); //$NON-NLS-1$
-            r.tags.put("alreadyBorrowed", tag); //$NON-NLS-1$
-            r.ok = true;
-            return r;
+            return settleAlreadyBorrowed(extension, baseProjectName, targetFqn, childKind, r);
         }
         Map<String, Object> tag = new LinkedHashMap<>();
         tag.put("targetFqn", targetFqn); //$NON-NLS-1$

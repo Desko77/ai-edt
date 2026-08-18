@@ -175,7 +175,11 @@ public class ExtensionWorkshopTool implements IMcpTool
             case "borrow_form_item": //$NON-NLS-1$
                 return doBorrow(params, op, "Form"); //$NON-NLS-1$
             case "borrow_module": //$NON-NLS-1$
-                return doBorrow(params, op, "Module"); //$NON-NLS-1$
+                // The module kind travels with the borrow: each kind of object keeps its override
+                // flag under its own property, and without knowing which one was meant the linkage
+                // could only ever set a common module's.
+                return doBorrow(params, op,
+                    moduleKindOrDefault(JsonUtils.extractStringArgument(params, "moduleType"))); //$NON-NLS-1$
             case "borrow_objects": //$NON-NLS-1$
                 return doBorrowBatch(params);
             case "list_borrowed": //$NON-NLS-1$
@@ -242,6 +246,18 @@ public class ExtensionWorkshopTool implements IMcpTool
         BmExtensionHelper.BorrowResult r = BmExtensionHelper.attemptBorrow(project,
             baseProjectName, objectFqn, childKind);
         return formatResult(r, op, objectFqn);
+    }
+
+    /**
+     * The module kind a borrow should carry, defaulting to the one an object has when it has only
+     * one.
+     *
+     * @param moduleType what the caller named, possibly nothing.
+     * @return the kind to pass along.
+     */
+    private static String moduleKindOrDefault(String moduleType)
+    {
+        return moduleType == null || moduleType.trim().isEmpty() ? "Module" : moduleType.trim(); //$NON-NLS-1$
     }
 
     private String doBorrowBatch(Map<String, String> params)
