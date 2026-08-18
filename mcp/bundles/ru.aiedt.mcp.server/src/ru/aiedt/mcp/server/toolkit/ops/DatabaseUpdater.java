@@ -39,6 +39,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.support.InfobaseHolders;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -359,6 +360,10 @@ public class DatabaseUpdater implements IMcpTool
         String applicationId = requestedApplicationId;
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
+        // Whoever owns the infobase - the project asked about and, for an extension, its parent.
+        // Declared out here so a failure can name who is holding the base, which is the one thing
+        // the platform error never says.
+        Set<String> ownerNames = new LinkedHashSet<>();
         try
         {
             IProject project = ProjectResolver.resolve(projectName);
@@ -413,6 +418,11 @@ public class DatabaseUpdater implements IMcpTool
             {
                 applicationId = appOpt.get().getId();
             }
+            // The launches that matter belong to whoever owns the infobase. For an extension routed
+            // to its parent that is the parent's name, and filtering by the extension's alone would
+            // have quietly matched nothing on the very path the fallback opened.
+            ownerNames.add(projectName);
+            ownerNames.add(infobaseProject.getName());
             if (viaParent)
             {
                 Activator.logInfo("update_database: " + project.getName() //$NON-NLS-1$
@@ -467,13 +477,6 @@ public class DatabaseUpdater implements IMcpTool
             // terminate() is async, so each stop is waited out (bounded) before the update runs.
             if (autoFreeClients)
             {
-                // The launches to free belong to whoever owns the infobase. For an extension
-                // routed to its parent that is the parent's name, and filtering by the
-                // extension's would have quietly freed nothing on the very path this fallback
-                // opened. Both names are accepted: an extension can carry its own launch too.
-                Set<String> ownerNames = new LinkedHashSet<>();
-                ownerNames.add(projectName);
-                ownerNames.add(infobaseProject.getName());
                 freedClients = freeClientsForApplication(applicationId, ownerNames);
                 if (appManager.getUpdateState(application) == ApplicationUpdateState.BEING_UPDATED)
                 {
@@ -483,6 +486,7 @@ public class DatabaseUpdater implements IMcpTool
                     busy.put("applicationId", applicationId); //$NON-NLS-1$
                     busy.put("autoFreeClients", true); //$NON-NLS-1$
                     busy.put("freedClients", freedClients); //$NON-NLS-1$
+                    putHolders(busy, applicationId, ownerNames);
                     return busy.toJson();
                 }
             }
@@ -553,6 +557,7 @@ public class DatabaseUpdater implements IMcpTool
                 errorResult.put("autoFreeClients", true); //$NON-NLS-1$
                 errorResult.put("freedClients", freedClients); //$NON-NLS-1$
             }
+            putHolders(errorResult, applicationId, ownerNames);
             return errorResult.toJson();
         }
         catch (Exception e)
@@ -565,7 +570,29 @@ public class DatabaseUpdater implements IMcpTool
                 errorResult.put("autoFreeClients", true); //$NON-NLS-1$
                 errorResult.put("freedClients", freedClients); //$NON-NLS-1$
             }
+            putHolders(errorResult, applicationId, ownerNames);
             return errorResult.toJson();
+        }
+    }
+
+    /**
+     * Names who is holding the infobase, when anyone visible is.
+     * <p>
+     * A refused update says what the platform said, and the platform does not say who is in the
+     * way. Left at that, a held base and a broken tool look identical from outside, and the reader
+     * goes looking in the wrong place.
+     * </p>
+     *
+     * @param result the answer being built.
+     * @param applicationId the application whose infobase is concerned.
+     * @param ownerNames the projects that own it.
+     */
+    private static void putHolders(ToolResult result, String applicationId, Set<String> ownerNames)
+    {
+        Map<String, Object> holders = InfobaseHolders.describe(applicationId, ownerNames);
+        if (holders != null)
+        {
+            result.put("infobaseHolders", holders); //$NON-NLS-1$
         }
     }
 
