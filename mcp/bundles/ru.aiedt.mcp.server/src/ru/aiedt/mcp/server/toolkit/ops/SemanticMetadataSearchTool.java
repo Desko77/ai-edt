@@ -220,10 +220,12 @@ public class SemanticMetadataSearchTool implements IMcpTool
 
     private static String extractSynonym(MdObject obj)
     {
+        // MdObject declares getSynonym(), so it is called rather than looked up by name -
+        // unlike the same-named helper on an EObject receiver elsewhere, where the base
+        // type does not declare it and reflection is the only way.
         try
         {
-            Object syn = obj.getClass().getMethod("getSynonym").invoke(obj); //$NON-NLS-1$
-            return ru.aiedt.mcp.server.support.LocalizedStringUtils.text(syn);
+            return ru.aiedt.mcp.server.support.LocalizedStringUtils.text(obj.getSynonym());
         }
         catch (Exception ignored)
         {

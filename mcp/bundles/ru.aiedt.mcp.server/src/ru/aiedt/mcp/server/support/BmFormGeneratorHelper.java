@@ -477,14 +477,12 @@ public final class BmFormGeneratorHelper
         {
             return null;
         }
+        // Configuration declares getInterfaceCompatibilityMode(), so it is called rather
+        // than looked up by name. The NoSuchMethodException arm went with the lookup: a
+        // build without the method would not resolve at all.
         try
         {
-            Method m = config.getClass().getMethod("getInterfaceCompatibilityMode"); //$NON-NLS-1$
-            return m.invoke(config);
-        }
-        catch (NoSuchMethodException nsm)
-        {
-            return null;
+            return config.getInterfaceCompatibilityMode();
         }
         catch (Exception e)
         {

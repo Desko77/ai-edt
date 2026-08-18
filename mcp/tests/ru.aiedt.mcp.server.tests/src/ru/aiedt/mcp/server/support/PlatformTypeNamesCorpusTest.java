@@ -66,6 +66,75 @@ public class PlatformTypeNamesCorpusTest
         "TypeDescription", "UUID", "ValueList", "ValueStorage", "ValueTable", "ValueTree", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
         "VerticalAlign" }; //$NON-NLS-1$
 
+    /**
+     * The kind halves of the dotted type names in live use, censused the same way. A
+     * reference type is written {@code <Kind>.<Name>}, and the gate currently believes
+     * any kind at all - so a misspelled {@code CatalolgRef} goes through. Refusing an
+     * unknown kind is only safe if the register knows every kind a real configuration
+     * writes, which is what this list is here to find out.
+     */
+    private static final String[] KINDS_IN_USE = { "AccountingRegisterRecordSet", //$NON-NLS-1$
+        "AccumulationRegisterRecordSet", "BusinessProcessManager", "BusinessProcessObject", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "BusinessProcessRef", "CalculationRegisterRecordSet", "CatalogManager", "CatalogObject", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "CatalogRef", "Characteristic", "ChartOfAccountsObject", "ChartOfAccountsRef", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "ChartOfCalculationTypesObject", "ChartOfCalculationTypesRef", //$NON-NLS-1$ //$NON-NLS-2$
+        "ChartOfCharacteristicTypesObject", "ChartOfCharacteristicTypesRef", //$NON-NLS-1$ //$NON-NLS-2$
+        "ConstantValueManager", "DataProcessorObject", "DefinedType", "DocumentManager", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "DocumentObject", "DocumentRef", "EnumRef", "ExchangePlanObject", "ExchangePlanRef", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "ExternalDataProcessor", "ExternalDataSourceCubeDimensionTableRef", //$NON-NLS-1$ //$NON-NLS-2$
+        "ExternalDataSourceTableRecordManager", "InformationRegisterRecordManager", //$NON-NLS-1$ //$NON-NLS-2$
+        "InformationRegisterRecordSet", "ReportObject", "SequenceRecordSet", "TaskObject", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "TaskRef" }; //$NON-NLS-1$
+
+    /**
+     * The kinds the register does NOT know, though a real configuration writes them.
+     * Measured 2026-08-18 across the census above.
+     */
+    private static final String[] KINDS_THE_REGISTER_MISSES = { "DataProcessorObject", //$NON-NLS-1$
+        "DefinedType", "ExternalDataSourceCubeDimensionTableRef", //$NON-NLS-1$ //$NON-NLS-2$
+        "ExternalDataSourceTableRecordManager" }; //$NON-NLS-1$
+
+    @Test
+    public void theRegisterCannotBeAskedAboutTheKindHalfOfAReferenceType()
+    {
+        // This test exists to keep a door shut, and to say why.
+        //
+        // A misspelled kind - CatalolgRef.Валюты - still goes through the type gate,
+        // because the collection it strips to is not found and that reads as "no idea"
+        // rather than "wrong". The obvious repair is to put the kind itself to the
+        // platform register, since CatalogRef and AnyRef are both in there.
+        //
+        // It does not work. Of the 34 kinds a real configuration writes, the register
+        // does not know these four - so a gate built on it would refuse four legal kinds
+        // to catch one typo. Measured before writing the code, not after.
+        //
+        // Should a later EDT start answering to them, this test fails and the repair
+        // becomes available. That is the point of pinning it rather than writing a note.
+        List<String> unexpectedlyKnown = new ArrayList<>();
+        for (String kind : KINDS_THE_REGISTER_MISSES)
+        {
+            if (PlatformTypeNames.checkForVersion(kind, PRESENT) == Verdict.KNOWN)
+            {
+                unexpectedlyKnown.add(kind);
+            }
+        }
+        assertEquals("the register has started answering to these kinds - the kind half of a " //$NON-NLS-1$
+            + "reference type may now be checkable: " + unexpectedlyKnown, //$NON-NLS-1$
+            0, unexpectedlyKnown.size());
+
+        // And the rest of the census is known, which is what made the idea look workable.
+        List<String> unknown = new ArrayList<>();
+        for (String kind : KINDS_IN_USE)
+        {
+            if (PlatformTypeNames.checkForVersion(kind, PRESENT) != Verdict.KNOWN)
+            {
+                unknown.add(kind);
+            }
+        }
+        assertEquals("kinds the register does not know: " + unknown, //$NON-NLS-1$
+            KINDS_THE_REGISTER_MISSES.length, unknown.size());
+    }
+
     @Test
     public void everyNameARealConfigurationUsesIsAcceptedOnItsOwnMerits()
     {

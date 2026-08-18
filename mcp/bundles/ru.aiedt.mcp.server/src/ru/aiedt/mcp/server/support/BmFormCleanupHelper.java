@@ -293,6 +293,9 @@ public final class BmFormCleanupHelper
         }
         catch (NoSuchMethodException ignored)
         {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure - the caller reads the null as
+            // "this element has no such property".
             return false;
         }
     }
@@ -456,6 +459,9 @@ public final class BmFormCleanupHelper
         }
         catch (NoSuchMethodException ignored)
         {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure - the caller reads the null as
+            // "this element has no such property".
             return null;
         }
         catch (Exception e)

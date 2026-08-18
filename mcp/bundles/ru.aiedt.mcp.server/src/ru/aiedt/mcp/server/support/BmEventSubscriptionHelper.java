@@ -188,17 +188,12 @@ public final class BmEventSubscriptionHelper
         }
         try
         {
-            Method m = config.getClass().getMethod("getCommonModules"); //$NON-NLS-1$
-            Object list = m.invoke(config);
-            if (list instanceof EList)
+            // Configuration declares getCommonModules(), so it is called, not looked up.
+            for (Object o : config.getCommonModules())
             {
-                for (Object o : (EList<?>) list)
+                if (o instanceof MdObject && moduleName.equalsIgnoreCase(((MdObject)o).getName()))
                 {
-                    if (o instanceof MdObject
-                        && moduleName.equalsIgnoreCase(((MdObject) o).getName()))
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
         }

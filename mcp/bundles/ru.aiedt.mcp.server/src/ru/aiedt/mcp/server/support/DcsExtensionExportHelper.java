@@ -331,6 +331,8 @@ public final class DcsExtensionExportHelper
                     }
                     catch (Throwable ignored)
                     {
+                        // Reading eClass is only for the log line below; failing to read it must not
+                        // stop the serialization that follows.
                     }
                     serializeXml.invoke(serializer, top, baos, lineSep, dtProject);
                 }
@@ -386,6 +388,9 @@ public final class DcsExtensionExportHelper
         }
         catch (Throwable ignored)
         {
+            // The service is reached by name to keep this file free of a compile-time
+            // dependency on it. A miss means the service shape changed, and the caller
+            // already treats the null as "cannot resolve".
             return System.lineSeparator();
         }
     }

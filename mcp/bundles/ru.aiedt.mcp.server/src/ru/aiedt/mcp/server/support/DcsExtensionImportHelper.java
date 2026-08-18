@@ -18,6 +18,7 @@ import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceReference;
 
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
+import com._1c.g5.v8.dt.core.platform.IDtProject;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -109,9 +110,12 @@ public final class DcsExtensionImportHelper
             byte[] diskBytes = baos.toByteArray();
             r.readBytes = diskBytes.length;
 
-            // Resolve dtProject + version + serializer
-            Method getDt = manager.getClass().getMethod("getDtProject", String.class); //$NON-NLS-1$
-            Object dtProject = getDt.invoke(manager, project.getName());
+            // Resolve dtProject + version + serializer. getDtProject(String) is declared
+            // by IBmModelManager, so it is called on the interface rather than looked up
+            // on the implementation - which is not public, and would answer
+            // IllegalAccessException however public the method itself is. The result
+            // still travels on as an Object into the serializer reflection below.
+            IDtProject dtProject = manager.getDtProject(project.getName());
             if (dtProject == null)
             {
                 r.error = "IDtProject not resolved"; //$NON-NLS-1$
@@ -221,6 +225,9 @@ public final class DcsExtensionImportHelper
         }
         catch (Throwable ignored)
         {
+            // The service is reached by name to keep this file free of a compile-time
+            // dependency on it. A miss means the service shape changed, and the caller
+            // already treats the null as "cannot resolve".
         }
         try
         {

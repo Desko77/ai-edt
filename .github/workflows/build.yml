@@ -67,6 +67,13 @@ jobs:
       - name: Facade gate census
         run: python3 scripts/check-facade-gates.py
 
+      # A reflection failure caught and discarded looks exactly like "this EDT does not offer it".
+      # getWorkspaceProject() was reached by name on a non-public implementation for years: invoke
+      # refused it, the catch dropped it, and everything downstream degraded in silence. Each
+      # swallow now has to say why absence is expected there.
+      - name: Swallowed reflection census
+        run: python3 scripts/check-swallowed-reflection.py
+
       # The README tells users to install the skill, so a skill that has fallen behind the code
       # teaches an agent that a capability is absent. That has happened twice: a removed facade left
       # described, and an import stated as refused months after it was built.

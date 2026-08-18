@@ -1545,7 +1545,8 @@ final class FormItemsOps
                 return java.util.Collections.emptyList();
             }
             java.util.List<String> names = new java.util.ArrayList<>();
-            EList<?> pictures = (EList<?>) config.getClass().getMethod("getCommonPictures").invoke(config);
+            // Configuration declares getCommonPictures(), so it is called, not looked up.
+            EList<?> pictures = config.getCommonPictures();
             for (Object pic : pictures)
             {
                 if (pic instanceof MdObject)

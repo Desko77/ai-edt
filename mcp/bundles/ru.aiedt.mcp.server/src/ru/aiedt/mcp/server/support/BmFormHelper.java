@@ -1439,6 +1439,9 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure - the caller reads the null as
+            // "this element has no such property".
             return columnName;
         }
     }
@@ -3195,6 +3198,9 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure - the caller reads the null as
+            // "this element has no such property".
             return null;
         }
     }
@@ -3690,6 +3696,9 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure - the caller reads the null as
+            // "this element has no such property".
             return null;
         }
     }

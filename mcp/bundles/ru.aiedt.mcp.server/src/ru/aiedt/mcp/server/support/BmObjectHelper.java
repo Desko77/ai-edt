@@ -1296,6 +1296,9 @@ public final class BmObjectHelper
                 }
                 catch (ClassNotFoundException ignored)
                 {
+                    // Neither spelling of the factory resolving means this EDT has no mcore
+                    // factory at all - nothing to build a LocalString with, and the caller
+                    // falls back to the raw String.
                     return null;
                 }
             }
@@ -1323,6 +1326,12 @@ public final class BmObjectHelper
         }
         catch (Exception ignored)
         {
+            // Measured 2026-08-18 against the mcore bundle: McoreFactory carries 78
+            // create* methods and createLocalString is NOT among them, and the jar has
+            // no LocalString class either. This branch therefore never succeeds - it
+            // always lands here and the caller passes the raw String instead. Kept
+            // rather than deleted because removing it is a product decision that has
+            // been deferred; the measurement is recorded so nobody repeats it.
             return null;
         }
     }

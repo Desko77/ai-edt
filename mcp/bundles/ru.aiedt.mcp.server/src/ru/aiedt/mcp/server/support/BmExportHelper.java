@@ -15,6 +15,7 @@ import java.util.concurrent.Semaphore;
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
+import com._1c.g5.v8.dt.core.platform.IDtProject;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -136,40 +137,22 @@ public final class BmExportHelper
 
         try
         {
-            Class<?> dtProjectIface = Class.forName("com._1c.g5.v8.dt.core.platform.IDtProject"); //$NON-NLS-1$
-            Method getDtProject = manager.getClass().getMethod("getDtProject", String.class); //$NON-NLS-1$
-            Object dtProject = getDtProject.invoke(manager, project.getName());
+            // Called on the interface. This was reached by name on manager.getClass(),
+            // which is the implementation - and an EDT service implementation is
+            // routinely not public, so invoke answers IllegalAccessException however
+            // public the method itself is. Both getDtProject(String) and the two
+            // forceExport overloads are declared by IBmModelManager, so the compiler
+            // can bind them and the whole overload probe goes away with the reflection.
+            IDtProject dtProject = manager.getDtProject(project.getName());
             if (dtProject == null)
             {
                 r.error = "IDtProject not resolved for " + project.getName(); //$NON-NLS-1$
                 return r;
             }
 
-            // Try the List overload first - it lets EDT batch the export once
+            // The List overload lets EDT batch the export once.
             long forceStart = System.currentTimeMillis();
-            boolean exportOk = false;
-            try
-            {
-                Method forceExportList = manager.getClass()
-                    .getMethod("forceExport", dtProjectIface, List.class); //$NON-NLS-1$
-                Object res = forceExportList.invoke(manager, dtProject, fqns);
-                exportOk = !(res instanceof Boolean) || ((Boolean) res).booleanValue();
-            }
-            catch (NoSuchMethodException nsmeList)
-            {
-                // Fall back to the per-FQN String overload
-                Method forceExportString = manager.getClass()
-                    .getMethod("forceExport", dtProjectIface, String.class); //$NON-NLS-1$
-                exportOk = true;
-                for (String fqn : fqns)
-                {
-                    Object res = forceExportString.invoke(manager, dtProject, fqn);
-                    if (res instanceof Boolean && !((Boolean) res).booleanValue())
-                    {
-                        exportOk = false;
-                    }
-                }
-            }
+            boolean exportOk = manager.forceExport(dtProject, fqns);
             r.forceExportOk = exportOk;
             r.forceExportMs = System.currentTimeMillis() - forceStart;
 
@@ -241,9 +224,11 @@ public final class BmExportHelper
         /** The synchronization completed within the budget. */
         COMPLETED,
         /** The wait exceeded the budget - the flush is still running. */
-        TIMED_OUT,
-        /** The EDT build has no {@code waitModelSynchronization(IProject)}. */
-        UNAVAILABLE
+        TIMED_OUT
+        // There used to be an UNAVAILABLE for "this EDT build has no
+        // waitModelSynchronization(IProject)". It went with the reflection: the call is
+        // now bound by the compiler, so a build without the method would not resolve at
+        // all rather than take a branch here.
     }
 
     /**
@@ -280,19 +265,12 @@ public final class BmExportHelper
     private static SyncWaitOutcome boundedWaitModelSync(IBmModelManager manager, IProject project,
         long budgetMs)
     {
-        final Method waitSync;
-        try
-        {
-            waitSync = manager.getClass().getMethod("waitModelSynchronization", //$NON-NLS-1$
-                IProject.class);
-        }
-        catch (NoSuchMethodException nsme)
-        {
-            Activator.logWarning("waitModelSynchronization(IProject) not available - " //$NON-NLS-1$
-                + "scheduled saves may not have flushed yet"); //$NON-NLS-1$
-            return SyncWaitOutcome.UNAVAILABLE;
-        }
-
+        // waitModelSynchronization(IProject) is declared by IBmModelManager, so it is
+        // called on the interface. Looked up by name on the implementation it could
+        // fail two ways - the method missing, which was handled, and the enclosing
+        // implementation class not being public, which was not: invoke would have
+        // answered IllegalAccessException inside the waiter thread and been logged as
+        // a failed wait rather than as an unusable call.
         // Bound the number of concurrent flush-wait daemons plugin-wide so a
         // permanently-stuck sync manager cannot accumulate threads as mutations
         // and retries pile up. No permit free -> the flush is clearly not
@@ -310,7 +288,7 @@ public final class BmExportHelper
         Thread waiter = new Thread(() -> {
             try
             {
-                waitSync.invoke(manager, project);
+                manager.waitModelSynchronization(project);
             }
             catch (Throwable ex)
             {

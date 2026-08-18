@@ -2680,6 +2680,9 @@ public final class BmDefinedTypeHelper
         }
         catch (NoSuchMethodException ignored)
         {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure - the caller reads the null as
+            // "this element has no such property".
             return null;
         }
         catch (Exception e)
@@ -3030,8 +3033,13 @@ public final class BmDefinedTypeHelper
             }
             return referenceTargetExists(parts[0], parts[1], project, config);
         }
-        if (parts[0].equals("DefinedType")) //$NON-NLS-1$
+        if (parts[0].equals("DefinedType") || parts[0].equals("Characteristic")) //$NON-NLS-1$ //$NON-NLS-2$
         {
+            // Characteristic is a real kind, not a curiosity: the demonstration
+            // configuration types a business process's addressing attribute
+            // Characteristic.ОбъектыАдресацииЗадач. The gate used to fall through to the
+            // refusal below and turn that legal type down, while createFromProducedTypes
+            // right next door knows the kind perfectly well.
             return referenceTargetExists(parts[0], parts[1], project, config);
         }
         if (parts[0].equals("ОпределяемыйТип")) //$NON-NLS-1$

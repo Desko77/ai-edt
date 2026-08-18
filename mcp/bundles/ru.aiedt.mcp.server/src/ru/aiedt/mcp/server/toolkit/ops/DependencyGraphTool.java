@@ -476,16 +476,12 @@ public class DependencyGraphTool implements IMcpTool
     {
         try
         {
-            Object value = configuration.getClass().getMethod("getCommonModules") //$NON-NLS-1$
-                .invoke(configuration);
-            if (value instanceof java.util.List)
+            // Configuration declares getCommonModules(), so it is called, not looked up.
+            for (Object entry : configuration.getCommonModules())
             {
-                for (Object entry : (java.util.List<?>) value)
+                if (entry instanceof IBmObject)
                 {
-                    if (entry instanceof IBmObject)
-                    {
-                        roots.add((IBmObject) entry);
-                    }
+                    roots.add((IBmObject)entry);
                 }
             }
         }
@@ -499,17 +495,12 @@ public class DependencyGraphTool implements IMcpTool
     {
         try
         {
-            Object value = configuration.getClass().getMethod("getSubsystems") //$NON-NLS-1$
-                .invoke(configuration);
-            if (value instanceof java.util.List)
+            // Configuration declares getSubsystems(), so it is called, not looked up.
+            for (Subsystem entry : configuration.getSubsystems())
             {
-                for (Object entry : (java.util.List<?>) value)
+                if (entry != null && name.equalsIgnoreCase(entry.getName()))
                 {
-                    if (entry instanceof Subsystem
-                        && name.equalsIgnoreCase(((Subsystem) entry).getName()))
-                    {
-                        return (Subsystem) entry;
-                    }
+                    return entry;
                 }
             }
         }

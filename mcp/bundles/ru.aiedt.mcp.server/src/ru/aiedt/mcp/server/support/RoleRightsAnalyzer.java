@@ -137,13 +137,13 @@ public final class RoleRightsAnalyzer
         {
             return Collections.emptyList();
         }
+        // Configuration declares getRoles(), so it is called, not looked up by name.
         try
         {
-            Method m = config.getClass().getMethod("getRoles"); //$NON-NLS-1$
-            Object value = m.invoke(config);
-            if (value instanceof EList)
+            EList<Role> roles = config.getRoles();
+            if (roles != null)
             {
-                return (EList<Role>) value;
+                return roles;
             }
         }
         catch (Throwable e)
