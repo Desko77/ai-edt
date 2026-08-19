@@ -7,10 +7,15 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 
+import com.e1c.g5.dt.applications.IApplication;
+import com.e1c.g5.dt.applications.IApplicationManager;
+
+import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.BranchInfobaseBook;
 import ru.aiedt.mcp.server.support.GitBranch;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -112,6 +117,64 @@ public class BranchInfobaseTool
     }
 
     /**
+     * Why the named application is not one this project has, when it is not.
+     * <p>
+     * Answers <code>null</code> both when the id is good and when the question could not be asked
+     * at all - a runtime without the application manager must not turn a binding into a refusal on
+     * the strength of a check that never ran.
+     * </p>
+     *
+     * @param project the project the binding belongs to.
+     * @param applicationId the id the caller passed.
+     * @return the reason to refuse, or <code>null</code> to go ahead
+     */
+    private static String whyNotAnApplication(IProject project, String applicationId)
+    {
+        Activator activator = Activator.getDefault();
+        IApplicationManager applications =
+            activator == null ? null : activator.getApplicationManager();
+        if (applications == null)
+        {
+            return null;
+        }
+        try
+        {
+            if (applications.getApplication(project, applicationId).isPresent())
+            {
+                return null;
+            }
+        }
+        catch (Exception cannotAsk)
+        {
+            Activator.logWarning("Could not check applicationId '" + applicationId + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                + cannotAsk.getMessage());
+            return null;
+        }
+        StringBuilder reason = new StringBuilder();
+        reason.append("No application '").append(applicationId).append("' in project '") //$NON-NLS-1$ //$NON-NLS-2$
+            .append(project.getName()).append("'. Binding it would make every update on this ") //$NON-NLS-1$
+            .append("branch refuse, so nothing was written."); //$NON-NLS-1$
+        try
+        {
+            List<IApplication> known = applications.getApplications(project);
+            if (known != null && !known.isEmpty())
+            {
+                reason.append(" This project has: "); //$NON-NLS-1$
+                for (int i = 0; i < known.size(); i++)
+                {
+                    reason.append(i == 0 ? "" : ", ").append(known.get(i).getId()); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                reason.append('.');
+            }
+        }
+        catch (Exception cannotList)
+        {
+            reason.append(" See get_applications for the ids."); //$NON-NLS-1$
+        }
+        return reason.toString();
+    }
+
+    /**
      * Reports the branch and what is bound to it.
      *
      * @param projectName the project, for the answer.
@@ -198,6 +261,16 @@ public class BranchInfobaseTool
         if (applicationId == null || applicationId.isEmpty())
         {
             return ToolResult.error("applicationId is required to bind. See get_applications.").toJson(); //$NON-NLS-1$
+        }
+        // Checked here rather than discovered later. A binding is only ever read by
+        // update_database, and it is read to REFUSE: a mistyped id binds the branch to an
+        // application that does not exist, and every update on that branch is then turned away
+        // for a reason the caller cannot see, because the binding it names looks perfectly fine.
+        // The typo has to be caught where it is made.
+        String unknown = whyNotAnApplication(project, applicationId);
+        if (unknown != null)
+        {
+            return ToolResult.error(unknown).toJson();
         }
         String failure = BranchInfobaseBook.bind(project, branch, applicationId);
         if (failure != null)
