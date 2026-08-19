@@ -171,6 +171,56 @@ public final class PlatformTypeNames
     }
 
     /**
+     * Describes a property of the platform's global context, which is a different register from
+     * the type one.
+     * <p>
+     * Needed because some names in code are not types at all. A system enumeration is the clearest
+     * case: {@code ВидДвиженияНакопления} in front of a dot is a global property whose type carries
+     * the values, and that property lives in the {@code Property} register - the version bundle
+     * contributes it separately, loaded by its own {@code SystemEnumsLoader}. Asking the type
+     * register for the same name returns the type OF a value, whose context is empty. Measured on
+     * the stand: the manager type is not in the type register under any spelling.
+     * </p>
+     *
+     * @param bareName the name as written in code, in either script.
+     * @param project the project, which fixes the platform version.
+     * @return the register's description, or <code>null</code> when there is none or it could not
+     *         be consulted
+     */
+    public static Object describeGlobalProperty(String bareName, IProject project)
+    {
+        if (bareName == null || bareName.isEmpty() || project == null)
+        {
+            return null;
+        }
+        try
+        {
+            Activator activator = Activator.getDefault();
+            Object versionSupport = activator == null ? null : activator.getRuntimeVersionSupport();
+            if (versionSupport == null)
+            {
+                return null;
+            }
+            Object version = runtimeVersion(versionSupport, project);
+            Handles h = handles();
+            if (version == null || h == null || h.propertyEClass == null)
+            {
+                return null;
+            }
+            Object provider = h.registryGet.invoke(h.registry, h.propertyEClass, version);
+            // No canary here, unlike the type register. The canary exists to tell an empty register
+            // from a misspelling, and it needs a name that is certainly present; there is no such
+            // property that holds across every supported platform version, so an invented one would
+            // report a healthy register as empty.
+            return provider == null ? null : describe(provider, bareName);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * The same question asked against an explicit platform version, which is what
      * the register is actually keyed by.
      * <p>
@@ -281,6 +331,7 @@ public final class PlatformTypeNames
         final Object registry;
         final Method registryGet;
         final Object typeItemEClass;
+        final Object propertyEClass;
         final Method getDescription;
 
         Handles() throws Exception
@@ -288,12 +339,35 @@ public final class PlatformTypeNames
             Class<?> mcoreLiterals =
                 Class.forName("com._1c.g5.v8.dt.mcore.McorePackage$Literals"); //$NON-NLS-1$
             typeItemEClass = mcoreLiterals.getField("TYPE_ITEM").get(null); //$NON-NLS-1$
+            // Optional on purpose: this one serves the enumeration lookup only, and an EDT build
+            // without it must still leave type checking working rather than failing to get in at
+            // all.
+            propertyEClass = optionalLiteral(mcoreLiterals, "PROPERTY"); //$NON-NLS-1$
             Class<?> registryClass =
                 Class.forName("com._1c.g5.v8.dt.platform.IEObjectProvider$Registry"); //$NON-NLS-1$
             registry = registryClass.getField("INSTANCE").get(null); //$NON-NLS-1$
             registryGet = findRegistryGet(registryClass);
             getDescription = Class.forName("com._1c.g5.v8.dt.platform.IEObjectProvider") //$NON-NLS-1$
                 .getMethod("getEObjectDescription", String.class); //$NON-NLS-1$
+        }
+
+        /**
+         * One of the package literals, absent without taking the rest down with it.
+         *
+         * @param literals the literals holder.
+         * @param field the literal's field name.
+         * @return the EClass, or <code>null</code> when this build has no such literal
+         */
+        private static Object optionalLiteral(Class<?> literals, String field)
+        {
+            try
+            {
+                return literals.getField(field).get(null);
+            }
+            catch (Exception absent)
+            {
+                return null;
+            }
         }
 
         /**

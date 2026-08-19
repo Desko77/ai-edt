@@ -227,6 +227,9 @@ public class DocsLookupFacadeTool implements IMcpTool
         return ToolResult.success()
             .put("typeName", typeName) //$NON-NLS-1$
             .put("isSystemEnum", true) //$NON-NLS-1$
+            // Named because it is usually NOT the name that was asked for: the values live on a
+            // second type, and saying which one keeps the answer checkable.
+            .put("valuesFrom", lookup.valuesFrom) //$NON-NLS-1$
             .put("valueCount", lookup.values.size()) //$NON-NLS-1$
             .put("values", lookup.values) //$NON-NLS-1$
             .toJson();
