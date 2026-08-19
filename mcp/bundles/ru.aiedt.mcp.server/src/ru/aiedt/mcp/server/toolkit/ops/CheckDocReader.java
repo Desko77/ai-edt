@@ -37,6 +37,9 @@ public class CheckDocReader
 {
     private static final String MD_SUFFIX = ".md"; //$NON-NLS-1$
 
+    /** What EDT adds to a check's id when naming the file that describes it. */
+    private static final String CHECK_SUFFIX = "-check"; //$NON-NLS-1$
+
     private static final String BUNDLE_CHECKS_PREFIX = "checks/"; //$NON-NLS-1$
 
     private static final String SAFE_ID = "[^a-zA-Z0-9_-]"; //$NON-NLS-1$
@@ -110,7 +113,14 @@ public class CheckDocReader
             {
                 return bundled;
             }
-            return "**Error:** No documentation is available for check: " + checkId; //$NON-NLS-1$
+            // Naming what was tried, because the alternative wording - "no documentation" - reads
+            // as "this check has none" when it often means "it is filed under a name nobody
+            // guessed". EDT's own legacy and Xtext diagnostics genuinely ship none, and the
+            // caller can tell the two apart from this line.
+            return "**Error:** No documentation is available for check: " + checkId //$NON-NLS-1$
+                + "\n\nLooked for: " + String.join(", ", candidateNames(checkId)) //$NON-NLS-1$ //$NON-NLS-2$
+                + ". EDT's own legacy checks (`*-legacy-*`) and Xtext syntax diagnostics ship no " //$NON-NLS-1$
+                + "description of any kind."; //$NON-NLS-1$
         }
         catch (IOException e)
         {
@@ -135,20 +145,83 @@ public class CheckDocReader
             return false;
         }
 
+        // The same resolution the reader uses, and that matters more than it looks: this answers
+        // the Docs column of a findings table, and an agent reads that column to decide whether
+        // asking is worth a call. Saying false over a description that exists is the same lie as
+        // failing to find it, told one step earlier.
+        java.util.List<String> names = candidateNames(checkId);
         String folder = checksFolder();
         if (folder != null && !folder.isEmpty())
         {
             File directory = new File(folder);
-            if (directory.isDirectory() && (new File(directory, checkId + MD_SUFFIX).isFile()
-                || new File(directory, checkId.toLowerCase() + MD_SUFFIX).isFile()))
+            if (directory.isDirectory())
             {
-                return true;
+                for (String name : names)
+                {
+                    if (new File(directory, name + MD_SUFFIX).isFile())
+                    {
+                        return true;
+                    }
+                }
             }
         }
 
         Bundle bundle = bundle();
-        return bundle != null && (bundle.getEntry(BUNDLE_CHECKS_PREFIX + checkId + MD_SUFFIX) != null
-            || bundle.getEntry(BUNDLE_CHECKS_PREFIX + checkId.toLowerCase() + MD_SUFFIX) != null);
+        if (bundle == null)
+        {
+            return false;
+        }
+        for (String name : names)
+        {
+            if (bundle.getEntry(BUNDLE_CHECKS_PREFIX + name + MD_SUFFIX) != null)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The file names one check id might be stored under, in the order they are tried.
+     * <p>
+     * A marker reports {@code module-unused-method}; the description sits in
+     * {@code module-unused-method-check.md}. Both names come from EDT - the first is the id the
+     * check registers under, the second is what the shipped description file is called - and until
+     * now only the first was tried, so an agent reading a finding could not reach its explanation.
+     * </p>
+     * <p>
+     * Counted against a real project on 2026-08-19: of 51 check ids actually firing, 7 resolved by
+     * exact name and 24 more resolve once the suffix is tried. The remaining 20 are EDT's own
+     * legacy and Xtext diagnostics, which ship no description of any kind - a gap this cannot
+     * close, and does not pretend to.
+     * </p>
+     * <p>
+     * Exact first, always. One name exists on disk both with and without the suffix
+     * ({@code data-composition-conditional-appearance-use-check}), so appending before looking
+     * would answer one check with the other's text.
+     * </p>
+     *
+     * @param checkId the id as the caller gave it
+     * @return the candidate base names, without extension, most likely first
+     */
+    static java.util.List<String> candidateNames(String checkId)
+    {
+        java.util.List<String> names = new java.util.ArrayList<>(4);
+        names.add(checkId);
+        String lower = checkId.toLowerCase();
+        if (!lower.equals(checkId))
+        {
+            names.add(lower);
+        }
+        if (!checkId.endsWith(CHECK_SUFFIX))
+        {
+            names.add(checkId + CHECK_SUFFIX);
+            if (!lower.equals(checkId))
+            {
+                names.add(lower + CHECK_SUFFIX);
+            }
+        }
+        return names;
     }
 
     /**
@@ -171,15 +244,13 @@ public class CheckDocReader
         {
             return null;
         }
-        File exact = new File(directory, checkId + MD_SUFFIX);
-        if (exact.isFile())
+        for (String name : candidateNames(checkId))
         {
-            return readUtf8(exact);
-        }
-        File lower = new File(directory, checkId.toLowerCase() + MD_SUFFIX);
-        if (lower.isFile())
-        {
-            return readUtf8(lower);
+            File candidate = new File(directory, name + MD_SUFFIX);
+            if (candidate.isFile())
+            {
+                return readUtf8(candidate);
+            }
         }
         return null;
     }
@@ -197,12 +268,15 @@ public class CheckDocReader
         {
             return null;
         }
-        String exact = readBundleResource(BUNDLE_CHECKS_PREFIX + checkId + MD_SUFFIX);
-        if (exact != null)
+        for (String name : candidateNames(checkId))
         {
-            return exact;
+            String found = readBundleResource(BUNDLE_CHECKS_PREFIX + name + MD_SUFFIX);
+            if (found != null)
+            {
+                return found;
+            }
         }
-        return readBundleResource(BUNDLE_CHECKS_PREFIX + checkId.toLowerCase() + MD_SUFFIX);
+        return null;
     }
 
     /**

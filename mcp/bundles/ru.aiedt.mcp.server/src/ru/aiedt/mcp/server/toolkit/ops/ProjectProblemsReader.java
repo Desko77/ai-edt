@@ -302,16 +302,23 @@ public class ProjectProblemsReader
             }
             if ("project".equals(resolvedScope) && collected.size() >= limit) //$NON-NLS-1$
             {
-                long total = countProjectMarkers(markerManager, projectName);
-                if (total > PROJECT_SUMMARY_THRESHOLD)
+                // Counted through the SAME filter the rows came through. It used to be counted by
+                // project alone, so a caller who had narrowed to one check and legitimately filled
+                // the page was told the project holds forty thousand markers and advised to pass
+                // the filter it had just passed. A number that answers a question nobody asked
+                // reads as a refusal, and this one was sending callers back to narrow something
+                // already narrow.
+                MatchCount total = countMatching(markerManager, checkRepository, filter);
+                if (total.exceeds(PROJECT_SUMMARY_THRESHOLD))
                 {
                     // This used to RETURN here, so an overflowing project answered with the
                     // header alone - "Returned: 300" above an empty page, while the 300 rows
                     // sat collected and were thrown away. Finding out which checks fire on a
                     // large configuration then took one call per object. The warning belongs
                     // in front of the rows, not instead of them.
-                    return capNotice(total, collected.size()) + formatMarkers(collected,
-                        resolvedScope, projectName, severity, checkId, objects, limit, extraInfo);
+                    return capNotice(total, collected.size(), filter.isNarrowed())
+                        + formatMarkers(collected, resolvedScope, projectName, severity, checkId,
+                            objects, limit, extraInfo);
                 }
             }
             return formatMarkers(collected, resolvedScope, projectName, severity, checkId, objects, limit, extraInfo);
@@ -909,22 +916,64 @@ public class ProjectProblemsReader
     }
 
     /**
-     * Counts every EDT marker of the target project(s).
+     * How many markers match the filter, counted up to a ceiling.
+     * <p>
+     * The ceiling is the point. Without a check-id filter this is a cheap pass over marker
+     * metadata, but a check id can only be tested on the mapped row, which means resolving every
+     * marker against the check repository - on a large configuration that is tens of thousands of
+     * resolutions to produce one number in a banner. So it stops at the same ceiling the summary
+     * view already scans, and says it stopped rather than pretending the number is exact.
+     * </p>
      *
      * @param markerManager the marker manager
-     * @param projectName the project to restrict to, or <code>null</code>/empty for all
-     * @return the total marker count
+     * @param checkRepository the check repository, needed only when a check id is being matched
+     * @param filter the same filter the rows came through
+     * @return the count, and whether counting stopped early
      */
-    private static long countProjectMarkers(IMarkerManager markerManager, String projectName)
+    private static MatchCount countMatching(IMarkerManager markerManager,
+        ICheckRepository checkRepository, Filter filter)
     {
-        return markerManager.markers().filter(marker -> {
-            IProject project = marker.getProject();
-            if (project == null)
-            {
-                return false;
-            }
-            return projectName == null || projectName.isEmpty() || project.getName().equals(projectName);
-        }).count();
+        java.util.stream.Stream<Marker> matching = markerManager.markers().filter(filter::matchesEdt);
+        long counted;
+        if (filter.hasCheckIdentityFilter())
+        {
+            counted = matching.map(marker -> toErrorInfo(marker, checkRepository, false))
+                .filter(error -> filter.matchesCheckIdentity(error.checkId, error.checkCode))
+                .limit(COMPACT_SCAN_CAP + 1L)
+                .count();
+        }
+        else
+        {
+            counted = matching.limit(COMPACT_SCAN_CAP + 1L).count();
+        }
+        return new MatchCount(Math.min(counted, COMPACT_SCAN_CAP), counted > COMPACT_SCAN_CAP);
+    }
+
+    /**
+     * A count that knows whether it is the whole answer.
+     */
+    static final class MatchCount
+    {
+        final long value;
+
+        final boolean atLeast;
+
+        MatchCount(long value, boolean atLeast)
+        {
+            this.value = value;
+            this.atLeast = atLeast;
+        }
+
+        boolean exceeds(long threshold)
+        {
+            return atLeast || value > threshold;
+        }
+
+        @Override
+        public String toString()
+        {
+            return atLeast ? "more than " + value : Long.toString(value); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -990,21 +1039,34 @@ public class ProjectProblemsReader
      * @return the markdown
      */
     /**
-     * The banner that goes in front of a capped project listing: what the project holds, what
-     * came back, and the two cheaper ways to ask.
+     * The banner in front of a capped listing: how many match what was asked, how many came back,
+     * and what to do about the difference.
+     * <p>
+     * Which advice is worth giving depends on whether the caller has already narrowed. Telling
+     * somebody who passed a check id to pass a check id is how this message used to read, and it
+     * made a working call look like a refusal.
+     * </p>
      *
-     * @param total markers the project holds in all
-     * @param returned markers this answer carries
+     * @param total how many markers match the filter
+     * @param returned how many this answer carries
+     * @param narrowed whether the caller already restricted the question
      * @return a markdown block ending in a blank line, ready to prefix the listing
      */
-    static String capNotice(long total, int returned)
+    static String capNotice(MatchCount total, int returned, boolean narrowed)
     {
-        return "# Too Many Project Markers\n\n**Total markers in project:** " + total //$NON-NLS-1$
-            + "\n**Returned below:** " + returned + " (capped)\n\nFor the whole picture ask for a " //$NON-NLS-1$ //$NON-NLS-2$
-            + "summary instead: `compact=true` groups every marker by check id, and it scans up to " //$NON-NLS-1$
-            + COMPACT_SCAN_CAP + " markers regardless of `limit` - so those counts are exact for a " //$NON-NLS-1$
-            + "project up to that size. To narrow instead, pass `objects=[...]`, `checkId=...`, or " //$NON-NLS-1$
-            + "`scope=session` for this session's changes only.\n\n"; //$NON-NLS-1$
+        StringBuilder notice = new StringBuilder("# More Matches Than Fit\n\n"); //$NON-NLS-1$
+        notice.append("**Matching this request:** ").append(total) //$NON-NLS-1$
+            .append("\n**Returned below:** ").append(returned).append(" (capped)\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        notice.append("For the whole picture ask for a summary instead: `compact=true` groups every " //$NON-NLS-1$
+            + "marker by check id, and it scans up to ").append(COMPACT_SCAN_CAP) //$NON-NLS-1$
+            .append(" markers regardless of `limit` - so those counts are exact for a project up to " //$NON-NLS-1$
+                + "that size."); //$NON-NLS-1$
+        notice.append(narrowed
+            ? " This request is already filtered, so the rest is more of the same: raise `limit` to " //$NON-NLS-1$
+                + "see further, or narrow again." //$NON-NLS-1$
+            : " To narrow instead, pass `objects=[...]`, `checkId=...`, or `scope=session` for this " //$NON-NLS-1$
+                + "session's changes only."); //$NON-NLS-1$
+        return notice.append("\n\n").toString(); //$NON-NLS-1$
     }
 
     private static String formatCompact(List<ErrorInfo> errors, String resolvedScope, String projectName,
@@ -1216,6 +1278,30 @@ public class ProjectProblemsReader
             this.sessionFqns = sessionFqns;
             this.sessionScope = sessionScope;
             this.fileFilter = fileFilter;
+        }
+
+        /**
+         * Whether a check id has to be matched on the mapped row.
+         *
+         * @return true when counting cannot skip the mapping step
+         */
+        boolean hasCheckIdentityFilter()
+        {
+            return checkId != null && !checkId.isEmpty();
+        }
+
+        /**
+         * Whether the caller restricted the question beyond naming a project.
+         * <p>
+         * The project name does not count: it says where to look, not what to look for.
+         * </p>
+         *
+         * @return true when a check, an object, a file or the session scope is in force
+         */
+        boolean isNarrowed()
+        {
+            return hasCheckIdentityFilter() || sessionScope || (fileFilter != null && !fileFilter.isEmpty())
+                || (objectFqns != null && !objectFqns.isEmpty());
         }
 
         boolean matchesEdt(Marker marker)
