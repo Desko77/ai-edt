@@ -47,6 +47,11 @@ than all of them.
   replaces a composition the adopted object does not have; extending adds an entry marked
   `Extended` where an adopted object really keeps its types, and leaves the inherited ones alone.
 
+- **When a parameter's description reads like one line and you need the rules.**
+  `edit_metadata operation=help topic=parameters` carries the full text of the parameters whose
+  schema description was shortened. Nothing was removed from the schema - every parameter is still
+  declared - so this is detail, not a second list.
+
 For BSL and 1C metadata this server beats grep-style search: it answers from the model.
 
 ## When not to use it

@@ -42,6 +42,14 @@ Two things worth knowing before the first call:
   not atomic, so read `batchResults[]` afterwards, redo the failed entries individually, then
   revalidate. Do not use a batch where each step must be checked before the next one.
 - `dryRun=true` previews a change without writing it.
+- `operation=help topic=parameters` gives the full rules of the parameters whose schema description
+  is a single line. The catalogue is sent whole before the first call, so the prose those parameters
+  used to carry lives here instead. Every parameter is still declared - nothing became
+  undiscoverable, only quieter.
+- `extend_object_type` adds a type to an object the extension BORROWED, marked `Extended`, leaving
+  the inherited ones alone. `set_object_type` does not work there and does not say so: an adopted
+  object keeps its types in the extension block, and setting a type wrote to a property it does not
+  have while answering `applied:true`.
 
 `edit_form` exposes the same form operations under a smaller surface. Prefer `edit_metadata` when
 form edits are chained with other metadata edits.
@@ -125,6 +133,6 @@ them: `extension_workshop operation=list_interceptors` and `project_admin operat
 | `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. |
 | `mxl_workshop` | Spreadsheet templates. Coordinates are 1-based. |
 | `xdto_workshop` | XDTO package schemas. Create the package with `edit_metadata` first. |
-| `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison. |
+| `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison. Borrowing writes the link that makes the extension actually extend, and a borrow that cannot write it fails rather than reporting success; calling borrow again repairs an object left unlinked by an older build. `borrow_module` needs `moduleType` wherever an object has more than one module. |
 | `external_object_workshop` | External data processor and report projects, which are standalone DT projects rather than configuration objects. |
 | `external_data_source_workshop` | Tables, fields and functions of an external data source. |
