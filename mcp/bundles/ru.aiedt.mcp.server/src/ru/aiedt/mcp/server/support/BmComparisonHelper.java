@@ -245,8 +245,43 @@ public final class BmComparisonHelper
     private static String describe(Throwable e)
     {
         String message = e.getMessage();
-        return message == null || message.isEmpty() ? e.getClass().getName()
-            : e.getClass().getSimpleName() + ": " + message; //$NON-NLS-1$
+        if (message != null && !message.isEmpty())
+        {
+            return e.getClass().getSimpleName() + ": " + message; //$NON-NLS-1$
+        }
+        // A bare type name is barely better than "null". The failures that arrive here carry no
+        // message at all - a guava precondition, an Eclipse assertion - and every one of them was
+        // thrown inside the environment's own comparison code, which the frame names precisely.
+        // Measured: "NullPointerException" alone said nothing, while
+        // "TopObjectInfo.setUuid" says a source object has no UUID and points at the data rather
+        // than at us.
+        return e.getClass().getName() + whereItCameFrom(e);
+    }
+
+    /**
+     * The first frame that belongs to the environment, which is where a message-less failure
+     * actually happened.
+     *
+     * @param e the failure.
+     * @return {@code " at Class.method"}, or the empty string when no such frame exists
+     */
+    private static String whereItCameFrom(Throwable e)
+    {
+        StackTraceElement[] frames = e.getStackTrace();
+        if (frames == null)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        for (StackTraceElement frame : frames)
+        {
+            String className = frame.getClassName();
+            if (className.startsWith("com._1c.")) //$NON-NLS-1$
+            {
+                return " at " + className.substring(className.lastIndexOf('.') + 1) //$NON-NLS-1$
+                    + "." + frame.getMethodName(); //$NON-NLS-1$
+            }
+        }
+        return ""; //$NON-NLS-1$
     }
 
     /**
