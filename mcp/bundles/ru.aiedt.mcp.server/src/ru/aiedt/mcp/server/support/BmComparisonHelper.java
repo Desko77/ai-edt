@@ -13,6 +13,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.eclipse.core.resources.IProject;
+
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.compare.core.CompareMergeProcessBatch;
 import com._1c.g5.v8.dt.compare.core.CompareMergeProcessDescriptor;
 import com._1c.g5.v8.dt.compare.core.ComparisonProcessHandle;
@@ -86,6 +90,17 @@ public final class BmComparisonHelper
 
         /** Why nothing could be said, when nothing could. */
         public String cannotTell;
+
+        /**
+         * What the environment thought of the directories it was handed, appended to a failure.
+         * <p>
+         * A comparison source on disk is expected to be a DT project, and the environment can say
+         * whether a directory looks like one. When a comparison dies, that answer is usually the
+         * whole explanation - so it travels with the failure instead of being left for whoever
+         * reads the workspace log.
+         * </p>
+         */
+        String sourceNote = ""; //$NON-NLS-1$
     }
 
     private BmComparisonHelper()
@@ -132,8 +147,11 @@ public final class BmComparisonHelper
                     return outcome;
                 }
             }
-            IComparisonDataSourceDescriptor main =
-                new V8ProjectComparisonDataSourceDescriptor(mainProjectName, null);
+            IComparisonDataSourceDescriptor main = ourSide(mainProjectName, outcome);
+            if (main == null)
+            {
+                return outcome;
+            }
 
             ComparisonProcessHandle handle = ancestor == null
                 ? new ComparisonProcessHandle(main, other, ComparisonScope.EMPTY_SCOPE)
@@ -164,10 +182,60 @@ public final class BmComparisonHelper
         }
         catch (Exception e)
         {
-            Activator.logWarning("Comparison failed: " + e.getMessage()); //$NON-NLS-1$
-            outcome.cannotTell = "the comparison could not be run: " + e.getMessage(); //$NON-NLS-1$
+            // Named by type, not only by message. The first live run answered "could not be run:
+            // null" - an NPE carries no message, so the report said nothing at all and the reason
+            // had to be hunted in the workspace log. A failure that cannot say what it was is the
+            // same defect as a success that did not happen.
+            outcome.cannotTell = "the comparison could not be run: " + describe(e) + outcome.sourceNote; //$NON-NLS-1$
+            Activator.logError("Comparison failed: " + describe(e), e); //$NON-NLS-1$
             return outcome;
         }
+    }
+
+    /**
+     * Names a failure by type as well as by message.
+     *
+     * @param e the failure.
+     * @return a description that is never empty
+     */
+    private static String describe(Throwable e)
+    {
+        String message = e.getMessage();
+        return message == null || message.isEmpty() ? e.getClass().getName()
+            : e.getClass().getSimpleName() + ": " + message; //$NON-NLS-1$
+    }
+
+    /**
+     * The open project that plays our side.
+     * <p>
+     * Built from the project itself rather than from its name and a guessed nature. The
+     * name-and-nature constructor takes a nature string, and there is no honest value to pass for
+     * it from here - a null went in on the first live run and came back as an exception with no
+     * message at all.
+     * </p>
+     *
+     * @param projectName the project name.
+     * @param outcome the answer being built, for the reason when the project is not there.
+     * @return the descriptor, or <code>null</code>
+     */
+    private static IComparisonDataSourceDescriptor ourSide(String projectName, Outcome outcome)
+    {
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            outcome.cannotTell = ProjectResolver.describeNotFound(projectName);
+            return null;
+        }
+        Activator activator = Activator.getDefault();
+        IV8ProjectManager projects = activator == null ? null : activator.getV8ProjectManager();
+        IV8Project v8Project = projects == null ? null : projects.getProject(project);
+        if (v8Project == null)
+        {
+            outcome.cannotTell = projectName
+                + " is in the workspace but is not a 1C project the environment recognises"; //$NON-NLS-1$
+            return null;
+        }
+        return new V8ProjectComparisonDataSourceDescriptor(v8Project);
     }
 
     /**
@@ -185,7 +253,17 @@ public final class BmComparisonHelper
             outcome.cannotTell = path + " is not a directory"; //$NON-NLS-1$
             return null;
         }
-        return new FileSystemComparisonDataSourceDescriptor(directory);
+        FileSystemComparisonDataSourceDescriptor descriptor =
+            new FileSystemComparisonDataSourceDescriptor(directory);
+        // Asked, not assumed, and not used to refuse: the environment may well read a layout this
+        // predicate does not recognise. It is recorded so that a failure can say what the sources
+        // looked like rather than leaving the caller to guess at the format.
+        if (!descriptor.storesValidDtProject())
+        {
+            outcome.sourceNote += ". " + path //$NON-NLS-1$
+                + " does not look like a DT project directory to the environment"; //$NON-NLS-1$
+        }
+        return descriptor;
     }
 
     /**
@@ -212,7 +290,11 @@ public final class BmComparisonHelper
             if (failure != null)
             {
                 outcome.status = "FAILED"; //$NON-NLS-1$
-                outcome.cannotTell = "the comparison failed: " + failure.getMessage(); //$NON-NLS-1$
+                // Named by type here too. The first fix named the type in one of the two failure
+                // paths and left this one saying "null" - the same silence, one line further on.
+                outcome.cannotTell = "the comparison failed: " + describe(failure) //$NON-NLS-1$
+                    + outcome.sourceNote;
+                Activator.logError("Comparison failed: " + describe(failure), failure); //$NON-NLS-1$
                 return;
             }
             ComparisonProcessStatus status = manager.getStatus(handle);
@@ -228,7 +310,7 @@ public final class BmComparisonHelper
             Thread.sleep(POLL_MS);
         }
         outcome.cannotTell = "the comparison did not finish within the time allowed; last status " //$NON-NLS-1$
-            + outcome.status;
+            + outcome.status + outcome.sourceNote;
     }
 
     /**
