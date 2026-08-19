@@ -47,8 +47,8 @@ import ru.aiedt.mcp.server.support.UiSync;
  * reference attributes), {@code modules} (CommonModule.A -> CommonModule.B via
  * call graph), {@code mixed} (both).
  * <p>
- * BFS runs inside a single {@code IBmModel.executeReadonlyTask}; cross-review
- * 1.38 lesson: never call {@code display.syncExec} inside a BFS loop.
+ * BFS runs inside a single {@code IBmModel.executeReadonlyTask}; never call
+ * {@code display.syncExec} inside a BFS loop.
  */
 public class DependencyGraphTool implements IMcpTool
 {

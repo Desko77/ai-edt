@@ -286,8 +286,7 @@ public class CodeTextSearcher
                 else if (retry.timedOut || retryInterrupted)
                 {
                     // Retry found nothing but did not finish - a plain "no matches" would hide
-                    // that the flexible-whitespace pass was cut short by the time budget
-                    // (codex MEDIUM).
+                    // that the flexible-whitespace pass was cut short by the time budget.
                     retryCutShort = true;
                 }
             }

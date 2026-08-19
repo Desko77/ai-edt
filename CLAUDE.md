@@ -19,8 +19,8 @@ assistants can work against the live EDT model instead of scraping project files
 
 ## Critical Rules
 
-- **ALWAYS BUILD WHEN CODE CHANGES ARE COMPLETE.** After finishing a set of Java changes and passing
-  cross-review, run the Maven/Tycho build yourself - do not ask for approval and do not defer it.
+- **ALWAYS BUILD WHEN CODE CHANGES ARE COMPLETE.** After finishing a set of Java changes, run the
+  Maven/Tycho build yourself - do not ask for approval and do not defer it.
 - **ALL CODE AND INTERFACE MUST BE IN ENGLISH.**
 - Before committing, verify `git diff --cached` carries no private data: real project or customer
   names, absolute local paths, IP addresses, credentials, non-default dev ports.

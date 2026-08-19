@@ -31,7 +31,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
  * objects. Designed for tools that traverse object graphs (e.g.
  * {@code dependency_graph}, {@code project_metrics} usage counters):
  * <p>
- * Cross-review (Sonnet, 1.38) lesson: calling {@code ReferenceLocator} from
+ * Learned the hard way: calling {@code ReferenceLocator} from
  * a BFS loop with one {@code display.syncExec} per node deadlocks the EDT UI
  * thread. This helper assumes the caller already owns a BM read-only
  * transaction (single {@code IBmModel.executeReadonlyTask}) and exposes pure

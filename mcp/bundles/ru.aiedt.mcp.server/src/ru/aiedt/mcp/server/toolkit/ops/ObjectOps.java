@@ -69,7 +69,7 @@ final class ObjectOps
         // Default server=true whenever the caller did not set it: EDT's common-module-type
         // check requires an execution context (server/client/externalConnection/serverCall),
         // and `global` is NOT one, so defaulting server=false on a global-only request would
-        // leave the module contextless and invalid (codex HIGH). An explicit server wins.
+        // leave the module contextless and invalid. An explicit server wins.
         boolean effectiveServer = server != null ? server : true;
         setBooleanProperty(module, "setServer", effectiveServer); //$NON-NLS-1$
         if (global != null)

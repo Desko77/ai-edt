@@ -28,7 +28,7 @@ import ru.aiedt.mcp.server.Activator;
  * Sequential pipeline that collects metrics for a project / subsystem:
  * objects, modules, methods, errors, tests, forms, debt indicators.
  * <p>
- * Cross-review (Sonnet, 1.38) lesson: parallel collection is not feasible due
+ * Learned the hard way: parallel collection is not feasible due
  * to workspace lock contention between BM read-tasks and IMarker API. The
  * pipeline runs sequentially. No cache between calls (stale-data risk); cache
  * scope is one collector instance.

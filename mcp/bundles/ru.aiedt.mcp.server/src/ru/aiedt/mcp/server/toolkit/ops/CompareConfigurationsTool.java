@@ -41,8 +41,8 @@ import ru.aiedt.mcp.server.support.UiSync;
  * <p>
  * <b>1.38 modes:</b> {@code projects} (two open EDT projects) or
  * {@code files} (two on-disk exports). VCS-aware modes (commits / branches /
- * bm_vs_disk) are deferred to 1.39 (cross-review HIGH F3+F17 — public
- * {@code IBmModel.reload()} not available).
+ * bm_vs_disk) are deferred to 1.39: public {@code IBmModel.reload()} is not
+ * available.
  */
 public class CompareConfigurationsTool implements IMcpTool
 {

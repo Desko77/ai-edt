@@ -35,7 +35,7 @@ import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess;
  * Helper for building BSL call graphs (caller/callee adjacency) for the
  * {@code dependency_graph level=modules} mode and similar tools.
  * <p>
- * Cross-review (Sonnet, 1.38) lesson: the existing
+ * Learned the hard way: the existing
  * {@code CallHierarchyReader} encapsulates Xtext {@code IReferenceFinder}
  * integration but only as part of a tool, not as a reusable helper. This class
  * exposes the reusable pieces. Reflection-free; depends only on Xtext + EDT

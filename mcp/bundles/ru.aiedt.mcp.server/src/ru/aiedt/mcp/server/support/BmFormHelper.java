@@ -391,7 +391,7 @@ public class BmFormHelper
                         // flow; this covers the FormItemsOps path through executeFormOperation.
                         // For a borrowed form in an extension, inherited ids live on the separate
                         // BaseForm top-object, so scan both - scanning only the override form
-                        // would let a new id collide with an inherited one (codex review).
+                        // would let a new id collide with an inherited one.
                         // On scan failure, REFUSE rather than continue from an unknown id-space
                         // (idCounter stays 0 -> duplicate ids); logging-and-continuing would
                         // re-introduce the L68 collision silently.

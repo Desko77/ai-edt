@@ -523,7 +523,7 @@ public class BmCommandInterfaceHelper
             ab = MdClassFactory.eINSTANCE.createAdjustableBoolean();
             // A fresh fragment's common value defaults to the shown state; the per-role
             // entry is the exception. Without this the EMF default (common=false) would
-            // hide the section for every role that has no exception (codex HIGH).
+            // hide the section for every role that has no exception.
             ab.setCommon(true);
             frag.setVisible(ab);
         }
@@ -564,7 +564,7 @@ public class BmCommandInterfaceHelper
         {
             ab = MdClassFactory.eINSTANCE.createAdjustableBoolean();
             // Fresh fragment: common defaults to shown so the per-role entry is the
-            // exception, not a hide-everything-else (codex HIGH).
+            // exception, not a hide-everything-else.
             ab.setCommon(true);
             frag.setVisible(ab);
         }

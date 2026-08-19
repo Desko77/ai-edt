@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
 
 /**
  * Static rules for detecting anti-patterns in 1C query text. 1.38 MVP uses
- * regex-based analysis (best-effort). Cross-review (Sonnet) note: full AST
+ * regex-based analysis (best-effort). Note: full AST
  * traversal via Xtext is more accurate but slower; for the 1.38 first cut
  * regex covers the most common cases (SELECT *, missing WHERE, virtual table
  * params). Deeper rules (CROSS JOIN without condition, nested subquery depth)
