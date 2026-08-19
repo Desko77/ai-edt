@@ -169,6 +169,9 @@ public class DocsLookupFacadeTool implements IMcpTool
                 + "property documentation, keyed by type name.\n"); //$NON-NLS-1$
             sb.append("- **get_object_help** - an object's own built-in help pages (F1 in " //$NON-NLS-1$
                 + "the 1C UI), keyed by object FQN.\n"); //$NON-NLS-1$
+            sb.append("- **system_enum_values** - the values a system enumeration can take, " //$NON-NLS-1$
+                + "under both names. Ask before writing after the dot: an unknown member is a " //$NON-NLS-1$
+                + "run-time error, not one the editor catches.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the " //$NON-NLS-1$
                 + "operation-picker guide.\n"); //$NON-NLS-1$
             return sb.toString();

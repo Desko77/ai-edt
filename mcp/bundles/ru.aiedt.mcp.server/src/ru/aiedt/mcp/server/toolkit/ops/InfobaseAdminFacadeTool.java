@@ -317,6 +317,15 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "synchronization. Pass its own action as syncOperation, not operation; " //$NON-NLS-1$
                 + "some syncOperation values (reseed_baseline, mark_synchronized, " //$NON-NLS-1$
                 + "recover_stuck_merge) are DANGEROUS.\n"); //$NON-NLS-1$
+            sb.append("- **start_client** - start a 1C client from a launch configuration, " //$NON-NLS-1$
+                + "without a debugger. Use it instead of building a 1cv8.exe command line.\n"); //$NON-NLS-1$
+            sb.append("- **branch_infobase** - bind a git branch to an application, so that " //$NON-NLS-1$
+                + "update_database refuses an infobase belonging to another branch. Actions: " //$NON-NLS-1$
+                + "current (default) / list / bind / unbind. For an extension project the " //$NON-NLS-1$
+                + "binding lives in the extension itself.\n"); //$NON-NLS-1$
+            sb.append("- **read_event_log** - read a FILE infobase's event log: who logged in, " //$NON-NLS-1$
+                + "what was posted, what the platform refused. Filterable by from / to / event " //$NON-NLS-1$
+                + "/ user / severity.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the operation-picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
             return sb.toString();

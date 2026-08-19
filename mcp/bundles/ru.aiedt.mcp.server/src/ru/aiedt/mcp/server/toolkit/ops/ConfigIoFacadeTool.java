@@ -274,6 +274,9 @@ public class ConfigIoFacadeTool implements IMcpTool
                 + "validate_for_export then runs automatically and blocks the dump on " //$NON-NLS-1$
                 + "dump-breakers (e.g. <help> without its HTML); pass skipValidation=true to " //$NON-NLS-1$
                 + "override. Synchronous.\n"); //$NON-NLS-1$
+            sb.append("- **unpack_external_binary** - turn a binary .epf or .erf into XML " //$NON-NLS-1$
+                + "sources. The first of two steps: import the XML afterwards to get a " //$NON-NLS-1$
+                + "project.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the operation-picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
             return sb.toString();
