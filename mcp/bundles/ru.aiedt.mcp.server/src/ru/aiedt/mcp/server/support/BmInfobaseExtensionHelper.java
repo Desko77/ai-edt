@@ -120,6 +120,19 @@ public final class BmInfobaseExtensionHelper
         r.infobaseName = ctx.infobaseName;
         try
         {
+            // The in-process lock below keeps this EDT's own callers apart. It says nothing
+            // about the EDT next door, and a Designer launched against an infobase another
+            // instance is already working on fails with a platform error about a locked
+            // configuration - or waits out the timeout. Neither names anybody.
+            MonopolyLock.Claim claim =
+                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "list_extension"); //$NON-NLS-1$
+            if (!claim.granted())
+            {
+                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
+                    + claim.heldBy;
+                r.failureKind = ErrorTags.BUSY.wire();
+                return r;
+            }
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
@@ -141,6 +154,7 @@ public final class BmInfobaseExtensionHelper
             }
             finally
             {
+                claim.close();
                 if (ctx.lock != null) ctx.lock.unlock();
             }
         }
@@ -172,6 +186,19 @@ public final class BmInfobaseExtensionHelper
         try
         {
             String name = (extensionName != null && !extensionName.isEmpty()) ? extensionName : null;
+            // The in-process lock below keeps this EDT's own callers apart. It says nothing
+            // about the EDT next door, and a Designer launched against an infobase another
+            // instance is already working on fails with a platform error about a locked
+            // configuration - or waits out the timeout. Neither names anybody.
+            MonopolyLock.Claim claim =
+                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "uninstall_extension"); //$NON-NLS-1$
+            if (!claim.granted())
+            {
+                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
+                    + claim.heldBy;
+                r.failureKind = ErrorTags.BUSY.wire();
+                return r;
+            }
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
@@ -188,6 +215,7 @@ public final class BmInfobaseExtensionHelper
             }
             finally
             {
+                claim.close();
                 if (ctx.lock != null) ctx.lock.unlock();
             }
         }
@@ -300,6 +328,19 @@ public final class BmInfobaseExtensionHelper
 
         try
         {
+            // The in-process lock below keeps this EDT's own callers apart. It says nothing
+            // about the EDT next door, and a Designer launched against an infobase another
+            // instance is already working on fails with a platform error about a locked
+            // configuration - or waits out the timeout. Neither names anybody.
+            MonopolyLock.Claim claim =
+                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "unpack_external_binary"); //$NON-NLS-1$
+            if (!claim.granted())
+            {
+                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
+                    + claim.heldBy;
+                r.failureKind = ErrorTags.BUSY.wire();
+                return r;
+            }
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
@@ -319,6 +360,7 @@ public final class BmInfobaseExtensionHelper
             }
             finally
             {
+                claim.close();
                 if (ctx.lock != null) ctx.lock.unlock();
             }
             // A conversion that returns without writing anything is a failure that
@@ -472,6 +514,19 @@ public final class BmInfobaseExtensionHelper
 
         try
         {
+            // The in-process lock below keeps this EDT's own callers apart. It says nothing
+            // about the EDT next door, and a Designer launched against an infobase another
+            // instance is already working on fails with a platform error about a locked
+            // configuration - or waits out the timeout. Neither names anybody.
+            MonopolyLock.Claim claim =
+                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_extension"); //$NON-NLS-1$
+            if (!claim.granted())
+            {
+                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
+                    + claim.heldBy;
+                r.failureKind = ErrorTags.BUSY.wire();
+                return r;
+            }
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
@@ -494,6 +549,7 @@ public final class BmInfobaseExtensionHelper
             }
             finally
             {
+                claim.close();
                 if (ctx.lock != null) ctx.lock.unlock();
             }
         }
@@ -580,6 +636,19 @@ public final class BmInfobaseExtensionHelper
 
         try
         {
+            // The in-process lock below keeps this EDT's own callers apart. It says nothing
+            // about the EDT next door, and a Designer launched against an infobase another
+            // instance is already working on fails with a platform error about a locked
+            // configuration - or waits out the timeout. Neither names anybody.
+            MonopolyLock.Claim claim =
+                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_configuration_to_cf"); //$NON-NLS-1$
+            if (!claim.granted())
+            {
+                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
+                    + claim.heldBy;
+                r.failureKind = ErrorTags.BUSY.wire();
+                return r;
+            }
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
@@ -598,6 +667,7 @@ public final class BmInfobaseExtensionHelper
             }
             finally
             {
+                claim.close();
                 if (ctx.lock != null) ctx.lock.unlock();
             }
         }
@@ -785,6 +855,19 @@ public final class BmInfobaseExtensionHelper
             {
                 command.updateDatabaseConfiguration();
             }
+            // The in-process lock below keeps this EDT's own callers apart. It says nothing
+            // about the EDT next door, and a Designer launched against an infobase another
+            // instance is already working on fails with a platform error about a locked
+            // configuration - or waits out the timeout. Neither names anybody.
+            MonopolyLock.Claim claim =
+                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "install_extension"); //$NON-NLS-1$
+            if (!claim.granted())
+            {
+                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
+                    + claim.heldBy;
+                r.failureKind = ErrorTags.BUSY.wire();
+                return r;
+            }
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
@@ -806,6 +889,7 @@ public final class BmInfobaseExtensionHelper
             }
             finally
             {
+                claim.close();
                 if (ctx.lock != null) ctx.lock.unlock();
             }
         }

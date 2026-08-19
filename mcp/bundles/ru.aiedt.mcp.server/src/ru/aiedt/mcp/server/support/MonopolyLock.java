@@ -145,6 +145,73 @@ public final class MonopolyLock implements AutoCloseable
     }
 
     /**
+     * The outcome of one attempt: either the claim, or who has it.
+     * <p>
+     * One object rather than a take followed by a separate question, because between those two
+     * calls the holder can finish - and the answer then read "another instance is working on this
+     * infobase. null", which looks like a defect in the tool rather than a race the caller can
+     * simply retry.
+     * </p>
+     */
+    public static final class Claim
+        implements AutoCloseable
+    {
+        /** The claim, when this caller got it. */
+        public final MonopolyLock held;
+
+        /** Who has it, when this caller did not. Never {@code null} when {@link #held} is. */
+        public final String heldBy;
+
+        Claim(MonopolyLock held, String heldBy)
+        {
+            this.held = held;
+            this.heldBy = heldBy;
+        }
+
+        /** @return true when the caller may proceed */
+        public boolean granted()
+        {
+            return held != null;
+        }
+
+        @Override
+        public void close()
+        {
+            if (held != null)
+            {
+                held.close();
+            }
+        }
+    }
+
+    /**
+     * Tries to claim something, and says who has it when the answer is no.
+     *
+     * @param subject what is being claimed.
+     * @param operation what is being done to it.
+     * @return the outcome, never {@code null}
+     */
+    public static Claim claim(String subject, String operation)
+    {
+        if (subject == null || subject.isEmpty())
+        {
+            // Nothing identifies this infobase - a connection string this cannot read, a kind of
+            // reference it does not know. That is NOT contention, and answering "somebody else is
+            // working on it" would refuse an operation for a neighbour that does not exist. The
+            // caller proceeds unclaimed, exactly as it did before claims existed.
+            return new Claim(new MonopolyLock(null), null);
+        }
+        Optional<MonopolyLock> taken = take(subject, operation);
+        if (taken.isPresent())
+        {
+            return new Claim(taken.get(), null);
+        }
+        String who = heldBy(subject);
+        return new Claim(null, who != null ? who
+            : "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$
+    }
+
+    /**
      * Who holds a claim, in words meant for whoever reads the failed answer.
      *
      * @param subject the same identity {@link #take} was called with.

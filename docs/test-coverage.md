@@ -11,7 +11,7 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | ui-bound | 51 | needs a display or an extension point |
 | workspace-bound | 68 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **359** | across 150 test classes |
+| **total** | **359** | across 151 test classes |
 
 ## untested (0)
 
@@ -488,7 +488,7 @@ closes.
 | 9-16 | 40 |
 | 17+ | 13 |
 
-1601 test methods across 150 test classes; 99 classes have a test of their own, median 9 methods each.
+1606 test methods across 151 test classes; 99 classes have a test of their own, median 9 methods each.
 
 Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 99 of 359 classes have one: 95 are covered by the registry-wide contract sweep and 68 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 

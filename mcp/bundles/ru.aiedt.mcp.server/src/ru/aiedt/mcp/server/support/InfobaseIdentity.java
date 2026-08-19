@@ -55,7 +55,22 @@ public final class InfobaseIdentity
         {
             return null;
         }
-        InfobaseReference infobase = ((IInfobaseApplication)application).getInfobase();
+        return of(((IInfobaseApplication)application).getInfobase());
+    }
+
+    /**
+     * The identity of an infobase named directly.
+     * <p>
+     * The thick-client helpers hold a reference rather than an application, and deriving the key
+     * twice by two routes is how two spellings of one infobase end up as two locks - which is the
+     * same as no lock, only harder to notice.
+     * </p>
+     *
+     * @param infobase the reference, possibly {@code null}.
+     * @return a stable identity, or {@code null} when the infobase does not say where it is
+     */
+    public static String of(InfobaseReference infobase)
+    {
         IConnectionString connection = infobase == null ? null : infobase.getConnectionString();
         if (connection instanceof FileConnectionString)
         {
