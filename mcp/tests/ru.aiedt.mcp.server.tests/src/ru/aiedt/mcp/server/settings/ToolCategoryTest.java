@@ -108,7 +108,7 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void totalToolCountIsOneHundredTwentySix()
+    public void totalToolCountMatchesTheGroupTable()
     {
         // Recounted directly from the group table. F3d facades landed on 118; the 2026-07-28
         // data_access removal dropped execute_query, browse_data and data_access (-3 -> 115) and
@@ -130,9 +130,15 @@ public class ToolCategoryTest
         // On 2026-08-19 read_event_log joined APPLICATIONS (+1 -> 126): it reads a file beside
         // the infobase and writes nothing, but it belongs with the infobase group because that
         // is what a preset limiting access to a live base is expected to cover.
+        // The running tally above ends at 126 while the assertion stood at 127: one addition
+        // was made without a line here. Left as found rather than invented - the number the
+        // test enforces is the group table, and the log is a courtesy that fell a step behind.
+        // On 2026-08-19 compare_three_way joined ANALYSIS (+1 -> 128): it compares an open
+        // project against a delivery and the delivery both came from, and writes nothing -
+        // the merge that such a comparison leads to is deliberately not implemented.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(127, ToolCategory.getTotalToolCount());
+        assertEquals(128, ToolCategory.getTotalToolCount());
     }
 
     @Test

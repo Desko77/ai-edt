@@ -57,6 +57,7 @@ import ru.aiedt.mcp.server.toolkit.ops.ProjectCleaner;
 import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
 import ru.aiedt.mcp.server.toolkit.ops.CodeTemplateTool;
 import ru.aiedt.mcp.server.toolkit.ops.CompareConfigurationsTool;
+import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchConfigCreator;
@@ -1136,6 +1137,7 @@ public class McpHttpEndpoint
             new DetectQueryAntiPatternsTool(),
             new ProjectMetricsTool(),
             new CompareConfigurationsTool(),
+            new ThreeWayComparisonTool(),
             new ValidateForExportTool(),
             new ImpactAnalysisTool(),
             new AuditRoleRightsTool(),

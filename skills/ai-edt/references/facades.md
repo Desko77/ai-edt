@@ -12,7 +12,7 @@ parameters of one. When this file and the server disagree, the server is right.
 | Facade | Operations |
 |---|---|
 | `code_search` | `text_search`, `object_references`, `method_references`, `resolve_symbol`, `call_hierarchy`, `symbol_info`, `content_assist`, `outgoing_structures`, `help` |
-| `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help` |
+| `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `compare_three_way`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help` |
 | `security_audit` | `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help` |
 
 `audit_role_rights mode=orphans` is the exception to this group being read-only: it lists rights that point at objects no longer in the configuration, and with `apply=true` removes them. It removes only what it could prove is gone - what it could not decide is listed separately and left alone - and `apply=true` is refused when the active preset forbids writing.

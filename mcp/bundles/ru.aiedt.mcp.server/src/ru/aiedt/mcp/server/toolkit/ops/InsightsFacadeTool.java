@@ -240,6 +240,8 @@ public class InsightsFacadeTool implements IMcpTool
                 return new DependencyGraphTool().execute(params);
             case "compare_configurations": //$NON-NLS-1$
                 return new CompareConfigurationsTool().execute(params);
+            case "compare_three_way": //$NON-NLS-1$
+                return new ThreeWayComparisonTool().execute(params);
             case "detect_query_anti_patterns": //$NON-NLS-1$
                 return new DetectQueryAntiPatternsTool().execute(params);
             case "generate_health_snapshot": //$NON-NLS-1$
@@ -270,6 +272,9 @@ public class InsightsFacadeTool implements IMcpTool
                 + "objects or modules.\n"); //$NON-NLS-1$
             sb.append("- **compare_configurations** - diff two projects or two " //$NON-NLS-1$
                 + "Designer-XML exports.\n"); //$NON-NLS-1$
+            sb.append("- **compare_three_way** - an open project against a new delivery and " //$NON-NLS-1$
+                + "the delivery both came from, which is what an update on support is. " //$NON-NLS-1$
+                + "Reads only.\n"); //$NON-NLS-1$
             sb.append("- **detect_query_anti_patterns** - scan queries for known " //$NON-NLS-1$
                 + "performance anti-patterns.\n"); //$NON-NLS-1$
             sb.append("- **generate_health_snapshot** - composite errors+metadata+" //$NON-NLS-1$
@@ -317,7 +322,8 @@ public class InsightsFacadeTool implements IMcpTool
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
             "project_metrics", "dependency_graph", //$NON-NLS-1$ //$NON-NLS-2$
-            "compare_configurations", "detect_query_anti_patterns", //$NON-NLS-1$ //$NON-NLS-2$
+            "compare_configurations", "compare_three_way", //$NON-NLS-1$ //$NON-NLS-2$
+            "detect_query_anti_patterns", //$NON-NLS-1$
             "generate_health_snapshot", "impact_analysis", //$NON-NLS-1$ //$NON-NLS-2$
             "object_summary", "describe_db_tables", //$NON-NLS-1$ //$NON-NLS-2$
             "semantic_metadata_search")) //$NON-NLS-1$

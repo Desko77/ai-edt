@@ -253,6 +253,7 @@
 | `detect_query_anti_patterns` | Чтение | Ищет производительные и структурные проблемы запросов. |
 | `project_metrics` | Чтение | Рассчитывает метрики проекта и состава конфигурации. |
 | `compare_configurations` | Чтение | Сравнивает две конфигурации или проекта EDT. |
+| `compare_three_way` | Чтение | Сравнивает открытый проект с новой поставкой и с поставкой, от которой обе произошли. Только читает: объединение не выполняет. |
 | `impact_analysis` | Чтение | Оценивает последствия изменения или удаления объекта. |
 | `extension_diff` | Чтение | Сравнивает расширение с основной конфигурацией. |
 | `list_interceptors` | Чтение | Показывает перехватчики методов расширения. |
@@ -361,7 +362,7 @@
 <details>
 <summary><code>insights</code> - аналитика конфигурации</summary>
 
-Операции: `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help`.
+Операции: `project_metrics`, `dependency_graph`, `compare_configurations`, `compare_three_way`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help`.
 
 Все операции только читают проект.
 </details>
