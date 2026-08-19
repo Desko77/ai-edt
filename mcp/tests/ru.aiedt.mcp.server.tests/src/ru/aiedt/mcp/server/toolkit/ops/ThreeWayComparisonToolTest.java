@@ -104,6 +104,44 @@ public class ThreeWayComparisonToolTest
     }
 
     /**
+     * A comparison that is no longer awaited must be called off, and the wait must be short.
+     * <p>
+     * Both come from one live incident. The first run waited half an hour, and when it gave up it
+     * simply walked away: the comparison stayed pending inside EDT, held a transaction open, and
+     * the session could no longer shut down - its UI thread stopped responding entirely. A tool
+     * that can leave the environment in that state is worse than one that answers slowly, so the
+     * wait is bounded in seconds and the exit path stops the work it started.
+     * </p>
+     */
+    @Test
+    public void theWaitIsShortAndTheWorkIsCalledOff()
+    {
+        String source = ru.aiedt.mcp.server.support.BmComparisonHelper.class.getName();
+        assertNotNull(source);
+
+        boolean cancels = false;
+        for (java.lang.reflect.Method m : ru.aiedt.mcp.server.support.BmComparisonHelper.class
+            .getDeclaredMethods())
+        {
+            if ("cancel".equals(m.getName()))
+            {
+                cancels = true;
+            }
+        }
+        assertTrue("giving up on a comparison must call it off, not abandon it", cancels); //$NON-NLS-1$
+    }
+
+    /** Long work belongs in the Pending flow, where waiting costs nobody a session. */
+    @Test
+    public void itRunsThroughThePendingFlowAndCountsAsHeavy()
+    {
+        assertTrue("a comparison is heavy work", //$NON-NLS-1$
+            ru.aiedt.mcp.server.support.HeavyTools.isHeavy("compare_three_way")); //$NON-NLS-1$
+        assertTrue("and must resume by runKey rather than block the caller", //$NON-NLS-1$
+            ru.aiedt.mcp.server.support.GenericPending.applies("compare_three_way")); //$NON-NLS-1$
+    }
+
+    /**
      * The merge entry points must stay out of reach. Checked against the class rather than the
      * source text so the test still holds if the file is reorganised.
      */

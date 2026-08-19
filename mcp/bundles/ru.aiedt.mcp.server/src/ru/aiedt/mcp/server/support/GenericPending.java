@@ -61,6 +61,7 @@ public final class GenericPending
             "audit_role_rights", //$NON-NLS-1$
             "code_review", //$NON-NLS-1$
             "compare_configurations", //$NON-NLS-1$
+            "compare_three_way", //$NON-NLS-1$
             "dcs_search", //$NON-NLS-1$
             "dependency_graph", //$NON-NLS-1$
             "detect_query_anti_patterns", //$NON-NLS-1$

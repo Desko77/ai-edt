@@ -44,6 +44,7 @@ public final class HeavyTools
         "vanessa", //$NON-NLS-1$
         "code_review", //$NON-NLS-1$
         "compare_configurations", //$NON-NLS-1$
+        "compare_three_way", //$NON-NLS-1$
         "dependency_graph", //$NON-NLS-1$
         "generate_health_snapshot", //$NON-NLS-1$
         "project_metrics", //$NON-NLS-1$

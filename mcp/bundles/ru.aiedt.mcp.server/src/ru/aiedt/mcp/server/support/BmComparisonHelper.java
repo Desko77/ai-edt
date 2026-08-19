@@ -55,8 +55,18 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class BmComparisonHelper
 {
-    /** How long to wait for a comparison before giving up on it. */
-    private static final long WAIT_LIMIT_MS = 30L * 60L * 1000L;
+    /**
+     * How long to wait for a comparison before giving up on it and calling it off.
+     * <p>
+     * Ninety seconds, not thirty minutes. The first live run waited half an hour and in doing so
+     * held a whole EDT session hostage: the comparison could not proceed, and the session would not
+     * shut down while it was pending, so every attempt to install a build was refused for as long
+     * as the wait lasted. A slow answer is a nuisance; an environment that cannot be closed is a
+     * different order of problem, and the tool has no business creating one. Anything longer than
+     * this goes through the Pending flow, where waiting costs nobody a session.
+     * </p>
+     */
+    private static final long WAIT_LIMIT_MS = 90L * 1000L;
 
     /** How often to ask the manager what the status is. */
     private static final long POLL_MS = 500L;
@@ -193,6 +203,31 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Calls off a comparison that is no longer being waited for.
+     *
+     * @param manager the comparison service.
+     * @param handle the process to stop.
+     * @return what to append to the reason, saying whether it could be stopped
+     */
+    private static String cancel(IComparisonManager manager, ComparisonProcessHandle handle)
+    {
+        try
+        {
+            manager.cancel(handle);
+            return ", and it was called off"; //$NON-NLS-1$
+        }
+        catch (Exception cannotCancel)
+        {
+            Activator.logWarning("Could not call off a comparison: " //$NON-NLS-1$
+                + describe(cannotCancel));
+            // Said out loud rather than swallowed: a comparison still running holds contexts open,
+            // and whoever reads this needs to know the environment may not close cleanly.
+            return ", and it could NOT be called off (" + describe(cannotCancel) //$NON-NLS-1$
+                + ") - it may still be running"; //$NON-NLS-1$
+        }
+    }
+
+    /**
      * Names a failure by type as well as by message.
      *
      * @param e the failure.
@@ -309,8 +344,13 @@ public final class BmComparisonHelper
             }
             Thread.sleep(POLL_MS);
         }
+        // Called off, not abandoned. A comparison left pending keeps its virtual project contexts
+        // open, and EDT will not shut down while they are - which is how the first live run turned
+        // a slow answer into a session that refused to close. Whoever asked has stopped waiting, so
+        // the work stops too.
+        String calledOff = cancel(manager, handle);
         outcome.cannotTell = "the comparison did not finish within the time allowed; last status " //$NON-NLS-1$
-            + outcome.status + outcome.sourceNote;
+            + outcome.status + calledOff + outcome.sourceNote;
     }
 
     /**
