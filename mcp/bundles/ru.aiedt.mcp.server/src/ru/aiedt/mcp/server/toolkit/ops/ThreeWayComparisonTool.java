@@ -92,6 +92,8 @@ public class ThreeWayComparisonTool
             .put("oneSided", outcome.oneSided) //$NON-NLS-1$
             .put("blockingProblems", outcome.blockingProblems) //$NON-NLS-1$
             .put("problems", outcome.problems) //$NON-NLS-1$
+            // Present only when the list is empty for a reason other than there being no problems.
+            .put("problemsNote", outcome.problemsNote) //$NON-NLS-1$
             .toJson();
     }
 }

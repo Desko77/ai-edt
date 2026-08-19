@@ -98,6 +98,15 @@ public final class BmComparisonHelper
         /** How many of those problems block a merge. */
         public int blockingProblems;
 
+        /**
+         * Why the problem list is empty, when it is empty because it was not read.
+         * <p>
+         * An empty list and an unread one are different answers, and only one of them means
+         * "nothing stands in the way".
+         * </p>
+         */
+        public String problemsNote;
+
         /** Why nothing could be said, when nothing could. */
         public String cannotTell;
 
@@ -374,20 +383,57 @@ public final class BmComparisonHelper
         {
             walk(root, outcome);
         }
-        List<MergeProblem> problems = manager.getMergeProblems(handle);
-        if (problems != null)
+        readProblems(manager, handle, outcome);
+    }
+
+    /**
+     * Reads the merge problems, when there are any to read.
+     * <p>
+     * Guarded separately from the tree, and this is not defensive habit - it is measured. Merge
+     * problems come out of the pre-merge validation, and a comparison that will never be merged
+     * never runs it: {@code getMergeProblems} then fails an internal assertion. That threw away a
+     * finished tree twice over, because the counts were already computed and the exception
+     * discarded the whole answer on the way out.
+     * </p>
+     * <p>
+     * So the absence of problems is reported as what it is - not asked, because no merge was
+     * prepared - rather than as an empty list, which would read as "nothing stands in the way".
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process.
+     * @param outcome the answer being built.
+     */
+    private static void readProblems(IComparisonManager manager, ComparisonProcessHandle handle,
+        Outcome outcome)
+    {
+        List<MergeProblem> problems;
+        try
         {
-            for (MergeProblem problem : problems)
+            problems = manager.getMergeProblems(handle);
+        }
+        catch (Exception notApplicable)
+        {
+            outcome.problemsNote = "not read: merge problems come from the pre-merge validation, " //$NON-NLS-1$
+                + "which a comparison that is never merged does not run (" //$NON-NLS-1$
+                + describe(notApplicable) + ")"; //$NON-NLS-1$
+            return;
+        }
+        if (problems == null)
+        {
+            outcome.problemsNote = "not read: the environment offered no problem list"; //$NON-NLS-1$
+            return;
+        }
+        for (MergeProblem problem : problems)
+        {
+            if (problem.isBlocking())
             {
-                if (problem.isBlocking())
-                {
-                    outcome.blockingProblems++;
-                    outcome.problems.add(0, "BLOCKING: " + problem.getMessage()); //$NON-NLS-1$
-                }
-                else
-                {
-                    outcome.problems.add(problem.getMessage());
-                }
+                outcome.blockingProblems++;
+                outcome.problems.add(0, "BLOCKING: " + problem.getMessage()); //$NON-NLS-1$
+            }
+            else
+            {
+                outcome.problems.add(problem.getMessage());
             }
         }
     }
