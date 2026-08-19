@@ -550,6 +550,25 @@ public class DatabaseUpdater implements IMcpTool
                 }
             }
 
+            // Asked again, right here. Between the guard above and this line the call opens a
+            // shell, may wait on the interface, and stops running clients one by one - seconds at
+            // best, and on a large configuration considerably more. A branch checked out in that
+            // window would have been checked against a state that no longer holds, and what the
+            // guard exists to prevent is precisely the update that restructures the wrong infobase.
+            // Cheap to ask, and the only moment where the answer is still true when it matters.
+            String branchChanged =
+                branchMismatch(project, infobaseProject, applicationId, ignoreBranchBinding);
+            if (branchChanged != null)
+            {
+                ToolResult switched = ToolResult.error("The branch changed while this update was "
+                    + "being prepared, and now says another infobase. " + branchChanged);
+                switched.put("applicationId", applicationId); //$NON-NLS-1$
+                switched.put("projectName", projectName); //$NON-NLS-1$
+                switched.put("freedClients", freedClients); //$NON-NLS-1$
+                switched.put("branchRecheckedBeforeUpdate", true); //$NON-NLS-1$
+                return switched.toJson();
+            }
+
             ApplicationUpdateState stateAfter = appManager.update(application, updateType, context, monitor);
 
             boolean updateComplete = stateAfter == ApplicationUpdateState.UPDATED;
