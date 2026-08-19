@@ -27,6 +27,18 @@ public final class McpServerMeta
     public static final String PROTOCOL_VERSION = "2025-11-25"; //$NON-NLS-1$
 
     /**
+     * The revision that dropped the handshake: version, identity and capabilities travel in every
+     * request instead.
+     * <p>
+     * Kept apart from {@link #PROTOCOL_VERSION} on purpose. That one is what an {@code initialize}
+     * handshake answers with, and a client that reaches the handshake at all is a client of the
+     * older era - answering it with a revision that has no handshake would name a revision in
+     * which the very question it just asked does not exist.
+     * </p>
+     */
+    public static final String MODERN_PROTOCOL_VERSION = "2026-07-28"; //$NON-NLS-1$
+
+    /**
      * Revisions this server will agree to when a client asks for one.
      * <p>
      * The four listed differ, for the traffic that actually crosses this wire, only in
@@ -45,6 +57,7 @@ public final class McpServerMeta
      */
     public static final java.util.Set<String> SUPPORTED_PROTOCOL_VERSIONS =
         java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(java.util.Arrays.asList(
+            MODERN_PROTOCOL_VERSION,
             "2025-11-25", //$NON-NLS-1$
             "2025-06-18", //$NON-NLS-1$
             "2025-03-26", //$NON-NLS-1$
@@ -62,6 +75,36 @@ public final class McpServerMeta
      */
     public static final String PLUGIN_VERSION;
 
+    /**
+     * Asks a server what it speaks, before anything else is sent. Required of every server from
+     * {@link #MODERN_PROTOCOL_VERSION}, and the one method a client may call without knowing which
+     * era the server belongs to.
+     */
+    public static final String METHOD_SERVER_DISCOVER = "server/discover"; //$NON-NLS-1$
+
+    /** Where a request keeps its metadata: inside {@code params}, not beside it. */
+    public static final String PARAM_META = "_meta"; //$NON-NLS-1$
+
+    /** Metadata key: the protocol version this one request speaks. Required from the modern era. */
+    public static final String META_PROTOCOL_VERSION =
+        "io.modelcontextprotocol/protocolVersion"; //$NON-NLS-1$
+
+    /** Metadata key: what the client can do. Required from the modern era. */
+    public static final String META_CLIENT_CAPABILITIES =
+        "io.modelcontextprotocol/clientCapabilities"; //$NON-NLS-1$
+
+    /** Metadata key: who the client is. Advisory - never used to decide behaviour. */
+    public static final String META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"; //$NON-NLS-1$
+
+    /** Metadata key: who answered. Put on every modern result. */
+    public static final String META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"; //$NON-NLS-1$
+
+    /** Every modern result says what kind it is; an ordinary one is complete. */
+    public static final String RESULT_TYPE = "resultType"; //$NON-NLS-1$
+
+    /** The result kind of an ordinary, finished answer. */
+    public static final String RESULT_COMPLETE = "complete"; //$NON-NLS-1$
+
     /** JSON-RPC: request body could not be parsed. Declared for completeness, never emitted. */
     public static final int ERROR_PARSE = -32700;
 
@@ -76,6 +119,19 @@ public final class McpServerMeta
 
     /** JSON-RPC: anything that escaped request handling. */
     public static final int ERROR_INTERNAL = -32603;
+
+    /**
+     * The request named a protocol version this server does not serve. Its {@code data} carries the
+     * versions that ARE served, so the client can retry on one of them rather than give up.
+     * <p>
+     * Allocated by the specification, not by us: the range from {@code -32020} belongs to MCP, and
+     * emitting anything else from it would be inventing a meaning for somebody else's number.
+     * </p>
+     */
+    public static final int ERROR_UNSUPPORTED_PROTOCOL_VERSION = -32022;
+
+    /** The request needs a client capability the request itself did not declare. */
+    public static final int ERROR_MISSING_CLIENT_CAPABILITY = -32021;
 
     /** Header naming the negotiated MCP revision. Declared for completeness, never emitted. */
     public static final String HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version"; //$NON-NLS-1$

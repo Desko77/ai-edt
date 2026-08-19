@@ -1302,8 +1302,15 @@ public class McpHttpEndpoint
             // Routed by looking for the method name in the raw text rather than by parsing it. The
             // protocol layer parses it properly a moment later; all this decides is which of the two
             // ways of running it is used, and it costs nothing to be wrong.
-            boolean initialize = body.contains(quoted(McpServerMeta.METHOD_INITIALIZE));
             boolean toolCall = body.contains(quoted(McpServerMeta.METHOD_TOOLS_CALL));
+
+            // The handshake, on the other hand, is worth being right about: it is the one answer
+            // that hands out a session id. A tool call carrying the word "initialize" somewhere in
+            // its arguments - a module being written, a search being run - used to be enough to get
+            // one, and a session id in an answer to a stateless caller is a claim that there is a
+            // session. Excluding tool calls costs nothing and removes the only way that happens in
+            // practice.
+            boolean initialize = !toolCall && body.contains(quoted(McpServerMeta.METHOD_INITIALIZE));
 
             String document;
             try

@@ -39,6 +39,7 @@ Counted with the rule above (`.java` files present in the tree at `e28560f`), no
 | Of those, reimplemented independently | 177 files (waves 1a-1c, 2a-2c, 3a-3b, tools/impl helpers + batches 1-2 + batch-4 validate_query+revalidate+clean_project + batch-5 breakpoint trio + inspect/profiling quartet + debug-control quartet + debug_yaxunit_tests + debug_launch + get_tags/get_objects_by_tags + run_yaxunit_tests + get_platform_documentation + add_metadata_attribute + get_form_screenshot + delete_metadata_object + update_database + write_module_source + rename_metadata_object + find_references + the 29 unit tests) | 2026-07-16 |
 | Still upstream-derived | **0 files** (0 plugin + 0 unit tests) | 2026-07-16 |
 | Written in this fork after the fork point | 117 files | 2026-07-14 |
+| Size of the tree today (all authored in this fork) | 484 files (348 plugin + 136 tests) | 2026-08-19 |
 
 No upstream-derived code remains anywhere in the reactor: the HTTP transport, the MCP/JSON-RPC
 layer, the OSGi activation and startup, the tool interface and registry, all ~50 tool

@@ -18,6 +18,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -316,6 +317,241 @@ public class McpRequestRouterTest
 
     // ---- helpers ----
 
+
+    // ---- the 2026-07-28 era, and the promise that the older one is untouched ----
+
+    /** A modern request carries its version in params._meta and needs no handshake first. */
+    @Test
+    public void aModernRequestIsServedWithoutAnyHandshake()
+    {
+        JsonObject result = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, modernParams()))
+            .getAsJsonObject("result");
+
+        assertNotNull("a modern tools/list was not answered", result); //$NON-NLS-1$
+        assertEquals("every modern result declares its kind", //$NON-NLS-1$
+            "complete", result.get("resultType").getAsString());
+        JsonObject meta = result.getAsJsonObject("_meta");
+        assertNotNull("a modern result should identify the server", meta); //$NON-NLS-1$
+        assertNotNull(meta.getAsJsonObject("io.modelcontextprotocol/serverInfo"));
+    }
+
+    /**
+     * The promise this whole change rests on: a caller of the older revision sees exactly what it
+     * saw before.
+     * <p>
+     * Not "sees something compatible" - sees no new fields at all. A client that has been parsing
+     * this answer for a year did not ask for extra members, and the specification puts the burden
+     * of tolerating an absent resultType on the CLIENT of the new revision, not on servers of the
+     * old one.
+     * </p>
+     */
+    @Test
+    public void aLegacyRequestIsAnsweredExactlyAsBefore()
+    {
+        JsonObject result = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, null))
+            .getAsJsonObject("result");
+
+        assertNotNull(result);
+        assertNull("resultType must not appear for a caller of the older revision", //$NON-NLS-1$
+            result.get("resultType"));
+        assertNull("_meta must not appear for a caller of the older revision", //$NON-NLS-1$
+            result.get("_meta"));
+        assertNull("cache hints must not appear for a caller of the older revision", //$NON-NLS-1$
+            result.get("ttlMs"));
+        assertNull("cache hints must not appear for a caller of the older revision", //$NON-NLS-1$
+            result.get("cacheScope"));
+    }
+
+    /**
+     * The catalogue says how long it keeps, so a client need not fetch it on every reconnect.
+     * <p>
+     * This is the largest single answer the server sends - the whole tool catalogue, before the
+     * client has made one call - and it is the same answer every time until somebody flips a preset.
+     * </p>
+     */
+    @Test
+    public void theCatalogueSaysHowLongItKeeps()
+    {
+        JsonObject result = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, modernParams()))
+            .getAsJsonObject("result");
+
+        assertNotNull("the catalogue must say how long it keeps", result.get("ttlMs")); //$NON-NLS-1$
+        assertTrue("a freshness window of zero is not a window", //$NON-NLS-1$
+            result.get("ttlMs").getAsLong() > 0L);
+        assertEquals("the catalogue reflects this workspace, so no shared cache may hold it", //$NON-NLS-1$
+            "private", result.get("cacheScope").getAsString());
+    }
+
+    /**
+     * Two identical requests produce byte-identical catalogues.
+     * <p>
+     * The registry keeps tools in a hash map, whose iteration order is not part of its contract and
+     * shifts as the map grows. A caching client compares what it received with what it has; a model
+     * whose prompt cache holds the catalogue loses the hit on the first differing byte. Both want
+     * the same bytes, so the order is fixed on the way out.
+     * </p>
+     */
+    @Test
+    public void theCatalogueComesOutInTheSameOrderEveryTime()
+    {
+        registerScrambledCatalogue();
+
+        String first =
+            send(request(1, McpServerMeta.METHOD_TOOLS_LIST, null)).getAsJsonObject("result").toString();
+        String second =
+            send(request(2, McpServerMeta.METHOD_TOOLS_LIST, null)).getAsJsonObject("result").toString();
+
+        assertEquals("the catalogue must be byte-identical between calls", first, second); //$NON-NLS-1$
+    }
+
+    /** And the fixed order is by name, so it is predictable rather than merely repeatable. */
+    @Test
+    public void theCatalogueIsOrderedByName()
+    {
+        registerScrambledCatalogue();
+
+        JsonArray tools = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, null))
+            .getAsJsonObject("result").getAsJsonArray("tools");
+
+        assertTrue("an empty catalogue proves nothing about its order", tools.size() > 1); //$NON-NLS-1$
+        String previous = null;
+        for (int i = 0; i < tools.size(); i++)
+        {
+            String name = tools.get(i).getAsJsonObject().get("name").getAsString();
+            if (previous != null)
+            {
+                assertTrue("the catalogue is out of order at " + name + " after " + previous, //$NON-NLS-1$ //$NON-NLS-2$
+                    previous.compareTo(name) < 0);
+            }
+            previous = name;
+        }
+    }
+
+    /** server/discover answers whoever asks, because it is asked before the era is known. */
+    @Test
+    public void discoverNamesEveryServedVersionAndIdentifiesTheServer()
+    {
+        JsonObject result = send(request("d1", McpServerMeta.METHOD_SERVER_DISCOVER, modernParams()))
+            .getAsJsonObject("result");
+
+        assertNotNull("server/discover was not answered", result); //$NON-NLS-1$
+        assertEquals("complete", result.get("resultType").getAsString());
+        String versions = result.get("supportedVersions").toString();
+        assertTrue("the current revision is not among the served ones: " + versions, //$NON-NLS-1$
+            versions.contains(McpServerMeta.MODERN_PROTOCOL_VERSION));
+        assertTrue("an older served revision disappeared: " + versions, //$NON-NLS-1$
+            versions.contains(McpServerMeta.PROTOCOL_VERSION));
+        assertNotNull("discovery must say what the server can do", //$NON-NLS-1$
+            result.getAsJsonObject("capabilities"));
+        assertNotNull("a cacheable result must say how long it keeps", result.get("ttlMs")); //$NON-NLS-1$
+        assertEquals("the answer names this workspace, so no shared cache may hold it", //$NON-NLS-1$
+            "private", result.get("cacheScope").getAsString());
+    }
+
+    /** Discovery answers a caller that named no version at all - that is what a probe looks like. */
+    @Test
+    public void discoverAnswersAProbeThatNamesNoVersion()
+    {
+        JsonObject response = send(request("d2", McpServerMeta.METHOD_SERVER_DISCOVER, null));
+
+        assertNull("a probe must not be refused", response.get("error")); //$NON-NLS-1$
+        assertNotNull(response.getAsJsonObject("result").get("supportedVersions"));
+    }
+
+    /**
+     * A version nobody serves is refused with the versions that ARE served, so the caller has
+     * somewhere to go.
+     */
+    @Test
+    public void anUnservedVersionIsRefusedWithSomewhereToRetry()
+    {
+        String params = "{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"1900-01-01\","
+            + "\"io.modelcontextprotocol/clientCapabilities\":{}}}";
+
+        JsonObject error = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, params))
+            .getAsJsonObject("error");
+
+        assertNotNull("an unserved version was not refused", error); //$NON-NLS-1$
+        assertEquals(-32022, error.get("code").getAsInt());
+        JsonObject data = error.getAsJsonObject("data");
+        assertNotNull("the refusal must carry the served versions", data); //$NON-NLS-1$
+        assertEquals("1900-01-01", data.get("requested").getAsString());
+        assertTrue("the served versions are not listed: " + data, //$NON-NLS-1$
+            data.get("supported").toString().contains(McpServerMeta.MODERN_PROTOCOL_VERSION));
+    }
+
+    /**
+     * Declaring a version but omitting the capabilities is invalid params, NOT an unsupported
+     * version - the caller must be sent to fix the field it left out.
+     */
+    @Test
+    public void modernMetadataMissingARequiredFieldIsInvalidParams()
+    {
+        String params = "{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""
+            + McpServerMeta.MODERN_PROTOCOL_VERSION + "\"}}";
+
+        JsonObject error = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, params))
+            .getAsJsonObject("error");
+
+        assertNotNull(error);
+        assertEquals(-32602, error.get("code").getAsInt());
+        assertTrue("the message should name the field that is missing: " + error, //$NON-NLS-1$
+            error.get("message").getAsString().contains("clientCapabilities"));
+    }
+
+    /**
+     * Two eras on one connection, in either order, each answered in its own shape.
+     * <p>
+     * The point of deciding the era per request is that nothing is remembered between requests. A
+     * server that latched onto the first caller it saw would serve the second one the wrong shape -
+     * and would do it silently, because both shapes parse.
+     * </p>
+     */
+    @Test
+    public void erasDoNotLeakIntoEachOtherOnOneServer()
+    {
+        JsonObject legacyFirst = send(request(1, McpServerMeta.METHOD_TOOLS_LIST, null))
+            .getAsJsonObject("result");
+        JsonObject modern = send(request(2, McpServerMeta.METHOD_TOOLS_LIST, modernParams()))
+            .getAsJsonObject("result");
+        JsonObject legacyAgain = send(request(3, McpServerMeta.METHOD_TOOLS_LIST, null))
+            .getAsJsonObject("result");
+
+        assertNull("the first legacy answer was decorated", legacyFirst.get("resultType")); //$NON-NLS-1$
+        assertNotNull("the modern answer between them lost its kind", modern.get("resultType")); //$NON-NLS-1$
+        assertNull("a legacy caller was served the modern shape after a modern one asked", //$NON-NLS-1$
+            legacyAgain.get("resultType"));
+    }
+
+    /**
+     * A modern caller is served without ever having sent a handshake, twice in a row.
+     * <p>
+     * This is what stateless means in practice, and it is worth a test of its own: no ordering
+     * requirement, no first call that unlocks the rest.
+     * </p>
+     */
+    @Test
+    public void aModernCallerNeedsNoFirstCall()
+    {
+        registry.register(stub("alpha", "Alpha tool", "{\"type\":\"object\"}")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        for (int attempt = 1; attempt <= 2; attempt++)
+        {
+            JsonObject result = send(request(attempt, McpServerMeta.METHOD_TOOLS_LIST, modernParams()))
+                .getAsJsonObject("result");
+
+            assertEquals("attempt " + attempt + " was not served", //$NON-NLS-1$ //$NON-NLS-2$
+                1, result.getAsJsonArray("tools").size());
+        }
+    }
+
+    private static String modernParams()
+    {
+        return "{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""
+            + McpServerMeta.MODERN_PROTOCOL_VERSION
+            + "\",\"io.modelcontextprotocol/clientCapabilities\":{}}}";
+    }
+
     private JsonObject send(String document)
     {
         return JsonParser.parseString(handler.processRequest(document)).getAsJsonObject();
@@ -346,6 +582,24 @@ public class McpRequestRouterTest
         params.append(",\"arguments\":"); //$NON-NLS-1$
         params.append(argumentsJson != null ? argumentsJson : "{}"); //$NON-NLS-1$
         return request(id, McpServerMeta.METHOD_TOOLS_CALL, params.append('}').toString());
+    }
+
+    /**
+     * Fills the registry in an order that is not the answer.
+     * <p>
+     * Registration order is not iteration order - the registry keeps tools in a hash map - so this
+     * does not by itself guarantee the unsorted reading would come out wrong. What it does
+     * guarantee is that nothing along the way is quietly relying on the order things went in, and
+     * with six names the odds of the hash landing them alphabetically by accident are small enough
+     * that removing the sort gets caught.
+     * </p>
+     */
+    private void registerScrambledCatalogue()
+    {
+        for (String name : new String[] {"zulu", "alpha", "mike", "bravo", "yankee", "charlie"}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        {
+            registry.register(stub(name, name + " tool", "{\"type\":\"object\"}")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
     }
 
     private static IMcpTool stub(String name, String description, String schema)

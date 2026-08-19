@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.wire;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,7 @@ import ru.aiedt.mcp.server.McpHttpEndpoint;
 import ru.aiedt.mcp.server.OperatorSignal;
 import ru.aiedt.mcp.server.settings.HistorySettings;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.wire.jsonrpc.DiscoverResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.InitializeResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcRequest;
 import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcResponse;
@@ -32,6 +35,7 @@ import ru.aiedt.mcp.server.wire.jsonrpc.ToolsListResult;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.FailureShape;
 import ru.aiedt.mcp.server.support.GenericPending;
+import ru.aiedt.mcp.server.support.InstanceRegistry;
 import ru.aiedt.mcp.server.support.MutatorIdempotency;
 import ru.aiedt.mcp.server.support.MutatorIdempotencyStore;
 import ru.aiedt.mcp.server.support.PendingExecutor;
@@ -102,6 +106,19 @@ public class McpRequestRouter
 
     private static final String EMPTY = ""; //$NON-NLS-1$
 
+    /**
+     * How long a discovery answer stays fresh. An hour: what it reports - served revisions,
+     * capabilities, identity - changes only when the plugin itself is replaced, and that restarts
+     * the server anyway.
+     */
+    private static final long DISCOVER_TTL_MS = 3_600_000L;
+
+    /**
+     * Who may cache it. Private, not public: the answer names the workspace this EDT has open, and
+     * a shared cache would hand one developer's workspace name to another.
+     */
+    private static final String CACHE_SCOPE_PRIVATE = "private"; //$NON-NLS-1$
+
     private final McpToolCatalog toolRegistry;
 
     /**
@@ -144,10 +161,25 @@ public class McpRequestRouter
                 return failure(requestId, McpServerMeta.ERROR_INVALID_REQUEST, MSG_INVALID_REQUEST);
             }
 
+            // Which era this ONE request speaks, decided from the request alone. Nothing is
+            // remembered between requests, so a legacy and a modern client may interleave.
+            ProtocolEra era = ProtocolEra.of(request);
+            String refusal = refuseUnservableRequest(requestId, era);
+            if (refusal != null)
+            {
+                return refusal;
+            }
+
             String method = request.getMethod();
+            if (McpServerMeta.METHOD_SERVER_DISCOVER.equals(method))
+            {
+                // Answered whatever era asked: this is the method a client uses precisely when it
+                // does not yet know which era the server belongs to.
+                return answer(requestId, buildDiscoverResult(), era);
+            }
             if (McpServerMeta.METHOD_INITIALIZE.equals(method))
             {
-                return answer(requestId, buildInitializeResult(request));
+                return answer(requestId, buildInitializeResult(request), era);
             }
             if (McpServerMeta.METHOD_INITIALIZED.equals(method))
             {
@@ -155,11 +187,11 @@ public class McpRequestRouter
             }
             if (McpServerMeta.METHOD_TOOLS_LIST.equals(method))
             {
-                return answer(requestId, buildToolsList());
+                return answer(requestId, buildToolsList(), era);
             }
             if (McpServerMeta.METHOD_TOOLS_CALL.equals(method))
             {
-                return callTool(request, requestId);
+                return callTool(request, requestId, era);
             }
             return failure(requestId, McpServerMeta.ERROR_METHOD_NOT_FOUND, MSG_METHOD_NOT_FOUND);
         }
@@ -259,6 +291,58 @@ public class McpRequestRouter
     }
 
     /**
+     * Turns a request this server cannot serve into the answer the specification requires.
+     * <p>
+     * Two refusals, deliberately kept apart. A version this server does not serve is answered with
+     * the versions it DOES serve, so the client can retry on one of them instead of giving up. A
+     * modern request missing a required metadata field is invalid params - a different problem with
+     * a different fix, and telling the caller the version was wrong would send it to change the one
+     * thing that was right.
+     * </p>
+     *
+     * @param requestId the id to echo.
+     * @param era what the request turned out to be.
+     * @return the refusal document, or null when the request is servable.
+     */
+    private static String refuseUnservableRequest(Object requestId, ProtocolEra era)
+    {
+        if (era.getKind() == ProtocolEra.Kind.UNSUPPORTED)
+        {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("supported", new ArrayList<>(McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS)); //$NON-NLS-1$
+            data.put("requested", era.getRequestedVersion()); //$NON-NLS-1$
+            return GsonHolder.toJson(JsonRpcResponse.error(requestId,
+                McpServerMeta.ERROR_UNSUPPORTED_PROTOCOL_VERSION,
+                "Unsupported protocol version", data)); //$NON-NLS-1$
+        }
+        if (era.getKind() == ProtocolEra.Kind.MALFORMED)
+        {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("missing", era.getMissing()); //$NON-NLS-1$
+            return GsonHolder.toJson(JsonRpcResponse.error(requestId,
+                McpServerMeta.ERROR_INVALID_PARAMS,
+                "A request declaring a protocol version must also carry " //$NON-NLS-1$
+                    + String.join(", ", era.getMissing()) + " in params._meta", //$NON-NLS-1$ //$NON-NLS-2$
+                data));
+        }
+        return null;
+    }
+
+    /**
+     * Builds what {@code server/discover} answers.
+     *
+     * @return the discovery result
+     */
+    private static DiscoverResult buildDiscoverResult()
+    {
+        return new DiscoverResult(new ArrayList<>(McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS),
+            "Works against a running 1C:EDT: BSL, metadata, managed forms, queries, validation, " //$NON-NLS-1$
+                + "debugging and the infobase. Every tool needs EDT open with the target project " //$NON-NLS-1$
+                + "loaded - there is no headless mode.", //$NON-NLS-1$
+            DISCOVER_TTL_MS, CACHE_SCOPE_PRIVATE);
+    }
+
+    /**
      * Answers the handshake.
      * <p>
      * A revision the client asks for is granted when this server actually implements it, and
@@ -279,7 +363,7 @@ public class McpRequestRouter
                 : McpServerMeta.PROTOCOL_VERSION;
 
         return new InitializeResult(revision, McpServerMeta.SERVER_NAME, McpServerMeta.PLUGIN_VERSION,
-            McpServerMeta.AUTHOR, ru.aiedt.mcp.server.support.InstanceRegistry.selfTitle());
+            McpServerMeta.AUTHOR, InstanceRegistry.selfTitle());
     }
 
     /**
@@ -296,7 +380,13 @@ public class McpRequestRouter
     private ToolsListResult buildToolsList()
     {
         ToolsListResult catalogue = new ToolsListResult();
-        for (IMcpTool tool : toolRegistry.getEnabledTools())
+        // Sorted by name, because the registry hands them over in the order of a hash map. The
+        // catalogue is the same catalogue either way, but a client caching it - or a model whose
+        // prompt cache holds it - only benefits when the bytes come out the same each time. The
+        // ordering is a property of the wire, so it is imposed here rather than in the registry.
+        List<IMcpTool> listed = new ArrayList<>(toolRegistry.getEnabledTools());
+        listed.sort(Comparator.comparing(IMcpTool::getName));
+        for (IMcpTool tool : listed)
         {
             JsonElement schema = JsonParser.parseString(tool.getInputSchema());
             catalogue.addTool(tool.getName(), tool.getDescription(), schema);
@@ -309,9 +399,10 @@ public class McpRequestRouter
      *
      * @param request the tools/call request
      * @param requestId the id to echo
+     * @param era which revision the caller speaks, so the answer is shaped for it
      * @return the response document
      */
-    private String callTool(JsonRpcRequest request, Object requestId)
+    private String callTool(JsonRpcRequest request, Object requestId, ProtocolEra era)
     {
         String toolName = request.getToolName();
         IMcpTool tool = toolName != null ? toolRegistry.getTool(toolName) : null;
@@ -323,7 +414,7 @@ public class McpRequestRouter
         {
             // Not an error on purpose: an agent that is handed a protocol error gives up, while an
             // agent that is handed instructions asks the human to act on them.
-            return answer(requestId, ToolCallResult.text(disabledToolMessage(toolName)));
+            return answer(requestId, ToolCallResult.text(disabledToolMessage(toolName)), era);
         }
 
         Map<String, String> arguments = flattenArguments(request.getArguments());
@@ -366,7 +457,8 @@ public class McpRequestRouter
                 + " bytes; its payload was truncated to " + responseLimit //$NON-NLS-1$
                 + " bytes before this notice. Narrow the request (add filters, or an offset/limit) " //$NON-NLS-1$
                 + "or call a more specific tool.]"; //$NON-NLS-1$
-            return answer(requestId, ToolCallResult.text(withPlainSignal(result + notice, capSignal)));
+            return answer(requestId,
+                ToolCallResult.text(withPlainSignal(result + notice, capSignal)), era);
         }
         if (piiRedactEnabled() && tool.getResponseType() != IMcpTool.ResponseType.IMAGE)
         {
@@ -379,7 +471,7 @@ public class McpRequestRouter
         OperatorSignal signal = consumeUserSignal();
         boolean plainTextMode = isPlainTextMode();
 
-        return answer(requestId, shapeResult(tool, arguments, result, signal, plainTextMode));
+        return answer(requestId, shapeResult(tool, arguments, result, signal, plainTextMode), era);
     }
 
     /** Whether 152-FZ PII masking is enabled in the preferences (default off). */
@@ -907,11 +999,56 @@ public class McpRequestRouter
      *
      * @param requestId the id to echo
      * @param result the payload
+     * @param era which revision the caller speaks
      * @return the response document
      */
-    private static String answer(Object requestId, Object result)
+    private static String answer(Object requestId, Object result, ProtocolEra era)
     {
-        return GsonHolder.toJson(JsonRpcResponse.success(requestId, result));
+        Object body = era.isModern() ? asModernResult(result) : result;
+        return GsonHolder.toJson(JsonRpcResponse.success(requestId, body));
+    }
+
+    /**
+     * Adds what the current revision requires of every result, and only for callers of it.
+     * <p>
+     * A result gains {@code resultType} and the server's identity in {@code _meta}. Callers of the
+     * older revisions get the bytes they got before, unchanged - the specification tells THEM to
+     * treat an absent {@code resultType} as complete, and adding fields to an answer somebody has
+     * been parsing for a year is a change nobody asked for.
+     * </p>
+     *
+     * @param result the result as its own type builds it.
+     * @return the result as a tree, decorated.
+     */
+    private static JsonElement asModernResult(Object result)
+    {
+        JsonElement tree = GsonHolder.get().toJsonTree(result);
+        if (!tree.isJsonObject())
+        {
+            return tree;
+        }
+        JsonObject body = tree.getAsJsonObject();
+        if (!body.has(McpServerMeta.RESULT_TYPE))
+        {
+            body.addProperty(McpServerMeta.RESULT_TYPE, McpServerMeta.RESULT_COMPLETE);
+        }
+        if (result instanceof CacheableResult)
+        {
+            CacheableResult cacheable = (CacheableResult)result;
+            body.addProperty("ttlMs", cacheable.getTtlMs()); //$NON-NLS-1$
+            body.addProperty("cacheScope", cacheable.getCacheScope()); //$NON-NLS-1$
+        }
+        JsonObject meta = body.has(McpServerMeta.PARAM_META)
+            && body.get(McpServerMeta.PARAM_META).isJsonObject()
+                ? body.getAsJsonObject(McpServerMeta.PARAM_META) : new JsonObject();
+        JsonObject serverInfo = new JsonObject();
+        serverInfo.addProperty("name", McpServerMeta.SERVER_NAME); //$NON-NLS-1$
+        serverInfo.addProperty("version", McpServerMeta.PLUGIN_VERSION); //$NON-NLS-1$
+        serverInfo.addProperty("title", //$NON-NLS-1$
+            InstanceRegistry.selfTitle());
+        meta.add(McpServerMeta.META_SERVER_INFO, serverInfo);
+        body.add(McpServerMeta.PARAM_META, meta);
+        return body;
     }
 
     /**

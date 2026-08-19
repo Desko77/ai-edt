@@ -12,8 +12,22 @@ import java.util.List;
 /**
  * The result of a {@code tools/list}: the catalogue a client uses to decide what it can call.
  */
-public class ToolsListResult
+public class ToolsListResult implements ru.aiedt.mcp.server.wire.CacheableResult
 {
+    /**
+     * How long the catalogue stays fresh.
+     * <p>
+     * Five minutes, and the number is a compromise with a reason. What the catalogue describes
+     * changes only when the plugin is replaced or a person flips a tool preset - the first restarts
+     * the server anyway, and the second is the case that stops this being an hour. Somebody who
+     * turns a preset off expects it to take effect; bounding the wait at five minutes keeps that
+     * true while still letting a client skip the catalogue on every reconnect within a working
+     * session. When this server learns to say {@code toolsListChanged}, the number can go up,
+     * because staleness will then be corrected rather than waited out.
+     * </p>
+     */
+    private static final long TTL_MS = 300_000L;
+
     private final List<ToolInfo> tools = new ArrayList<>();
 
     /**
@@ -34,6 +48,29 @@ public class ToolsListResult
      *
      * @return the tools, never <code>null</code>
      */
+    @Override
+    public long getTtlMs()
+    {
+        return TTL_MS;
+    }
+
+    /**
+     * Who may hold the catalogue.
+     * <p>
+     * Private. It is not a public fact: it reflects the presets of this workspace and the tools
+     * this EDT happens to have, so an intermediary handing one developer's catalogue to another
+     * would be handing over the wrong answer - and, with a restricting preset in play, a more
+     * permissive one than the second developer is meant to see.
+     * </p>
+     *
+     * @return {@link ru.aiedt.mcp.server.wire.CacheableResult#SCOPE_PRIVATE}
+     */
+    @Override
+    public String getCacheScope()
+    {
+        return SCOPE_PRIVATE;
+    }
+
     public List<ToolInfo> getTools()
     {
         return tools;

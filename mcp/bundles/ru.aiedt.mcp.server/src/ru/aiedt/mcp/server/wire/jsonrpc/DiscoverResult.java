@@ -1,0 +1,141 @@
+/**
+ * AI-EDT - 1C AI tools for EDT
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server.wire.jsonrpc;
+
+import java.util.List;
+
+/**
+ * What {@code server/discover} answers: which protocol revisions this server serves, what it can
+ * do, and who it is.
+ * <p>
+ * From revision {@code 2026-07-28} there is no handshake to carry this, and every server is
+ * required to answer this one method. It is also how a client that supports both eras finds out
+ * which one it is talking to without guessing: a server of the older era does not know the method
+ * and says so, and that answer is itself the signal.
+ * </p>
+ * <p>
+ * The result is cacheable and says so ({@code ttlMs}, {@code cacheScope}), because a client that
+ * has to ask this before every conversation pays for the answer every time.
+ * </p>
+ */
+public class DiscoverResult
+{
+    /** Every ordinary result declares its kind; this one is always a finished answer. */
+    private final String resultType = ru.aiedt.mcp.server.wire.McpServerMeta.RESULT_COMPLETE;
+
+    private final List<String> supportedVersions;
+
+    private final Capabilities capabilities;
+
+    private final String instructions;
+
+    private final long ttlMs;
+
+    private final String cacheScope;
+
+    /**
+     * Builds the answer.
+     *
+     * @param supportedVersions the revisions served, newest first.
+     * @param instructions natural-language guidance for a model using this server.
+     * @param ttlMs how long the answer stays fresh.
+     * @param cacheScope {@code public} when shared caches may hold it, {@code private} otherwise.
+     */
+    public DiscoverResult(List<String> supportedVersions, String instructions, long ttlMs,
+        String cacheScope)
+    {
+        this.supportedVersions = supportedVersions;
+        this.capabilities = new Capabilities();
+        this.instructions = instructions;
+        this.ttlMs = ttlMs;
+        this.cacheScope = cacheScope;
+    }
+
+    /**
+     * Returns the kind of this result.
+     *
+     * @return always {@code complete}
+     */
+    public String getResultType()
+    {
+        return resultType;
+    }
+
+    /**
+     * Returns the revisions this server serves.
+     *
+     * @return the versions, newest first
+     */
+    public List<String> getSupportedVersions()
+    {
+        return supportedVersions;
+    }
+
+    /**
+     * Returns what this server can do.
+     *
+     * @return the capabilities
+     */
+    public Capabilities getCapabilities()
+    {
+        return capabilities;
+    }
+
+    /**
+     * Returns the guidance offered to a model using this server.
+     *
+     * @return the instructions
+     */
+    public String getInstructions()
+    {
+        return instructions;
+    }
+
+    /**
+     * Returns how long this answer stays fresh.
+     *
+     * @return the lifetime in milliseconds
+     */
+    public long getTtlMs()
+    {
+        return ttlMs;
+    }
+
+    /**
+     * Returns who may cache this answer.
+     *
+     * @return {@code public} or {@code private}
+     */
+    public String getCacheScope()
+    {
+        return cacheScope;
+    }
+
+    /**
+     * What this server can do. Tools, and nothing else - the same answer the handshake gives, so
+     * the two eras cannot describe the server differently.
+     */
+    public static class Capabilities
+    {
+        private final Tools tools = new Tools();
+
+        /**
+         * Returns the tools capability. Its mere presence is the announcement.
+         *
+         * @return the tools capability
+         */
+        public Tools getTools()
+        {
+            return tools;
+        }
+
+        /** Announced by being there; it carries no settings of its own. */
+        public static class Tools
+        {
+        }
+    }
+}

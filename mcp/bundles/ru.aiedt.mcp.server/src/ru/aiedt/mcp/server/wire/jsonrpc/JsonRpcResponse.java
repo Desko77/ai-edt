@@ -60,9 +60,23 @@ public class JsonRpcResponse
      */
     public static JsonRpcResponse error(Object id, int code, String message)
     {
+        return error(id, code, message, null);
+    }
+
+    /**
+     * Builds a failed response carrying what the caller needs to act on it.
+     *
+     * @param id the id of the request being answered
+     * @param code one of the {@code McpServerMeta.ERROR_*} codes
+     * @param message what went wrong; may be <code>null</code>
+     * @param data the payload the caller acts on; null leaves it off the wire
+     * @return the response
+     */
+    public static JsonRpcResponse error(Object id, int code, String message, Object data)
+    {
         JsonRpcResponse response = new JsonRpcResponse();
         response.id = id;
-        response.error = new JsonRpcError(code, message);
+        response.error = new JsonRpcError(code, message).withData(data);
         return response;
     }
 
