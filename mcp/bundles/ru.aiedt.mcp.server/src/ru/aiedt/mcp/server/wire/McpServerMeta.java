@@ -130,7 +130,15 @@ public final class McpServerMeta
      */
     public static final int ERROR_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
-    /** The request needs a client capability the request itself did not declare. */
+    /**
+     * The request needs a client capability the request itself did not declare.
+     * <p>
+     * Taken from the core schema of {@code 2026-07-28}, which allocates {@code -32020} onwards to
+     * the protocol and says in the same breath that {@code -32002} and {@code -32003} are retired
+     * and not to be reused. The tasks extension's own draft still cites {@code -32003} for this;
+     * where the two disagree the core schema is the one clients are built against.
+     * </p>
+     */
     public static final int ERROR_MISSING_CLIENT_CAPABILITY = -32021;
 
     /** Header naming the negotiated MCP revision. Declared for completeness, never emitted. */
@@ -138,6 +146,24 @@ public final class McpServerMeta
 
     /** Header carrying the session id handed out on initialize. */
     public static final String HEADER_SESSION_ID = "MCP-Session-Id"; //$NON-NLS-1$
+
+    /** Result kind: not the answer, a handle to where the answer will be. */
+    public static final String RESULT_TASK = "task"; //$NON-NLS-1$
+
+    /** The tasks extension, by its reverse-DNS name. */
+    public static final String EXTENSION_TASKS = "io.modelcontextprotocol/tasks"; //$NON-NLS-1$
+
+    /** Key under which capabilities - a client's or this server's - list their extensions. */
+    public static final String CAPABILITY_EXTENSIONS = "extensions"; //$NON-NLS-1$
+
+    /** Method: read a task's state. */
+    public static final String METHOD_TASKS_GET = "tasks/get"; //$NON-NLS-1$
+
+    /** Method: answer a task's outstanding input requests. */
+    public static final String METHOD_TASKS_UPDATE = "tasks/update"; //$NON-NLS-1$
+
+    /** Method: ask a task to stop. */
+    public static final String METHOD_TASKS_CANCEL = "tasks/cancel"; //$NON-NLS-1$
 
     /** Method: capability handshake. */
     public static final String METHOD_INITIALIZE = "initialize"; //$NON-NLS-1$

@@ -30,6 +30,7 @@ import ru.aiedt.mcp.server.wire.jsonrpc.DiscoverResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.InitializeResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcRequest;
 import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcResponse;
+import ru.aiedt.mcp.server.wire.jsonrpc.TaskResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.ToolCallResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.ToolsListResult;
 import ru.aiedt.mcp.server.support.ErrorTags;
@@ -40,6 +41,7 @@ import ru.aiedt.mcp.server.support.MutatorIdempotency;
 import ru.aiedt.mcp.server.support.MutatorIdempotencyStore;
 import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
+import ru.aiedt.mcp.server.support.TaskDirectory;
 import ru.aiedt.mcp.server.support.ResponseCap;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.ToolGate;
@@ -112,6 +114,18 @@ public class McpRequestRouter
      * the server anyway.
      */
     private static final long DISCOVER_TTL_MS = 3_600_000L;
+
+    /** The two marks a pending answer always carries, checked before anything is parsed. */
+    private static final String PENDING_STATUS_MARK = "\"Pending\""; //$NON-NLS-1$
+
+    private static final String PENDING_KEY_MARK = "\"runKey\""; //$NON-NLS-1$
+
+    /**
+     * Size beyond which a result cannot be a pending answer. A pending answer is a handful of
+     * fields and a sentence of advice; this is generous by an order of magnitude, and it keeps the
+     * check off the large results it would otherwise scan on every call.
+     */
+    private static final int MAX_PENDING_ENVELOPE_CHARS = 4096;
 
     /**
      * Who may cache it. Private, not public: the answer names the workspace this EDT has open, and
@@ -192,6 +206,12 @@ public class McpRequestRouter
             if (McpServerMeta.METHOD_TOOLS_CALL.equals(method))
             {
                 return callTool(request, requestId, era);
+            }
+            if (McpServerMeta.METHOD_TASKS_GET.equals(method)
+                || McpServerMeta.METHOD_TASKS_CANCEL.equals(method)
+                || McpServerMeta.METHOD_TASKS_UPDATE.equals(method))
+            {
+                return handleTask(request, requestId, era, method);
             }
             return failure(requestId, McpServerMeta.ERROR_METHOD_NOT_FOUND, MSG_METHOD_NOT_FOUND);
         }
@@ -288,6 +308,184 @@ public class McpRequestRouter
             }
         }
         return id;
+    }
+
+    /**
+     * Serves the three methods of the tasks extension.
+     * <p>
+     * They exist only in the current revision, so a caller of the older one is told the method does
+     * not exist - which is true for it. What is NOT required here is the extension declaration: the
+     * task id is itself proof that this server handed the caller a task, and it only does that for
+     * a caller that declared. Demanding the declaration again on the poll would refuse a client
+     * that is holding a handle this server gave it, which helps nobody.
+     * </p>
+     *
+     * @param request the request.
+     * @param requestId the id to echo.
+     * @param era the era it speaks.
+     * @param method which of the three it is.
+     * @return the answer document
+     */
+    private String handleTask(JsonRpcRequest request, Object requestId, ProtocolEra era, String method)
+    {
+        if (!era.isModern())
+        {
+            return failure(requestId, McpServerMeta.ERROR_METHOD_NOT_FOUND, MSG_METHOD_NOT_FOUND);
+        }
+        String taskId = taskIdOf(request);
+        if (taskId == null || taskId.isEmpty())
+        {
+            return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
+                "tasks methods need a taskId"); //$NON-NLS-1$
+        }
+        TaskDirectory directory = TaskDirectory.getInstance();
+        if (McpServerMeta.METHOD_TASKS_CANCEL.equals(method))
+        {
+            if (!directory.cancel(taskId))
+            {
+                return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
+                    "Failed to cancel task: no task with id " + taskId); //$NON-NLS-1$
+            }
+            return answer(requestId, new java.util.LinkedHashMap<String, Object>(), era);
+        }
+        if (McpServerMeta.METHOD_TASKS_UPDATE.equals(method))
+        {
+            // Acknowledged and nothing more, because this server never asks a task for input: no
+            // run here pauses on a question. The specification says to ignore responses to keys
+            // that are not outstanding, and here none ever are. Answering a bare acknowledgement is
+            // the honest reading of that; refusing would tell a client it did something wrong.
+            if (directory.poll(taskId) == null)
+            {
+                return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
+                    "Failed to update task: no task with id " + taskId); //$NON-NLS-1$
+            }
+            return answer(requestId, new java.util.LinkedHashMap<String, Object>(), era);
+        }
+        TaskDirectory.Task task = directory.poll(taskId);
+        if (task == null)
+        {
+            return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
+                "Failed to retrieve task: no task with id " + taskId); //$NON-NLS-1$
+        }
+        return answer(requestId, TaskResult.state(task, finishedResultOf(task), failureOf(task)), era);
+    }
+
+    /**
+     * Reads {@code params.taskId}.
+     *
+     * @param request the request.
+     * @return the id, or null when the request carried none.
+     */
+    private static String taskIdOf(JsonRpcRequest request)
+    {
+        if (request == null || request.getParams() == null)
+        {
+            return null;
+        }
+        Object id = request.getParams().get("taskId"); //$NON-NLS-1$
+        return id instanceof String ? (String)id : null;
+    }
+
+    /**
+     * Shapes a finished task's answer the way the original call would have shaped it.
+     * <p>
+     * The same tool, the same arguments, the same shaping: a client that waited must not get a
+     * differently-shaped answer from one that did not. When the tool is no longer registered - it
+     * was switched off while the work ran - the text is handed over as text rather than dropped.
+     * </p>
+     *
+     * @param task the finished task.
+     * @return the result, or null unless the task completed.
+     */
+    private Object finishedResultOf(TaskDirectory.Task task)
+    {
+        if (!TaskDirectory.COMPLETED.equals(task.status) || task.result == null)
+        {
+            return null;
+        }
+        IMcpTool tool = task.toolName == null ? null : toolRegistry.getTool(task.toolName);
+        if (tool == null)
+        {
+            return ToolCallResult.text(task.result);
+        }
+        return shapeResult(tool, task.arguments, task.result, null, isPlainTextMode());
+    }
+
+    /**
+     * Builds the JSON-RPC error a failed task reports.
+     *
+     * @param task the task.
+     * @return the error object, or null unless the task failed.
+     */
+    private static Object failureOf(TaskDirectory.Task task)
+    {
+        if (!TaskDirectory.FAILED.equals(task.status))
+        {
+            return null;
+        }
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("code", McpServerMeta.ERROR_INTERNAL); //$NON-NLS-1$
+        error.put("message", task.failure == null ? "The task failed." : task.failure); //$NON-NLS-1$ //$NON-NLS-2$
+        return error;
+    }
+
+    /**
+     * Turns a pending answer into a task, for a caller that said it understands tasks.
+     * <p>
+     * The pending answer is this server's own construction - one function builds it, for every slow
+     * tool - so recognising it is reading a shape we wrote, not guessing at foreign text. The cheap
+     * checks come first because this runs on every tool result: a pending answer is small and
+     * always carries both marks, so anything large or missing either of them is not one.
+     * </p>
+     *
+     * @param toolName the tool that was called.
+     * @param arguments the call's arguments.
+     * @param result whatever the tool returned.
+     * @return the task, or null when this is an ordinary answer
+     */
+    private static TaskDirectory.Task asTask(String toolName, Map<String, String> arguments, String result)
+    {
+        if (result == null || result.length() > MAX_PENDING_ENVELOPE_CHARS
+            || !result.contains(PENDING_STATUS_MARK) || !result.contains(PENDING_KEY_MARK))
+        {
+            return null;
+        }
+        JsonElement tree;
+        try
+        {
+            tree = JsonParser.parseString(result);
+        }
+        catch (JsonParseException malformed)
+        {
+            return null;
+        }
+        if (!tree.isJsonObject())
+        {
+            return null;
+        }
+        JsonObject body = tree.getAsJsonObject();
+        JsonElement status = body.get("status"); //$NON-NLS-1$
+        JsonElement runKey = body.get("runKey"); //$NON-NLS-1$
+        if (status == null || !status.isJsonPrimitive() || !"Pending".equals(status.getAsString()) //$NON-NLS-1$
+            || runKey == null || !runKey.isJsonPrimitive() || runKey.getAsString().isEmpty())
+        {
+            return null;
+        }
+        if (PendingWorkRegistry.domainOf(runKey.getAsString()) == null)
+        {
+            // A pending answer whose key no domain holds. It happens: the YAxUnit runner keeps its
+            // own launches in a map of its own and issues keys that mean something only to it. A
+            // task over such a key could never be answered - the first poll would have to report
+            // that the run had vanished - so the honest thing is to leave the answer alone and let
+            // the caller redeem the key the way that tool expects. Checked by asking rather than by
+            // listing which tools are which, so a tool added later cannot quietly become a lie.
+            return null;
+        }
+        JsonElement operation = body.get("operation"); //$NON-NLS-1$
+        String operationName = operation != null && operation.isJsonPrimitive()
+            ? operation.getAsString() : toolName;
+        return TaskDirectory.getInstance()
+            .open(runKey.getAsString(), operationName, toolName, arguments);
     }
 
     /**
@@ -432,6 +630,17 @@ public class McpRequestRouter
             // propagating UiBusyException reads as "UI busy, retry" rather than a bare internal
             // error. Tools that already tag it locally never reach this.
             result = ToolResult.error(busy.getMessage()).put("tag", busy.tag()).toJson(); //$NON-NLS-1$
+        }
+        if (era.declaresExtension(McpServerMeta.EXTENSION_TASKS))
+        {
+            // Only for a caller that said it understands one. Everybody else keeps the runKey
+            // answer they have always had - which still works, and is still the only thing an
+            // older client could do anything with.
+            TaskDirectory.Task task = asTask(toolName, arguments, result);
+            if (task != null)
+            {
+                return answer(requestId, TaskResult.handle(task), era);
+            }
         }
         // Cap an oversized response centrally, before the redact / parse / frame steps below
         // copy it several times over. Images are exempt: a truncated base64 blob is a broken

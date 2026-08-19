@@ -123,6 +123,8 @@ public class DiscoverResult
     {
         private final Tools tools = new Tools();
 
+        private final java.util.Map<String, Object> extensions = extensionsOffered();
+
         /**
          * Returns the tools capability. Its mere presence is the announcement.
          *
@@ -131,6 +133,29 @@ public class DiscoverResult
         public Tools getTools()
         {
             return tools;
+        }
+
+        /**
+         * Returns the extensions this server implements, keyed by their reverse-DNS names.
+         * <p>
+         * An extension is announced by being listed; the value carries no settings. A client reads
+         * this to decide whether it may ask for the things the extension defines - and this server
+         * reads the client's matching declaration before it answers with any of them.
+         * </p>
+         *
+         * @return the extensions offered
+         */
+        public java.util.Map<String, Object> getExtensions()
+        {
+            return extensions;
+        }
+
+        private static java.util.Map<String, Object> extensionsOffered()
+        {
+            java.util.Map<String, Object> offered = new java.util.LinkedHashMap<>();
+            offered.put(ru.aiedt.mcp.server.wire.McpServerMeta.EXTENSION_TASKS,
+                new java.util.LinkedHashMap<String, Object>());
+            return offered;
         }
 
         /** Announced by being there; it carries no settings of its own. */

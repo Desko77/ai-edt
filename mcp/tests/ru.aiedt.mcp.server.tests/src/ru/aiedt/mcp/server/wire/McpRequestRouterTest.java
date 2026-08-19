@@ -23,6 +23,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
+import ru.aiedt.mcp.server.support.TaskDirectory;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 
@@ -38,6 +40,9 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  */
 public class McpRequestRouterTest
 {
+    /** The key the stub slow tool reports, seeded into the generic domain by the tests using it. */
+    private static final String PENDING_RUN_KEY = "aiedt-test-pending-run"; //$NON-NLS-1$
+
     private McpRequestRouter handler;
     private McpToolCatalog registry;
 
@@ -53,6 +58,8 @@ public class McpRequestRouterTest
     public void clearRegistry()
     {
         registry.clear();
+        PendingWorkRegistry.GENERIC.remove(PENDING_RUN_KEY);
+        TaskDirectory.getInstance().clear();
     }
 
     // ---- initialize ----
@@ -545,6 +552,185 @@ public class McpRequestRouterTest
         }
     }
 
+    // ---- tasks, and who is allowed to be handed one ----
+
+    /**
+     * A slow tool's pending answer becomes a task for a caller that says it understands tasks.
+     */
+    @Test
+    public void aPendingAnswerBecomesATaskForACallerThatAskedForOne()
+    {
+        seedPendingRun();
+        registry.register(stub("slow", "Slow tool", "{\"type\":\"object\"}", pendingEnvelope())); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        JsonObject result = send(toolCall(1, "slow", null, tasksParams())) //$NON-NLS-1$
+            .getAsJsonObject("result");
+
+        assertEquals("a task handle must say it is not the answer", //$NON-NLS-1$
+            "task", result.get("resultType").getAsString());
+        assertNotNull("a handle without an id is not a handle", result.get("taskId")); //$NON-NLS-1$
+        assertEquals("working", result.get("status").getAsString());
+        assertNotNull("a client needs to know how often to ask", result.get("pollIntervalMs")); //$NON-NLS-1$
+        assertNotNull("and how long the handle is good for", result.get("ttlMs")); //$NON-NLS-1$
+    }
+
+    /**
+     * The same call from a caller that did not declare the extension gets the runKey answer it has
+     * always got.
+     * <p>
+     * This is the rule the specification states outright - never hand a task to a client that did
+     * not ask for one - and it is also the only behaviour that keeps every existing client working.
+     * </p>
+     */
+    @Test
+    public void aCallerThatDidNotAskForTasksStillGetsItsRunKey()
+    {
+        seedPendingRun();
+        registry.register(stub("slow", "Slow tool", "{\"type\":\"object\"}", pendingEnvelope())); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        for (String params : new String[] {null, modernParams()})
+        {
+            JsonObject result = send(toolCall(1, "slow", null, params)).getAsJsonObject("result"); //$NON-NLS-1$
+
+            assertNull("a caller that did not declare tasks was handed one", //$NON-NLS-1$
+                result.get("taskId"));
+            assertTrue("the runKey answer went missing: " + result, //$NON-NLS-1$
+                result.toString().contains("runKey")); //$NON-NLS-1$
+        }
+    }
+
+    /** An ordinary answer is left alone even when the caller understands tasks. */
+    @Test
+    public void anOrdinaryAnswerIsNotDressedUpAsATask()
+    {
+        registry.register(stub("quick", "Quick tool", "{\"type\":\"object\"}", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "{\"success\":true,\"status\":\"Done\"}")); //$NON-NLS-1$
+
+        JsonObject result = send(toolCall(1, "quick", null, tasksParams())).getAsJsonObject("result"); //$NON-NLS-1$
+
+        assertNull(result.get("taskId"));
+        assertEquals("complete", result.get("resultType").getAsString());
+    }
+
+    /** Polling a task reports where it has got to. */
+    @Test
+    public void aTaskCanBePolled()
+    {
+        seedPendingRun();
+        registry.register(stub("slow", "Slow tool", "{\"type\":\"object\"}", pendingEnvelope())); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        String taskId = send(toolCall(1, "slow", null, tasksParams())) //$NON-NLS-1$
+            .getAsJsonObject("result").get("taskId").getAsString();
+
+        JsonObject result = send(request(2, McpServerMeta.METHOD_TASKS_GET,
+            "{\"taskId\":\"" + taskId + "\"," + tasksMeta() + "}")).getAsJsonObject("result"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertEquals("a poll is itself a finished answer, about a task", //$NON-NLS-1$
+            "complete", result.get("resultType").getAsString());
+        assertEquals(taskId, result.get("taskId").getAsString());
+        assertNotNull("a poll must say where the task has got to", result.get("status")); //$NON-NLS-1$
+    }
+
+    /** An id nobody handed out is invalid params, naming the id. */
+    @Test
+    public void pollingAnUnknownTaskIsInvalidParams()
+    {
+        JsonObject error = send(request(1, McpServerMeta.METHOD_TASKS_GET,
+            "{\"taskId\":\"never-issued\"," + tasksMeta() + "}")).getAsJsonObject("error"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(-32602, error.get("code").getAsInt());
+        assertTrue("the message should name the id: " + error, //$NON-NLS-1$
+            error.get("message").getAsString().contains("never-issued"));
+    }
+
+    /** Cancelling acknowledges with an empty result, as the extension requires. */
+    @Test
+    public void cancellingATaskIsAcknowledgedAndNothingMore()
+    {
+        seedPendingRun();
+        registry.register(stub("slow", "Slow tool", "{\"type\":\"object\"}", pendingEnvelope())); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        String taskId = send(toolCall(1, "slow", null, tasksParams())) //$NON-NLS-1$
+            .getAsJsonObject("result").get("taskId").getAsString();
+
+        JsonObject result = send(request(2, McpServerMeta.METHOD_TASKS_CANCEL,
+            "{\"taskId\":\"" + taskId + "\"," + tasksMeta() + "}")).getAsJsonObject("result"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertEquals("complete", result.get("resultType").getAsString());
+        assertNull("an acknowledgement carries nothing else", result.get("status")); //$NON-NLS-1$
+
+        JsonObject polled = send(request(3, McpServerMeta.METHOD_TASKS_GET,
+            "{\"taskId\":\"" + taskId + "\"," + tasksMeta() + "}")).getAsJsonObject("result"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals("cancelled", polled.get("status").getAsString());
+    }
+
+    /** The task methods do not exist for a caller of the older revision, and say so. */
+    @Test
+    public void theTaskMethodsDoNotExistInTheOlderRevision()
+    {
+        JsonObject error = send(request(1, McpServerMeta.METHOD_TASKS_GET, "{\"taskId\":\"x\"}")) //$NON-NLS-1$
+            .getAsJsonObject("error");
+
+        assertEquals(McpServerMeta.ERROR_METHOD_NOT_FOUND, error.get("code").getAsInt());
+    }
+
+    /** Discovery advertises the extension, which is how a client knows it may ask for a task. */
+    @Test
+    public void discoveryAdvertisesTheTasksExtension()
+    {
+        JsonObject capabilities = send(request("d", McpServerMeta.METHOD_SERVER_DISCOVER, modernParams())) //$NON-NLS-1$
+            .getAsJsonObject("result").getAsJsonObject("capabilities");
+
+        JsonObject extensions = capabilities.getAsJsonObject("extensions");
+        assertNotNull("a server that implements an extension has to say so", extensions); //$NON-NLS-1$
+        assertTrue("the tasks extension is not advertised: " + extensions, //$NON-NLS-1$
+            extensions.has(McpServerMeta.EXTENSION_TASKS));
+    }
+
+    /**
+     * A pending answer names a run that is really going, so the seed puts one there.
+     * <p>
+     * Without it the key belongs to no domain and the server declines to build a task over it -
+     * which is the right refusal, and would make these tests prove the opposite of what they mean.
+     * </p>
+     */
+    private void seedPendingRun()
+    {
+        PendingWorkRegistry.GENERIC.getOrStart(PENDING_RUN_KEY, () -> "the slow answer"); //$NON-NLS-1$
+    }
+
+    /** A task over a key nobody owns is refused, because it could never be answered. */
+    @Test
+    public void noTaskIsBuiltOverAKeyNoDomainOwns()
+    {
+        registry.register(stub("orphan", "Orphan", "{\"type\":\"object\"}", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "{\"success\":true,\"operation\":\"orphan\",\"status\":\"Pending\"," //$NON-NLS-1$
+                + "\"runKey\":\"belongs-to-nobody\"}")); //$NON-NLS-1$
+
+        JsonObject result = send(toolCall(1, "orphan", null, tasksParams())).getAsJsonObject("result"); //$NON-NLS-1$
+
+        assertNull("a task was opened over a key that can never be redeemed", result.get("taskId")); //$NON-NLS-1$
+        assertTrue("and the caller lost its key with it: " + result, //$NON-NLS-1$
+            result.toString().contains("belongs-to-nobody")); //$NON-NLS-1$
+    }
+
+    private static String pendingEnvelope()
+    {
+        return "{\"success\":true,\"operation\":\"slow\",\"status\":\"Pending\",\"runKey\":\"" //$NON-NLS-1$
+            + PENDING_RUN_KEY + "\",\"elapsedMs\":10,\"waitedMs\":10}"; //$NON-NLS-1$
+    }
+
+    private static String tasksMeta()
+    {
+        return "\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"" //$NON-NLS-1$
+            + McpServerMeta.MODERN_PROTOCOL_VERSION
+            + "\",\"io.modelcontextprotocol/clientCapabilities\":{\"extensions\":{\"" //$NON-NLS-1$
+            + McpServerMeta.EXTENSION_TASKS + "\":{}}}}"; //$NON-NLS-1$
+    }
+
+    private static String tasksParams()
+    {
+        return "{" + tasksMeta() + "}"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     private static String modernParams()
     {
         return "{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""
@@ -600,6 +786,58 @@ public class McpRequestRouterTest
         {
             registry.register(stub(name, name + " tool", "{\"type\":\"object\"}")); //$NON-NLS-1$ //$NON-NLS-2$
         }
+    }
+
+    private static IMcpTool stub(String name, String description, String schema, String answer)
+    {
+        return new IMcpTool()
+        {
+            @Override
+            public String getName()
+            {
+                return name;
+            }
+
+            @Override
+            public String getDescription()
+            {
+                return description;
+            }
+
+            @Override
+            public String getInputSchema()
+            {
+                return schema;
+            }
+
+            @Override
+            public String execute(Map<String, String> params)
+            {
+                return answer;
+            }
+        };
+    }
+
+    /**
+     * A tools/call document that can also carry per-request metadata.
+     *
+     * @param id the request id.
+     * @param toolName the tool to call.
+     * @param argumentsJson the arguments object, or null for none.
+     * @param extraParamsJson a params object whose members are merged in, or null.
+     * @return the request document
+     */
+    private static String toolCall(Object id, String toolName, String argumentsJson,
+        String extraParamsJson)
+    {
+        StringBuilder params = new StringBuilder("{\"name\":\""); //$NON-NLS-1$
+        params.append(toolName).append("\",\"arguments\":"); //$NON-NLS-1$
+        params.append(argumentsJson != null ? argumentsJson : "{}"); //$NON-NLS-1$
+        if (extraParamsJson != null && extraParamsJson.length() > 2)
+        {
+            params.append(',').append(extraParamsJson, 1, extraParamsJson.length() - 1);
+        }
+        return request(id, McpServerMeta.METHOD_TOOLS_CALL, params.append('}').toString());
     }
 
     private static IMcpTool stub(String name, String description, String schema)

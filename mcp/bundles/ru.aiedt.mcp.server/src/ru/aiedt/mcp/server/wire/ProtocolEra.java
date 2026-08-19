@@ -57,11 +57,20 @@ public final class ProtocolEra
 
     private final List<String> missing;
 
+    private final Map<String, Object> capabilities;
+
     private ProtocolEra(Kind kind, String requestedVersion, List<String> missing)
+    {
+        this(kind, requestedVersion, missing, null);
+    }
+
+    private ProtocolEra(Kind kind, String requestedVersion, List<String> missing,
+        Map<String, Object> capabilities)
     {
         this.kind = kind;
         this.requestedVersion = requestedVersion;
         this.missing = missing;
+        this.capabilities = capabilities;
     }
 
     /**
@@ -94,7 +103,8 @@ public final class ProtocolEra
         {
             return new ProtocolEra(Kind.UNSUPPORTED, requested, List.of());
         }
-        return new ProtocolEra(Kind.MODERN, requested, List.of());
+        return new ProtocolEra(Kind.MODERN, requested, List.of(),
+            asMap(meta.get(McpServerMeta.META_CLIENT_CAPABILITIES)));
     }
 
     /**
@@ -112,6 +122,40 @@ public final class ProtocolEra
         }
         Object meta = request.getParams().get(McpServerMeta.PARAM_META);
         return meta instanceof Map ? (Map<String, Object>)meta : null;
+    }
+
+    /**
+     * Whether this caller said it understands a given extension.
+     * <p>
+     * Asked before this server does anything an extension defines. The specification is blunt about
+     * why: a client that did not declare the tasks extension must never be handed a task, because a
+     * task is not the answer it asked for and it has no way of knowing what to do with one. A
+     * capability is a promise made per request, so this reads it per request too.
+     * </p>
+     *
+     * @param extensionId the reverse-DNS extension name.
+     * @return true only when the request declared it.
+     */
+    public boolean declaresExtension(String extensionId)
+    {
+        if (kind != Kind.MODERN || capabilities == null)
+        {
+            return false;
+        }
+        Map<String, Object> extensions = asMap(capabilities.get(McpServerMeta.CAPABILITY_EXTENSIONS));
+        return extensions != null && extensions.containsKey(extensionId);
+    }
+
+    /**
+     * Reads a nested object out of loosely-typed request metadata.
+     *
+     * @param value whatever was under the key.
+     * @return the map, or null when it was not one.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object value)
+    {
+        return value instanceof Map ? (Map<String, Object>)value : null;
     }
 
     /**

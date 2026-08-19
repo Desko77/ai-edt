@@ -8,7 +8,10 @@ package ru.aiedt.mcp.server.support;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -242,6 +245,53 @@ public final class PendingWorkRegistry
             });
             return entry;
         });
+    }
+
+    /**
+     * Every domain, in a fixed order.
+     * <p>
+     * A runKey is unique only within its domain, so anything holding a bare key - a task handle
+     * handed to a client, for one - has to be able to find which domain issued it. Five map lookups
+     * settle that, and the alternative (threading the domain through every layer that only ever
+     * passes a key) buys nothing.
+     * </p>
+     *
+     * @return the registries, in declaration order
+     */
+    public static List<PendingWorkRegistry> domains()
+    {
+        return Collections.unmodifiableList(
+            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, GENERIC));
+    }
+
+    /**
+     * Finds the domain holding a key.
+     *
+     * @param runKey the key to look for, may be {@code null}
+     * @return the registry that has it, or {@code null} when no domain does
+     */
+    public static PendingWorkRegistry domainOf(String runKey)
+    {
+        if (runKey == null || runKey.isEmpty())
+        {
+            return null;
+        }
+        for (PendingWorkRegistry registry : domains())
+        {
+            if (registry.get(runKey) != null)
+            {
+                return registry;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @return the human-readable domain name this registry was built with
+     */
+    public String domain()
+    {
+        return domainLabel;
     }
 
     /**
