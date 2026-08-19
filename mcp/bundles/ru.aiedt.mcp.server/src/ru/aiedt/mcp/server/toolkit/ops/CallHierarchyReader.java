@@ -7,9 +7,12 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -63,6 +66,17 @@ public class CallHierarchyReader
     private static final int MIN_LIMIT = 1;
     private static final int CALL_TEXT_TRUNCATE_AT = 100;
 
+    /**
+     * The furthest a transitive walk will go.
+     * <p>
+     * Five, because each level multiplies the index lookups by the fan-in of the level before it,
+     * and on a configuration where a common-module method is called from three hundred places the
+     * second level is already the whole project. The limit stops it before the depth does; this
+     * stops somebody asking for a walk that could never finish.
+     * </p>
+     */
+    private static final int MAX_DEPTH = 5;
+
     @Override
     public String getName()
     {
@@ -93,6 +107,10 @@ public class CallHierarchyReader
             .stringProperty("methodName", "Procedure or function name; case is ignored when matching (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("direction", //$NON-NLS-1$
                 "Which direction to walk: 'callers' (who invokes this method, the default) or 'callees' (what it invokes)") //$NON-NLS-1$
+            .integerProperty("depth", //$NON-NLS-1$
+                "How many levels of callers to follow (default 1, max " + MAX_DEPTH + "). Only for " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "direction=callers: a callee is reported by name, and a name alone does not " //$NON-NLS-1$
+                    + "say which module to follow it into.") //$NON-NLS-1$
             .integerProperty("limit", "Ceiling on how many results come back. Defaults to 100, up to 500") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
@@ -117,6 +135,7 @@ public class CallHierarchyReader
         String modulePath = JsonUtils.extractStringArgument(params, "modulePath"); //$NON-NLS-1$
         String methodName = JsonUtils.extractStringArgument(params, "methodName"); //$NON-NLS-1$
         int limit = JsonUtils.extractIntArgument(params, "limit", DEFAULT_LIMIT); //$NON-NLS-1$
+        int depth = JsonUtils.extractIntArgument(params, "depth", 1); //$NON-NLS-1$
 
         if (projectName == null || projectName.isEmpty())
         {
@@ -146,6 +165,17 @@ public class CallHierarchyReader
         }
 
         limit = Math.min(Math.max(MIN_LIMIT, limit), MAX_LIMIT);
+        depth = Math.min(Math.max(1, depth), MAX_DEPTH);
+        if (depth > 1 && DIRECTION_CALLEES.equals(direction))
+        {
+            // Said rather than quietly ignored. A callee is found as a NAME in the caller's text;
+            // which module that name belongs to is a resolution step this does not do, so there is
+            // nothing to recurse into. Silently walking one level would answer a question about
+            // three with an answer about one.
+            return "Error: depth applies to direction=callers only. A callee is reported by name, " //$NON-NLS-1$
+                + "and a name does not say which module to follow it into - use resolve_symbol on " //$NON-NLS-1$
+                + "a callee, then ask for its own callees."; //$NON-NLS-1$
+        }
 
         IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
         if (project == null || !project.exists())
@@ -162,11 +192,18 @@ public class CallHierarchyReader
 
         final String dir = direction;
         final int maxResults = limit;
+        final int levels = depth;
         try
         {
-            return UiSync.call(() -> DIRECTION_CALLERS.equals(dir)
-                ? findCallers(projectName, resolvedModulePath, methodName, maxResults)
-                : findCallees(projectName, resolvedModulePath, methodName, maxResults));
+            return UiSync.call(() -> {
+                if (!DIRECTION_CALLERS.equals(dir))
+                {
+                    return findCallees(projectName, resolvedModulePath, methodName, maxResults);
+                }
+                return levels > 1
+                    ? findCallersTransitively(projectName, resolvedModulePath, methodName, maxResults, levels)
+                    : findCallers(projectName, resolvedModulePath, methodName, maxResults);
+            });
         }
         catch (Exception e)
         {
@@ -186,23 +223,49 @@ public class CallHierarchyReader
      */
     private String findCallers(String projectName, String modulePath, String methodName, int limit)
     {
+        Harvest harvest = harvestCallers(projectName, modulePath, methodName, limit);
+        return harvest.error != null ? harvest.error
+            : formatCallersOutput(modulePath, methodName, harvest.callers, limit, harvest.total);
+    }
+
+    /**
+     * Collects the callers without formatting them.
+     * <p>
+     * Split out because a transitive walk needs the rows rather than the report, and because the
+     * walk feeds each row's own module and method straight back in - which only works while they
+     * are still values rather than table cells.
+     * </p>
+     *
+     * @param projectName the project name
+     * @param modulePath the resolved {@code src/}-relative module path
+     * @param methodName the method name, case-insensitive
+     * @param limit the maximum number of callers to collect
+     * @return the rows, or a harvest carrying the reason there are none
+     */
+    private Harvest harvestCallers(String projectName, String modulePath, String methodName, int limit)
+    {
+        Harvest harvest = new Harvest();
         IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
         if (project == null || !project.exists())
         {
-            return "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+            harvest.error = "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+            return harvest;
         }
 
         Module module = BslModuleAccess.loadModule(project, modulePath);
         if (module == null)
         {
-            return "Error: could not load the EMF model for " + modulePath //$NON-NLS-1$
+            harvest.error = "Error: could not load the EMF model for " + modulePath //$NON-NLS-1$
                 + ". The call hierarchy needs the BSL AST (EMF) to build it. Check the EDT Error Log for details."; //$NON-NLS-1$
+            return harvest;
         }
 
         Method method = BslModuleAccess.findMethod(module, methodName);
         if (method == null)
         {
-            return BslModuleAccess.buildMethodNotFoundResponse(module, modulePath, methodName);
+            harvest.error =
+                BslModuleAccess.buildMethodNotFoundResponse(module, modulePath, methodName);
+            return harvest;
         }
 
         URI methodUri = EcoreUtil.getURI(method);
@@ -211,13 +274,15 @@ public class CallHierarchyReader
             IResourceServiceProvider.Registry.INSTANCE.getResourceServiceProvider(BslModuleAccess.BSL_LOOKUP_URI);
         if (rsp == null)
         {
-            return "Error: the BSL resource service provider cannot be reached"; //$NON-NLS-1$
+            harvest.error = "Error: the BSL resource service provider cannot be reached"; //$NON-NLS-1$
+            return harvest;
         }
 
         IReferenceFinder finder = rsp.get(IReferenceFinder.class);
         if (finder == null)
         {
-            return "Error: the reference finder cannot be reached"; //$NON-NLS-1$
+            harvest.error = "Error: the reference finder cannot be reached"; //$NON-NLS-1$
+            return harvest;
         }
 
         List<CallerInfo> callers = new ArrayList<>();
@@ -275,7 +340,9 @@ public class CallHierarchyReader
             sharedResourceSet.getResources().clear();
         }
 
-        return formatCallersOutput(modulePath, methodName, callers, limit, totalReferences[0]);
+        harvest.callers = callers;
+        harvest.total = totalReferences[0];
+        return harvest;
     }
 
     /**
@@ -489,6 +556,158 @@ public class CallHierarchyReader
     }
 
     /**
+     * Walks callers of callers, to a depth.
+     * <p>
+     * Breadth-first, so the nearest callers are reported before the distant ones and a limit cuts
+     * the far end rather than a branch. Every method already seen is skipped: recursion in BSL is
+     * ordinary, mutual recursion between two modules is not rare, and without that check the first
+     * cycle turns the walk into an infinite one.
+     * </p>
+     *
+     * @param projectName the project name
+     * @param modulePath the starting module
+     * @param methodName the starting method
+     * @param limit the most rows to collect in total, across every level
+     * @param depth how many levels to walk
+     * @return the report
+     */
+    private String findCallersTransitively(String projectName, String modulePath, String methodName,
+        int limit, int depth)
+    {
+        List<CallerInfo> collected = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        seen.add(key(modulePath, methodName));
+        List<String[]> frontier = new ArrayList<>();
+        frontier.add(new String[] {modulePath, methodName});
+        String firstError = null;
+        int reachedDepth = 0;
+
+        for (int level = 1; level <= depth && !frontier.isEmpty() && collected.size() < limit; level++)
+        {
+            List<String[]> next = new ArrayList<>();
+            for (String[] target : frontier)
+            {
+                if (collected.size() >= limit)
+                {
+                    break;
+                }
+                Harvest harvest = harvestCallers(projectName, target[0], target[1], limit - collected.size());
+                if (harvest.error != null)
+                {
+                    // One unreadable module must not lose the whole walk - the rest of the frontier
+                    // is still worth following, and the reason is reported at the end.
+                    if (firstError == null)
+                    {
+                        firstError = harvest.error;
+                    }
+                    continue;
+                }
+                for (CallerInfo caller : harvest.callers)
+                {
+                    if (collected.size() >= limit)
+                    {
+                        break;
+                    }
+                    caller.level = level;
+                    caller.throughMethod = level > 1 ? target[1] : null;
+                    if (seen.add(key(caller.modulePath, caller.callerMethodName)))
+                    {
+                        collected.add(caller);
+                        if (caller.modulePath != null && caller.callerMethodName != null)
+                        {
+                            next.add(new String[] {caller.modulePath, caller.callerMethodName});
+                        }
+                    }
+                }
+                reachedDepth = Math.max(reachedDepth, level);
+            }
+            frontier = next;
+        }
+        if (collected.isEmpty() && firstError != null)
+        {
+            return firstError;
+        }
+        return formatTransitiveOutput(modulePath, methodName, collected, limit, depth, reachedDepth,
+            !frontier.isEmpty());
+    }
+
+    /**
+     * The identity a method is remembered by while walking.
+     *
+     * @param modulePath the module, possibly null
+     * @param methodName the method, possibly null
+     * @return a key that is case-insensitive on the method, as BSL is
+     */
+    private static String key(String modulePath, String methodName)
+    {
+        return (modulePath == null ? "" : modulePath) + "::" //$NON-NLS-1$ //$NON-NLS-2$
+            + (methodName == null ? "" : methodName.toLowerCase(Locale.ROOT)); //$NON-NLS-1$
+    }
+
+    /**
+     * Formats a transitive walk, one row per caller, with the level it was found at.
+     *
+     * @param modulePath the starting module
+     * @param methodName the starting method
+     * @param callers what was found
+     * @param limit the limit applied
+     * @param requestedDepth how deep the caller asked to go
+     * @param reachedDepth how deep the walk actually got
+     * @param moreToFollow whether the frontier still had unexplored methods when it stopped
+     * @return the Markdown report
+     */
+    private String formatTransitiveOutput(String modulePath, String methodName,
+        List<CallerInfo> callers, int limit, int requestedDepth, int reachedDepth, boolean moreToFollow)
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## Method Call Graph: ").append(modulePath).append(" :: ").append(methodName) //$NON-NLS-1$ //$NON-NLS-2$
+            .append("\n\n"); //$NON-NLS-1$
+        sb.append("**Direction:** callers, followed ").append(reachedDepth) //$NON-NLS-1$
+            .append(" level").append(reachedDepth == 1 ? "" : "s") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .append(" of ").append(requestedDepth).append(" asked for\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        sb.append("**Distinct callers found:** ").append(callers.size()); //$NON-NLS-1$
+        if (callers.size() >= limit && moreToFollow)
+        {
+            sb.append(" (the limit stopped the walk; raise `limit` or lower `depth`)"); //$NON-NLS-1$
+        }
+        sb.append("\n\n"); //$NON-NLS-1$
+
+        if (callers.isEmpty())
+        {
+            sb.append("Nothing calls this method.\n"); //$NON-NLS-1$
+            return sb.toString();
+        }
+
+        sb.append("| # | Level | Module | Enclosing Method | Reaches It Through | Line | Call Snippet |\n"); //$NON-NLS-1$
+        sb.append("|---|-------|--------|------------------|--------------------|------|-------------|\n"); //$NON-NLS-1$
+        for (int i = 0; i < callers.size(); i++)
+        {
+            CallerInfo caller = callers.get(i);
+            sb.append("| ").append(i + 1).append(" | ").append(caller.level) //$NON-NLS-1$ //$NON-NLS-2$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable( //$NON-NLS-1$
+                    caller.modulePath != null ? caller.modulePath : "-")) //$NON-NLS-1$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable( //$NON-NLS-1$
+                    caller.callerMethodName != null ? caller.callerMethodName : "-")) //$NON-NLS-1$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable( //$NON-NLS-1$
+                    caller.throughMethod != null ? caller.throughMethod : "-")) //$NON-NLS-1$
+                .append(" | ").append(caller.line > 0 ? String.valueOf(caller.line) : "-") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(" | `").append(MarkdownTableHelper.escapeForTable( //$NON-NLS-1$
+                    caller.callCode != null ? caller.callCode : "-")).append("` |\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return sb.toString();
+    }
+
+    /** What a caller harvest produced, or why it produced nothing. */
+    private static final class Harvest
+    {
+        String error;
+
+        List<CallerInfo> callers = new ArrayList<>();
+
+        int total;
+    }
+
+    /**
      * Formats the callers report as Markdown.
      *
      * @param modulePath the module path
@@ -590,6 +809,10 @@ public class CallHierarchyReader
         int line;
         /** The call snippet, comment-stripped and truncated. */
         String callCode;
+        /** How many hops from the method asked about; 1 for a direct caller. */
+        int level = 1;
+        /** On a transitive walk, the method of the previous level this one reaches. */
+        String throughMethod;
     }
 
     /** Collected information about one callee invoked by the target method. */

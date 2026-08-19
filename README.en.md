@@ -292,7 +292,10 @@ files EDT owns edited by hand, a call retried that had already handed back a res
 
 Open **Window → Preferences → AI-EDT** and check:
 
-1. the server port, normally `12250`;
+1. the server port, normally `12250`, and **how many consecutive ports it may take**. Ten by
+   default: the server takes the first free one, so a second EDT on the same machine starts without
+   anybody editing settings. Set it to 1 when the port is written into a client config and has to
+   stay exactly that;
 2. click **Start** to run the server now, or enable **Auto-start** and restart EDT;
 3. **Plain text mode** for clients that do not support MCP resources;
 4. the active tool preset.
