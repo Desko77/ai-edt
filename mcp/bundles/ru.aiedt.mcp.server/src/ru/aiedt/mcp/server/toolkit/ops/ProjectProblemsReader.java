@@ -308,7 +308,8 @@ public class ProjectProblemsReader
                 // the filter it had just passed. A number that answers a question nobody asked
                 // reads as a refusal, and this one was sending callers back to narrow something
                 // already narrow.
-                MatchCount total = countMatching(markerManager, checkRepository, filter);
+                MatchCount total =
+                    countMatching(markerManager, checkRepository, filter, targetProjects(projectName));
                 // Against what came back, not against a fixed threshold. Exactly `limit` matches
                 // with `limit` rows returned is a COMPLETE answer, and heading it "more matches
                 // than fit" tells the caller to narrow a request that already returned everything.
@@ -934,22 +935,97 @@ public class ProjectProblemsReader
      * @return the count, and whether counting stopped early
      */
     private static MatchCount countMatching(IMarkerManager markerManager,
-        ICheckRepository checkRepository, Filter filter)
+        ICheckRepository checkRepository, Filter filter, IProject[] projects)
     {
         java.util.stream.Stream<Marker> matching = markerManager.markers().filter(filter::matchesEdt);
         long counted;
+        Set<String> edtKeys = new HashSet<>();
         if (filter.hasCheckIdentityFilter())
         {
             counted = matching.map(marker -> toErrorInfo(marker, checkRepository, false))
                 .filter(error -> filter.matchesCheckIdentity(error.checkId, error.checkCode))
                 .limit(COMPACT_SCAN_CAP + 1L)
+                .peek(error -> edtKeys.add(dedupKey(error.objectPresentation, error.message)))
                 .count();
         }
         else
         {
-            counted = matching.limit(COMPACT_SCAN_CAP + 1L).count();
+            counted = matching.limit(COMPACT_SCAN_CAP + 1L)
+                .peek(marker -> {
+                    ErrorInfo error = toErrorInfo(marker, checkRepository, false);
+                    edtKeys.add(dedupKey(error.objectPresentation, error.message));
+                })
+                .count();
         }
+        // The rows come from two sources and the count used to come from one. A project whose
+        // problems are partly Eclipse markers was told it matched fewer than were listed - the
+        // header could name a number smaller than the number of rows underneath it, which reads
+        // as arithmetic nobody can trust rather than as the cap it was meant to explain.
+        counted += countEclipseMatching(projects, filter, edtKeys, COMPACT_SCAN_CAP + 1L - counted);
         return new MatchCount(Math.min(counted, COMPACT_SCAN_CAP), counted > COMPACT_SCAN_CAP);
+    }
+
+    /**
+     * Counts Eclipse problem markers the EDT pass did not already account for.
+     * <p>
+     * Deduplicated against the EDT keys exactly as {@code collectEclipseMarkers} deduplicates the
+     * rows, so the count and the listing answer the same question. Bounded by what is left of the
+     * scan cap: past it the answer is "more than", and counting further would buy nothing.
+     * </p>
+     *
+     * @param projects the projects to scan; may be <code>null</code>.
+     * @param filter the predicate.
+     * @param edtKeys dedup keys the EDT pass already produced.
+     * @param room how many more may be counted before the cap is passed.
+     * @return the number of additional matches
+     */
+    private static long countEclipseMatching(IProject[] projects, Filter filter, Set<String> edtKeys,
+        long room)
+    {
+        if (projects == null || room <= 0)
+        {
+            return 0;
+        }
+        Set<String> seen = new HashSet<>(edtKeys);
+        long counted = 0;
+        for (IProject project : projects)
+        {
+            if (project == null || !project.isOpen() || counted >= room)
+            {
+                continue;
+            }
+            IMarker[] markers;
+            try
+            {
+                markers = project.findMarkers(IMarker.PROBLEM, true, IResource.DEPTH_INFINITE);
+            }
+            catch (CoreException cannotRead)
+            {
+                // The same silence collectEclipseMarkers keeps: a project that will not answer
+                // contributes nothing to either the rows or the count, and the two stay in step.
+                continue;
+            }
+            for (IMarker marker : markers)
+            {
+                if (counted >= room)
+                {
+                    break;
+                }
+                MarkerSeverity mapped = mapEclipseSeverity(
+                    marker.getAttribute(IMarker.SEVERITY, IMarker.SEVERITY_INFO));
+                String sourceId = marker.getAttribute(IMarker.SOURCE_ID, ""); //$NON-NLS-1$
+                String presentation = buildEclipsePresentation(marker);
+                if (!filter.matchesEclipse(mapped, sourceId, presentation))
+                {
+                    continue;
+                }
+                if (seen.add(dedupKey(presentation, marker.getAttribute(IMarker.MESSAGE, "")))) //$NON-NLS-1$
+                {
+                    counted++;
+                }
+            }
+        }
+        return counted;
     }
 
     /**
