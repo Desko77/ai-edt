@@ -197,6 +197,8 @@ public class EventLogReaderTest
             assertNull("nothing there is not an unsupported format", none.unsupported); //$NON-NLS-1$
             assertTrue("the answer should name the missing directory: " + none.error, //$NON-NLS-1$
                 none.error.contains(EventLogReader.LOG_DIRECTORY));
+            assertTrue("and say where to look, since logging being off is the likelier cause: " //$NON-NLS-1$
+                + none.error, none.error.contains("Designer")); //$NON-NLS-1$
 
             Path logDir = bare.resolve(EventLogReader.LOG_DIRECTORY);
             Files.createDirectories(logDir);
@@ -206,6 +208,12 @@ public class EventLogReaderTest
             assertFalse("an unreadable format is not a successful read", sqlite.ok); //$NON-NLS-1$
             assertEquals("the format should be named, not merely refused", //$NON-NLS-1$
                 "1Cv8.lgd", sqlite.unsupported); //$NON-NLS-1$
+            // Naming the format tells the reader what happened. It does not tell them what to do
+            // about it, and a refusal that leaves somebody stuck is only half an answer.
+            assertTrue("the refusal should say where the setting is: " + sqlite.error, //$NON-NLS-1$
+                sqlite.error.contains("Designer")); //$NON-NLS-1$
+            assertTrue("and that the file can be opened directly: " + sqlite.error, //$NON-NLS-1$
+                sqlite.error.contains("SQLite client")); //$NON-NLS-1$
         }
         finally
         {

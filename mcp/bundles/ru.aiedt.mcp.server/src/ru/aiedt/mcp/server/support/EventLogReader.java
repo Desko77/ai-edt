@@ -176,7 +176,9 @@ public final class EventLogReader
         if (!Files.isDirectory(logDir))
         {
             r.error = "no " + LOG_DIRECTORY + " directory beside the infobase at " //$NON-NLS-1$ //$NON-NLS-2$
-                + infobaseDirectory + " - either nothing has been logged yet, or logging is off."; //$NON-NLS-1$
+                + infobaseDirectory + " - either nothing has been logged yet, or logging is off. " //$NON-NLS-1$
+                + "Check the event log settings in the Designer, under Administration: with every " //$NON-NLS-1$
+                + "event switched off the directory is never created at all."; //$NON-NLS-1$
             return r;
         }
         if (Files.exists(logDir.resolve(SQLITE_LOG)) && !Files.exists(logDir.resolve(DICTIONARY)))
@@ -185,7 +187,12 @@ public final class EventLogReader
             r.error = "this infobase keeps its log in " + SQLITE_LOG + ", the single-file SQLite " //$NON-NLS-1$ //$NON-NLS-2$
                 + "form. This reader takes apart the older " + RECORD_SUFFIX + " files and cannot " //$NON-NLS-1$ //$NON-NLS-2$
                 + "read that one. Reporting nothing found would have been the wrong answer, so " //$NON-NLS-1$
-                + "this says it plainly instead."; //$NON-NLS-1$
+                + "this says it plainly instead. Two ways forward: switch the infobase back to the " //$NON-NLS-1$
+                + "separate-files form in the Designer, under the event log settings in " //$NON-NLS-1$
+                + "Administration - new records then land in " + RECORD_SUFFIX + " files this can " //$NON-NLS-1$ //$NON-NLS-2$
+                + "read, though the records already in " + SQLITE_LOG + " stay where they are; or " //$NON-NLS-1$ //$NON-NLS-2$
+                + "open " + SQLITE_LOG + " with any SQLite client, since it is an ordinary SQLite " //$NON-NLS-1$ //$NON-NLS-2$
+                + "database and not an encrypted one."; //$NON-NLS-1$
             return r;
         }
 

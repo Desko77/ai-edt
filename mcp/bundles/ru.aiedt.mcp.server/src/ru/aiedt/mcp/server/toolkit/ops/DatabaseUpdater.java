@@ -39,8 +39,11 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InfobaseHolders;
+import ru.aiedt.mcp.server.support.InfobaseIdentity;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
+import ru.aiedt.mcp.server.support.MonopolyLock;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
@@ -360,6 +363,10 @@ public class DatabaseUpdater implements IMcpTool
         String applicationId = requestedApplicationId;
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
+        // Held across the whole attempt and released in the finally below, so a throw halfway
+        // through an update does not leave a claim behind. A claim outliving its work would be
+        // cleared as stale only when this whole EDT went away.
+        MonopolyLock infobaseClaim = null;
         // Whoever owns the infobase - the project asked about and, for an extension, its parent.
         // Declared out here so a failure can name who is holding the base, which is the one thing
         // the platform error never says.
@@ -436,6 +443,24 @@ public class DatabaseUpdater implements IMcpTool
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
                 return ToolResult.error("This application has an update already in progress - wait for it to finish.").toJson(); //$NON-NLS-1$
+            }
+
+            // A neighbouring EDT updating the SAME infobase is the collision this catches. EDT's own
+            // BEING_UPDATED state is per-instance and says nothing about the process next door; what
+            // that looks like without a claim is a platform error about a locked configuration, or a
+            // wait that ends in a timeout - neither of which names anybody.
+            String infobaseIdentity = InfobaseIdentity.of(application);
+            java.util.Optional<MonopolyLock> claim =
+                MonopolyLock.take(infobaseIdentity, "update_database"); //$NON-NLS-1$
+            infobaseClaim = claim.orElse(null);
+            if (infobaseIdentity != null && claim.isEmpty())
+            {
+                ToolResult taken = ToolResult.error("Another AI-EDT instance is working on this " //$NON-NLS-1$
+                    + "infobase. " + MonopolyLock.heldBy(infobaseIdentity)); //$NON-NLS-1$
+                taken.put("tag", ErrorTags.BUSY.wire()); //$NON-NLS-1$
+                taken.put("applicationId", applicationId); //$NON-NLS-1$
+                putHolders(taken, applicationId, ownerNames);
+                return taken.toJson();
             }
 
             ApplicationUpdateType updateType =
@@ -572,6 +597,13 @@ public class DatabaseUpdater implements IMcpTool
             }
             putHolders(errorResult, applicationId, ownerNames);
             return errorResult.toJson();
+        }
+        finally
+        {
+            if (infobaseClaim != null)
+            {
+                infobaseClaim.close();
+            }
         }
     }
 

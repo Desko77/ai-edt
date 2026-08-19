@@ -406,8 +406,8 @@ public class McpHttpEndpoint
      * instruction, and it must find a full registry.
      * </p>
      *
-     * @param serverPort the TCP port to listen on
-     * @throws IOException when the port is taken, or the socket cannot be opened
+     * @param serverPort the first TCP port to try
+     * @throws IOException when every port in the span is taken, or no socket can be opened
      */
     public synchronized void start(int serverPort) throws IOException
     {
@@ -418,13 +418,103 @@ public class McpHttpEndpoint
 
         registerTools();
         protocolHandler = new McpRequestRouter();
-        port = serverPort;
 
         configureJdkHttpTimeouts();
         heavyPermits.setLimit(heavyToolLimit());
         // Stamp before the first listener opens, so /health never reports a stale uptime from a prior run.
         serverStartMillis = System.currentTimeMillis();
 
+        // Consecutive ports from the configured one. Seven EDT instances on one machine has already
+        // happened here, and each needed its port set by hand in preferences before it would start
+        // - a step nobody remembers until a server silently is not there. A span of one restores
+        // the old behaviour exactly, for anybody who has written the port into a client config.
+        int span = portSpan();
+        IOException lastFailure = null;
+        for (int candidate = serverPort; candidate < serverPort + span; candidate++)
+        {
+            try
+            {
+                open(candidate);
+                if (candidate != serverPort)
+                {
+                    Activator.logInfo("MCP server took port " + candidate + " because " //$NON-NLS-1$ //$NON-NLS-2$
+                        + serverPort + " was already in use" //$NON-NLS-1$
+                        + (candidate > serverPort + 1 ? ", along with the ports between" : "")); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                return;
+            }
+            catch (IOException taken)
+            {
+                lastFailure = taken;
+            }
+        }
+        throw new IOException(everyPortTaken(serverPort, span), lastFailure);
+    }
+
+    /**
+     * How many consecutive ports may be tried.
+     *
+     * @return at least one
+     */
+    private static int portSpan()
+    {
+        Activator activator = Activator.getDefault();
+        if (activator == null)
+        {
+            return PrefKeys.DEFAULT_PORT_SPAN;
+        }
+        return Math.max(1, activator.getPreferenceStore().getInt(PrefKeys.PREF_PORT_SPAN));
+    }
+
+    /**
+     * Says which ports were tried and, where it can, who has them.
+     * <p>
+     * The bare message - "could not bind" - is where an hour goes. The instances that announced
+     * themselves are on disk, so the answer usually names the neighbour holding the port rather
+     * than leaving somebody to find it with a port scanner.
+     * </p>
+     *
+     * @param firstPort the first port tried
+     * @param span how many were tried
+     * @return the message
+     */
+    static String everyPortTaken(int firstPort, int span)
+    {
+        StringBuilder message = new StringBuilder("MCP server could not bind any port in "); //$NON-NLS-1$
+        message.append(firstPort).append('-').append(firstPort + span - 1).append('.');
+        StringBuilder holders = new StringBuilder();
+        for (JsonObject instance : InstanceRegistry.live())
+        {
+            if (!instance.has("port")) //$NON-NLS-1$
+            {
+                continue;
+            }
+            int held = instance.get("port").getAsInt(); //$NON-NLS-1$
+            if (held < firstPort || held >= firstPort + span)
+            {
+                continue;
+            }
+            holders.append(holders.length() == 0 ? " Held by: " : ", ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(held).append(" - ") //$NON-NLS-1$
+                .append(instance.has("title") ? instance.get("title").getAsString() : "an instance"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        if (holders.length() > 0)
+        {
+            message.append(holders).append('.');
+        }
+        message.append(" Widen the span or change the port in preferences."); //$NON-NLS-1$
+        return message.toString();
+    }
+
+    /**
+     * Opens every listener on one candidate port, or leaves nothing behind.
+     *
+     * @param serverPort the port to try
+     * @throws IOException when no address binds on it
+     */
+    private void open(int serverPort) throws IOException
+    {
+        port = serverPort;
         List<HttpServer> servers = new ArrayList<>();
         try
         {
@@ -477,7 +567,9 @@ public class McpHttpEndpoint
         httpServers = servers;
         running = true;
         // Announced only once a listener is actually up: a record naming a port nothing answers
-        // on is worse than no record, because it reads as a server that is refusing.
+        // on is worse than no record, because it reads as a server that is refusing. It also has to
+        // name the port actually taken rather than the one asked for, which is the whole point of
+        // the registry once the port can move.
         InstanceRegistry.announce(serverPort);
     }
 

@@ -29,6 +29,15 @@ public final class PrefKeys
     /** TCP port the MCP endpoint listens on. */
     public static final String PREF_PORT = "mcpServerPort"; //$NON-NLS-1$
 
+    /**
+     * How many consecutive ports may be tried, starting at {@link #PREF_PORT}.
+     * <p>
+     * One means the configured port and nothing else, which is what this software did before the
+     * setting existed and what somebody pinning a port in a client config still wants.
+     * </p>
+     */
+    public static final String PREF_PORT_SPAN = "mcpServerPortSpan"; //$NON-NLS-1$
+
     /** Whether the endpoint opens by itself when EDT starts. */
     public static final String PREF_AUTO_START = "mcpServerAutoStart"; //$NON-NLS-1$
 
@@ -261,6 +270,17 @@ public final class PrefKeys
      * </p>
      */
     public static final int DEFAULT_PORT = 12250;
+
+    /**
+     * How many ports to try by default.
+     * <p>
+     * Ten, because the thing being worked around is several EDT instances on one developer's
+     * machine, and seven at once has already happened here. It is a span, not a pool: the ports are
+     * consecutive from the configured one, so a firewall rule or a client config written for the
+     * range stays a range somebody can read.
+     * </p>
+     */
+    public static final int DEFAULT_PORT_SPAN = 10;
 
     /** Shipped heavy-tool concurrency limit: a few at once, enough for parallel agents without a stampede. */
     public static final int DEFAULT_HEAVY_TOOL_LIMIT = 3;

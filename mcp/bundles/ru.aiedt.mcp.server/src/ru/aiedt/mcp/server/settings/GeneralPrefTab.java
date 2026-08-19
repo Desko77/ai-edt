@@ -57,6 +57,13 @@ public class GeneralPrefTab
 
     private static final int MAX_PORT = 65535;
 
+    /**
+     * The widest span the page offers. Fifty is far past what a machine full of EDT instances
+     * needs, and small enough that a mistyped value cannot have the server walking off into ports
+     * that belong to something else entirely.
+     */
+    private static final int MAX_PORT_SPAN = 50;
+
     private static final String[] MARKER_STYLE_LABELS =
         {"All (suffix)", "First only", "Count"}; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
@@ -74,6 +81,8 @@ public class GeneralPrefTab
     private Font sectionFont;
 
     private Spinner portSpinner;
+
+    private Spinner portSpanSpinner;
 
     private Button autoStartCheck;
 
@@ -224,6 +233,7 @@ public class GeneralPrefTab
     public void performOk()
     {
         store.setValue(PrefKeys.PREF_PORT, portSpinner.getSelection());
+        store.setValue(PrefKeys.PREF_PORT_SPAN, portSpanSpinner.getSelection());
         store.setValue(PrefKeys.PREF_AUTO_START, autoStartCheck.getSelection());
         store.setValue(PrefKeys.PREF_CHECKS_FOLDER, checksFolderText.getText());
         store.setValue(PrefKeys.PREF_BSL_LS_JAR, bslLsJarText.getText().trim());
@@ -292,6 +302,7 @@ public class GeneralPrefTab
     public void performDefaults()
     {
         portSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_PORT));
+        portSpanSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_PORT_SPAN));
         autoStartCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_AUTO_START));
         checksFolderText.setText(store.getDefaultString(PrefKeys.PREF_CHECKS_FOLDER));
         bslLsJarText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAR));
@@ -353,6 +364,19 @@ public class GeneralPrefTab
         portSpinner.setMinimum(MIN_PORT);
         portSpinner.setMaximum(MAX_PORT);
         portSpinner.setSelection(store.getInt(PrefKeys.PREF_PORT));
+        spacer(section);
+
+        Label spanLabel = new Label(section, SWT.NONE);
+        spanLabel.setText("Ports to try:"); //$NON-NLS-1$
+
+        portSpanSpinner = new Spinner(section, SWT.BORDER);
+        portSpanSpinner.setMinimum(1);
+        portSpanSpinner.setMaximum(MAX_PORT_SPAN);
+        portSpanSpinner.setSelection(store.getInt(PrefKeys.PREF_PORT_SPAN));
+        portSpanSpinner.setToolTipText("Consecutive ports from the one above. The server takes the " //$NON-NLS-1$
+            + "first free one, so a second EDT on this machine starts without anybody editing a " //$NON-NLS-1$
+            + "port. Set it to 1 to use only the port above - which is what you want if a client " //$NON-NLS-1$
+            + "config has the port written into it."); //$NON-NLS-1$
         spacer(section);
 
         autoStartCheck = new Button(section, SWT.CHECK);

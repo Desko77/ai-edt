@@ -133,10 +133,17 @@ public class EventLogTool implements IMcpTool
         if (connection instanceof ServerConnectionString)
         {
             ServerConnectionString server = (ServerConnectionString)connection;
-            return ToolResult.error("This is a server infobase (" + server.getServer() + "/" //$NON-NLS-1$ //$NON-NLS-2$
-                + server.getReference() + "). Its event log lives on the 1C server and is not a " //$NON-NLS-1$
-                + "file this can open - read it from the server, or through the platform's own " //$NON-NLS-1$
-                + "event log tools.").toJson(); //$NON-NLS-1$
+            ToolResult onTheServer = ToolResult.error("This is a server infobase (" //$NON-NLS-1$
+                + server.getServer() + "/" + server.getReference() + "). Its event log is written " //$NON-NLS-1$ //$NON-NLS-2$
+                + "on the 1C server, in the cluster's working directory under the infobase's own " //$NON-NLS-1$
+                + "folder, and this machine has no path to it. Three ways to reach it: open the " //$NON-NLS-1$
+                + "log from the Designer or the client connected to this infobase, which reads it " //$NON-NLS-1$
+                + "through the server; look in the cluster working directory on " //$NON-NLS-1$
+                + server.getServer() + " itself; or copy that infobase's log directory to this " //$NON-NLS-1$ //$NON-NLS-2$
+                + "machine and point a file infobase at it."); //$NON-NLS-1$
+            onTheServer.put("logLocation", "server"); //$NON-NLS-1$ //$NON-NLS-2$
+            onTheServer.put("server", server.getServer()); //$NON-NLS-1$
+            return onTheServer.toJson();
         }
         if (!(connection instanceof FileConnectionString))
         {

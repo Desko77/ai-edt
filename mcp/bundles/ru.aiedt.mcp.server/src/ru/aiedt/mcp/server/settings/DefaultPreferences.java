@@ -30,6 +30,7 @@ public class DefaultPreferences
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
 
         store.setDefault(PrefKeys.PREF_PORT, PrefKeys.DEFAULT_PORT);
+        store.setDefault(PrefKeys.PREF_PORT_SPAN, PrefKeys.DEFAULT_PORT_SPAN);
         store.setDefault(PrefKeys.PREF_HEAVY_TOOL_LIMIT, PrefKeys.DEFAULT_HEAVY_TOOL_LIMIT);
         store.setDefault(PrefKeys.PREF_HEAP_REFUSAL_PERCENT, PrefKeys.DEFAULT_HEAP_REFUSAL_PERCENT);
         store.setDefault(PrefKeys.PREF_DEBUG_LOG_ENABLED, PrefKeys.DEFAULT_DEBUG_LOG_ENABLED);
