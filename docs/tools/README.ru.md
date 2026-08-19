@@ -124,6 +124,7 @@
 | `vanessa` | Выполнение | Управляет сценариями Vanessa Automation. |
 | `create_launch_config` | Изменение | Создает конфигурацию запуска EDT. |
 | `start_client` | Выполнение | Запускает клиент 1С:Предприятие по конфигурации запуска EDT, без отладчика. |
+| `branch_infobase` | Изменение | Связывает ветку git с информационной базой проекта; `update_database` сверяется с этой записью. |
 | `create_infobase` | Опасно | Создает информационную базу и связывает ее с проектом. |
 | `delete_infobase` | Опасно | Удаляет информационную базу. |
 | `install_extension` | Опасно | Устанавливает расширение в информационную базу. |
@@ -346,7 +347,7 @@
 <details>
 <summary><code>infobase_admin</code> - жизненный цикл информационной базы</summary>
 
-Объединяет `get_applications`, `read_event_log`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `update_database`, `sync_control` и встроенную справку.
+Объединяет `get_applications`, `read_event_log`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `branch_infobase`, `update_database`, `sync_control` и встроенную справку.
 </details>
 
 <a id="config_io"></a>

@@ -78,7 +78,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "one, update the database, control EDT<->infobase sync. Operations: " //$NON-NLS-1$
             + "get_applications, read_event_log, create_infobase, delete_infobase, " //$NON-NLS-1$
             + "set_infobase_credentials, " //$NON-NLS-1$
-            + "create_launch_config, start_client, update_database, " //$NON-NLS-1$
+            + "create_launch_config, start_client, branch_infobase, update_database, " //$NON-NLS-1$
             + "sync_control, help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
             + "getApplications is also accepted); remaining parameters follow the per-operation " //$NON-NLS-1$
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
@@ -97,13 +97,18 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("operation", //$NON-NLS-1$
                 "get_applications / read_event_log / create_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
-                    + "update_database / " //$NON-NLS-1$
+                    + "branch_infobase / update_database / " //$NON-NLS-1$
                     + "sync_control / help (snake_case canonical; camelCase like " //$NON-NLS-1$
                     + "getApplications is also accepted). Pass operation=help without other " //$NON-NLS-1$
                     + "params for the operation catalog.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
+            .stringProperty("action", //$NON-NLS-1$
+                "branch_infobase: current (default) / list / bind / unbind.") //$NON-NLS-1$
+            .stringProperty("branch", //$NON-NLS-1$
+                "branch_infobase: the branch to bind or unbind. Defaults to the branch the " //$NON-NLS-1$
+                    + "project is on.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name. Required for get_applications, set_infobase_credentials, " //$NON-NLS-1$
                     + "create_launch_config and sync_control; optional association target for " //$NON-NLS-1$
@@ -208,7 +213,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             return ToolResult.error("operation is required. Allowed: get_applications / " //$NON-NLS-1$
                 + "read_event_log / " //$NON-NLS-1$
                 + "create_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
-                + "create_launch_config / start_client / update_database / sync_control / " //$NON-NLS-1$
+                + "create_launch_config / start_client / branch_infobase / update_database / " //$NON-NLS-1$
+                + "sync_control / " //$NON-NLS-1$
                 + "help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
@@ -247,6 +253,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 return new LaunchConfigCreator().execute(params);
             case "start_client": //$NON-NLS-1$
                 return new ClientSessionStarter().execute(params);
+            case "branch_infobase": //$NON-NLS-1$
+                return new BranchInfobaseTool().execute(params);
             case "update_database": //$NON-NLS-1$
                 return new DatabaseUpdater().execute(params);
             case "sync_control": //$NON-NLS-1$
@@ -339,6 +347,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             "create_infobase", //$NON-NLS-1$
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$
             "create_launch_config", "start_client", //$NON-NLS-1$ //$NON-NLS-2$
+            "branch_infobase", //$NON-NLS-1$
             "update_database", "sync_control")) //$NON-NLS-1$ //$NON-NLS-2$
         {
             m.put(op, op);

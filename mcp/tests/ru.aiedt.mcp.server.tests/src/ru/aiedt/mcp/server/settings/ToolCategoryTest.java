@@ -132,7 +132,7 @@ public class ToolCategoryTest
         // is what a preset limiting access to a live base is expected to cover.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
-        assertEquals(126, ToolCategory.getTotalToolCount());
+        assertEquals(127, ToolCategory.getTotalToolCount());
     }
 
     @Test

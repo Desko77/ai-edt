@@ -307,6 +307,7 @@ public enum ToolProfile
             "set_infobase_credentials", //$NON-NLS-1$
             "create_launch_config", //$NON-NLS-1$
             "start_client", //$NON-NLS-1$
+            "branch_infobase", //$NON-NLS-1$
             "update_database", //$NON-NLS-1$
             "sync_control", //$NON-NLS-1$
 

@@ -51,6 +51,7 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 import ru.aiedt.mcp.server.toolkit.ops.AttributeAdder;
 import ru.aiedt.mcp.server.toolkit.ops.AiContextTool;
 import ru.aiedt.mcp.server.toolkit.ops.AuditRoleRightsTool;
+import ru.aiedt.mcp.server.toolkit.ops.BranchInfobaseTool;
 import ru.aiedt.mcp.server.toolkit.ops.BslCodeReviewTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCleaner;
 import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
@@ -1087,6 +1088,7 @@ public class McpHttpEndpoint
             new InfobaseCreator(),
             new LaunchConfigCreator(),
             new ClientSessionStarter(),
+            new BranchInfobaseTool(),
             new InfobaseRemover(),
             new ListExtensionsTool(),
             new UninstallExtensionTool(),

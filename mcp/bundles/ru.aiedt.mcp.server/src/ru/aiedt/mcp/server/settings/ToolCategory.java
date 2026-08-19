@@ -94,6 +94,7 @@ public enum ToolCategory
         "vanessa", //$NON-NLS-1$
         "create_launch_config", //$NON-NLS-1$
         "start_client", //$NON-NLS-1$
+        "branch_infobase", //$NON-NLS-1$
         "create_infobase", //$NON-NLS-1$
         "delete_infobase", //$NON-NLS-1$
         "install_extension", //$NON-NLS-1$

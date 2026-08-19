@@ -39,7 +39,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.support.BranchInfobaseBook;
 import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.GitBranch;
 import ru.aiedt.mcp.server.support.InfobaseHolders;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
@@ -105,6 +107,10 @@ public class DatabaseUpdater implements IMcpTool
                     + "the default of the configuration it extends. The response says which was updated.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
+                + "on is bound to a different application (see branch_infobase). Off by default: " //$NON-NLS-1$
+                + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
+                + "branch switch, which cannot be undone.") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
                 + "EDT-launched runtime-client sessions for this infobase, so an active client cannot keep " //$NON-NLS-1$
                 + "the infobase locked and block the update. Only runtime-client launches that match both this project " //$NON-NLS-1$
@@ -162,6 +168,8 @@ public class DatabaseUpdater implements IMcpTool
         boolean fullUpdate = JsonUtils.extractBooleanArgument(params, "fullUpdate", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoRestructure = JsonUtils.extractBooleanArgument(params, "autoRestructure", true); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoFreeClients = JsonUtils.extractBooleanArgument(params, "autoFreeClients", false); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean ignoreBranchBinding =
+            JsonUtils.extractBooleanArgument(params, "ignoreBranchBinding", false); //$NON-NLS-1$
 
         boolean hasName = configName != null && !configName.isEmpty();
         if (!hasName)
@@ -222,8 +230,13 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFull = fullUpdate;
         final boolean fRestr = autoRestructure;
         final boolean fFree = autoFreeClients;
+        final boolean fIgnoreBranch = ignoreBranchBinding;
+        // The override is part of the run's identity: the same call with and without it is two
+        // different intentions, and coalescing them would let a refusal be served as the answer
+        // to a caller who had said to go ahead.
         String runKey = PendingWorkRegistry.computeRunKey(fProjectName, fApplicationId,
-            String.valueOf(fFull), String.valueOf(fRestr), String.valueOf(fFree));
+            String.valueOf(fFull), String.valueOf(fRestr), String.valueOf(fFree),
+            String.valueOf(fIgnoreBranch));
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
@@ -239,7 +252,7 @@ public class DatabaseUpdater implements IMcpTool
             registry.remove(runKey);
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree));
+            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch));
 
         String result = entry.await(timeoutMs);
         if (result != null)
@@ -355,10 +368,11 @@ public class DatabaseUpdater implements IMcpTool
      * @param fullUpdate full vs incremental
      * @param autoRestructure whether EDT may restructure
      * @param autoFreeClients whether to free held clients first
+     * @param ignoreBranchBinding whether to go ahead when the branch names another application
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
-        boolean autoRestructure, boolean autoFreeClients)
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding)
     {
         String applicationId = requestedApplicationId;
         // Populated by auto-free so both success and error paths can report what was stopped.
@@ -443,6 +457,19 @@ public class DatabaseUpdater implements IMcpTool
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
                 return ToolResult.error("This application has an update already in progress - wait for it to finish.").toJson(); //$NON-NLS-1$
+            }
+
+            // The branch says which infobase belongs to this work. Checked BEFORE anything is
+            // claimed or freed, because the whole point is to stop short of touching the wrong one
+            // - an update that restructures tables is not a thing anybody undoes.
+            String branchRefusal =
+                branchMismatch(infobaseProject, applicationId, ignoreBranchBinding);
+            if (branchRefusal != null)
+            {
+                ToolResult wrongBase = ToolResult.error(branchRefusal);
+                wrongBase.put("applicationId", applicationId); //$NON-NLS-1$
+                wrongBase.put("projectName", projectName); //$NON-NLS-1$
+                return wrongBase.toJson();
             }
 
             // A neighbouring EDT updating the SAME infobase is the collision this catches. EDT's own
@@ -605,6 +632,45 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * Whether the branch this project is on says a different infobase than the call names.
+     * <p>
+     * Only when somebody has said so. With no binding there is nothing to disagree with, and this
+     * must not start refusing updates on projects that never asked it to - a guard that fires on
+     * its own guesses is worse than none.
+     * </p>
+     *
+     * @param project the project whose infobase is being updated.
+     * @param applicationId the application the call resolved to.
+     * @param ignoreBranchBinding whether the caller said to go ahead anyway.
+     * @return the refusal, or {@code null} when there is nothing to object to
+     */
+    private static String branchMismatch(IProject project, String applicationId,
+        boolean ignoreBranchBinding)
+    {
+        String branch = GitBranch.of(project);
+        if (!GitBranch.isBranch(branch))
+        {
+            return null;
+        }
+        String bound = BranchInfobaseBook.boundTo(project, branch);
+        if (bound == null || bound.equals(applicationId))
+        {
+            return null;
+        }
+        if (ignoreBranchBinding)
+        {
+            Activator.logInfo("update_database: branch " + branch + " is bound to " + bound //$NON-NLS-1$ //$NON-NLS-2$
+                + " but " + applicationId + " was updated anyway, at the caller's word"); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+        return "Branch " + branch + " is bound to application " + bound + ", and this call would " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + "update " + applicationId + " instead. Updating the wrong infobase restructures its " //$NON-NLS-1$ //$NON-NLS-2$
+            + "tables to match a configuration it was not built from, and that is not undone. " //$NON-NLS-1$
+            + "Either update " + bound + ", or change the binding with branch_infobase, or pass " //$NON-NLS-1$ //$NON-NLS-2$
+            + "ignoreBranchBinding=true if this really is what you want."; //$NON-NLS-1$
     }
 
     /**

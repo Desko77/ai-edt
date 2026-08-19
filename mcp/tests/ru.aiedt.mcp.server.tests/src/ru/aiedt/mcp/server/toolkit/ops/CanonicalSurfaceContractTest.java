@@ -215,7 +215,8 @@ public class CanonicalSurfaceContractTest
         // vocabulary.
         m.put("infobase_admin", Set.of(
             "get_applications", "read_event_log", "create_infobase", "delete_infobase",
-            "set_infobase_credentials", "create_launch_config", "start_client", "update_database",
+            "set_infobase_credentials", "create_launch_config", "start_client", "branch_infobase",
+            "update_database",
             "sync_control", "help"));
 
         // config_io (ConfigIoFacadeTool.execute + its OPS catalog): four operations, all
@@ -327,7 +328,7 @@ public class CanonicalSurfaceContractTest
         // Tripwire 1: exactly how many standalone names CANONICAL currently hides. A change here
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
-        assertEquals(82, ToolProfile.CANONICAL.getUnlistedTools().size());
+        assertEquals(83, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,
