@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  # A tag can only be built once by the push trigger, and a run that dies on infrastructure leaves
+  # no way to build it again except deleting and re-pushing the tag - which rewrites a published
+  # ref for a reason that has nothing to do with the code. This lets the same tag be rebuilt from
+  # a fixed workflow instead.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, e.g. v0.2.31'
+        required: true
 
 jobs:
   release:
@@ -14,6 +23,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # On a tag push this is the tag already; on a manual rebuild it is the tag named in the
+          # input, so the artifact is built from the same source either way.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -34,10 +47,14 @@ jobs:
 
       - name: Extract version from tag
         id: version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          # tag: v1.26.0 → 1.26.0
-          VERSION="${GITHUB_REF_NAME#v}"
+          # tag: v1.26.0 -> 1.26.0
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Set version from tag
         working-directory: mcp
@@ -47,11 +64,25 @@ jobs:
             --batch-mode --no-transfer-progress
 
       # See the note in build.yml: the OSGi test runtime loads SWT/GTK, so give it a display.
+      #
+      # Bounded and non-fatal on purpose. The runner image already ships xvfb, so this step is
+      # insurance, not a dependency - and on 2026-08-19 it stopped being free: the same commands
+      # that took 11 seconds in the morning hung indefinitely twice in the afternoon, holding a
+      # release that was otherwise ready. An unbounded apt call in a release path can stall the
+      # release for as long as a mirror or a dpkg lock feels like it. Now it gets ten minutes and
+      # the build proceeds either way; if xvfb really is absent, the Maven step fails on its own
+      # and says so.
       - name: Install headless display
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          sudo apt-get install -y libgtk-3-0t64 || sudo apt-get install -y libgtk-3-0 || true
+          sudo apt-get -o DPkg::Lock::Timeout=120 update || true
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y xvfb || true
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y libgtk-3-0t64 \
+            || sudo apt-get -o DPkg::Lock::Timeout=120 install -y libgtk-3-0 || true
+          command -v xvfb-run || echo "xvfb-run not on PATH - the Maven step will say so"
 
       - name: Maven build
         working-directory: mcp
@@ -71,6 +102,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Named explicitly rather than taken from the ref: on a manual rebuild the ref is a
+          # branch, and the release has to land on the tag all the same.
+          tag_name: ${{ steps.version.outputs.tag }}
           name: AI-EDT v${{ steps.version.outputs.version }}
           files: AI-EDT-*.zip
           generate_release_notes: true
