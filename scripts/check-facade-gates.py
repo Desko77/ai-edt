@@ -95,7 +95,14 @@ def unreachable_operations(source: str) -> list[str]:
         return []
     tail = source[building.end():]
     end = tail.find("\n    }")
-    catalogued = set(re.findall(r'"([a-z0-9_]+)"', tail[:end if end != -1 else len(tail)]))
+    body = tail[:end if end != -1 else len(tail)]
+    # A catalog assembled from another collection cannot be read by scanning literals here: the
+    # names live in whatever built that collection. Abstain rather than accuse - DcsWorkshopTool
+    # derives its vocabulary from a mutation registry, and reading only this method's literals
+    # reported four of its operations as unreachable when every one of them is registered.
+    if ".keySet()" in body or ".addAll(" in body or ".putAll(" in body:
+        return []
+    catalogued = set(re.findall(r'"([a-z0-9_]+)"', body))
     if not catalogued:
         return []
     dispatched = set(CASE_LABEL.findall(dispatch_body(source)))
@@ -139,6 +146,26 @@ def facades() -> list[tuple[pathlib.Path, int]]:
     return found
 
 
+def catalog_keepers() -> list[pathlib.Path]:
+    """Every tool that decides its vocabulary in a catalog, whether or not it delegates.
+
+    Separate from facades() because the two checks ask different questions. Whether a tool asks the
+    preset before handing work to ANOTHER tool only makes sense for one that delegates. Whether a
+    `case` label can be reached at all makes sense for anything that guards its switch with a
+    catalog - and the workshops do, while delegating to nobody, so facades() never looked at them.
+
+    That gap was real: on 2026-08-19 `format_cells` was declared, dispatched, and refused before the
+    switch because it was missing from the catalog, and this script ran green over it. The check
+    existed for exactly that mistake and was simply not pointed at the file.
+    """
+    found = []
+    for path in sorted(OPS.glob("*.java")):
+        source = path.read_text(encoding="utf-8")
+        if DISPATCH.search(source) and CATALOG_GUARD.search(source):
+            found.append(path)
+    return found
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print every facade and its verdict")
@@ -152,13 +179,17 @@ def main() -> int:
     ungated = []
     late = []
     unreachable = []
+    # Reachability is asked of every tool that keeps a catalog; delegation gating only of those
+    # that delegate. Asking one question of the other's population accuses a workshop of not
+    # gating work it never hands to anybody.
+    for path in catalog_keepers():
+        missing = unreachable_operations(path.read_text(encoding="utf-8"))
+        if missing:
+            unreachable.append((path.name, missing))
     for path, delegations in found:
         source = path.read_text(encoding="utf-8")
         gated = any(gate in source for gate in GATES)
         name = path.name
-        missing = unreachable_operations(source)
-        if missing:
-            unreachable.append((name, missing))
         if not gated and name not in EXEMPT:
             ungated.append(name)
         too_late = gate_comes_first(source) if gated else None

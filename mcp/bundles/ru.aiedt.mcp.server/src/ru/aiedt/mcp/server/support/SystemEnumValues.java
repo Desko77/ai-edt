@@ -149,8 +149,27 @@ public final class SystemEnumValues
         {
             return described instanceof EObject ? (EObject)described : null;
         }
-        EObject proxy = (EObject)object;
-        return proxy.eIsProxy() ? null : proxy;
+        EObject candidate = (EObject)object;
+        if (!candidate.eIsProxy())
+        {
+            return candidate;
+        }
+        // A proxy is what the register normally hands back - it holds descriptions, not loaded
+        // models, and the definition arrives when the proxy is resolved. Treating "is a proxy" as
+        // failure meant this never returned anything at all: measured on the stand, every lookup
+        // answered "the definition could not be loaded", including for types that plainly exist.
+        try
+        {
+            EObject resolved = org.eclipse.emf.ecore.util.EcoreUtil.resolve(candidate,
+                new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl());
+            return resolved == null || resolved.eIsProxy() ? null : resolved;
+        }
+        catch (Exception cannotLoad)
+        {
+            Activator.logWarning("Could not resolve a platform type proxy: " //$NON-NLS-1$
+                + cannotLoad.getMessage());
+            return null;
+        }
     }
 
     /**

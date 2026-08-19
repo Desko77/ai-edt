@@ -1015,7 +1015,8 @@ public class MxlWorkshopTool implements IMcpTool
     private static Map<String, String> buildOpsCatalog()
     {
         Map<String, String> m = new LinkedHashMap<>();
-        for (String op : Arrays.asList("create_template", "set_cell", "merge_cells", "draw", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        for (String op : Arrays.asList("create_template", "set_cell", "format_cells", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "merge_cells", "draw", //$NON-NLS-1$ //$NON-NLS-2$
             "add_drawing", "remove_drawing", "read_template")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         {
             m.put(op, op);
