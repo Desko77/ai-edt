@@ -268,7 +268,7 @@
 
 | Инструмент | Режим | Назначение |
 |---|---|---|
-| `audit_role_rights` | Чтение | Анализирует права ролей на объекты конфигурации. |
+| `audit_role_rights` | Изменение | Анализирует права ролей на объекты конфигурации; `mode=orphans apply=true` удаляет права на объекты, которых в конфигурации больше нет. |
 | `find_rls_violations` | Чтение | Ищет подозрительные или неполные ограничения RLS. |
 | `sensitive_data_scan` | Чтение | Ищет потенциальные секреты и персональные данные в коде и метаданных. |
 | [`security_audit`](#security_audit) | Фасад · Чтение | Объединяет аудит ролей, RLS и sensitive-data scan. |
@@ -370,7 +370,7 @@
 <details>
 <summary><code>security_audit</code> - аудит безопасности</summary>
 
-Операции: `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help`. Все операции только читают проект.
+Операции: `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help`. Все они читают проект, кроме одной: `audit_role_rights` с `mode=orphans apply=true` удаляет записи прав. По умолчанию `apply` выключен, а под пресетом без права записи отклоняется.
 </details>
 
 <a id="workspace_marks"></a>
@@ -384,7 +384,7 @@
 <details>
 <summary><code>docs_lookup</code> - документация платформы и объектов</summary>
 
-Объединяет `get_platform_documentation`, `get_object_help` и встроенную справку фасада.
+Объединяет `get_platform_documentation`, `get_object_help`, `system_enum_values` и встроенную справку фасада. `system_enum_values` перечисляет значения системного перечисления по реестру типов платформы - тому же, из которого дополняет редактор.
 </details>
 
 <a id="yaxunit_tests"></a>
@@ -425,7 +425,7 @@
 <details>
 <summary><code>mxl_workshop</code> - табличный макет MXL</summary>
 
-Управляет областями, ячейками, объединением, оформлением, шириной, высотой и рисунками табличного документа. Поддерживает preview через `dryRun`.
+Управляет областями, ячейками, объединением и рисунками табличного документа. `format_cells` задаёт оформление: перенос текста (`textPlacement`), поворот (`textOrientation`), высоту строки, ширину колонки, автоширину и вес колонки при распределении ширины. Поддерживает preview через `dryRun`.
 </details>
 
 <a id="extension_workshop"></a>

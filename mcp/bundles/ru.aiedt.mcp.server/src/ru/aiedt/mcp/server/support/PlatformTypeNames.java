@@ -124,6 +124,53 @@ public final class PlatformTypeNames
     }
 
     /**
+     * The register's own description of a type, for callers that need more than yes or no.
+     * <p>
+     * {@link #check(String, IProject)} answers whether a name is known, which is all a validator
+     * needs. Reading what the type IS - its members, whether it is an enumeration - takes the
+     * description itself, and re-deriving the version and the provider at every such call site
+     * would duplicate the part of this class that is easy to get wrong.
+     * </p>
+     *
+     * @param bareName the type name as written in code; case-sensitive.
+     * @param project the project, which fixes the platform version.
+     * @return the register's description object, or {@code null} when it has none or could not be
+     *         consulted - the two are not distinguished here, and a caller must treat both as
+     *         "cannot tell" rather than as "no such type"
+     */
+    public static Object describeType(String bareName, IProject project)
+    {
+        if (bareName == null || bareName.isEmpty() || project == null)
+        {
+            return null;
+        }
+        try
+        {
+            Activator activator = Activator.getDefault();
+            Object versionSupport = activator == null ? null : activator.getRuntimeVersionSupport();
+            if (versionSupport == null)
+            {
+                return null;
+            }
+            Object version = runtimeVersion(versionSupport, project);
+            if (version == null)
+            {
+                return null;
+            }
+            Object provider = typeItemProvider(version);
+            if (provider == null || !isUsable(provider, version))
+            {
+                return null;
+            }
+            return describe(provider, bareName);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * The same question asked against an explicit platform version, which is what
      * the register is actually keyed by.
      * <p>

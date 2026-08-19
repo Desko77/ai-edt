@@ -13,6 +13,9 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import org.eclipse.core.resources.IProject;
+import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.SystemEnumValues;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -66,7 +69,8 @@ public class DocsLookupFacadeTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "get_platform_documentation / get_object_help / help (snake_case " //$NON-NLS-1$
+                "get_platform_documentation / get_object_help / system_enum_values / help " //$NON-NLS-1$
+                    + "(snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like getPlatformDocumentation is also " //$NON-NLS-1$
                     + "accepted). Pass operation=help without other params for the " //$NON-NLS-1$
                     + "operation catalog.", true) //$NON-NLS-1$
@@ -147,6 +151,8 @@ public class DocsLookupFacadeTool implements IMcpTool
                 return new PlatformDocReader().execute(params);
             case "get_object_help": //$NON-NLS-1$
                 return new GetObjectHelpTool().execute(params);
+            case "system_enum_values": //$NON-NLS-1$
+                return systemEnumValues(params);
             default:
                 return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
         }
@@ -182,11 +188,56 @@ public class DocsLookupFacadeTool implements IMcpTool
         return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * Lists what one system enumeration may hold.
+     * <p>
+     * The values are read from the platform's own type register - the same one the editor completes
+     * from - not from prose. An agent writing {@code ВидДвиженияНакопления.Приход} otherwise has to
+     * guess, and a wrong member of a system enumeration is a run-time error, not one the editor
+     * catches.
+     * </p>
+     *
+     * @param params the call's arguments.
+     * @return the values, or the reason they could not be read
+     */
+    private static String systemEnumValues(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String typeName = JsonUtils.extractStringArgument(params, "typeName"); //$NON-NLS-1$
+        if (projectName == null || projectName.isEmpty() || typeName == null || typeName.isEmpty())
+        {
+            return ToolResult.error("projectName and typeName are required").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+        SystemEnumValues.Lookup lookup = SystemEnumValues.of(typeName, project);
+        if (lookup.cannotTell != null)
+        {
+            // A failure, not an empty list. An empty list would read as "this enumeration has no
+            // values", which is never true of a real one, and would send the caller looking for
+            // the mistake in their own code.
+            return ToolResult.error(lookup.cannotTell)
+                .put("typeName", typeName) //$NON-NLS-1$
+                .put("isSystemEnum", lookup.isSystemEnum) //$NON-NLS-1$
+                .toJson();
+        }
+        return ToolResult.success()
+            .put("typeName", typeName) //$NON-NLS-1$
+            .put("isSystemEnum", true) //$NON-NLS-1$
+            .put("valueCount", lookup.values.size()) //$NON-NLS-1$
+            .put("values", lookup.values) //$NON-NLS-1$
+            .toJson();
+    }
+
     private static Map<String, String> buildOpsCatalog()
     {
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
-            "get_platform_documentation", "get_object_help")) //$NON-NLS-1$ //$NON-NLS-2$
+            "get_platform_documentation", "get_object_help", //$NON-NLS-1$ //$NON-NLS-2$
+            "system_enum_values")) //$NON-NLS-1$
         {
             m.put(op, op);
         }

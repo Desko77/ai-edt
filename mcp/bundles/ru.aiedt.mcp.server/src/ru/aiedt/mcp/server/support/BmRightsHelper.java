@@ -881,6 +881,145 @@ public final class BmRightsHelper
         return doc;
     }
 
+    /**
+     * What a sweep of a role's rights file found.
+     */
+    public static final class OrphanSweep
+    {
+        /** Whether the file could be read at all. */
+        public boolean ok;
+
+        /** FQNs whose object is certainly not in the configuration. */
+        public final java.util.List<String> orphaned = new java.util.ArrayList<>();
+
+        /** FQNs this could not decide about, with the reason - never removed. */
+        public final java.util.Map<String, String> undecided = new java.util.LinkedHashMap<>();
+
+        /** How many object blocks the file holds in all. */
+        public int total;
+
+        /** Whether anything was actually written. */
+        public boolean changed;
+
+        /** Why the sweep failed, when it did. */
+        public String error;
+    }
+
+    /**
+     * Finds - and optionally removes - rights on objects the configuration no longer has.
+     * <p>
+     * A role keeps an {@code <object>} block per metadata object it says anything about. Delete the
+     * object and the block stays: EDT does not always sweep it, and an XML import from the
+     * Configurator or a storage update leaves them behind wholesale. They are invisible in the
+     * editor and they accumulate.
+     * </p>
+     * <p>
+     * <b>Removal is refused unless the caller asks for it explicitly, and even then only for
+     * entries this is CERTAIN about.</b> Deleting a rights entry is a security change that nobody
+     * reviews afterwards, so anything undecidable - a type prefix this does not recognise, a model
+     * that would not load - is reported and left exactly where it is. A repair that guesses is
+     * worse than the rubbish it removes.
+     * </p>
+     *
+     * @param project the project the role belongs to.
+     * @param roleName the role.
+     * @param exists decides whether one FQN is still in the configuration; returns {@code null} when
+     *            it cannot tell, and the reason goes in the report.
+     * @param apply {@code false} to report only.
+     * @return what was found, and what was done about it
+     */
+    public static OrphanSweep sweepOrphanedRights(IProject project, String roleName,
+        java.util.function.Function<String, Boolean> exists, boolean apply)
+    {
+        OrphanSweep sweep = new OrphanSweep();
+        if (project == null || roleName == null || roleName.isEmpty() || exists == null)
+        {
+            sweep.error = "project, roleName and a resolver are required"; //$NON-NLS-1$
+            return sweep;
+        }
+        if (roleName.indexOf('/') >= 0 || roleName.indexOf('\\') >= 0 || roleName.contains("..")) //$NON-NLS-1$
+        {
+            sweep.error = "roleName must be a simple role name (no path separators or '..')"; //$NON-NLS-1$
+            return sweep;
+        }
+        if (project.getLocation() == null)
+        {
+            sweep.error = "project location is not on the local filesystem"; //$NON-NLS-1$
+            return sweep;
+        }
+        Path file = project.getLocation().toFile().toPath()
+            .resolve("src").resolve("Roles").resolve(roleName).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (!Files.exists(file))
+        {
+            sweep.error = "the role has no Rights.rights: " + roleName; //$NON-NLS-1$
+            return sweep;
+        }
+        // One writer at a time on one file, the same lock the right setters take: a sweep is a
+        // read-modify-write and would otherwise lose whatever a concurrent setter had just added.
+        ReentrantLock lock = fileLock(file.toString());
+        lock.lock();
+        try
+        {
+            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+            dbf.setNamespaceAware(false);
+            Document doc = dbf.newDocumentBuilder()
+                .parse(new ByteArrayInputStream(Files.readAllBytes(file)));
+            Element root = doc.getDocumentElement();
+            java.util.List<Element> doomed = new java.util.ArrayList<>();
+            NodeList kids = root.getChildNodes();
+            for (int i = 0; i < kids.getLength(); i++)
+            {
+                Node n = kids.item(i);
+                if (!(n instanceof Element) || !"object".equals(((Element)n).getTagName())) //$NON-NLS-1$
+                {
+                    continue;
+                }
+                sweep.total++;
+                Element nameEl = firstChild((Element)n, "name"); //$NON-NLS-1$
+                String fqn = nameEl == null ? null : nameEl.getTextContent().trim();
+                if (fqn == null || fqn.isEmpty())
+                {
+                    sweep.undecided.put("<object> with no name", //$NON-NLS-1$
+                        "the block names no object, so there is nothing to resolve"); //$NON-NLS-1$
+                    continue;
+                }
+                Boolean present = exists.apply(fqn);
+                if (present == null)
+                {
+                    sweep.undecided.put(fqn, "could not be resolved either way"); //$NON-NLS-1$
+                }
+                else if (!present.booleanValue())
+                {
+                    sweep.orphaned.add(fqn);
+                    doomed.add((Element)n);
+                }
+            }
+            sweep.ok = true;
+            if (!apply || doomed.isEmpty())
+            {
+                return sweep;
+            }
+            for (Element dead : doomed)
+            {
+                root.removeChild(dead);
+            }
+            String written = printRightsDom(doc);
+            Files.write(file, written.getBytes(StandardCharsets.UTF_8));
+            sweep.changed = true;
+            return sweep;
+        }
+        catch (Exception e)
+        {
+            sweep.ok = false;
+            sweep.error = "could not sweep " + file + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+            return sweep;
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
     /** Finds a direct child element {@code <tag>} whose {@code <name>} text equals value. */
     private static Element findChildByName(Element parent, String tag, String name)
     {

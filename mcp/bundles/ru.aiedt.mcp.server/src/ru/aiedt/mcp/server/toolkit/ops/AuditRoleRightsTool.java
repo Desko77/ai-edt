@@ -24,7 +24,10 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmRightsHelper;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.RoleRightsAnalyzer;
 import ru.aiedt.mcp.server.support.UiSync;
@@ -50,7 +53,9 @@ public class AuditRoleRightsTool implements IMcpTool
         return "Back-compat alias of `security_audit` `operation=audit_role_rights`; prefer the facade for new prompts. " //$NON-NLS-1$
             + "Audit 1C role rights: rights grid per object, under-privileged gaps, conflicts " //$NON-NLS-1$
             + "between two or more roles, impact analysis (what user loses on role removal). " //$NON-NLS-1$
-            + "Modes: rights | missing | conflicts | impact."; //$NON-NLS-1$
+            + "Modes: rights | missing | conflicts | impact | orphans. orphans finds rights on " //$NON-NLS-1$
+            + "metadata objects the configuration no longer has - left behind by deletions and by " //$NON-NLS-1$
+            + "XML imports - and removes them only when asked with apply=true."; //$NON-NLS-1$
     }
 
     @Override
@@ -61,7 +66,12 @@ public class AuditRoleRightsTool implements IMcpTool
             .stringProperty("roleName", "Role name (required for rights / missing modes)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("roleNames", //$NON-NLS-1$
                 "Comma-separated role names (for conflicts / impact modes)") //$NON-NLS-1$
-            .stringProperty("mode", "rights | missing | conflicts | impact (default rights)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("mode", //$NON-NLS-1$
+                "rights | missing | conflicts | impact | orphans (default rights)") //$NON-NLS-1$
+            .booleanProperty("apply", //$NON-NLS-1$
+                "orphans mode: actually remove what was found. Off by default - a rights entry " //$NON-NLS-1$
+                    + "removed is a security change nobody reviews afterwards, so the first answer " //$NON-NLS-1$
+                    + "is always a list to read.") //$NON-NLS-1$
             .stringProperty("objectType", //$NON-NLS-1$
                 "Catalog | Document | Register | Report | all (default all)") //$NON-NLS-1$
             .stringProperty("objectFqn", "Specific object FQN to focus on") //$NON-NLS-1$ //$NON-NLS-2$
@@ -121,6 +131,8 @@ public class AuditRoleRightsTool implements IMcpTool
         {
             case "rights": //$NON-NLS-1$
                 return runRights(project, config, objects, params, format, includeRls);
+            case "orphans": //$NON-NLS-1$
+                return orphans(params, project, config);
             case "missing": //$NON-NLS-1$
                 return runMissing(project, config, objects, params, format);
             case "conflicts": //$NON-NLS-1$
@@ -128,7 +140,7 @@ public class AuditRoleRightsTool implements IMcpTool
             case "impact": //$NON-NLS-1$
                 return runImpact(project, config, objects, params, format);
             default:
-                return ToolResult.error("mode must be rights | missing | conflicts | impact") //$NON-NLS-1$
+                return ToolResult.error("mode must be rights | missing | conflicts | impact | orphans") //$NON-NLS-1$
                     .toJson();
         }
     }
@@ -407,4 +419,133 @@ public class AuditRoleRightsTool implements IMcpTool
     {
         return value != null && !value.isEmpty() ? value : fallback;
     }
+    /**
+     * Reports - and on request removes - rights on objects the configuration no longer has.
+     * <p>
+     * The decision about each entry is deliberately three-valued. Present, certainly absent, and
+     * "cannot tell" are different answers, and only the middle one is ever acted on: a rights entry
+     * removed by mistake is a permission silently taken away, and nobody re-reads a role after a
+     * repair to notice.
+     * </p>
+     *
+     * @param params the call's arguments.
+     * @param projectName the project.
+     * @return the report
+     */
+    private static String orphans(Map<String, String> params, IProject project, Configuration configuration)
+    {
+        String roleName = JsonUtils.extractStringArgument(params, "roleName"); //$NON-NLS-1$
+        if (roleName == null || roleName.isEmpty())
+        {
+            return ToolResult.error("roleName is required for mode=orphans").toJson(); //$NON-NLS-1$
+        }
+        boolean apply = JsonUtils.extractBooleanArgument(params, "apply", false); //$NON-NLS-1$
+        if (apply)
+        {
+            // This tool lives in the security group, which a read-only preset leaves ON - an
+            // auditor under that preset still wants to audit. The reporting modes are read-only and
+            // stay; apply is not, so it is gated on a canonical writer instead. Without this,
+            // "Read-only changes nothing" would stop being true through a mode argument.
+            String forbidden = ToolGate.gateIfPresetDisabled("write_module_source"); //$NON-NLS-1$
+            if (forbidden != null)
+            {
+                return ToolResult.error("apply=true removes rights from the role's file, and the " //$NON-NLS-1$
+                    + "active preset does not allow writing. " + forbidden).toJson(); //$NON-NLS-1$
+            }
+        }
+        BmRightsHelper.OrphanSweep sweep = BmRightsHelper.sweepOrphanedRights(project, roleName,
+            fqn -> stillThere(configuration, fqn), apply);
+        if (!sweep.ok)
+        {
+            return ToolResult.error(sweep.error).put("roleName", roleName).toJson(); //$NON-NLS-1$
+        }
+        ToolResult result = ToolResult.success()
+            .put("projectName", project.getName()) //$NON-NLS-1$
+            .put("roleName", roleName) //$NON-NLS-1$
+            .put("objectsInFile", sweep.total) //$NON-NLS-1$
+            .put("orphanedCount", sweep.orphaned.size()) //$NON-NLS-1$
+            .put("orphaned", sweep.orphaned) //$NON-NLS-1$
+            .put("removed", sweep.changed); //$NON-NLS-1$
+        if (!sweep.undecided.isEmpty())
+        {
+            // Reported as its own list, not folded into the orphans. These were left alone, and a
+            // caller who read them as removed would think the role is cleaner than it is.
+            result.put("undecided", new java.util.LinkedHashMap<>(sweep.undecided)); //$NON-NLS-1$
+            result.put("undecidedNote", "These entries were NOT touched: this could not tell " //$NON-NLS-1$ //$NON-NLS-2$
+                + "whether their objects exist. Check them by hand."); //$NON-NLS-1$
+        }
+        if (!sweep.orphaned.isEmpty() && !apply)
+        {
+            result.put("message", "Nothing was changed. Pass apply=true to remove the " //$NON-NLS-1$ //$NON-NLS-2$
+                + sweep.orphaned.size() + " entries listed above."); //$NON-NLS-1$
+        }
+        else if (sweep.changed)
+        {
+            result.put("message", "Removed " + sweep.orphaned.size() //$NON-NLS-1$ //$NON-NLS-2$
+                + " entries. Revalidate the role to bring the in-memory model in step with the " //$NON-NLS-1$
+                + "file."); //$NON-NLS-1$
+        }
+        else if (sweep.orphaned.isEmpty())
+        {
+            result.put("message", "Every object this role names is still in the configuration."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return result.toJson();
+    }
+
+    /**
+     * Whether one FQN from a rights file is still in the configuration.
+     * <p>
+     * Three answers, and the third is the important one. A rights file names ordinary objects
+     * ({@code Catalog.Products}), their children ({@code Catalog.Products.Attribute.Price}) and the
+     * configuration root - and a prefix this does not recognise must come back as "cannot tell"
+     * rather than as "gone", because the caller may act on the difference.
+     * </p>
+     *
+     * @param configuration the configuration.
+     * @param fqn the name from the rights file.
+     * @return TRUE when present, FALSE when certainly absent, {@code null} when undecidable
+     */
+    private static Boolean stillThere(Configuration configuration, String fqn)
+    {
+        if (fqn == null || fqn.isEmpty())
+        {
+            return null;
+        }
+        if (fqn.equals(configuration.getName()) || "Configuration".equals(fqn) //$NON-NLS-1$
+            || fqn.startsWith("Configuration.")) //$NON-NLS-1$
+        {
+            // Rights on the configuration itself. It is always there.
+            return Boolean.TRUE;
+        }
+        String[] parts = fqn.split("\\."); //$NON-NLS-1$
+        if (parts.length < 2)
+        {
+            return null;
+        }
+        String type = MetadataTypeCatalog.toEnglishSingular(parts[0]);
+        if (type == null)
+        {
+            type = parts[0];
+        }
+        if (MetadataTypeCatalog.resolve(type) == null)
+        {
+            // A collection this does not know. Saying "gone" here would delete rights on an object
+            // that exists perfectly well behind a name this happens not to recognise.
+            return null;
+        }
+        MdObject owner = MetadataTypeCatalog.findObject(configuration, type, parts[1]);
+        if (owner == null)
+        {
+            return Boolean.FALSE;
+        }
+        if (parts.length == 2)
+        {
+            return Boolean.TRUE;
+        }
+        // A child FQN - an attribute, a tabular section, a dimension. The owner is there; whether
+        // this particular child still is takes a walk this does not do, so it is left undecided
+        // rather than guessed at.
+        return null;
+    }
+
 }

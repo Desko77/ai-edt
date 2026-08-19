@@ -37,6 +37,10 @@ import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Drawing;
 import com._1c.g5.v8.dt.moxel.Format;
 import com._1c.g5.v8.dt.moxel.Merge;
+import com._1c.g5.v8.dt.moxel.Column;
+import com._1c.g5.v8.dt.moxel.Columns;
+import com._1c.g5.v8.dt.moxel.content.TextPlacement;
+import org.eclipse.emf.common.util.EList;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.Rect;
 import com._1c.g5.v8.dt.moxel.Row;
@@ -1165,6 +1169,216 @@ public final class BmTemplateHelper
             c.setText(ls);
         }
         ls.getContent().put(lang, text == null ? "" : text); //$NON-NLS-1$
+    }
+
+    /**
+     * What a formatting request changes, and what it left alone.
+     */
+    public static final class FormatOutcome
+    {
+        /** Cells whose format index moved. */
+        public int cellsChanged;
+
+        /** Columns whose width or auto-width changed. */
+        public int columnsChanged;
+
+        /** Properties that were asked for and are not supported by this runtime's model. */
+        public final java.util.List<String> unsupported = new java.util.ArrayList<>();
+
+        /** Why nothing happened, when nothing did. */
+        public String error;
+    }
+
+    /**
+     * Applies presentation properties to a rectangle of cells, and column width to its columns.
+     * <p>
+     * Formats in a spreadsheet are shared: a cell does not own one, it points at an index in the
+     * document's format table. So changing one cell means finding - or adding - a format that
+     * differs from its current one in exactly the requested properties, and repointing the cell.
+     * Editing the format in place would silently restyle every other cell that happens to share it,
+     * and in a platform-authored template that is most of the sheet.
+     * </p>
+     *
+     * @param doc the spreadsheet.
+     * @param fromRow first row, 1-based inclusive.
+     * @param fromCol first column, 1-based inclusive.
+     * @param toRow last row, inclusive.
+     * @param toCol last column, inclusive.
+     * @param placement text placement (wrap / cut / block / auto), or {@code null} to leave it.
+     * @param orientation text rotation in degrees, or {@code null} to leave it.
+     * @param rowHeight an explicit row height, or {@code null} to leave it. There is no
+     *            auto-height flag in this model: a row whose height is unset and whose cells wrap
+     *            is what the platform grows to fit the text.
+     * @param autoColumnWidth whether column width follows the content, or {@code null} to leave it.
+     * @param columnWidth an explicit column width, or {@code null} to leave it.
+     * @param widthWeight the column's share when widths are distributed, or {@code null}.
+     * @return what changed
+     */
+    public static FormatOutcome applyCellFormat(SpreadsheetDocument doc, int fromRow, int fromCol,
+        int toRow, int toCol, String placement, Integer orientation, Integer rowHeight,
+        Boolean autoColumnWidth, Integer columnWidth, Integer widthWeight)
+    {
+        FormatOutcome outcome = new FormatOutcome();
+        if (doc == null)
+        {
+            outcome.error = "no spreadsheet to format"; //$NON-NLS-1$
+            return outcome;
+        }
+        TextPlacement wanted = null;
+        if (placement != null && !placement.isEmpty())
+        {
+            wanted = TextPlacement.getByName(placement.toUpperCase(java.util.Locale.ROOT));
+            if (wanted == null)
+            {
+                outcome.error = "textPlacement must be one of auto, cut, block, wrap - got: " //$NON-NLS-1$
+                    + placement;
+                return outcome;
+            }
+        }
+        EMap<Integer, Row> rows = doc.getRows();
+        for (int row = fromRow; row <= toRow; row++)
+        {
+            Row r = rows.get(Integer.valueOf(row - 1));
+            if (r == null)
+            {
+                r = MoxelFactory.eINSTANCE.createRow();
+                rows.put(Integer.valueOf(row - 1), r);
+            }
+            if (rowHeight != null)
+            {
+                // Height belongs to the ROW's own format, not to the cells in it - a cell cannot
+                // make the line it sits on taller by itself.
+                r.setFormatIndex(indexOfFormatWith(doc, r.getFormatIndex(), null, null,
+                    rowHeight, null, null, null));
+            }
+            EMap<Integer, Cell> cells = r.getCells();
+            for (int col = fromCol; col <= toCol; col++)
+            {
+                Cell c = cells.get(Integer.valueOf(col - 1));
+                if (c == null)
+                {
+                    c = MoxelFactory.eINSTANCE.createCell();
+                    cells.put(Integer.valueOf(col - 1), c);
+                }
+                int before = c.getFormatIndex();
+                int after = indexOfFormatWith(doc, before, wanted, orientation, null, null, null, null);
+                if (after != before)
+                {
+                    c.setFormatIndex(after);
+                    outcome.cellsChanged++;
+                }
+            }
+        }
+        if (autoColumnWidth != null || columnWidth != null || widthWeight != null)
+        {
+            outcome.columnsChanged =
+                applyColumnFormat(doc, fromCol, toCol, autoColumnWidth, columnWidth, widthWeight);
+        }
+        return outcome;
+    }
+
+    /**
+     * Points a range of columns at a format carrying the requested width behaviour.
+     *
+     * @param doc the spreadsheet.
+     * @param fromCol first column, 1-based inclusive.
+     * @param toCol last column, inclusive.
+     * @param autoWidth whether the width follows the content, or {@code null} to leave it.
+     * @param width an explicit width, or {@code null} to leave it.
+     * @param weight the column's share when widths are distributed, or {@code null}.
+     * @return how many columns moved
+     */
+    private static int applyColumnFormat(SpreadsheetDocument doc, int fromCol, int toCol,
+        Boolean autoWidth, Integer width, Integer weight)
+    {
+        Columns columns = doc.getColumns();
+        if (columns == null)
+        {
+            return 0;
+        }
+        EMap<Integer, Column> byIndex = columns.getColumns();
+        int changed = 0;
+        for (int col = fromCol; col <= toCol; col++)
+        {
+            Column c = byIndex.get(Integer.valueOf(col - 1));
+            if (c == null)
+            {
+                c = MoxelFactory.eINSTANCE.createColumn();
+                byIndex.put(Integer.valueOf(col - 1), c);
+            }
+            int before = c.getFormatIndex();
+            int after = indexOfFormatWith(doc, before, null, null, null, autoWidth, width, weight);
+            if (after != before)
+            {
+                c.setFormatIndex(after);
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Finds - or adds - a format that differs from an existing one in exactly the given properties.
+     * <p>
+     * Reuse first. A template that sets the same wrap on two hundred cells should end with one new
+     * format, not two hundred: the format table is written into the file, and a table that grows by
+     * one entry per formatted cell makes the template larger every time it is touched.
+     * </p>
+     *
+     * @param doc the spreadsheet holding the format table.
+     * @param baseIndex the format the element points at now.
+     * @param placement the wanted placement, or {@code null} to keep the base's.
+     * @param orientation the wanted rotation, or {@code null} to keep the base's.
+     * @param height the wanted height, or {@code null} to keep the base's.
+     * @param autoWidth the wanted auto-width, or {@code null} to keep the base's.
+     * @param width the wanted width, or {@code null} to keep the base's.
+     * @param weight the wanted width weight, or {@code null} to keep the base's.
+     * @return the index to point at
+     */
+    private static int indexOfFormatWith(SpreadsheetDocument doc, int baseIndex,
+        TextPlacement placement, Integer orientation, Integer height, Boolean autoWidth,
+        Integer width, Integer weight)
+    {
+        EList<Format> formats = doc.getFormats();
+        Format base = baseIndex >= 0 && baseIndex < formats.size() ? formats.get(baseIndex) : null;
+        Format wanted = MoxelFactory.eINSTANCE.createFormat();
+        if (base != null)
+        {
+            wanted = EcoreUtil.copy(base);
+        }
+        if (placement != null)
+        {
+            wanted.setTextPlacement(placement);
+        }
+        if (orientation != null)
+        {
+            wanted.setTextOrientation(orientation.intValue());
+        }
+        if (height != null)
+        {
+            wanted.setHeight(height.intValue());
+        }
+        if (autoWidth != null)
+        {
+            wanted.setAutoWidthCalculation(autoWidth.booleanValue());
+        }
+        if (width != null)
+        {
+            wanted.setWidth(width.intValue());
+        }
+        if (weight != null)
+        {
+            wanted.setWidthWeightFactor(weight.intValue());
+        }
+        for (int i = 0; i < formats.size(); i++)
+        {
+            if (EcoreUtil.equals(formats.get(i), wanted))
+            {
+                return i;
+            }
+        }
+        formats.add(wanted);
+        return formats.size() - 1;
     }
 
     /**

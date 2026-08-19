@@ -56,7 +56,8 @@ public class MxlWorkshopTool implements IMcpTool
     public String getDescription()
     {
         return "MXL spreadsheet template constructor. 7 operations: create_template, " //$NON-NLS-1$
-            + "set_cell, merge_cells, draw, add_drawing, remove_drawing, read_template. " //$NON-NLS-1$
+            + "set_cell, format_cells, merge_cells, draw, add_drawing, remove_drawing, " //$NON-NLS-1$
+            + "read_template. " //$NON-NLS-1$
             + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
             + "SpreadsheetDocument model directly. read_template returns dimensions, " //$NON-NLS-1$
             + "the populated cell map, merged ranges and drawing ids. " //$NON-NLS-1$
@@ -109,6 +110,19 @@ public class MxlWorkshopTool implements IMcpTool
                 "add_drawing: format-table index for stroke/fill (default: a fresh empty format)") //$NON-NLS-1$
             .integerProperty("zOrder", "add_drawing: explicit z-order (default = drawing id)") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("drawingId", "remove_drawing: id of the drawing to remove") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("textPlacement", //$NON-NLS-1$
+                "format_cells: how text behaves when it does not fit - auto / cut / block / wrap.") //$NON-NLS-1$
+            .integerProperty("textOrientation", //$NON-NLS-1$
+                "format_cells: text rotation in degrees.") //$NON-NLS-1$
+            .integerProperty("rowHeight", //$NON-NLS-1$
+                "format_cells: explicit row height. There is no auto-height flag in the model - a " //$NON-NLS-1$
+                    + "row with no explicit height whose cells wrap is what the platform grows to " //$NON-NLS-1$
+                    + "fit the text.") //$NON-NLS-1$
+            .booleanProperty("autoColumnWidth", //$NON-NLS-1$
+                "format_cells: let the column width follow its content.") //$NON-NLS-1$
+            .integerProperty("columnWidth", "format_cells: explicit column width.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("columnWidthWeight", //$NON-NLS-1$
+                "format_cells: this column's share when the available width is distributed.") //$NON-NLS-1$
             .booleanProperty("dryRun", "Preview without applying (default false)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
@@ -145,6 +159,8 @@ public class MxlWorkshopTool implements IMcpTool
                 return opCreateTemplate(params);
             case "set_cell": //$NON-NLS-1$
                 return opSetCell(params);
+            case "format_cells": //$NON-NLS-1$
+                return opFormatCells(params);
             case "merge_cells": //$NON-NLS-1$
                 return opMergeCells(params);
             case "draw": //$NON-NLS-1$
@@ -352,6 +368,134 @@ public class MxlWorkshopTool implements IMcpTool
             r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
         }
         return formatResult(r, "merge_cells"); //$NON-NLS-1$
+    }
+
+    /**
+     * Applies presentation properties to a rectangle of cells and the columns under it.
+     * <p>
+     * Every property is optional and only what is passed is touched: this is a formatter, not a
+     * style reset, and a template arrives with a look somebody chose. Passing none of them is
+     * refused rather than treated as a no-op, because a call that changes nothing and reports
+     * success reads as a call that worked.
+     * </p>
+     *
+     * @param params the call's arguments.
+     * @return the result
+     */
+    private String opFormatCells(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("format_cells"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        int fromRow = JsonUtils.extractIntArgument(params, "fromRow", //$NON-NLS-1$
+            JsonUtils.extractIntArgument(params, "row", -1)); //$NON-NLS-1$
+        int fromCol = JsonUtils.extractIntArgument(params, "fromCol", //$NON-NLS-1$
+            JsonUtils.extractIntArgument(params, "col", -1)); //$NON-NLS-1$
+        int toRow = JsonUtils.extractIntArgument(params, "toRow", fromRow); //$NON-NLS-1$
+        int toCol = JsonUtils.extractIntArgument(params, "toCol", fromCol); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+
+        String placement = JsonUtils.extractStringArgument(params, "textPlacement"); //$NON-NLS-1$
+        Integer orientation = optionalInt(params, "textOrientation"); //$NON-NLS-1$
+        Integer rowHeight = optionalInt(params, "rowHeight"); //$NON-NLS-1$
+        Integer columnWidth = optionalInt(params, "columnWidth"); //$NON-NLS-1$
+        Integer widthWeight = optionalInt(params, "columnWidthWeight"); //$NON-NLS-1$
+        Boolean autoColumnWidth = params.containsKey("autoColumnWidth") //$NON-NLS-1$
+            ? Boolean.valueOf(JsonUtils.extractBooleanArgument(params, "autoColumnWidth", false)) //$NON-NLS-1$
+            : null;
+
+        if (projectName == null || ownerFqn == null || templateName == null
+            || fromRow < 1 || fromCol < 1 || toRow < fromRow || toCol < fromCol)
+        {
+            return ToolResult.error("projectName, ownerFqn, templateName and a cell range are " //$NON-NLS-1$
+                + "required: row/col for one cell, or fromRow/fromCol/toRow/toCol for a " //$NON-NLS-1$
+                + "rectangle").toJson(); //$NON-NLS-1$
+        }
+        if (placement == null && orientation == null && rowHeight == null && columnWidth == null
+            && widthWeight == null && autoColumnWidth == null)
+        {
+            return ToolResult.error("nothing to apply: pass at least one of textPlacement, " //$NON-NLS-1$
+                + "textOrientation, rowHeight, autoColumnWidth, columnWidth, " //$NON-NLS-1$
+                + "columnWidthWeight").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+        final int fromRowF = fromRow;
+        final int fromColF = fromCol;
+        final int toRowF = toRow;
+        final int toColF = toCol;
+        final String[] persistErrorRef = { null };
+        final String[] formatErrorRef = { null };
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                BmTemplateHelper.FormatOutcome outcome = BmTemplateHelper.applyCellFormat(doc,
+                    fromRowF, fromColF, toRowF, toColF, placement, orientation, rowHeight,
+                    autoColumnWidth, columnWidth, widthWeight);
+                if (outcome.error != null)
+                {
+                    formatErrorRef[0] = outcome.error;
+                    return outcome.error;
+                }
+                if (!dryRun)
+                {
+                    String pErr = BmTemplateHelper.persistTemplateMxlx(project,
+                        ownerFqn, templateName, doc);
+                    if (pErr != null)
+                    {
+                        persistErrorRef[0] = pErr;
+                    }
+                }
+                return outcome.cellsChanged + " cells, " + outcome.columnsChanged + " columns"; //$NON-NLS-1$ //$NON-NLS-2$
+            });
+        if (formatErrorRef[0] != null)
+        {
+            // The transaction may well have "succeeded" without changing anything - the request was
+            // rejected inside it. Reported as a failure so a bad textPlacement is not answered with
+            // success and an unchanged template.
+            return ToolResult.error(formatErrorRef[0]).put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (persistErrorRef[0] != null && r.tags != null)
+        {
+            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+        }
+        return formatResult(r, "format_cells"); //$NON-NLS-1$
+    }
+
+    /**
+     * Reads an integer argument that is meaningfully absent.
+     * <p>
+     * A formatter needs the difference between "set this to zero" and "leave it alone", which a
+     * default-valued read cannot express.
+     * </p>
+     *
+     * @param params the arguments.
+     * @param name the argument.
+     * @return the value, or {@code null} when it was not passed
+     */
+    private static Integer optionalInt(Map<String, String> params, String name)
+    {
+        String raw = JsonUtils.extractStringArgument(params, name);
+        if (raw == null || raw.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            return Integer.valueOf(raw.trim());
+        }
+        catch (NumberFormatException notANumber)
+        {
+            return null;
+        }
     }
 
     /**
