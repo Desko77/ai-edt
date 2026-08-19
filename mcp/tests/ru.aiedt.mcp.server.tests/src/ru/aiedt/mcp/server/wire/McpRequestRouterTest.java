@@ -733,8 +733,9 @@ public class McpRequestRouterTest
     public void noTaskIsBuiltOverAKeyNoDomainOwns()
     {
         registry.register(stub("orphan", "Orphan", "{\"type\":\"object\"}", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "{\"success\":true,\"operation\":\"orphan\",\"status\":\"Pending\"," //$NON-NLS-1$
-                + "\"runKey\":\"belongs-to-nobody\"}")); //$NON-NLS-1$
+            "{\"success\":true,\"operation\":\"orphan\",\"status\":\"Pending\",\"" //$NON-NLS-1$
+                + ru.aiedt.mcp.server.support.PendingEnvelope.MARK //$NON-NLS-1$
+                + "\":true,\"runKey\":\"belongs-to-nobody\"}")); //$NON-NLS-1$
 
         JsonObject result = send(toolCall(1, "orphan", null, tasksParams())).getAsJsonObject("result"); //$NON-NLS-1$
 
@@ -743,9 +744,20 @@ public class McpRequestRouterTest
             result.toString().contains("belongs-to-nobody")); //$NON-NLS-1$
     }
 
+    /**
+     * A pending envelope exactly as a producer writes one, mark and all.
+     * <p>
+     * The mark is what the router recognises. Written here through the same constant the producers
+     * use, so a test cannot pass on an envelope no real tool would emit - and so that renaming the
+     * member breaks this in the compiler rather than at run time.
+     * </p>
+     *
+     * @return the envelope
+     */
     private static String pendingEnvelope()
     {
-        return "{\"success\":true,\"operation\":\"slow\",\"status\":\"Pending\",\"runKey\":\"" //$NON-NLS-1$
+        return "{\"success\":true,\"operation\":\"slow\",\"status\":\"Pending\",\"" //$NON-NLS-1$
+            + ru.aiedt.mcp.server.support.PendingEnvelope.MARK + "\":true,\"runKey\":\"" //$NON-NLS-1$
             + PENDING_RUN_KEY + "\",\"elapsedMs\":10,\"waitedMs\":10}"; //$NON-NLS-1$
     }
 

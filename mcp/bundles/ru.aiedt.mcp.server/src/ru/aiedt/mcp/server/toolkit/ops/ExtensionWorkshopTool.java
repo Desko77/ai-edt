@@ -342,6 +342,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         }
         return ToolResult.success()
             .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
             .put("batch", true) //$NON-NLS-1$
             .put("runKey", runKey) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$

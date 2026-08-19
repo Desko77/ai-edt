@@ -364,6 +364,7 @@ public class ExportObjectTool implements IMcpTool
         ToolResult tr = ToolResult.success()
             .put("operation", NAME) //$NON-NLS-1$
             .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
             .put("runKey", runKey) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
             .put("waitedMs", timeoutMs) //$NON-NLS-1$

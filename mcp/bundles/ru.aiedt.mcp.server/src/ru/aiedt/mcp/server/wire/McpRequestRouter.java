@@ -115,18 +115,6 @@ public class McpRequestRouter
      */
     private static final long DISCOVER_TTL_MS = 3_600_000L;
 
-    /** The two marks a pending answer always carries, checked before anything is parsed. */
-    private static final String PENDING_STATUS_MARK = "\"Pending\""; //$NON-NLS-1$
-
-    private static final String PENDING_KEY_MARK = "\"runKey\""; //$NON-NLS-1$
-
-    /**
-     * Size beyond which a result cannot be a pending answer. A pending answer is a handful of
-     * fields and a sentence of advice; this is generous by an order of magnitude, and it keeps the
-     * check off the large results it would otherwise scan on every call.
-     */
-    private static final int MAX_PENDING_ENVELOPE_CHARS = 4096;
-
     /**
      * Who may cache it. Private, not public: the answer names the workspace this EDT has open, and
      * a shared cache would hand one developer's workspace name to another.
@@ -481,8 +469,14 @@ public class McpRequestRouter
      */
     private static TaskDirectory.Task asTask(String toolName, Map<String, String> arguments, String result)
     {
-        if (result == null || result.length() > MAX_PENDING_ENVELOPE_CHARS
-            || !result.contains(PENDING_STATUS_MARK) || !result.contains(PENDING_KEY_MARK))
+        // Recognised by a member producers stamp, not by looking for words in the text. The old
+        // pre-check asked whether the answer was shorter than four thousand characters and
+        // mentioned "Pending" and "runKey" - two guesses that fail in opposite directions. An
+        // envelope that grew past the limit stopped becoming a task, silently, for having got
+        // longer; an ordinary answer quoting those words was parsed as one. The mark is written by
+        // nothing else, so it rejects everything else without parsing and rejects no envelope at
+        // all, however long.
+        if (!ru.aiedt.mcp.server.support.PendingEnvelope.isCandidate(result))
         {
             return null;
         }
