@@ -186,9 +186,17 @@ public class PendingExecutorTest
             {
                 throw new RuntimeException("boom"); //$NON-NLS-1$
             }, null);
-        // The contract is a terminal "Error: ..." result (not a hang, not Pending);
-        // the exact message is the cause's text, which the registry prefixes.
-        assertTrue("failure surfaced as a terminal Error result", out.startsWith("Error:")); //$NON-NLS-1$ //$NON-NLS-2$
+        // The contract is a terminal refusal - not a hang, not Pending - and it is structured.
+        // It used to be the sentence "Error: boom", which nothing downstream could tell from an
+        // answer beginning with that word, and which carried no success:false for anything reading
+        // the structured channel.
+        assertTrue("a thrown failure must answer success:false: " + out, //$NON-NLS-1$
+            out.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("and must name the exception type, not only its message: " + out, //$NON-NLS-1$
+            out.contains("RuntimeException")); //$NON-NLS-1$
+        assertTrue("and carry what was thrown: " + out, out.contains("boom")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("and say it happened in the background: " + out, //$NON-NLS-1$
+            out.contains("\"failedInBackground\":true")); //$NON-NLS-1$
         assertFalse("a thrown failure must not read as Pending", //$NON-NLS-1$
             out.contains("\"status\":\"Pending\"")); //$NON-NLS-1$
         assertNull("entry removed after terminal retrieval", REG.get(rk)); //$NON-NLS-1$

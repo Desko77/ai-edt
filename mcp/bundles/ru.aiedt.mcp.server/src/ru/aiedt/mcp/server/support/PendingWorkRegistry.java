@@ -215,8 +215,7 @@ public final class PendingWorkRegistry
                 catch (Throwable t)
                 {
                     Activator.logError(domainLabel + " async work failed for runKey=" + k, t); //$NON-NLS-1$
-                    return "Error: " + (t.getMessage() != null ? t.getMessage() //$NON-NLS-1$
-                        : t.getClass().getSimpleName());
+                    return failed(t, k);
                 }
                 finally
                 {
@@ -238,7 +237,7 @@ public final class PendingWorkRegistry
             }, executor);
             entry.future.whenComplete((result, throwable) ->
             {
-                String cached = result != null ? result : ("Error: " + throwable); //$NON-NLS-1$
+                String cached = result != null ? result : failed(throwable, entry.runKey);
                 entry.cachedResult = cached;
                 entry.oversized = cached.length() > MAX_CACHED_RESULT_CHARS;
                 entry.completedAt = System.currentTimeMillis();
@@ -436,6 +435,38 @@ public final class PendingWorkRegistry
     /**
      * Per-runKey state for the registry.
      */
+    /**
+     * What a caller gets when the work threw instead of answering.
+     * <p>
+     * A structured refusal, not the sentence {@code "Error: " + message} this used to return. That
+     * sentence was the tool's entire result: nothing downstream could tell a failure from an
+     * answer that happened to start with the word, the response carried no {@code success:false}
+     * for anything reading the structured channel, and a message-less exception - which is most of
+     * them - produced "Error: null".
+     * </p>
+     * <p>
+     * The exception type is named as well as its message, for the same reason it is named
+     * everywhere else here: the type is what says where to look when the message says nothing.
+     * </p>
+     *
+     * @param t what was thrown; may be a completion wrapper.
+     * @param runKey the run it belonged to, so the answer can be tied back to the request.
+     * @return the failure as a tool result
+     */
+    private static String failed(Throwable t, String runKey)
+    {
+        Throwable cause = t instanceof java.util.concurrent.CompletionException && t.getCause() != null
+            ? t.getCause() : t;
+        String message = cause == null ? null : cause.getMessage();
+        String named = cause == null ? "the work failed without saying how" //$NON-NLS-1$
+            : (message == null || message.isEmpty() ? cause.getClass().getName()
+                : cause.getClass().getSimpleName() + ": " + message); //$NON-NLS-1$
+        return ru.aiedt.mcp.server.wire.ToolResult.error(named)
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("failedInBackground", true) //$NON-NLS-1$
+            .toJson();
+    }
+
     public static final class PendingEntry
     {
         public final String runKey;
@@ -472,7 +503,10 @@ public final class PendingWorkRegistry
             }
             catch (Exception e)
             {
-                return "Error: " + e.getMessage(); //$NON-NLS-1$
+                // Same shape as a failure raised inside the work. Waiting for it and running it
+                // are two ways to meet the same exception, and answering them differently made
+                // the caller's handling depend on which one happened to reach it first.
+                return failed(e, runKey);
             }
         }
 
