@@ -43,6 +43,10 @@ public class McpRequestRouterTest
     /** The key the stub slow tool reports, seeded into the generic domain by the tests using it. */
     private static final String PENDING_RUN_KEY = "aiedt-test-pending-run"; //$NON-NLS-1$
 
+    /** Held down while a seeded run must look unfinished; released when the test ends. */
+    private final java.util.concurrent.CountDownLatch seededRunRelease =
+        new java.util.concurrent.CountDownLatch(1);
+
     private McpRequestRouter handler;
     private McpToolCatalog registry;
 
@@ -58,6 +62,7 @@ public class McpRequestRouterTest
     public void clearRegistry()
     {
         registry.clear();
+        seededRunRelease.countDown();
         PendingWorkRegistry.GENERIC.remove(PENDING_RUN_KEY);
         TaskDirectory.getInstance().clear();
     }
@@ -108,11 +113,24 @@ public class McpRequestRouterTest
         assertEquals(McpServerMeta.PROTOCOL_VERSION, result.get("protocolVersion").getAsString());
     }
 
-    /** Every revision on the supported list is agreed to, so a client pinned to one keeps working. */
+    /**
+     * The handshake agrees to every revision that HAS a handshake - and to no others.
+     * <p>
+     * The current revision has none: {@code initialize} was removed from it. Agreeing to it here
+     * would name a revision in which the question just asked does not exist, which is a claim made
+     * without looking - the kind this project keeps finding and removing.
+     * </p>
+     */
     @Test
-    public void initializeAgreesToEveryRevisionItClaimsToSupport()
+    public void initializeAgreesToEveryHandshakeRevisionAndNoOther()
     {
-        for (String revision : McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS)
+        String modern = send(request(1, McpServerMeta.METHOD_INITIALIZE,
+            "{\"protocolVersion\":\"" + McpServerMeta.MODERN_PROTOCOL_VERSION + "\"}")) //$NON-NLS-1$ //$NON-NLS-2$
+                .getAsJsonObject("result").get("protocolVersion").getAsString();
+        assertEquals("the handshake agreed to a revision that has no handshake", //$NON-NLS-1$
+            McpServerMeta.PROTOCOL_VERSION, modern);
+
+        for (String revision : McpServerMeta.HANDSHAKE_PROTOCOL_VERSIONS)
         {
             String params = "{\"protocolVersion\":\"" + revision + "\"}"; //$NON-NLS-1$ //$NON-NLS-2$
             JsonObject result = send(request(1, McpServerMeta.METHOD_INITIALIZE, params))
@@ -694,7 +712,20 @@ public class McpRequestRouterTest
      */
     private void seedPendingRun()
     {
-        PendingWorkRegistry.GENERIC.getOrStart(PENDING_RUN_KEY, () -> "the slow answer"); //$NON-NLS-1$
+        // Held open until the test ends. A run that finishes the instant it starts is not a slow
+        // run, and a task over it is completed before anybody asks - which is correct behaviour
+        // and useless for testing what a handle to UNFINISHED work says.
+        PendingWorkRegistry.GENERIC.getOrStart(PENDING_RUN_KEY, () -> {
+            try
+            {
+                seededRunRelease.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return "the slow answer"; //$NON-NLS-1$
+        });
     }
 
     /** A task over a key nobody owns is refused, because it could never be answered. */

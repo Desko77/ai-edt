@@ -139,8 +139,9 @@ public class EventLogTool implements IMcpTool
                 + "folder, and this machine has no path to it. Three ways to reach it: open the " //$NON-NLS-1$
                 + "log from the Designer or the client connected to this infobase, which reads it " //$NON-NLS-1$
                 + "through the server; look in the cluster working directory on " //$NON-NLS-1$
-                + server.getServer() + " itself; or copy that infobase's log directory to this " //$NON-NLS-1$ //$NON-NLS-2$
-                + "machine and point a file infobase at it."); //$NON-NLS-1$
+                + server.getServer() + " itself; or copy the infobase directory - the one CONTAINING " //$NON-NLS-1$ //$NON-NLS-2$
+                + "1Cv8Log, not the log directory itself - to this machine and read it as a file " //$NON-NLS-1$
+                + "infobase."); //$NON-NLS-1$
             onTheServer.put("logLocation", "server"); //$NON-NLS-1$ //$NON-NLS-2$
             onTheServer.put("server", server.getServer()); //$NON-NLS-1$
             return onTheServer.toJson();

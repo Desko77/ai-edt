@@ -70,6 +70,10 @@ public class McpAutoStart
 
             int port = preferences.getInt(PrefKeys.PREF_PORT);
             activator.getMcpServer().start(port);
+            // Read back rather than reported from the preference: the server takes the first free
+            // port of a range, so the configured number and the listening number are two different
+            // facts and only one of them can be dialled.
+            port = activator.getMcpServer().getPort();
             Activator.logInfo("AI-EDT endpoint came up automatically on port " + port); //$NON-NLS-1$
         }
         catch (Exception e)

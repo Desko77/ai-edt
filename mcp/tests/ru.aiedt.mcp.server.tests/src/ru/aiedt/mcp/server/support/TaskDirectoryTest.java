@@ -87,8 +87,64 @@ public class TaskDirectoryTest
         assertEquals("the answer", directory.poll(task.taskId).result); //$NON-NLS-1$
         assertEquals("a second poll must report the same finished task", //$NON-NLS-1$
             "the answer", directory.poll(task.taskId).result);
-        assertNull("the registry should have let go of a collected result", //$NON-NLS-1$
+        assertNotNull("the task keeps its own copy and does not consume the run: two tasks over " //$NON-NLS-1$
+            + "one run would otherwise compete for a single result", //$NON-NLS-1$
             PendingWorkRegistry.GENERIC.get(key));
+    }
+
+    /**
+     * Two tasks over one run both get the answer.
+     * <p>
+     * Identical calls coalesce onto one entry in the registry. When a task took the answer OUT of
+     * the registry, the second task found nothing and reported the run had vanished - so two agents
+     * asking the same question got one answer and one lie. They are the same run, so they are now
+     * the same task.
+     * </p>
+     *
+     * @throws Exception when the seeded run cannot be driven
+     */
+    @Test
+    public void twoTasksOverOneRunAreOneTask() throws Exception
+    {
+        CountDownLatch release = new CountDownLatch(1);
+        String key = start("shared", release); //$NON-NLS-1$
+
+        TaskDirectory.Task first = directory.open(key, "code_review", "code_review", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        TaskDirectory.Task second = directory.open(key, "code_review", "code_review", args()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals("one run is one task", first.taskId, second.taskId); //$NON-NLS-1$
+        release.countDown();
+        awaitCompletion(key);
+        assertEquals("shared", directory.poll(first.taskId).result); //$NON-NLS-1$
+        assertEquals("shared", directory.poll(second.taskId).result); //$NON-NLS-1$
+    }
+
+    /**
+     * The answer lands when the work finishes, not when somebody happens to poll.
+     * <p>
+     * The registry drops an uncollected result after five minutes while a task advertises thirty.
+     * Collecting on poll therefore made the advertised lifetime a promise the server could not
+     * keep; subscribing to the work makes it one it does not have to.
+     * </p>
+     *
+     * @throws Exception when the seeded run cannot be driven
+     */
+    @Test
+    public void theAnswerArrivesWithoutBeingPolledFor() throws Exception
+    {
+        CountDownLatch release = new CountDownLatch(1);
+        String key = start("unpolled", release); //$NON-NLS-1$
+        TaskDirectory.Task task = directory.open(key, "find_references", "find_references", args()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        release.countDown();
+        awaitCompletion(key);
+        for (int attempt = 0; attempt < 100 && !task.isTerminal(); attempt++)
+        {
+            Thread.sleep(20L);
+        }
+
+        assertEquals("the task settled on its own", TaskDirectory.COMPLETED, task.status); //$NON-NLS-1$
+        assertEquals("unpolled", task.result); //$NON-NLS-1$
     }
 
     /**

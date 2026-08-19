@@ -146,11 +146,10 @@ public final class GitBranch
             }
             if (Files.isRegularFile(candidate))
             {
-                Path linked = readGitLink(candidate, here);
-                if (linked != null)
-                {
-                    return linked;
-                }
+                // A .git FILE is the repository boundary whether or not it can be followed. Walking
+                // past a broken one lands in the enclosing repository and answers with ITS branch -
+                // a plausible name for the wrong tree, which is worse than no name at all.
+                return readGitLink(candidate, here);
             }
             here = here.getParent();
         }

@@ -130,13 +130,21 @@ public class ProjectProblemsCapNoticeTest
         assertFalse(exactly(120).exceeds(200));
     }
 
-    /** A count that stopped early is above any threshold below its ceiling, by construction. */
+    /**
+     * A count that stopped early answers up to its ceiling and no further.
+     * <p>
+     * It knows one thing: the true number is above the ceiling. That settles every threshold up to
+     * and including the ceiling. Above it the count knows nothing, and answering {@code true}
+     * anyway would be claiming knowledge it does not have - which is how an approximate number
+     * turns into a confident wrong statement.
+     * </p>
+     */
     @Test
-    public void aCeilingStoppedCountIsAboveEveryThresholdItCouldHaveTested()
+    public void aCeilingStoppedCountAnswersOnlyUpToItsCeiling()
     {
         assertTrue(atLeast(5000).exceeds(200));
-        assertTrue("stopping early means there was more, whatever the threshold", //$NON-NLS-1$
-            atLeast(5000).exceeds(5000));
+        assertTrue("more than 5000 is certainly more than 5000", atLeast(5000).exceeds(5000)); //$NON-NLS-1$
+        assertFalse("more than 5000 says nothing about 10000", atLeast(5000).exceeds(10000)); //$NON-NLS-1$
     }
 
     private static ProjectProblemsReader.MatchCount exactly(long value)

@@ -591,7 +591,11 @@ public class CallHierarchyReader
                 {
                     break;
                 }
-                Harvest harvest = harvestCallers(projectName, target[0], target[1], limit - collected.size());
+                // Harvested against the FULL limit, not the remaining budget. Deduplication happens
+                // after, so a method called twenty times from one module would otherwise spend
+                // twenty of the remaining slots to contribute one row - and the next distinct
+                // caller would never be reached.
+                Harvest harvest = harvestCallers(projectName, target[0], target[1], limit);
                 if (harvest.error != null)
                 {
                     // One unreadable module must not lose the whole walk - the rest of the frontier
@@ -610,6 +614,15 @@ public class CallHierarchyReader
                     }
                     caller.level = level;
                     caller.throughMethod = level > 1 ? target[1] : null;
+                    if (caller.callerMethodName == null || caller.callerMethodName.isEmpty())
+                    {
+                        // No enclosing method name, so nothing identifies this row apart from
+                        // others like it. Kept in the report, kept out of the seen set: folding
+                        // several unidentified callers of one module into one would hide callers,
+                        // and following them is impossible anyway.
+                        collected.add(caller);
+                        continue;
+                    }
                     if (seen.add(key(caller.modulePath, caller.callerMethodName)))
                     {
                         collected.add(caller);
@@ -628,7 +641,7 @@ public class CallHierarchyReader
             return firstError;
         }
         return formatTransitiveOutput(modulePath, methodName, collected, limit, depth, reachedDepth,
-            !frontier.isEmpty());
+            !frontier.isEmpty() && collected.size() >= limit, firstError);
     }
 
     /**
@@ -653,11 +666,13 @@ public class CallHierarchyReader
      * @param limit the limit applied
      * @param requestedDepth how deep the caller asked to go
      * @param reachedDepth how deep the walk actually got
-     * @param moreToFollow whether the frontier still had unexplored methods when it stopped
+     * @param stoppedByLimit whether the limit, rather than the depth, ended the walk
+     * @param partialReason the first error met on the way, or {@code null} when there was none
      * @return the Markdown report
      */
     private String formatTransitiveOutput(String modulePath, String methodName,
-        List<CallerInfo> callers, int limit, int requestedDepth, int reachedDepth, boolean moreToFollow)
+        List<CallerInfo> callers, int limit, int requestedDepth, int reachedDepth,
+        boolean stoppedByLimit, String partialReason)
     {
         StringBuilder sb = new StringBuilder();
         sb.append("## Method Call Graph: ").append(modulePath).append(" :: ").append(methodName) //$NON-NLS-1$ //$NON-NLS-2$
@@ -666,11 +681,20 @@ public class CallHierarchyReader
             .append(" level").append(reachedDepth == 1 ? "" : "s") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .append(" of ").append(requestedDepth).append(" asked for\n"); //$NON-NLS-1$ //$NON-NLS-2$
         sb.append("**Distinct callers found:** ").append(callers.size()); //$NON-NLS-1$
-        if (callers.size() >= limit && moreToFollow)
+        if (stoppedByLimit)
         {
             sb.append(" (the limit stopped the walk; raise `limit` or lower `depth`)"); //$NON-NLS-1$
         }
         sb.append("\n\n"); //$NON-NLS-1$
+        if (partialReason != null)
+        {
+            // Said rather than left out. A walk that lost a branch to an error and reports only its
+            // survivors is indistinguishable from a complete walk, and somebody deciding whether a
+            // method is safe to change would read the short list as "nothing else reaches it".
+            sb.append("**Incomplete:** at least one module could not be read, so this list is " //$NON-NLS-1$
+                + "missing whatever reaches the method through it. First reason: ") //$NON-NLS-1$
+                .append(partialReason.replace("\n", " ")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
 
         if (callers.isEmpty())
         {

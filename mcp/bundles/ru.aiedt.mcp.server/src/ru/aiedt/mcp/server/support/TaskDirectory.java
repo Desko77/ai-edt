@@ -91,8 +91,20 @@ public final class TaskDirectory
     public Task open(String runKey, String operation, String toolName, Map<String, String> arguments)
     {
         prune();
+        // One task per run. Two identical calls coalesce onto ONE entry in the registry, so giving
+        // them two tasks made them compete for a single result: whichever polled first took it and
+        // the other reported the run had vanished. They are the same run and now they are the same
+        // task.
+        for (Task existing : tasks.values())
+        {
+            if (!existing.isTerminal() && existing.runKey.equals(runKey))
+            {
+                return existing;
+            }
+        }
         Task task = new Task(runKey, operation, toolName, arguments);
         tasks.put(task.taskId, task);
+        task.watchTheWork();
         return task;
     }
 
@@ -224,7 +236,7 @@ public final class TaskDirectory
             return !WORKING.equals(status);
         }
 
-        void cancel()
+        synchronized void cancel()
         {
             if (isTerminal())
             {
@@ -235,61 +247,99 @@ public final class TaskDirectory
             {
                 registry.cancel(runKey);
             }
-            status = CANCELLED;
             statusMessage = "Cancellation was asked for and this server stopped waiting on the run. " //$NON-NLS-1$
                 + "The work itself may still be finishing: a Designer-mode process cannot be " //$NON-NLS-1$
                 + "interrupted once started."; //$NON-NLS-1$
+            status = CANCELLED;
             lastUpdatedAt = System.currentTimeMillis();
         }
 
         /**
-         * Moves the task on if the work underneath has moved.
+         * Subscribes to the work, so the answer lands here when the work finishes.
          * <p>
-         * The first poll to find the work done takes the answer out of the registry and keeps it
-         * here, because that is the poll after which the registry would have dropped it.
+         * The first version took the answer out of the registry on whichever poll first found the
+         * work done. Three faults followed from that one decision, and they are worth naming
+         * because the fix is one line of design rather than three patches:
+         * </p>
+         * <ul>
+         * <li>the result was CONSUMED, so a second task over the same run - which happens whenever
+         * two identical calls coalesce - found nothing and reported the run had vanished;</li>
+         * <li>two concurrent polls could both pass the not-yet-terminal check, and the loser
+         * overwrote the winner's answer with a failure;</li>
+         * <li>the registry drops an uncollected result after five minutes, while the task told the
+         * client it had thirty - so a client that believed the TTL got a failure.</li>
+         * </ul>
+         * <p>
+         * Subscribing removes all three: the answer is copied here the moment the work produces it,
+         * whoever is or is not polling.
          * </p>
          */
-        void refresh()
+        void watchTheWork()
+        {
+            PendingWorkRegistry registry = PendingWorkRegistry.domainOf(runKey);
+            PendingWorkRegistry.PendingEntry entry = registry == null ? null : registry.get(runKey);
+            if (entry == null || entry.future == null)
+            {
+                // Nothing to subscribe to. The poll path below reports it rather than leaving the
+                // task working forever.
+                return;
+            }
+            entry.future.whenComplete((produced, thrown) -> settle(produced, thrown));
+        }
+
+        /**
+         * Records what the work produced, once.
+         *
+         * @param produced the tool's answer, or {@code null} when the work threw.
+         * @param thrown what it threw, or {@code null}.
+         */
+        synchronized void settle(String produced, Throwable thrown)
+        {
+            if (isTerminal())
+            {
+                return;
+            }
+            if (produced != null)
+            {
+                // The answer before the status, and not the other way round: a reader that sees
+                // COMPLETED must find the result already there.
+                result = produced;
+                statusMessage = operation + " finished"; //$NON-NLS-1$
+                status = COMPLETED;
+            }
+            else
+            {
+                failure = thrown == null ? "The run finished without producing a result." //$NON-NLS-1$
+                    : "The run failed: " + thrown.getMessage(); //$NON-NLS-1$
+                statusMessage = failure;
+                status = FAILED;
+            }
+            lastUpdatedAt = System.currentTimeMillis();
+        }
+
+        /**
+         * Reports where the work has got to, without taking anything from it.
+         */
+        synchronized void refresh()
         {
             if (isTerminal())
             {
                 return;
             }
             PendingWorkRegistry registry = PendingWorkRegistry.domainOf(runKey);
-            if (registry == null)
-            {
-                // The key is in no domain and this task never collected an answer. Either something
-                // else redeemed the key first - a caller of the older revision re-calling the tool
-                // with the same arguments produces the same key and collects it - or it was swept
-                // for age. Both are worth saying out loud rather than reporting as still working
-                // forever.
-                status = FAILED;
-                failure = "The run behind this task is no longer held by the server. Its result was " //$NON-NLS-1$
-                    + "either collected by another call with the same parameters, or the run was " //$NON-NLS-1$
-                    + "evicted for age. Start the work again."; //$NON-NLS-1$
-                statusMessage = failure;
-                lastUpdatedAt = System.currentTimeMillis();
-                return;
-            }
-            PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
-            if (entry == null || !entry.isDone())
+            if (registry != null && registry.get(runKey) != null)
             {
                 return;
             }
-            String finished = entry.await(1L);
-            registry.remove(runKey);
-            if (finished == null)
-            {
-                status = FAILED;
-                failure = "The run finished without producing a result."; //$NON-NLS-1$
-                statusMessage = failure;
-            }
-            else
-            {
-                status = COMPLETED;
-                result = finished;
-                statusMessage = operation + " finished"; //$NON-NLS-1$
-            }
+            // The run is in no domain and nothing settled this task. Either the answer was redeemed
+            // by something else - a caller re-issuing the same call with the same arguments produces
+            // the same key - or the run was swept for age. Both are worth saying out loud rather
+            // than reporting as still working forever.
+            failure = "The run behind this task is no longer held by the server. Its result was " //$NON-NLS-1$
+                + "either collected by another call with the same parameters, or the run was " //$NON-NLS-1$
+                + "evicted for age. Start the work again."; //$NON-NLS-1$
+            statusMessage = failure;
+            status = FAILED;
             lastUpdatedAt = System.currentTimeMillis();
         }
     }

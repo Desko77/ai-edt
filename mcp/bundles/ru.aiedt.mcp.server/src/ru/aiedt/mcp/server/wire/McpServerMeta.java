@@ -63,6 +63,39 @@ public final class McpServerMeta
             "2025-03-26", //$NON-NLS-1$
             "2024-11-05"))); //$NON-NLS-1$
 
+    /**
+     * Revisions whose rules a request may be answered by when it declares its version per request.
+     * <p>
+     * Only revisions that DEFINE that shape belong here, and the distinction is not pedantic. The
+     * version in {@code params._meta} says which revision the request is using; answering a request
+     * that says {@code 2025-11-25} with {@code resultType} and {@code _meta.serverInfo} produces a
+     * body that revision does not define. The version being supported is a separate question from
+     * the version defining the answer, and one list cannot answer both.
+     * </p>
+     * <p>
+     * A request that declares a supported but older revision is therefore served the shape of the
+     * revision it named - the same answer a client of that era gets - rather than refused. It asked
+     * for a revision this server serves; it just did not ask for this one.
+     * </p>
+     */
+    public static final java.util.Set<String> MODERN_PROTOCOL_VERSIONS =
+        java.util.Collections.singleton(MODERN_PROTOCOL_VERSION);
+
+    /**
+     * Revisions the {@code initialize} handshake may agree to.
+     * <p>
+     * Everything except the current revision, because the current revision has no handshake. A
+     * server that answered {@code initialize} with {@code 2026-07-28} would be agreeing to a
+     * revision in which the question it was just asked does not exist.
+     * </p>
+     */
+    public static final java.util.Set<String> HANDSHAKE_PROTOCOL_VERSIONS =
+        java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(java.util.Arrays.asList(
+            "2025-11-25", //$NON-NLS-1$
+            "2025-06-18", //$NON-NLS-1$
+            "2025-03-26", //$NON-NLS-1$
+            "2024-11-05"))); //$NON-NLS-1$
+
     /** Value of {@code serverInfo.name} in the initialize result. */
     public static final String SERVER_NAME = "ai-edt-mcp-server"; //$NON-NLS-1$
 

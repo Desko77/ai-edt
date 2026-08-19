@@ -83,6 +83,13 @@ public final class ProtocolEra
     {
         Map<String, Object> meta = metaOf(request);
         Object version = meta == null ? null : meta.get(McpServerMeta.META_PROTOCOL_VERSION);
+        if (version != null && !(version instanceof String))
+        {
+            // Present but not a string. Reading it as absent would serve a client that tried to
+            // declare its revision as though it never had, so the malformed field is named.
+            return new ProtocolEra(Kind.MALFORMED, null,
+                List.of(McpServerMeta.META_PROTOCOL_VERSION));
+        }
         if (!(version instanceof String) || ((String)version).isEmpty())
         {
             // No per-request version: this is a client of the handshake era, or a request that
@@ -90,18 +97,32 @@ public final class ProtocolEra
             return new ProtocolEra(Kind.LEGACY, null, List.of());
         }
         String requested = (String)version;
-        List<String> absent = new ArrayList<>();
-        if (!meta.containsKey(McpServerMeta.META_CLIENT_CAPABILITIES))
+        if (!McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS.contains(requested))
         {
+            // Checked before the required fields, and the order is the answer to a real question:
+            // a client naming a revision nobody serves has to change its version, and telling it
+            // to add a field first would send it round a loop it cannot leave.
+            return new ProtocolEra(Kind.UNSUPPORTED, requested, List.of());
+        }
+        List<String> absent = new ArrayList<>();
+        Object capabilities = meta.get(McpServerMeta.META_CLIENT_CAPABILITIES);
+        if (!(capabilities instanceof Map))
+        {
+            // A missing key and a key holding something that is not an object are the same problem
+            // for the caller - there are no capabilities to read - and the same fix.
             absent.add(McpServerMeta.META_CLIENT_CAPABILITIES);
         }
         if (!absent.isEmpty())
         {
             return new ProtocolEra(Kind.MALFORMED, requested, absent);
         }
-        if (!McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS.contains(requested))
+        if (!McpServerMeta.MODERN_PROTOCOL_VERSIONS.contains(requested))
         {
-            return new ProtocolEra(Kind.UNSUPPORTED, requested, List.of());
+            // Declared a revision this server serves, but not one that defines the per-request
+            // shape. It gets the shape of the revision it named. Answering it with resultType and
+            // _meta.serverInfo would hand it a body its own revision has no definition for - which
+            // is the same fault as refusing it, told the other way round.
+            return new ProtocolEra(Kind.LEGACY, requested, List.of());
         }
         return new ProtocolEra(Kind.MODERN, requested, List.of(),
             asMap(meta.get(McpServerMeta.META_CLIENT_CAPABILITIES)));

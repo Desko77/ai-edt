@@ -208,7 +208,9 @@ public class CheckDocReader
     {
         java.util.List<String> names = new java.util.ArrayList<>(4);
         names.add(checkId);
-        String lower = checkId.toLowerCase();
+        // ROOT, not the default locale. In a Turkish locale toLowerCase maps ASCII 'I' to a
+        // dotless 'i', and a check id containing one stops resolving on that machine alone.
+        String lower = checkId.toLowerCase(java.util.Locale.ROOT);
         if (!lower.equals(checkId))
         {
             names.add(lower);

@@ -160,6 +160,28 @@ public class GitBranchTest
         assertNull(GitBranch.at(root));
     }
 
+    /**
+     * A broken .git file stops the search where it stands.
+     * <p>
+     * It is the repository boundary whether or not it can be followed. Walking past it lands in
+     * whatever repository encloses this one and answers with ITS branch - a plausible name for the
+     * wrong working tree, which is worse than admitting there is no answer.
+     * </p>
+     *
+     * @throws Exception when the tree cannot be built
+     */
+    @Test
+    public void aBrokenGitLinkDoesNotFallThroughToTheRepositoryAbove() throws Exception
+    {
+        head(gitDir(root), "ref: refs/heads/outer\n"); //$NON-NLS-1$
+        Path inner = root.resolve("inner"); //$NON-NLS-1$
+        Files.createDirectories(inner);
+        Files.write(inner.resolve(".git"), "gitdir: /nowhere/at/all".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertNull("the enclosing repository's branch is not this tree's branch", //$NON-NLS-1$
+            GitBranch.at(inner));
+    }
+
     private static Path gitDir(Path where) throws Exception
     {
         Path git = where.resolve(".git"); //$NON-NLS-1$

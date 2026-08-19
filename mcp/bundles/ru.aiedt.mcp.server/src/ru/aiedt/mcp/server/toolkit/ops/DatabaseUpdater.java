@@ -463,7 +463,7 @@ public class DatabaseUpdater implements IMcpTool
             // claimed or freed, because the whole point is to stop short of touching the wrong one
             // - an update that restructures tables is not a thing anybody undoes.
             String branchRefusal =
-                branchMismatch(infobaseProject, applicationId, ignoreBranchBinding);
+                branchMismatch(project, infobaseProject, applicationId, ignoreBranchBinding);
             if (branchRefusal != null)
             {
                 ToolResult wrongBase = ToolResult.error(branchRefusal);
@@ -482,8 +482,15 @@ public class DatabaseUpdater implements IMcpTool
             infobaseClaim = claim.orElse(null);
             if (infobaseIdentity != null && claim.isEmpty())
             {
+                // Asked again, and the answer may have changed: the holder can finish between the
+                // failed claim and this question. Pasting a null into the sentence produced
+                // "Another instance is working on this infobase. null", which reads as a defect in
+                // the tool rather than as what it is - a race the caller can simply retry.
+                String holder = MonopolyLock.heldBy(infobaseIdentity);
                 ToolResult taken = ToolResult.error("Another AI-EDT instance is working on this " //$NON-NLS-1$
-                    + "infobase. " + MonopolyLock.heldBy(infobaseIdentity)); //$NON-NLS-1$
+                    + "infobase. " + (holder != null ? holder //$NON-NLS-1$
+                        : "It has finished since this call tried to claim it - run the update " //$NON-NLS-1$
+                            + "again.")); //$NON-NLS-1$
                 taken.put("tag", ErrorTags.BUSY.wire()); //$NON-NLS-1$
                 taken.put("applicationId", applicationId); //$NON-NLS-1$
                 putHolders(taken, applicationId, ownerNames);
@@ -635,35 +642,81 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
-     * Whether the branch this project is on says a different infobase than the call names.
+     * Whether the branch says a different infobase than the call names.
      * <p>
      * Only when somebody has said so. With no binding there is nothing to disagree with, and this
      * must not start refusing updates on projects that never asked it to - a guard that fires on
      * its own guesses is worse than none.
      * </p>
+     * <p>
+     * Two projects, and which one is asked first matters. An extension has no infobase of its own,
+     * so the update is routed to the configuration it extends - but the developer works in the
+     * EXTENSION, on the extension's branch, and that is the project they bound. Reading only the
+     * infobase project meant an extension's binding was never consulted at all: it could be set,
+     * reported back, and have no effect whatsoever.
+     * </p>
      *
-     * @param project the project whose infobase is being updated.
+     * @param project the project the call named - the extension, where one is in play.
+     * @param infobaseProject the project that owns the infobase, which may be the same one.
      * @param applicationId the application the call resolved to.
      * @param ignoreBranchBinding whether the caller said to go ahead anyway.
      * @return the refusal, or {@code null} when there is nothing to object to
      */
-    private static String branchMismatch(IProject project, String applicationId,
+    private static String branchMismatch(IProject project, IProject infobaseProject,
+        String applicationId, boolean ignoreBranchBinding)
+    {
+        String refusal = bindingConflict(project, applicationId, ignoreBranchBinding);
+        if (refusal == null && infobaseProject != null && !infobaseProject.equals(project))
+        {
+            refusal = bindingConflict(infobaseProject, applicationId, ignoreBranchBinding);
+        }
+        return refusal;
+    }
+
+    /**
+     * The conflict one project's bindings have with this call, if any.
+     *
+     * @param project the project whose bindings and branch are read.
+     * @param applicationId the application the call resolved to.
+     * @param ignoreBranchBinding whether the caller said to go ahead anyway.
+     * @return the refusal, or {@code null}
+     */
+    private static String bindingConflict(IProject project, String applicationId,
         boolean ignoreBranchBinding)
     {
+        if (ignoreBranchBinding)
+        {
+            return null;
+        }
+        boolean hasRules = !BranchInfobaseBook.all(project).isEmpty();
+        if (!BranchInfobaseBook.readable(project))
+        {
+            // The file is there and cannot be read. Refusing is the fail-CLOSED choice and it is
+            // the right one here: the rules exist, this server cannot see them, and the operation
+            // on the other side of the question rebuilds tables irreversibly.
+            return "This project has branch bindings (.settings/" + BranchInfobaseBook.FILE //$NON-NLS-1$
+                + ") that cannot be read, so there is no way to tell whether " + applicationId //$NON-NLS-1$
+                + " is the right infobase for the current branch. Repair the file, or pass " //$NON-NLS-1$
+                + "ignoreBranchBinding=true to update without the check."; //$NON-NLS-1$
+        }
         String branch = GitBranch.of(project);
         if (!GitBranch.isBranch(branch))
         {
-            return null;
+            if (!hasRules)
+            {
+                return null;
+            }
+            // Bindings exist but the branch does not - a detached head, or a HEAD this cannot read.
+            // Passing silently would apply exactly none of the rules the project asked for.
+            return "This project has branch bindings, but its current branch cannot be determined" //$NON-NLS-1$
+                + (branch == null ? " (it is not in a git repository, or HEAD is unreadable)." //$NON-NLS-1$
+                    : " - " + branch + ".") //$NON-NLS-1$ //$NON-NLS-2$
+                + " Check out a branch, or pass ignoreBranchBinding=true to update without the " //$NON-NLS-1$
+                + "check."; //$NON-NLS-1$
         }
         String bound = BranchInfobaseBook.boundTo(project, branch);
         if (bound == null || bound.equals(applicationId))
         {
-            return null;
-        }
-        if (ignoreBranchBinding)
-        {
-            Activator.logInfo("update_database: branch " + branch + " is bound to " + bound //$NON-NLS-1$ //$NON-NLS-2$
-                + " but " + applicationId + " was updated anyway, at the caller's word"); //$NON-NLS-1$ //$NON-NLS-2$
             return null;
         }
         return "Branch " + branch + " is bound to application " + bound + ", and this call would " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$

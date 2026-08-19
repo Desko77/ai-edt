@@ -51,6 +51,17 @@ public final class MonopolyLock implements AutoCloseable
 
     private final Path file;
 
+    /**
+     * Set once released, so a second {@link #close()} does nothing.
+     * <p>
+     * Not merely tidiness. Without it the sequence "we release, somebody else takes it, we close
+     * again" deletes THEIR claim - and the second close is not hypothetical: a caller may close
+     * early and still have a {@code finally} to run.
+     * </p>
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean released =
+        new java.util.concurrent.atomic.AtomicBoolean();
+
     private MonopolyLock(Path file)
     {
         this.file = file;
@@ -89,19 +100,40 @@ public final class MonopolyLock implements AutoCloseable
             {
                 return Optional.empty();
             }
-            // CREATE_NEW is the whole race: two processes reaching here at once, exactly one file
-            // created. Nothing is deleted first - a stale claim was already removed by the read
-            // above, so anything still here belongs to a live holder, and clearing the way would
-            // hand this process a lock somebody else was holding.
-            Files.write(file, record(subject, operation).toString().getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            // Written whole somewhere else, then moved into place. The move is the atomic step:
+            // it either creates the claim complete or fails because somebody else got there, and
+            // there is no instant at which the claim exists half-written. Writing straight to the
+            // target with CREATE_NEW is atomic about EXISTENCE but not about CONTENT - a reader
+            // arriving between the create and the write sees an empty file, calls it unreadable,
+            // deletes it and takes the lock, and then two processes hold it.
+            Path pending = Files.createTempFile(file.getParent(), "claim-", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+            try
+            {
+                Files.write(pending, record(subject, operation).toString().getBytes(StandardCharsets.UTF_8));
+                Files.move(pending, file);
+            }
+            catch (IOException | RuntimeException failed)
+            {
+                Files.deleteIfExists(pending);
+                throw failed;
+            }
             return Optional.of(new MonopolyLock(file));
         }
         catch (java.nio.file.FileAlreadyExistsException raced)
         {
-            // Somebody claimed it between the read and the write. That is the race working, not a
+            // Somebody claimed it between the read and the move. That is the race working, not a
             // failure: they hold it, we do not.
             return Optional.empty();
+        }
+        catch (java.nio.file.FileSystemException broken)
+        {
+            // The store itself is unusable - the lock directory is a file, a claim cannot be
+            // removed. Reported as unavailable rather than as contention: telling the caller
+            // somebody else holds the infobase would send them looking for a neighbour that does
+            // not exist.
+            Activator.logWarning("The lock store is unusable (" + broken.getMessage() //$NON-NLS-1$
+                + "); running " + operation + " without a cross-process claim."); //$NON-NLS-1$ //$NON-NLS-2$
+            return Optional.of(new MonopolyLock(null));
         }
         catch (IOException | RuntimeException e)
         {
@@ -149,7 +181,7 @@ public final class MonopolyLock implements AutoCloseable
     @Override
     public void close()
     {
-        if (file == null)
+        if (file == null || !released.compareAndSet(false, true))
         {
             return;
         }
@@ -159,8 +191,12 @@ public final class MonopolyLock implements AutoCloseable
         }
         catch (IOException | RuntimeException e)
         {
-            // The claim outlives its work now, and will be cleared as stale when this process ends.
-            Activator.logWarning("Could not release a lock: " + e.getMessage()); //$NON-NLS-1$
+            // The claim outlives its work, and nothing else will clear it while this process lives -
+            // its pid is alive, so every other instance reads the claim as held. Logged loudly for
+            // that reason: this is the one failure here that needs a person.
+            Activator.logError("Could not release the lock on " + file //$NON-NLS-1$
+                + ". Until this EDT is restarted, other instances will read that infobase as held.", //$NON-NLS-1$
+                e instanceof Exception ? (Exception)e : new IOException(e));
         }
     }
 

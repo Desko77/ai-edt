@@ -26,6 +26,17 @@ import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
  */
 public final class InfobaseIdentity
 {
+    /**
+     * Whether this platform's file system treats two spellings of one path as the same file.
+     * <p>
+     * Windows and macOS do; Linux does not. Folding case where the file system does not would put
+     * two different infobases behind one lock.
+     * </p>
+     */
+    private static final boolean CASE_INSENSITIVE_PATHS =
+        System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            || System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
     private InfobaseIdentity()
     {
     }
@@ -53,10 +64,31 @@ public final class InfobaseIdentity
             {
                 return null;
             }
-            // Lowercased, because Windows will hand back the same directory spelled two ways and
-            // two spellings of one infobase would be two locks over one thing - which is the same
-            // as no lock, only harder to notice.
-            return "file:" + file.trim().replace('\\', '/').toLowerCase(Locale.ROOT); //$NON-NLS-1$
+            // Canonicalised, because two spellings of one infobase are two locks over one thing -
+            // which is the same as no lock, only harder to notice. A trailing separator, a "." in
+            // the middle and a relative segment all name the same directory and must not produce
+            // different keys.
+            String canonical;
+            try
+            {
+                canonical = java.nio.file.Paths.get(file.trim()).toAbsolutePath().normalize().toString();
+            }
+            catch (RuntimeException notAPath)
+            {
+                canonical = file.trim();
+            }
+            canonical = canonical.replace('\\', '/');
+            while (canonical.length() > 1 && canonical.endsWith("/")) //$NON-NLS-1$
+            {
+                canonical = canonical.substring(0, canonical.length() - 1);
+            }
+            // Case folded only where the file system folds it. On Linux /data/Base and /data/base
+            // are two directories, and folding them together would lock one behind the other.
+            if (CASE_INSENSITIVE_PATHS)
+            {
+                canonical = canonical.toLowerCase(Locale.ROOT);
+            }
+            return "file:" + canonical; //$NON-NLS-1$
         }
         if (connection instanceof ServerConnectionString)
         {

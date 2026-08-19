@@ -49,6 +49,17 @@ public final class BranchInfobaseBook
 
     private static final String ROOT = "bindings"; //$NON-NLS-1$
 
+    /**
+     * Files that exist but could not be read, remembered from the last read of each.
+     * <p>
+     * A set rather than a return value because {@link #all} is called from places that want the
+     * bindings and nothing else. What it buys is the distinction between "no rules" and "rules that
+     * cannot be read", which a guard in front of a destructive operation must not confuse.
+     * </p>
+     */
+    private static final java.util.Set<String> UNREADABLE =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private BranchInfobaseBook()
     {
     }
@@ -73,6 +84,24 @@ public final class BranchInfobaseBook
     public static Map<String, String> allAt(Path projectDirectory)
     {
         return read(projectDirectory == null ? null : projectDirectory.resolve(SETTINGS).resolve(FILE));
+    }
+
+    /**
+     * Whether a project's bindings could be read the last time they were asked for.
+     *
+     * @param project the project.
+     * @return {@code false} when the file is there but unreadable - the one state in which an empty
+     *         answer from {@link #all} means nothing
+     */
+    public static boolean readable(IProject project)
+    {
+        Path file = fileOf(project);
+        if (file == null)
+        {
+            return true;
+        }
+        all(project);
+        return !UNREADABLE.contains(file.toString());
     }
 
     /**
@@ -120,7 +149,7 @@ public final class BranchInfobaseBook
      * @param applicationId the application to use on it.
      * @return {@code null} on success, or why it could not be written
      */
-    public static String bindAt(Path projectDirectory, String branch, String applicationId)
+    public static synchronized String bindAt(Path projectDirectory, String branch, String applicationId)
     {
         if (projectDirectory == null)
         {
@@ -159,7 +188,7 @@ public final class BranchInfobaseBook
      * @param branch the branch to forget.
      * @return {@code null} on success or when there was nothing to remove, or why it failed
      */
-    public static String unbindAt(Path projectDirectory, String branch)
+    public static synchronized String unbindAt(Path projectDirectory, String branch)
     {
         if (projectDirectory == null)
         {
@@ -215,19 +244,25 @@ public final class BranchInfobaseBook
             }
             for (Map.Entry<Object, Object> entry : ((Map<Object, Object>)root).entrySet())
             {
-                if (entry.getKey() != null && entry.getValue() != null)
+                // Both halves must be text. String.valueOf on a nested map or a list produces a
+                // key nothing can ever match, which is a binding that silently never fires.
+                if (entry.getKey() instanceof String && entry.getValue() instanceof String)
                 {
-                    bindings.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+                    bindings.put((String)entry.getKey(), (String)entry.getValue());
                 }
             }
         }
         catch (IOException | RuntimeException e)
         {
-            // A file somebody hand-edited into nonsense reads as no bindings. It must not stop the
-            // operation it was meant to guard - a guard that breaks the thing it guards is worse
-            // than no guard.
+            // Remembered, not swallowed. An unreadable file and an absent one used to be the same
+            // answer - no bindings - which turned "somebody's notes got mangled" into "this project
+            // has no rules", and switched the guard off at exactly the moment its state was least
+            // trustworthy. The caller decides what to do; see readable().
             Activator.logWarning("Could not read " + FILE + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            UNREADABLE.add(file.toString());
+            return bindings;
         }
+        UNREADABLE.remove(file.toString());
         return bindings;
     }
 
@@ -248,10 +283,24 @@ public final class BranchInfobaseBook
             DumperOptions options = new DumperOptions();
             options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
             options.setPrettyFlow(true);
-            try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8))
+            // Written beside the target and moved over it. Writing in place truncates first, so a
+            // reader arriving mid-write saw an empty file - and an empty file is "no bindings",
+            // which is the guard switched off for as long as the write takes.
+            Path pending = Files.createTempFile(file.getParent(), "bindings-", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+            try
             {
-                new Yaml(options).dump(document, writer);
+                try (Writer writer = Files.newBufferedWriter(pending, StandardCharsets.UTF_8))
+                {
+                    new Yaml(options).dump(document, writer);
+                }
+                Files.move(pending, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
+            catch (IOException | RuntimeException failed)
+            {
+                Files.deleteIfExists(pending);
+                throw failed;
+            }
+            UNREADABLE.remove(file.toString());
             return null;
         }
         catch (IOException | RuntimeException e)

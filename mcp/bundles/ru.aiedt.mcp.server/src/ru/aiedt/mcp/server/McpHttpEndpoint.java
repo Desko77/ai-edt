@@ -261,6 +261,9 @@ public class McpHttpEndpoint
         "file://", //$NON-NLS-1$
         "vscode-webview://"}; //$NON-NLS-1$
 
+    /** The highest TCP port there is; the search may not walk past it. */
+    private static final int MAX_PORT = 65535;
+
     private static final int HTTP_OK = 200;
 
     private static final int HTTP_ACCEPTED = 202;
@@ -430,8 +433,12 @@ public class McpHttpEndpoint
         // - a step nobody remembers until a server silently is not there. A span of one restores
         // the old behaviour exactly, for anybody who has written the port into a client config.
         int span = portSpan();
+        // Computed wide and clamped, because 65535 + 10 is not a port: InetSocketAddress rejects it
+        // with an unchecked exception, which would come out of a start() that had already opened
+        // listeners on the way there.
+        int lastCandidate = (int)Math.min(MAX_PORT, (long)serverPort + span - 1);
         IOException lastFailure = null;
-        for (int candidate = serverPort; candidate < serverPort + span; candidate++)
+        for (int candidate = serverPort; candidate <= lastCandidate; candidate++)
         {
             try
             {
@@ -449,7 +456,7 @@ public class McpHttpEndpoint
                 lastFailure = taken;
             }
         }
-        throw new IOException(everyPortTaken(serverPort, span), lastFailure);
+        throw new IOException(everyPortTaken(serverPort, lastCandidate - serverPort + 1), lastFailure);
     }
 
     /**
@@ -523,7 +530,9 @@ public class McpHttpEndpoint
             ssePool = createSsePool();
             McpHandler mcpHandler = new McpHandler();
             HealthHandler healthHandler = new HealthHandler();
-            for (InetSocketAddress address : listenAddresses(serverPort))
+            List<InetSocketAddress> addresses = listenAddresses(serverPort);
+            boolean first = true;
+            for (InetSocketAddress address : addresses)
             {
                 HttpServer server;
                 try
@@ -532,18 +541,30 @@ public class McpHttpEndpoint
                 }
                 catch (IOException e)
                 {
-                    // A loopback family that is not available (e.g. no IPv6 stack) is skipped, not
-                    // fatal, as long as at least one address binds. A taken port fails every address
-                    // and is caught below.
                     Activator.logInfo("MCP server could not bind " //$NON-NLS-1$
                         + address.getAddress().getHostAddress() + ": " + e.getMessage()); //$NON-NLS-1$
+                    if (first)
+                    {
+                        // The first address is the one clients use - 127.0.0.1 for loopback, the
+                        // wildcard when bound to every interface. Carrying on because a LATER
+                        // family bound would declare the port taken while another process owns the
+                        // address every client will actually dial: the two servers would then be
+                        // one port apart, and everything would connect to the wrong one.
+                        throw e;
+                    }
+                    // A later family that is not available (no IPv6 stack, say) is skipped: nothing
+                    // reaches this server through it that cannot reach it through the first.
                     continue;
                 }
+                // Registered for cleanup as soon as it exists: create() has already bound the
+                // socket, so a throw from any of the three calls below would otherwise leave a
+                // listener nobody can close and the port taken by this process for nothing.
+                servers.add(server);
+                first = false;
                 server.createContext(CONTEXT_MCP, mcpHandler);
                 server.createContext(CONTEXT_HEALTH, healthHandler);
                 server.setExecutor(requestPool);
                 server.start();
-                servers.add(server);
                 Activator.logInfo("MCP server listening on " //$NON-NLS-1$
                     + address.getAddress().getHostAddress() + ":" + serverPort); //$NON-NLS-1$
             }

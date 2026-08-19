@@ -404,11 +404,47 @@ public class McpRequestRouter
             return null;
         }
         IMcpTool tool = task.toolName == null ? null : toolRegistry.getTool(task.toolName);
+        String answer = task.result;
         if (tool == null)
         {
-            return ToolCallResult.text(task.result);
+            // The tool was switched off while the work ran. The text is still handed over, but it
+            // still passes the masker: whether a preference applies must not depend on which tools
+            // happen to be enabled when the answer is collected.
+            return ToolCallResult.text(redactIfAsked(answer, true));
         }
-        return shapeResult(tool, task.arguments, task.result, null, isPlainTextMode());
+        boolean maskable = tool.getResponseType() != IMcpTool.ResponseType.IMAGE;
+        int responseLimit = effectiveResponseLimit();
+        if (responseLimit > 0 && maskable && ResponseCap.exceeds(answer, responseLimit))
+        {
+            long originalBytes = ResponseCap.byteLength(answer);
+            answer = ResponseCap.truncateUtf8(answer, responseLimit);
+            return ToolCallResult.text(redactIfAsked(answer, true) + "\n\n[" //$NON-NLS-1$
+                + ErrorTags.TRUNCATED.wire() + "=true: the task's result was " + originalBytes //$NON-NLS-1$
+                + " bytes; its payload was truncated to " + responseLimit //$NON-NLS-1$
+                + " bytes before this notice.]"); //$NON-NLS-1$
+        }
+        // Masked and capped exactly as a synchronous answer from the same tool would be. Going
+        // straight to shaping meant a result collected through a task escaped both - so turning on
+        // the masking preference protected every answer except the ones that took the longest, and
+        // those are the runs over whole configurations.
+        return shapeResult(tool, task.arguments, redactIfAsked(answer, maskable), null,
+            isPlainTextMode());
+    }
+
+    /**
+     * Masks personal data in a tool's own output when the preference asks for it.
+     *
+     * @param text the tool's answer.
+     * @param maskable false for an image blob, where masking would corrupt the payload.
+     * @return the text, masked or as it was
+     */
+    private static String redactIfAsked(String text, boolean maskable)
+    {
+        if (text == null || !maskable || !piiRedactEnabled())
+        {
+            return text;
+        }
+        return ru.aiedt.mcp.server.support.SensitiveTextMasker.redact(text);
     }
 
     /**
@@ -557,7 +593,7 @@ public class McpRequestRouter
     {
         String requested = request.getStringParam(PARAM_PROTOCOL_VERSION);
         String revision = requested != null && MCP_REVISION.matcher(requested).matches()
-            && McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS.contains(requested) ? requested
+            && McpServerMeta.HANDSHAKE_PROTOCOL_VERSIONS.contains(requested) ? requested
                 : McpServerMeta.PROTOCOL_VERSION;
 
         return new InitializeResult(revision, McpServerMeta.SERVER_NAME, McpServerMeta.PLUGIN_VERSION,

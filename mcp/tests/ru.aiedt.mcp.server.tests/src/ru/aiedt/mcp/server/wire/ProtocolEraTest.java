@@ -89,15 +89,75 @@ public class ProtocolEraTest
         assertTrue("nothing should be reported missing", era.getMissing().isEmpty()); //$NON-NLS-1$
     }
 
-    /** An older served revision announced the modern way is still served the modern way. */
+    /**
+     * An older revision named the modern way is served the shape of the revision it named.
+     * <p>
+     * The version field says which revision the request is USING. Answering a request that says
+     * {@code 2025-11-25} with {@code resultType} and {@code _meta.serverInfo} hands it a body that
+     * revision does not define - the same fault as refusing it, told the other way round. It is
+     * supported, so it is not refused; it is not the current revision, so it does not get the
+     * current revision's shape.
+     * </p>
+     */
     @Test
-    public void anOlderServedVersionInModernMetadataIsModern()
+    public void anOlderServedVersionNamedTheModernWayGetsItsOwnShape()
     {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put(McpServerMeta.META_PROTOCOL_VERSION, McpServerMeta.PROTOCOL_VERSION);
         meta.put(McpServerMeta.META_CLIENT_CAPABILITIES, new LinkedHashMap<>());
 
-        assertTrue(ProtocolEra.of(requestWith(meta)).isModern());
+        ProtocolEra era = ProtocolEra.of(requestWith(meta));
+
+        assertFalse("an older revision must not be answered in the current revision's shape", //$NON-NLS-1$
+            era.isModern());
+        assertEquals(ProtocolEra.Kind.LEGACY, era.getKind());
+        assertEquals("and it is still the version the caller named, not a refusal", //$NON-NLS-1$
+            McpServerMeta.PROTOCOL_VERSION, era.getRequestedVersion());
+    }
+
+    /** A version key holding something that is not a string is malformed, not absent. */
+    @Test
+    public void aVersionOfTheWrongTypeIsMalformed()
+    {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put(McpServerMeta.META_PROTOCOL_VERSION, Integer.valueOf(20260728));
+        meta.put(McpServerMeta.META_CLIENT_CAPABILITIES, new LinkedHashMap<>());
+
+        ProtocolEra era = ProtocolEra.of(requestWith(meta));
+
+        assertEquals("reading it as absent would serve a client that tried to declare itself", //$NON-NLS-1$
+            ProtocolEra.Kind.MALFORMED, era.getKind());
+        assertTrue(era.getMissing().contains(McpServerMeta.META_PROTOCOL_VERSION));
+    }
+
+    /** Capabilities holding something that is not an object are as good as absent. */
+    @Test
+    public void capabilitiesOfTheWrongTypeAreAsGoodAsMissing()
+    {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put(McpServerMeta.META_PROTOCOL_VERSION, McpServerMeta.MODERN_PROTOCOL_VERSION);
+        meta.put(McpServerMeta.META_CLIENT_CAPABILITIES, "none"); //$NON-NLS-1$
+
+        ProtocolEra era = ProtocolEra.of(requestWith(meta));
+
+        assertEquals(ProtocolEra.Kind.MALFORMED, era.getKind());
+        assertTrue(era.getMissing().contains(McpServerMeta.META_CLIENT_CAPABILITIES));
+    }
+
+    /**
+     * An unserved version outranks a missing field.
+     * <p>
+     * Order matters here: a client naming a revision nobody serves has to change its version, and
+     * telling it to add a field first sends it round a loop it cannot leave.
+     * </p>
+     */
+    @Test
+    public void anUnservedVersionIsReportedBeforeAMissingField()
+    {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put(McpServerMeta.META_PROTOCOL_VERSION, "1900-01-01"); //$NON-NLS-1$
+
+        assertEquals(ProtocolEra.Kind.UNSUPPORTED, ProtocolEra.of(requestWith(meta)).getKind());
     }
 
     /** An empty version string is no version - the request falls to the handshake era. */

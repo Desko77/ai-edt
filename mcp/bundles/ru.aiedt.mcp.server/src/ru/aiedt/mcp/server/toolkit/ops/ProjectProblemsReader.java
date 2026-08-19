@@ -309,7 +309,10 @@ public class ProjectProblemsReader
                 // reads as a refusal, and this one was sending callers back to narrow something
                 // already narrow.
                 MatchCount total = countMatching(markerManager, checkRepository, filter);
-                if (total.exceeds(PROJECT_SUMMARY_THRESHOLD))
+                // Against what came back, not against a fixed threshold. Exactly `limit` matches
+                // with `limit` rows returned is a COMPLETE answer, and heading it "more matches
+                // than fit" tells the caller to narrow a request that already returned everything.
+                if (total.exceeds(collected.size()) && total.exceeds(PROJECT_SUMMARY_THRESHOLD))
                 {
                     // This used to RETURN here, so an overflowing project answered with the
                     // header alone - "Returned: 300" above an empty page, while the 300 rows
@@ -964,9 +967,20 @@ public class ProjectProblemsReader
             this.atLeast = atLeast;
         }
 
+        /**
+         * Whether the number of matches is known to be above a threshold.
+         * <p>
+         * A count that stopped at its ceiling knows one thing: the true number is above the ceiling.
+         * That answers every threshold up to and including the ceiling, and no threshold above it.
+         * Answering {@code true} regardless would claim knowledge it does not have.
+         * </p>
+         *
+         * @param threshold the number to compare against.
+         * @return true when the count is certainly greater
+         */
         boolean exceeds(long threshold)
         {
-            return atLeast || value > threshold;
+            return atLeast ? threshold <= value : value > threshold;
         }
 
         @Override
@@ -1030,15 +1044,6 @@ public class ProjectProblemsReader
     }
 
     /**
-     * Renders the rows as per-check and per-location counts.
-     *
-     * @param errors the rows
-     * @param resolvedScope the scope, for the header
-     * @param projectName the project filter, for the header
-     * @param scanCap the collection cap, for the "cap reached" note
-     * @return the markdown
-     */
-    /**
      * The banner in front of a capped listing: how many match what was asked, how many came back,
      * and what to do about the difference.
      * <p>
@@ -1069,6 +1074,18 @@ public class ProjectProblemsReader
         return notice.append("\n\n").toString(); //$NON-NLS-1$
     }
 
+    /**
+     * Renders the rows as per-check and per-location counts.
+     *
+     * @param errors the rows
+     * @param resolvedScope the scope, for the header
+     * @param projectName the project filter, for the header
+     * @param severity the severity argument, for the empty message
+     * @param checkId the check filter, for the empty message
+     * @param objects the object filter, for the empty message
+     * @param scanCap the collection cap, for the "cap reached" note
+     * @return the markdown
+     */
     private static String formatCompact(List<ErrorInfo> errors, String resolvedScope, String projectName,
         String severity, String checkId, List<String> objects, int scanCap)
     {

@@ -106,6 +106,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("action", //$NON-NLS-1$
                 "branch_infobase: current (default) / list / bind / unbind.") //$NON-NLS-1$
+            .booleanProperty("ignoreBranchBinding", //$NON-NLS-1$
+                "update_database: update even when the branch is bound to another application. " //$NON-NLS-1$
+                    + "Declared here because the refusal tells the caller to pass it, and a facade " //$NON-NLS-1$
+                    + "that does not accept it leaves that instruction impossible to follow.") //$NON-NLS-1$
             .stringProperty("branch", //$NON-NLS-1$
                 "branch_infobase: the branch to bind or unbind. Defaults to the branch the " //$NON-NLS-1$
                     + "project is on.") //$NON-NLS-1$

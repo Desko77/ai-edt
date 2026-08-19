@@ -31,6 +31,8 @@ public class DiscoverResult
 
     private final Capabilities capabilities;
 
+    private final ServerInfo serverInfo;
+
     private final String instructions;
 
     private final long ttlMs;
@@ -50,6 +52,7 @@ public class DiscoverResult
     {
         this.supportedVersions = supportedVersions;
         this.capabilities = new Capabilities();
+        this.serverInfo = new ServerInfo();
         this.instructions = instructions;
         this.ttlMs = ttlMs;
         this.cacheScope = cacheScope;
@@ -86,6 +89,22 @@ public class DiscoverResult
     }
 
     /**
+     * Returns who this server is.
+     * <p>
+     * Carried in the result rather than in {@code _meta}, because discovery is the method a client
+     * calls precisely when it does not yet know which era it is talking to - so it may well be
+     * answered in the shape that carries no {@code _meta} at all. Identity belongs to the answer
+     * itself, not to a decoration the caller might not receive.
+     * </p>
+     *
+     * @return the server's name, version and title
+     */
+    public ServerInfo getServerInfo()
+    {
+        return serverInfo;
+    }
+
+    /**
      * Returns the guidance offered to a model using this server.
      *
      * @return the instructions
@@ -119,6 +138,40 @@ public class DiscoverResult
      * What this server can do. Tools, and nothing else - the same answer the handshake gives, so
      * the two eras cannot describe the server differently.
      */
+    /** Who answered. */
+    public static class ServerInfo
+    {
+        private final String name = ru.aiedt.mcp.server.wire.McpServerMeta.SERVER_NAME;
+
+        private final String version = ru.aiedt.mcp.server.wire.McpServerMeta.PLUGIN_VERSION;
+
+        private final String title = ru.aiedt.mcp.server.support.InstanceRegistry.selfTitle();
+
+        /**
+         * @return the server's protocol name
+         */
+        public String getName()
+        {
+            return name;
+        }
+
+        /**
+         * @return the plugin version
+         */
+        public String getVersion()
+        {
+            return version;
+        }
+
+        /**
+         * @return a name that tells this instance from the others on the machine
+         */
+        public String getTitle()
+        {
+            return title;
+        }
+    }
+
     public static class Capabilities
     {
         private final Tools tools = new Tools();
