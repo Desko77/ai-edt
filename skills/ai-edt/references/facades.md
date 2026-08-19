@@ -14,6 +14,8 @@ parameters of one. When this file and the server disagree, the server is right.
 | `code_search` | `text_search`, `object_references`, `method_references`, `resolve_symbol`, `call_hierarchy`, `symbol_info`, `content_assist`, `outgoing_structures`, `help` |
 | `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help` |
 | `security_audit` | `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help` |
+
+`audit_role_rights mode=orphans` is the exception to this group being read-only: it lists rights that point at objects no longer in the configuration, and with `apply=true` removes them. It removes only what it could prove is gone - what it could not decide is listed separately and left alone - and `apply=true` is refused when the active preset forbids writing.
 | `docs_lookup` | `get_platform_documentation`, `get_object_help`, `help` |
 | `workspace_marks` | `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks`, `help` |
 
@@ -64,6 +66,7 @@ form edits are chained with other metadata edits.
 | `create_launch_config` | A new launch configuration. |
 | `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
 | `update_database` | Writes the configuration into the infobase. Validate for export first. |
+| `branch_infobase` | Binds a git branch to a launch configuration, so `update_database` refuses to write into an infobase that belongs to another branch. For a project that is an extension the binding lives in the extension itself, not in the configuration it extends. |
 | `sync_control` | Inspects and controls EDT-to-infobase synchronization. See the safety rule in `expected-behavior.md`. |
 
 ## Configuration import and export

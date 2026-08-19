@@ -269,13 +269,45 @@ public class JsonUtilsTest
     @Test
     public void serverInfoPayloadExposesNameVersionAndRunningStatus()
     {
-        String document = JsonUtils.buildServerInfo("srv", "3.1", "2026.1", "2025-11-25");
+        String document = JsonUtils.buildServerInfo("srv", "3.1", "2026.1", "2025-11-25",
+            java.util.Arrays.asList("2026-07-28", "2025-11-25"));
 
         assertTrue(document.contains("\"name\":\"srv\""));
         assertTrue(document.contains("\"version\":\"3.1\""));
         assertTrue(document.contains("\"edt_version\":\"2026.1\""));
         assertTrue(document.contains("\"protocol_version\":\"2025-11-25\""));
         assertTrue(document.contains("\"status\":\"running\""));
+    }
+
+    /**
+     * The scalar named one revision while five were served, and a client picking from it would
+     * never reach the current one. Both members are published: the scalar is what a handshake
+     * settles on, the list is what the server actually serves.
+     */
+    @Test
+    public void serverInfoNamesEveryRevisionItServes()
+    {
+        String document = JsonUtils.buildServerInfo("srv", "3.1", "2026.1",
+            McpServerMeta.PROTOCOL_VERSION, McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS);
+
+        for (String revision : McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS)
+        {
+            assertTrue("every served revision must be named: " + revision + " in " + document,
+                document.contains('"' + revision + '"'));
+        }
+        assertTrue("the current revision is the one a reader would otherwise miss",
+            document.contains('"' + McpServerMeta.MODERN_PROTOCOL_VERSION + '"'));
+    }
+
+    /** No list is better than an empty one, which would read as "it serves no revision at all". */
+    @Test
+    public void anAbsentListIsLeftOutRatherThanPublishedEmpty()
+    {
+        assertFalse(JsonUtils.buildServerInfo("srv", "3.1", "2026.1", "2025-11-25", null)
+            .contains("protocol_versions"));
+        assertFalse(JsonUtils
+            .buildServerInfo("srv", "3.1", "2026.1", "2025-11-25", java.util.Collections.emptyList())
+            .contains("protocol_versions"));
     }
 
     @Test

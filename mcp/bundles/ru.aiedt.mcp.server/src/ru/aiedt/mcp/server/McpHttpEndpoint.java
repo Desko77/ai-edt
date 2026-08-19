@@ -1702,7 +1702,7 @@ public class McpHttpEndpoint
                 }
                 sendJson(exchange, HTTP_OK, JsonUtils.buildServerInfo(McpServerMeta.SERVER_NAME,
                     McpServerMeta.PLUGIN_VERSION, EdtVersionReader.getEdtVersion(),
-                    McpServerMeta.PROTOCOL_VERSION));
+                    McpServerMeta.PROTOCOL_VERSION, McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS));
             }
             catch (IOException e)
             {

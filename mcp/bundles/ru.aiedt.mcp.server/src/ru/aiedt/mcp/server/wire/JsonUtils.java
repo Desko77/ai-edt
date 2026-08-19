@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -52,6 +53,8 @@ public final class JsonUtils
     private static final String KEY_EDT_VERSION = "edt_version"; //$NON-NLS-1$
 
     private static final String KEY_PROTOCOL_VERSION = "protocol_version"; //$NON-NLS-1$
+
+    private static final String KEY_PROTOCOL_VERSIONS = "protocol_versions"; //$NON-NLS-1$
 
     private static final String KEY_STATUS = "status"; //$NON-NLS-1$
 
@@ -128,17 +131,32 @@ public final class JsonUtils
      * @param name the server name
      * @param version the plugin version
      * @param edtVersion the version of the hosting EDT
-     * @param protocolVersion the advertised MCP revision
+     * @param protocolVersion the revision an {@code initialize} handshake settles on by default
+     * @param protocolVersions every revision this server serves; <code>null</code> or empty leaves
+     *            the list out rather than publishing an empty one
      * @return the JSON document
      */
     public static String buildServerInfo(String name, String version, String edtVersion,
-        String protocolVersion)
+        String protocolVersion, java.util.Collection<String> protocolVersions)
     {
         JsonObject payload = new JsonObject();
         payload.addProperty(KEY_NAME, name);
         payload.addProperty(KEY_VERSION, version);
         payload.addProperty(KEY_EDT_VERSION, edtVersion);
         payload.addProperty(KEY_PROTOCOL_VERSION, protocolVersion);
+        // One revision was named here while five were served, which reads as "this is all it
+        // speaks" - the single most misleading line in the whole endpoint, because a client
+        // choosing a revision from it would never pick the current one. The scalar stays: it is
+        // what a handshake settles on by default, and something out there reads it.
+        if (protocolVersions != null && !protocolVersions.isEmpty())
+        {
+            JsonArray revisions = new JsonArray();
+            for (String revision : protocolVersions)
+            {
+                revisions.add(revision);
+            }
+            payload.add(KEY_PROTOCOL_VERSIONS, revisions);
+        }
         payload.addProperty(KEY_STATUS, STATUS_RUNNING);
         return GsonHolder.toJson(payload);
     }

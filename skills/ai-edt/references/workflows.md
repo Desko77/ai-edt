@@ -10,7 +10,8 @@ Recipes, not rules. Each one assumes EDT is running and `get_edt_version` answer
 3. `get_module_structure` for the module that matters, then `read_method_source` for the two or
    three methods that matter. Do not read whole modules.
 4. `code_search operation=call_hierarchy` with `direction=incoming` to learn who calls a method,
-   `outgoing` to see what it calls.
+   `outgoing` to see what it calls. `depth` walks past the immediate neighbours, up to
+   five levels; cycles are dropped rather than followed.
 5. `code_search operation=object_references` for everything that touches a metadata object,
    including forms, roles and subsystems - references a text search cannot find.
 
