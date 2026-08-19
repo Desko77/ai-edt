@@ -209,16 +209,58 @@ public class MonopolyLockTest
             Files.exists(claimFile()));
     }
 
+    /**
+     * The claim, which is the file that comes and goes.
+     * <p>
+     * Named by its suffix rather than taken as "the first file here": two files live in this
+     * directory now. The claim says who holds the subject and is deleted on release; beside it sits
+     * the file the operating system lock is taken on, which is created once and deliberately never
+     * removed - deleting a lock file while another process waits on it would leave a lock nobody
+     * holds.
+     * </p>
+     *
+     * @return the claim file's path, whether or not it exists
+     */
     private Path claimFile() throws RuntimeException
     {
         try (Stream<Path> entries = Files.list(locks))
         {
-            return entries.findFirst().orElse(locks.resolve(digestOfSubject()));
+            return entries.filter(path -> path.getFileName().toString().endsWith(".lock.json")) //$NON-NLS-1$
+                .findFirst()
+                .orElse(locks.resolve(digestOfSubject() + ".lock.json")); //$NON-NLS-1$
         }
         catch (Exception e)
         {
-            return locks.resolve(digestOfSubject());
+            return locks.resolve(digestOfSubject() + ".lock.json"); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The operating system holds this, not a heuristic about somebody else's process.
+     * <p>
+     * A pid plus a start time can only be re-judged by every reader, cannot see a process that is
+     * alive but wedged, and leaves a window between calling a claim stale and replacing it. An
+     * exclusive file lock has none of that and is dropped by the kernel when the holder dies. So a
+     * second take must come back empty while the first is held, and must succeed once it is
+     * released - measured here through the public API rather than by inspecting files.
+     * </p>
+     */
+    @Test
+    public void asecondTakeWaitsForTheFirstToLetGo()
+    {
+        MonopolyLock first = MonopolyLock.take(SUBJECT, "update_database").orElseThrow(); //$NON-NLS-1$
+        try
+        {
+            assertTrue("while one holds it, nobody else may", //$NON-NLS-1$
+                MonopolyLock.take(SUBJECT, "export_configuration_to_cf").isEmpty()); //$NON-NLS-1$
+        }
+        finally
+        {
+            first.close();
+        }
+        Optional<MonopolyLock> after = MonopolyLock.take(SUBJECT, "update_database"); //$NON-NLS-1$
+        assertTrue("once released it must be takeable again", after.isPresent()); //$NON-NLS-1$
+        after.get().close();
     }
 
     private String digestOfSubject()

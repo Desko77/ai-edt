@@ -62,9 +62,97 @@ public final class MonopolyLock implements AutoCloseable
     private final java.util.concurrent.atomic.AtomicBoolean released =
         new java.util.concurrent.atomic.AtomicBoolean();
 
+    /** The operating system's answer to who holds this; {@code null} when there is none to hold. */
+    private final Holding holding;
+
     private MonopolyLock(Path file)
     {
+        this(file, null);
+    }
+
+    private MonopolyLock(Path file, Holding holding)
+    {
         this.file = file;
+        this.holding = holding;
+    }
+
+    /**
+     * An exclusive lock on a file, held for as long as this object is.
+     * <p>
+     * This is the part the operating system enforces. The claim beside it says WHO holds the
+     * subject and is read by people; this says THAT it is held, and is read by the kernel. The
+     * distinction matters when a holder dies: a claim file survives its process and has to be
+     * judged stale by inspecting a pid, while a lock is dropped by the kernel the moment the
+     * process ends - crash, kill, power loss alike.
+     * </p>
+     */
+    private static final class Holding
+    {
+        private final java.nio.channels.FileChannel channel;
+
+        private final java.nio.channels.FileLock lock;
+
+        private Holding(java.nio.channels.FileChannel channel, java.nio.channels.FileLock lock)
+        {
+            this.channel = channel;
+            this.lock = lock;
+        }
+
+        /**
+         * Takes the lock, or reports that somebody else has it.
+         *
+         * @param path the file to lock; created when absent.
+         * @return the holding, or {@code null} when it is held elsewhere
+         * @throws IOException when the file cannot be opened at all
+         */
+        static Holding tryTake(Path path) throws IOException
+        {
+            java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(path,
+                StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            try
+            {
+                java.nio.channels.FileLock lock = channel.tryLock();
+                if (lock == null)
+                {
+                    channel.close();
+                    return null;
+                }
+                return new Holding(channel, lock);
+            }
+            catch (java.nio.channels.OverlappingFileLockException mine)
+            {
+                // Held by THIS process already - a second tool call on the same infobase. From the
+                // caller's side that is the same answer as a neighbour holding it: not now.
+                channel.close();
+                return null;
+            }
+            catch (IOException | RuntimeException failed)
+            {
+                channel.close();
+                throw failed;
+            }
+        }
+
+        /** Lets the operating system know this is no longer held. */
+        void release()
+        {
+            try
+            {
+                lock.release();
+            }
+            catch (IOException | RuntimeException e)
+            {
+                Activator.logWarning("Could not release a file lock: " + e.getMessage()); //$NON-NLS-1$
+            }
+            try
+            {
+                channel.close();
+            }
+            catch (IOException | RuntimeException e)
+            {
+                Activator.logWarning("Could not close a lock channel: " + e.getMessage()); //$NON-NLS-1$
+            }
+        }
     }
 
     /**
@@ -92,13 +180,28 @@ public final class MonopolyLock implements AutoCloseable
             return Optional.empty();
         }
         Path file = fileFor(subject);
+        Holding holding = null;
         try
         {
             Files.createDirectories(file.getParent());
+            // The operating system decides who holds this, not a guess about somebody else's
+            // process. A pid plus a start time is a good heuristic and still only a heuristic: it
+            // has to be re-evaluated by every reader, it cannot see a process that is alive but
+            // wedged, and between deciding a claim is stale and replacing it there is a window.
+            // An exclusive lock on a file has none of that, and it is released by the kernel when
+            // the holder dies - including when it dies without releasing anything.
+            holding = Holding.tryTake(lockFileFor(subject));
+            if (holding == null)
+            {
+                return Optional.empty();
+            }
             JsonObject existing = readLiveClaim(file);
             if (existing != null)
             {
-                return Optional.empty();
+                // The lock is ours but a claim from someone else is lying there. It cannot be a
+                // live holder - they would hold the lock - so it is a leftover, and the reader
+                // below would report a stranger as the holder of a lock we own.
+                Files.deleteIfExists(file);
             }
             // Written whole somewhere else, then moved into place. The move is the atomic step:
             // it either creates the claim complete or fails because somebody else got there, and
@@ -117,7 +220,9 @@ public final class MonopolyLock implements AutoCloseable
                 Files.deleteIfExists(pending);
                 throw failed;
             }
-            return Optional.of(new MonopolyLock(file));
+            MonopolyLock taken = new MonopolyLock(file, holding);
+            holding = null;
+            return Optional.of(taken);
         }
         catch (java.nio.file.FileAlreadyExistsException raced)
         {
@@ -141,6 +246,16 @@ public final class MonopolyLock implements AutoCloseable
             // it is not the thing that keeps the infobase safe - the platform's own monopoly is.
             Activator.logWarning("Could not take the lock on " + operation + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
             return Optional.of(new MonopolyLock(null));
+        }
+        finally
+        {
+            // Every path out of here that did not hand the lock to a MonopolyLock has to
+            // let go of it. A lock held by nobody is held until this EDT exits, and the
+            // operation it guards then refuses for a reason no one can find.
+            if (holding != null)
+            {
+                holding.release();
+            }
         }
     }
 
@@ -248,7 +363,18 @@ public final class MonopolyLock implements AutoCloseable
     @Override
     public void close()
     {
-        if (file == null || !released.compareAndSet(false, true))
+        if (!released.compareAndSet(false, true))
+        {
+            return;
+        }
+        // Released before the claim is removed, and released even when there is no claim file to
+        // remove. The lock is what actually keeps the next caller out; the claim only tells them
+        // who to go and ask.
+        if (holding != null)
+        {
+            holding.release();
+        }
+        if (file == null)
         {
             return;
         }
@@ -374,6 +500,23 @@ public final class MonopolyLock implements AutoCloseable
     private static Path fileFor(String subject)
     {
         return lockDirectory().resolve(digest(subject) + SUFFIX);
+    }
+
+    /**
+     * The file the operating system lock is taken on.
+     * <p>
+     * Separate from the claim on purpose. The claim is created and deleted around each piece of
+     * work; a lock file that is deleted while somebody waits on it is a lock nobody is holding, so
+     * this one is created once and left alone. It stays empty - everything a reader wants is in
+     * the claim beside it.
+     * </p>
+     *
+     * @param subject what is claimed.
+     * @return the path of its lock file
+     */
+    private static Path lockFileFor(String subject)
+    {
+        return lockDirectory().resolve(digest(subject) + ".lock"); //$NON-NLS-1$
     }
 
     /**
