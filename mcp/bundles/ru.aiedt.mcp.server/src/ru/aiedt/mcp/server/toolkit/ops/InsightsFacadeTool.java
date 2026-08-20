@@ -192,6 +192,25 @@ public class InsightsFacadeTool implements IMcpTool
                     + "(default false).") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
                 "project_metrics: timeout cap in seconds (default 60).") //$NON-NLS-1$
+            // compare_three_way reads these and the facade did not advertise them, which under the
+            // default preset - where the facade is what a client sees - made the merge undiscoverable
+            // through the only surface it has. Found by the operation-parameter map, which is what
+            // that map is for.
+            .stringProperty("ancestorPath", //$NON-NLS-1$
+                "compare_three_way: directory holding the delivery both sides came from. Omit for " //$NON-NLS-1$
+                    + "a two-sided comparison.") //$NON-NLS-1$
+            .stringProperty("decisions", //$NON-NLS-1$
+                "compare_three_way: what to do with individual objects, as a JSON array of " //$NON-NLS-1$
+                    + "{\"object\":\"...\",\"rule\":\"...\"}.") //$NON-NLS-1$
+            .stringProperty("decisionsPath", //$NON-NLS-1$
+                "compare_three_way: where to write the recorded decisions. Must end in .zip.") //$NON-NLS-1$
+            .stringProperty("decisionsFrom", //$NON-NLS-1$
+                "compare_three_way: a settings file (.zip) written earlier whose decisions and " //$NON-NLS-1$
+                    + "hand-made object correspondences are applied to this comparison.") //$NON-NLS-1$
+            .stringProperty("intent", //$NON-NLS-1$
+                "compare_three_way: REPORT (default) reads and changes nothing; MERGE applies the " //$NON-NLS-1$
+                    + "decisions to the project - IRREVERSIBLE; MERGE_IGNORING_PROBLEMS proceeds " //$NON-NLS-1$
+                    + "past a problem the environment called blocking.") //$NON-NLS-1$
             .build();
     }
 

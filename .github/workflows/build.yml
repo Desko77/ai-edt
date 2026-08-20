@@ -69,6 +69,10 @@ jobs:
       # the rest behind per-operation help possible at all; the check fails on an operation whose
       # parameters cannot be established, because publishing "none" for one of those would be a
       # claim rather than an answer.
+      # Also fails on a parameter a handler reads that its facade never advertises: the schema is the
+      # only place a client learns a parameter exists, so such a parameter is a capability nobody can
+      # reach. Forty-two were already there when this was introduced and are recorded in
+      # scripts/unadvertised-parameters.txt - a list that may only get shorter.
       - name: Operation parameter census
         run: python3 scripts/check-operation-params.py --check
 

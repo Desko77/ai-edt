@@ -1,0 +1,53 @@
+# Parameters a handler reads that its facade's schema does not advertise.
+#
+# The schema is the only place a client learns a parameter exists, so each line here is a capability
+# nobody can discover through the surface the default preset shows. They were found the day the
+# operation-parameter map first existed - see scripts/check-operation-params.py - and are recorded
+# rather than fixed in one sweep, because a check that fails on all of them at once is a check
+# somebody turns off.
+#
+# This list may only get shorter. A parameter not on it fails the build: advertise it in the facade
+# schema, or add it here with a reason for why it stays hidden.
+CodeSearchTool:depth
+CodeSearchTool:maxResults
+CodeSearchTool:objectFqn
+EditFormTool:commandName
+EditFormTool:handler
+EditMetadataTool:auto_borrow
+EditMetadataTool:commandFqn
+EditMetadataTool:commandParameterType
+EditMetadataTool:composerName
+EditMetadataTool:customSignature
+EditMetadataTool:eventName
+EditMetadataTool:filter
+EditMetadataTool:format
+EditMetadataTool:kind
+EditMetadataTool:language
+EditMetadataTool:objectName
+EditMetadataTool:panel
+EditMetadataTool:settingsTableName
+EditMetadataTool:tooltip
+EditMetadataTool:types
+EditMetadataTool:userSettingsTableName
+ExtensionWorkshopTool:objectFqns
+InfobaseAdminFacadeTool:event
+InfobaseAdminFacadeTool:from
+InfobaseAdminFacadeTool:limit
+InfobaseAdminFacadeTool:severity
+InfobaseAdminFacadeTool:to
+InfobaseAdminFacadeTool:user
+InsightsFacadeTool:batchSize
+InsightsFacadeTool:includeStandard
+InsightsFacadeTool:methodName
+InsightsFacadeTool:otherPath
+LaunchDebuggerTool:kind
+LaunchDebuggerTool:timeoutMs
+ProjectAdminFacadeTool:confirm
+ProjectAdminFacadeTool:restart
+SecurityAuditFacadeTool:apply
+SecurityAuditFacadeTool:methodName
+SecurityAuditFacadeTool:moduleFqn
+SecurityAuditFacadeTool:objectFqn
+SecurityAuditFacadeTool:scope
+SecurityAuditFacadeTool:subsystemName
+

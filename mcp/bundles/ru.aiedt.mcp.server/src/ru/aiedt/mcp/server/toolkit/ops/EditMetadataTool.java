@@ -1653,6 +1653,8 @@ public class EditMetadataTool implements IMcpTool
             sb.append("- `topic=errorTags` - structured error tags reference (1.37)\n"); //$NON-NLS-1$
             sb.append("- `topic=parameters` - the full rules of the parameters whose " //$NON-NLS-1$
                 + "schema description is one line\n"); //$NON-NLS-1$
+            sb.append("- `topic=<operation>` - the parameters that one operation actually reads, " //$NON-NLS-1$
+                + "derived from its handler\n"); //$NON-NLS-1$
             return ToolResult.success().put("help", sb.toString()).toJson(); //$NON-NLS-1$
         }
         switch (topic.toLowerCase())
@@ -1679,9 +1681,26 @@ public class EditMetadataTool implements IMcpTool
                 return ToolResult.success().put("topic", topic) //$NON-NLS-1$
                     .put("text", parametersHelp()).toJson(); //$NON-NLS-1$
             default:
+                // An operation name is a topic too, and the most useful one: a caller about to make
+                // a call wants the handful of parameters THAT operation reads, not the hundred the
+                // schema lists for every operation this facade accepts.
+                java.util.List<String> parameters = ru.aiedt.mcp.server.support.OperationParameters
+                    .of("EditMetadataTool", topic.toLowerCase()); //$NON-NLS-1$
+                if (!parameters.isEmpty())
+                {
+                    return ToolResult.success().put("topic", topic) //$NON-NLS-1$
+                        .put("operation", topic.toLowerCase()) //$NON-NLS-1$
+                        .put("parameters", parameters) //$NON-NLS-1$
+                        .put("text", "Parameters read by operation=" + topic.toLowerCase() //$NON-NLS-1$ //$NON-NLS-2$
+                            + ": " + String.join(", ", parameters) //$NON-NLS-1$ //$NON-NLS-2$
+                            + ". Derived from the handler's own source, so it is what the operation " //$NON-NLS-1$
+                            + "actually reads rather than what the shared schema advertises.") //$NON-NLS-1$
+                        .toJson();
+                }
                 return ToolResult.error("Unknown topic: " + topic //$NON-NLS-1$
                     + ". Available: workflow, types, availability, composerWorkflow, " //$NON-NLS-1$
-                    + "matrixWorkflow, errorTags, parameters.") //$NON-NLS-1$
+                    + "matrixWorkflow, errorTags, parameters - or the name of any operation, " //$NON-NLS-1$
+                    + "which answers with the parameters that operation reads.") //$NON-NLS-1$
                     .toJson();
         }
     }

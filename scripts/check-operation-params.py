@@ -36,6 +36,12 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OPS = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server/toolkit/ops"
 REPORT = ROOT / "docs/tools/operation-parameters.md"
+# The same map as a resource the plugin packages, so per-operation help answers from it at runtime.
+# A data file rather than generated Java: generating Java from a script has cost this project two
+# builds already - a $NON-NLS marker swallowing a closing bracket, and text taken out of a Java
+# literal being escaped a second time on the way back in.
+RESOURCE = ROOT / "mcp/bundles/ru.aiedt.mcp.server/schema/operation-parameters.tsv"
+BASELINE = ROOT / "scripts/unadvertised-parameters.txt"
 
 DISPATCH = re.compile(r"switch\s*\((operation|action|op|mode)\)")
 CASE_LABEL = re.compile(r'case\s+"([a-z0-9_]+)"\s*:')
@@ -329,6 +335,45 @@ def collect() -> dict[str, dict[str, object]]:
     return result
 
 
+def unadvertised(found: dict[str, dict[str, object]]) -> list[str]:
+    """Parameters a handler reads that its facade's schema never mentions.
+
+    The schema is the only place a client learns a parameter exists, so one that is read but not
+    advertised is a capability nobody can reach - the same hole the facade gate already closes for
+    operations, one level down. Found the day this map first existed: five of them were the merge
+    arguments added hours earlier, which made merging undiscoverable through the facade that is what
+    the default preset shows.
+    """
+    by_facade: dict[str, set[str]] = {}
+    for row in found.values():
+        by_facade.setdefault(str(row["facade"]), set()).update(row["parameters"])
+    missing = []
+    for facade, params in sorted(by_facade.items()):
+        path = OPS / f"{facade}.java"
+        if not path.is_file():
+            continue
+        advertised = set(SCHEMA_PROP.findall(path.read_text(encoding="utf-8")))
+        if not advertised:
+            continue
+        for name in sorted(params):
+            if name not in advertised:
+                missing.append(f"{facade}:{name}")
+    return missing
+
+
+def baseline() -> set[str]:
+    """The unadvertised parameters already there when the check was introduced.
+
+    A count that may only go down. Failing on all of them at once would have meant either a red
+    build for weeks or a check nobody turns on - and a check nobody turns on stops new ones from
+    being noticed, which is the whole point.
+    """
+    if not BASELINE.is_file():
+        return set()
+    return {line.strip() for line in BASELINE.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")}
+
+
 def unknowns(found: dict[str, dict[str, object]]) -> list[str]:
     missing = []
     for key, row in sorted(found.items()):
@@ -367,6 +412,14 @@ def write_report(found: dict[str, dict[str, object]]) -> None:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join(lines), encoding="utf-8")
 
+    rows = ["# derived by scripts/check-operation-params.py - do not edit"]
+    for _, row in sorted(found.items()):
+        rows.append("\t".join((str(row["facade"]), str(row["operation"]),
+                               ",".join(row["parameters"]), str(row["how"]))))
+    rows.append("")
+    RESOURCE.parent.mkdir(parents=True, exist_ok=True)
+    RESOURCE.write_text("\n".join(rows), encoding="utf-8")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -388,11 +441,23 @@ def main() -> int:
     if not args.check:
         write_report(found)
 
+    hidden = unadvertised(found)
+    known = baseline()
+    fresh = [name for name in hidden if name not in known]
     covered = len(found) - len(missing)
     skipped = dispatches_otherwise()
     print(f"{len(found)} operations, {covered} with parameters established")
     if skipped:
         print("not covered - these dispatch without a switch: " + ", ".join(skipped))
+    print(f"{len(hidden)} parameters read but not advertised by their facade "
+          f"({len(fresh)} of them new)")
+    if fresh:
+        print("these are read but a client cannot discover them:", file=sys.stderr)
+        for name in fresh:
+            print(f"  {name}", file=sys.stderr)
+        print("advertise them in the facade schema, or add them to "
+              "scripts/unadvertised-parameters.txt with a reason", file=sys.stderr)
+        return 1
     if missing:
         print(f"{len(missing)} operations whose parameters could not be established:", file=sys.stderr)
         for key in missing[:20]:
