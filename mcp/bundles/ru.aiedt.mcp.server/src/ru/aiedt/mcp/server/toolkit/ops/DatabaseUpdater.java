@@ -616,6 +616,14 @@ public class DatabaseUpdater implements IMcpTool
                 .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                 .put("updateComplete", updateComplete); //$NON-NLS-1$
 
+            // An answer must not imply protection it did not have. A claim that could not be
+            // written still lets the work through - deliberately - but saying nothing about it
+            // reports a guarded update where none was guarded.
+            if (infobaseClaim != null && infobaseClaim.unprotectedReason() != null)
+            {
+                result.put("withoutCrossProcessClaim", infobaseClaim.unprotectedReason()); //$NON-NLS-1$
+            }
+
             if (stillUpdating != null)
             {
                 result.put("stillUpdating", stillUpdating); //$NON-NLS-1$

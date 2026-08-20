@@ -52,6 +52,18 @@ public final class MonopolyLock implements AutoCloseable
     private final Path file;
 
     /**
+     * Names a failure briefly, by type when it carries no message.
+     *
+     * @param e the failure.
+     * @return a description that is never empty
+     */
+    private static String describeBriefly(Throwable e)
+    {
+        String message = e.getMessage();
+        return message == null || message.isEmpty() ? e.getClass().getSimpleName() : message;
+    }
+
+    /**
      * Set once released, so a second {@link #close()} does nothing.
      * <p>
      * Not merely tidiness. Without it the sequence "we release, somebody else takes it, we close
@@ -65,15 +77,47 @@ public final class MonopolyLock implements AutoCloseable
     /** The operating system's answer to who holds this; {@code null} when there is none to hold. */
     private final Holding holding;
 
+    /**
+     * Why this claim protects nothing, when it does not.
+     * <p>
+     * A claim that could not be written comes back GRANTED so the work is never blocked by the
+     * bookkeeping - that is deliberate, and it is not what keeps the infobase safe. But a caller
+     * handed one has no way to tell it from the real thing, and so reports a protected run when
+     * nothing was protecting it. The reason travels with the claim instead.
+     * </p>
+     */
+    private final String unprotected;
+
     private MonopolyLock(Path file)
     {
-        this(file, null);
+        this(file, null, null);
+    }
+
+    private MonopolyLock(String unprotectedReason)
+    {
+        this(null, null, unprotectedReason);
+    }
+
+    /**
+     * Why this claim guards nothing, or <code>null</code> when it guards what it says.
+     *
+     * @return the reason, for an answer that must not overstate what it protected
+     */
+    public String unprotectedReason()
+    {
+        return unprotected;
     }
 
     private MonopolyLock(Path file, Holding holding)
     {
+        this(file, holding, null);
+    }
+
+    private MonopolyLock(Path file, Holding holding, String unprotected)
+    {
         this.file = file;
         this.holding = holding;
+        this.unprotected = unprotected;
     }
 
     /**
@@ -238,14 +282,16 @@ public final class MonopolyLock implements AutoCloseable
             // not exist.
             Activator.logWarning("The lock store is unusable (" + broken.getMessage() //$NON-NLS-1$
                 + "); running " + operation + " without a cross-process claim."); //$NON-NLS-1$ //$NON-NLS-2$
-            return Optional.of(new MonopolyLock(null));
+            return Optional.of(new MonopolyLock(
+                "the lock store is unusable (" + broken.getMessage() + ")")); //$NON-NLS-1$ //$NON-NLS-2$
         }
         catch (IOException | RuntimeException e)
         {
             // A claim that cannot be written must not stop the work. This makes conflicts legible;
             // it is not the thing that keeps the infobase safe - the platform's own monopoly is.
             Activator.logWarning("Could not take the lock on " + operation + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-            return Optional.of(new MonopolyLock(null));
+            return Optional.of(new MonopolyLock(
+                "the claim could not be written (" + describeBriefly(e) + ")")); //$NON-NLS-1$ //$NON-NLS-2$
         }
         finally
         {
@@ -314,7 +360,7 @@ public final class MonopolyLock implements AutoCloseable
             // reference it does not know. That is NOT contention, and answering "somebody else is
             // working on it" would refuse an operation for a neighbour that does not exist. The
             // caller proceeds unclaimed, exactly as it did before claims existed.
-            return new Claim(new MonopolyLock(null), null);
+            return new Claim(new MonopolyLock("nothing was claimed: no subject was given"), null); //$NON-NLS-1$
         }
         Optional<MonopolyLock> taken = take(subject, operation);
         if (taken.isPresent())
