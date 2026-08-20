@@ -27,8 +27,10 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * the difference between a report and a decision.
  * </p>
  * <p>
- * <b>Reads only.</b> No merge is performed, offered or reachable from here. A merge writes into a
- * configuration and a wrong one is not undone by a button.
+ * <b>Reading is the default; merging is possible and deliberate.</b> A merge happens only when the
+ * caller names the intent, has supplied decisions to apply, and - past a problem the environment
+ * itself called blocking - asks again in different words. A merge writes into a configuration and a
+ * wrong one is not undone by a button, so nothing about it is a default, a flag, or a shorthand.
  * </p>
  */
 public class ThreeWayComparisonTool
@@ -48,8 +50,10 @@ public class ThreeWayComparisonTool
             + "counts, how many differ, how many exist on one side only, the metadata objects " //$NON-NLS-1$
             + "that moved by name, and the problems the environment raises. Decisions about " //$NON-NLS-1$
             + "individual objects can be recorded and written to a settings file that EDT reads " //$NON-NLS-1$
-            + "back when a person runs the merge. Reads only, in the sense that matters: it " //$NON-NLS-1$
-            + "never merges, and the only thing it can write is that settings file."; //$NON-NLS-1$
+            + "back when a person runs the merge. Reading is the default and changes nothing. " //$NON-NLS-1$
+            + "Passing intent=MERGE applies the decisions to the project, which is IRREVERSIBLE " //$NON-NLS-1$
+            + "and is refused when the environment raises a blocking problem or when no decisions " //$NON-NLS-1$
+            + "were given."; //$NON-NLS-1$
     }
 
     @Override
@@ -68,11 +72,20 @@ public class ThreeWayComparisonTool
                     + "\"rule\":\"...\"}. The object is named as this tool names it in changed; " //$NON-NLS-1$
                     + "the rule is one of GET_FROM_OTHER, DO_NOT_MERGE, MERGE_PRIORITIZING_MAIN, " //$NON-NLS-1$
                     + "MERGE_PRIORITIZING_OTHER, CUSTOM_MERGE, MERGE_USING_EXTERNAL_TOOL. " //$NON-NLS-1$
-                    + "Recorded on the comparison; NOT applied - no merge is performed.") //$NON-NLS-1$
+                    + "Recorded on the comparison, and applied only when intent says to.") //$NON-NLS-1$
             .stringProperty("decisionsPath", //$NON-NLS-1$
                 "Absolute path to write the recorded decisions to, in the format EDT reads back " //$NON-NLS-1$
                     + "when a person runs the merge. Without it the decisions die with the " //$NON-NLS-1$
                     + "comparison.") //$NON-NLS-1$
+            .stringProperty("intent", //$NON-NLS-1$
+                "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
+                    + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
+                    + "writing when it raises a blocking problem; merged says what actually " //$NON-NLS-1$
+                    + "happened, not what was asked for. MERGE_IGNORING_PROBLEMS proceeds past " //$NON-NLS-1$
+                    + "those problems; it is a " //$NON-NLS-1$
+                    + "separate value and not a flag, because overriding the environment's own " //$NON-NLS-1$
+                    + "objection should not share a word with ordinary merging. A merge needs " //$NON-NLS-1$
+                    + "decisions: without them there is nothing to apply.") //$NON-NLS-1$
             .build();
     }
 
@@ -136,6 +149,36 @@ public class ThreeWayComparisonTool
         }
     }
 
+    /**
+     * Reads what the caller asked to happen.
+     * <p>
+     * An unrecognised value is refused rather than read as REPORT. Defaulting would be the safe
+     * direction and still the wrong one: somebody who wrote MERGE and mistyped it would be told
+     * their configuration is unchanged only by reading the answer closely, and would try again
+     * with the same word.
+     * </p>
+     *
+     * @param argument the value as written; may be <code>null</code>.
+     * @return the intent, REPORT when nothing was asked for
+     * @throws IllegalArgumentException when the value is not one of the three
+     */
+    private static BmComparisonHelper.Intent readIntent(String argument)
+    {
+        if (argument == null || argument.trim().isEmpty())
+        {
+            return BmComparisonHelper.Intent.REPORT;
+        }
+        for (BmComparisonHelper.Intent intent : BmComparisonHelper.Intent.values())
+        {
+            if (intent.name().equalsIgnoreCase(argument.trim()))
+            {
+                return intent;
+            }
+        }
+        throw new IllegalArgumentException(argument + " is not an intent. Use REPORT, MERGE or " //$NON-NLS-1$
+            + "MERGE_IGNORING_PROBLEMS."); //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
@@ -155,8 +198,30 @@ public class ThreeWayComparisonTool
             return ToolResult.error(malformed.getMessage()).toJson();
         }
 
+        String intentArgument = JsonUtils.extractStringArgument(params, "intent"); //$NON-NLS-1$
+        BmComparisonHelper.Intent intent;
+        try
+        {
+            intent = readIntent(intentArgument);
+        }
+        catch (IllegalArgumentException unknown)
+        {
+            return ToolResult.error(unknown.getMessage()).toJson();
+        }
+        if (intent != BmComparisonHelper.Intent.REPORT)
+        {
+            // A merge writes into the configuration, so a preset that forbids writing forbids this
+            // - checked before anything is compared, not after the work is done.
+            String forbidden = ru.aiedt.mcp.server.support.ToolGate
+                .gateIfPresetDisabled("write_module_source"); //$NON-NLS-1$
+            if (forbidden != null)
+            {
+                return forbidden;
+            }
+        }
+
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
-            ancestorPath, decisions, decisionsPath);
+            ancestorPath, decisions, decisionsPath, intent);
         if (outcome.cannotTell != null)
         {
             return ToolResult.error(outcome.cannotTell)
@@ -181,6 +246,11 @@ public class ThreeWayComparisonTool
             .put("decided", outcome.decided) //$NON-NLS-1$
             .put("decisionsWrittenTo", outcome.decisionsWrittenTo) //$NON-NLS-1$
             .put("decisionsNote", outcome.decisionsNote) //$NON-NLS-1$
+            .put("merged", outcome.merged) //$NON-NLS-1$
+            .put("mergeStatus", outcome.mergeStatus) //$NON-NLS-1$
+            // Present whenever a merge was asked for and did not happen. Silence here would leave
+            // the caller to infer from merged:false, which is also what a failed merge says.
+            .put("mergeRefused", outcome.mergeRefused) //$NON-NLS-1$
             .toJson();
     }
 }

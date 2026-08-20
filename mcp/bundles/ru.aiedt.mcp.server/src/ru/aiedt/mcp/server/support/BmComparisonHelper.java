@@ -43,10 +43,11 @@ import ru.aiedt.mcp.server.Activator;
 /**
  * Reads a comparison of two or three configurations and reports what it found.
  * <p>
- * <b>This class cannot merge.</b> It never calls {@code startMerge} or
- * {@code startMergeIgnoringProblems}, and it holds no reference to them: a merge writes into a
- * configuration and a wrong one is not undone by a button, so the reading half ships on its own and
- * the deciding half is a separate question with a person in it.
+ * <b>Merging is possible here and never happens by itself.</b> Reading is the default and needs no
+ * argument; a merge needs a named intent, decisions to apply, and - past a problem the environment
+ * called blocking - a second, differently worded request. A merge writes into a configuration and a
+ * wrong one is not undone by a button, so the cost of asking twice is nothing beside the cost of
+ * asking once by accident.
  * </p>
  * <p>
  * Three sides are what an update on support actually is: our reworked configuration, the new
@@ -70,11 +71,54 @@ public final class BmComparisonHelper
      */
     private static final long WAIT_LIMIT_MS = 90L * 1000L;
 
+    /**
+     * How long to wait for a started merge to end.
+     * <p>
+     * Longer than the comparison wait, and for the opposite reason. The comparison wait is short
+     * because a pending comparison holds a session open for no gain; a merge that has started is
+     * writing, and the useful thing to do is see it through and report what it did. Giving up on
+     * one does not stop it - nothing here calls it off - it only makes the answer less certain, so
+     * the limit exists to bound the call rather than to protect the environment.
+     * </p>
+     */
+    private static final long MERGE_WAIT_LIMIT_MS = 10L * 60L * 1000L;
+
+    /**
+     * How long a merge may sit at "validation finished" before that is taken as where it stopped.
+     * <p>
+     * That state is ambiguous: a merge on its way to writing passes through it, and a merge the
+     * environment refused ends on it. Blocking problems separate the two in every case observed,
+     * and this exists only for the case where they do not - so that such a merge is reported as
+     * having stopped, rather than as having timed out ten minutes later.
+     * </p>
+     */
+    private static final long VALIDATION_SETTLE_MS = 30L * 1000L;
+
     /** How often to ask the manager what the status is. */
     private static final long POLL_MS = 500L;
 
     /** How many changed objects are named before the list is cut short. */
     private static final int CHANGED_LIMIT = 500;
+
+    /**
+     * What a caller asked to happen after the comparison has been read.
+     * <p>
+     * Three states rather than a boolean, because "merge" and "merge even though the environment
+     * objects" are different decisions and must not share a flag. A flag that quietly means both
+     * is how an override becomes the default.
+     * </p>
+     */
+    public enum Intent
+    {
+        /** Read, report, and change nothing. The only value that needs no argument. */
+        REPORT,
+
+        /** Apply the decisions, unless the environment raises a blocking problem. */
+        MERGE,
+
+        /** Apply them even then. Separate on purpose: the environment named those problems. */
+        MERGE_IGNORING_PROBLEMS
+    }
 
     /** One object that differs between the sides, or exists on only one of them. */
     public static final class Change
@@ -177,6 +221,15 @@ public final class BmComparisonHelper
          */
         public String decisionsNote;
 
+        /** True when a merge ran and the environment reported it as successful. */
+        public boolean merged;
+
+        /** What the merge answered, in the environment's own words. */
+        public String mergeStatus;
+
+        /** Why no merge ran, when one was asked for and did not happen. */
+        public String mergeRefused;
+
         /** Why nothing could be said, when nothing could. */
         public String cannotTell;
 
@@ -206,7 +259,7 @@ public final class BmComparisonHelper
      * @return what the comparison found, or the reason it could not run
      */
     public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
-        List<Decision> decisions, String decisionsPath)
+        List<Decision> decisions, String decisionsPath, Intent intent)
     {
         Outcome outcome = new Outcome();
         if (mainProjectName == null || mainProjectName.isEmpty() || otherPath == null
@@ -261,16 +314,18 @@ public final class BmComparisonHelper
             }
             read(manager, handle, outcome);
             decide(manager, handle, decisions, decisionsPath, outcome);
-            // Read, then let go. A finished comparison stays registered with the virtual project
-            // contexts it opened for the sources on disk, and nothing else will ever close it: the
-            // handle lives only inside this call. One call is harmless, a working day of them is
-            // an environment quietly filling up with comparisons nobody can name - and the day
-            // this tool learned that a pending comparison keeps a session from shutting down was
-            // expensive enough not to leave the successful ones lying about too.
+            merge(manager, handle, batch, intent, outcome);
+            // Read, decided, possibly merged - then let go. A finished comparison stays registered
+            // with the virtual project contexts it opened for the sources on disk, and nothing
+            // else will ever close it: the handle lives only inside this call. One call is
+            // harmless, a working day of them is an environment quietly filling up with
+            // comparisons nobody can name - and the day this tool learned that a pending
+            // comparison keeps a session from shutting down was expensive enough not to leave the
+            // successful ones lying about too.
             //
-            // It also settles what marking merge decisions would take: the session must stay alive
-            // to be marked, so that feature is a deliberate design with a key handed back, not an
-            // accident of never cleaning up.
+            // It is also why deciding and merging happen in the same call: keeping the session
+            // alive between calls is what would have to be designed for, and this is the shape
+            // that needs no such thing.
             release(manager, handle);
             return outcome;
         }
@@ -297,10 +352,11 @@ public final class BmComparisonHelper
     /**
      * Marks the caller's decisions on the comparison and writes them to a file.
      * <p>
-     * Decisions, not a merge. What this produces is a settings file EDT can read back
-     * ({@code deserializeMergeSettings}), so the merge itself happens where a person can see it -
-     * which is the whole point of separating the two. Nothing here calls {@code startMerge}, and
-     * the comparison is closed immediately afterwards like any other.
+     * Marking is separate from merging, and stays separate even now that this class can merge. What
+     * this produces is a settings file EDT reads back ({@code deserializeMergeSettings}), so the
+     * decisions can be handed to a person to run, reviewed before anything is applied, or kept as a
+     * record of what was chosen. Nothing here calls {@code startMerge}; that happens afterwards and
+     * only when the intent said so.
      * </p>
      * <p>
      * A decision naming an object the comparison did not report is refused rather than ignored: a
@@ -407,6 +463,190 @@ public final class BmComparisonHelper
             names.append(names.length() == 0 ? "" : ", ").append(rule.name()); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return names.toString();
+    }
+
+    /**
+     * Applies the decisions to the configuration, when that is what was asked for.
+     * <p>
+     * This is the only irreversible thing in this class, and everything about it is arranged so it
+     * cannot happen by accident: the caller has to ask by name, has to have supplied decisions
+     * (there is nothing to apply otherwise), and has to ask a second time in different words to
+     * proceed past a problem the environment called blocking.
+     * </p>
+     * <p>
+     * What blocks a merge is decided by the environment, not here, and this is measured rather than
+     * assumed: merge problems come out of a validation phase that runs as part of the merge itself,
+     * so before one is started there is nothing to read - {@code getMergeProblems} fails an internal
+     * assertion. A check made here would therefore always see zero problems and always pass, which
+     * is worse than no check at all. The two entry points differ exactly in whether the environment
+     * proceeds past its own objection, and that is the choice the intent carries.
+     * </p>
+     * <p>
+     * The merge is also scheduled rather than performed: {@code startMerge} returns OK as soon as
+     * the job is accepted. Reporting that status as the result would say "merged" before anything
+     * had been written - so the answer here is taken from the process state after the work ends.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process.
+     * @param batch the batch that was compared.
+     * @param intent what the caller asked for.
+     * @param outcome the answer being built.
+     */
+    private static void merge(IComparisonManager manager, ComparisonProcessHandle handle,
+        CompareMergeProcessBatch batch, Intent intent, Outcome outcome)
+    {
+        if (intent == null || intent == Intent.REPORT)
+        {
+            return;
+        }
+        if (outcome.decided == 0)
+        {
+            outcome.mergeRefused = "no merge was run: there are no decisions to apply. Pass " //$NON-NLS-1$
+                + "decisions naming what to do with each object first."; //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            org.eclipse.core.runtime.IStatus scheduled =
+                intent == Intent.MERGE_IGNORING_PROBLEMS
+                    ? manager.startMergeIgnoringProblems(batch,
+                        new org.eclipse.core.runtime.NullProgressMonitor())
+                    : manager.startMerge(batch, new org.eclipse.core.runtime.NullProgressMonitor());
+            if (scheduled == null || !scheduled.isOK())
+            {
+                outcome.mergeStatus = scheduled == null ? "no status at all" //$NON-NLS-1$
+                    : scheduled.getSeverity() + ": " + scheduled.getMessage(); //$NON-NLS-1$
+                if (scheduled != null && scheduled.getException() != null)
+                {
+                    outcome.mergeStatus += " (" + describe(scheduled.getException()) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                outcome.mergeRefused = "the environment would not start the merge: " //$NON-NLS-1$
+                    + outcome.mergeStatus;
+                return;
+            }
+            awaitMergeEnd(manager, handle, outcome);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            outcome.mergeStatus = "the wait for the merge was interrupted"; //$NON-NLS-1$
+            outcome.mergeRefused = "the merge was started and this call stopped waiting for it; " //$NON-NLS-1$
+                + "whether it finished is not known from here"; //$NON-NLS-1$
+        }
+        catch (Exception failed)
+        {
+            // Said as a failure of the merge, not of the comparison: the comparison succeeded, and
+            // what the caller needs to know is whether their configuration was touched.
+            outcome.merged = false;
+            outcome.mergeStatus = "the merge failed: " + describe(failed); //$NON-NLS-1$
+            Activator.logError("Merge failed", failed); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Waits for a started merge to end, and reports what the environment actually did.
+     * <p>
+     * Three ends are distinguished, because they mean entirely different things to whoever asked:
+     * the merge ran, the environment's own validation stopped it before it wrote anything, or it
+     * was discarded. The middle one is the reason this waits at all - it is the ordinary outcome of
+     * intent=MERGE against a configuration the environment objects to, and it must not read as a
+     * merge that happened.
+     * </p>
+     * <p>
+     * Validation finishing is not by itself an end: on the way to a successful merge the process
+     * passes through that same state. What separates the two is whether the validation left
+     * blocking problems behind, which is readable from that point on - so the problems are read
+     * there and the answer follows them, rather than following a timer.
+     * </p>
+     * <p>
+     * A merge that outlives the wait is left alone. Calling off a comparison is safe and this class
+     * does it; calling off a merge half way through is how a configuration ends up in a state
+     * nobody chose.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process.
+     * @param outcome the answer being built.
+     * @throws InterruptedException when the wait is interrupted
+     */
+    private static void awaitMergeEnd(IComparisonManager manager, ComparisonProcessHandle handle,
+        Outcome outcome) throws InterruptedException
+    {
+        long deadline = System.currentTimeMillis() + MERGE_WAIT_LIMIT_MS;
+        boolean problemsTaken = false;
+        long validationFinishedAt = 0L;
+        while (System.currentTimeMillis() < deadline)
+        {
+            ComparisonProcessStatus status = manager.getStatus(handle);
+            if (status != null)
+            {
+                outcome.mergeStatus = status.name();
+                if (status == ComparisonProcessStatus.MERGE_PROCESS_VALIDATION_FINISHED)
+                {
+                    // The one moment the problem list is legal to read. Taken once and kept: by the
+                    // time the merge has finished this same call throws again, and re-reading would
+                    // replace a real list with "not read".
+                    if (!problemsTaken)
+                    {
+                        readProblems(manager, handle, outcome);
+                        problemsTaken = true;
+                        validationFinishedAt = System.currentTimeMillis();
+                    }
+                    if (outcome.blockingProblems > 0)
+                    {
+                        outcome.mergeRefused = "no merge was run: the environment's own " //$NON-NLS-1$
+                            + "validation raised " + outcome.blockingProblems //$NON-NLS-1$
+                            + " blocking problem(s), listed in problems, and stopped before " //$NON-NLS-1$
+                            + "writing anything. Read them, and if they are acceptable ask again " //$NON-NLS-1$
+                            + "with intent=MERGE_IGNORING_PROBLEMS."; //$NON-NLS-1$
+                        return;
+                    }
+                    if (System.currentTimeMillis() - validationFinishedAt > VALIDATION_SETTLE_MS)
+                    {
+                        // Validation refused for a reason it did not express as a blocking problem.
+                        // Reported as a stop rather than waited out to the full limit, because the
+                        // merge phase never starts from here and the caller would otherwise be told
+                        // about a timeout that is not one.
+                        outcome.mergeRefused = "no merge was run: the environment stopped after " //$NON-NLS-1$
+                            + "its own validation and did not begin writing. It raised no " //$NON-NLS-1$
+                            + "blocking problem to explain that, so the reason is the " //$NON-NLS-1$
+                            + "environment's own."; //$NON-NLS-1$
+                        return;
+                    }
+                }
+                if (status == ComparisonProcessStatus.MERGE_PROCESS_FINISHED)
+                {
+                    outcome.merged = true;
+                    return;
+                }
+                if (status == ComparisonProcessStatus.MERGE_PROCESS_DISCARDED
+                    || status == ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED)
+                {
+                    outcome.mergeRefused = "no merge was run: the environment ended the merge as " //$NON-NLS-1$
+                        + status.name() + ". Nothing was written."; //$NON-NLS-1$
+                    return;
+                }
+            }
+            else
+            {
+                // The session is gone, and for a merge that is the ordinary ending rather than an
+                // error: the environment sets MERGE_PROCESS_FINISHED and discards the session in
+                // the same breath, so the finished state is usually never observable from outside.
+                // Waiting for it cost ten minutes per merge and ended in a timeout on work that had
+                // already been done - the answer was wrong in the safe direction, which is still
+                // wrong. A vanished session cannot mean "not started": nothing gets here without
+                // startMerge having been accepted.
+                outcome.merged = true;
+                outcome.mergeStatus = "MERGE_PROCESS_FINISHED (session discarded on completion)"; //$NON-NLS-1$
+                return;
+            }
+            Thread.sleep(POLL_MS);
+        }
+        outcome.mergeRefused = "the merge was started and had not finished within the time " //$NON-NLS-1$
+            + "allowed; last state " + outcome.mergeStatus + ". It is still running - this call " //$NON-NLS-1$ //$NON-NLS-2$
+            + "stopped waiting, it did not stop the merge, and whether the configuration was " //$NON-NLS-1$
+            + "written cannot be answered from here."; //$NON-NLS-1$
     }
 
     /**
@@ -647,15 +887,21 @@ public final class BmComparisonHelper
     /**
      * Reads the merge problems, when there are any to read.
      * <p>
-     * Guarded separately from the tree, and this is not defensive habit - it is measured. Merge
-     * problems come out of the pre-merge validation, and a comparison that will never be merged
-     * never runs it: {@code getMergeProblems} then fails an internal assertion. That threw away a
-     * finished tree twice over, because the counts were already computed and the exception
-     * discarded the whole answer on the way out.
+     * Guarded separately from the tree, and this is not defensive habit - it is measured. The
+     * environment only allows this list to be read once its merge validation has run, and that
+     * validation is part of a merge: before one is started {@code getMergeProblems} fails an
+     * internal assertion. That threw away a finished tree twice over, because the counts were
+     * already computed and the exception discarded the whole answer on the way out.
      * </p>
      * <p>
-     * So the absence of problems is reported as what it is - not asked, because no merge was
-     * prepared - rather than as an empty list, which would read as "nothing stands in the way".
+     * So the absence of problems is reported as what it is - not asked yet - rather than as an
+     * empty list, which would read as "nothing stands in the way". The difference matters most
+     * where it is easiest to miss: a merge must never be allowed to proceed on the strength of a
+     * problem count that nobody was able to take.
+     * </p>
+     * <p>
+     * Called again after a merge, when the same list has become readable and says something real.
+     * It therefore replaces what it found last time rather than adding to it.
      * </p>
      *
      * @param manager the comparison service.
@@ -665,6 +911,9 @@ public final class BmComparisonHelper
     private static void readProblems(IComparisonManager manager, ComparisonProcessHandle handle,
         Outcome outcome)
     {
+        outcome.problems.clear();
+        outcome.blockingProblems = 0;
+        outcome.problemsNote = null;
         List<MergeProblem> problems;
         try
         {
@@ -672,8 +921,8 @@ public final class BmComparisonHelper
         }
         catch (Exception notApplicable)
         {
-            outcome.problemsNote = "not read: merge problems come from the pre-merge validation, " //$NON-NLS-1$
-                + "which a comparison that is never merged does not run (" //$NON-NLS-1$
+            outcome.problemsNote = "not read: the environment allows merge problems to be read " //$NON-NLS-1$
+                + "only after its merge validation has run, and that happens as part of a merge (" //$NON-NLS-1$
                 + describe(notApplicable) + ")"; //$NON-NLS-1$
             return;
         }
