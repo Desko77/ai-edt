@@ -202,6 +202,45 @@ public class ProjectProblemsReader
     }
 
     /**
+     * Counts the errors standing against a named set of objects.
+     * <p>
+     * Exists so that "how many errors are on these objects" has ONE answer in this codebase. The
+     * caller is a merge, which leaves a configuration in a state nobody has looked at yet and must
+     * not report success without saying whether the project still validates - but a second counter
+     * written next to the merge would drift from this one, and two answers to one question is worse
+     * than a slightly wider public surface here.
+     * </p>
+     *
+     * @param projectName the project the objects belong to; may be <code>null</code> for all.
+     * @param objects the object FQNs to count against; empty counts nothing.
+     * @return the number of ERROR-severity markers, or -1 when the marker service is unavailable
+     *         and the question therefore has no answer rather than the answer zero
+     */
+    public static long countErrorsOn(String projectName, List<String> objects)
+    {
+        if (objects == null || objects.isEmpty())
+        {
+            return 0L;
+        }
+        Activator activator = Activator.getDefault();
+        IMarkerManager markerManager = activator == null ? null : activator.getMarkerManager();
+        if (markerManager == null)
+        {
+            // Not zero. Zero is what a clean project looks like, and this is not that.
+            return -1L;
+        }
+        ICheckRepository checkRepository = activator == null ? null : activator.getCheckRepository();
+        Set<String> objectFqns = new HashSet<>();
+        for (String fqn : objects)
+        {
+            objectFqns.addAll(MetadataTypeCatalog.getAllFqnVariants(fqn));
+        }
+        Filter filter = new Filter(projectName, parseSeverityFilter("ERROR"), null, objectFqns, //$NON-NLS-1$
+            new HashSet<>(), false, null);
+        return countMatching(markerManager, checkRepository, filter, targetProjects(projectName)).value;
+    }
+
+    /**
      * The full entry point.
      *
      * @param projectName the project to restrict to, or <code>null</code>/empty for all

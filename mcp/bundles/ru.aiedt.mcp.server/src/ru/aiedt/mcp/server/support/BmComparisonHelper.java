@@ -34,8 +34,10 @@ import com._1c.g5.v8.dt.compare.merge.MergeProblem;
 import com._1c.g5.v8.dt.compare.model.ComparisonNode;
 import com._1c.g5.v8.dt.compare.model.ComparisonSide;
 import com._1c.g5.v8.dt.compare.model.MergeRule;
+import com._1c.g5.v8.dt.compare.model.ObjectsTriple;
 import com._1c.g5.v8.dt.compare.model.TopComparisonNode;
 import com._1c.g5.v8.dt.compare.settings.model.IMergeSettingsModel;
+import com._1c.g5.v8.dt.compare.settings.model.RestoredMergeSettings;
 import com._1c.g5.wiring.ServiceAccess;
 
 import ru.aiedt.mcp.server.Activator;
@@ -230,6 +232,33 @@ public final class BmComparisonHelper
         /** Why no merge ran, when one was asked for and did not happen. */
         public String mergeRefused;
 
+        /** Where the decisions applied to this comparison were read from, when they were. */
+        public String decisionsReadFrom;
+
+        /**
+         * True when that file actually carried decisions.
+         * <p>
+         * Separate from {@link #decisionsReadFrom} because a file that parses and decides nothing
+         * is the failure mode worth naming: the caller believes the work somebody did by hand is
+         * about to be carried out, and it is not.
+         * </p>
+         */
+        public boolean decisionsRestored;
+
+        /**
+         * Errors standing against the merged objects afterwards; -1 when it could not be asked.
+         * <p>
+         * A merge that leaves the configuration broken is the ordinary case, not the exception -
+         * taking the vendor's version of one object routinely breaks whatever referred to the old
+         * one. An answer that stops at "merged" leaves the caller to discover that later, so the
+         * objects are revalidated here and the count comes back with the merge.
+         * </p>
+         */
+        public long errorsAfterMerge = -1L;
+
+        /** True when the merged objects were revalidated before that count was taken. */
+        public boolean revalidatedAfterMerge;
+
         /** Why nothing could be said, when nothing could. */
         public String cannotTell;
 
@@ -259,7 +288,7 @@ public final class BmComparisonHelper
      * @return what the comparison found, or the reason it could not run
      */
     public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
-        List<Decision> decisions, String decisionsPath, Intent intent)
+        List<Decision> decisions, String decisionsPath, String decisionsFrom, Intent intent)
     {
         Outcome outcome = new Outcome();
         if (mainProjectName == null || mainProjectName.isEmpty() || otherPath == null
@@ -301,8 +330,12 @@ public final class BmComparisonHelper
                 : new ComparisonProcessHandle(main, other, ancestor, ComparisonScope.EMPTY_SCOPE);
             outcome.threeWay = handle.isThreeWay();
 
-            ComparisonProcessSettings settings = new ComparisonProcessSettings(
-                MatchingStrategy.UUID_THEN_NAME, Collections.emptyList(), new NoMergeSettings());
+            ComparisonProcessSettings settings = settingsFor(manager, handle, decisionsFrom,
+                outcome);
+            if (settings == null)
+            {
+                return outcome;
+            }
             CompareMergeProcessBatch batch =
                 new CompareMergeProcessBatch(new CompareMergeProcessDescriptor(handle, settings));
 
@@ -315,6 +348,7 @@ public final class BmComparisonHelper
             read(manager, handle, outcome);
             decide(manager, handle, decisions, decisionsPath, outcome);
             merge(manager, handle, batch, intent, outcome);
+            reportProjectState(mainProjectName, decisions, outcome);
             // Read, decided, possibly merged - then let go. A finished comparison stays registered
             // with the virtual project contexts it opened for the sources on disk, and nothing
             // else will ever close it: the handle lives only inside this call. One call is
@@ -347,6 +381,142 @@ public final class BmComparisonHelper
             Activator.logError("Comparison failed: " + describe(e), e); //$NON-NLS-1$
             return outcome;
         }
+    }
+
+    /**
+     * Builds the settings the comparison runs under, restoring saved decisions when asked.
+     * <p>
+     * This closes the circle the settings file opened. Writing decisions out is only half of
+     * handing work to a person: they open the file in EDT, decide the hard objects by eye, save,
+     * and the decisions then have to come back. The environment restores both halves of that file
+     * - the rules and the correspondences somebody established by hand between objects that do not
+     * match by uuid or name - and losing the second half would silently discard the most expensive
+     * part of their work.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process, already built.
+     * @param decisionsFrom path to a saved settings file, or <code>null</code> for none.
+     * @param outcome the answer being built.
+     * @return the settings, or <code>null</code> when the file was named and could not be read
+     */
+    private static ComparisonProcessSettings settingsFor(IComparisonManager manager,
+        ComparisonProcessHandle handle, String decisionsFrom, Outcome outcome)
+    {
+        if (decisionsFrom == null || decisionsFrom.trim().isEmpty())
+        {
+            return new ComparisonProcessSettings(MatchingStrategy.UUID_THEN_NAME,
+                Collections.emptyList(), new NoMergeSettings());
+        }
+        String path = decisionsFrom.trim();
+        if (!path.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) //$NON-NLS-1$
+        {
+            outcome.cannotTell = "decisionsFrom must name a .zip file - that is the format the " //$NON-NLS-1$
+                + "environment writes and the only one it reads: " + path; //$NON-NLS-1$
+            return null;
+        }
+        try
+        {
+            RestoredMergeSettings restored = manager.deserializeMergeSettings(handle, path);
+            if (restored == null)
+            {
+                outcome.cannotTell = "the environment read " + path + " and produced no settings"; //$NON-NLS-1$ //$NON-NLS-2$
+                return null;
+            }
+            List<ObjectsTriple<String>> correspondences =
+                restored.getComparedObjectsCorrespondences();
+            IMergeSettingsModel restoredModel = restored.getMergeSettingsModel();
+            ComparisonProcessSettings settings =
+                new ComparisonProcessSettings(MatchingStrategy.UUID_THEN_NAME,
+                    correspondences == null ? Collections.emptyList() : correspondences,
+                    restoredModel == null ? new NoMergeSettings() : restoredModel);
+            settings.setRestoredMergeSettings(restored);
+            outcome.decisionsReadFrom = path;
+            outcome.decisionsRestored = restoredModel != null && !restoredModel.isEmpty();
+            if (!outcome.decisionsRestored)
+            {
+                outcome.decisionsNote = path + " was read and carries no decisions, so nothing " //$NON-NLS-1$
+                    + "came from it"; //$NON-NLS-1$
+            }
+            return settings;
+        }
+        catch (Exception cannotRead)
+        {
+            // Named as a failure to read that file, not as a comparison that could not run: the
+            // caller pointed at something, and what they need to know is what was wrong with it.
+            outcome.cannotTell = "the decisions in " + path + " could not be read: " //$NON-NLS-1$ //$NON-NLS-2$
+                + describe(cannotRead);
+            return null;
+        }
+    }
+
+    /**
+     * Says what state the project is in after a merge has written to it.
+     * <p>
+     * Only after a merge, and only for the objects it touched. A merge that succeeds and leaves the
+     * configuration broken is the ordinary case rather than the exception - taking the other side's
+     * version of one object routinely breaks whatever referred to the old one - so an answer that
+     * stops at "merged" is true and useless. The objects are revalidated first, because a count
+     * taken off stale markers describes the configuration as it was before the merge.
+     * </p>
+     *
+     * @param projectName the project that was merged into.
+     * @param decisions what the caller decided, which names the objects that could have changed.
+     * @param outcome the answer being built.
+     */
+    private static void reportProjectState(String projectName, List<Decision> decisions,
+        Outcome outcome)
+    {
+        if (!outcome.merged)
+        {
+            return;
+        }
+        List<String> objects = new ArrayList<>();
+        if (decisions != null)
+        {
+            for (Decision decision : decisions)
+            {
+                if (decision.object != null && !decision.object.isEmpty())
+                {
+                    objects.add(decision.object);
+                }
+            }
+        }
+        if (objects.isEmpty())
+        {
+            // A merge driven from a settings file passes no decisions here, and skipping the check
+            // for exactly those merges would leave the ones somebody prepared by hand - the larger,
+            // riskier ones - as the only merges whose result nobody looks at. The objects the
+            // comparison found are the only ones that can have moved.
+            for (Change change : outcome.changed)
+            {
+                String named = change.main != null && !change.main.isEmpty() ? change.main
+                    : change.other;
+                if (named != null && !named.isEmpty())
+                {
+                    objects.add(named);
+                }
+            }
+        }
+        if (objects.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            ru.aiedt.mcp.server.toolkit.ops.ObjectsRevalidator.revalidateObjects(projectName,
+                objects);
+            outcome.revalidatedAfterMerge = true;
+        }
+        catch (Exception couldNotRevalidate)
+        {
+            // The count still gets taken, off whatever markers exist. Saying which of the two
+            // happened is the point: a number from stale markers is not the same claim.
+            Activator.logError("Revalidation after merge failed", couldNotRevalidate); //$NON-NLS-1$
+        }
+        outcome.errorsAfterMerge =
+            ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader.countErrorsOn(projectName,
+                objects);
     }
 
     /**
@@ -416,6 +586,16 @@ public final class BmComparisonHelper
         }
         if (path == null || path.isEmpty())
         {
+            return;
+        }
+        if (!path.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) //$NON-NLS-1$
+        {
+            // Refused here rather than inside the environment, which enforces the same thing with
+            // an assertion whose message reaches the caller as a failed write of a file they were
+            // told nothing about. The decisions are marked either way; only the file is missed.
+            outcome.decisionsNote = "the decisions are marked but were not written: " //$NON-NLS-1$
+                + "decisionsPath must end in .zip, which is the format the environment reads " //$NON-NLS-1$
+                + "back. Given: " + path; //$NON-NLS-1$
             return;
         }
         try
@@ -500,10 +680,15 @@ public final class BmComparisonHelper
         {
             return;
         }
-        if (outcome.decided == 0)
+        // Decisions reach a comparison two ways, and the guard has to see both. Counting only the
+        // ones passed in this call refused every merge driven from a saved settings file - which is
+        // the whole point of writing one: hand the hard objects to a person, take back what they
+        // decided, carry it out. The environment had the rules; we were the ones who said no.
+        if (outcome.decided == 0 && !outcome.decisionsRestored)
         {
             outcome.mergeRefused = "no merge was run: there are no decisions to apply. Pass " //$NON-NLS-1$
-                + "decisions naming what to do with each object first."; //$NON-NLS-1$
+                + "decisions naming what to do with each object, or decisionsFrom pointing at a " //$NON-NLS-1$
+                + "settings file that carries them."; //$NON-NLS-1$
             return;
         }
         try

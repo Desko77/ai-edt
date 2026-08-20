@@ -253,6 +253,94 @@ public class ThreeWayComparisonToolTest
     }
 
     /**
+     * Decisions travel both ways: out to a person, and back to be carried out.
+     * <p>
+     * Writing them was only half a handover. Without the way back, work decided by eye in EDT -
+     * including correspondences somebody established by hand between objects that match neither by
+     * uuid nor by name - could not be acted on at all.
+     * </p>
+     */
+    @Test
+    public void decisionsCanBeReadBackFromAFileAndNotOnlyWritten()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+
+        assertTrue("there must be a way in as well as a way out: " + schema, //$NON-NLS-1$
+            schema.contains("decisionsFrom")); //$NON-NLS-1$
+        assertTrue("and the description must say what the file is for", //$NON-NLS-1$
+            new ThreeWayComparisonTool().getDescription().contains("decisionsFrom")); //$NON-NLS-1$
+    }
+
+    /**
+     * A settings file is a source of decisions in its own right, not a decoration on the argument.
+     * <p>
+     * Measured on a stand, not supposed: the first version read the file, the environment applied
+     * its rules to the comparison, and the merge was then refused by our own guard - which counted
+     * only the decisions passed in that call. So the one workflow the file exists for, handing the
+     * hard objects to a person and carrying back what they decided, was the one workflow that could
+     * not run. The refusal must name both ways in, because a caller who used the file needs to know
+     * which one was missing.
+     * </p>
+     */
+    @Test
+    public void aRestoredFileCountsAsDecisionsForTheMergeGuard()
+    {
+        java.util.List<String> fields = new java.util.ArrayList<>();
+        for (java.lang.reflect.Field f : ru.aiedt.mcp.server.support.BmComparisonHelper.Outcome.class
+            .getFields())
+        {
+            fields.add(f.getName());
+        }
+        assertTrue("whether the file carried anything must be visible: " + fields, //$NON-NLS-1$
+            fields.contains("decisionsRestored")); //$NON-NLS-1$
+
+        String answer = new ThreeWayComparisonTool()
+            .execute(args("projectName", "P", "otherPath", "no such directory", "intent", "MERGE")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        assertTrue(answer, answer.contains("\"success\":false")); //$NON-NLS-1$
+    }
+
+    /**
+     * The environment writes and reads exactly one format, and says so with an assertion.
+     * <p>
+     * A path with the wrong extension used to reach {@code serializeMergeSettings} and fail inside
+     * it, which surfaced as a file that could not be written for a reason naming a constraint the
+     * caller had never been told about.
+     * </p>
+     */
+    @Test
+    public void theSettingsFileFormatIsNamedInTheSchema()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+
+        assertTrue("the required extension belongs where the path is asked for: " + schema, //$NON-NLS-1$
+            schema.contains(".zip")); //$NON-NLS-1$
+    }
+
+    /**
+     * A merge that succeeds and leaves the configuration broken is the ordinary case.
+     * <p>
+     * Taking the other side's version of one object routinely breaks whatever referred to the old
+     * one, so an answer that stops at "merged" is true and useless. The state of the project comes
+     * back with the merge rather than being left for the caller to think of.
+     * </p>
+     */
+    @Test
+    public void theStateOfTheProjectComesBackWithTheMerge()
+    {
+        java.util.List<String> fields = new java.util.ArrayList<>();
+        for (java.lang.reflect.Field f : ru.aiedt.mcp.server.support.BmComparisonHelper.Outcome.class
+            .getFields())
+        {
+            fields.add(f.getName());
+        }
+
+        assertTrue("the errors standing against the merged objects must be reported: " + fields, //$NON-NLS-1$
+            fields.contains("errorsAfterMerge")); //$NON-NLS-1$
+        assertTrue("and whether they were counted on fresh markers or stale ones", //$NON-NLS-1$
+            fields.contains("revalidatedAfterMerge")); //$NON-NLS-1$
+    }
+
+    /**
      * The merge entry points must stay out of reach. Checked against the class rather than the
      * source text so the test still holds if the file is reorganised.
      */

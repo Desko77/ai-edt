@@ -50,10 +50,12 @@ public class ThreeWayComparisonTool
             + "counts, how many differ, how many exist on one side only, the metadata objects " //$NON-NLS-1$
             + "that moved by name, and the problems the environment raises. Decisions about " //$NON-NLS-1$
             + "individual objects can be recorded and written to a settings file that EDT reads " //$NON-NLS-1$
-            + "back when a person runs the merge. Reading is the default and changes nothing. " //$NON-NLS-1$
-            + "Passing intent=MERGE applies the decisions to the project, which is IRREVERSIBLE " //$NON-NLS-1$
-            + "and is refused when the environment raises a blocking problem or when no decisions " //$NON-NLS-1$
-            + "were given."; //$NON-NLS-1$
+            + "back when a person runs the merge, and a file written earlier can be read back in " //$NON-NLS-1$
+            + "through decisionsFrom. Reading is the default and changes nothing. Passing " //$NON-NLS-1$
+            + "intent=MERGE applies the decisions to the project, which is IRREVERSIBLE and is " //$NON-NLS-1$
+            + "refused when the environment raises a blocking problem or when no decisions were " //$NON-NLS-1$
+            + "given; after a merge the touched objects are revalidated and the errors standing " //$NON-NLS-1$
+            + "against them are reported."; //$NON-NLS-1$
     }
 
     @Override
@@ -75,8 +77,13 @@ public class ThreeWayComparisonTool
                     + "Recorded on the comparison, and applied only when intent says to.") //$NON-NLS-1$
             .stringProperty("decisionsPath", //$NON-NLS-1$
                 "Absolute path to write the recorded decisions to, in the format EDT reads back " //$NON-NLS-1$
-                    + "when a person runs the merge. Without it the decisions die with the " //$NON-NLS-1$
-                    + "comparison.") //$NON-NLS-1$
+                    + "when a person runs the merge. Must end in .zip. Without it the decisions " //$NON-NLS-1$
+                    + "die with the comparison.") //$NON-NLS-1$
+            .stringProperty("decisionsFrom", //$NON-NLS-1$
+                "Absolute path to a settings file (.zip) written earlier - by this tool or by a " //$NON-NLS-1$
+                    + "person in EDT - whose decisions and hand-made object correspondences are " //$NON-NLS-1$
+                    + "applied to this comparison before anything else. This is how work decided " //$NON-NLS-1$
+                    + "by eye comes back to be carried out.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
@@ -188,6 +195,7 @@ public class ThreeWayComparisonTool
 
         String decisionsJson = JsonUtils.extractStringArgument(params, "decisions"); //$NON-NLS-1$
         String decisionsPath = JsonUtils.extractStringArgument(params, "decisionsPath"); //$NON-NLS-1$
+        String decisionsFrom = JsonUtils.extractStringArgument(params, "decisionsFrom"); //$NON-NLS-1$
         List<BmComparisonHelper.Decision> decisions;
         try
         {
@@ -221,7 +229,7 @@ public class ThreeWayComparisonTool
         }
 
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
-            ancestorPath, decisions, decisionsPath, intent);
+            ancestorPath, decisions, decisionsPath, decisionsFrom, intent);
         if (outcome.cannotTell != null)
         {
             return ToolResult.error(outcome.cannotTell)
@@ -246,11 +254,19 @@ public class ThreeWayComparisonTool
             .put("decided", outcome.decided) //$NON-NLS-1$
             .put("decisionsWrittenTo", outcome.decisionsWrittenTo) //$NON-NLS-1$
             .put("decisionsNote", outcome.decisionsNote) //$NON-NLS-1$
+            // Present only when decisions were restored from a file, so a caller who named
+            // one can tell it was read from a run where the argument was quietly ignored.
+            .put("decisionsReadFrom", outcome.decisionsReadFrom) //$NON-NLS-1$
+            .put("decisionsRestored", outcome.decisionsRestored) //$NON-NLS-1$
             .put("merged", outcome.merged) //$NON-NLS-1$
             .put("mergeStatus", outcome.mergeStatus) //$NON-NLS-1$
             // Present whenever a merge was asked for and did not happen. Silence here would leave
             // the caller to infer from merged:false, which is also what a failed merge says.
             .put("mergeRefused", outcome.mergeRefused) //$NON-NLS-1$
+            // What the project looks like after being written to. A merge that succeeds and
+            // leaves the configuration broken is ordinary, not exceptional.
+            .put("errorsAfterMerge", outcome.errorsAfterMerge) //$NON-NLS-1$
+            .put("revalidatedAfterMerge", outcome.revalidatedAfterMerge) //$NON-NLS-1$
             .toJson();
     }
 }
