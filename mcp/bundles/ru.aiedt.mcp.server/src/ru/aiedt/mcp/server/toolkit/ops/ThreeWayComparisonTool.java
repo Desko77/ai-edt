@@ -90,6 +90,10 @@ public class ThreeWayComparisonTool
             .put("nodes", outcome.nodes) //$NON-NLS-1$
             .put("differing", outcome.differing) //$NON-NLS-1$
             .put("oneSided", outcome.oneSided) //$NON-NLS-1$
+            // Named, not just counted: an update on support is decided object by object, and a
+            // number tells nobody which ones to look at.
+            .put("changed", outcome.changed) //$NON-NLS-1$
+            .put("changedListComplete", outcome.changed.size() < 500) //$NON-NLS-1$
             .put("blockingProblems", outcome.blockingProblems) //$NON-NLS-1$
             .put("problems", outcome.problems) //$NON-NLS-1$
             // Present only when the list is empty for a reason other than there being no problems.

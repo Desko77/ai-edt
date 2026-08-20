@@ -33,6 +33,7 @@ import com._1c.g5.v8.dt.compare.matching.MatchingStrategy;
 import com._1c.g5.v8.dt.compare.merge.MergeProblem;
 import com._1c.g5.v8.dt.compare.model.ComparisonNode;
 import com._1c.g5.v8.dt.compare.model.ComparisonSide;
+import com._1c.g5.v8.dt.compare.model.TopComparisonNode;
 import com._1c.g5.v8.dt.compare.settings.model.IMergeSettingsModel;
 import com._1c.g5.wiring.ServiceAccess;
 
@@ -71,6 +72,31 @@ public final class BmComparisonHelper
     /** How often to ask the manager what the status is. */
     private static final long POLL_MS = 500L;
 
+    /** How many changed objects are named before the list is cut short. */
+    private static final int CHANGED_LIMIT = 500;
+
+    /** One object that differs between the sides, or exists on only one of them. */
+    public static final class Change
+    {
+        /** Its identity on our side; empty when it is not there. */
+        public String main;
+
+        /** Its identity on the delivery being compared against. */
+        public String other;
+
+        /** Its identity on the delivery both came from, when there are three sides. */
+        public String ancestor;
+
+        /** True when it exists on one side only - added by one, or removed by the other. */
+        public boolean oneSided;
+
+        /** Which side has it, when only one does. */
+        public String presentOn;
+
+        /** Why it could not be named, when it could not. */
+        public String note;
+    }
+
     /** What a comparison produced. */
     public static final class Outcome
     {
@@ -91,6 +117,12 @@ public final class BmComparisonHelper
 
         /** Nodes present on one side only. */
         public int oneSided;
+
+        /**
+         * The metadata objects that moved, named. Cut at {@link #CHANGED_LIMIT}; the counts above
+         * stay whole, so a truncated list never makes the change look smaller than it is.
+         */
+        public final List<Change> changed = new ArrayList<>();
 
         /** Problems the environment raised, blocking ones first. */
         public final List<String> problems = new ArrayList<>();
@@ -479,16 +511,68 @@ public final class BmComparisonHelper
      * @param node the node to count and descend from.
      * @param outcome the answer being built.
      */
+    /**
+     * Names one changed object and says on which side it stands.
+     *
+     * @param node the top node, which is a metadata object.
+     * @param oneSided whether it exists on one side only.
+     * @return the description
+     */
+    private static Change describeChange(TopComparisonNode node, boolean oneSided)
+    {
+        Change change = new Change();
+        change.oneSided = oneSided;
+        try
+        {
+            change.main = node.getSymlink(ComparisonSide.MAIN);
+            change.other = node.getSymlink(ComparisonSide.OTHER);
+            change.ancestor = node.getSymlink(ComparisonSide.COMMON_ANCESTOR);
+            if (oneSided && node.getNodeSide() != null)
+            {
+                change.presentOn = node.getNodeSide().getName();
+            }
+        }
+        catch (Exception cannotName)
+        {
+            // A node that will not name itself is still reported: dropping it would understate
+            // what moved, which is the one thing this list must not do.
+            change.note = "could not be named: " + describe(cannotName); //$NON-NLS-1$
+        }
+        return change;
+    }
+
     private static void walk(ComparisonNode node, Outcome outcome)
     {
         outcome.nodes++;
-        if (node.isOneSideNode())
+        boolean oneSided = node.isOneSideNode();
+        boolean differs = !oneSided && node.getComparisonFlags() != null
+            && node.getComparisonFlags().hasDiffsMainOther();
+        if (oneSided)
         {
             outcome.oneSided++;
         }
-        else if (node.getComparisonFlags() != null && node.getComparisonFlags().hasDiffsMainOther())
+        else if (differs)
         {
             outcome.differing++;
+        }
+        // Counts alone do not answer the question anybody asks of an update on support, which is
+        // WHICH objects moved and on whose side. Only the top nodes are named: those are the
+        // metadata objects, and the nodes below them are the fields and members that make one
+        // object differ - listing those would bury the answer in its own detail.
+        if ((oneSided || differs) && node instanceof TopComparisonNode
+            && outcome.changed.size() < CHANGED_LIMIT)
+        {
+            Change change = describeChange((TopComparisonNode)node, oneSided);
+            // The configuration root is a top node too, and it names itself on no side at all. It
+            // differs whenever anything inside it does, so listing it says only "something
+            // changed" - which the counts already said. An entry that identifies nothing is noise
+            // in a list whose whole purpose is to identify.
+            if (change.main != null && !change.main.isEmpty()
+                || change.other != null && !change.other.isEmpty()
+                || change.ancestor != null && !change.ancestor.isEmpty() || change.note != null)
+            {
+                outcome.changed.add(change);
+            }
         }
         if (!node.hasChildren())
         {
