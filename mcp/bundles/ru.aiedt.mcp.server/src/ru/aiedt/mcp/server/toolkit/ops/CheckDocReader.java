@@ -86,6 +86,69 @@ public class CheckDocReader
     }
 
     /**
+     * Names every check this server can describe.
+     * <p>
+     * Both places the descriptions live, folded into one sorted list: the folder an installation may
+     * configure and the copies packaged in the jar. The configured folder wins on a collision, which
+     * is the same precedence {@link #getCheckDescription(String)} applies - the listing and the
+     * reading must not disagree about which file answers for an id, or a caller would be offered a
+     * document and handed a different one.
+     * </p>
+     *
+     * @return the check ids, sorted; empty when there is neither a folder nor a bundle to look in
+     */
+    public static java.util.List<String> listDocumentedChecks()
+    {
+        java.util.Set<String> ids = new java.util.TreeSet<>();
+        String folder = checksFolder();
+        if (folder != null && !folder.isEmpty())
+        {
+            File directory = new File(folder);
+            File[] files = directory.isDirectory() ? directory.listFiles() : null;
+            if (files != null)
+            {
+                for (File file : files)
+                {
+                    if (file.isFile() && file.getName().endsWith(MD_SUFFIX))
+                    {
+                        ids.add(idOfFile(file.getName()));
+                    }
+                }
+            }
+        }
+        Bundle bundle = bundle();
+        if (bundle != null)
+        {
+            java.util.Enumeration<String> entries =
+                bundle.getEntryPaths(BUNDLE_CHECKS_PREFIX);
+            while (entries != null && entries.hasMoreElements())
+            {
+                String path = entries.nextElement();
+                if (path != null && path.endsWith(MD_SUFFIX))
+                {
+                    ids.add(idOfFile(path.substring(path.lastIndexOf('/') + 1)));
+                }
+            }
+        }
+        return new java.util.ArrayList<>(ids);
+    }
+
+    /**
+     * Turns a description file name back into the check id it answers for.
+     *
+     * @param fileName the bare file name, ending in the markdown suffix.
+     * @return the id
+     */
+    private static String idOfFile(String fileName)
+    {
+        String bare = fileName.substring(0, fileName.length() - MD_SUFFIX.length());
+        // EDT names some files with the suffix it adds to the id itself. Stripping it here keeps
+        // the listed ids the same ones a caller passes to get_check_description.
+        return bare.endsWith(CHECK_SUFFIX)
+            ? bare.substring(0, bare.length() - CHECK_SUFFIX.length()) : bare;
+    }
+
+    /**
      * Returns the markdown for a check.
      * <p>
      * Public and static so other tools - get_project_errors among them - can offer the same

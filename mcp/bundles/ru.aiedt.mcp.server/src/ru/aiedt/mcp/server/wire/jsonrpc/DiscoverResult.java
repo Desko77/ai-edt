@@ -176,6 +176,8 @@ public class DiscoverResult
     {
         private final Tools tools = new Tools();
 
+        private final InitializeResult.Resources resources = new InitializeResult.Resources();
+
         private final java.util.Map<String, Object> extensions = extensionsOffered();
 
         /**
@@ -186,6 +188,21 @@ public class DiscoverResult
         public Tools getTools()
         {
             return tools;
+        }
+
+        /**
+         * Returns the resources capability, for the same reason the handshake announces it.
+         * <p>
+         * Discovery exists so a client can learn what this server does without a handshake. Leaving
+         * a capability out of it that the handshake announces would make the two disagree, and a
+         * client is entitled to trust either.
+         * </p>
+         *
+         * @return the resources capability
+         */
+        public InitializeResult.Resources getResources()
+        {
+            return resources;
         }
 
         /**

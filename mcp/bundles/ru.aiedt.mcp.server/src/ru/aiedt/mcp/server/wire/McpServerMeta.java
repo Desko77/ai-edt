@@ -210,6 +210,34 @@ public final class McpServerMeta
     /** Method: tool invocation. */
     public static final String METHOD_TOOLS_CALL = "tools/call"; //$NON-NLS-1$
 
+    /**
+     * Method: liveness. Answered with an empty result, which is the whole of it.
+     * <p>
+     * In the base specification since the beginning, and answered with method-not-found here until
+     * now - so a client checking liveness the standard way concluded the server was broken.
+     * </p>
+     */
+    public static final String METHOD_PING = "ping"; //$NON-NLS-1$
+
+    /** Method: what documents this server can hand over. */
+    public static final String METHOD_RESOURCES_LIST = "resources/list"; //$NON-NLS-1$
+
+    /** Method: hand one of them over, named by uri. */
+    public static final String METHOD_RESOURCES_READ = "resources/read"; //$NON-NLS-1$
+
+    /**
+     * The scheme this server's resources are addressed under.
+     * <p>
+     * Its own scheme rather than {@code file:} on purpose: a description may be packaged inside the
+     * plugin jar, where there is no file for a client to open, and an address that looks openable
+     * and is not is worse than one that plainly needs this server to resolve it.
+     * </p>
+     */
+    public static final String RESOURCE_SCHEME = "aiedt://"; //$NON-NLS-1$
+
+    /** The one family of resources served today: the write-ups for EDT validation checks. */
+    public static final String RESOURCE_CHECKS = RESOURCE_SCHEME + "checks/"; //$NON-NLS-1$
+
     private static final String UNKNOWN_VERSION = "unknown"; //$NON-NLS-1$
 
     private static final String VERSION_SEPARATOR = "."; //$NON-NLS-1$

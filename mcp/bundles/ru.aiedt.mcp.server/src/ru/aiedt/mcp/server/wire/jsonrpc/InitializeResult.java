@@ -72,6 +72,8 @@ public class InitializeResult
     {
         private final Tools tools = new Tools();
 
+        private final Resources resources = new Resources();
+
         /**
          * Returns the tools capability. Its mere presence is the announcement.
          *
@@ -81,6 +83,34 @@ public class InitializeResult
         {
             return tools;
         }
+
+        /**
+         * Returns the resources capability.
+         * <p>
+         * Announced because the server answers {@code resources/list} and {@code resources/read}.
+         * A capability declared without the methods behind it is worse than none: a client takes
+         * the announcement as permission to call them.
+         * </p>
+         *
+         * @return the resources capability
+         */
+        public Resources getResources()
+        {
+            return resources;
+        }
+    }
+
+    /**
+     * The resources capability.
+     * <p>
+     * Empty like {@link Tools}: this server neither subscribes clients to changes nor notifies them
+     * when the list changes, and announcing either would promise a message that never comes. The
+     * documents it serves are packaged with the plugin and change when the plugin does.
+     * </p>
+     */
+    public static class Resources
+    {
+        // no members: presence is the signal, and the absent sub-features are absent on purpose
     }
 
     /**

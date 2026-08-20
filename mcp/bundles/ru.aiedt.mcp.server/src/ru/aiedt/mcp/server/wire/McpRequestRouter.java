@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.wire;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +34,7 @@ import ru.aiedt.mcp.server.wire.jsonrpc.JsonRpcResponse;
 import ru.aiedt.mcp.server.wire.jsonrpc.TaskResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.ToolCallResult;
 import ru.aiedt.mcp.server.wire.jsonrpc.ToolsListResult;
+import ru.aiedt.mcp.server.toolkit.ops.CheckDocReader;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.FailureShape;
 import ru.aiedt.mcp.server.support.GenericPending;
@@ -52,8 +54,10 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 /**
  * Turns a JSON-RPC document into a tool call and the tool's answer back into a JSON-RPC document.
  * <p>
- * Four methods are recognized - {@code initialize}, {@code notifications/initialized},
- * {@code tools/list} and {@code tools/call} - and everything else is a method-not-found. Transport
+ * The methods recognized are {@code initialize}, {@code notifications/initialized},
+ * {@code tools/list}, {@code tools/call}, {@code ping}, {@code resources/list},
+ * {@code resources/read}, {@code server/discover} and the three {@code tasks/*} methods of the task
+ * extension - everything else is a method-not-found. Transport
  * concerns (sockets, CORS, authentication, HTTP status, SSE framing) belong to the server that owns
  * this handler; nothing below knows they exist.
  * </p>
@@ -194,6 +198,20 @@ public class McpRequestRouter
             if (McpServerMeta.METHOD_TOOLS_CALL.equals(method))
             {
                 return callTool(request, requestId, era);
+            }
+            if (McpServerMeta.METHOD_PING.equals(method))
+            {
+                // The whole of it. A ping asks whether anything is listening, and the answer is
+                // that something answered.
+                return answer(requestId, new java.util.LinkedHashMap<String, Object>(), era);
+            }
+            if (McpServerMeta.METHOD_RESOURCES_LIST.equals(method))
+            {
+                return answer(requestId, buildResourcesList(), era);
+            }
+            if (McpServerMeta.METHOD_RESOURCES_READ.equals(method))
+            {
+                return readResource(request, requestId, era);
             }
             if (McpServerMeta.METHOD_TASKS_GET.equals(method)
                 || McpServerMeta.METHOD_TASKS_CANCEL.equals(method)
@@ -554,6 +572,80 @@ public class McpRequestRouter
                 data));
         }
         return null;
+    }
+
+    /**
+     * Names the documents this server can hand over.
+     * <p>
+     * One family today: the write-up for each EDT validation check. They are worth addressing as
+     * resources rather than leaving behind a tool call because that is what they are - documents
+     * with stable names, read the same way every time and useful to a client that wants to show
+     * one to a person. The list is built from the same place {@code get_check_description} reads,
+     * so nothing can be listed here that cannot then be fetched.
+     * </p>
+     *
+     * @return the listing, in the shape the specification asks for
+     */
+    private static Map<String, Object> buildResourcesList()
+    {
+        List<Map<String, Object>> resources = new ArrayList<>();
+        for (String checkId : CheckDocReader.listDocumentedChecks())
+        {
+            Map<String, Object> resource = new LinkedHashMap<>();
+            resource.put("uri", McpServerMeta.RESOURCE_CHECKS + checkId); //$NON-NLS-1$
+            resource.put("name", checkId); //$NON-NLS-1$
+            resource.put("description", //$NON-NLS-1$
+                "What the EDT check " + checkId + " flags, and how to satisfy it"); //$NON-NLS-1$ //$NON-NLS-2$
+            resource.put("mimeType", "text/markdown"); //$NON-NLS-1$ //$NON-NLS-2$
+            resources.add(resource);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("resources", resources); //$NON-NLS-1$
+        return result;
+    }
+
+    /**
+     * Hands over one document, named by uri.
+     *
+     * @param request the read request.
+     * @param requestId the id to answer under.
+     * @param era which revision this request speaks.
+     * @return the response document
+     */
+    private static String readResource(JsonRpcRequest request, Object requestId, ProtocolEra era)
+    {
+        Object rawParams = request.getParams();
+        String uri = null;
+        if (rawParams instanceof Map)
+        {
+            Object named = ((Map<?, ?>)rawParams).get("uri"); //$NON-NLS-1$
+            uri = named == null ? null : String.valueOf(named);
+        }
+        if (uri == null || uri.isEmpty())
+        {
+            return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS, "uri is required"); //$NON-NLS-1$
+        }
+        if (!uri.startsWith(McpServerMeta.RESOURCE_CHECKS))
+        {
+            // Named rather than answered with an empty document: a client that mistyped a uri and
+            // got back nothing would read it as a check with no write-up.
+            return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
+                "No resource is served under " + uri + ". This server serves " //$NON-NLS-1$ //$NON-NLS-2$
+                    + McpServerMeta.RESOURCE_CHECKS + "<check id>."); //$NON-NLS-1$
+        }
+        String checkId = uri.substring(McpServerMeta.RESOURCE_CHECKS.length());
+        if (!CheckDocReader.hasCheckDocumentation(checkId))
+        {
+            return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
+                "No write-up is packaged for check " + checkId); //$NON-NLS-1$
+        }
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("uri", uri); //$NON-NLS-1$
+        content.put("mimeType", "text/markdown"); //$NON-NLS-1$ //$NON-NLS-2$
+        content.put("text", CheckDocReader.getCheckDescription(checkId)); //$NON-NLS-1$
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("contents", Collections.singletonList(content)); //$NON-NLS-1$
+        return answer(requestId, result, era);
     }
 
     /**
