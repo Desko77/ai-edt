@@ -74,6 +74,21 @@ public class DatabaseUpdater implements IMcpTool
     private static final long FREE_CLIENT_WAIT_MS = 10_000L;
     private static final long FREE_CLIENT_POLL_MS = 200L;
 
+    /**
+     * How long to keep the infobase claimed while EDT finishes an update it reported as still
+     * running.
+     * <p>
+     * Ten minutes: long enough for a restructure on a real configuration, short enough that a
+     * claim never outlives the answer by a working day. Past it the claim is released and the
+     * answer says so - a claim nobody can account for is worse than a race the caller was warned
+     * about.
+     * </p>
+     */
+    private static final long BEING_UPDATED_WAIT_MS = 600_000L;
+
+    /** How often to ask whether the update has finished. */
+    private static final long BEING_UPDATED_POLL_MS = 1_000L;
+
     @Override
     public String getName()
     {
@@ -572,6 +587,25 @@ public class DatabaseUpdater implements IMcpTool
 
             ApplicationUpdateState stateAfter = appManager.update(application, updateType, context, monitor);
 
+            // update() can hand back BEING_UPDATED: the work goes on inside EDT after this call
+            // returns. Releasing the claim then would announce the infobase free while it is being
+            // restructured, and the neighbour that took it next would meet the platform's own lock
+            // instead of our answer - which is the confusion this claim exists to remove. So the
+            // claim is held until the state leaves BEING_UPDATED, or until waiting stops being
+            // reasonable. Bounded, because a claim held forever is the other failure.
+            String stillUpdating = null;
+            if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
+            {
+                stateAfter = awaitUpdateEnd(appManager, application);
+                if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
+                {
+                    stillUpdating = "The update was still running after " //$NON-NLS-1$
+                        + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
+                        + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
+                        + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
+                }
+            }
+
             boolean updateComplete = stateAfter == ApplicationUpdateState.UPDATED;
             ToolResult result = ToolResult.success()
                 .put("project", projectName) //$NON-NLS-1$
@@ -581,6 +615,11 @@ public class DatabaseUpdater implements IMcpTool
                 .put("stateBefore", stateBefore.name()) //$NON-NLS-1$
                 .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                 .put("updateComplete", updateComplete); //$NON-NLS-1$
+
+            if (stillUpdating != null)
+            {
+                result.put("stillUpdating", stillUpdating); //$NON-NLS-1$
+            }
 
             if (viaParent)
             {
@@ -659,6 +698,50 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * Waits for an update EDT reported as still running, while the claim is still held.
+     *
+     * @param appManager the application manager.
+     * @param application the application being updated.
+     * @return the state it settled on, or BEING_UPDATED when the wait ran out
+     */
+    private static ApplicationUpdateState awaitUpdateEnd(IApplicationManager appManager,
+        IApplication application)
+    {
+        long deadline = System.currentTimeMillis() + BEING_UPDATED_WAIT_MS;
+        ApplicationUpdateState state = ApplicationUpdateState.BEING_UPDATED;
+        while (System.currentTimeMillis() < deadline)
+        {
+            try
+            {
+                Thread.sleep(BEING_UPDATED_POLL_MS);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+                return state;
+            }
+            try
+            {
+                state = appManager.getUpdateState(application);
+            }
+            catch (Exception cannotAsk)
+            {
+                // The manager will not say. Holding the claim on the strength of a question that
+                // cannot be asked would keep the infobase locked for no reason anybody could
+                // check, so the wait ends here and the caller is told what state was last seen.
+                Activator.logWarning("Could not read the update state while waiting: " //$NON-NLS-1$
+                    + cannotAsk.getMessage());
+                return state;
+            }
+            if (state != ApplicationUpdateState.BEING_UPDATED)
+            {
+                return state;
+            }
+        }
+        return ApplicationUpdateState.BEING_UPDATED;
     }
 
     /**
