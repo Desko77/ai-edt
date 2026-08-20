@@ -94,8 +94,9 @@ public class CodeSearchTool implements IMcpTool
                 + "Without topic - lists all operations with one-line summaries.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name. Optional for object_references (auto-detect via " //$NON-NLS-1$
-                + "owner walk + sister extensions/external scope) - required for the " //$NON-NLS-1$
-                + "other operations.") //$NON-NLS-1$
+                + "owner walk + sister extensions/external scope) and for text_search " //$NON-NLS-1$
+                + "(searches every open project with sources, and names them) - " //$NON-NLS-1$
+                + "required for the other operations.") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
                 "Search string for text_search / method_references. Supports plain " //$NON-NLS-1$
                 + "text and regex (isRegex=true). Wildcards * and ? work inside the " //$NON-NLS-1$
@@ -428,7 +429,8 @@ public class CodeSearchTool implements IMcpTool
                 return sb.toString();
             case "text_search": //$NON-NLS-1$
                 sb.append("# code_search operation=text_search\n\nDelegates to search_in_code. " //$NON-NLS-1$
-                    + "Parameters: projectName, query, caseSensitive, isRegex, wholeWord, " //$NON-NLS-1$
+                    + "Parameters: projectName (optional - omit to search every open " //$NON-NLS-1$
+                    + "project with sources), query, caseSensitive, isRegex, wholeWord, " //$NON-NLS-1$
                     + "compact, maxResults, contextLines, fileMask, metadataType, " //$NON-NLS-1$
                     + "outputMode (full/count/files).\n"); //$NON-NLS-1$
                 return sb.toString();

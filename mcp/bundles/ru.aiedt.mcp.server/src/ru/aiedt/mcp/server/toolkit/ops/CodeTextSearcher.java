@@ -65,8 +65,9 @@ public class CodeTextSearcher
     public String getDescription()
     {
         return "Back-compat alias of `code_search` `operation=text_search`; prefer the facade for new prompts. " //$NON-NLS-1$
-            + "Full-text search across all BSL modules of a project - literal or regex, with " //$NON-NLS-1$
-            + "context lines, case sensitivity, and file/metadata-type filters. " //$NON-NLS-1$
+            + "Full-text search across all BSL modules of a project - or of every open " //$NON-NLS-1$
+            + "project when projectName is omitted - literal or regex, with context " //$NON-NLS-1$
+            + "lines, case sensitivity, and file/metadata-type filters. " //$NON-NLS-1$
             + "Use outputMode 'count' or 'files' for a cheap probe before a full search. " //$NON-NLS-1$
             + "wholeWord=true matches whole tokens only (avoids 'КурсыВалют' matching 'КурсыВалютРасчетов'). " //$NON-NLS-1$
             + "compact=true trims large result sets to the first N hits plus summary stats. " //$NON-NLS-1$
@@ -77,7 +78,10 @@ public class CodeTextSearcher
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("projectName", "The EDT project to search in (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", //$NON-NLS-1$
+                "The EDT project to search in. Omit to search every open project that has "
+                    + "sources - the answer then names them, so an empty result says how "
+                    + "widely it was looked for.") //$NON-NLS-1$
             .stringProperty("query", "Literal text or a regex pattern to look for (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("caseSensitive", "Whether letter case must match exactly. Default: false") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("isRegex", "Treat query as a regular expression rather than literal text. Default: false") //$NON-NLS-1$ //$NON-NLS-2$
@@ -137,10 +141,6 @@ public class CodeTextSearcher
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String query = JsonUtils.extractStringArgument(params, "query"); //$NON-NLS-1$
 
-        if (projectName == null || projectName.isEmpty())
-        {
-            return "Error: projectName is required"; //$NON-NLS-1$
-        }
         if (query == null || query.isEmpty())
         {
             return "Error: query is required"; //$NON-NLS-1$
@@ -183,10 +183,32 @@ public class CodeTextSearcher
         linesBefore = Math.max(0, Math.min(CONTEXT_LINES_CAP, linesBefore));
         linesAfter = Math.max(0, Math.min(CONTEXT_LINES_CAP, linesAfter));
 
-        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
-        if (project == null || !project.exists())
+        List<IProject> searched = new ArrayList<>();
+        if (projectName != null && !projectName.isEmpty())
         {
-            return "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+            IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+            if (project == null || !project.exists())
+            {
+                return "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+            }
+            searched.add(project);
+        }
+        else
+        {
+            // Every open project with sources in it. Without this the caller had to name one, and
+            // the empty answer that came back from the wrong guess read as "this text is nowhere" -
+            // which is the single most misleading thing a search can say.
+            for (IProject candidate : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+            {
+                if (candidate.isOpen() && candidate.findMember("src") != null) //$NON-NLS-1$
+                {
+                    searched.add(candidate);
+                }
+            }
+            if (searched.isEmpty())
+            {
+                return "Error: no open project in this workspace has a src/ folder to search"; //$NON-NLS-1$
+            }
         }
 
         Pattern pattern;
@@ -232,14 +254,27 @@ public class CodeTextSearcher
         SearchCollector collector = new SearchCollector(pattern, fileMask, metadataFolderPrefix,
             collectDetails, maxResults, linesBefore, linesAfter, deadline, cancellation);
 
-        IResource src = project.findMember("src"); //$NON-NLS-1$
-        if (src == null || !src.exists())
+        List<IResource> roots = new ArrayList<>();
+        for (IProject project : searched)
+        {
+            IResource src = project.findMember("src"); //$NON-NLS-1$
+            if (src != null && src.exists())
+            {
+                roots.add(src);
+            }
+        }
+        if (roots.isEmpty())
         {
             return "Error: no src/ folder found in project " + projectName; //$NON-NLS-1$
         }
         try
         {
-            src.accept(collector);
+            // One collector across every root, so the result ceiling and the time budget mean the
+            // same thing whether one project was searched or eight.
+            for (IResource src : roots)
+            {
+                src.accept(collector);
+            }
         }
         catch (OperationCanceledException e)
         {
@@ -267,7 +302,10 @@ public class CodeTextSearcher
                 boolean retryInterrupted = false;
                 try
                 {
-                    src.accept(retry);
+                    for (IResource src : roots)
+                    {
+                        src.accept(retry);
+                    }
                 }
                 catch (OperationCanceledException | CoreException e)
                 {
@@ -315,6 +353,24 @@ public class CodeTextSearcher
         {
             formatted = "_No exact match; a flexible-whitespace retry started but was cut short " //$NON-NLS-1$
                 + "by the time budget - narrow the query or metadataType and try again._\n\n" + formatted; //$NON-NLS-1$
+        }
+
+        if (searched.size() > 1)
+        {
+            // Named, not just counted. An empty answer from a workspace search is a much stronger
+            // claim than an empty answer from one project, and the reader has to be able to tell
+            // which one they are looking at.
+            StringBuilder names = new StringBuilder();
+            for (IProject project : searched)
+            {
+                if (names.length() > 0)
+                {
+                    names.append(", "); //$NON-NLS-1$
+                }
+                names.append(project.getName());
+            }
+            formatted = "_Searched " + searched.size() + " projects: " + names //$NON-NLS-1$ //$NON-NLS-2$
+                + "._\n\n" + formatted; //$NON-NLS-1$
         }
 
         if (collector.cancelled)
