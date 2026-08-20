@@ -221,6 +221,17 @@ public final class BmComparisonHelper
                 return outcome;
             }
             read(manager, handle, outcome);
+            // Read, then let go. A finished comparison stays registered with the virtual project
+            // contexts it opened for the sources on disk, and nothing else will ever close it: the
+            // handle lives only inside this call. One call is harmless, a working day of them is
+            // an environment quietly filling up with comparisons nobody can name - and the day
+            // this tool learned that a pending comparison keeps a session from shutting down was
+            // expensive enough not to leave the successful ones lying about too.
+            //
+            // It also settles what marking merge decisions would take: the session must stay alive
+            // to be marked, so that feature is a deliberate design with a key handed back, not an
+            // accident of never cleaning up.
+            release(manager, handle);
             return outcome;
         }
         catch (NoClassDefFoundError absent)
@@ -240,6 +251,31 @@ public final class BmComparisonHelper
             outcome.cannotTell = "the comparison could not be run: " + describe(e) + outcome.sourceNote; //$NON-NLS-1$
             Activator.logError("Comparison failed: " + describe(e), e); //$NON-NLS-1$
             return outcome;
+        }
+    }
+
+    /**
+     * Closes a comparison that has been read.
+     * <p>
+     * Failure to close is logged and nothing more: the answer is already complete and correct, and
+     * turning a successful comparison into a refusal because the cleanup stumbled would be the
+     * worse trade. It is logged rather than swallowed because a comparison that will not close is
+     * exactly what the caller will feel later, when the session declines to shut down.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process to close.
+     */
+    private static void release(IComparisonManager manager, ComparisonProcessHandle handle)
+    {
+        try
+        {
+            manager.stop(handle);
+        }
+        catch (Exception cannotStop)
+        {
+            Activator.logWarning("A finished comparison could not be closed: " //$NON-NLS-1$
+                + describe(cannotStop));
         }
     }
 
