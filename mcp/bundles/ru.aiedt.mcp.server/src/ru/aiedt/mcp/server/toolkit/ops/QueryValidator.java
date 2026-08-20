@@ -39,6 +39,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.QlValidator;
 import ru.aiedt.mcp.server.support.QueryResultSchema;
 import ru.aiedt.mcp.server.support.UiSync;
 
@@ -277,9 +278,22 @@ public class QueryValidator
         }
     }
 
-    private String doValidateQuery(IProject project, String queryText, boolean dcsMode,
+    private String doValidateQuery(IProject asked, String queryText, boolean dcsMode,
         boolean describeResult)
     {
+        // An extension has no model of its own to resolve a query against. Its own view of the
+        // database holds what it declares and not what it inherits, so a borrowed object's
+        // standard fields are missing from it - measured on a stand, EDT 2026.2.0.289:
+        //
+        //   ВЫБРАТЬ Ссылка, Наименование ИЗ Справочник._ДемоКонтрагенты
+        //     named as the extension        ERROR  Поле 'Наименование' не найдено
+        //     named as the configuration    valid
+        //
+        // The table resolves either way; it is the inherited fields that do not. A query mixing a
+        // borrowed object with a standard table could therefore be validated nowhere. The
+        // configuration's model holds both, the extension's own objects included, so that is where
+        // the query goes - the same redirection update_database performs, for the same reason.
+        IProject project = QlValidator.queryModelProject(asked);
         XtextResource resource = null;
         try
         {
@@ -374,7 +388,7 @@ public class QueryValidator
                     offset != null ? offset.intValue() : -1));
             }
 
-            return buildResult(project, queryText, issues, dcsMode, describeResult);
+            return buildResult(project, asked, queryText, issues, dcsMode, describeResult);
         }
         catch (IOException e)
         {
@@ -486,13 +500,22 @@ public class QueryValidator
         }
     }
 
-    private String buildResult(IProject project, String queryText, List<QueryIssue> issues,
-        boolean dcsMode, boolean describeResult)
+    private String buildResult(IProject project, IProject asked, String queryText,
+        List<QueryIssue> issues, boolean dcsMode, boolean describeResult)
     {
         JsonObject result = new JsonObject();
         result.addProperty("success", true); //$NON-NLS-1$
         result.addProperty("valid", issues.isEmpty()); //$NON-NLS-1$
         result.addProperty("dcsMode", dcsMode); //$NON-NLS-1$
+        // An extension has no model of its own to answer a query with, so the configuration it
+        // extends answers instead. Said out loud: a caller who sees a query pass has to be able to
+        // tell which model said so, and a redirection nobody mentions is the kind of helpfulness
+        // that becomes a puzzle later.
+        String elsewhere = QlValidator.resolvedElsewhere(asked);
+        if (elsewhere != null)
+        {
+            result.addProperty("resolvedInProject", elsewhere); //$NON-NLS-1$
+        }
         result.addProperty("errorCount", //$NON-NLS-1$
             issues.stream().filter(i -> "ERROR".equals(i.severity)).count()); //$NON-NLS-1$
         result.addProperty("warningCount", //$NON-NLS-1$
