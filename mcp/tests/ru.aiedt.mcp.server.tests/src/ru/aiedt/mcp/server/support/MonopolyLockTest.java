@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -233,6 +234,88 @@ public class MonopolyLockTest
         {
             return locks.resolve(digestOfSubject() + ".lock.json"); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * A SECOND PROCESS cannot take what this one holds.
+     * <p>
+     * Every other test here runs in one JVM, where an overlapping lock is refused by Java itself
+     * rather than by the operating system - so none of them actually proves the property the whole
+     * design now rests on. This one starts a real second process.
+     * </p>
+     * <p>
+     * It needs no plugin classes: since ownership became an OS file lock, the probe only has to
+     * open the same file and try. Java runs a single source file directly, so there is nothing to
+     * compile and no classpath to get wrong - the one dependency is a JDK, and where there is none
+     * the test says so instead of failing.
+     * </p>
+     */
+    @Test
+    public void aSecondProcessIsRefusedWhileThisOneHolds() throws Exception
+    {
+        Path launcher = Path.of(System.getProperty("java.home"), "bin", //$NON-NLS-1$ //$NON-NLS-2$
+            System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        org.junit.Assume.assumeTrue("no java to start a second process with", //$NON-NLS-1$
+            Files.isRegularFile(launcher));
+
+        Path probe = locks.resolve("LockProbe.java"); //$NON-NLS-1$
+        Files.write(probe, ("import java.nio.channels.*;import java.nio.file.*;" //$NON-NLS-1$
+            + "public class LockProbe{public static void main(String[] a)throws Exception{" //$NON-NLS-1$
+            + "try(FileChannel c=FileChannel.open(Path.of(a[0])," //$NON-NLS-1$
+            + "StandardOpenOption.CREATE,StandardOpenOption.READ,StandardOpenOption.WRITE)){" //$NON-NLS-1$
+            + "FileLock l=c.tryLock();" //$NON-NLS-1$
+            + "System.out.println(l==null?\"BUSY\":\"FREE\");" //$NON-NLS-1$
+            + "if(l!=null)l.release();}}}").getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+
+        // The claim and the lock are two files beside each other, and only the second is what the
+        // operating system holds. digestOfSubject() names the claim, so the suffix is swapped -
+        // appending to it produced a third path nobody locks, and the probe duly found it free.
+        // A test that measures the wrong file passes for the wrong reason; this one failed for
+        // the right one.
+        Path lockFile = locks.resolve(
+            digestOfSubject().replace(".lock.json", ".lock")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        MonopolyLock held = MonopolyLock.take(SUBJECT, "update_database").orElseThrow(); //$NON-NLS-1$
+        String whileHeld;
+        try
+        {
+            whileHeld = askAnotherProcess(launcher, probe, lockFile);
+        }
+        finally
+        {
+            held.close();
+        }
+        String afterRelease = askAnotherProcess(launcher, probe, lockFile);
+
+        assertEquals("another process must be refused while this one holds it", "BUSY", whileHeld); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("and must get it once this one lets go", "FREE", afterRelease); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Runs the probe and returns its verdict.
+     *
+     * @param launcher the java launcher.
+     * @param probe the single-file source to run.
+     * @param lockFile the file to try locking.
+     * @return {@code BUSY} or {@code FREE}
+     * @throws Exception when the process cannot be run at all
+     */
+    private static String askAnotherProcess(Path launcher, Path probe, Path lockFile) throws Exception
+    {
+        ProcessBuilder builder = new ProcessBuilder(launcher.toString(), probe.toString(),
+            lockFile.toString());
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        String output;
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+            new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)))
+        {
+            output = reader.lines().reduce("", (a, b) -> a + b.trim()); //$NON-NLS-1$
+        }
+        // Bounded: a probe that will not finish must fail the test rather than hang the suite.
+        assertTrue("the probe process did not finish", //$NON-NLS-1$
+            process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS));
+        return output.contains("BUSY") ? "BUSY" : output.contains("FREE") ? "FREE" : output; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     }
 
     /**
