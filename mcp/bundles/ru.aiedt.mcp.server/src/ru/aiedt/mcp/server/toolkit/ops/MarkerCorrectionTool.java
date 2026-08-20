@@ -202,8 +202,10 @@ public class MarkerCorrectionTool implements IMcpTool
             .put("message", withCorrections == 0 //$NON-NLS-1$
                 ? "None of the " + markers.size() + " findings has a correction - most checks " //$NON-NLS-1$ //$NON-NLS-2$
                     + "report without offering one, and this is not a failure." //$NON-NLS-1$
-                : withCorrections + " of " + markers.size() + " findings can be corrected; pass the " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "description as variant to operation=apply.") //$NON-NLS-1$
+                : withCorrections + " of " + markers.size() + " findings offer a correction; pass " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "the description as variant to operation=apply. Not every correction is an " //$NON-NLS-1$
+                    + "edit - some are EDT interface actions that only a person can carry out in " //$NON-NLS-1$
+                    + "the editor, and apply says so rather than performing them.") //$NON-NLS-1$
             .toJson();
     }
 
@@ -238,6 +240,9 @@ public class MarkerCorrectionTool implements IMcpTool
         String wanted = JsonUtils.extractStringArgument(params, "variant"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         FixProcessHandle handle = null;
+        // Declared out here so the failure path can name which correction refused - the catch below
+        // reports it, and a correction that cannot run is only useful information if it is named.
+        FixVariantDescriptor chosen = null;
         try
         {
             handle = fixManager.prepareFix(marker, dtProject);
@@ -248,7 +253,6 @@ public class MarkerCorrectionTool implements IMcpTool
                 return ToolResult.error("EDT offers no correction for this finding: " //$NON-NLS-1$
                     + marker.getMessage() + ". Most checks report without offering one.").toJson(); //$NON-NLS-1$
             }
-            FixVariantDescriptor chosen = null;
             if (wanted == null || wanted.isEmpty())
             {
                 if (variants.size() > 1)
@@ -311,12 +315,56 @@ public class MarkerCorrectionTool implements IMcpTool
         }
         catch (Exception e)
         {
+            if (needsTheEditor(e))
+            {
+                // Measured, not guessed: EDT offers corrections that are IDE ACTIONS rather than
+                // edits - "open the documentation-comment panel" is one - and executing such a
+                // variant off the display thread throws SWT's invalid-thread-access. Running it on
+                // the display thread instead would not help: it would open a panel in the user's
+                // editor and change nothing in the file, which is a worse answer than a refusal.
+                return ToolResult.error("This correction is an EDT interface action, not an edit: " //$NON-NLS-1$
+                    + "it opens something in the editor and has to be performed by a person there. " //$NON-NLS-1$
+                    + "Nothing was changed, and the finding still stands.") //$NON-NLS-1$
+                    .put("correction", chosen == null ? null : chosen.getDescription()) //$NON-NLS-1$
+                    .put("object", marker.getObjectPresentation()) //$NON-NLS-1$
+                    .put("refusedBy", e.getClass().getSimpleName() + ": " + e.getMessage()) //$NON-NLS-1$ //$NON-NLS-2$
+                    .toJson();
+            }
             return ToolResult.error("The correction failed: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
         finally
         {
             finish(fixManager, handle);
         }
+    }
+
+    /**
+     * Tells apart a correction that needs the editor from one that simply failed.
+     * <p>
+     * Matched on the exception type first and only then on the message, because the message is
+     * produced by the platform and a русская EDT would word it differently - a check written
+     * against English words alone has failed here before.
+     * </p>
+     *
+     * @param failure what the correction threw.
+     * @return true when the failure means "this has to happen in the editor"
+     */
+    private static boolean needsTheEditor(Throwable failure)
+    {
+        for (Throwable t = failure; t != null; t = t.getCause() == t ? null : t.getCause())
+        {
+            String type = t.getClass().getName();
+            if (type.startsWith("org.eclipse.swt.")) //$NON-NLS-1$
+            {
+                return true;
+            }
+            String message = t.getMessage();
+            if (message != null && message.contains("Invalid thread access")) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

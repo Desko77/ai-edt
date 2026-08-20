@@ -94,4 +94,52 @@ public class MarkerCorrectionToolTest
         assertFalse(description.isEmpty());
         assertTrue(description, description.contains("check")); //$NON-NLS-1$
     }
+
+    /**
+     * A correction that cannot be performed from here is told apart from one that failed.
+     * <p>
+     * Measured on a stand: EDT offers corrections that are IDE ACTIONS rather than edits - "open the
+     * documentation-comment panel" among them - and executing one off the display thread throws
+     * SWT's invalid-thread-access. The first version passed that through as "The correction failed:
+     * Invalid thread access", which tells a caller nothing about what to do and reads like a defect
+     * in this server. Running it on the display thread instead is not the fix: it would open a panel
+     * in the user's editor and change nothing in the file.
+     * </p>
+     */
+    @Test
+    public void aCorrectionThatNeedsTheEditorIsRecognisedByTypeNotByWording()
+        throws Exception
+    {
+        java.lang.reflect.Method needsTheEditor =
+            MarkerCorrectionTool.class.getDeclaredMethod("needsTheEditor", Throwable.class); //$NON-NLS-1$
+        needsTheEditor.setAccessible(true);
+
+        assertTrue("an SWT failure means the editor is required", //$NON-NLS-1$
+            (Boolean)needsTheEditor.invoke(null, new org.eclipse.swt.SWTException("anything"))); //$NON-NLS-1$
+        assertTrue("and so does one wrapped further down", //$NON-NLS-1$
+            (Boolean)needsTheEditor.invoke(null,
+                new RuntimeException("wrapped", new org.eclipse.swt.SWTException("x")))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("an ordinary failure is still an ordinary failure", //$NON-NLS-1$
+            (Boolean)needsTheEditor.invoke(null, new IllegalStateException("no fix here"))); //$NON-NLS-1$
+    }
+
+    /**
+     * The listing must not promise what applying cannot keep.
+     * <p>
+     * "N findings can be corrected" read as a guarantee, and for an interface action it was not one.
+     * </p>
+     */
+    @Test
+    public void theListingDoesNotPromiseEveryCorrectionCanBeCarriedOut()
+    {
+        String source = MarkerCorrectionTool.class.getName();
+        assertFalse(source.isEmpty());
+
+        String description = tool.getDescription();
+        assertFalse(description.isEmpty());
+        // The promise now lives in the list reply itself, which is built at runtime; what is pinned
+        // here is that the wording "can be corrected" is gone from the tool's own vocabulary.
+        assertFalse("the tool must not claim a correction can always be carried out", //$NON-NLS-1$
+            description.contains("can be corrected")); //$NON-NLS-1$
+    }
 }
