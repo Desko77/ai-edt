@@ -142,6 +142,44 @@ public class ThreeWayComparisonToolTest
     }
 
     /**
+     * Decisions a caller cannot have meant are refused, not quietly dropped.
+     * <p>
+     * Someone who wrote decisions and got a comparison back without them would believe they had
+     * been recorded - and would then look for a settings file that says nothing. Malformed input
+     * fails where it was written.
+     * </p>
+     */
+    @Test
+    public void unreadableDecisionsAreRefusedRatherThanIgnored()
+    {
+        String notArray = new ThreeWayComparisonTool().execute(
+            args("projectName", "P", "otherPath", "somewhere", "decisions", "{\"object\":\"X\"}")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        assertTrue(notArray, notArray.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("the refusal must say what shape was expected: " + notArray, //$NON-NLS-1$
+            notArray.contains("array")); //$NON-NLS-1$
+
+        String missingRule = new ThreeWayComparisonTool().execute(
+            args("projectName", "P", "otherPath", "somewhere", "decisions", "[{\"object\":\"X\"}]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        assertTrue(missingRule, missingRule.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("and which half is missing: " + missingRule, //$NON-NLS-1$
+            missingRule.contains("rule")); //$NON-NLS-1$
+
+        String garbage = new ThreeWayComparisonTool()
+            .execute(args("projectName", "P", "otherPath", "somewhere", "decisions", "not json")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        assertTrue(garbage, garbage.contains("\"success\":false")); //$NON-NLS-1$
+    }
+
+    /** No decisions at all is not an error - the tool's ordinary use is to read. */
+    @Test
+    public void noDecisionsIsNotARefusal()
+    {
+        String answer = new ThreeWayComparisonTool()
+            .execute(args("projectName", "P", "otherPath", "no such directory")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertTrue("it must fail on the path, not on the absent decisions: " + answer, //$NON-NLS-1$
+            answer.contains("not a directory")); //$NON-NLS-1$
+    }
+
+    /**
      * The merge entry points must stay out of reach. Checked against the class rather than the
      * source text so the test still holds if the file is reorganised.
      */

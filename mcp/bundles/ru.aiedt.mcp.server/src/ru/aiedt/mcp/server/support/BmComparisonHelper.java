@@ -33,6 +33,7 @@ import com._1c.g5.v8.dt.compare.matching.MatchingStrategy;
 import com._1c.g5.v8.dt.compare.merge.MergeProblem;
 import com._1c.g5.v8.dt.compare.model.ComparisonNode;
 import com._1c.g5.v8.dt.compare.model.ComparisonSide;
+import com._1c.g5.v8.dt.compare.model.MergeRule;
 import com._1c.g5.v8.dt.compare.model.TopComparisonNode;
 import com._1c.g5.v8.dt.compare.settings.model.IMergeSettingsModel;
 import com._1c.g5.wiring.ServiceAccess;
@@ -95,6 +96,28 @@ public final class BmComparisonHelper
 
         /** Why it could not be named, when it could not. */
         public String note;
+
+        /** What was decided for it, when the caller decided anything. */
+        public String decision;
+
+        /** The node this change belongs to, for applying a decision. Not reported. */
+        transient long nodeId;
+    }
+
+    /** What a caller may decide about one object, in the environment's own vocabulary. */
+    public static final class Decision
+    {
+        /** The object, named as the comparison names it on either side. */
+        public final String object;
+
+        /** One of the environment's merge rules. */
+        public final String rule;
+
+        public Decision(String object, String rule)
+        {
+            this.object = object;
+            this.rule = rule;
+        }
     }
 
     /** What a comparison produced. */
@@ -139,6 +162,21 @@ public final class BmComparisonHelper
          */
         public String problemsNote;
 
+        /** How many decisions were recorded. */
+        public int decided;
+
+        /** Where the decisions were written, when they were. */
+        public String decisionsWrittenTo;
+
+        /**
+         * Why the decisions are not what the caller asked for, when they are not.
+         * <p>
+         * A settings file quietly missing half of somebody's decisions is worse than no file,
+         * so anything that stopped one being recorded is said rather than implied by a count.
+         * </p>
+         */
+        public String decisionsNote;
+
         /** Why nothing could be said, when nothing could. */
         public String cannotTell;
 
@@ -167,7 +205,8 @@ public final class BmComparisonHelper
      *            two-sided comparison.
      * @return what the comparison found, or the reason it could not run
      */
-    public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath)
+    public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
+        List<Decision> decisions, String decisionsPath)
     {
         Outcome outcome = new Outcome();
         if (mainProjectName == null || mainProjectName.isEmpty() || otherPath == null
@@ -221,6 +260,7 @@ public final class BmComparisonHelper
                 return outcome;
             }
             read(manager, handle, outcome);
+            decide(manager, handle, decisions, decisionsPath, outcome);
             // Read, then let go. A finished comparison stays registered with the virtual project
             // contexts it opened for the sources on disk, and nothing else will ever close it: the
             // handle lives only inside this call. One call is harmless, a working day of them is
@@ -252,6 +292,121 @@ public final class BmComparisonHelper
             Activator.logError("Comparison failed: " + describe(e), e); //$NON-NLS-1$
             return outcome;
         }
+    }
+
+    /**
+     * Marks the caller's decisions on the comparison and writes them to a file.
+     * <p>
+     * Decisions, not a merge. What this produces is a settings file EDT can read back
+     * ({@code deserializeMergeSettings}), so the merge itself happens where a person can see it -
+     * which is the whole point of separating the two. Nothing here calls {@code startMerge}, and
+     * the comparison is closed immediately afterwards like any other.
+     * </p>
+     * <p>
+     * A decision naming an object the comparison did not report is refused rather than ignored: a
+     * settings file that quietly lacks half the decisions somebody wrote is worse than no file.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process.
+     * @param decisions what the caller decided; may be empty.
+     * @param path where to write the settings, or <code>null</code> to only mark them.
+     * @param outcome the answer being built.
+     */
+    private static void decide(IComparisonManager manager, ComparisonProcessHandle handle,
+        List<Decision> decisions, String path, Outcome outcome)
+    {
+        if (decisions == null || decisions.isEmpty())
+        {
+            return;
+        }
+        IComparisonSession session = manager.getComparisonSession(handle);
+        if (session == null)
+        {
+            outcome.decisionsNote = "the comparison offered no session, so nothing was decided"; //$NON-NLS-1$
+            return;
+        }
+        for (Decision decision : decisions)
+        {
+            Change target = null;
+            for (Change change : outcome.changed)
+            {
+                if (decision.object != null && (decision.object.equals(change.main)
+                    || decision.object.equals(change.other) || decision.object.equals(change.ancestor)))
+                {
+                    target = change;
+                    break;
+                }
+            }
+            if (target == null)
+            {
+                outcome.decisionsNote = "no object named " + decision.object //$NON-NLS-1$
+                    + " is among the changes, so no decision was recorded for it"; //$NON-NLS-1$
+                return;
+            }
+            MergeRule rule = ruleNamed(decision.rule);
+            if (rule == null)
+            {
+                outcome.decisionsNote = decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
+                    + ruleNames();
+                return;
+            }
+            // To the subtree, because a decision about an object is a decision about what the
+            // object is made of. The narrower call needs a comparison context this has no honest
+            // value for.
+            session.setMergeRuleToSubtree(target.nodeId, rule);
+            target.decision = rule.name();
+            outcome.decided++;
+        }
+        if (path == null || path.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            manager.serializeMergeSettings(Collections.singletonList(handle), path);
+            outcome.decisionsWrittenTo = path;
+        }
+        catch (Exception cannotWrite)
+        {
+            // The decisions are marked either way, but they die with the comparison. Said plainly:
+            // a caller told the file was written would go looking for one.
+            outcome.decisionsNote = "the decisions were marked but could not be written to " + path //$NON-NLS-1$
+                + ": " + describe(cannotWrite); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The merge rule of that name, or <code>null</code>.
+     *
+     * @param name what the caller wrote.
+     * @return the rule
+     */
+    private static MergeRule ruleNamed(String name)
+    {
+        if (name == null)
+        {
+            return null;
+        }
+        for (MergeRule rule : MergeRule.values())
+        {
+            if (rule.name().equalsIgnoreCase(name.trim()))
+            {
+                return rule;
+            }
+        }
+        return null;
+    }
+
+    /** @return every rule name, for a refusal that tells the caller what to write instead */
+    private static String ruleNames()
+    {
+        StringBuilder names = new StringBuilder();
+        for (MergeRule rule : MergeRule.values())
+        {
+            names.append(names.length() == 0 ? "" : ", ").append(rule.name()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return names.toString();
     }
 
     /**
@@ -558,6 +713,7 @@ public final class BmComparisonHelper
     {
         Change change = new Change();
         change.oneSided = oneSided;
+        change.nodeId = node.bmGetId();
         try
         {
             change.main = node.getSymlink(ComparisonSide.MAIN);
