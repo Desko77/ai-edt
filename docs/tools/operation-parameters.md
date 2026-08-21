@@ -149,6 +149,7 @@
 | `ExtensionWorkshopTool` | `borrow_module` | `baseProjectName`, `moduleType`, `objectFqn`, `projectName` | read in place |
 | `ExtensionWorkshopTool` | `borrow_object` | `baseProjectName`, `objectFqn`, `projectName` | read in place |
 | `ExtensionWorkshopTool` | `borrow_objects` | `baseProjectName`, `objectFqns`, `projectName`, `runKey` | read in place |
+| `ExtensionWorkshopTool` | `check_release_fitness` | `baseProjectName`, `projectName` | read in place |
 | `ExtensionWorkshopTool` | `create_extension_project` | `baseProjectName`, `namePrefix`, `projectName` | read in place |
 | `ExtensionWorkshopTool` | `export_extension` | `applicationId`, `extensionName`, `outputPath`, `projectName` | delegate ExportExtensionTool |
 | `ExtensionWorkshopTool` | `extension_diff` | `baseProjectName`, `objectFqn`, `projectName` | delegate ExtensionDiffTool |
