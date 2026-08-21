@@ -1141,6 +1141,12 @@ public final class BmComparisonHelper
                     + ruleNames();
                 return;
             }
+            String impossible = whyRuleCannotRun(rule);
+            if (impossible != null)
+            {
+                outcome.decisionsNote = impossible;
+                return;
+            }
             // To the subtree, because a decision about an object is a decision about what the
             // object is made of. The narrower call needs a comparison context this has no honest
             // value for.
@@ -1315,6 +1321,12 @@ public final class BmComparisonHelper
         {
             outcome.decisionsNote = decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
                 + ruleNames();
+            return;
+        }
+        String impossible = whyRuleCannotRun(rule);
+        if (impossible != null)
+        {
+            outcome.decisionsNote = impossible;
             return;
         }
         if (outcome.matchingNodes.isEmpty())
@@ -1706,6 +1718,38 @@ public final class BmComparisonHelper
      * @param name what the caller wrote.
      * @return the rule
      */
+    /**
+     * Says why a rule cannot be carried out from here.
+     * <p>
+     * <b>Measured on a stand, and only one of the two suspects is guilty.</b> On a node the
+     * environment was willing to move - vendor-only change, {@code mustBeMerged} set, GET_FROM_OTHER
+     * recommended - CUSTOM_MERGE was accepted, the merge reported success and the content did not
+     * change. MERGE_USING_EXTERNAL_TOOL on the same node in the same state took the delivery's
+     * version, so it stays.
+     * </p>
+     * <p>
+     * CUSTOM_MERGE is the rule that asks a person to compose the result in the merge editor. There
+     * is no editor in a call like this, so there is nothing for it to do - and it says so by doing
+     * nothing while everything reports success, which is the worst way to fail.
+     * </p>
+     *
+     * @param rule the rule asked for.
+     * @return the refusal, or <code>null</code> when the rule can be carried out
+     */
+    private static String whyRuleCannotRun(MergeRule rule)
+    {
+        if (rule != MergeRule.CUSTOM_MERGE)
+        {
+            return null;
+        }
+        return "CUSTOM_MERGE composes the result in the merge editor, and there is no editor in " //$NON-NLS-1$
+            + "this call. Measured: it is accepted, the merge reports success and nothing " //$NON-NLS-1$
+            + "changes, even on a node the environment was willing to move. Use DO_NOT_MERGE to " //$NON-NLS-1$
+            + "keep ours, GET_FROM_OTHER or MERGE_USING_EXTERNAL_TOOL to take the delivery, or " //$NON-NLS-1$
+            + "write the decisions to a file with decisionsPath and let a person finish them in " //$NON-NLS-1$
+            + "EDT."; //$NON-NLS-1$
+    }
+
     private static MergeRule ruleNamed(String name)
     {
         if (name == null)
