@@ -429,6 +429,26 @@ public class ThreeWayComparisonToolTest
             schema.contains("refuses outright")); //$NON-NLS-1$
     }
 
+    /**
+     * Looking inside modules is asked for, and what it costs comes back either way.
+     * <p>
+     * Measured: with the switch on, a method arrives as its own node carrying its full name and
+     * its own attribution, and a decision addressed at that name is accepted. So a conflict can be
+     * stated as "this method" rather than "this module was changed by both sides".
+     * </p>
+     */
+    @Test
+    public void lookingInsideModulesIsOptionalAndItsCostIsReported()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("a caller who wants the detail has to be able to ask for it", //$NON-NLS-1$
+            schema.contains("methodLevel")); //$NON-NLS-1$
+        assertTrue("and the schema has to say the cost is measured rather than argued about", //$NON-NLS-1$
+            schema.contains("comparedInMs")); //$NON-NLS-1$
+        assertTrue("and say that a decision can be addressed at one method, which is the whole " //$NON-NLS-1$
+            + "point of looking inside", schema.contains("Module.MethodName")); //$NON-NLS-1$
+    }
+
     /** No decisions at all is not an error - the tool's ordinary use is to read. */
     @Test
     public void noDecisionsIsNotARefusal()
