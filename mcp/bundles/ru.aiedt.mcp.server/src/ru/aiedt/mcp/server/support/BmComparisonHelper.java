@@ -157,7 +157,24 @@ public final class BmComparisonHelper
          * accident.
          * </p>
          */
-        UPDATE_UNCHANGED
+        UPDATE_UNCHANGED,
+
+        /**
+         * Take the delivery, and keep every object this side reworked.
+         * <p>
+         * The ordinary shape of an update on support. Objects only the delivery changed take the
+         * rule the environment itself proposes, so the release arrives; objects reworked here are
+         * set to DO_NOT_MERGE, which was measured to keep their content.
+         * </p>
+         * <p>
+         * Conflicts are protected too, and that is not caution. Measured: a catalogue we had
+         * customised and the delivery had deleted comes back with mustBeMerged set and
+         * GET_FROM_OTHER proposed - the environment is willing to move it, and moving it removes
+         * the customisation. So they are held and listed, because a conflict is work for a person,
+         * not for a default.
+         * </p>
+         */
+        UPDATE_KEEPING_OURS
     }
 
     /**
@@ -529,6 +546,33 @@ public final class BmComparisonHelper
          */
         public final List<String> decisionsWithoutEffect = new ArrayList<>();
 
+        /** Nodes attributed to us, for the mode that protects them. Not reported. */
+        public final transient List<Long> oursNodes = new ArrayList<>();
+
+        /** Nodes both sides changed, for the same mode and for the queue. Not reported. */
+        public final transient List<Long> bothNodes = new ArrayList<>();
+
+        /** How many objects were held back from the update and confirmed to carry the rule. */
+        public int protectedFromUpdate;
+
+        /**
+         * Objects the environment would not hold back, named.
+         * <p>
+         * An object that cannot be protected is the whole point of the report: it is the work that
+         * this update is about to overwrite whatever the caller asked for.
+         * </p>
+         */
+        public final List<String> protectionRefused = new ArrayList<>();
+
+        /**
+         * The conflicts, named - what a person has to decide about by hand.
+         * <p>
+         * Held at DO_NOT_MERGE meanwhile, so the update cannot resolve them by default while
+         * nobody is looking.
+         * </p>
+         */
+        public final List<String> conflictQueue = new ArrayList<>();
+
         /** True when there were more matches than one decision may cover. */
         public boolean matchingTruncated;
 
@@ -805,6 +849,12 @@ public final class BmComparisonHelper
             }
             read(manager, handle, outcome, page);
             reportScope(scope, outcome);
+            // Before the caller's own decisions, so an explicit one about a named object still
+            // wins over the blanket protection.
+            if (intent == Intent.UPDATE_KEEPING_OURS)
+            {
+                protectOurs(manager, handle, outcome);
+            }
             decide(manager, handle, decisions, decisionsPath, outcome);
             // Only when something is going to be written. Reporting must leave no trace, and the
             // snapshot below is a file inside the project - a read that wrote one would break the
@@ -1778,6 +1828,60 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Holds back everything this side reworked, so the delivery can be taken over the rest.
+     * <p>
+     * DO_NOT_MERGE on every object attributed to us and on every conflict, read back from the node
+     * afterwards. Reading it back is not ceremony: a rule the environment declines leaves the
+     * object exposed to the update, and that object is exactly the work this mode exists to keep.
+     * </p>
+     * <p>
+     * Conflicts are held as well. Measured: a catalogue we had customised and the delivery had
+     * deleted arrives with mustBeMerged set and GET_FROM_OTHER proposed, so the environment is
+     * willing to carry out the deletion. Holding it and naming it in the queue turns a silent loss
+     * into a decision somebody makes.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process.
+     * @param outcome the answer being built.
+     */
+    private static void protectOurs(IComparisonManager manager, ComparisonProcessHandle handle,
+        Outcome outcome)
+    {
+        IComparisonSession session = manager.getComparisonSession(handle);
+        if (session == null)
+        {
+            outcome.decisionsNote = "the comparison offered no session, so nothing was protected"; //$NON-NLS-1$
+            return;
+        }
+        List<Long> hold = new ArrayList<>(outcome.oursNodes);
+        hold.addAll(outcome.bothNodes);
+        for (Long nodeId : hold)
+        {
+            if (!session.setMergeRuleToSubtree(nodeId, MergeRule.DO_NOT_MERGE))
+            {
+                if (outcome.protectionRefused.size() < PAGE_LIMIT)
+                {
+                    outcome.protectionRefused
+                        .add(nameOf(session, nodeId) + describeAvailable(session, nodeId));
+                }
+                continue;
+            }
+            if (ruleOn(session, nodeId) != MergeRule.DO_NOT_MERGE)
+            {
+                if (outcome.protectionRefused.size() < PAGE_LIMIT)
+                {
+                    outcome.protectionRefused.add(nameOf(session, nodeId)
+                        + ": took DO_NOT_MERGE and does not carry it"); //$NON-NLS-1$
+                }
+                continue;
+            }
+            outcome.protectedFromUpdate++;
+            outcome.decided++;
+        }
+    }
+
+    /**
      * Says why a configuration cannot be updated as an unchanged one.
      * <p>
      * The condition is strict on purpose, and all three counts matter. A zero for our own changes
@@ -1864,7 +1968,27 @@ public final class BmComparisonHelper
         // ones passed in this call refused every merge driven from a saved settings file - which is
         // the whole point of writing one: hand the hard objects to a person, take back what they
         // decided, carry it out. The environment had the rules; we were the ones who said no.
-        if (intent == Intent.UPDATE_UNCHANGED)
+        if (intent == Intent.UPDATE_KEEPING_OURS)
+        {
+            if (!outcome.threeWay)
+            {
+                outcome.mergeRefused = "no merge was run: keeping our changes means telling them " //$NON-NLS-1$
+                    + "from the delivery's, and without the delivery both sides came from nothing " //$NON-NLS-1$
+                    + "can. Pass ancestorPath."; //$NON-NLS-1$
+                return;
+            }
+            if (!outcome.protectionRefused.isEmpty())
+            {
+                // Refused rather than merged partially. Going ahead would update the configuration
+                // while leaving named customisations unprotected - the one outcome this mode is
+                // supposed to make impossible.
+                outcome.mergeRefused = "no merge was run: " + outcome.protectionRefused.size() //$NON-NLS-1$
+                    + " object(s) could not be held back from the update, and they are named in " //$NON-NLS-1$
+                    + "protectionRefused. Merging now would overwrite them."; //$NON-NLS-1$
+                return;
+            }
+        }
+        else if (intent == Intent.UPDATE_UNCHANGED)
         {
             String blocked = whyNotUnchanged(outcome);
             if (blocked != null)
@@ -2604,6 +2728,24 @@ public final class BmComparisonHelper
                 // Counted whole, listed by the page. A census that shrank with the page would
                 // understate the update, which is the one thing these numbers must not do.
                 countAttribution(outcome, change.changedBy);
+                // Collected regardless of the page filter: the mode that protects customisations
+                // has to reach every one of them, and the filter is what a caller reads, not what
+                // an update covers.
+                if (AttributionRule.OURS.equals(change.changedBy)
+                    && outcome.oursNodes.size() < MASS_LIMIT)
+                {
+                    outcome.oursNodes.add(change.nodeId);
+                }
+                else if (AttributionRule.BOTH.equals(change.changedBy)
+                    && outcome.bothNodes.size() < MASS_LIMIT)
+                {
+                    outcome.bothNodes.add(change.nodeId);
+                    if (outcome.conflictQueue.size() < PAGE_LIMIT)
+                    {
+                        outcome.conflictQueue.add(change.main != null && !change.main.isEmpty()
+                            ? change.main : String.valueOf(change.other));
+                    }
+                }
                 if (page.wants(change))
                 {
                     outcome.changedMatching++;

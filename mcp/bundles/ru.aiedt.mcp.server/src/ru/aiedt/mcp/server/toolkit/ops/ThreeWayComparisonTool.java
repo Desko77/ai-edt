@@ -186,7 +186,13 @@ public class ThreeWayComparisonTool
                     + "exception - it takes the delivery whole and needs no decisions, and is " //$NON-NLS-1$
                     + "refused unless the comparison is three-sided, finished, and found nothing " //$NON-NLS-1$
                     + "changed here, on both sides, or unattributed. The tool checks that itself " //$NON-NLS-1$
-                    + "rather than trusting the caller, and names the counts when it refuses.") //$NON-NLS-1$
+                    + "rather than trusting the caller, and names the counts when it refuses. " //$NON-NLS-1$
+                    + "UPDATE_KEEPING_OURS is the ordinary update on support: objects only the " //$NON-NLS-1$
+                    + "delivery changed take the rule the environment proposes, everything this " //$NON-NLS-1$
+                    + "side reworked is held at DO_NOT_MERGE and read back to confirm it, and " //$NON-NLS-1$
+                    + "conflicts are held too and listed in conflictQueue for a person to decide. " //$NON-NLS-1$
+                    + "It refuses outright when any object could not be held, because merging " //$NON-NLS-1$
+                    + "then would overwrite named work.") //$NON-NLS-1$
             .build();
     }
 
@@ -311,7 +317,7 @@ public class ThreeWayComparisonTool
             }
         }
         throw new IllegalArgumentException(argument + " is not an intent. Use REPORT, MERGE, " //$NON-NLS-1$
-            + "MERGE_IGNORING_PROBLEMS or UPDATE_UNCHANGED."); //$NON-NLS-1$
+            + "MERGE_IGNORING_PROBLEMS, UPDATE_UNCHANGED or UPDATE_KEEPING_OURS."); //$NON-NLS-1$
     }
 
     @Override
@@ -445,6 +451,13 @@ public class ThreeWayComparisonTool
             .put("scopeRequested", outcome.scopeRequested) //$NON-NLS-1$
             .put("scopeUnrecognised", outcome.scopeUnrecognised) //$NON-NLS-1$
             .put("scopeExtendedBy", outcome.scopeExtendedBy) //$NON-NLS-1$
+            // What an update on support is actually asked: how much of our work survives it, what
+            // could not be kept, and what a person still has to decide.
+            .put("protectedFromUpdate", outcome.protectedFromUpdate) //$NON-NLS-1$
+            .put("protectionRefused", outcome.protectionRefused) //$NON-NLS-1$
+            .put("takenFromVendor", outcome.objectsChangedByVendor) //$NON-NLS-1$
+            .put("conflictQueue", outcome.conflictQueue) //$NON-NLS-1$
+            .put("conflictQueueCount", outcome.objectsChangedByBoth) //$NON-NLS-1$
             // What the merge did to the vendor support settings, counted either side of it.
             // Not a promise that they were protected - that was tried and does not work.
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$

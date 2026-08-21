@@ -106,13 +106,15 @@ public class ThreeWayComparisonToolTest
         // Counted rather than listed, so that a fifth way to write into a configuration cannot
         // arrive without this test being read. Each of the four is a distinct decision a person
         // makes, and none of them is a flag on another.
-        assertEquals("four intents, no more: " + names, 4, names.size()); //$NON-NLS-1$
+        assertEquals("five intents, no more: " + names, 5, names.size()); //$NON-NLS-1$
         assertTrue(names.contains("REPORT")); //$NON-NLS-1$
         assertTrue(names.contains("MERGE")); //$NON-NLS-1$
         assertTrue("the override must be a value of its own", //$NON-NLS-1$
             names.contains("MERGE_IGNORING_PROBLEMS")); //$NON-NLS-1$
         assertTrue("and so must the one route that merges with no decisions at all", //$NON-NLS-1$
             names.contains("UPDATE_UNCHANGED")); //$NON-NLS-1$
+        assertTrue("and the ordinary update, which protects what this side reworked", //$NON-NLS-1$
+            names.contains("UPDATE_KEEPING_OURS")); //$NON-NLS-1$
         assertEquals("reading must be the first value, which is what an absent argument means", //$NON-NLS-1$
             "REPORT", names.get(0)); //$NON-NLS-1$
     }
@@ -360,7 +362,7 @@ public class ThreeWayComparisonToolTest
             }
         }
         assertEquals("every intent but REPORT writes, and each one has to be gated as a write: " //$NON-NLS-1$
-            + writes, 3, writes.size());
+            + writes, 4, writes.size());
         assertTrue("the tool has to say which mode changes nothing", //$NON-NLS-1$
             new ThreeWayComparisonTool().getInputSchema().contains("REPORT (default)")); //$NON-NLS-1$
     }
@@ -406,6 +408,25 @@ public class ThreeWayComparisonToolTest
             + "reported success and did nothing", schema.contains("CUSTOM_MERGE is ")); //$NON-NLS-1$
         assertTrue("and the rule that does work must still be offered", //$NON-NLS-1$
             schema.contains("MERGE_USING_EXTERNAL_TOOL")); //$NON-NLS-1$
+    }
+
+    /**
+     * The ordinary update on support has to protect conflicts too, not only our own changes.
+     * <p>
+     * Measured: a catalogue we had customised and the delivery had deleted comes back with
+     * mustBeMerged set and GET_FROM_OTHER proposed - the environment is willing to carry out the
+     * deletion. Protecting only the objects attributed to us would leave exactly that one exposed.
+     * </p>
+     */
+    @Test
+    public void keepingOurChangesHoldsTheConflictsAsWell()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("the mode has to be nameable", schema.contains("UPDATE_KEEPING_OURS")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("and it has to say that conflicts are held and listed, not resolved by a " //$NON-NLS-1$
+            + "default while nobody is looking", schema.contains("conflictQueue")); //$NON-NLS-1$
+        assertTrue("and that it refuses rather than merging around an object it could not hold", //$NON-NLS-1$
+            schema.contains("refuses outright")); //$NON-NLS-1$
     }
 
     /** No decisions at all is not an error - the tool's ordinary use is to read. */
