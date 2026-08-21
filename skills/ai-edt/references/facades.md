@@ -142,6 +142,32 @@ Not every tool belongs to a facade. These are called by name.
 Two more are reached through a facade rather than by name, because the Canonical preset hides
 them: `extension_workshop operation=list_interceptors` and `project_admin operation=self_upkeep`.
 
+## Will this delivery break the extension
+
+Two questions, and neither answers the other.
+
+| Ask | Operation | What it reads |
+|---|---|---|
+| what a new delivery breaks in an extension | `extension_workshop operation=check_release_fitness` | declarations in the model: a borrowed object gone, a borrowed field gone, a field whose type moved. Needs `baseProjectName`, the project the new delivery is loaded as |
+| whether the handlers still fit their targets | `extension_workshop operation=list_interceptors` with `baseProjectName` | the target's signature from the BSL model, and whether a controlled fragment's text drifted |
+| whether the platform will take it at all | `extension_workshop operation=check_platform_verdict` | the platform's own answer, in a staging infobase built for the run |
+
+`check_release_fitness` finding nothing does NOT mean the extension applies - it reads declarations,
+and a dependency written as a string in code, a name inside a query or a drifted controlled fragment
+is not a declaration. Only the platform says "applies", which is what `check_platform_verdict` asks:
+it takes the delivery as a `.cf` and the extension as a `.cfe` (files, not projects - exporting
+either out of a project takes the configuration lock away from the open EDT session), loads them
+into an infobase created for the run, and removes it afterwards.
+
+Read its answer with care on two fields. `applies` is three-valued: `null` means the run could not
+be made and the platform never saw the extension, which is not the same as a refusal. `refusedAt`
+says which question failed - `applicability` is "does not fit this delivery", `load` is "the file
+would not go in at all", usually the file or the platform version.
+
+Loading is not applicability: measured, a delivery with the borrowed catalogue deleted still
+answered "Загрузка конфигурации успешно завершена" to the load. The applicability check is a
+separate question the platform only answers when asked.
+
 ## Constructors
 
 | Tool | Builds |
@@ -149,6 +175,6 @@ them: `extension_workshop operation=list_interceptors` and `project_admin operat
 | `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. |
 | `mxl_workshop` | Spreadsheet templates. Coordinates are 1-based. |
 | `xdto_workshop` | XDTO package schemas. Create the package with `edit_metadata` first. |
-| `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison. Borrowing writes the link that makes the extension actually extend, and a borrow that cannot write it fails rather than reporting success; calling borrow again repairs an object left unlinked by an older build. `borrow_module` needs `moduleType` wherever an object has more than one module. |
+| `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison, and what a new delivery does to an extension. Borrowing writes the link that makes the extension actually extend, and a borrow that cannot write it fails rather than reporting success; calling borrow again repairs an object left unlinked by an older build. `borrow_module` needs `moduleType` wherever an object has more than one module. `borrow_child` composes the child's FQN from `objectFqn` plus `childKind` and `name` - before that it borrowed the OWNER and answered "borrowed". |
 | `external_object_workshop` | External data processor and report projects, which are standalone DT projects rather than configuration objects. |
 | `external_data_source_workshop` | Tables, fields and functions of an external data source. |
