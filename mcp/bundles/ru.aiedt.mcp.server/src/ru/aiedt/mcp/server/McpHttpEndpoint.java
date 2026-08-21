@@ -57,6 +57,7 @@ import ru.aiedt.mcp.server.toolkit.ops.ProjectCleaner;
 import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
 import ru.aiedt.mcp.server.toolkit.ops.CodeTemplateTool;
 import ru.aiedt.mcp.server.toolkit.ops.CompareConfigurationsTool;
+import ru.aiedt.mcp.server.toolkit.ops.SupportRegistryTool;
 import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
@@ -1159,6 +1160,7 @@ public class McpHttpEndpoint
             new ConfigIoFacadeTool(),
             new InsightsFacadeTool(),
             new SecurityAuditFacadeTool(),
+            new SupportRegistryTool(),
             new WorkspaceMarksFacadeTool(),
             new DocsLookupFacadeTool());
     }

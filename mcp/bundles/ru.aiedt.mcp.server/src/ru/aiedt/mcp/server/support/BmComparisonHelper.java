@@ -31,9 +31,11 @@ import com._1c.g5.v8.dt.compare.datasource.IComparisonDataSourceDescriptor;
 import com._1c.g5.v8.dt.compare.datasource.V8ProjectComparisonDataSourceDescriptor;
 import com._1c.g5.v8.dt.compare.matching.MatchingStrategy;
 import com._1c.g5.v8.dt.compare.merge.MergeProblem;
+import com._1c.g5.v8.dt.compare.model.ComparisonFlags;
 import com._1c.g5.v8.dt.compare.model.ComparisonNode;
 import com._1c.g5.v8.dt.compare.model.ComparisonSide;
 import com._1c.g5.v8.dt.compare.model.MergeRule;
+import com._1c.g5.v8.dt.compare.model.MergeSettings;
 import com._1c.g5.v8.dt.compare.model.ObjectsTriple;
 import com._1c.g5.v8.dt.compare.model.TopComparisonNode;
 import com._1c.g5.v8.dt.compare.settings.model.IMergeSettingsModel;
@@ -146,6 +148,30 @@ public final class BmComparisonHelper
         /** What was decided for it, when the caller decided anything. */
         public String decision;
 
+        /**
+         * Which side made the change: OURS, VENDOR, BOTH, or UNKNOWN.
+         * <p>
+         * The question three sides exist to answer. Without the common ancestor it cannot be
+         * answered at all, and the value is UNKNOWN rather than a guess: on a reworked
+         * configuration almost everything differs from a new delivery, and which side moved it is
+         * the whole of what a person needs.
+         * </p>
+         * <p>
+         * BOTH is the expensive case - both the vendor and we changed the same object - and it is
+         * the queue somebody has to work through by hand.
+         * </p>
+         */
+        public String changedBy;
+
+        /** The rule the environment itself proposes for this node, when it proposes one. */
+        public String recommendedRule;
+
+        /** True when the environment says this node has to take part in a merge. */
+        public boolean mustBeMerged;
+
+        /** True when the environment says this node can take part in one. */
+        public boolean canBeMerged;
+
         /** The node this change belongs to, for applying a decision. Not reported. */
         transient long nodeId;
     }
@@ -188,6 +214,30 @@ public final class BmComparisonHelper
         public int oneSided;
 
         /**
+         * Metadata objects that moved, counted whole.
+         * <p>
+         * Separate from {@link #nodes} and {@link #differing} on purpose, and named so the two
+         * cannot be confused. Those count every node in the tree: one changed object answers to
+         * many differing child nodes - its properties, its module sections, its support settings -
+         * so a category census over objects will never add up to a node count. Reporting both
+         * under one word is how a correct implementation looks broken.
+         * </p>
+         */
+        public int objectsChanged;
+
+        /** Of those, the ones only we changed. */
+        public int objectsChangedByUs;
+
+        /** Of those, the ones only the vendor changed. */
+        public int objectsChangedByVendor;
+
+        /** Of those, the ones both sides changed - the queue for a person. */
+        public int objectsChangedByBoth;
+
+        /** Of those, the ones no ancestor was available to attribute. */
+        public int objectsChangedUnattributed;
+
+        /**
          * The metadata objects that moved, named. Cut at {@link #CHANGED_LIMIT}; the counts above
          * stay whole, so a truncated list never makes the change look smaller than it is.
          */
@@ -210,6 +260,28 @@ public final class BmComparisonHelper
 
         /** How many decisions were recorded. */
         public int decided;
+
+        /**
+         * Support modes across the configuration before a merge, counted by mode.
+         * <p>
+         * A measurement, because the promise could not be kept. Keeping vendor support settings
+         * out of a merge was attempted through the environment's own merge rules and does not
+         * work: with the configuration-level support node and 11537 of 11539 per-object ones all
+         * set to DO_NOT_MERGE, the support model still came across from the delivery whole. That
+         * was measured on a live configuration, not argued, so the tool stops claiming protection
+         * and starts counting what happened.
+         * </p>
+         * <p>
+         * Empty when the support subsystem is absent or the project is on nobody's support.
+         * </p>
+         */
+        public final java.util.Map<String, Integer> supportModesBefore = new java.util.TreeMap<>();
+
+        /** The same census after the merge. */
+        public final java.util.Map<String, Integer> supportModesAfter = new java.util.TreeMap<>();
+
+        /** True when the merge changed what objects are allowed to have done to them. */
+        public boolean supportModesChanged;
 
         /** Where the decisions were written, when they were. */
         public String decisionsWrittenTo;
@@ -347,7 +419,14 @@ public final class BmComparisonHelper
             }
             read(manager, handle, outcome);
             decide(manager, handle, decisions, decisionsPath, outcome);
+            // Measured either side of the merge. The merge cannot be stopped from touching
+            // support settings - that was tried and does not work - so the honest thing left is
+            // to say what it did to them.
+            censusSupport(mainProjectName, outcome.supportModesBefore);
             merge(manager, handle, batch, intent, outcome);
+            censusSupport(mainProjectName, outcome.supportModesAfter);
+            outcome.supportModesChanged =
+                !outcome.supportModesBefore.equals(outcome.supportModesAfter);
             reportProjectState(mainProjectName, decisions, outcome);
             // Read, decided, possibly merged - then let go. A finished comparison stays registered
             // with the virtual project contexts it opened for the sources on disk, and nothing
@@ -564,10 +643,17 @@ public final class BmComparisonHelper
                     break;
                 }
             }
-            if (target == null)
+            // The reported list stops at CHANGED_LIMIT, and a real update runs to tens of
+            // thousands of changed objects. Resolving a decision against that list alone meant a
+            // decision could only be made about whatever happened to land in the printed window -
+            // and the window's contents move between runs, so the same call answered "recorded"
+            // one day and "not among the changes" the next. The environment indexes top nodes by
+            // name; ask it instead, and the list stays what it is - a report.
+            long nodeId = target != null ? target.nodeId : findTopNode(session, decision.object);
+            if (nodeId < 0)
             {
                 outcome.decisionsNote = "no object named " + decision.object //$NON-NLS-1$
-                    + " is among the changes, so no decision was recorded for it"; //$NON-NLS-1$
+                    + " takes part in this comparison, so no decision was recorded for it"; //$NON-NLS-1$
                 return;
             }
             MergeRule rule = ruleNamed(decision.rule);
@@ -580,8 +666,11 @@ public final class BmComparisonHelper
             // To the subtree, because a decision about an object is a decision about what the
             // object is made of. The narrower call needs a comparison context this has no honest
             // value for.
-            session.setMergeRuleToSubtree(target.nodeId, rule);
-            target.decision = rule.name();
+            session.setMergeRuleToSubtree(nodeId, rule);
+            if (target != null)
+            {
+                target.decision = rule.name();
+            }
             outcome.decided++;
         }
         if (path == null || path.isEmpty())
@@ -618,6 +707,85 @@ public final class BmComparisonHelper
      * @param name what the caller wrote.
      * @return the rule
      */
+    /**
+     * Finds the node of a named object anywhere in the comparison.
+     * <p>
+     * Asked of the environment rather than searched for in the reported list, because the list is
+     * capped and the comparison is not. Each side is tried in turn: an object added by the vendor
+     * has no name on our side, one we deleted has none on theirs, and either is still a legitimate
+     * thing to decide about.
+     * </p>
+     *
+     * @param session the comparison session.
+     * @param name the object as the comparison names it.
+     * @return the node identity, or -1 when no side knows that name
+     */
+    private static long findTopNode(IComparisonSession session, String name)
+    {
+        if (name == null || name.isEmpty())
+        {
+            return -1;
+        }
+        for (ComparisonSide side : new ComparisonSide[] {ComparisonSide.MAIN, ComparisonSide.OTHER,
+            ComparisonSide.COMMON_ANCESTOR})
+        {
+            try
+            {
+                TopComparisonNode node = session.getTopNode(name, side);
+                if (node != null)
+                {
+                    return node.bmGetId();
+                }
+            }
+            catch (RuntimeException | LinkageError notThere)
+            {
+                Activator.logDebug("comparison: side " + side + " could not resolve " + name //$NON-NLS-1$ //$NON-NLS-2$
+                    + ": " + notThere); //$NON-NLS-1$
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Counts the support modes of a project, by mode.
+     * <p>
+     * Guarded by a bundle check because the support subsystem is an optional dependency: an EDT
+     * without it must produce an empty census rather than a class-loading failure in the middle of
+     * a merge.
+     * </p>
+     *
+     * @param projectName the project to count.
+     * @param into where to write the counts; left empty when nothing can be counted.
+     */
+    private static void censusSupport(String projectName, java.util.Map<String, Integer> into)
+    {
+        try
+        {
+            if (org.eclipse.core.runtime.Platform
+                .getBundle("com.e1c.g5.v8.dt.distribution") == null) //$NON-NLS-1$
+            {
+                return;
+            }
+            BmSupportRegistryHelper.Registry registry = BmSupportRegistryHelper.read(projectName);
+            if (registry.cannotTell != null || !registry.onSupport)
+            {
+                return;
+            }
+            for (BmSupportRegistryHelper.Parent parent : registry.parents)
+            {
+                for (java.util.Map.Entry<String, Integer> mode : parent.byUserMode.entrySet())
+                {
+                    into.merge(mode.getKey(), mode.getValue(),
+                        (was, more) -> Integer.valueOf(was.intValue() + more.intValue()));
+                }
+            }
+        }
+        catch (RuntimeException | LinkageError cannotCount)
+        {
+            Activator.logDebug("merge: support modes could not be counted: " + cannotCount); //$NON-NLS-1$
+        }
+    }
+
     private static MergeRule ruleNamed(String name)
     {
         if (name == null)
@@ -1143,11 +1311,14 @@ public final class BmComparisonHelper
      * @param oneSided whether it exists on one side only.
      * @return the description
      */
-    private static Change describeChange(TopComparisonNode node, boolean oneSided)
+    private static Change describeChange(TopComparisonNode node, boolean oneSided,
+        boolean threeWay)
     {
         Change change = new Change();
         change.oneSided = oneSided;
         change.nodeId = node.bmGetId();
+        change.changedBy = attribute(node, oneSided, threeWay);
+        readRecommendation(node, change);
         try
         {
             change.main = node.getSymlink(ComparisonSide.MAIN);
@@ -1165,6 +1336,149 @@ public final class BmComparisonHelper
             change.note = "could not be named: " + describe(cannotName); //$NON-NLS-1$
         }
         return change;
+    }
+
+    /**
+     * Says which side changed an object.
+     * <p>
+     * Read from the environment own flags rather than inferred. A difference between our side and
+     * the ancestor is our doing; a difference between the delivery and the ancestor is the
+     * vendor doing; both at once is a conflict, and the environment has a flag for exactly that.
+     * </p>
+     * <p>
+     * A one-sided node is attributed by the side it stands on: present only on the delivery means
+     * the vendor added it, present only here means either we added it or the vendor removed it -
+     * the same event seen from two directions, so the answer names the side rather than pretending
+     * to know the intent.
+     * </p>
+     *
+     * @param node the node to attribute.
+     * @param oneSided whether it exists on one side only.
+     * @param threeWay whether a common ancestor took part.
+     * @return OURS, VENDOR, BOTH or UNKNOWN
+     */
+    private static String attribute(ComparisonNode node, boolean oneSided, boolean threeWay)
+    {
+        if (!threeWay)
+        {
+            // Two sides can say that something differs and never which side moved it. Answering
+            // anything else here would be a guess dressed as a measurement.
+            return "UNKNOWN"; //$NON-NLS-1$
+        }
+        try
+        {
+            if (oneSided)
+            {
+                // Which side an object stands on does not say who moved it - the ancestor does.
+                // An object present here and absent from the delivery was added by us if the
+                // ancestor never had it, and DELETED BY THE VENDOR if it did. Reading the side
+                // alone calls every vendor deletion our own work, and every deletion of ours a
+                // vendor addition, which turns the whole census inside out on exactly the objects
+                // an update is most likely to break.
+                boolean inAncestor = node.isAncestorObjectExists();
+                ComparisonSide side = node.getNodeSide();
+                if (side == ComparisonSide.OTHER)
+                {
+                    return inAncestor ? "OURS" : "VENDOR"; //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                if (side == ComparisonSide.MAIN)
+                {
+                    return inAncestor ? "VENDOR" : "OURS"; //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                return "UNKNOWN"; //$NON-NLS-1$
+            }
+            ComparisonFlags flags = node.getComparisonFlags();
+            if (flags == null)
+            {
+                return "UNKNOWN"; //$NON-NLS-1$
+            }
+            if (flags.hasDoubleChanges())
+            {
+                return "BOTH"; //$NON-NLS-1$
+            }
+            boolean ours =
+                flags.hasDifferences(ComparisonSide.MAIN, ComparisonSide.COMMON_ANCESTOR);
+            boolean vendor =
+                flags.hasDifferences(ComparisonSide.OTHER, ComparisonSide.COMMON_ANCESTOR);
+            if (ours && vendor)
+            {
+                return "BOTH"; //$NON-NLS-1$
+            }
+            if (ours)
+            {
+                return "OURS"; //$NON-NLS-1$
+            }
+            if (vendor)
+            {
+                return "VENDOR"; //$NON-NLS-1$
+            }
+            return "UNKNOWN"; //$NON-NLS-1$
+        }
+        catch (RuntimeException | LinkageError flagsRefused)
+        {
+            // Named as unknown rather than assumed: a wrong attribution sends somebody to review
+            // the wrong side of an update.
+            Activator.logDebug("comparison: could not attribute a node: " + flagsRefused); //$NON-NLS-1$
+            return "UNKNOWN"; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Copies the environment own merge recommendation onto a change.
+     * <p>
+     * The environment already worked out which rule suits each node. Recomputing that here would be
+     * inventing a second opinion; carrying it out means a caller can confirm or override a proposal
+     * instead of deciding from nothing.
+     * </p>
+     *
+     * @param node the node.
+     * @param change where to write the recommendation.
+     */
+    private static void readRecommendation(ComparisonNode node, Change change)
+    {
+        try
+        {
+            MergeSettings settings = node.getMergeSettings();
+            if (settings == null)
+            {
+                return;
+            }
+            MergeRule rule = settings.getDefaultMergeRule();
+            change.recommendedRule = rule == null ? null : rule.name();
+            change.mustBeMerged = settings.isMustBeMerged();
+            change.canBeMerged = settings.isCanBeMerged();
+        }
+        catch (RuntimeException | LinkageError noSettings)
+        {
+            Activator.logDebug("comparison: no merge settings on a node: " + noSettings); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Adds one object to the census of who changed what.
+     *
+     * @param outcome where to count.
+     * @param changedBy the attribution.
+     */
+    private static void countAttribution(Outcome outcome, String changedBy)
+    {
+        outcome.objectsChanged++;
+        if ("OURS".equals(changedBy)) //$NON-NLS-1$
+        {
+            outcome.objectsChangedByUs++;
+        }
+        else if ("VENDOR".equals(changedBy)) //$NON-NLS-1$
+        {
+            outcome.objectsChangedByVendor++;
+        }
+        else if ("BOTH".equals(changedBy)) //$NON-NLS-1$
+        {
+            outcome.objectsChangedByBoth++;
+        }
+        else
+        {
+            outcome.objectsChangedUnattributed++;
+        }
     }
 
     private static void walk(ComparisonNode node, Outcome outcome)
@@ -1185,10 +1499,10 @@ public final class BmComparisonHelper
         // WHICH objects moved and on whose side. Only the top nodes are named: those are the
         // metadata objects, and the nodes below them are the fields and members that make one
         // object differ - listing those would bury the answer in its own detail.
-        if ((oneSided || differs) && node instanceof TopComparisonNode
-            && outcome.changed.size() < CHANGED_LIMIT)
+        if ((oneSided || differs) && node instanceof TopComparisonNode)
         {
-            Change change = describeChange((TopComparisonNode)node, oneSided);
+            Change change =
+                describeChange((TopComparisonNode)node, oneSided, outcome.threeWay);
             // The configuration root is a top node too, and it names itself on no side at all. It
             // differs whenever anything inside it does, so listing it says only "something
             // changed" - which the counts already said. An entry that identifies nothing is noise
@@ -1197,7 +1511,14 @@ public final class BmComparisonHelper
                 || change.other != null && !change.other.isEmpty()
                 || change.ancestor != null && !change.ancestor.isEmpty() || change.note != null)
             {
-                outcome.changed.add(change);
+                // Counted whole, listed only up to the cap. A census that shrank with the
+                // list would understate the update, which is the one thing these numbers
+                // must not do.
+                countAttribution(outcome, change.changedBy);
+                if (outcome.changed.size() < CHANGED_LIMIT)
+                {
+                    outcome.changed.add(change);
+                }
             }
         }
         if (!node.hasChildren())
