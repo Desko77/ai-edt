@@ -234,6 +234,9 @@
 | `SecurityAuditFacadeTool` | `audit_role_rights` | `apply`, `format`, `includeRls`, `mode`, `objectFqn`, `objectType`, `projectName`, `roleName`, `roleNames` | delegate AuditRoleRightsTool |
 | `SecurityAuditFacadeTool` | `find_rls_violations` | `format`, `methodName`, `moduleFqn`, `projectName`, `roleName`, `scope`, `severity_filter` | delegate FindRlsViolationsTool |
 | `SecurityAuditFacadeTool` | `sensitive_data_scan` | `checks`, `customPatterns`, `format`, `moduleFqn`, `projectName`, `scope`, `severity_filter`, `subsystemName` | delegate SensitiveDataScanTool |
+| `SupportRegistryTool` | `list_objects` | `projectName` | passed in as locals |
+| `SupportRegistryTool` | `object_mode` | `operation`, `projectName` | passed in as locals |
+| `SupportRegistryTool` | `status` | `projectName` | passed in as locals |
 | `SyncControlTool` | `diagnose` | `projectName` | passed in as locals |
 | `SyncControlTool` | `diagnose_delta` | `projectName` | passed in as locals |
 | `SyncControlTool` | `diagnose_stuck_locks` | `projectName` | passed in as locals |

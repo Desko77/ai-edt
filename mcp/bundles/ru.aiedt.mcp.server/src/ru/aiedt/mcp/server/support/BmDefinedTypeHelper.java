@@ -3118,7 +3118,6 @@ public final class BmDefinedTypeHelper
             // already translated - primitives by normalizePrimitiveFqn for every
             // carrier, collection types by normalizeFormCollectionFqns on the form path
             // alone - so nothing legitimate is turned away by this.
-            // Caught on the stand 2026-08-18, after the unit tests passed.
             return false;
         }
         switch (verdict)

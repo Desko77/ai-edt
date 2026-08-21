@@ -14,6 +14,19 @@ parameters of one. When this file and the server disagree, the server is right.
 | `code_search` | `text_search`, `object_references`, `method_references`, `resolve_symbol`, `call_hierarchy`, `symbol_info`, `content_assist`, `outgoing_structures`, `help` |
 | `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `compare_three_way`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help` |
 | `security_audit` | `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help` |
+| `support_registry` | `status`, `list_objects`, `object_mode`, `help` |
+
+`support_registry` reads the vendor support state of a configuration: which vendor configurations it
+descends from with their releases, the object count per support mode, the rules the environment
+applies on the next update, and the mode of a single object together with the objects the
+environment requires to change with it. A mode is a declared setting - `CHANGES_NOT_ALLOWED`,
+`CHANGES_ALLOWED` or `CANCELLED` - and not a statement that the object was modified;
+`compare_three_way` reports that. When the two disagree - an object modified while still set to
+`CHANGES_NOT_ALLOWED` - the next vendor update overwrites that modification. The configuration root
+has a mode of its own and must be set to `CHANGES_ALLOWED` before any other object can be; request
+it as `objectFqn=Configuration`. Where a configuration descends from several vendors, a mode belongs
+to a pair of object and vendor: `object_mode` reports per vendor, and `list_objects` requires
+`parentId`.
 
 `audit_role_rights mode=orphans` is the exception to this group being read-only: it lists rights that point at objects no longer in the configuration, and with `apply=true` removes them. It removes only what it could prove is gone - what it could not decide is listed separately and left alone - and `apply=true` is refused when the active preset forbids writing.
 | `docs_lookup` | `get_platform_documentation`, `get_object_help`, `help` |

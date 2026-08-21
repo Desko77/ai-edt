@@ -196,6 +196,7 @@ public enum ToolCategory
         "project_metrics", //$NON-NLS-1$
         "compare_configurations", //$NON-NLS-1$
         "compare_three_way", //$NON-NLS-1$
+        "support_registry", //$NON-NLS-1$
         "impact_analysis", //$NON-NLS-1$
         "extension_diff", //$NON-NLS-1$
         "list_interceptors", //$NON-NLS-1$

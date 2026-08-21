@@ -184,8 +184,7 @@ public class BmDefinedTypeHelperTest
         // The platform register answers to Russian type names too, so asking it first
         // made "ДеревоЗначений" acceptable on an OBJECT attribute - where a value tree
         // is not valid metadata, and where the ASCII-only shape rule had been the thing
-        // refusing it. Measured on the stand: the unit tests were green and the stand
-        // said applied:true.
+        // refusing it. Measured: the write reported applied:true.
         assertFalse(BmDefinedTypeHelper.isAcceptableBareName("ДеревоЗначений", //$NON-NLS-1$
             PlatformTypeNames.Verdict.KNOWN));
         assertFalse(BmDefinedTypeHelper.isAcceptableBareName("Строка", //$NON-NLS-1$

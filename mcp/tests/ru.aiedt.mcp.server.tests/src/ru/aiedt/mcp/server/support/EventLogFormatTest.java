@@ -49,8 +49,8 @@ public class EventLogFormatTest
      * Every record has the same number of fields, and a nested group counts as ONE of them.
      * <p>
      * This is the assertion that catches a field shift. A group followed by a comma used to add
-     * the empty text buffer as a second value, which pushed the session number into the slot after
-     * it and turned every row into a plausible lie.
+     * the empty text buffer as a second value, which pushed the session number into the slot
+     * after it, so every row carried the wrong value in that column.
      * </p>
      */
     @Test

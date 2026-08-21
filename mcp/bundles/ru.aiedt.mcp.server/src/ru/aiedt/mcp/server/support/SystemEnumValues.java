@@ -342,9 +342,8 @@ public final class SystemEnumValues
      * Loads a proxy.
      * <p>
      * A proxy is what a register normally hands back - it holds descriptions, not loaded models.
-     * Treating "is a proxy" as failure meant this returned nothing at all: measured on the stand,
-     * every lookup answered "the definition could not be loaded", including for names that plainly
-     * exist.
+     * Treating "is a proxy" as failure meant this returned nothing at all. Measured: every lookup
+     * answered "the definition could not be loaded", including for names that exist.
      * </p>
      *
      * @param proxy the proxy.

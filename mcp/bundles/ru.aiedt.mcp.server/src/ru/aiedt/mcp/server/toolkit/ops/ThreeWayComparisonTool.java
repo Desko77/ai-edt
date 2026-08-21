@@ -48,7 +48,15 @@ public class ThreeWayComparisonTool
         return "Compares an open project against a new delivery and, optionally, against the " //$NON-NLS-1$
             + "delivery both came from - the three sides of an update on support. Reports node " //$NON-NLS-1$
             + "counts, how many differ, how many exist on one side only, the metadata objects " //$NON-NLS-1$
-            + "that moved by name, and the problems the environment raises. Decisions about " //$NON-NLS-1$
+            + "that moved by name, and the problems the environment raises. With an ancestor " //$NON-NLS-1$
+            + "every changed object carries changedBy - OURS, VENDOR or BOTH - so a customisation " //$NON-NLS-1$
+            + "is told apart from a vendor change and BOTH marks the conflicts; without an " //$NON-NLS-1$
+            + "ancestor changedBy is UNKNOWN rather than guessed. Each object also reports the " //$NON-NLS-1$
+            + "merge rule the environment itself proposes. A MERGE also takes the vendor " //$NON-NLS-1$
+            + "support settings from the delivery - that cannot be prevented through the " //$NON-NLS-1$
+            + "environment's merge rules, so instead the support modes are counted before " //$NON-NLS-1$
+            + "and after and reported as supportModesBefore, supportModesAfter and " //$NON-NLS-1$
+            + "supportModesChanged. Decisions about " //$NON-NLS-1$
             + "individual objects can be recorded and written to a settings file that EDT reads " //$NON-NLS-1$
             + "back when a person runs the merge, and a file written earlier can be read back in " //$NON-NLS-1$
             + "through decisionsFrom. Reading is the default and changes nothing. Passing " //$NON-NLS-1$
@@ -243,6 +251,17 @@ public class ThreeWayComparisonTool
             .put("nodes", outcome.nodes) //$NON-NLS-1$
             .put("differing", outcome.differing) //$NON-NLS-1$
             .put("oneSided", outcome.oneSided) //$NON-NLS-1$
+            // Objects, not nodes. One changed object answers to many differing child nodes - its
+            // properties, its module sections, its support settings - so these will never add up
+            // to differing, and they are named apart from it so nobody expects them to.
+            .put("objectsChanged", outcome.objectsChanged) //$NON-NLS-1$
+            .put("objectsChangedByUs", outcome.objectsChangedByUs) //$NON-NLS-1$
+            .put("objectsChangedByVendor", outcome.objectsChangedByVendor) //$NON-NLS-1$
+            // The queue somebody has to work through by hand: both sides touched these.
+            .put("objectsChangedByBoth", outcome.objectsChangedByBoth) //$NON-NLS-1$
+            // Always equal to objectsChanged on a two-sided comparison: without the ancestor there
+            // is nothing to attribute against, and a guess would be worse than the admission.
+            .put("objectsChangedUnattributed", outcome.objectsChangedUnattributed) //$NON-NLS-1$
             // Named, not just counted: an update on support is decided object by object, and a
             // number tells nobody which ones to look at.
             .put("changed", outcome.changed) //$NON-NLS-1$
@@ -252,6 +271,19 @@ public class ThreeWayComparisonTool
             // Present only when the list is empty for a reason other than there being no problems.
             .put("problemsNote", outcome.problemsNote) //$NON-NLS-1$
             .put("decided", outcome.decided) //$NON-NLS-1$
+            // What the merge did to the vendor support settings, counted either side of it.
+            // Not a promise that they were protected - that was tried and does not work.
+            .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$
+            .put("supportModesAfter", outcome.supportModesAfter) //$NON-NLS-1$
+            .put("supportModesChanged", outcome.supportModesChanged) //$NON-NLS-1$
+            // Said plainly, because a merge that quietly re-locks objects somebody deliberately
+            // unlocked is the worst outcome this tool can produce, and it cannot be prevented.
+            .put("supportSettingsNote", outcome.supportModesChanged //$NON-NLS-1$
+                ? "this merge CHANGED the vendor support modes - compare supportModesBefore with " //$NON-NLS-1$
+                    + "supportModesAfter. The environment writes the support model as part of the " //$NON-NLS-1$
+                    + "merge and its merge rules do not prevent it. Restore the previous modes " //$NON-NLS-1$
+                    + "explicitly if they are required." //$NON-NLS-1$
+                : "the vendor support modes are unchanged by this call") //$NON-NLS-1$
             .put("decisionsWrittenTo", outcome.decisionsWrittenTo) //$NON-NLS-1$
             .put("decisionsNote", outcome.decisionsNote) //$NON-NLS-1$
             // Present only when decisions were restored from a file, so a caller who named
