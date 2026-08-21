@@ -92,6 +92,30 @@ public class ThreeWayComparisonTool
                     + "person in EDT - whose decisions and hand-made object correspondences are " //$NON-NLS-1$
                     + "applied to this comparison before anything else. This is how work decided " //$NON-NLS-1$
                     + "by eye comes back to be carried out.") //$NON-NLS-1$
+            .stringProperty("changedBy", //$NON-NLS-1$
+                "List only objects with this attribution: OURS, VENDOR, BOTH or UNKNOWN. The " //$NON-NLS-1$
+                    + "counts are unaffected - they always cover everything. OURS is what a " //$NON-NLS-1$
+                    + "customisation-preserving update needs to enumerate.") //$NON-NLS-1$
+            .stringProperty("type", //$NON-NLS-1$
+                "List only objects of this metadata type, as the comparison qualifies names " //$NON-NLS-1$
+                    + "(Catalog, Document, CommonModule).") //$NON-NLS-1$
+            .booleanProperty("oneSided", //$NON-NLS-1$
+                "true lists only objects present on one side, false only those present on both. " //$NON-NLS-1$
+                    + "Omit for either.") //$NON-NLS-1$
+            .booleanProperty("mustBeMergedOnly", //$NON-NLS-1$
+                "List only objects the environment says must take part in a merge.") //$NON-NLS-1$
+            .integerProperty("offset", //$NON-NLS-1$
+                "How many matching objects to skip. Default 0. With limit this walks the whole " //$NON-NLS-1$
+                    + "set: a real update runs to tens of thousands of changed objects and one " //$NON-NLS-1$
+                    + "page names at most 500 of them.") //$NON-NLS-1$
+            .integerProperty("limit", //$NON-NLS-1$
+                "How many objects to name. Default and maximum 500.") //$NON-NLS-1$
+            .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
+                "Compare the sides even when they do not identify as the same configuration in " //$NON-NLS-1$
+                    + "different versions. Off by default: an ancestor from another configuration " //$NON-NLS-1$
+                    + "inverts every changedBy in the answer without failing. Legitimate cases " //$NON-NLS-1$
+                    + "exist - a renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
+                    + "then reported in originMismatches rather than swallowed.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
@@ -236,8 +260,19 @@ public class ThreeWayComparisonTool
             }
         }
 
+        boolean ignoreOriginMismatch = JsonUtils.extractBooleanArgument(params,
+            "ignoreOriginMismatch", false); //$NON-NLS-1$
+        BmComparisonHelper.Page page = new BmComparisonHelper.Page();
+        page.changedBy = JsonUtils.extractStringArgument(params, "changedBy"); //$NON-NLS-1$
+        page.type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
+        page.oneSided = JsonUtils.extractBooleanArgumentNullable(params, "oneSided"); //$NON-NLS-1$
+        page.mustBeMergedOnly =
+            JsonUtils.extractBooleanArgument(params, "mustBeMergedOnly", false); //$NON-NLS-1$
+        page.offset = JsonUtils.extractIntArgument(params, "offset", 0); //$NON-NLS-1$
+        page.limit = JsonUtils.extractIntArgument(params, "limit", 0); //$NON-NLS-1$
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
-            ancestorPath, decisions, decisionsPath, decisionsFrom, intent);
+            ancestorPath, decisions, decisionsPath, decisionsFrom, intent, ignoreOriginMismatch,
+            page);
         if (outcome.cannotTell != null)
         {
             return ToolResult.error(outcome.cannotTell)
@@ -248,6 +283,12 @@ public class ThreeWayComparisonTool
         return ToolResult.success()
             .put("threeWay", outcome.threeWay) //$NON-NLS-1$
             .put("status", outcome.status) //$NON-NLS-1$
+            // What the sides turned out to be, read from the configurations themselves. A caller
+            // who mistyped a path sees it here rather than in an inverted attribution.
+            .put("otherIs", outcome.otherIs) //$NON-NLS-1$
+            .put("ancestorIs", outcome.ancestorIs) //$NON-NLS-1$
+            .put("projectDescendsFrom", outcome.projectDescendsFrom) //$NON-NLS-1$
+            .put("originMismatches", outcome.originMismatches) //$NON-NLS-1$
             .put("nodes", outcome.nodes) //$NON-NLS-1$
             .put("differing", outcome.differing) //$NON-NLS-1$
             .put("oneSided", outcome.oneSided) //$NON-NLS-1$
@@ -265,12 +306,21 @@ public class ThreeWayComparisonTool
             // Named, not just counted: an update on support is decided object by object, and a
             // number tells nobody which ones to look at.
             .put("changed", outcome.changed) //$NON-NLS-1$
-            .put("changedListComplete", outcome.changed.size() < 500) //$NON-NLS-1$
+            // How many matched the filter across every page, where this page starts, and whether
+            // more matched than fit. A short list is also what the last page looks like, so the
+            // difference is stated rather than left to be inferred.
+            .put("changedMatching", outcome.changedMatching) //$NON-NLS-1$
+            .put("changedOffset", outcome.changedOffset) //$NON-NLS-1$
+            .put("moreChanged", outcome.moreChanged) //$NON-NLS-1$
             .put("blockingProblems", outcome.blockingProblems) //$NON-NLS-1$
             .put("problems", outcome.problems) //$NON-NLS-1$
             // Present only when the list is empty for a reason other than there being no problems.
             .put("problemsNote", outcome.problemsNote) //$NON-NLS-1$
             .put("decided", outcome.decided) //$NON-NLS-1$
+            // Decisions the environment would not take, counted apart from the ones it did. The
+            // call that records a decision returns a boolean, and counting calls instead of
+            // answers would report a merge as decided when nothing was decided.
+            .put("decisionsRefused", outcome.decisionsRefused) //$NON-NLS-1$
             // What the merge did to the vendor support settings, counted either side of it.
             // Not a promise that they were protected - that was tried and does not work.
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$

@@ -181,7 +181,7 @@
 | `InfobaseAdminFacadeTool` | `sync_control` | `syncOperation` | read in place |
 | `InfobaseAdminFacadeTool` | `update_database` | `applicationId`, `autoFreeClients`, `autoRestructure`, `cancel`, `fullUpdate`, `ignoreBranchBinding`, `launchConfigurationName`, `projectName`, `runKey`, `timeoutSeconds` | delegate DatabaseUpdater |
 | `InsightsFacadeTool` | `compare_configurations` | `format`, `level`, `mode`, `objectFqn`, `projectName`, `scope`, `showRenames`, `target` | delegate CompareConfigurationsTool |
-| `InsightsFacadeTool` | `compare_three_way` | `ancestorPath`, `decisions`, `decisionsFrom`, `decisionsPath`, `intent`, `otherPath`, `projectName` | delegate ThreeWayComparisonTool |
+| `InsightsFacadeTool` | `compare_three_way` | `ancestorPath`, `changedBy`, `decisions`, `decisionsFrom`, `decisionsPath`, `ignoreOriginMismatch`, `intent`, `limit`, `mustBeMergedOnly`, `offset`, `oneSided`, `otherPath`, `projectName`, `type` | delegate ThreeWayComparisonTool |
 | `InsightsFacadeTool` | `dependency_graph` | `depth`, `direction`, `format`, `includeStandard`, `level`, `maxEdges`, `maxNodes`, `moduleFqn`, `objectFqn`, `projectName`, `scope`, `subsystemName` | delegate DependencyGraphTool |
 | `InsightsFacadeTool` | `describe_db_tables` | `includeFields`, `objectFqn`, `projectName` | delegate DbTablesReader |
 | `InsightsFacadeTool` | `detect_query_anti_patterns` | `batchSize`, `format`, `methodName`, `moduleFqn`, `projectName`, `rules`, `scope`, `severity_filter` | delegate DetectQueryAntiPatternsTool |
