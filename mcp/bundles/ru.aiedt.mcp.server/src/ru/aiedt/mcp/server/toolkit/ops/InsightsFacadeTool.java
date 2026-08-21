@@ -211,6 +211,24 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_three_way: REPORT (default) reads and changes nothing; MERGE applies the " //$NON-NLS-1$
                     + "decisions to the project - IRREVERSIBLE; MERGE_IGNORING_PROBLEMS proceeds " //$NON-NLS-1$
                     + "past a problem the environment called blocking.") //$NON-NLS-1$
+            .stringProperty("changedBy", //$NON-NLS-1$
+                "compare_three_way: list only objects with this attribution - OURS, VENDOR, BOTH " //$NON-NLS-1$
+                    + "or UNKNOWN. The counts always cover everything; this narrows the listing.") //$NON-NLS-1$
+            .stringProperty("type", //$NON-NLS-1$
+                "compare_three_way: list only objects of this metadata type (Catalog, Document).") //$NON-NLS-1$
+            .booleanProperty("oneSided", //$NON-NLS-1$
+                "compare_three_way: true lists only objects present on one side, false only those " //$NON-NLS-1$
+                    + "present on both.") //$NON-NLS-1$
+            .booleanProperty("mustBeMergedOnly", //$NON-NLS-1$
+                "compare_three_way: list only objects the environment says must take part in a " //$NON-NLS-1$
+                    + "merge.") //$NON-NLS-1$
+            .integerProperty("offset", //$NON-NLS-1$
+                "compare_three_way: how many matching objects to skip. With limit this walks the " //$NON-NLS-1$
+                    + "whole set - a real update runs to tens of thousands of changed objects.") //$NON-NLS-1$
+            .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
+                "compare_three_way: compare the sides even when they do not identify as the same " //$NON-NLS-1$
+                    + "configuration in different versions. Off by default: a wrong ancestor " //$NON-NLS-1$
+                    + "inverts every changedBy without failing.") //$NON-NLS-1$
             .build();
     }
 

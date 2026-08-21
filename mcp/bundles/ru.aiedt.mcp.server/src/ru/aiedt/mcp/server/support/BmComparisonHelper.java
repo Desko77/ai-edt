@@ -101,8 +101,16 @@ public final class BmComparisonHelper
     /** How often to ask the manager what the status is. */
     private static final long POLL_MS = 500L;
 
-    /** How many changed objects are named before the list is cut short. */
-    private static final int CHANGED_LIMIT = 500;
+    /**
+     * How many changed objects one page carries by default, and the most it will carry.
+     * <p>
+     * This used to be a ceiling with nothing behind it: a real update runs to tens of thousands of
+     * changed objects and the answer named five hundred of them, chosen by walk order, with no way
+     * to ask for the rest. Protecting a customisation means naming every object that carries one,
+     * so a ceiling here was a ceiling on the whole task.
+     * </p>
+     */
+    private static final int PAGE_LIMIT = 500;
 
     /**
      * What a caller asked to happen after the comparison has been read.
@@ -122,6 +130,93 @@ public final class BmComparisonHelper
 
         /** Apply them even then. Separate on purpose: the environment named those problems. */
         MERGE_IGNORING_PROBLEMS
+    }
+
+    /**
+     * Which changed objects a caller wants named, and which page of them.
+     * <p>
+     * The counts are always over everything: filtering narrows what is listed, never what is
+     * counted. A census that shrank with the page would understate the update, and understating it
+     * is the one thing these numbers must not do.
+     * </p>
+     */
+    public static final class Page
+    {
+        /** Report only objects with this attribution; every attribution when null. */
+        public String changedBy;
+
+        /** Report only objects of this metadata type; every type when null. */
+        public String type;
+
+        /** Report only objects present on one side; both kinds when null. */
+        public Boolean oneSided;
+
+        /** Report only objects the environment says must take part in a merge. */
+        public boolean mustBeMergedOnly;
+
+        /** How many matching objects to skip. */
+        public int offset;
+
+        /** How many to name, capped at {@link #PAGE_LIMIT}. */
+        public int limit = PAGE_LIMIT;
+
+        /**
+         * Decides whether one change belongs in the listing.
+         *
+         * @param change the change to test.
+         * @return <code>true</code> when it passes every stated filter
+         */
+        boolean wants(Change change)
+        {
+            if (changedBy != null && !changedBy.equalsIgnoreCase(change.changedBy))
+            {
+                return false;
+            }
+            if (oneSided != null && oneSided.booleanValue() != change.oneSided)
+            {
+                return false;
+            }
+            if (mustBeMergedOnly && !change.mustBeMerged)
+            {
+                return false;
+            }
+            return type == null || isOfType(change, type);
+        }
+
+        /**
+         * Decides whether a change names an object of a metadata type.
+         * <p>
+         * Matched on the name the comparison gives the object, which is qualified - Catalog.Name -
+         * so the type is the part before the first dot. Any side may carry the name: an object the
+         * vendor added has none on ours.
+         * </p>
+         *
+         * @param change the change.
+         * @param wanted the type asked for.
+         * @return <code>true</code> when any side names it as that type
+         */
+        private static boolean isOfType(Change change, String wanted)
+        {
+            return startsWithType(change.main, wanted) || startsWithType(change.other, wanted)
+                || startsWithType(change.ancestor, wanted);
+        }
+
+        /**
+         * Decides whether a qualified name belongs to a type.
+         *
+         * @param name the name; may be <code>null</code>.
+         * @param wanted the type.
+         * @return <code>true</code> when the name is that type's
+         */
+        private static boolean startsWithType(String name, String wanted)
+        {
+            if (name == null)
+            {
+                return false;
+            }
+            int dot = name.indexOf('.');
+            return dot > 0 && name.substring(0, dot).equalsIgnoreCase(wanted);
+        }
     }
 
     /** One object that differs between the sides, or exists on only one of them. */
@@ -201,6 +296,25 @@ public final class BmComparisonHelper
         /** True when three sides took part rather than two. */
         public boolean threeWay;
 
+        /** What the delivery being compared against turned out to be. */
+        public String otherIs;
+
+        /** What the delivery both sides came from turned out to be. */
+        public String ancestorIs;
+
+        /** What the project's own support registry says it descends from. */
+        public String projectDescendsFrom;
+
+        /**
+         * What did not line up between the sides, when the caller chose to compare anyway.
+         * <p>
+         * Empty on an ordinary run. Non-empty means the caller passed
+         * {@code ignoreOriginMismatch}, and every attribution in this answer is suspect - so the
+         * reason travels with the answer rather than staying in the refusal that was overridden.
+         * </p>
+         */
+        public final List<String> originMismatches = new ArrayList<>();
+
         /** The status the process ended on, named as the environment names it. */
         public String status;
 
@@ -238,10 +352,22 @@ public final class BmComparisonHelper
         public int objectsChangedUnattributed;
 
         /**
-         * The metadata objects that moved, named. Cut at {@link #CHANGED_LIMIT}; the counts above
-         * stay whole, so a truncated list never makes the change look smaller than it is.
+         * The metadata objects that moved, named - one page of them.
+         * <p>
+         * The counts above stay whole whatever the page holds, so a page never makes the update
+         * look smaller than it is.
+         * </p>
          */
         public final List<Change> changed = new ArrayList<>();
+
+        /** How many objects matched the filter, across every page. */
+        public int changedMatching;
+
+        /** Where this page starts inside the matching set. */
+        public int changedOffset;
+
+        /** True when objects beyond this page matched and were not named. */
+        public boolean moreChanged;
 
         /** Problems the environment raised, blocking ones first. */
         public final List<String> problems = new ArrayList<>();
@@ -260,6 +386,17 @@ public final class BmComparisonHelper
 
         /** How many decisions were recorded. */
         public int decided;
+
+        /**
+         * Decisions the environment would not take.
+         * <p>
+         * Counted apart from {@link #decided}, because the call that records a decision returns a
+         * boolean and the first version of this code discarded it. A count of calls presented as a
+         * count of applied decisions is the defect this project keeps paying for; here it would
+         * mean reporting a merge as decided when the environment decided nothing.
+         * </p>
+         */
+        public int decisionsRefused;
 
         /**
          * Support modes across the configuration before a merge, counted by mode.
@@ -360,9 +497,32 @@ public final class BmComparisonHelper
      * @return what the comparison found, or the reason it could not run
      */
     public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
-        List<Decision> decisions, String decisionsPath, String decisionsFrom, Intent intent)
+        List<Decision> decisions, String decisionsPath, String decisionsFrom, Intent intent,
+        boolean ignoreOriginMismatch, Page page)
     {
         Outcome outcome = new Outcome();
+        if (page == null)
+        {
+            page = new Page();
+        }
+        page.limit = page.limit <= 0 ? PAGE_LIMIT : Math.min(page.limit, PAGE_LIMIT);
+        page.offset = Math.max(0, page.offset);
+        outcome.changedOffset = page.offset;
+        // Before anything is compared, and not after: an ancestor from the wrong configuration
+        // inverts every attribution in the answer, and nothing downstream would notice.
+        OriginCheck.Verdict origin = OriginCheck.check(mainProjectName, otherPath, ancestorPath);
+        outcome.otherIs = origin.other == null ? null : origin.other.toString();
+        outcome.ancestorIs = origin.ancestor == null ? null : origin.ancestor.toString();
+        outcome.projectDescendsFrom = origin.projectDescendsFrom;
+        if (!origin.agrees())
+        {
+            if (!ignoreOriginMismatch)
+            {
+                outcome.cannotTell = OriginCheck.refusal(origin);
+                return outcome;
+            }
+            outcome.originMismatches.addAll(origin.mismatches);
+        }
         if (mainProjectName == null || mainProjectName.isEmpty() || otherPath == null
             || otherPath.isEmpty())
         {
@@ -417,7 +577,7 @@ public final class BmComparisonHelper
             {
                 return outcome;
             }
-            read(manager, handle, outcome);
+            read(manager, handle, outcome, page);
             decide(manager, handle, decisions, decisionsPath, outcome);
             // Measured either side of the merge. The merge cannot be stopped from touching
             // support settings - that was tried and does not work - so the honest thing left is
@@ -666,7 +826,19 @@ public final class BmComparisonHelper
             // To the subtree, because a decision about an object is a decision about what the
             // object is made of. The narrower call needs a comparison context this has no honest
             // value for.
-            session.setMergeRuleToSubtree(nodeId, rule);
+            //
+            // The return value is the whole point: the environment refuses a rule a node does not
+            // accept, and a decision counted without reading it is a decision nobody made.
+            if (!session.setMergeRuleToSubtree(nodeId, rule))
+            {
+                outcome.decisionsRefused++;
+                if (outcome.decisionsNote == null)
+                {
+                    outcome.decisionsNote = "the environment refused " + rule.name() + " for " //$NON-NLS-1$ //$NON-NLS-2$
+                        + decision.object + describeAvailable(session, nodeId);
+                }
+                continue;
+            }
             if (target != null)
             {
                 target.decision = rule.name();
@@ -707,6 +879,46 @@ public final class BmComparisonHelper
      * @param name what the caller wrote.
      * @return the rule
      */
+    /**
+     * Names the rules a node will accept, for a refusal message.
+     * <p>
+     * A refusal without the alternatives sends the caller guessing through six rule names. The
+     * environment already knows which ones this node allows.
+     * </p>
+     *
+     * @param session the comparison session.
+     * @param nodeId the node the rule was refused for.
+     * @return a readable tail for the refusal, empty when the node will not say
+     */
+    private static String describeAvailable(IComparisonSession session, long nodeId)
+    {
+        try
+        {
+            ComparisonNode node = session.getNode(nodeId);
+            MergeSettings settings = node == null ? null : node.getMergeSettings();
+            if (settings == null || settings.getAvailableMergeRules() == null
+                || settings.getAvailableMergeRules().isEmpty())
+            {
+                return ". That node accepts no merge rule at all."; //$NON-NLS-1$
+            }
+            StringBuilder allowed = new StringBuilder();
+            for (MergeRule rule : settings.getAvailableMergeRules())
+            {
+                if (allowed.length() > 0)
+                {
+                    allowed.append('/');
+                }
+                allowed.append(rule.name());
+            }
+            return ". That node accepts: " + allowed; //$NON-NLS-1$
+        }
+        catch (RuntimeException | LinkageError silent)
+        {
+            Activator.logDebug("comparison: node would not list its rules: " + silent); //$NON-NLS-1$
+            return ""; //$NON-NLS-1$
+        }
+    }
+
     /**
      * Finds the node of a named object anywhere in the comparison.
      * <p>
@@ -1221,7 +1433,7 @@ public final class BmComparisonHelper
      * @param outcome the answer being built.
      */
     private static void read(IComparisonManager manager, ComparisonProcessHandle handle,
-        Outcome outcome)
+        Outcome outcome, Page page)
     {
         IComparisonSession session = manager.getComparisonSession(handle);
         if (session == null)
@@ -1232,7 +1444,7 @@ public final class BmComparisonHelper
         ComparisonNode root = session.getRootNode();
         if (root != null)
         {
-            walk(root, outcome);
+            walk(root, outcome, page);
         }
         readProblems(manager, handle, outcome);
     }
@@ -1481,7 +1693,7 @@ public final class BmComparisonHelper
         }
     }
 
-    private static void walk(ComparisonNode node, Outcome outcome)
+    private static void walk(ComparisonNode node, Outcome outcome, Page page)
     {
         outcome.nodes++;
         boolean oneSided = node.isOneSideNode();
@@ -1511,13 +1723,21 @@ public final class BmComparisonHelper
                 || change.other != null && !change.other.isEmpty()
                 || change.ancestor != null && !change.ancestor.isEmpty() || change.note != null)
             {
-                // Counted whole, listed only up to the cap. A census that shrank with the
-                // list would understate the update, which is the one thing these numbers
-                // must not do.
+                // Counted whole, listed by the page. A census that shrank with the page would
+                // understate the update, which is the one thing these numbers must not do.
                 countAttribution(outcome, change.changedBy);
-                if (outcome.changed.size() < CHANGED_LIMIT)
+                if (page.wants(change))
                 {
-                    outcome.changed.add(change);
+                    outcome.changedMatching++;
+                    if (outcome.changedMatching > page.offset
+                        && outcome.changed.size() < page.limit)
+                    {
+                        outcome.changed.add(change);
+                    }
+                    else if (outcome.changed.size() >= page.limit)
+                    {
+                        outcome.moreChanged = true;
+                    }
                 }
             }
         }
@@ -1529,7 +1749,7 @@ public final class BmComparisonHelper
         {
             if (child != null)
             {
-                walk(child, outcome);
+                walk(child, outcome, page);
             }
         }
     }
