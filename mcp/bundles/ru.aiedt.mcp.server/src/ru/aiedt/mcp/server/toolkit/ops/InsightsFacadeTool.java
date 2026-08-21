@@ -229,6 +229,12 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_three_way: compare the sides even when they do not identify as the same " //$NON-NLS-1$
                     + "configuration in different versions. Off by default: a wrong ancestor " //$NON-NLS-1$
                     + "inverts every changedBy without failing.") //$NON-NLS-1$
+            .booleanProperty("closeSession", //$NON-NLS-1$
+                "compare_three_way: close the comparison after answering instead of " //$NON-NLS-1$
+                    + "keeping it open for the next page. Off by default, because a " //$NON-NLS-1$
+                    + "comparison of two configurations takes minutes and paging would " //$NON-NLS-1$
+                    + "otherwise cost one per page. Pass it on the last call: an open " //$NON-NLS-1$
+                    + "comparison holds the comparison store of the environment.") //$NON-NLS-1$
             .build();
     }
 

@@ -6,6 +6,9 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -13,6 +16,9 @@ import java.util.Map;
 
 import org.eclipse.core.runtime.Platform;
 
+import ru.aiedt.mcp.server.support.BmSupportRegistryHelper;
+import ru.aiedt.mcp.server.support.SupportSnapshot;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -21,10 +27,11 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 /**
  * Reads what a configuration on vendor support is allowed to have done to it.
  * <p>
- * Three operations, all read-only. {@code status} says which vendor configurations this one
+ * Four of the five operations only read. {@code status} says which vendor configurations this one
  * descends from and how its objects are distributed across support modes; {@code list_objects}
  * names the objects in a given mode; {@code object_mode} answers for one object, including the
- * objects the environment would require to change alongside it.
+ * objects the environment would require to change alongside it; {@code snapshot_modes} writes the
+ * whole per-object map to a file. {@code restore_modes} is the one that changes the configuration.
  * </p>
  * <p>
  * <b>A mode is a declared setting, not a measurement.</b> {@code CHANGES_ALLOWED} records that the
@@ -35,8 +42,12 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * {@code CHANGES_NOT_ALLOWED} is overwritten by the next vendor update.
  * </p>
  * <p>
- * <b>Nothing here writes.</b> Changing a support mode is a separate operation with its own
- * confirmation, because it decides what a vendor update is allowed to overwrite.
+ * <b>One operation writes, and only when asked twice.</b> {@code restore_modes} puts modes back the
+ * way a snapshot recorded them, and reports what it would do unless {@code apply=true}. It exists
+ * because a merge takes the support model from the delivery and no merge rule prevents that -
+ * measured on a stand - so the modes a person set are lost by an ordinary update. A snapshot taken
+ * beforehand is the only thing that makes that reversible, which is why {@code compare_three_way}
+ * writes one into the project before every merge.
  * </p>
  */
 public class SupportRegistryTool
@@ -72,9 +83,13 @@ public class SupportRegistryTool
             + "rules the environment applies on the next update, and the mode of any single " //$NON-NLS-1$
             + "object together with the objects the environment requires to change with it. " //$NON-NLS-1$
             + "Operations: " //$NON-NLS-1$
-            + "status, list_objects, object_mode, help. A mode records what was declared for an " //$NON-NLS-1$
-            + "object, not whether the object was modified - use compare_three_way for that. " //$NON-NLS-1$
-            + "Read-only: nothing here changes a mode."; //$NON-NLS-1$
+            + "status, list_objects, object_mode, snapshot_modes, restore_modes, help. A mode " //$NON-NLS-1$
+            + "records what was declared for an object, not whether the object was modified - " //$NON-NLS-1$
+            + "use compare_three_way for that. snapshot_modes writes down which object held " //$NON-NLS-1$
+            + "which mode, which is what makes a merge reversible: an update takes the support " //$NON-NLS-1$
+            + "model from the delivery and no merge rule prevents it. restore_modes puts them " //$NON-NLS-1$
+            + "back, and is the only operation here that changes anything - it reports what it " //$NON-NLS-1$
+            + "would do unless apply=true."; //$NON-NLS-1$
     }
 
     @Override
@@ -82,8 +97,8 @@ public class SupportRegistryTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "status / list_objects / object_mode / help. Pass operation=help without other " //$NON-NLS-1$
-                    + "parameters for the catalog.", true) //$NON-NLS-1$
+                "status / list_objects / object_mode / snapshot_modes / restore_modes / help. " //$NON-NLS-1$
+                    + "Pass operation=help without other parameters for the catalog.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
@@ -104,6 +119,13 @@ public class SupportRegistryTool
                 "list_objects: how many matching objects to skip. Default 0.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "list_objects: how many to return. Default and maximum 500.") //$NON-NLS-1$
+            .stringProperty("snapshotPath", //$NON-NLS-1$
+                "snapshot_modes: absolute path to write the snapshot to. restore_modes: the " //$NON-NLS-1$
+                    + "snapshot to restore from - required. compare_three_way writes one into " //$NON-NLS-1$
+                    + "the project's .settings before every merge and names it in its answer.") //$NON-NLS-1$
+            .booleanProperty("apply", //$NON-NLS-1$
+                "restore_modes: write the recorded modes back. Default false, which reports " //$NON-NLS-1$
+                    + "what would be written and changes nothing.") //$NON-NLS-1$
             .build();
     }
 
@@ -152,6 +174,10 @@ public class SupportRegistryTool
                 return listObjects(projectName, params);
             case "object_mode": //$NON-NLS-1$
                 return objectMode(projectName, params);
+            case "snapshot_modes": //$NON-NLS-1$
+                return snapshotModes(projectName, params);
+            case "restore_modes": //$NON-NLS-1$
+                return restoreModes(projectName, params);
             default:
                 return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
             }
@@ -287,6 +313,124 @@ public class SupportRegistryTool
             .toJson();
     }
 
+    /**
+     * Writes down which object holds which support mode.
+     *
+     * @param projectName the project to read.
+     * @param params the call, which must name where to write.
+     * @return the answer as JSON
+     */
+    private static String snapshotModes(String projectName, Map<String, String> params)
+    {
+        String where = JsonUtils.extractStringArgument(params, "snapshotPath"); //$NON-NLS-1$
+        if (where == null || where.isBlank())
+        {
+            return ToolResult.error("snapshotPath is required: a snapshot that is not written " //$NON-NLS-1$
+                + "down dies with the call, and the modes it recorded with it.").toJson(); //$NON-NLS-1$
+        }
+        SupportSnapshot snapshot = BmSupportRegistryHelper.snapshot(projectName);
+        if (snapshot.cannotTell != null)
+        {
+            return ToolResult.error(snapshot.cannotTell).toJson();
+        }
+        try
+        {
+            Path path = Paths.get(where.trim());
+            snapshot.write(path);
+            return ToolResult.success()
+                .put("projectName", projectName) //$NON-NLS-1$
+                .put("snapshotPath", path.toString()) //$NON-NLS-1$
+                .put("entries", snapshot.entries()) //$NON-NLS-1$
+                .put("vendorConfigurations", snapshot.parents.size()) //$NON-NLS-1$
+                // Subordinate entities carry their own support records and are not indexed by
+                // name, so they are counted here rather than dropped: a restore cannot set a mode
+                // on an object it cannot find, and a snapshot that hid that would look complete.
+                .put("notInTheConfiguration", snapshot.unresolved) //$NON-NLS-1$
+                .toJson();
+        }
+        catch (IOException | RuntimeException cannotWrite)
+        {
+            return ToolResult.error("the snapshot could not be written to " + where + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + cannotWrite).toJson();
+        }
+    }
+
+    /**
+     * Puts support modes back the way a snapshot recorded them.
+     *
+     * @param projectName the project to write to.
+     * @param params the call, which must name the snapshot.
+     * @return the answer as JSON
+     */
+    private static String restoreModes(String projectName, Map<String, String> params)
+    {
+        String where = JsonUtils.extractStringArgument(params, "snapshotPath"); //$NON-NLS-1$
+        if (where == null || where.isBlank())
+        {
+            return ToolResult.error("snapshotPath is required: restoring means putting back what " //$NON-NLS-1$
+                + "a snapshot recorded, so there is nothing to do without one.").toJson(); //$NON-NLS-1$
+        }
+        boolean apply = JsonUtils.extractBooleanArgument(params, "apply", false); //$NON-NLS-1$
+        if (apply)
+        {
+            // The preset gate works by tool name, and this tool sits in a reading group that
+            // Read-only deliberately leaves on - an auditor under that preset still wants to read
+            // support state. So the writing ARGUMENT is gated on a canonical writer instead.
+            // Without this, "Read-only changes nothing" would stop being true through a flag.
+            String forbidden = ToolGate.gateIfPresetDisabled("write_module_source"); //$NON-NLS-1$
+            if (forbidden != null)
+            {
+                return ToolResult.error("apply=true writes the support model of the project, and " //$NON-NLS-1$
+                    + "the active preset does not allow writing. " + forbidden).toJson(); //$NON-NLS-1$
+            }
+        }
+        SupportSnapshot before;
+        try
+        {
+            before = SupportSnapshot.read(Paths.get(where.trim()));
+        }
+        catch (IOException | RuntimeException cannotRead)
+        {
+            return ToolResult.error("the snapshot could not be read from " + where + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + cannotRead).toJson();
+        }
+        if (before.cannotTell != null)
+        {
+            return ToolResult.error(before.cannotTell).toJson();
+        }
+        BmSupportRegistryHelper.Restore restore =
+            BmSupportRegistryHelper.restore(projectName, before, apply);
+        if (restore.cannotTell != null)
+        {
+            return ToolResult.error(restore.cannotTell).toJson();
+        }
+        ToolResult result = ToolResult.success()
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("snapshotPath", where.trim()) //$NON-NLS-1$
+            .put("applied", restore.applied) //$NON-NLS-1$
+            .put("restored", restore.restored) //$NON-NLS-1$
+            .put("refused", restore.refused) //$NON-NLS-1$
+            .put("notInTheConfiguration", restore.missing) //$NON-NLS-1$
+            .put("writeRoute", restore.writeRoute); //$NON-NLS-1$
+        if (restore.drift != null)
+        {
+            // Three groups, because only one of them is damage. Objects that survived and lost
+            // their mode are work no longer marked as ours; objects the delivery brought take the
+            // default from the update rules; objects the update removed can take no mode at all.
+            result.put("changed", restore.drift.changed) //$NON-NLS-1$
+                .put("changedCount", restore.drift.changed.size()) //$NON-NLS-1$
+                .put("arrived", restore.drift.arrived) //$NON-NLS-1$
+                .put("gone", restore.drift.gone) //$NON-NLS-1$
+                .put("vendorConfigurationsMatched", restore.drift.parentsMatched) //$NON-NLS-1$
+                .put("vendorConfigurationsGone", restore.drift.parentsGone) //$NON-NLS-1$
+                .put("vendorConfigurationsNew", restore.drift.parentsNew); //$NON-NLS-1$
+        }
+        return result.put("note", apply //$NON-NLS-1$
+            ? "the support model was written" //$NON-NLS-1$
+            : "nothing was written - pass apply=true to put these modes back") //$NON-NLS-1$
+            .toJson();
+    }
+
     private static String buildHelp(String topic)
     {
         topic = JsonUtils.normalizeOperationToken(topic);
@@ -301,6 +445,11 @@ public class SupportRegistryTool
             sb.append("- **object_mode** - one object: its mode per vendor, whether the " //$NON-NLS-1$
                 + "environment lets it be edited or deleted, and which objects it requires " //$NON-NLS-1$
                 + "to change with it.\n"); //$NON-NLS-1$
+            sb.append("- **snapshot_modes** - writes every object and its mode to a file. " //$NON-NLS-1$
+                + "Take one before any update: a merge takes the support model from the " //$NON-NLS-1$
+                + "delivery, and this file is the only route back.\n"); //$NON-NLS-1$
+            sb.append("- **restore_modes** - puts the recorded modes back. Reports what it " //$NON-NLS-1$
+                + "would do unless apply=true. THIS ONE WRITES.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=modes for what the modes mean, " //$NON-NLS-1$
                 + "topic=workflow for the operation picker.\n"); //$NON-NLS-1$
             return sb.toString();
@@ -336,6 +485,11 @@ public class SupportRegistryTool
                 + "(userMode=CHANGES_ALLOWED) |\n"); //$NON-NLS-1$
             sb.append("| Why this object cannot be edited | object_mode |\n"); //$NON-NLS-1$
             sb.append("| Which objects change with it | object_mode, field dependents |\n"); //$NON-NLS-1$
+            sb.append("| Record the modes before an update | snapshot_modes |\n"); //$NON-NLS-1$
+            sb.append("| See what an update did to the modes | restore_modes without " //$NON-NLS-1$
+                + "apply - it reports the difference and writes nothing |\n"); //$NON-NLS-1$
+            sb.append("| Put the modes back after an update | restore_modes apply=true |" //$NON-NLS-1$
+                + "\n"); //$NON-NLS-1$
             return sb.toString();
         }
         return "# Unknown topic '" + topic + "'.\n\nAvailable: modes, workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
@@ -344,7 +498,8 @@ public class SupportRegistryTool
     private static Map<String, String> buildOpsCatalog()
     {
         Map<String, String> m = new LinkedHashMap<>();
-        for (String op : Arrays.asList("status", "list_objects", "object_mode")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        for (String op : Arrays.asList("status", "list_objects", "object_mode", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "snapshot_modes", "restore_modes")) //$NON-NLS-1$ //$NON-NLS-2$
         {
             m.put(op, op);
         }
