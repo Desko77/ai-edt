@@ -115,4 +115,41 @@ public class AttributionRuleTest
             + "would put an object into a review queue for no reason",
             AttributionRule.UNKNOWN, AttributionRule.forTwoSided(false, false, false));
     }
+
+    /**
+     * Unreadable is not unchanged, and answering VENDOR for it deletes customisations.
+     * <p>
+     * The path: an object present on our side, existing in the ancestor, whose comparison flags the
+     * environment will not produce. Answering "unchanged" names it VENDOR, and VENDOR keeps it out
+     * of the list an update is held back by AND out of what blocks an unchanged-configuration
+     * update - so the object is removed and appears in neither the protection list nor the
+     * refusals. BOTH costs a decision by hand; the alternative costs the object.
+     * </p>
+     */
+    @Test
+    public void anUnreadableSurvivorIsAConflictRatherThanTheVendors()
+    {
+        assertEquals(AttributionRule.BOTH, AttributionRule.forOneSided(true, true, null));
+        assertEquals(AttributionRule.BOTH, AttributionRule.forOneSided(false, true, null));
+    }
+
+    @Test
+    public void aReadableUnchangedSurvivorStillAnswersBySide()
+    {
+        // The fix must not swallow the ordinary answer: when the flags DO say "unchanged", a
+        // one-sided object is exactly what its side makes it.
+        assertEquals(AttributionRule.VENDOR,
+            AttributionRule.forOneSided(true, true, Boolean.FALSE));
+        assertEquals(AttributionRule.OURS,
+            AttributionRule.forOneSided(false, true, Boolean.FALSE));
+    }
+
+    @Test
+    public void withoutAnAncestorNothingIsAskedOfTheSurvivor()
+    {
+        // No ancestor means nothing to conflict with, so the third argument decides nothing - and
+        // a null there must not reach the conflict branch and turn a plainly new object into one.
+        assertEquals(AttributionRule.OURS, AttributionRule.forOneSided(true, false, null));
+        assertEquals(AttributionRule.VENDOR, AttributionRule.forOneSided(false, false, null));
+    }
 }

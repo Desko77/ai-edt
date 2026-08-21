@@ -51,6 +51,7 @@ import ru.aiedt.mcp.server.workbench.NavigatorToolbarTweaker;
 import ru.aiedt.mcp.server.support.BmComparisonHelper;
 import ru.aiedt.mcp.server.support.ComparisonSessions;
 import ru.aiedt.mcp.server.support.DebugLog;
+import ru.aiedt.mcp.server.support.IdleComparisonSweep;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
@@ -214,6 +215,8 @@ public class Activator
         // And for the update watcher: a preference listener and a job that may be waiting on a
         // socket, either of which would keep this classloader alive past the bundle.
         ReleaseSweep.get().shutdown();
+        // Before closing what is open, so a tick cannot land on a registry being emptied.
+        IdleComparisonSweep.shutdown();
         closeOpenComparisons();
 
         logInfo("AI-EDT plugin stopped"); //$NON-NLS-1$
