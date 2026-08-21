@@ -284,7 +284,22 @@ public class ExtensionDiffTool implements IMcpTool
         try
         {
             Object type = attribute.getClass().getMethod("getType").invoke(attribute); //$NON-NLS-1$
-            return type != null ? type.toString() : null;
+            if (type == null)
+            {
+                return null;
+            }
+            // By name, never by toString. A TypeDescription answers toString with its identity, so
+            // two instances describing the very same type render differently and compare unequal -
+            // measured on an untouched extension, where every borrowed attribute came back as
+            // having changed type. Sorted, so the same set of types always renders the same way.
+            java.util.List<String> names = new java.util.ArrayList<>(
+                ru.aiedt.mcp.server.support.BmDefinedTypeHelper.readTypeDescriptionNames(type));
+            if (names.isEmpty())
+            {
+                return null;
+            }
+            java.util.Collections.sort(names);
+            return String.join(", ", names); //$NON-NLS-1$
         }
         catch (Exception e)
         {

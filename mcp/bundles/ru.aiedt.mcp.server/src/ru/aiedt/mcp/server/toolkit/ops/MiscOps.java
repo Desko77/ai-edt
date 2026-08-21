@@ -355,7 +355,11 @@ final class MiscOps
      */
     static String composeChildFqn(String op, String fqn, Map<String, String> params)
     {
-        if (!"adopt_child".equals(op) && !"adopt_form_item".equals(op)) //$NON-NLS-1$ //$NON-NLS-2$
+        // Both spellings. The facade calls it borrow_child and edit_metadata calls it adopt_child,
+        // and the composition is about the shape of the call rather than the word for it - which is
+        // how the first fix landed on one route and left the other exactly as broken.
+        if (!"adopt_child".equals(op) && !"adopt_form_item".equals(op) //$NON-NLS-1$ //$NON-NLS-2$
+            && !"borrow_child".equals(op) && !"borrow_form_item".equals(op)) //$NON-NLS-1$ //$NON-NLS-2$
         {
             return fqn;
         }
