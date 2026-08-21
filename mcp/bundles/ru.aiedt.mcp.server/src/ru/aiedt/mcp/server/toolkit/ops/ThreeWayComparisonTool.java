@@ -372,19 +372,23 @@ public class ThreeWayComparisonTool
         {
             return ToolResult.error(outcome.cannotTell)
                 .put("threeWay", outcome.threeWay) //$NON-NLS-1$
-            // A reporting comparison stays open under this key, so the next page costs nothing;
-            // reused says whether this answer came from an open one or from a fresh comparison.
-            // Empty after a merge: the merge writes into the project, so the comparison no longer
-            // describes it, and holding it open leaves a transaction on the comparison store that
-            // the environment waits for when somebody closes EDT.
-            .put("sessionKey", outcome.sessionKey) //$NON-NLS-1$
-            .put("sessionReused", outcome.sessionReused) //$NON-NLS-1$
                 .put("status", outcome.status) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
             .put("threeWay", outcome.threeWay) //$NON-NLS-1$
             .put("status", outcome.status) //$NON-NLS-1$
+            // A reporting comparison stays open under this key, so the next page costs nothing;
+            // reused says whether this answer came from an open one or from a fresh comparison.
+            // Absent after a merge: the merge writes into the project, so the comparison no longer
+            // describes it, and holding it open leaves a transaction on the comparison store that
+            // the environment waits for when somebody closes EDT.
+            //
+            // These two used to sit in the refusal above, where a session key is of no use to
+            // anybody - a comparison that failed has nothing to page through. The whole suite was
+            // green and every live answer came back without a key.
+            .put("sessionKey", outcome.sessionKey) //$NON-NLS-1$
+            .put("sessionReused", outcome.sessionReused) //$NON-NLS-1$
             // What the sides turned out to be, read from the configurations themselves. A caller
             // who mistyped a path sees it here rather than in an inverted attribution.
             .put("otherIs", outcome.otherIs) //$NON-NLS-1$

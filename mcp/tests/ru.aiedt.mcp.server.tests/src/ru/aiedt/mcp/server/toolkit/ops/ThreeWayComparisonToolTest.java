@@ -365,6 +365,30 @@ public class ThreeWayComparisonToolTest
             new ThreeWayComparisonTool().getInputSchema().contains("REPORT (default)")); //$NON-NLS-1$
     }
 
+    /**
+     * The key that lets a caller ask a second question has to reach the answer that has a session.
+     * <p>
+     * It did not. The two session fields were emitted in the refusal branch, where a comparison
+     * that failed has nothing to page through, and every successful answer came back without a
+     * key - so paging silently cost a fresh comparison each time. The whole suite was green;
+     * a single live call found it. This test pins the position, not the value.
+     * </p>
+     */
+    @Test
+    public void theSessionKeyIsReportedWhereThereIsASession()
+    {
+        String failed = new ThreeWayComparisonTool()
+            .execute(args("projectName", "P", "otherPath", "no such directory")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertTrue(failed, failed.contains("\"success\":false")); //$NON-NLS-1$
+        assertFalse("a comparison that never ran has no session to hand back, and a key there " //$NON-NLS-1$
+            + "would invite a caller to page through nothing: " + failed,
+            failed.contains("sessionReused")); //$NON-NLS-1$
+
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("and the caller has to be able to ask for it to be closed", //$NON-NLS-1$
+            schema.contains("closeSession")); //$NON-NLS-1$
+    }
+
     /** No decisions at all is not an error - the tool's ordinary use is to read. */
     @Test
     public void noDecisionsIsNotARefusal()

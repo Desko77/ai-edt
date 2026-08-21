@@ -487,6 +487,16 @@ public final class BmComparisonHelper
         public final List<String> scopeRequested = new ArrayList<>();
 
         /**
+         * Every top node the comparison produced, when the comparison was narrowed.
+         * <p>
+         * Collected only under a scope, where it is bounded by what was asked for. It is the
+         * evidence a requested name landed: the environment's own scope object hands back the
+         * names it was given, misspellings included, so it cannot answer this.
+         * </p>
+         */
+        public final transient java.util.Set<String> namesInTree = new java.util.HashSet<>();
+
+        /**
          * Requested names the environment did not recognise.
          * <p>
          * The reason this is reported rather than logged: a narrowed comparison whose names are
@@ -703,7 +713,11 @@ public final class BmComparisonHelper
         if (mainProjectName == null || mainProjectName.isEmpty() || otherPath == null
             || otherPath.isEmpty())
         {
-            outcome.cannotTell = "mainProjectName and otherPath are required"; //$NON-NLS-1$
+            // Named as the schema names them. The refusal used to carry the internal parameter
+            // name, which is in no schema and no client - so a caller reading it went looking for
+            // something that does not exist. Caught on a stand, by a probe that had passed the
+            // right arguments under the right names.
+            outcome.cannotTell = "projectName and otherPath are required"; //$NON-NLS-1$
             return outcome;
         }
         // Both live outside the try so that the finally can reach them. Everything the comparison
@@ -1231,10 +1245,12 @@ public final class BmComparisonHelper
         }
         try
         {
-            List<String> ran = scope.getScope(ComparisonSide.MAIN);
+            // Judged against the tree the comparison actually built. Asking the scope object was
+            // measured and is useless: it returns the names it was handed, a misspelling included,
+            // so a scope of names that exist nowhere compared nothing and reported no differences.
             for (String asked : outcome.scopeRequested)
             {
-                if (ran == null || !ran.contains(asked))
+                if (!outcome.namesInTree.contains(asked))
                 {
                     outcome.scopeUnrecognised.add(asked);
                 }
@@ -2294,6 +2310,25 @@ public final class BmComparisonHelper
      * @param oneSided whether it exists on one side only.
      * @return the description
      */
+    /**
+     * Names a top node on one side, without letting a node that will not answer stop the walk.
+     *
+     * @param node the node.
+     * @param side the side to name it on.
+     * @return the name, or <code>null</code> when the node has none there
+     */
+    private static String symlinkOf(TopComparisonNode node, ComparisonSide side)
+    {
+        try
+        {
+            return node.getSymlink(side);
+        }
+        catch (RuntimeException | LinkageError cannotName)
+        {
+            return null;
+        }
+    }
+
     private static Change describeChange(TopComparisonNode node, boolean oneSided,
         boolean threeWay)
     {
@@ -2497,6 +2532,19 @@ public final class BmComparisonHelper
         // WHICH objects moved and on whose side. Only the top nodes are named: those are the
         // metadata objects, and the nodes below them are the fields and members that make one
         // object differ - listing those would bury the answer in its own detail.
+        if (node instanceof TopComparisonNode && !outcome.scopeRequested.isEmpty())
+        {
+            TopComparisonNode top = (TopComparisonNode)node;
+            for (ComparisonSide side : new ComparisonSide[] {ComparisonSide.MAIN,
+                ComparisonSide.OTHER, ComparisonSide.COMMON_ANCESTOR})
+            {
+                String named = symlinkOf(top, side);
+                if (named != null && !named.isEmpty())
+                {
+                    outcome.namesInTree.add(named);
+                }
+            }
+        }
         if ((oneSided || differs) && node instanceof TopComparisonNode)
         {
             Change change =
