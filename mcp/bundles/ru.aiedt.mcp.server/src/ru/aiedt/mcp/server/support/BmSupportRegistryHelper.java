@@ -270,6 +270,20 @@ public final class BmSupportRegistryHelper
 
         /** Which form of the environment's write method was found, for the report. */
         public String writeRoute;
+
+        /**
+         * Where the modes as they stood BEFORE this restore were written down.
+         * <p>
+         * A restore is itself a write, and a restore from the wrong file is a way to lose the
+         * modes just as thoroughly as the update it was undoing. So the state it is about to
+         * replace is recorded first, and the path comes back with the answer: without it a restore
+         * that turns out to be wrong has nowhere to go.
+         * </p>
+         */
+        public String undoSnapshotFile;
+
+        /** Why the state before the restore could not be recorded. Present only on failure. */
+        public String undoSnapshotNote;
     }
 
     /**
@@ -318,8 +332,50 @@ public final class BmSupportRegistryHelper
                 + "there is nothing to write modes onto"; //$NON-NLS-1$
             return restore;
         }
+        // Recorded before anything is written, and a failure to record refuses the restore. A
+        // partial restore with no note of what it replaced is a state with no way out, which is
+        // the outcome this whole stage exists to prevent.
+        keepUndo(projectName, now, before, restore);
+        if (restore.undoSnapshotNote != null)
+        {
+            restore.cannotTell = "nothing was written: " + restore.undoSnapshotNote; //$NON-NLS-1$
+            return restore;
+        }
         write(project, before, now, restore);
         return restore;
+    }
+
+    /**
+     * Writes down what the restore is about to replace, beside the snapshot it restores from.
+     *
+     * @param projectName the project.
+     * @param now the modes as they stand.
+     * @param from the snapshot being restored, whose path decides where this one goes.
+     * @param restore where to record the path or the reason there is none.
+     */
+    private static void keepUndo(String projectName, SupportSnapshot now, SupportSnapshot from,
+        Restore restore)
+    {
+        if (now == null || now.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            java.nio.file.Path beside = from != null && from.sourcePath != null
+                ? java.nio.file.Paths.get(from.sourcePath)
+                : java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), //$NON-NLS-1$
+                    projectName + "-modes.tsv"); //$NON-NLS-1$
+            String name = beside.getFileName().toString();
+            java.nio.file.Path undo = beside.resolveSibling(name + ".before-restore.tsv"); //$NON-NLS-1$
+            now.write(undo);
+            restore.undoSnapshotFile = undo.toString();
+        }
+        catch (java.io.IOException | RuntimeException cannotKeep)
+        {
+            restore.undoSnapshotNote = "the modes as they stand could not be written down, so " //$NON-NLS-1$
+                + "this restore would have no way back: " + cannotKeep; //$NON-NLS-1$
+        }
     }
 
     /**

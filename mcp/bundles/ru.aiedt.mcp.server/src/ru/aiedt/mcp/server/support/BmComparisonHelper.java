@@ -862,6 +862,12 @@ public final class BmComparisonHelper
             // point is that nothing changes.
             if (intent != null && intent != Intent.REPORT)
             {
+                String unsettled = whyNotSettled();
+                if (unsettled != null)
+                {
+                    outcome.mergeRefused = unsettled;
+                    return outcome;
+                }
                 // Measured either side of the merge. The merge cannot be stopped from touching
                 // support settings - that was tried and does not work - so the honest thing left
                 // is to say what it did to them.
@@ -875,6 +881,14 @@ public final class BmComparisonHelper
                 // exists only in this call dies with it, and the modes it recorded are then
                 // unrecoverable - which is the exact loss the snapshot exists to undo.
                 keepSnapshot(mainProjectName, supportBefore, outcome);
+                if (outcome.supportSnapshotNote != null)
+                {
+                    // The one precondition that is worth stopping for. Everything else this call
+                    // does can be repeated; a support model overwritten with no record of what it
+                    // held cannot be put back by anything.
+                    outcome.mergeRefused = "no merge was run: " + outcome.supportSnapshotNote; //$NON-NLS-1$
+                    return outcome;
+                }
                 merge(manager, handle, batch, intent, outcome);
                 censusSupport(mainProjectName, outcome.supportModesAfter);
                 outcome.supportModesChanged =
@@ -1643,6 +1657,45 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Says why an irreversible operation should not start yet.
+     * <p>
+     * A workspace still indexing or building is one whose model is moving. A merge measured
+     * against a moving model reports counts that were true a moment ago, and it writes on that
+     * basis - which is the same defect as a success nobody verified, only harder to see.
+     * </p>
+     * <p>
+     * <b>What this does NOT check, stated rather than implied:</b> whether a person has unsaved
+     * work open in an editor. Reaching into the workbench to find out is exactly the kind of thing
+     * that interrupts somebody mid-sentence, and this server has paid for that before. A merge run
+     * while an editor holds unsaved changes is a case a person has to avoid; the tool cannot see
+     * it and does not pretend to.
+     * </p>
+     *
+     * @return the reason to wait, or <code>null</code> when the workspace has settled
+     */
+    private static String whyNotSettled()
+    {
+        try
+        {
+            if (!WorkspacePhase.busy())
+            {
+                return null;
+            }
+            return "no merge was run: the workspace is " + WorkspacePhase.current() //$NON-NLS-1$
+                + ", so its model is still moving. A merge decided against counts taken from a " //$NON-NLS-1$
+                + "moving model writes on the strength of numbers that were true a moment ago. " //$NON-NLS-1$
+                + "Wait for it to settle and ask again."; //$NON-NLS-1$
+        }
+        catch (RuntimeException | LinkageError cannotTell)
+        {
+            // Not knowing is not a reason to stop: the check is a guard, and a guard that refuses
+            // when it cannot see would block every merge on an install it does not understand.
+            Activator.logDebug("comparison: the workspace phase could not be read: " + cannotTell); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
      * Writes the pre-merge snapshot into the project, where a restore can find it.
      * <p>
      * Beside the plugin's other project state in {@code .settings}, and stamped with the time so a
@@ -1677,6 +1730,10 @@ public final class BmComparisonHelper
         }
         catch (IOException | RuntimeException cannotKeep)
         {
+            // A refusal, not a note. The snapshot is the only way back from a merge that takes the
+            // support model from the delivery; going ahead without one means the loss is
+            // unrecoverable, and a caller reading a note beside a successful merge will not
+            // discover that until they need the file.
             outcome.supportSnapshotNote = "the support modes could not be written down before the " //$NON-NLS-1$
                 + "merge, so anything the merge overwrites cannot be put back: " + cannotKeep; //$NON-NLS-1$
         }
