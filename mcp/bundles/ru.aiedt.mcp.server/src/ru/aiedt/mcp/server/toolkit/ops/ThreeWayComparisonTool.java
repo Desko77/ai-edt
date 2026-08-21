@@ -121,7 +121,9 @@ public class ThreeWayComparisonTool
                     + "in massRefused and massMismatched. The object is named as this tool " //$NON-NLS-1$
                     + "names it in changed; " //$NON-NLS-1$
                     + "the rule is one of GET_FROM_OTHER, DO_NOT_MERGE, MERGE_PRIORITIZING_MAIN, " //$NON-NLS-1$
-                    + "MERGE_PRIORITIZING_OTHER, CUSTOM_MERGE, MERGE_USING_EXTERNAL_TOOL. " //$NON-NLS-1$
+                    + "MERGE_PRIORITIZING_OTHER, MERGE_USING_EXTERNAL_TOOL. CUSTOM_MERGE is " //$NON-NLS-1$
+                    + "refused: it composes the result in the merge editor, and measured from " //$NON-NLS-1$
+                    + "here it is accepted, reports success and changes nothing. " //$NON-NLS-1$
                     + "Recorded on the comparison, and applied only when intent says to.") //$NON-NLS-1$
             .stringProperty("decisionsPath", //$NON-NLS-1$
                 "Absolute path to write the recorded decisions to, in the format EDT reads back " //$NON-NLS-1$

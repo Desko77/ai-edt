@@ -389,6 +389,25 @@ public class ThreeWayComparisonToolTest
             schema.contains("closeSession")); //$NON-NLS-1$
     }
 
+    /**
+     * A rule that cannot do anything from here is refused rather than accepted and ignored.
+     * <p>
+     * Measured: on a node the environment was willing to move, CUSTOM_MERGE was taken, the merge
+     * reported success and the content did not change. MERGE_USING_EXTERNAL_TOOL on the same node
+     * in the same state took the delivery's version, so it is not refused - over-refusing would
+     * remove a rule that works.
+     * </p>
+     */
+    @Test
+    public void aRuleThatNeedsAnEditorIsRefusedAndOneThatDoesNotIsKept()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("the refusal has to be discoverable before the call, not after a merge that " //$NON-NLS-1$
+            + "reported success and did nothing", schema.contains("CUSTOM_MERGE is ")); //$NON-NLS-1$
+        assertTrue("and the rule that does work must still be offered", //$NON-NLS-1$
+            schema.contains("MERGE_USING_EXTERNAL_TOOL")); //$NON-NLS-1$
+    }
+
     /** No decisions at all is not an error - the tool's ordinary use is to read. */
     @Test
     public void noDecisionsIsNotARefusal()
