@@ -429,6 +429,10 @@ public class ThreeWayComparisonTool
             .put("massDecided", outcome.massDecided) //$NON-NLS-1$
             .put("massRefused", outcome.massRefused) //$NON-NLS-1$
             .put("massMismatched", outcome.massMismatched) //$NON-NLS-1$
+            // Accepted and inert. On a node both sides changed the same way, asking for the
+            // delivery's version is taken, counted, and does nothing - measured on a stand - so an
+            // answer that reported only decided and merged would read as though it had arrived.
+            .put("decisionsWithoutEffect", outcome.decisionsWithoutEffect) //$NON-NLS-1$
             // What was asked for, what the environment did not recognise, and what it added on
             // its own. A narrowed comparison that quietly compared nothing is the failure these
             // three answer between them.

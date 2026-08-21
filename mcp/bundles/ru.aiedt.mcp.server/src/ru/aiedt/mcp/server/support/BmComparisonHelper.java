@@ -506,6 +506,19 @@ public final class BmComparisonHelper
          */
         public final List<String> scopeExtendedBy = new ArrayList<>();
 
+        /**
+         * Decisions the environment took and will not act on, named with what it will do instead.
+         * <p>
+         * Measured on a stand, and the reason this list exists: on a node the environment marks
+         * {@code mustBeMerged=false} - both sides changed the same lines - asking for the
+         * delivery's version does nothing. GET_FROM_OTHER and MERGE_PRIORITIZING_OTHER were both
+         * accepted, the merge reported success, and our side was kept. Without this list the
+         * answer says decided and merged, and a person reads that as the vendor's version having
+         * arrived.
+         * </p>
+         */
+        public final List<String> decisionsWithoutEffect = new ArrayList<>();
+
         /** True when there were more matches than one decision may cover. */
         public boolean matchingTruncated;
 
@@ -1134,6 +1147,7 @@ public final class BmComparisonHelper
             {
                 target.decision = rule.name();
             }
+            noteIfInert(session, nodeId, rule, decision.object, outcome);
             outcome.decided++;
         }
         if (path == null || path.isEmpty())
@@ -1320,6 +1334,7 @@ public final class BmComparisonHelper
                 }
                 continue;
             }
+            noteIfInert(session, nodeId, rule, nameOf(session, nodeId), outcome);
             outcome.massDecided++;
             applied++;
         }
@@ -1336,6 +1351,62 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Says when a decision the environment accepted will not move anything.
+     * <p>
+     * <b>Measured, not inferred.</b> On a stand, with a module both sides had changed on the same
+     * lines, the environment reported {@code mustBeMerged=false} and recommended DO_NOT_MERGE.
+     * Asking for GET_FROM_OTHER and then for MERGE_PRIORITIZING_OTHER was accepted both times, the
+     * merge finished with no problems, and the module kept our text. The same rules on a node the
+     * environment marked {@code mustBeMerged=true} did take the delivery's version, and on a
+     * module the two sides had changed in different places MERGE_PRIORITIZING_OTHER produced a
+     * genuine textual merge carrying both.
+     * </p>
+     * <p>
+     * So {@code mustBeMerged} is not advice about tidiness - it says whether the environment will
+     * move this node at all. A decision recorded against it is accepted, counted, and inert, and
+     * an answer reporting only "decided" and "merged" reads as though the delivery had arrived.
+     * </p>
+     *
+     * @param session the comparison.
+     * @param nodeId the node the rule was set on.
+     * @param rule the rule that was asked for.
+     * @param object how the caller named the object.
+     * @param outcome the answer being built.
+     */
+    private static void noteIfInert(IComparisonSession session, long nodeId, MergeRule rule,
+        String object, Outcome outcome)
+    {
+        if (rule != MergeRule.GET_FROM_OTHER && rule != MergeRule.MERGE_PRIORITIZING_OTHER)
+        {
+            return;
+        }
+        try
+        {
+            ComparisonNode node = session.getNode(nodeId);
+            MergeSettings settings = node == null ? null : node.getMergeSettings();
+            if (settings == null || settings.isMustBeMerged())
+            {
+                return;
+            }
+            if (outcome.decisionsWithoutEffect.size() >= PAGE_LIMIT)
+            {
+                return;
+            }
+            MergeRule instead = settings.getDefaultMergeRule();
+            outcome.decisionsWithoutEffect.add(object + ": " + rule.name() //$NON-NLS-1$
+                + " was recorded, but both sides changed the same content and the environment " //$NON-NLS-1$
+                + "will keep ours" //$NON-NLS-1$
+                + (instead == null ? "" : " - it proposes " + instead.name())); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        catch (RuntimeException | LinkageError willNotSay)
+        {
+            Activator.logDebug("comparison: a node would not say whether it must be merged: " //$NON-NLS-1$
+                + willNotSay);
+        }
+    }
+
+    /**
+     * Reads back the rule a node carries.    /**
      * Reads back the rule a node carries.
      *
      * @param session the comparison.
