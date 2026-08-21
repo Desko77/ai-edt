@@ -109,8 +109,14 @@ public class ThreeWayComparisonTool
                 "Directory holding the common ancestor (COMMON_ANCESTOR). Omit for a two-sided " //$NON-NLS-1$
                     + "comparison.") //$NON-NLS-1$
             .stringProperty("decisions", //$NON-NLS-1$
-                "What to do with individual objects, as a JSON array of {\"object\":\"...\"," //$NON-NLS-1$
-                    + "\"rule\":\"...\"}. The object is named as this tool names it in changed; " //$NON-NLS-1$
+                "What to do with objects, as a JSON array. An entry names one object - " //$NON-NLS-1$
+                    + "{\"object\":\"...\",\"rule\":\"...\"} - or a whole class of them - " //$NON-NLS-1$
+                    + "{\"select\":\"matching\",\"rule\":\"...\"}, which covers every object " //$NON-NLS-1$
+                    + "the filter arguments matched, so changedBy=OURS with select=matching is " //$NON-NLS-1$
+                    + "one call instead of thousands. The rule each object ends up carrying is " //$NON-NLS-1$
+                    + "read back from the comparison, and the ones that did not take are named " //$NON-NLS-1$
+                    + "in massRefused and massMismatched. The object is named as this tool " //$NON-NLS-1$
+                    + "names it in changed; " //$NON-NLS-1$
                     + "the rule is one of GET_FROM_OTHER, DO_NOT_MERGE, MERGE_PRIORITIZING_MAIN, " //$NON-NLS-1$
                     + "MERGE_PRIORITIZING_OTHER, CUSTOM_MERGE, MERGE_USING_EXTERNAL_TOOL. " //$NON-NLS-1$
                     + "Recorded on the comparison, and applied only when intent says to.") //$NON-NLS-1$
@@ -206,14 +212,24 @@ public class ThreeWayComparisonTool
                 }
                 com.google.gson.JsonObject entry = element.getAsJsonObject();
                 com.google.gson.JsonElement object = entry.get("object"); //$NON-NLS-1$
+                com.google.gson.JsonElement select = entry.get("select"); //$NON-NLS-1$
                 com.google.gson.JsonElement rule = entry.get("rule"); //$NON-NLS-1$
-                if (object == null || rule == null)
+                if (rule == null || object == null && select == null)
                 {
-                    throw new IllegalArgumentException(
-                        "every decision needs both object and rule: " + entry); //$NON-NLS-1$
+                    throw new IllegalArgumentException("every decision needs a rule and either " //$NON-NLS-1$
+                        + "an object or a select: " + entry); //$NON-NLS-1$
                 }
-                decisions.add(new BmComparisonHelper.Decision(object.getAsString(),
-                    rule.getAsString()));
+                if (object != null && select != null)
+                {
+                    // Refused rather than resolved by precedence. One entry naming both an object
+                    // and a class is a caller who meant one of them, and guessing which would
+                    // apply a rule to a set they did not ask for.
+                    throw new IllegalArgumentException("a decision names an object or a select, " //$NON-NLS-1$
+                        + "not both: " + entry); //$NON-NLS-1$
+                }
+                decisions.add(new BmComparisonHelper.Decision(
+                    object == null ? null : object.getAsString(),
+                    select == null ? null : select.getAsString(), rule.getAsString()));
             }
             return decisions;
         }
@@ -365,6 +381,12 @@ public class ThreeWayComparisonTool
             // call that records a decision returns a boolean, and counting calls instead of
             // answers would report a merge as decided when nothing was decided.
             .put("decisionsRefused", outcome.decisionsRefused) //$NON-NLS-1$
+            // A decision about a class reports what took, not how many calls were made. The two
+            // differ whenever the environment refuses a rule for a node, and the difference is
+            // the whole reason a mass assignment can be trusted at all.
+            .put("massDecided", outcome.massDecided) //$NON-NLS-1$
+            .put("massRefused", outcome.massRefused) //$NON-NLS-1$
+            .put("massMismatched", outcome.massMismatched) //$NON-NLS-1$
             // What the merge did to the vendor support settings, counted either side of it.
             // Not a promise that they were protected - that was tried and does not work.
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$

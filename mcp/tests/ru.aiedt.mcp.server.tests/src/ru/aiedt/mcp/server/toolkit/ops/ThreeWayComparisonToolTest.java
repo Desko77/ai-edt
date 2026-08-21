@@ -217,6 +217,58 @@ public class ThreeWayComparisonToolTest
         assertTrue(garbage, garbage.contains("\"success\":false")); //$NON-NLS-1$
     }
 
+    /**
+     * A decision about a class is one call instead of thousands, and its shape has to be exact.
+     * <p>
+     * The reason a mass assignment needs a stricter parser than a single one: getting it wrong
+     * applies a merge rule to a set of objects nobody looked at, and a merge rule decides whether
+     * a customisation survives the update.
+     * </p>
+     */
+    @Test
+    public void aDecisionNamesAnObjectOrAClassButNotBoth()
+    {
+        String both = new ThreeWayComparisonTool().execute(args("projectName", "P", //$NON-NLS-1$ //$NON-NLS-2$
+            "otherPath", "somewhere", "decisions", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "[{\"object\":\"Catalog.X\",\"select\":\"matching\",\"rule\":\"DO_NOT_MERGE\"}]")); //$NON-NLS-1$
+        assertTrue(both, both.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("guessing which of the two was meant would apply a rule to a set the caller " //$NON-NLS-1$
+            + "did not ask for: " + both, both.contains("not both")); //$NON-NLS-1$
+
+        String neither = new ThreeWayComparisonTool().execute(args("projectName", "P", //$NON-NLS-1$ //$NON-NLS-2$
+            "otherPath", "somewhere", "decisions", "[{\"rule\":\"DO_NOT_MERGE\"}]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue(neither, neither.contains("\"success\":false")); //$NON-NLS-1$
+
+        String noRule = new ThreeWayComparisonTool().execute(args("projectName", "P", //$NON-NLS-1$ //$NON-NLS-2$
+            "otherPath", "somewhere", "decisions", "[{\"select\":\"matching\"}]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue(noRule, noRule.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("and it must say which half is missing: " + noRule, noRule.contains("rule")); //$NON-NLS-1$
+    }
+
+    /** A selector on its own is well formed, and must not be refused by the parser. */
+    @Test
+    public void aSelectorAloneIsAWellFormedDecision()
+    {
+        String answer = new ThreeWayComparisonTool().execute(args("projectName", "P", //$NON-NLS-1$ //$NON-NLS-2$
+            "otherPath", "no such directory", "decisions", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "[{\"select\":\"matching\",\"rule\":\"DO_NOT_MERGE\"}]")); //$NON-NLS-1$
+        assertTrue("it must get as far as the path, which means the decision parsed: " + answer, //$NON-NLS-1$
+            answer.contains("not a directory")); //$NON-NLS-1$
+    }
+
+    /** The schema has to advertise the selector, or nobody can discover it. */
+    @Test
+    public void theSchemaOffersTheClassWideDecision()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("a capability nobody can find in the schema is a capability nobody calls", //$NON-NLS-1$
+            schema.contains("select"));
+        assertTrue(schema.contains("matching")); //$NON-NLS-1$
+        assertTrue("and the schema has to say the result is read back, because the difference " //$NON-NLS-1$
+            + "between calls made and rules carried is the whole point",
+            schema.contains("massRefused") || schema.contains("read back")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     /** No decisions at all is not an error - the tool's ordinary use is to read. */
     @Test
     public void noDecisionsIsNotARefusal()

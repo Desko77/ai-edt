@@ -114,6 +114,16 @@ public final class BmComparisonHelper
     private static final int PAGE_LIMIT = 500;
 
     /**
+     * How many objects one decision about a class may cover.
+     * <p>
+     * A real update runs to tens of thousands of changed objects, and all of them may legitimately
+     * be OURS. The ceiling exists so that a filter matching everything cannot silently turn into an
+     * unbounded write; reaching it is reported rather than trimmed away.
+     * </p>
+     */
+    private static final int MASS_LIMIT = 20000;
+
+    /**
      * What a caller asked to happen after the comparison has been read.
      * <p>
      * Three states rather than a boolean, because "merge" and "merge even though the environment
@@ -278,12 +288,42 @@ public final class BmComparisonHelper
         /** The object, named as the comparison names it on either side. */
         public final String object;
 
+        /**
+         * A whole class of objects instead of one.
+         * <p>
+         * The only value is {@code matching}: every object the filter arguments matched. There is
+         * no second selector vocabulary on purpose - the filter already says OURS, or one-sided,
+         * or a metadata type, and a decision phrased in different words than the preview would be
+         * a decision about a set nobody looked at.
+         * </p>
+         */
+        public final String select;
+
         /** One of the environment's merge rules. */
         public final String rule;
 
+        /**
+         * Names one object and what to do with it.
+         *
+         * @param object the object.
+         * @param rule the merge rule.
+         */
         public Decision(String object, String rule)
         {
+            this(object, null, rule);
+        }
+
+        /**
+         * Names an object or a selector, and what to do with it.
+         *
+         * @param object the object, or <code>null</code> when a selector is given.
+         * @param select the selector, or <code>null</code> when an object is named.
+         * @param rule the merge rule.
+         */
+        public Decision(String object, String select, String rule)
+        {
             this.object = object;
+            this.select = select;
             this.rule = rule;
         }
     }
@@ -410,6 +450,41 @@ public final class BmComparisonHelper
          * </p>
          */
         public int decisionsRefused;
+
+        /**
+         * Every node the filter matched, for a decision about the whole class.
+         * <p>
+         * Not reported: it is thousands of internal identifiers. The count that IS reported is
+         * changedMatching, and the objects themselves come back a page at a time - which is what a
+         * person reads before deciding about all of them.
+         * </p>
+         */
+        public final transient List<Long> matchingNodes = new ArrayList<>();
+
+        /** True when there were more matches than one decision may cover. */
+        public boolean matchingTruncated;
+
+        /** How many objects a decision about the whole class was applied to and read back on. */
+        public int massDecided;
+
+        /**
+         * Objects the environment would not take the rule for, named with its reason.
+         * <p>
+         * Named rather than counted, and separated from the successes for the reason the plan
+         * spells out: a mass assignment reporting only how many calls it made says nothing about
+         * how many took.
+         * </p>
+         */
+        public final List<String> massRefused = new ArrayList<>();
+
+        /**
+         * Objects that accepted the call and do not carry the rule when read back.
+         * <p>
+         * The source of truth is the rule read back from the node, not the return of the setter.
+         * These two disagreeing is the failure this list exists to make visible.
+         * </p>
+         */
+        public final List<String> massMismatched = new ArrayList<>();
 
         /**
          * Support modes across the configuration before a merge, counted by mode.
@@ -947,6 +1022,11 @@ public final class BmComparisonHelper
         }
         for (Decision decision : decisions)
         {
+            if (decision.select != null && !decision.select.isEmpty())
+            {
+                decideClass(session, decision, outcome);
+                continue;
+            }
             Change target = null;
             for (Change change : outcome.changed)
             {
@@ -1028,11 +1108,132 @@ public final class BmComparisonHelper
     }
 
     /**
-     * The merge rule of that name, or <code>null</code>.
+     * Applies one rule to every object the filter matched.
      *
-     * @param name what the caller wrote.
-     * @return the rule
+     * @param session the comparison.
+     * @param decision the selector and the rule.
+     * @param outcome the answer being built.
      */
+    private static void decideClass(IComparisonSession session, Decision decision, Outcome outcome)
+    {
+        if (!"matching".equalsIgnoreCase(decision.select.trim())) //$NON-NLS-1$
+        {
+            // Refused by name rather than ignored. A selector nobody implements that is silently
+            // skipped reads, in the answer, exactly like a selector that matched nothing.
+            outcome.decisionsNote = decision.select + " is not a selector. The only one is " //$NON-NLS-1$
+                + "matching, which covers every object the filter arguments matched - use " //$NON-NLS-1$
+                + "changedBy, type, oneSided and mustBeMergedOnly to say which those are."; //$NON-NLS-1$
+            return;
+        }
+        MergeRule rule = ruleNamed(decision.rule);
+        if (rule == null)
+        {
+            outcome.decisionsNote = decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
+                + ruleNames();
+            return;
+        }
+        if (outcome.matchingNodes.isEmpty())
+        {
+            outcome.decisionsNote = "the filter matched no objects, so a decision about the " //$NON-NLS-1$
+                + "matching ones changes nothing"; //$NON-NLS-1$
+            return;
+        }
+        int applied = 0;
+        for (Long nodeId : outcome.matchingNodes)
+        {
+            if (!session.setMergeRuleToSubtree(nodeId, rule))
+            {
+                if (outcome.massRefused.size() < PAGE_LIMIT)
+                {
+                    outcome.massRefused
+                        .add(nameOf(session, nodeId) + describeAvailable(session, nodeId));
+                }
+                outcome.decisionsRefused++;
+                continue;
+            }
+            // The source of truth is the rule read back from the node, not the return of the
+            // setter. Those two disagreeing is the failure this looks for, and a mass assignment
+            // is precisely the case where nobody is going to check the objects by hand.
+            MergeRule carries = ruleOn(session, nodeId);
+            if (carries != rule)
+            {
+                if (outcome.massMismatched.size() < PAGE_LIMIT)
+                {
+                    outcome.massMismatched.add(nameOf(session, nodeId) + ": asked for " //$NON-NLS-1$
+                        + rule.name() + ", carries " //$NON-NLS-1$
+                        + (carries == null ? "nothing" : carries.name())); //$NON-NLS-1$
+                }
+                continue;
+            }
+            outcome.massDecided++;
+            applied++;
+        }
+        // Counted locally and added once. massDecided accumulates across every selector in the
+        // call, so adding IT to the total would count the first selector again for each one that
+        // followed - and the total is what a caller reads to decide the merge is safe.
+        outcome.decided += applied;
+        if (outcome.matchingTruncated)
+        {
+            outcome.decisionsNote = "more than " + MASS_LIMIT + " objects matched, and this " //$NON-NLS-1$ //$NON-NLS-2$
+                + "decision covered the first " + MASS_LIMIT + " of them. Narrow the filter and " //$NON-NLS-1$ //$NON-NLS-2$
+                + "decide in parts - the rest carry no rule from this call."; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Reads back the rule a node carries.
+     *
+     * @param session the comparison.
+     * @param nodeId the node.
+     * @return the rule, or <code>null</code> when the node carries none or will not say
+     */
+    private static MergeRule ruleOn(IComparisonSession session, long nodeId)
+    {
+        try
+        {
+            ComparisonNode node = session.getNode(nodeId);
+            MergeSettings settings = node == null ? null : node.getMergeSettings();
+            return settings == null ? null : settings.getMergeRule();
+        }
+        catch (RuntimeException | LinkageError willNotSay)
+        {
+            Activator.logDebug("comparison: a node would not say its merge rule: " + willNotSay); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Names a node the way the change list names objects.
+     *
+     * @param session the comparison.
+     * @param nodeId the node.
+     * @return a name a caller can find in the change list, or the identity when it has none
+     */
+    private static String nameOf(IComparisonSession session, long nodeId)
+    {
+        try
+        {
+            ComparisonNode node = session.getNode(nodeId);
+            if (node instanceof TopComparisonNode)
+            {
+                Change named = describeChange((TopComparisonNode)node, node.isOneSideNode(), true);
+                if (named.main != null && !named.main.isEmpty())
+                {
+                    return named.main;
+                }
+                if (named.other != null && !named.other.isEmpty())
+                {
+                    return named.other;
+                }
+            }
+        }
+        catch (RuntimeException | LinkageError cannotName)
+        {
+            Activator.logDebug("comparison: a node would not name itself: " + cannotName); //$NON-NLS-1$
+        }
+        return "node " + nodeId; //$NON-NLS-1$
+    }
+
     /**
      * Names the rules a node will accept, for a refusal message.
      * <p>
@@ -1257,6 +1458,12 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * The merge rule of that name, or <code>null</code>.
+     *
+     * @param name what the caller wrote.
+     * @return the rule
+     */
     private static MergeRule ruleNamed(String name)
     {
         if (name == null)
@@ -2010,6 +2217,17 @@ public final class BmComparisonHelper
                 if (page.wants(change))
                 {
                     outcome.changedMatching++;
+                    // Collected whole, not by the page: a decision about a class has to reach
+                    // every member of it, and the page is what a person reads, not what the
+                    // decision covers.
+                    if (outcome.matchingNodes.size() < MASS_LIMIT)
+                    {
+                        outcome.matchingNodes.add(change.nodeId);
+                    }
+                    else
+                    {
+                        outcome.matchingTruncated = true;
+                    }
                     if (outcome.changedMatching > page.offset
                         && outcome.changed.size() < page.limit)
                     {
