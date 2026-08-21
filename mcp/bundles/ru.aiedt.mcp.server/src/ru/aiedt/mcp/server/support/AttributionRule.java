@@ -56,18 +56,29 @@ public final class AttributionRule
      * @param presentOnMain <code>true</code> when the object survives on our side, <code>false</code>
      *            when it survives in the delivery.
      * @param existedInAncestor whether the delivery both sides came from had the object.
-     * @param survivorChanged whether the surviving copy differs from the ancestor.
+     * @param survivorChanged whether the surviving copy differs from the ancestor, or
+     *     <code>null</code> when that could not be read - which is answered as BOTH, not as
+     *     unchanged.
      * @return OURS, VENDOR or BOTH
      */
     public static String forOneSided(boolean presentOnMain, boolean existedInAncestor,
-        boolean survivorChanged)
+        Boolean survivorChanged)
     {
         if (!existedInAncestor)
         {
             // Nothing to conflict with: the object is new on the side it stands on.
             return presentOnMain ? OURS : VENDOR;
         }
-        if (survivorChanged)
+        if (survivorChanged == null)
+        {
+            // Unreadable is not unchanged, and the difference decides whether an object survives
+            // an update. Answering "unchanged" here names the surviving copy VENDOR, which keeps
+            // it out of the protection list AND out of what blocks an unchanged-configuration
+            // update - so a customisation nobody could read gets deleted without appearing
+            // anywhere. BOTH costs a decision by hand; the alternative costs the object.
+            return BOTH;
+        }
+        if (survivorChanged.booleanValue())
         {
             return BOTH;
         }

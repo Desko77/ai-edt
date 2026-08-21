@@ -127,6 +127,17 @@ public final class BmComparisonHelper
     private static final int MASS_LIMIT = 20000;
 
     /**
+     * How many nodes the protection lists hold before they stop.
+     * <p>
+     * Far above {@link #MASS_LIMIT} because these carry node ids rather than rendered text: a
+     * million of them is a few megabytes, while a report of a million lines is unreadable. The
+     * limit stays only as a backstop against an unbounded model, and reaching it now refuses the
+     * merge instead of quietly shortening what gets protected.
+     * </p>
+     */
+    private static final int HOLD_LIMIT = 1_000_000;
+
+    /**
      * What a caller asked to happen after the comparison has been read.
      * <p>
      * Three states rather than a boolean, because "merge" and "merge even though the environment
@@ -642,6 +653,18 @@ public final class BmComparisonHelper
         public final List<String> protectionRefused = new ArrayList<>();
 
         /**
+         * Whether the lists that drive protection stopped short of the changes found.
+         * <p>
+         * <b>Truncating these is not the same as truncating a report.</b> The paged lists are what
+         * a person reads; these two are what an update is held back by. A node that never reached
+         * {@link #oursNodes} is never offered to the environment, never fails to be protected, and
+         * so never appears in {@link #protectionRefused} either - leaving that list empty and the
+         * merge free to overwrite the very customisations the mode exists to keep.
+         * </p>
+         */
+        public boolean protectionTruncated;
+
+        /**
          * The conflicts, named - what a person has to decide about by hand.
          * <p>
          * Held at DO_NOT_MERGE meanwhile, so the update cannot resolve them by default while
@@ -1043,7 +1066,14 @@ public final class BmComparisonHelper
             // failed, timed out, was refused by a blocking problem or was cancelled kept its
             // transaction on the comparison store, and nothing ever came back to close it.
             closeDropped(manager);
-            if (!keepSession)
+            if (keepSession)
+            {
+                // Something is held open for paging, so the idle limit now needs a clock to reach
+                // it. Armed here rather than at plugin start: an install where nobody compares
+                // should pay for no timer at all.
+                IdleComparisonSweep.ensureRunning();
+            }
+            else
             {
                 closeOwnSession(manager, outcome);
             }
@@ -1080,6 +1110,51 @@ public final class BmComparisonHelper
      *
      * @return how many were closed
      */
+    /**
+     * Closes comparisons that have gone idle, without waiting for another comparison to ask.
+     * <p>
+     * <b>Expiry used to run only as a side effect of the next call.</b> A caller who took one
+     * report and stopped left the session open until the plugin shut down - the idle limit was
+     * written down and never reached, because nothing was there to reach it. The cost is not
+     * memory: an open comparison holds a transaction on the environment's comparison store, and
+     * that is what left an EDT unable to shut down once already.
+     * </p>
+     * <p>
+     * Draining is deliberately part of the same sweep. Expiring only moves a session to the
+     * dropped queue; what releases the transaction is the close, and a queue nobody drains is the
+     * same leak under a different name.
+     * </p>
+     *
+     * @return how many were closed
+     */
+    public static int sweepIdle()
+    {
+        if (!ComparisonSessions.anythingOpen())
+        {
+            return 0;
+        }
+        int closed = 0;
+        try
+        {
+            ComparisonSessions.expireIdle();
+            IComparisonManager manager = ServiceAccess.get(IComparisonManager.class);
+            for (ComparisonSessions.Session dropped : ComparisonSessions.drainDropped())
+            {
+                if (manager != null && dropped.handle instanceof ComparisonProcessHandle)
+                {
+                    release(manager, (ComparisonProcessHandle)dropped.handle);
+                }
+                closed++;
+            }
+        }
+        catch (RuntimeException | LinkageError noComparisonSubsystem)
+        {
+            Activator.logDebug("idle sweep found no comparison subsystem: " //$NON-NLS-1$
+                + noComparisonSubsystem);
+        }
+        return closed;
+    }
+
     public static int closeEverything()
     {
         int closed = 0;
@@ -2209,6 +2284,17 @@ public final class BmComparisonHelper
                     + "can. Pass ancestorPath."; //$NON-NLS-1$
                 return;
             }
+            if (outcome.protectionTruncated)
+            {
+                // Refused rather than merged partially, for the same reason as below and with less
+                // to show for it: the objects beyond the limit were never offered to the
+                // environment, so they cannot even be named. An empty protectionRefused here means
+                // "nothing was tried", not "nothing failed".
+                outcome.mergeRefused = "no merge was run: more than " + HOLD_LIMIT //$NON-NLS-1$
+                    + " objects carry our changes, which is past what this mode can hold back at " //$NON-NLS-1$
+                    + "once. Narrow the comparison with scope and run it per area."; //$NON-NLS-1$
+                return;
+            }
             if (!outcome.protectionRefused.isEmpty())
             {
                 // Refused rather than merged partially. Going ahead would update the configuration
@@ -2889,8 +2975,11 @@ public final class BmComparisonHelper
                 }
                 boolean presentOnMain = side == ComparisonSide.MAIN;
                 boolean inAncestor = node.isAncestorObjectExists();
+                // Not `inAncestor && survivorDiffers(...)`: that unboxes, and it would throw on
+                // exactly the unreadable node this answers for. Without an ancestor the third
+                // argument decides nothing, so it is not asked for.
                 return AttributionRule.forOneSided(presentOnMain, inAncestor,
-                    inAncestor && survivorDiffersFromAncestor(node, side));
+                    inAncestor ? survivorDiffersFromAncestor(node, side) : Boolean.FALSE);
             }
             ComparisonFlags flags = node.getComparisonFlags();
             if (flags == null)
@@ -2934,25 +3023,28 @@ public final class BmComparisonHelper
      * @param side the side it survives on.
      * @return <code>true</code> when the surviving copy differs from the ancestor
      */
-    private static boolean survivorDiffersFromAncestor(ComparisonNode node, ComparisonSide side)
+    private static Boolean survivorDiffersFromAncestor(ComparisonNode node, ComparisonSide side)
     {
         try
         {
             ComparisonFlags flags = node.getComparisonFlags();
             if (flags == null)
             {
-                // No flags is not evidence of no change. Answering false here would restore the
-                // very reading this method exists to correct, so the caller keeps the plain
-                // one-sided answer and nothing is invented.
-                return false;
+                // No flags is not evidence of no change - and false is not an abstention. It
+                // resolves to VENDOR, which keeps a possibly customised object out of the
+                // protection list and out of what blocks an unchanged-configuration update. The
+                // caller answers BOTH on null, which costs a decision by hand instead of an
+                // object. The comment that used to stand here claimed nothing was invented; it
+                // was, and it took a review to see it.
+                return null;
             }
-            return flags.hasDifferences(side, ComparisonSide.COMMON_ANCESTOR);
+            return Boolean.valueOf(flags.hasDifferences(side, ComparisonSide.COMMON_ANCESTOR));
         }
         catch (RuntimeException | LinkageError flagsRefused)
         {
             Activator.logDebug("comparison: a one-sided node would not compare with its " //$NON-NLS-1$
                 + "ancestor: " + flagsRefused); //$NON-NLS-1$
-            return false;
+            return null;
         }
     }
 
@@ -3053,15 +3145,27 @@ public final class BmComparisonHelper
                 // Collected regardless of the page filter: the mode that protects customisations
                 // has to reach every one of them, and the filter is what a caller reads, not what
                 // an update covers.
-                if (AttributionRule.OURS.equals(change.changedBy)
-                    && outcome.oursNodes.size() < MASS_LIMIT)
+                if (AttributionRule.OURS.equals(change.changedBy))
                 {
-                    outcome.oursNodes.add(change.nodeId);
+                    if (outcome.oursNodes.size() < HOLD_LIMIT)
+                    {
+                        outcome.oursNodes.add(change.nodeId);
+                    }
+                    else
+                    {
+                        outcome.protectionTruncated = true;
+                    }
                 }
-                else if (AttributionRule.BOTH.equals(change.changedBy)
-                    && outcome.bothNodes.size() < MASS_LIMIT)
+                else if (AttributionRule.BOTH.equals(change.changedBy))
                 {
-                    outcome.bothNodes.add(change.nodeId);
+                    if (outcome.bothNodes.size() < HOLD_LIMIT)
+                    {
+                        outcome.bothNodes.add(change.nodeId);
+                    }
+                    else
+                    {
+                        outcome.protectionTruncated = true;
+                    }
                     if (outcome.conflictQueue.size() < PAGE_LIMIT)
                     {
                         outcome.conflictQueue.add(change.main != null && !change.main.isEmpty()

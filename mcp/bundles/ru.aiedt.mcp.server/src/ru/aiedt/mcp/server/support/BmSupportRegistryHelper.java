@@ -313,6 +313,18 @@ public final class BmSupportRegistryHelper
             restore.cannotTell = "there is no snapshot to restore from"; //$NON-NLS-1$
             return restore;
         }
+        if (before.projectName != null && !before.projectName.equals(projectName))
+        {
+            // Checked by name because the uuids cannot tell them apart. Two projects descended
+            // from the same vendor share parent and object identities, so a snapshot of one
+            // applies cleanly to the other and overwrites its modes with a stranger's - the
+            // failure looks like a successful restore.
+            restore.cannotTell = "this snapshot was taken from '" + before.projectName //$NON-NLS-1$
+                + "' and would be applied to '" + projectName + "'. Two projects from the same " //$NON-NLS-1$
+                + "vendor share object identities, so it would apply and be wrong. Take a " //$NON-NLS-1$
+                + "snapshot of this project, or name the project the snapshot came from."; //$NON-NLS-1$
+            return restore;
+        }
         SupportSnapshot now = snapshot(projectName);
         if (now.cannotTell != null)
         {
@@ -367,7 +379,13 @@ public final class BmSupportRegistryHelper
                 : java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), //$NON-NLS-1$
                     projectName + "-modes.tsv"); //$NON-NLS-1$
             String name = beside.getFileName().toString();
+            // Numbered, because the second restore from one snapshot used to overwrite the only
+            // record of what the first one replaced - and that record is the sole way back.
             java.nio.file.Path undo = beside.resolveSibling(name + ".before-restore.tsv"); //$NON-NLS-1$
+            for (int attempt = 2; java.nio.file.Files.exists(undo) && attempt < 1000; attempt++)
+            {
+                undo = beside.resolveSibling(name + ".before-restore." + attempt + ".tsv"); //$NON-NLS-1$
+            }
             now.write(undo);
             restore.undoSnapshotFile = undo.toString();
         }
@@ -1108,9 +1126,9 @@ public final class BmSupportRegistryHelper
     /**
      * Indexes the objects themselves, for a caller that has to hand one to the environment.
      * <p>
-     * Same traversal as {@link #indexNames(Configuration)} and the same limit: subordinate entities
-     * are not indexed, so a snapshot entry that answers to one has no object to set a mode on and is
-     * reported as missing rather than quietly skipped.
+     * Unlike {@link #indexNames(Configuration)} this one goes under each object as well, because
+     * what it feeds is a write: an entry with no object to set a mode on cannot be restored at all.
+     * See {@link #indexSubordinates}.
      * </p>
      *
      * @param configuration the configuration to index.
@@ -1143,10 +1161,55 @@ public final class BmSupportRegistryHelper
                 if (object != null && object.getUuid() != null)
                 {
                     objects.put(object.getUuid(), object);
+                    indexSubordinates(object, objects);
                 }
             }
         }
         return objects;
+    }
+
+    /**
+     * Adds the attributes, tabular sections, forms, templates and commands under one object.
+     * <p>
+     * <b>The registry keeps modes for these, so a restore that cannot reach them restores half of
+     * what it took.</b> A support mode belongs to any object the vendor delivered, subordinate ones
+     * included, and the snapshot copies the registry entry for entry. Indexing only the top level
+     * therefore produced a snapshot that could be written and not read back: every subordinate
+     * entry came out of {@code restore_modes} as missing, which is exactly the state the snapshot
+     * exists to recover from.
+     * </p>
+     * <p>
+     * Walked rather than enumerated by kind. The model knows what an object contains; a list of
+     * kinds written here would go stale the first time the platform adds one, and go stale
+     * silently, because a missing kind looks the same as an object that has none.
+     * </p>
+     *
+     * @param owner the object to walk under.
+     * @param objects the index to add to.
+     */
+    private static void indexSubordinates(MdObject owner, Map<UUID, MdObject> objects)
+    {
+        try
+        {
+            java.util.Iterator<org.eclipse.emf.ecore.EObject> inside = owner.eAllContents();
+            while (inside.hasNext())
+            {
+                org.eclipse.emf.ecore.EObject child = inside.next();
+                if (child instanceof MdObject)
+                {
+                    MdObject subordinate = (MdObject)child;
+                    if (subordinate.getUuid() != null)
+                    {
+                        objects.put(subordinate.getUuid(), subordinate);
+                    }
+                }
+            }
+        }
+        catch (RuntimeException | LinkageError refused)
+        {
+            // One object that will not open its contents costs its subordinates, not the index.
+            Activator.logDebug("support: could not walk under an object: " + refused); //$NON-NLS-1$
+        }
     }
 
     /**

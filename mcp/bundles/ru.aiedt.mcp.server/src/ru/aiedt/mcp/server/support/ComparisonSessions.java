@@ -226,6 +226,18 @@ public final class ComparisonSessions
      *
      * @param now the current time in milliseconds.
      */
+    /**
+     * Runs the idle check on its own, for the sweep that does not otherwise touch the registry.
+     * <p>
+     * Every other caller expires as a side effect of doing something else, which is why an idle
+     * session used to outlive its limit whenever nothing else happened.
+     * </p>
+     */
+    public static synchronized void expireIdle()
+    {
+        expire(System.currentTimeMillis());
+    }
+
     private static void expire(long now)
     {
         Iterator<Session> sessions = OPEN.values().iterator();
