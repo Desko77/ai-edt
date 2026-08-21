@@ -301,9 +301,14 @@ public class ExtensionWorkshopTool implements IMcpTool
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
+        // The child's name has to reach the borrow as part of the name being borrowed. The helper
+        // resolves one object from one FQN and ignores childKind entirely, so a call that named an
+        // owner and a kind adopted the owner and reported success - measured, and the template it
+        // was asked for appeared nowhere.
+        String borrowFqn = MiscOps.composeChildFqn(op, objectFqn, params);
         BmExtensionHelper.BorrowResult r = BmExtensionHelper.attemptBorrow(project,
-            baseProjectName, objectFqn, childKind);
-        return formatResult(r, op, objectFqn);
+            baseProjectName, borrowFqn, childKind);
+        return formatResult(r, op, borrowFqn);
     }
 
     /**

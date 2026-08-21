@@ -238,9 +238,21 @@ public final class ExtensionFitness
                     "the delivery no longer has this attribute")); //$NON-NLS-1$
                 continue;
             }
-            String was = MdChildren.typeOf(field.getValue());
+            String was = MdChildren.borrowedTypeOf(field.getValue());
             String now = MdChildren.typeOf(other);
-            if (was != null && now != null && !was.equals(now))
+            if (was == null || now == null)
+            {
+                // Said, not skipped. A type nobody could read is not a type that matches, and a
+                // silent skip here reads in the answer exactly like agreement - which is how a
+                // delivery that retyped a borrowed field would pass unnoticed.
+                add(verdict, new Finding(fqn + "." + field.getKey(), "attribute type", //$NON-NLS-1$ //$NON-NLS-2$
+                    "the type could not be read on " //$NON-NLS-1$
+                        + (was == null && now == null ? "either side" //$NON-NLS-1$
+                            : was == null ? "the extension's side" : "the delivery's side") //$NON-NLS-1$ //$NON-NLS-2$
+                        + ", so nothing was compared")); //$NON-NLS-1$
+                continue;
+            }
+            if (!was.equals(now))
             {
                 // Not cosmetic. Code written against one type and run against another fails where
                 // it is used, not where it is declared, which is the hardest kind to trace back.
@@ -313,17 +325,147 @@ public final class ExtensionFitness
         }
 
         /**
-         * Renders a field's type for comparison.
+         * Reads the type a borrowed field was borrowed against.
+         * <p>
+         * <b>Measured, and it is not where a field's type usually lives.</b> A borrowed attribute
+         * carries an empty ordinary type and keeps the real one under its extension node, as the
+         * extension's own record of what it took: {@code extension.typeExtension.types.type}. Read
+         * from the usual place it comes back empty, the comparison is skipped, and a delivery that
+         * retyped the field passes as though nothing happened - which is what a stand showed.
+         * </p>
+         *
+         * @param field the borrowed field.
+         * @return the type names it was borrowed against, or the ordinary type when it has one
+         */
+        static String borrowedTypeOf(EObject field)
+        {
+            try
+            {
+                Object extension = field.getClass().getMethod("getExtension").invoke(field); //$NON-NLS-1$
+                if (extension != null)
+                {
+                    Object typeExtension =
+                        extension.getClass().getMethod("getTypeExtension").invoke(extension); //$NON-NLS-1$
+                    String borrowed = renderBorrowed(typeExtension);
+                    if (borrowed != null)
+                    {
+                        return borrowed;
+                    }
+                }
+            }
+            catch (ReflectiveOperationException | RuntimeException noExtension)
+            {
+                // A field that is not borrowed has no extension node, and its ordinary type is the
+                // right answer.
+                Activator.logDebug("no type extension on a field: " + noExtension); //$NON-NLS-1$
+            }
+            return typeOf(field);
+        }
+
+        /**
+         * Renders the extension's own record of a borrowed type, by name.
+         * <p>
+         * <b>It is a list of entries, not a list of types.</b> An ordinary composition holds the
+         * types themselves, so naming each element names the type. The extension holds one entry
+         * per type - {@code state} beside {@code type} - and naming the entry gives nothing,
+         * because an entry has no name of its own. Read as an ordinary composition it comes back
+         * empty, the comparison is skipped, and a delivery that retyped the field passes as though
+         * nothing happened. Measured on a stand: the extension had {@code Number}, the delivery
+         * {@code String}, and the check reported no finding.
+         * </p>
+         *
+         * @param typeExtension the extension's composition block, possibly nothing.
+         * @return the names, sorted, or <code>null</code> when nothing resolves
+         */
+        static String renderBorrowed(Object typeExtension)
+        {
+            Object entries = invokeNoArg(typeExtension, "getTypes"); //$NON-NLS-1$
+            if (!(entries instanceof List))
+            {
+                return null;
+            }
+            List<String> names = new ArrayList<>();
+            for (Object entry : (List<?>)entries)
+            {
+                Object type = invokeNoArg(entry, "getType"); //$NON-NLS-1$
+                String name = BmDefinedTypeHelper.readTypeNameOf(type != null ? type : entry);
+                if (name != null && !name.isEmpty())
+                {
+                    names.add(name);
+                }
+            }
+            if (names.isEmpty())
+            {
+                return null;
+            }
+            java.util.Collections.sort(names);
+            return String.join(", ", names); //$NON-NLS-1$
+        }
+
+        private static Object invokeNoArg(Object target, String getter)
+        {
+            if (target == null)
+            {
+                return null;
+            }
+            try
+            {
+                return target.getClass().getMethod(getter).invoke(target);
+            }
+            catch (ReflectiveOperationException | RuntimeException absent)
+            {
+                Activator.logDebug(getter + " is not on " + target.getClass() + ": " + absent); //$NON-NLS-1$ //$NON-NLS-2$
+                return null;
+            }
+        }
+
+        /**
+         * Renders a type description by name.
+         *
+         * @param typeDescription the description, possibly nothing.
+         * @return the names, sorted, or <code>null</code> when nothing resolves
+         */
+        static String render(Object typeDescription)
+        {
+            if (typeDescription == null)
+            {
+                return null;
+            }
+            java.util.List<String> names =
+                new ArrayList<>(BmDefinedTypeHelper.readTypeDescriptionNames(typeDescription));
+            if (names.isEmpty())
+            {
+                return null;
+            }
+            java.util.Collections.sort(names);
+            return String.join(", ", names); //$NON-NLS-1$
+        }
+
+        /**
+         * Renders a field's type for comparison, by name.
+         * <p>
+         * <b>Not by toString.</b> A TypeDescription answers toString with its identity, so two
+         * instances describing the very same type compare unequal - measured on an untouched
+         * extension, which reported every borrowed attribute as having changed type. A check that
+         * cries wolf on a clean configuration is worse than no check: the one real finding arrives
+         * among the false ones and is read as another of them.
+         * </p>
          *
          * @param field the field.
-         * @return the type as text, or <code>null</code> when it will not say
+         * @return the type names, sorted so the same type always renders the same way
          */
         static String typeOf(EObject field)
         {
             try
             {
                 Object type = field.getClass().getMethod("getType").invoke(field); //$NON-NLS-1$
-                return type == null ? null : String.valueOf(type);
+                if (type == null)
+                {
+                    return null;
+                }
+                // Nothing resolvable is not the same as a type: returning the identity here
+                // would put the false comparison straight back.
+                return render(type);
             }
             catch (ReflectiveOperationException | RuntimeException noType)
             {

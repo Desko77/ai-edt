@@ -412,13 +412,22 @@ public class ListInterceptorsTool implements IMcpTool
     {
         try
         {
-            String modulePath = extFile.getProjectRelativePath().toString();
+            // The model wants the path from src/, and a project-relative path starts with it.
+            String modulePath = extFile.getProjectRelativePath().toString().replace('\\', '/');
+            if (modulePath.startsWith("src/")) //$NON-NLS-1$
+            {
+                modulePath = modulePath.substring(4);
+            }
             MethodSignature inBase = BslSignatureReader.read(baseProject, modulePath, target);
             if (inBase == null)
             {
-                // Nothing to compare against. Whether that is because the target is gone is
-                // already said by targetExists; repeating it here under another name would report
-                // one break twice.
+                // Said, not skipped. A silent absence here reads as "the signatures agree", which
+                // is the one thing it must not be taken for - measured on a stand, where every
+                // signature field was simply missing and the answer looked fine.
+                entry.put("signatureNote", Boolean.TRUE.equals(entry.get("targetExists")) //$NON-NLS-1$ //$NON-NLS-2$
+                    ? "the target exists but its signature could not be read from the model, so " //$NON-NLS-1$
+                        + "nothing was compared" //$NON-NLS-1$
+                    : "there is no target to compare a signature with"); //$NON-NLS-1$
                 return;
             }
             entry.put("targetSignature", inBase.render()); //$NON-NLS-1$
@@ -431,6 +440,8 @@ public class ListInterceptorsTool implements IMcpTool
                 String.valueOf(handlerName));
             if (handler == null)
             {
+                entry.put("signatureNote", "the handler's own signature could not be read, so " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "nothing was compared"); //$NON-NLS-1$
                 return;
             }
             entry.put("handlerSignature", handler.render()); //$NON-NLS-1$

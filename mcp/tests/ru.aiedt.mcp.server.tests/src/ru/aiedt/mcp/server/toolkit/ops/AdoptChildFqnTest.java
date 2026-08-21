@@ -56,6 +56,25 @@ public class AdoptChildFqnTest
                 args("childKind", "Template", "childName", "Invoice")));
     }
 
+    /**
+     * The facade spells it borrow_child, and the first fix keyed on adopt_child alone.
+     * <p>
+     * So the rule was right and reached only one of the two routes: a live call through the facade
+     * behaved exactly as before the fix. The composition is about the shape of the call, not the
+     * word, and this pins that.
+     * </p>
+     */
+    @Test
+    public void bothSpellingsOfTheOperationComposeTheName()
+    {
+        assertEquals("Catalog.Products.Attribute.Price",
+            MiscOps.composeChildFqn("borrow_child", "Catalog.Products",
+                args("childKind", "Attribute", "name", "Price")));
+        assertEquals("Catalog.Products.Form.ItemForm.Item.Price",
+            MiscOps.composeChildFqn("borrow_form_item", "Catalog.Products.Form.ItemForm.Item.Price",
+                args("childKind", "Item", "name", "Price")));
+    }
+
     @Test
     public void aFullChildFqnIsLeftAlone()
     {

@@ -6,8 +6,13 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+
+import java.util.Arrays;
+import java.util.List;
 
 import org.junit.Test;
 
@@ -51,5 +56,99 @@ public class ExtensionFitnessTest
         assertTrue(finding.object.contains("Price"));
         assertTrue(finding.kind.contains("type"));
         assertTrue(finding.what.contains("Number -> String"));
+    }
+
+    /**
+     * What the extension keeps is a list of entries, and an entry is not a type.
+     * <p>
+     * An ordinary composition holds the types themselves, so naming each element names the type.
+     * The extension holds one entry per type - a state beside a type - and an entry has no name of
+     * its own. Read as an ordinary composition it yields nothing, the two sides never get compared,
+     * and a delivery that retyped a borrowed field passes as though it had left it alone. That is
+     * what a stand showed: the extension had Number against a delivery holding String, and the
+     * check reported no finding at all.
+     * </p>
+     */
+    @Test
+    public void aBorrowedTypeIsNamedThroughItsEntry()
+    {
+        assertEquals("Number",
+            ExtensionFitness.MdChildren.renderBorrowed(new Composition(new Entry(new Named("Number")))));
+    }
+
+    @Test
+    public void severalBorrowedTypesRenderInAStableOrder()
+    {
+        // Sorted, so the same composition renders the same way whichever order it is held in -
+        // otherwise two identical types compare unequal and every borrowed field cries wolf.
+        String forwards = ExtensionFitness.MdChildren.renderBorrowed(
+            new Composition(new Entry(new Named("String")), new Entry(new Named("Number"))));
+        String backwards = ExtensionFitness.MdChildren.renderBorrowed(
+            new Composition(new Entry(new Named("Number")), new Entry(new Named("String"))));
+        assertEquals(forwards, backwards);
+        assertEquals("Number, String", forwards);
+    }
+
+    @Test
+    public void anEmptyCompositionIsNothingRatherThanAnEmptyName()
+    {
+        // An empty name would compare equal to another empty name, which is how two sides that
+        // were never read come to look like two sides that agree.
+        assertNull(ExtensionFitness.MdChildren.renderBorrowed(new Composition()));
+        assertNull(ExtensionFitness.MdChildren.renderBorrowed(null));
+        assertNull(ExtensionFitness.MdChildren.renderBorrowed("not a composition at all"));
+    }
+
+    /** Stands in for the extension composition block: it answers getTypes with its entries. */
+    public static final class Composition
+    {
+        private final List<Entry> entries;
+
+        Composition(Entry... entries)
+        {
+            this.entries = Arrays.asList(entries);
+        }
+
+        public List<Entry> getTypes()
+        {
+            return entries;
+        }
+    }
+
+    /** Stands in for one entry: a state beside a type, and no name of its own. */
+    public static final class Entry
+    {
+        private final Named type;
+
+        Entry(Named type)
+        {
+            this.type = type;
+        }
+
+        public String getState()
+        {
+            return "Checked";
+        }
+
+        public Named getType()
+        {
+            return type;
+        }
+    }
+
+    /** Stands in for the type an entry points at. */
+    public static final class Named
+    {
+        private final String name;
+
+        Named(String name)
+        {
+            this.name = name;
+        }
+
+        public String getName()
+        {
+            return name;
+        }
     }
 }
