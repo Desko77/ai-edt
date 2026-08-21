@@ -310,6 +310,214 @@ public final class BmBinaryImportHelper
         }
     }
 
+    /**
+     * What the platform said when the extension was put in front of it.
+     * <p>
+     * {@link #applies} is deliberately three-valued. A run that could not be made at all is not a
+     * verdict, and reporting it as <code>false</code> would read as "the platform refused this
+     * extension" when the truth is that the platform never saw it.
+     * </p>
+     */
+    public static final class Verdict
+    {
+        /** Whether a verdict was reached; <code>false</code> means {@link #error} says why not. */
+        public boolean ok;
+
+        /** The verdict, or <code>null</code> when the run could not be made. */
+        public Boolean applies;
+
+        /** What the platform said, in its own words. Never paraphrased. */
+        public String platformSaid;
+
+        /** Why no verdict was reached. */
+        public String error;
+
+        /** Wire tag for {@link #error}. */
+        public String failureKind;
+
+        /** The name the extension was loaded under. */
+        public String extensionName;
+
+        /**
+         * Where a refusal happened: {@code load} or {@code applicability}.
+         * <p>
+         * <b>Loading is not the verdict, and measuring it as one got the answer wrong.</b> The
+         * platform takes an extension file into the configuration store without asking whether it
+         * fits: a delivery with the borrowed catalogue deleted still answered "Загрузка
+         * конфигурации успешно завершена". Applicability is a question of its own, and the platform
+         * has a command for asking it.
+         * </p>
+         */
+        public String refusedAt;
+
+        /** The staging infobase's name, so a leftover can be found by name. */
+        public String stagingInfobaseName;
+
+        /** Whether the staging infobase was created. */
+        public boolean stagingCreated;
+
+        /** Whether it is gone again. Reported rather than assumed. */
+        public boolean stagingRemoved;
+    }
+
+    /**
+     * Puts an extension in front of the platform, against a delivery it has never met, and reports
+     * what the platform said.
+     * <p>
+     * <b>Why a staging infobase rather than the working one.</b> The verdict wanted here is the
+     * platform's, and the only way to get it is to have the platform load the extension. Doing that
+     * against the working infobase would mean loading an extension nobody has decided to keep -
+     * and taking the configuration lock away from the open EDT session to do it. The staging
+     * infobase is created for this run, holds the delivery and nothing else, and is removed
+     * afterwards; the working infobase is not opened, locked or altered.
+     * </p>
+     * <p>
+     * <b>What separates a refusal from a broken run.</b> Creating the infobase and seeding it with
+     * the delivery happen before the extension is touched. A failure there is environmental and is
+     * reported as no verdict. Everything after it is an answer about the extension - handed back in
+     * the platform's own words, because a paraphrase of a refusal is a second-hand refusal.
+     * </p>
+     * <p>
+     * <b>The extension going in is not the verdict.</b> Measured: against a delivery with the
+     * borrowed catalogue deleted, loading the extension still answered "Загрузка конфигурации
+     * успешно завершена". The platform takes the file into the configuration store and checks
+     * whether it fits only when asked - which is what
+     * {@code checkConfigurationExtensionsApplicability} asks, and what {@link Verdict#refusedAt}
+     * distinguishes from a file that would not load at all.
+     * </p>
+     *
+     * @param configuration the delivery, as a .cf.
+     * @param extension the extension, as a .cfe.
+     * @param platform the platform version to run, or <code>null</code> for the newest installed.
+     * @param extensionName the name to load it under, or <code>null</code> to read it off the file.
+     * @return the verdict, or the reason there is none
+     */
+    public static Verdict verdict(Path configuration, Path extension, String platform,
+        String extensionName)
+    {
+        Verdict v = new Verdict();
+        if (kindOf(configuration) != BinaryKind.CONFIGURATION)
+        {
+            v.error = "Expected a .cf holding the delivery, got: " + configuration; //$NON-NLS-1$
+            v.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
+            return v;
+        }
+        if (kindOf(extension) != BinaryKind.EXTENSION)
+        {
+            v.error = "Expected a .cfe holding the extension, got: " + extension; //$NON-NLS-1$
+            v.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
+            return v;
+        }
+        for (Path file : new Path[] { configuration, extension })
+        {
+            if (!Files.isRegularFile(file))
+            {
+                v.error = "The file does not exist: " + file; //$NON-NLS-1$
+                v.failureKind = ErrorTags.INPUT_MISSING.wire();
+                return v;
+            }
+        }
+        v.extensionName = extensionName == null || extensionName.isBlank()
+            ? extensionNameFrom(extension) : extensionName.trim();
+
+        Path stagingDir;
+        try
+        {
+            stagingDir = Files.createTempDirectory(STAGING_PREFIX);
+        }
+        catch (IOException | RuntimeException e)
+        {
+            v.error = "Cannot prepare the staging directory: " + oneLine(e); //$NON-NLS-1$
+            v.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
+            return v;
+        }
+
+        String infobaseName = STAGING_PREFIX + System.currentTimeMillis();
+        v.stagingInfobaseName = infobaseName;
+        boolean created = false;
+        try
+        {
+            BmInfobaseLifecycleHelper.CreateResult create = BmInfobaseLifecycleHelper.createInfobase(
+                infobaseName, stagingDir.resolve("ib").toString(), platform, //$NON-NLS-1$
+                configuration.toString(), null);
+            if (!create.ok)
+            {
+                v.error = "The delivery could not be loaded into a staging infobase, so the " //$NON-NLS-1$
+                    + "extension was never put to the platform: " + create.error //$NON-NLS-1$
+                    + ". The platform used was " //$NON-NLS-1$
+                    + (platform == null || platform.isBlank() ? "the newest installed" : platform) //$NON-NLS-1$
+                    + "."; //$NON-NLS-1$
+                v.failureKind = create.failureKind;
+                return v;
+            }
+            created = true;
+            v.stagingCreated = true;
+
+            Staging staging = resolveStaging(infobaseName, platform);
+            if (staging.error != null)
+            {
+                v.error = staging.error;
+                v.failureKind = staging.failureKind;
+                return v;
+            }
+
+            String loaded = run(staging, command -> command.importCfToInfobase(extension.toString())
+                .forExtension(v.extensionName));
+            v.ok = true;
+            if (staging.failure != null)
+            {
+                // The file would not go in at all. That is an answer about the extension - the
+                // delivery was already loaded - but a different one from "it does not fit", and
+                // saying which is what lets the reader tell a broken file from a mismatched one.
+                v.applies = Boolean.FALSE;
+                v.refusedAt = "load"; //$NON-NLS-1$
+                v.platformSaid = join(staging.failure, loaded);
+                return v;
+            }
+
+            String checked =
+                run(staging, command -> command.checkConfigurationExtensionsApplicability(
+                    v.extensionName));
+            v.applies = staging.failure == null;
+            if (staging.failure != null)
+            {
+                v.refusedAt = "applicability"; //$NON-NLS-1$
+                v.platformSaid = join(staging.failure, checked);
+            }
+            else
+            {
+                v.platformSaid = emptyToNull(checked) != null ? checked : emptyToNull(loaded);
+            }
+            return v;
+        }
+        catch (Throwable e)
+        {
+            v.error = "Putting the extension to the platform failed: " + oneLine(e); //$NON-NLS-1$
+            return v;
+        }
+        finally
+        {
+            if (created)
+            {
+                v.stagingRemoved = removeStaging(infobaseName);
+            }
+            deleteTree(stagingDir);
+        }
+    }
+
+    /**
+     * Joins the failure and the transcript, keeping whichever of them there is.
+     *
+     * @param failure what the run threw.
+     * @param transcript what it printed, possibly nothing.
+     * @return both, or the one that exists
+     */
+    private static String join(String failure, String transcript)
+    {
+        String tail = emptyToNull(transcript);
+        return tail == null ? failure : failure + System.lineSeparator() + tail;
+    }
+
     /** Everything one Designer run needs, or the reason there is none. */
     private static final class Staging
     {

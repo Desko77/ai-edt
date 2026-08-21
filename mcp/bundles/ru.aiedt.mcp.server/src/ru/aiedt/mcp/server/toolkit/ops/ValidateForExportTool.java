@@ -641,6 +641,29 @@ public class ValidateForExportTool implements IMcpTool
 
     // ---- .mdo -----------------------------------------------------------
 
+    /**
+     * Whether a root configuration is missing the internal information the platform demands.
+     * <p>
+     * Only the ROOT configuration carries contained objects, so an ordinary object's .mdo is not a
+     * candidate and must not be flagged. An extension's root is a Configuration too and IS a
+     * candidate: all 54 extension roots in the census carry them, same as a configuration.
+     * </p>
+     * <p>
+     * The test is "declares none", never "declares seven": two configurations in the census carry
+     * six, both on 8.2.16 compatibility, because the seventh class id appeared in a later platform.
+     * Counting would fail those two for having nothing wrong with them.
+     * </p>
+     *
+     * @param rootTag the file's first start tag, possibly <code>null</code>.
+     * @param content the whole file.
+     * @return <code>true</code> when this is a root configuration declaring none
+     */
+    static boolean configurationLacksInternalInfo(String rootTag, String content)
+    {
+        return rootTag != null && rootTag.contains("mdclass:Configuration") //$NON-NLS-1$
+            && content != null && !content.contains("<containedObjects"); //$NON-NLS-1$
+    }
+
     private void scanMdo(String content, String relPath, String fqn, String checkFilterLower,
         List<Map<String, Object>> findings, IFile file)
     {
@@ -666,6 +689,23 @@ public class ValidateForExportTool implements IMcpTool
                     "duplicate xmlns:" + prefix + " on root tag - EDT drops the object from " //$NON-NLS-1$ //$NON-NLS-2$
                     + "the BM index (md-reference-integrity); remove the redundant declaration."); //$NON-NLS-1$
             }
+        }
+
+        // A root configuration with no contained objects. The platform calls these its internal
+        // information and refuses to load a configuration without them, naming a
+        // "/Configuration.xml" an EDT project does not have - so the message points at the wrong
+        // file and the search starts in the wrong place. Nothing else flags it: EDT validates such
+        // a project clean, and it is only the infobase update that fails. Census on one machine:
+        // 52 real configurations carry exactly seven, and every configuration carrying none was
+        // machine-made.
+        if (configurationLacksInternalInfo(rootTag, content))
+        {
+            add(findings, checkFilterLower, relPath, fqn,
+                "mdo-configuration-no-contained-objects", "ERROR", 1, //$NON-NLS-1$ //$NON-NLS-2$
+                "the root configuration declares no <containedObjects> - the platform refuses it " //$NON-NLS-1$
+                + "on update_database with \"Отсутствует внутренняя информация (узел InternalInfo)\" " //$NON-NLS-1$
+                + "and names a /Configuration.xml this project does not have. A configuration " //$NON-NLS-1$
+                + "carries seven, one per platform class id, each with an objectId of its own."); //$NON-NLS-1$
         }
 
         Matcher m = MDO_EMPTY_NUMBER_FILLVALUE.matcher(content);

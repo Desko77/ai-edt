@@ -17,6 +17,7 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProjectManager;
 import com._1c.g5.v8.dt.metadata.mdclass.CompatibilityMode;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.ContainedObject;
 import com._1c.g5.v8.dt.metadata.mdclass.DefaultDataLockControlMode;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 import com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport;
@@ -120,29 +121,7 @@ public final class BmConfigurationProjectHelper
         try
         {
             IProgressMonitor monitor = new NullProgressMonitor();
-            // Detached base-Configuration shell; EDT attaches it as the new project root.
-            // createProject fills an empty name from the project name, but set it
-            // explicitly the way the New Project wizard does.
-            Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
-            configuration.setName(name);
-            // EDT fills neither of these on the shell, and both leave the new project
-            // broken: without a uuid md-legacy-emf-check reports the root Configuration
-            // as incomplete, and a compatibility mode left at the model default outranks
-            // the runtime version written to DT-INF/PROJECT.PMF - a configuration that
-            // claims 8.5.1 on an 8.3.x runtime resolves no platform type at all.
-            configuration.setUuid(UUID.randomUUID());
-            CompatibilityMode compatibility = compatibilityModeFor(version);
-            if (compatibility != null)
-            {
-                configuration.setCompatibilityMode(compatibility);
-            }
-            // Automatic locking is the model default and a MAJOR standards finding
-            // on sight (configuration-data-lock-mode), so a project created here
-            // would open with a violation nobody asked for. Managed is what a new
-            // configuration is supposed to be; callers who want the legacy mode can
-            // still set it afterwards.
-            configuration.setDataLockControlMode(DefaultDataLockControlMode.MANAGED);
-            IProject created = mgr.create(name, version, configuration, monitor);
+            IProject created = mgr.create(name, version, newConfigurationShell(name, version), monitor);
             if (created == null)
             {
                 created = ResourcesPlugin.getWorkspace().getRoot().getProject(name);
@@ -167,6 +146,98 @@ public final class BmConfigurationProjectHelper
             Activator.logError("createConfigurationProject(" + name + ") failed", t); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return r;
+    }
+
+    /**
+     * Builds the detached root a new project is created around.
+     * <p>
+     * EDT attaches this shell as the project root and fills only an empty name from the project
+     * name, so everything else the root must carry is set here. Each of these was left at the model
+     * default once, and each produced a project that was wrong before anybody edited it.
+     * </p>
+     *
+     * @param name the configuration name.
+     * @param version the platform version the project is for, or <code>null</code> to leave the
+     *     compatibility mode at the model default.
+     * @return the shell, detached
+     */
+    static Configuration newConfigurationShell(String name, Version version)
+    {
+        // createProject fills an empty name from the project name, but set it explicitly the way
+        // the New Project wizard does.
+        Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
+        configuration.setName(name);
+        // Without a uuid md-legacy-emf-check reports the root Configuration as incomplete, and a
+        // compatibility mode left at the model default outranks the runtime version written to
+        // DT-INF/PROJECT.PMF - a configuration that claims 8.5.1 on an 8.3.x runtime resolves no
+        // platform type at all.
+        configuration.setUuid(UUID.randomUUID());
+        CompatibilityMode compatibility = version == null ? null : compatibilityModeFor(version);
+        if (compatibility != null)
+        {
+            configuration.setCompatibilityMode(compatibility);
+        }
+        // Automatic locking is the model default and a MAJOR standards finding on sight
+        // (configuration-data-lock-mode), so a project created here would open with a violation
+        // nobody asked for. Managed is what a new configuration is supposed to be; callers who want
+        // the legacy mode can still set it afterwards.
+        configuration.setDataLockControlMode(DefaultDataLockControlMode.MANAGED);
+        seedContainedObjects(configuration);
+        return configuration;
+    }
+
+    /**
+     * The class ids of the objects a configuration contains, which the platform calls its internal
+     * information.
+     * <p>
+     * <b>A census, not a guess.</b> 105 roots on one machine: 38 configurations and all 54
+     * extension roots carry exactly these seven, byte for byte the same set, across different
+     * vendors, versions and workspaces. 11 carry none, and all 11 were made here. The ids belong to
+     * the platform, so they are the same everywhere and only the object ids are per configuration.
+     * </p>
+     * <p>
+     * The remaining 2 carry six: both are on 8.2.16 compatibility and both lack
+     * {@code fb282519-d103-4dd3-bc12-cb271d631dfc}, which a later platform added. A project created
+     * here targets a modern platform - {@code compatibilityModeFor} maps the requested version to a
+     * modern mode - so seven is what it gets, and that number is measured rather than eternal.
+     * </p>
+     */
+    private static final String[] CONTAINED_OBJECT_CLASS_IDS = {
+        "9cd510cd-abfc-11d4-9434-004095e12fc7", //$NON-NLS-1$
+        "9fcd25a0-4822-11d4-9414-008048da11f9", //$NON-NLS-1$
+        "e3687481-0a87-462c-a166-9f34594f9bba", //$NON-NLS-1$
+        "9de14907-ec23-4a07-96f0-85521cb6b53b", //$NON-NLS-1$
+        "51f2d5d8-ea4d-4064-8892-82951750031e", //$NON-NLS-1$
+        "e68182ea-4237-4383-967f-90c1e3370bc7", //$NON-NLS-1$
+        "fb282519-d103-4dd3-bc12-cb271d631dfc" //$NON-NLS-1$
+    };
+
+    /**
+     * Gives a new configuration the internal information the platform refuses to load without.
+     * <p>
+     * <b>Measured, because nothing else says it.</b> Without these the project opens, edits and
+     * validates clean - {@code validate_for_export} scans it and reports no findings - and then
+     * {@code update_database} is refused by the platform with "Отсутствует внутренняя информация
+     * (узел InternalInfo) для объекта Configuration", naming a {@code /Configuration.xml} that an
+     * EDT project does not even have. So the most ordinary path there is, create a project and put
+     * it in an infobase, ended at the first step and pointed at the wrong file.
+     * </p>
+     * <p>
+     * The object ids are fresh per configuration. Copying them from an existing one also loads,
+     * but it would hand every project made here the same identity.
+     * </p>
+     *
+     * @param configuration the new configuration shell, before it is attached.
+     */
+    private static void seedContainedObjects(Configuration configuration)
+    {
+        for (String classId : CONTAINED_OBJECT_CLASS_IDS)
+        {
+            ContainedObject contained = MdClassFactory.eINSTANCE.createContainedObject();
+            contained.setClassId(UUID.fromString(classId));
+            contained.setObjectId(UUID.randomUUID());
+            configuration.getContainedObjects().add(contained);
+        }
     }
 
     /**
