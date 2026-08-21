@@ -103,11 +103,16 @@ public class ThreeWayComparisonToolTest
             names.add(intent.name());
         }
 
-        assertEquals("three intents, no more: " + names, 3, names.size()); //$NON-NLS-1$
+        // Counted rather than listed, so that a fifth way to write into a configuration cannot
+        // arrive without this test being read. Each of the four is a distinct decision a person
+        // makes, and none of them is a flag on another.
+        assertEquals("four intents, no more: " + names, 4, names.size()); //$NON-NLS-1$
         assertTrue(names.contains("REPORT")); //$NON-NLS-1$
         assertTrue(names.contains("MERGE")); //$NON-NLS-1$
         assertTrue("the override must be a value of its own", //$NON-NLS-1$
             names.contains("MERGE_IGNORING_PROBLEMS")); //$NON-NLS-1$
+        assertTrue("and so must the one route that merges with no decisions at all", //$NON-NLS-1$
+            names.contains("UPDATE_UNCHANGED")); //$NON-NLS-1$
         assertEquals("reading must be the first value, which is what an absent argument means", //$NON-NLS-1$
             "REPORT", names.get(0)); //$NON-NLS-1$
     }
@@ -267,6 +272,97 @@ public class ThreeWayComparisonToolTest
         assertTrue("and the schema has to say the result is read back, because the difference " //$NON-NLS-1$
             + "between calls made and rules carried is the whole point",
             schema.contains("massRefused") || schema.contains("read back")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Comparing one object must not mean comparing a whole configuration first.
+     * <p>
+     * Measured on a stand before this existed: a full comparison runs to some two hundred thousand
+     * nodes and takes minutes, which is the wrong price for moving one catalogue between two
+     * configurations.
+     * </p>
+     */
+    @Test
+    public void theComparisonCanBeNarrowedToNamedObjects()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("a capability absent from the schema is one nobody calls", //$NON-NLS-1$
+            schema.contains("scope")); //$NON-NLS-1$
+        assertTrue("the answer has to say which names did not land - a scope of misspelled names " //$NON-NLS-1$
+            + "compares nothing and would otherwise report that nothing differs",
+            schema.contains("scopeUnrecognised")); //$NON-NLS-1$
+        assertTrue("and what the environment added on its own, because that is the difference " //$NON-NLS-1$
+            + "between the scope that was written and the scope that ran",
+            schema.contains("scopeExtendedBy")); //$NON-NLS-1$
+    }
+
+    /** A scope of blanks is the same as no scope, not a comparison of nothing. */
+    @Test
+    public void anEmptyScopeMeansTheWholeConfiguration()
+    {
+        String answer = new ThreeWayComparisonTool()
+            .execute(args("projectName", "P", "otherPath", "no such directory", "scope", " , ")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertTrue("it must fail on the path, not turn a blank scope into an empty comparison: " //$NON-NLS-1$
+            + answer, answer.contains("not a directory")); //$NON-NLS-1$
+    }
+
+    /**
+     * A configuration with nothing reworked updates in one call, and the tool decides that.
+     * <p>
+     * The condition is checked here rather than trusted to the caller, because getting it wrong
+     * hands every conflict to whatever the environment defaults to. All three counts matter: BOTH
+     * is a category of its own and can stand above zero while OURS is zero, and UNKNOWN means
+     * there was no attribution at all.
+     * </p>
+     */
+    @Test
+    public void takingADeliveryWholeIsItsOwnIntent()
+    {
+        String schema = new ThreeWayComparisonTool().getInputSchema();
+        assertTrue("a route that skips the decisions must be nameable, or nobody can take it", //$NON-NLS-1$
+            schema.contains("UPDATE_UNCHANGED")); //$NON-NLS-1$
+
+        String unknown = new ThreeWayComparisonTool().execute(args("projectName", "P", //$NON-NLS-1$ //$NON-NLS-2$
+            "otherPath", "somewhere", "intent", "UPDATE_EVERYTHING")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue(unknown, unknown.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("the refusal must list the intents that exist, this one included: " + unknown, //$NON-NLS-1$
+            unknown.contains("UPDATE_UNCHANGED")); //$NON-NLS-1$
+    }
+
+    /** The fast path writes, so a preset that forbids writing forbids it too. */
+    @Test
+    public void takingADeliveryWholeIsAWriteLikeAnyOther()
+    {
+        String answer = new ThreeWayComparisonTool().execute(args("projectName", "P", //$NON-NLS-1$ //$NON-NLS-2$
+            "otherPath", "no such directory", "intent", "UPDATE_UNCHANGED")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue("it must reach the path check, which means the intent parsed: " + answer, //$NON-NLS-1$
+            answer.contains("not a directory") || answer.contains("preset")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Reading has to leave no trace, and that includes files this tool writes for its own use.
+     * <p>
+     * The support snapshot goes into the settings folder of the project so that a merge can be
+     * undone. Taking it on a REPORT would mean the default mode of a reading tool writing into the
+     * project - and under a preset whose whole promise is that nothing changes.
+     * </p>
+     */
+    @Test
+    public void readingIsTheOnlyIntentThatWritesNothing()
+    {
+        java.util.List<String> writes = new java.util.ArrayList<>();
+        for (ru.aiedt.mcp.server.support.BmComparisonHelper.Intent intent : ru.aiedt.mcp.server.support.BmComparisonHelper.Intent
+            .values())
+        {
+            if (intent != ru.aiedt.mcp.server.support.BmComparisonHelper.Intent.REPORT)
+            {
+                writes.add(intent.name());
+            }
+        }
+        assertEquals("every intent but REPORT writes, and each one has to be gated as a write: " //$NON-NLS-1$
+            + writes, 3, writes.size());
+        assertTrue("the tool has to say which mode changes nothing", //$NON-NLS-1$
+            new ThreeWayComparisonTool().getInputSchema().contains("REPORT (default)")); //$NON-NLS-1$
     }
 
     /** No decisions at all is not an error - the tool's ordinary use is to read. */

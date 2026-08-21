@@ -91,6 +91,9 @@ public class ThreeWayComparisonTool
             + "individual objects can be recorded and written to a settings file that EDT reads " //$NON-NLS-1$
             + "back when a person runs the merge, and a file written earlier can be read back in " //$NON-NLS-1$
             + "through decisionsFrom. Reading is the default and changes nothing. Passing " //$NON-NLS-1$
+            + "A configuration with no customisations updates in one call with " //$NON-NLS-1$
+            + "intent=UPDATE_UNCHANGED, which needs no decisions and refuses itself the moment " //$NON-NLS-1$
+            + "anything was changed here or on both sides. " //$NON-NLS-1$
             + "intent=MERGE applies the decisions to the project, which is IRREVERSIBLE and is " //$NON-NLS-1$
             + "refused when the environment raises a blocking problem or when no decisions were " //$NON-NLS-1$
             + "given; after a merge the touched objects are revalidated and the errors standing " //$NON-NLS-1$
@@ -147,6 +150,17 @@ public class ThreeWayComparisonTool
                     + "page names at most 500 of them.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "How many objects to name. Default and maximum 500.") //$NON-NLS-1$
+            .stringProperty("scope", //$NON-NLS-1$
+                "Compare only these objects, comma separated and named as this tool names them " //$NON-NLS-1$
+                    + "(Catalog.X,Document.Y). Omit to compare the whole configuration, which on " //$NON-NLS-1$
+                    + "a real one means minutes and a tree of some two hundred thousand nodes. " //$NON-NLS-1$
+                    + "The environment adds what the named objects cannot be compared without, " //$NON-NLS-1$
+                    + "and the additions come back in scopeExtendedBy. A name the environment " //$NON-NLS-1$
+                    + "does not recognise is reported in scopeUnrecognised rather than dropped: " //$NON-NLS-1$
+                    + "a scope of misspelled names compares nothing and would otherwise answer " //$NON-NLS-1$
+                    + "that there are no differences. An object renamed between the two sides " //$NON-NLS-1$
+                    + "cannot be scoped - it is called one thing here and another in the " //$NON-NLS-1$
+                    + "delivery - so compare the whole configuration for those.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
                 "Close the comparison after answering instead of keeping it open for further " //$NON-NLS-1$
                     + "pages. Off by default: a comparison of a real configuration takes minutes, " //$NON-NLS-1$
@@ -166,7 +180,11 @@ public class ThreeWayComparisonTool
                     + "those problems; it is a " //$NON-NLS-1$
                     + "separate value and not a flag, because overriding the environment's own " //$NON-NLS-1$
                     + "objection should not share a word with ordinary merging. A merge needs " //$NON-NLS-1$
-                    + "decisions: without them there is nothing to apply.") //$NON-NLS-1$
+                    + "decisions: without them there is nothing to apply. UPDATE_UNCHANGED is the " //$NON-NLS-1$
+                    + "exception - it takes the delivery whole and needs no decisions, and is " //$NON-NLS-1$
+                    + "refused unless the comparison is three-sided, finished, and found nothing " //$NON-NLS-1$
+                    + "changed here, on both sides, or unattributed. The tool checks that itself " //$NON-NLS-1$
+                    + "rather than trusting the caller, and names the counts when it refuses.") //$NON-NLS-1$
             .build();
     }
 
@@ -188,6 +206,30 @@ public class ThreeWayComparisonTool
      * @return the decisions, empty when none were given
      * @throws IllegalArgumentException when the argument is there but unreadable
      */
+    /**
+     * Reads the objects a caller wants compared, when they want less than everything.
+     *
+     * @param params the call.
+     * @return the names, empty when the whole configuration is meant
+     */
+    private static List<String> readScope(Map<String, String> params)
+    {
+        List<String> names = new ArrayList<>();
+        String scope = JsonUtils.extractStringArgument(params, "scope"); //$NON-NLS-1$
+        if (scope == null || scope.trim().isEmpty())
+        {
+            return names;
+        }
+        for (String name : scope.split(",")) //$NON-NLS-1$
+        {
+            if (!name.trim().isEmpty())
+            {
+                names.add(name.trim());
+            }
+        }
+        return names;
+    }
+
     private static List<BmComparisonHelper.Decision> readDecisions(String json)
     {
         List<BmComparisonHelper.Decision> decisions = new ArrayList<>();
@@ -266,8 +308,8 @@ public class ThreeWayComparisonTool
                 return intent;
             }
         }
-        throw new IllegalArgumentException(argument + " is not an intent. Use REPORT, MERGE or " //$NON-NLS-1$
-            + "MERGE_IGNORING_PROBLEMS."); //$NON-NLS-1$
+        throw new IllegalArgumentException(argument + " is not an intent. Use REPORT, MERGE, " //$NON-NLS-1$
+            + "MERGE_IGNORING_PROBLEMS or UPDATE_UNCHANGED."); //$NON-NLS-1$
     }
 
     @Override
@@ -325,7 +367,7 @@ public class ThreeWayComparisonTool
         boolean closeSession = JsonUtils.extractBooleanArgument(params, "closeSession", false); //$NON-NLS-1$
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
             ancestorPath, decisions, decisionsPath, decisionsFrom, intent, ignoreOriginMismatch,
-            page, closeSession);
+            page, closeSession, readScope(params));
         if (outcome.cannotTell != null)
         {
             return ToolResult.error(outcome.cannotTell)
@@ -387,6 +429,12 @@ public class ThreeWayComparisonTool
             .put("massDecided", outcome.massDecided) //$NON-NLS-1$
             .put("massRefused", outcome.massRefused) //$NON-NLS-1$
             .put("massMismatched", outcome.massMismatched) //$NON-NLS-1$
+            // What was asked for, what the environment did not recognise, and what it added on
+            // its own. A narrowed comparison that quietly compared nothing is the failure these
+            // three answer between them.
+            .put("scopeRequested", outcome.scopeRequested) //$NON-NLS-1$
+            .put("scopeUnrecognised", outcome.scopeUnrecognised) //$NON-NLS-1$
+            .put("scopeExtendedBy", outcome.scopeExtendedBy) //$NON-NLS-1$
             // What the merge did to the vendor support settings, counted either side of it.
             // Not a promise that they were protected - that was tried and does not work.
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$

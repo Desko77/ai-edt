@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 
@@ -140,7 +141,23 @@ public final class BmComparisonHelper
         MERGE,
 
         /** Apply them even then. Separate on purpose: the environment named those problems. */
-        MERGE_IGNORING_PROBLEMS
+        MERGE_IGNORING_PROBLEMS,
+
+        /**
+         * Take the delivery whole, having checked that nothing here was reworked.
+         * <p>
+         * The degenerate case of an update on support: no customisations, so nobody has to sit
+         * through sixteen thousand objects deciding about each. The tool checks the condition
+         * rather than trusting the caller to have checked it, because getting it wrong here hands
+         * the conflicts to whatever the environment defaults to.
+         * </p>
+         * <p>
+         * A separate value rather than a flag on MERGE: this is the one merge that runs with no
+         * decisions at all, and a route that skips the decisions must not be reachable by
+         * accident.
+         * </p>
+         */
+        UPDATE_UNCHANGED
     }
 
     /**
@@ -461,6 +478,34 @@ public final class BmComparisonHelper
          */
         public final transient List<Long> matchingNodes = new ArrayList<>();
 
+        /**
+         * Names the caller asked to compare, when the comparison was narrowed.
+         * <p>
+         * Empty means the whole configuration was compared.
+         * </p>
+         */
+        public final List<String> scopeRequested = new ArrayList<>();
+
+        /**
+         * Requested names the environment did not recognise.
+         * <p>
+         * The reason this is reported rather than logged: a narrowed comparison whose names are
+         * all misspelled compares nothing and answers "no differences", which is the worst thing
+         * an update tool can say. A name that did not land has to arrive with the answer.
+         * </p>
+         */
+        public final List<String> scopeUnrecognised = new ArrayList<>();
+
+        /**
+         * What the environment pulled in beyond what was asked for, and on account of what.
+         * <p>
+         * Comparing one object drags in what it cannot be compared without. The additions are the
+         * difference between the scope a caller wrote and the scope that ran, so they are named
+         * rather than counted.
+         * </p>
+         */
+        public final List<String> scopeExtendedBy = new ArrayList<>();
+
         /** True when there were more matches than one decision may cover. */
         public boolean matchingTruncated;
 
@@ -617,7 +662,7 @@ public final class BmComparisonHelper
      */
     public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
         List<Decision> decisions, String decisionsPath, String decisionsFrom, Intent intent,
-        boolean ignoreOriginMismatch, Page page, boolean closeSession)
+        boolean ignoreOriginMismatch, Page page, boolean closeSession, List<String> scopeNames)
     {
         Outcome outcome = new Outcome();
         if (page == null)
@@ -686,8 +731,13 @@ public final class BmComparisonHelper
             // ones this server opened are candidates: the environment can list a comparison a
             // person opened in the editor, and adopting that would mean applying decisions to
             // somebody else's work or closing it under them.
-            String fingerprint =
-                ComparisonSessions.fingerprintOf(mainProjectName, otherPath, ancestorPath);
+            ComparisonScope scope = scopeOf(scopeNames, ancestor != null, outcome);
+            // The scope is part of what a session compares. Without it in the fingerprint a
+            // narrowed comparison would be handed back to a caller who asked for the whole
+            // configuration, and the answer would name a fraction of what changed while the counts
+            // read like a complete census.
+            String fingerprint = ComparisonSessions.fingerprintOf(mainProjectName, otherPath,
+                ancestorPath) + " | " + describeScope(outcome.scopeRequested); //$NON-NLS-1$
             ComparisonSessions.Session session =
                 ComparisonSessions.findByFingerprint(fingerprint, System.currentTimeMillis());
             ComparisonProcessHandle handle;
@@ -703,9 +753,8 @@ public final class BmComparisonHelper
             else
             {
                 handle = ancestor == null
-                    ? new ComparisonProcessHandle(main, other, ComparisonScope.EMPTY_SCOPE)
-                    : new ComparisonProcessHandle(main, other, ancestor,
-                        ComparisonScope.EMPTY_SCOPE);
+                    ? new ComparisonProcessHandle(main, other, scope)
+                    : new ComparisonProcessHandle(main, other, ancestor, scope);
                 session = ComparisonSessions.open(fingerprint, handle,
                     System.currentTimeMillis());
             }
@@ -728,25 +777,33 @@ public final class BmComparisonHelper
                 return outcome;
             }
             read(manager, handle, outcome, page);
+            reportScope(scope, outcome);
             decide(manager, handle, decisions, decisionsPath, outcome);
-            // Measured either side of the merge. The merge cannot be stopped from touching
-            // support settings - that was tried and does not work - so the honest thing left is
-            // to say what it did to them.
-            censusSupport(mainProjectName, outcome.supportModesBefore);
-            // Counts say that damage happened; only a per-object snapshot says which objects it
-            // happened to, and only that can be put back. The merge takes the support model from
-            // the delivery and the environment's merge rules do not stop it - measured - so the
-            // snapshot is the whole of what makes a restore possible.
-            SupportSnapshot supportBefore = snapshotSupport(mainProjectName);
-            // Written to disk before the merge runs, not offered as an option. A snapshot that
-            // exists only in this call dies with it, and the modes it recorded are then
-            // unrecoverable - which is the exact loss the snapshot exists to undo.
-            keepSnapshot(mainProjectName, supportBefore, outcome);
-            merge(manager, handle, batch, intent, outcome);
-            censusSupport(mainProjectName, outcome.supportModesAfter);
-            outcome.supportModesChanged =
-                !outcome.supportModesBefore.equals(outcome.supportModesAfter);
-            describeSupportDrift(mainProjectName, supportBefore, outcome);
+            // Only when something is going to be written. Reporting must leave no trace, and the
+            // snapshot below is a file inside the project - a read that wrote one would break the
+            // promise this tool makes about its default, and break it in a preset whose whole
+            // point is that nothing changes.
+            if (intent != null && intent != Intent.REPORT)
+            {
+                // Measured either side of the merge. The merge cannot be stopped from touching
+                // support settings - that was tried and does not work - so the honest thing left
+                // is to say what it did to them.
+                censusSupport(mainProjectName, outcome.supportModesBefore);
+                // Counts say that damage happened; only a per-object snapshot says which objects
+                // it happened to, and only that can be put back. The merge takes the support model
+                // from the delivery and the environment's merge rules do not stop it - measured -
+                // so the snapshot is the whole of what makes a restore possible.
+                SupportSnapshot supportBefore = snapshotSupport(mainProjectName);
+                // Written to disk before the merge runs, not offered as an option. A snapshot that
+                // exists only in this call dies with it, and the modes it recorded are then
+                // unrecoverable - which is the exact loss the snapshot exists to undo.
+                keepSnapshot(mainProjectName, supportBefore, outcome);
+                merge(manager, handle, batch, intent, outcome);
+                censusSupport(mainProjectName, outcome.supportModesAfter);
+                outcome.supportModesChanged =
+                    !outcome.supportModesBefore.equals(outcome.supportModesAfter);
+                describeSupportDrift(mainProjectName, supportBefore, outcome);
+            }
             reportProjectState(mainProjectName, decisions, outcome);
             // A reporting comparison stays open, and its key goes out with the answer. Paging
             // through tens of thousands of changed objects is the only way to enumerate what to
@@ -1105,6 +1162,104 @@ public final class BmComparisonHelper
             outcome.decisionsNote = "the decisions were marked but could not be written to " + path //$NON-NLS-1$
                 + ": " + describe(cannotWrite); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Builds the scope a comparison runs under.
+     * <p>
+     * Every side gets the same names. An object carries one name across a vendor update, and the
+     * case where it does not - a rename - is the case a narrowed comparison cannot express: the
+     * object is called one thing here and another in the delivery, and naming only one of them
+     * would compare it against nothing. Comparing the whole configuration is the answer there.
+     * </p>
+     *
+     * @param names what the caller asked to compare; may be <code>null</code> or empty.
+     * @param threeSided whether an ancestor takes part.
+     * @param outcome the answer, which records what was asked for.
+     * @return the scope, or the empty one which means the whole configuration
+     */
+    private static ComparisonScope scopeOf(List<String> names, boolean threeSided, Outcome outcome)
+    {
+        if (names == null || names.isEmpty())
+        {
+            return ComparisonScope.EMPTY_SCOPE;
+        }
+        List<String> wanted = new ArrayList<>();
+        for (String name : names)
+        {
+            if (name != null && !name.trim().isEmpty() && !wanted.contains(name.trim()))
+            {
+                wanted.add(name.trim());
+            }
+        }
+        if (wanted.isEmpty())
+        {
+            return ComparisonScope.EMPTY_SCOPE;
+        }
+        outcome.scopeRequested.addAll(wanted);
+        return threeSided
+            ? new ComparisonScope(new ArrayList<>(wanted), new ArrayList<>(wanted),
+                new ArrayList<>(wanted))
+            : new ComparisonScope(new ArrayList<>(wanted), new ArrayList<>(wanted));
+    }
+
+    /**
+     * Says what the scope became once the environment had its say.
+     *
+     * @param scope the scope the comparison ran under.
+     * @param outcome the answer being built.
+     */
+    private static void reportScope(ComparisonScope scope, Outcome outcome)
+    {
+        if (scope == null || outcome.scopeRequested.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            List<String> ran = scope.getScope(ComparisonSide.MAIN);
+            for (String asked : outcome.scopeRequested)
+            {
+                if (ran == null || !ran.contains(asked))
+                {
+                    outcome.scopeUnrecognised.add(asked);
+                }
+            }
+            Map<String, List<String>> extended = scope.getExtendedScope(ComparisonSide.MAIN);
+            if (extended != null)
+            {
+                for (Map.Entry<String, List<String>> added : extended.entrySet())
+                {
+                    if (outcome.scopeExtendedBy.size() >= PAGE_LIMIT)
+                    {
+                        break;
+                    }
+                    outcome.scopeExtendedBy
+                        .add(added.getKey() + " pulled in " + added.getValue()); //$NON-NLS-1$
+                }
+            }
+        }
+        catch (RuntimeException | LinkageError willNotSay)
+        {
+            Activator.logDebug("comparison: the scope would not describe itself: " + willNotSay); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Describes a scope for the session fingerprint.
+     *
+     * @param names what was asked for.
+     * @return a stable description; the same text for the same set
+     */
+    private static String describeScope(List<String> names)
+    {
+        if (names == null || names.isEmpty())
+        {
+            return "(whole configuration)"; //$NON-NLS-1$
+        }
+        List<String> sorted = new ArrayList<>(names);
+        Collections.sort(sorted);
+        return String.join(",", sorted); //$NON-NLS-1$
     }
 
     /**
@@ -1519,6 +1674,45 @@ public final class BmComparisonHelper
      * @param intent what the caller asked for.
      * @param outcome the answer being built.
      */
+    /**
+     * Says why a configuration cannot be updated as an unchanged one.
+     * <p>
+     * The condition is strict on purpose, and all three counts matter. A zero for our own changes
+     * is not enough: BOTH is a category of its own and can stand above zero while OURS is zero,
+     * and UNKNOWN means there was no attribution at all - which is what a comparison without an
+     * ancestor produces, and the case where taking the delivery whole would silently overwrite
+     * work.
+     * </p>
+     *
+     * @param outcome what the comparison found.
+     * @return the reason, or <code>null</code> when the fast path is legitimate
+     */
+    private static String whyNotUnchanged(Outcome outcome)
+    {
+        if (!outcome.threeWay)
+        {
+            return "no merge was run: taking a delivery whole is only safe when the comparison " //$NON-NLS-1$
+                + "has the delivery both sides came from, because without it nothing can tell a " //$NON-NLS-1$
+                + "customisation from a vendor change. Pass ancestorPath."; //$NON-NLS-1$
+        }
+        if (!outcome.completed)
+        {
+            return "no merge was run: the comparison did not finish, so its counts say nothing " //$NON-NLS-1$
+                + "about whether this configuration was reworked."; //$NON-NLS-1$
+        }
+        if (outcome.objectsChangedByUs > 0 || outcome.objectsChangedByBoth > 0
+            || outcome.objectsChangedUnattributed > 0)
+        {
+            return "no merge was run: this configuration is not unchanged. " //$NON-NLS-1$
+                + outcome.objectsChangedByUs + " object(s) were changed here, " //$NON-NLS-1$
+                + outcome.objectsChangedByBoth + " on both sides, and " //$NON-NLS-1$
+                + outcome.objectsChangedUnattributed + " could not be attributed. Taking the " //$NON-NLS-1$
+                + "delivery whole would overwrite them. List them with changedBy=OURS and " //$NON-NLS-1$
+                + "changedBy=BOTH, and decide about them."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
     private static void merge(IComparisonManager manager, ComparisonProcessHandle handle,
         CompareMergeProcessBatch batch, Intent intent, Outcome outcome)
     {
@@ -1530,7 +1724,16 @@ public final class BmComparisonHelper
         // ones passed in this call refused every merge driven from a saved settings file - which is
         // the whole point of writing one: hand the hard objects to a person, take back what they
         // decided, carry it out. The environment had the rules; we were the ones who said no.
-        if (outcome.decided == 0 && !outcome.decisionsRestored)
+        if (intent == Intent.UPDATE_UNCHANGED)
+        {
+            String blocked = whyNotUnchanged(outcome);
+            if (blocked != null)
+            {
+                outcome.mergeRefused = blocked;
+                return;
+            }
+        }
+        else if (outcome.decided == 0 && !outcome.decisionsRestored)
         {
             outcome.mergeRefused = "no merge was run: there are no decisions to apply. Pass " //$NON-NLS-1$
                 + "decisions naming what to do with each object, or decisionsFrom pointing at a " //$NON-NLS-1$
