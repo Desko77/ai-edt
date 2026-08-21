@@ -236,6 +236,28 @@ public class SupportSnapshotTest
             1, read.unresolved);
     }
 
+    /**
+     * A snapshot read off disk remembers where it came from.
+     * <p>
+     * A restore is itself a write, and the record of what it replaced has to land beside the file
+     * that caused it. Without the path there is nowhere obvious to put that record, and a restore
+     * that turns out to have been the wrong one has nowhere to go back to.
+     * </p>
+     */
+    @Test
+    public void aSnapshotReadFromAFileRemembersThePath() throws IOException
+    {
+        SupportSnapshot snapshot = snapshotWith(VENDOR, "2.5.14.20"); //$NON-NLS-1$
+        snapshot.parents.get(0).modes.put(KEPT, "CHANGES_ALLOWED"); //$NON-NLS-1$
+        Path file = folder.resolve("modes.tsv"); //$NON-NLS-1$
+        snapshot.write(file);
+
+        SupportSnapshot back = SupportSnapshot.read(file);
+        assertEquals(file.toString(), back.sourcePath);
+        assertNull("one built in memory has no file to point at, and inventing one would put a " //$NON-NLS-1$
+            + "record of a restore somewhere nobody looks", snapshot.sourcePath);
+    }
+
     @Test
     public void anEmptySnapshotHasNothingToRestore()
     {

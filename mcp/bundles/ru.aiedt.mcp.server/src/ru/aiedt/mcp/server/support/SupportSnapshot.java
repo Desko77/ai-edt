@@ -81,6 +81,15 @@ public final class SupportSnapshot
     /** The project the snapshot was taken from. */
     public String projectName;
 
+    /**
+     * Where this snapshot was read from, when it came off disk.
+     * <p>
+     * Kept so that anything written on the strength of it lands beside it. A record of what a
+     * restore replaced is only useful if it can be found next to the file that caused the restore.
+     * </p>
+     */
+    public String sourcePath;
+
     /** One entry per vendor configuration, in the order the support model lists them. */
     public final List<Parent> parents = new ArrayList<>();
 
@@ -289,6 +298,7 @@ public final class SupportSnapshot
     public static SupportSnapshot read(Path path) throws IOException
     {
         SupportSnapshot snapshot = new SupportSnapshot();
+        snapshot.sourcePath = path.toString();
         List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
         if (lines.isEmpty() || !lines.get(0).startsWith(HEADER))
         {
