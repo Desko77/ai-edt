@@ -568,6 +568,25 @@ public final class BmComparisonHelper
         public final List<String> scopeUnrecognised = new ArrayList<>();
 
         /**
+         * What the named objects cannot be carried without, worked out before anything is written.
+         * <p>
+         * Different from scopeExtendedBy, and both are needed. That one is what the environment
+         * added to make its own comparison work; this one is what a move would have to take along
+         * for the result to hold together on the other side.
+         * </p>
+         */
+        public final List<String> closureAdds = new ArrayList<>();
+
+        /** Dependencies a reference walk is structurally unable to find. Always populated. */
+        public final List<String> closureBlindSpots = new ArrayList<>();
+
+        /** Why the closure could not be worked out, when it could not. */
+        public String closureNote;
+
+        /** True when the closure hit a bound and stopped short. */
+        public boolean closureTruncated;
+
+        /**
          * What the environment pulled in beyond what was asked for, and on account of what.
          * <p>
          * Comparing one object drags in what it cannot be compared without. The additions are the
@@ -589,6 +608,20 @@ public final class BmComparisonHelper
          * </p>
          */
         public final List<String> decisionsWithoutEffect = new ArrayList<>();
+
+        /**
+         * Errors standing against the WHOLE project before the merge.
+         * <p>
+         * The baseline. Counting only the objects that moved lets a project that was already
+         * broken come back clean, and hides an error the merge caused somewhere it did not touch -
+         * which is where a dependency that travelled without its owner shows up. -1 means the
+         * marker service could not be reached, which is not the same as none.
+         * </p>
+         */
+        public long projectErrorsBefore = -1;
+
+        /** Errors standing against the whole project after the merge, against the same baseline. */
+        public long projectErrorsAfter = -1;
 
         /** Nodes attributed to us, for the mode that protects them. Not reported. */
         public final transient List<Long> oursNodes = new ArrayList<>();
@@ -914,6 +947,9 @@ public final class BmComparisonHelper
             }
             read(manager, handle, outcome, page);
             reportScope(scope, outcome);
+            // Before the merge, never after: a move whose dependencies are discovered as broken
+            // references in somebody's configuration has been discovered too late.
+            reportClosure(mainProjectName, outcome);
             // Before the caller's own decisions, so an explicit one about a named object still
             // wins over the blanket protection.
             if (intent == Intent.UPDATE_KEEPING_OURS)
@@ -941,6 +977,12 @@ public final class BmComparisonHelper
                 // it happened to, and only that can be put back. The merge takes the support model
                 // from the delivery and the environment's merge rules do not stop it - measured -
                 // so the snapshot is the whole of what makes a restore possible.
+                // Taken before anything is written, and over the whole project. Compared with the
+                // count afterwards this says what the merge caused; without it, errors that were
+                // already there read as the merge's doing, and errors the merge caused outside the
+                // objects it touched do not read at all.
+                outcome.projectErrorsBefore = ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader
+                    .countAllErrors(mainProjectName);
                 SupportSnapshot supportBefore = snapshotSupport(mainProjectName);
                 // Written to disk before the merge runs, not offered as an option. A snapshot that
                 // exists only in this call dies with it, and the modes it recorded are then
@@ -1215,6 +1257,8 @@ public final class BmComparisonHelper
         outcome.errorsAfterMerge =
             ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader.countErrorsOn(projectName,
                 objects);
+        outcome.projectErrorsAfter =
+            ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader.countAllErrors(projectName);
     }
 
     /**
@@ -1381,6 +1425,55 @@ public final class BmComparisonHelper
             ? new ComparisonScope(new ArrayList<>(wanted), new ArrayList<>(wanted),
                 new ArrayList<>(wanted))
             : new ComparisonScope(new ArrayList<>(wanted), new ArrayList<>(wanted));
+    }
+
+    /**
+     * Works out what a narrowed comparison would have to carry along, and says what it cannot see.
+     * <p>
+     * Only when a scope was asked for. Without one the comparison covers the whole configuration
+     * and there is nothing outside it to drag in.
+     * </p>
+     *
+     * @param projectName our side.
+     * @param outcome the answer being built.
+     */
+    private static void reportClosure(String projectName, Outcome outcome)
+    {
+        if (outcome.scopeRequested.isEmpty())
+        {
+            return;
+        }
+        // Shipped whatever the walk finds. A caller reading a short list of additions and no list
+        // of blind spots will take the first for the whole answer.
+        outcome.closureBlindSpots.addAll(ScopeClosure.whatReferencesCannotExpress());
+        try
+        {
+            ScopeClosure.Closure closure = ScopeClosure.of(projectName, outcome.scopeRequested, 0);
+            if (closure.cannotTell != null)
+            {
+                outcome.closureNote = closure.cannotTell;
+                return;
+            }
+            outcome.closureTruncated = closure.truncated;
+            for (String added : closure.added)
+            {
+                if (outcome.closureAdds.size() >= PAGE_LIMIT)
+                {
+                    outcome.closureTruncated = true;
+                    break;
+                }
+                outcome.closureAdds.add(added);
+            }
+            if (closure.truncated)
+            {
+                outcome.closureNote = "the closure stopped at a bound, so it names fewer objects " //$NON-NLS-1$
+                    + "than the move actually needs"; //$NON-NLS-1$
+            }
+        }
+        catch (RuntimeException | LinkageError cannotClose)
+        {
+            outcome.closureNote = "the dependencies could not be followed: " + cannotClose; //$NON-NLS-1$
+        }
     }
 
     /**
