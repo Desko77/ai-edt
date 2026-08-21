@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.nio.file.Paths;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -21,6 +23,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.ExtensionFitness;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmExtensionProjectHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
@@ -31,12 +34,13 @@ import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.ToolGate;
 
 /**
- * Unified extension facade with 14 operations across three areas. Authoring:
+ * Unified extension facade, three areas. Authoring:
  * create_extension_project, borrow_object, borrow_objects (batch), borrow_child,
  * borrow_form_item, borrow_module, list_borrowed. Deployment (routes to the
  * standalone tools): install_extension, uninstall_extension, list_extension,
  * export_extension. Inspection (routes to the standalone tools):
- * extension_lifecycle, extension_diff, list_interceptors, check_release_fitness.
+ * extension_lifecycle, extension_diff, list_interceptors, check_release_fitness,
+ * check_platform_verdict.
  * <p>
  * The borrow ops run through {@link BmExtensionHelper#attemptBorrow}. When the
  * EDT adopt service is not reachable, the response carries a structured
@@ -65,7 +69,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             + "borrow_form_item, borrow_module, list_borrowed. Deployment (into a " //$NON-NLS-1$
             + "project's infobase): install_extension, uninstall_extension, list_extension, " //$NON-NLS-1$
             + "export_extension. Inspection: extension_lifecycle, extension_diff, " //$NON-NLS-1$
-            + "list_interceptors, check_release_fitness. The deploy / inspect operations route " //$NON-NLS-1$
+            + "list_interceptors, check_release_fitness, check_platform_verdict. The deploy / " //$NON-NLS-1$
+            + "inspect operations route " //$NON-NLS-1$
             + "to the matching " //$NON-NLS-1$
             + "standalone tools, which remain available. dryRun is not supported for the " //$NON-NLS-1$
             + "authoring operations; when the EDT adopt service is not reachable the " //$NON-NLS-1$
@@ -81,7 +86,7 @@ public class ExtensionWorkshopTool implements IMcpTool
                     + "borrow_form_item / borrow_module / list_borrowed / install_extension / " //$NON-NLS-1$
                     + "uninstall_extension / list_extension / export_extension / " //$NON-NLS-1$
                     + "extension_lifecycle / extension_diff / list_interceptors / " //$NON-NLS-1$
-                    + "check_release_fitness / help", true) //$NON-NLS-1$
+                    + "check_release_fitness / check_platform_verdict / help", true) //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Extension project name. For create_extension_project this is the NEW " //$NON-NLS-1$
                     + "extension's name (must not already exist); for borrow_* it is the " //$NON-NLS-1$
@@ -139,6 +144,22 @@ public class ExtensionWorkshopTool implements IMcpTool
                 "list_interceptors: filter by interceptor kind.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "list_interceptors: maximum rows to return.") //$NON-NLS-1$
+            .stringProperty("configurationFile", //$NON-NLS-1$
+                "check_platform_verdict: the delivery as a .cf. It is loaded into a staging " //$NON-NLS-1$
+                    + "infobase created for this run; the working infobase is not opened, " //$NON-NLS-1$
+                    + "locked or altered.") //$NON-NLS-1$
+            .stringProperty("extensionFile", //$NON-NLS-1$
+                "check_platform_verdict: the extension as a .cfe, put to the platform against " //$NON-NLS-1$
+                    + "the delivery above.") //$NON-NLS-1$
+            .stringProperty("loadAs", //$NON-NLS-1$
+                "check_platform_verdict: the name to load the extension under. Omit and the file " //$NON-NLS-1$
+                    + "name is used - which the answer reports back as loadedAs. The platform " //$NON-NLS-1$
+                    + "matches an extension to a configuration by content, so the name does not " //$NON-NLS-1$
+                    + "change the verdict.") //$NON-NLS-1$
+            .stringProperty("platform", //$NON-NLS-1$
+                "check_platform_verdict: platform version to run (for example 8.3.27.1234). " //$NON-NLS-1$
+                    + "Omit for the newest installed. A delivery built for an older platform " //$NON-NLS-1$
+                    + "is refused by a newer one, so name the version it was built for.") //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
             .build();
@@ -205,6 +226,8 @@ public class ExtensionWorkshopTool implements IMcpTool
                 return new ListInterceptorsTool().execute(params);
             case "check_release_fitness": //$NON-NLS-1$
                 return checkReleaseFitness(params);
+            case "check_platform_verdict": //$NON-NLS-1$
+                return checkPlatformVerdict(params);
             default:
                 return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
         }
@@ -260,6 +283,106 @@ public class ExtensionWorkshopTool implements IMcpTool
                 + "inside a query, or a controlled fragment whose text drifted is not a " //$NON-NLS-1$
                 + "declaration and is invisible here. Run list_interceptors with the same " //$NON-NLS-1$
                 + "baseProjectName for the handlers.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The name to load the extension under.
+     * <p>
+     * {@code loadAs} is what this operation calls it. {@code extensionName} is accepted too because
+     * every other operation on this facade spells it that way, and a caller who reaches for the
+     * familiar name should not get silence.
+     * </p>
+     *
+     * @param params the call.
+     * @return the name, or <code>null</code> to take it off the file
+     */
+    static String loadAs(Map<String, String> params)
+    {
+        String named = JsonUtils.extractStringArgument(params, "loadAs"); //$NON-NLS-1$
+        return named != null && !named.isBlank() ? named
+            : JsonUtils.extractStringArgument(params, "extensionName"); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts the extension to the platform and reports what the platform said.
+     * <p>
+     * {@code check_release_fitness} reads declarations and says what it cannot see. This is the
+     * other half: the platform loads the extension against the delivery and either takes it or
+     * refuses it in its own words. It happens in a staging infobase created for the run and removed
+     * afterwards, so the working infobase keeps its configuration and the open EDT session keeps
+     * its lock.
+     * </p>
+     * <p>
+     * Gated on {@code create_infobase} because that is what it does. A preset that will not let an
+     * infobase be created must not let one be created through here either.
+     * </p>
+     *
+     * @param params the call.
+     * @return the verdict as JSON
+     */
+    private static String checkPlatformVerdict(Map<String, String> params)
+    {
+        String gate = ToolGate.gateIfPresetDisabled("create_infobase"); //$NON-NLS-1$
+        if (gate != null)
+        {
+            return ToolResult.error(gate).toJson();
+        }
+        String configuration = JsonUtils.extractStringArgument(params, "configurationFile"); //$NON-NLS-1$
+        String extension = JsonUtils.extractStringArgument(params, "extensionFile"); //$NON-NLS-1$
+        if (configuration == null || configuration.isBlank() || extension == null
+            || extension.isBlank())
+        {
+            return ToolResult.error("configurationFile (the delivery as a .cf) and extensionFile " //$NON-NLS-1$
+                + "(the extension as a .cfe) are both required. Files rather than projects on " //$NON-NLS-1$
+                + "purpose: exporting either one out of a project takes the configuration lock " //$NON-NLS-1$
+                + "away from the open EDT session, and this operation exists to avoid touching " //$NON-NLS-1$
+                + "it.").toJson(); //$NON-NLS-1$
+        }
+        BmBinaryImportHelper.Verdict verdict = BmBinaryImportHelper.verdict(
+            Paths.get(configuration), Paths.get(extension),
+            JsonUtils.extractStringArgument(params, "platform"), //$NON-NLS-1$
+            loadAs(params));
+
+        ToolResult result = verdict.ok ? ToolResult.success()
+            : ToolResult.error(verdict.error == null
+                ? "the run ended without reaching a verdict and without saying why" //$NON-NLS-1$
+                : verdict.error);
+        // Named for what it is. Without an extensionName the value comes off the FILE name, so
+        // "ext.cfe" reported extensionName=ext for an extension called AiEdtC22Ext - a guess
+        // reading as a fact. The platform matches an extension to a configuration by content and
+        // not by name, so the verdict stands either way; the field just has to stop claiming to be
+        // the extension's own name.
+        result.put("loadedAs", verdict.extensionName) //$NON-NLS-1$
+            .put("stagingInfobaseName", verdict.stagingInfobaseName) //$NON-NLS-1$
+            .put("stagingCreated", verdict.stagingCreated) //$NON-NLS-1$
+            // Said out loud. A staging infobase that outlived its run is a file tree on disk, and
+            // the only way the caller can clear it is by the name printed above.
+            .put("stagingRemoved", verdict.stagingRemoved); //$NON-NLS-1$
+        if (verdict.stagingCreated && !verdict.stagingRemoved)
+        {
+            result.put("stagingLeftBehind", "the staging infobase could not be removed - it is " //$NON-NLS-1$ //$NON-NLS-2$
+                + "registered under the name above and can be deleted with " //$NON-NLS-1$
+                + "infobase_admin operation=delete_infobase."); //$NON-NLS-1$
+        }
+        if (!verdict.ok)
+        {
+            result.put("failureKind", verdict.failureKind); //$NON-NLS-1$
+            return result.toJson();
+        }
+        return result.put("applies", verdict.applies) //$NON-NLS-1$
+            .put("refusedAt", verdict.refusedAt) //$NON-NLS-1$
+            .put("platformSaid", verdict.platformSaid) //$NON-NLS-1$
+            .put("note", Boolean.TRUE.equals(verdict.applies) //$NON-NLS-1$
+                ? "the platform loaded the extension against this delivery. That is the verdict " //$NON-NLS-1$
+                    + "on whether it APPLIES, not on whether it still does what it was written " //$NON-NLS-1$
+                    + "to do - a handler left pointing at a method that changed meaning loads " //$NON-NLS-1$
+                    + "fine. Run check_release_fitness and list_interceptors for that half."
+                : "the platform refused the extension, and platformSaid carries its words " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "unedited. refusedAt says which question it failed: 'applicability' means " //$NON-NLS-1$
+                    + "the extension does not fit this delivery; 'load' means the file would not " //$NON-NLS-1$
+                    + "go into the configuration store at all, which is usually the file or the " //$NON-NLS-1$
+                    + "platform version rather than fitness.") //$NON-NLS-1$
             .toJson();
     }
 
@@ -618,7 +741,10 @@ public class ExtensionWorkshopTool implements IMcpTool
         if (topic == null || topic.isEmpty())
         {
             StringBuilder sb = new StringBuilder("# extension_workshop\n\n"); //$NON-NLS-1$
-            sb.append("Author, deploy and inspect configuration extensions. 14 operations.\n\n"); //$NON-NLS-1$
+            // Counted, not typed. It said 14 while the facade answered 15, because a number
+            // written into prose stops being true the next time an operation is added.
+            sb.append("Author, deploy and inspect configuration extensions. ") //$NON-NLS-1$
+                .append(OPS.size()).append(" operations.\n\n"); //$NON-NLS-1$
             sb.append("Authoring:\n"); //$NON-NLS-1$
             sb.append("- create_extension_project - create a NEW extension project from a " //$NON-NLS-1$
                 + "base configuration (projectName=new name, baseProjectName=base config)\n"); //$NON-NLS-1$
@@ -639,7 +765,11 @@ public class ExtensionWorkshopTool implements IMcpTool
             sb.append("- list_interceptors - method interceptors declared by extensions\n\n"); //$NON-NLS-1$
             sb.append("- check_release_fitness - what a new delivery breaks in an extension: an " //$NON-NLS-1$
                 + "adopted object gone, a borrowed field gone, a field whose type moved. Needs " //$NON-NLS-1$
-                + "baseProjectName. Finding nothing does NOT mean the extension applies.\n\n"); //$NON-NLS-1$
+                + "baseProjectName. Finding nothing does NOT mean the extension applies.\n"); //$NON-NLS-1$
+            sb.append("- check_platform_verdict - the platform itself loads the extension against " //$NON-NLS-1$
+                + "a delivery .cf, in a staging infobase created for the run and removed after " //$NON-NLS-1$
+                + "it. Takes configurationFile and extensionFile. The working infobase is not " //$NON-NLS-1$
+                + "opened or locked. This is the half check_release_fitness cannot answer.\n\n"); //$NON-NLS-1$
             sb.append("**Adopt API status:** ") //$NON-NLS-1$
                 .append(BmExtensionHelper.isAvailable()
                     ? ("found - " + BmExtensionHelper.resolvedAdoptServiceClass()) //$NON-NLS-1$
@@ -713,7 +843,7 @@ public class ExtensionWorkshopTool implements IMcpTool
             "borrow_form_item", "borrow_module", "list_borrowed", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "install_extension", "uninstall_extension", "list_extension", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "export_extension", "extension_lifecycle", "extension_diff", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "list_interceptors", "check_release_fitness")) //$NON-NLS-1$
+            "list_interceptors", "check_release_fitness", "check_platform_verdict")) //$NON-NLS-1$
         {
             m.put(op, op);
         }
