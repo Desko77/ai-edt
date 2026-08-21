@@ -27,6 +27,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BslSignatureReader;
+import ru.aiedt.mcp.server.support.ControlledFragment;
 import ru.aiedt.mcp.server.support.MethodSignature;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
@@ -285,6 +286,7 @@ public class ListInterceptorsTool implements IMcpTool
             entry.put("baseModuleFound", true); //$NON-NLS-1$
             entry.put("targetExists", methodDeclared(baseSrc, target)); //$NON-NLS-1$
             compareSignatures(entry, extFile, target, baseProject);
+            checkControlledFragment(entry, extFile, target, baseSrc);
         }
         catch (Exception e)
         {
@@ -292,6 +294,96 @@ public class ListInterceptorsTool implements IMcpTool
             entry.put("targetExists", false); //$NON-NLS-1$
             entry.put("validationNote", "base check failed: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
         }
+    }
+
+    /**
+     * Checks that a controlled change still controls the code the delivery has.
+     * <p>
+     * Only for the annotation that carries a copy of the base method - the others run beside their
+     * target and do not care what its body says. For this one the body is the whole contract: the
+     * platform applies the extension while the code around the markers is still the base's code,
+     * and refuses it whole the moment that stops being true.
+     * </p>
+     *
+     * @param entry the interceptor being described.
+     * @param extFile the extension module the handler sits in.
+     * @param target the method it controls.
+     * @param baseSrc the delivery's module, already read.
+     */
+    private static void checkControlledFragment(Map<String, Object> entry, IFile extFile,
+        String target, String baseSrc)
+    {
+        if (!"changeAndValidate".equals(entry.get("kind"))) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return;
+        }
+        try
+        {
+            Object handler = entry.get("handler"); //$NON-NLS-1$
+            String extSrc;
+            try (InputStream is = extFile.getContents())
+            {
+                extSrc = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            String handlerBody = bodyOf(extSrc, String.valueOf(handler));
+            String targetBody = bodyOf(baseSrc, target);
+            if (handlerBody == null || targetBody == null)
+            {
+                entry.put("controlledNote", "the controlled code could not be read on both " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "sides, so nothing was compared"); //$NON-NLS-1$
+                return;
+            }
+            String drift = ControlledFragment.describeDrift(handlerBody, targetBody);
+            entry.put("controlledMatches", drift == null); //$NON-NLS-1$
+            if (drift != null)
+            {
+                entry.put("controlledDrift", drift); //$NON-NLS-1$
+            }
+        }
+        catch (Exception cannotCheck)
+        {
+            entry.put("controlledNote", "the controlled code could not be compared: " //$NON-NLS-1$ //$NON-NLS-2$
+                + cannotCheck.getMessage());
+        }
+    }
+
+    /**
+     * Takes one method's body out of a module's text.
+     * <p>
+     * Text and not the model, deliberately. What the platform compares is the source as written,
+     * so a body rebuilt from the model - reformatted, with its comments dropped - would be the
+     * wrong thing to compare even when it parses to the same program.
+     * </p>
+     *
+     * @param source the module.
+     * @param methodName the method.
+     * @return the lines between the declaration and its end, or <code>null</code> when not found
+     */
+    private static String bodyOf(String source, String methodName)
+    {
+        if (source == null || methodName == null || methodName.isEmpty())
+        {
+            return null;
+        }
+        String[] lines = source.split("\r?\n", -1); //$NON-NLS-1$
+        Pattern start = Pattern.compile("(?i)^\\s*(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
+            + Pattern.quote(methodName) + "\\s*\\("); //$NON-NLS-1$
+        Pattern end = Pattern.compile(
+            "(?i)^\\s*(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)\\s*$"); //$NON-NLS-1$
+        int from = -1;
+        for (int i = 0; i < lines.length; i++)
+        {
+            if (from < 0 && start.matcher(lines[i]).find())
+            {
+                from = i + 1;
+                continue;
+            }
+            if (from >= 0 && end.matcher(lines[i]).find())
+            {
+                return String.join("\n", java.util.Arrays.copyOfRange(lines, from, i)); //$NON-NLS-1$
+            }
+        }
+        return null;
     }
 
     /**
