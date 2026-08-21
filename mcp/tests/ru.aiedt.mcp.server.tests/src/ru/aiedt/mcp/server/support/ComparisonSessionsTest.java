@@ -155,6 +155,33 @@ public class ComparisonSessionsTest
     }
 
     @Test
+    public void nothingOpenMeansNothingToCloseAtShutdown()
+    {
+        // Asked on the way out by a caller that must not load the comparison types unless there
+        // is something to close: those imports are optional, and touching them on an install
+        // without the comparison packages would fail while the plugin is stopping.
+        assertFalse(ComparisonSessions.anythingOpen());
+        ComparisonSessions.open(SIDES, "handle", 1_000L);
+        assertTrue(ComparisonSessions.anythingOpen());
+        ComparisonSessions.closeAll();
+        assertFalse(ComparisonSessions.anythingOpen());
+    }
+
+    @Test
+    public void aDroppedSessionStillCountsAsSomethingToClose()
+    {
+        // The defect this guards: expiry forgets a session, and only a later call came back to
+        // close the comparison behind it. A shutdown that asked "is anything OPEN" would answer
+        // no, and the comparison would outlive the plugin holding the comparison store.
+        ComparisonSessions.open(SIDES, "handle", 1_000L);
+        ComparisonSessions.findByFingerprint(SIDES, 1_000L + ComparisonSessions.IDLE_LIMIT_MS + 1);
+        assertTrue("expired is not closed - the environment still holds the comparison",
+            ComparisonSessions.anythingOpen());
+        ComparisonSessions.drainDropped();
+        assertFalse(ComparisonSessions.anythingOpen());
+    }
+
+    @Test
     public void keysDifferBetweenSessions()
     {
         ComparisonSessions.Session first = ComparisonSessions.open("sides a", "ha", 1_000L);

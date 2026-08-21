@@ -279,6 +279,21 @@ public final class ComparisonSessions
     }
 
     /**
+     * Says whether anything is open or waiting to be closed.
+     * <p>
+     * Asked at shutdown by a caller that must not load the comparison types unless there is
+     * something to close: this class carries none of them, and the helper that does has optional
+     * imports which would fail to resolve on an install without the comparison packages.
+     * </p>
+     *
+     * @return <code>true</code> when a comparison still needs closing
+     */
+    public static synchronized boolean anythingOpen()
+    {
+        return !OPEN.isEmpty() || !DROPPED.isEmpty();
+    }
+
+    /**
      * Empties the registry without touching the environment.
      * <p>
      * For tests, which have no environment to touch.

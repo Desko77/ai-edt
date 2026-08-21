@@ -573,9 +573,15 @@ public final class BmComparisonHelper
             outcome.cannotTell = "mainProjectName and otherPath are required"; //$NON-NLS-1$
             return outcome;
         }
+        // Both live outside the try so that the finally can reach them. Everything the comparison
+        // opens has to be closed on EVERY path out of this method, not only the one that worked:
+        // a comparison left open holds the comparison store of the environment, and an EDT that
+        // cannot close is what that looks like from the outside.
+        IComparisonManager manager = null;
+        boolean keepSession = false;
         try
         {
-            IComparisonManager manager = ServiceAccess.get(IComparisonManager.class);
+            manager = ServiceAccess.get(IComparisonManager.class);
             if (manager == null)
             {
                 outcome.cannotTell = "this EDT install offers no comparison service"; //$NON-NLS-1$
@@ -614,6 +620,10 @@ public final class BmComparisonHelper
             {
                 handle = (ComparisonProcessHandle)session.handle;
                 outcome.sessionReused = true;
+                // This call closes only what it opened. A comparison somebody else is still
+                // paging through must survive a failure here - otherwise a mistyped path would
+                // throw away minutes of work that had nothing to do with the mistake.
+                keepSession = true;
             }
             else
             {
@@ -663,25 +673,19 @@ public final class BmComparisonHelper
                 !outcome.supportModesBefore.equals(outcome.supportModesAfter);
             describeSupportDrift(mainProjectName, supportBefore, outcome);
             reportProjectState(mainProjectName, decisions, outcome);
-            // The comparison stays open, and its key goes out with the answer. Paging through
-            // tens of thousands of changed objects is the only way to enumerate what to protect,
-            // and closing here would charge a full comparison for every page.
+            // A reporting comparison stays open, and its key goes out with the answer. Paging
+            // through tens of thousands of changed objects is the only way to enumerate what to
+            // protect, and closing here would charge a full comparison for every page. Only a
+            // comparison that got this far is worth keeping: one that failed answers nothing and
+            // would hold the store until it expired.
             //
-            // What is closed is what the registry dropped - expired or evicted. A comparison that
-            // outlives its session keeps the environment's comparison store busy, and an EDT that
-            // cannot close is a worse outcome than a slow one. Closing happens here rather than
-            // inside the registry because it means calling the environment, and the registry holds
-            // a lock every other caller waits on.
-            closeDropped(manager);
-            if (closeSession)
-            {
-                ComparisonSessions.Session done = ComparisonSessions.close(outcome.sessionKey);
-                if (done != null && done.handle instanceof ComparisonProcessHandle)
-                {
-                    release(manager, (ComparisonProcessHandle)done.handle);
-                }
-                outcome.sessionKey = null;
-            }
+            // A merge is different, and this is the transaction leak. The merge writes into the
+            // project, so the comparison no longer describes it - paging on would answer from a
+            // model that has been overtaken. Worse, keeping it open leaves a transaction on the
+            // comparison store of the environment, and if the person closes EDT before the idle
+            // limit runs out, the environment waits on a transaction whose owner never comes back.
+            // Measured: an EDT at no load for the better part of an hour, unable to shut down.
+            keepSession = !closeSession && intent == Intent.REPORT;
             return outcome;
         }
         catch (NoClassDefFoundError absent)
@@ -702,6 +706,74 @@ public final class BmComparisonHelper
             Activator.logError("Comparison failed: " + describe(e), e); //$NON-NLS-1$
             return outcome;
         }
+        finally
+        {
+            // Every path out of the method passes here: the answer, each early refusal, both
+            // catches. Draining only on the path that worked was the defect - a comparison that
+            // failed, timed out, was refused by a blocking problem or was cancelled kept its
+            // transaction on the comparison store, and nothing ever came back to close it.
+            closeDropped(manager);
+            if (!keepSession)
+            {
+                closeOwnSession(manager, outcome);
+            }
+        }
+    }
+
+    /**
+     * Closes the comparison this call opened, when it is not being kept for paging.
+     *
+     * @param manager the comparison service; may be <code>null</code> when it was never reached.
+     * @param outcome the answer, whose session key is cleared once the comparison is gone.
+     */
+    private static void closeOwnSession(IComparisonManager manager, Outcome outcome)
+    {
+        if (outcome.sessionKey == null)
+        {
+            return;
+        }
+        ComparisonSessions.Session done = ComparisonSessions.close(outcome.sessionKey);
+        outcome.sessionKey = null;
+        if (manager != null && done != null && done.handle instanceof ComparisonProcessHandle)
+        {
+            release(manager, (ComparisonProcessHandle)done.handle);
+        }
+    }
+
+    /**
+     * Closes every comparison this server still has open.
+     * <p>
+     * For plugin stop. A comparison that outlives the server holds the comparison store of the
+     * environment, and the environment then waits on a transaction whose owner is gone - measured
+     * as an EDT sitting at no load for the better part of an hour, unable to shut down.
+     * </p>
+     *
+     * @return how many were closed
+     */
+    public static int closeEverything()
+    {
+        int closed = 0;
+        try
+        {
+            IComparisonManager manager = ServiceAccess.get(IComparisonManager.class);
+            List<ComparisonSessions.Session> open = ComparisonSessions.closeAll();
+            open.addAll(ComparisonSessions.drainDropped());
+            for (ComparisonSessions.Session session : open)
+            {
+                if (manager != null && session.handle instanceof ComparisonProcessHandle)
+                {
+                    release(manager, (ComparisonProcessHandle)session.handle);
+                }
+                closed++;
+            }
+        }
+        catch (RuntimeException | LinkageError noComparisonSubsystem)
+        {
+            // An install without the comparison packages has nothing open to close, and a stopping
+            // plugin is the wrong place to raise that.
+            Activator.logDebug("no comparison sessions to close: " + noComparisonSubsystem); //$NON-NLS-1$
+        }
+        return closed;
     }
 
     /**
