@@ -48,6 +48,8 @@ import ru.aiedt.mcp.server.settings.MarkerSettingsMigration;
 import ru.aiedt.mcp.server.labels.MarkerManager;
 import ru.aiedt.mcp.server.labels.ui.MarkerFilterController;
 import ru.aiedt.mcp.server.workbench.NavigatorToolbarTweaker;
+import ru.aiedt.mcp.server.support.BmComparisonHelper;
+import ru.aiedt.mcp.server.support.ComparisonSessions;
 import ru.aiedt.mcp.server.support.DebugLog;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
@@ -212,10 +214,45 @@ public class Activator
         // And for the update watcher: a preference listener and a job that may be waiting on a
         // socket, either of which would keep this classloader alive past the bundle.
         ReleaseSweep.get().shutdown();
+        closeOpenComparisons();
 
         logInfo("AI-EDT plugin stopped"); //$NON-NLS-1$
         plugin = null;
         super.stop(context);
+    }
+
+    /**
+     * Closes any comparison this server still has open.
+     * <p>
+     * A comparison kept open for paging holds a transaction on the comparison store of the
+     * environment. One that outlives this bundle leaves the environment waiting on a transaction
+     * whose owner is gone - measured on a stand as an EDT sitting at no load, unable to shut down.
+     * </p>
+     * <p>
+     * The registry is asked first because it carries no comparison types of its own. The helper
+     * does, and its imports are optional: touching it on an install without the comparison packages
+     * would raise a class-loading error in the middle of stopping the plugin. Nothing open means
+     * nothing to load.
+     * </p>
+     */
+    private static void closeOpenComparisons()
+    {
+        if (!ComparisonSessions.anythingOpen())
+        {
+            return;
+        }
+        try
+        {
+            int closed = BmComparisonHelper.closeEverything();
+            if (closed > 0)
+            {
+                logInfo("Closed " + closed + " open comparison(s) on the way out"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        catch (RuntimeException | LinkageError cannotClose)
+        {
+            logWarning("Open comparisons could not be closed on shutdown: " + cannotClose); //$NON-NLS-1$
+        }
     }
 
     /**
