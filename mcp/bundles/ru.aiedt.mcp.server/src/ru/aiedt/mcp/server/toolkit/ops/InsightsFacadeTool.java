@@ -229,6 +229,12 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_three_way: compare the sides even when they do not identify as the same " //$NON-NLS-1$
                     + "configuration in different versions. Off by default: a wrong ancestor " //$NON-NLS-1$
                     + "inverts every changedBy without failing.") //$NON-NLS-1$
+            .booleanProperty("methodLevel", //$NON-NLS-1$
+                "compare_three_way: look inside modules, so a change comes back named by the " //$NON-NLS-1$
+                    + "method it is in - CommonModule.X.Module.MethodName - with its own " //$NON-NLS-1$
+                    + "attribution, and a decision can be addressed at one method without " //$NON-NLS-1$
+                    + "touching its neighbours. Off by default; comparedInMs reports the cost " //$NON-NLS-1$
+                    + "either way.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
                 "compare_three_way: close the comparison after answering instead of " //$NON-NLS-1$
                     + "keeping it open for the next page. Off by default, because a " //$NON-NLS-1$

@@ -163,6 +163,16 @@ public class ThreeWayComparisonTool
                     + "that there are no differences. An object renamed between the two sides " //$NON-NLS-1$
                     + "cannot be scoped - it is called one thing here and another in the " //$NON-NLS-1$
                     + "delivery - so compare the whole configuration for those.") //$NON-NLS-1$
+            .booleanProperty("methodLevel", //$NON-NLS-1$
+                "Look inside modules, so a change is named by the piece of the module it sits in " //$NON-NLS-1$
+                    + "rather than as \"this module was changed by both sides\". Off by default: " //$NON-NLS-1$
+                    + "telling a module apart piece by piece is more tree to build and to walk. " //$NON-NLS-1$
+                    + "comparedInMs comes back either way, so the cost is measurable. Each piece " //$NON-NLS-1$
+                    + "comes back in sections with its full name - " //$NON-NLS-1$
+                    + "CommonModule.X.Module.MethodName - its own attribution, and the kind of " //$NON-NLS-1$
+                    + "node the environment made it. A decision may be addressed at one of those " //$NON-NLS-1$
+                    + "names, which is how one method is decided about without touching its " //$NON-NLS-1$
+                    + "neighbours.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
                 "Close the comparison after answering instead of keeping it open for further " //$NON-NLS-1$
                     + "pages. Off by default: a comparison of a real configuration takes minutes, " //$NON-NLS-1$
@@ -373,6 +383,7 @@ public class ThreeWayComparisonTool
         page.offset = JsonUtils.extractIntArgument(params, "offset", 0); //$NON-NLS-1$
         page.limit = JsonUtils.extractIntArgument(params, "limit", 0); //$NON-NLS-1$
         boolean closeSession = JsonUtils.extractBooleanArgument(params, "closeSession", false); //$NON-NLS-1$
+        page.methodLevel = JsonUtils.extractBooleanArgument(params, "methodLevel", false); //$NON-NLS-1$
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
             ancestorPath, decisions, decisionsPath, decisionsFrom, intent, ignoreOriginMismatch,
             page, closeSession, readScope(params));
@@ -458,6 +469,11 @@ public class ThreeWayComparisonTool
             .put("takenFromVendor", outcome.objectsChangedByVendor) //$NON-NLS-1$
             .put("conflictQueue", outcome.conflictQueue) //$NON-NLS-1$
             .put("conflictQueueCount", outcome.objectsChangedByBoth) //$NON-NLS-1$
+            // What the comparison cost, always - it is the number that says whether looking
+            // inside modules is worth doing on a configuration this size.
+            .put("comparedInMs", outcome.comparedInMs) //$NON-NLS-1$
+            .put("sections", outcome.sections) //$NON-NLS-1$
+            .put("moreSections", outcome.moreSections) //$NON-NLS-1$
             // What the merge did to the vendor support settings, counted either side of it.
             // Not a promise that they were protected - that was tried and does not work.
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$

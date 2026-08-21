@@ -499,7 +499,7 @@ closes.
 | 9-16 | 45 |
 | 17+ | 14 |
 
-1726 test methods across 163 test classes; 107 classes have a test of their own, median 9 methods each.
+1727 test methods across 163 test classes; 107 classes have a test of their own, median 9 methods each.
 
 Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 107 of 370 classes have one: 94 are covered by the registry-wide contract sweep and 69 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 

@@ -36,6 +36,8 @@ import com._1c.g5.v8.dt.compare.merge.MergeProblem;
 import com._1c.g5.v8.dt.compare.model.ComparisonFlags;
 import com._1c.g5.v8.dt.compare.model.ComparisonNode;
 import com._1c.g5.v8.dt.compare.model.ComparisonSide;
+import com._1c.g5.v8.dt.compare.model.FeatureComparisonNode;
+import com._1c.g5.v8.dt.compare.model.RelatedFeature;
 import com._1c.g5.v8.dt.compare.model.MergeRule;
 import com._1c.g5.v8.dt.compare.model.MergeSettings;
 import com._1c.g5.v8.dt.compare.model.ObjectsTriple;
@@ -200,6 +202,16 @@ public final class BmComparisonHelper
         public boolean mustBeMergedOnly;
 
         /** How many matching objects to skip. */
+        /**
+         * Look inside modules, so a change can be named by the piece of the module it is in.
+         * <p>
+         * Off by default. Telling a module apart piece by piece is more tree to build and more to
+         * walk, and that cost belongs to the caller who wants the detail. comparedInMs comes back
+         * either way, so the price is measured rather than argued about.
+         * </p>
+         */
+        public boolean methodLevel;
+
         public int offset;
 
         /** How many to name, capped at {@link #PAGE_LIMIT}. */
@@ -262,6 +274,38 @@ public final class BmComparisonHelper
             int dot = name.indexOf('.');
             return dot > 0 && name.substring(0, dot).equalsIgnoreCase(wanted);
         }
+    }
+
+    /**
+     * One piece of a module the comparison told apart from the rest of it - in practice, a method.
+     * <p>
+     * <b>Measured on a stand.</b> With the switch on, the environment produces
+     * {@code BslModuleSectionComparisonNode}, and each one is a top node carrying the method's full
+     * name - {@code CommonModule.F3Api.Module.OurCustomisation} - with its own attribution. So a
+     * conflict can be stated as "this method" instead of "this module was changed by both sides",
+     * and a decision can be addressed at one method while its neighbours are left alone.
+     * </p>
+     * <p>
+     * The kind is reported as the environment names it rather than mapped onto a vocabulary of our
+     * own: what the tree holds is what a caller should be able to see.
+     * </p>
+     */
+    public static final class Section
+    {
+        /** The module this piece belongs to, named as the object list names it. */
+        public String module;
+
+        /** What the piece is called, on whichever side names it. */
+        public String name;
+
+        /** What the environment calls this kind of node. */
+        public String kind;
+
+        /** OURS, VENDOR, BOTH or UNKNOWN, by the same rule as an object. */
+        public String changedBy;
+
+        /** The node, for addressing a decision at it. Not reported. */
+        transient long nodeId;
     }
 
     /** One object that differs between the sides, or exists on only one of them. */
@@ -573,6 +617,24 @@ public final class BmComparisonHelper
          */
         public final List<String> conflictQueue = new ArrayList<>();
 
+        /**
+         * The pieces of modules that differ, when the caller asked to look inside them.
+         * <p>
+         * "This module was changed by both sides" is not something a person can act on. Which
+         * method it was, and whether the delivery touched the signature or the body, is.
+         * </p>
+         */
+        public final List<Section> sections = new ArrayList<>();
+
+        /** True when the caller asked to look inside modules. */
+        public transient boolean sectionsWanted;
+
+        /** True when there were more sections than the page holds. */
+        public boolean moreSections;
+
+        /** How long the comparison itself took, so the cost of looking inside modules is visible. */
+        public long comparedInMs;
+
         /** True when there were more matches than one decision may cover. */
         public boolean matchingTruncated;
 
@@ -831,6 +893,7 @@ public final class BmComparisonHelper
             }
             outcome.sessionKey = session.key;
             outcome.threeWay = handle.isThreeWay();
+            outcome.sectionsWanted = page.methodLevel;
 
             ComparisonProcessSettings settings = settingsFor(manager, handle, decisionsFrom,
                 outcome);
@@ -841,8 +904,10 @@ public final class BmComparisonHelper
             CompareMergeProcessBatch batch =
                 new CompareMergeProcessBatch(new CompareMergeProcessDescriptor(handle, settings));
 
+            long startedAt = System.currentTimeMillis();
             manager.startComparison(batch);
             awaitFinish(manager, handle, batch, outcome);
+            outcome.comparedInMs = System.currentTimeMillis() - startedAt;
             if (!outcome.completed)
             {
                 return outcome;
@@ -1016,13 +1081,30 @@ public final class BmComparisonHelper
      * @param outcome the answer being built.
      * @return the settings, or <code>null</code> when the file was named and could not be read
      */
+    /**
+     * Starts the settings for a comparison, with the one switch that changes what the tree holds.
+     * <p>
+     * {@code parseBslModuleStructure} makes the environment look inside modules instead of treating
+     * each one as a single lump. It is off unless asked for: a module told apart piece by piece is
+     * more tree to build and more tree to walk, and the caller who wants "which method" should pay
+     * for it knowingly rather than everybody paying for it always.
+     * </p>
+     *
+     * @param outcome the answer being built, which carries whether pieces were asked for.
+     * @return a builder with the matching strategy and that switch already set
+     */
+    private static ComparisonProcessSettings.ComparisonSettingsBuilder builder(Outcome outcome)
+    {
+        return new ComparisonProcessSettings.ComparisonSettingsBuilder(
+            MatchingStrategy.UUID_THEN_NAME).parseBslModuleStructure(outcome.sectionsWanted);
+    }
+
     private static ComparisonProcessSettings settingsFor(IComparisonManager manager,
         ComparisonProcessHandle handle, String decisionsFrom, Outcome outcome)
     {
         if (decisionsFrom == null || decisionsFrom.trim().isEmpty())
         {
-            return new ComparisonProcessSettings(MatchingStrategy.UUID_THEN_NAME,
-                Collections.emptyList(), new NoMergeSettings());
+            return builder(outcome).mergeSettingsModel(new NoMergeSettings()).build();
         }
         String path = decisionsFrom.trim();
         if (!path.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) //$NON-NLS-1$
@@ -1042,10 +1124,10 @@ public final class BmComparisonHelper
             List<ObjectsTriple<String>> correspondences =
                 restored.getComparedObjectsCorrespondences();
             IMergeSettingsModel restoredModel = restored.getMergeSettingsModel();
-            ComparisonProcessSettings settings =
-                new ComparisonProcessSettings(MatchingStrategy.UUID_THEN_NAME,
-                    correspondences == null ? Collections.emptyList() : correspondences,
-                    restoredModel == null ? new NoMergeSettings() : restoredModel);
+            ComparisonProcessSettings settings = builder(outcome)
+                .correspondences(correspondences == null ? Collections.emptyList() : correspondences)
+                .mergeSettingsModel(restoredModel == null ? new NoMergeSettings() : restoredModel)
+                .build();
             settings.setRestoredMergeSettings(restored);
             outcome.decisionsReadFrom = path;
             outcome.decisionsRestored = restoredModel != null && !restoredModel.isEmpty();
@@ -2456,7 +2538,7 @@ public final class BmComparisonHelper
         ComparisonNode root = session.getRootNode();
         if (root != null)
         {
-            walk(root, outcome, page);
+            walk(root, outcome, page, null);
         }
         readProblems(manager, handle, outcome);
     }
@@ -2535,6 +2617,95 @@ public final class BmComparisonHelper
      * @param oneSided whether it exists on one side only.
      * @return the description
      */
+    /**
+     * Records a piece of a module when it is one that moved.
+     * <p>
+     * Three ways a piece can have moved, and the narrow one is not enough: it can exist on one side
+     * only, it can differ between the sides, or the environment can mark it changed without the
+     * plain difference flag - which is what a module told apart piece by piece produces.
+     * </p>
+     *
+     * @param node the node inside the module.
+     * @param outcome the answer being built.
+     * @param module the module it belongs to.
+     * @param oneSided whether it exists on one side only.
+     * @param differs whether the sides disagree about it.
+     */
+    private static void recordIfPiece(ComparisonNode node, Outcome outcome, String module,
+        boolean oneSided, boolean differs)
+    {
+        if (!outcome.sectionsWanted)
+        {
+            return;
+        }
+        boolean moved = oneSided || differs;
+        if (!moved)
+        {
+            try
+            {
+                ComparisonFlags flags = node.getComparisonFlags();
+                moved = flags != null && flags.hasChangedMainOther();
+            }
+            catch (RuntimeException | LinkageError willNotSay)
+            {
+                moved = false;
+            }
+        }
+        if (moved)
+        {
+            recordSection(node, outcome, module, oneSided);
+        }
+    }
+
+    /**
+     * Records one differing piece of a module.
+     *
+     * @param node the node inside the module.
+     * @param outcome the answer being built.
+     * @param module the module it belongs to.
+     * @param oneSided whether the piece exists on one side only.
+     */
+    private static void recordSection(ComparisonNode node, Outcome outcome, String module,
+        boolean oneSided)
+    {
+        if (outcome.sections.size() >= PAGE_LIMIT)
+        {
+            outcome.moreSections = true;
+            return;
+        }
+        Section section = new Section();
+        section.module = module;
+        section.nodeId = node.bmGetId();
+        section.kind = node.getClass().getSimpleName().replace("Impl", ""); //$NON-NLS-1$
+        section.changedBy = attribute(node, oneSided, outcome.threeWay);
+        // A method section is a top node and names itself in full, which is what makes a decision
+        // about one method possible at all. The feature id below is the fallback for a piece that
+        // is not a top node: those carry no name of their own - ComparisonNode has no getName, and
+        // FeatureComparisonNode offers only a numeric id - so they come back identified rather
+        // than named, which is honest about being less than a name.
+        try
+        {
+            if (node instanceof TopComparisonNode)
+            {
+                section.name = symlinkOf((TopComparisonNode)node, ComparisonSide.MAIN);
+            }
+            else if (node instanceof FeatureComparisonNode)
+            {
+                RelatedFeature feature = ((FeatureComparisonNode)node).getFeature();
+                section.name = feature == null ? null : "feature " + feature.getFeatureId(); //$NON-NLS-1$
+            }
+        }
+        catch (RuntimeException | LinkageError cannotName)
+        {
+            section.name = null;
+        }
+        if (section.name == null || section.name.isEmpty())
+        {
+            section.name = "node " + section.nodeId; //$NON-NLS-1$
+        }
+        outcome.sections.add(section);
+    }
+
     /**
      * Names a top node on one side, without letting a node that will not answer stop the walk.
      *
@@ -2739,7 +2910,8 @@ public final class BmComparisonHelper
         }
     }
 
-    private static void walk(ComparisonNode node, Outcome outcome, Page page)
+    private static void walk(ComparisonNode node, Outcome outcome, Page page,
+        String insideModule)
     {
         outcome.nodes++;
         boolean oneSided = node.isOneSideNode();
@@ -2829,6 +3001,31 @@ public final class BmComparisonHelper
                 }
             }
         }
+        if (node instanceof TopComparisonNode)
+        {
+            String named = symlinkOf((TopComparisonNode)node, ComparisonSide.MAIN);
+            if (named == null || named.isEmpty())
+            {
+                named = symlinkOf((TopComparisonNode)node, ComparisonSide.OTHER);
+            }
+            if (named != null && named.endsWith(".Module")) //$NON-NLS-1$
+            {
+                // A module is a top node of its own - measured, and the same holds for form and
+                // template content. Everything below it belongs to that module.
+                insideModule = named;
+            }
+            else if (insideModule != null)
+            {
+                // A piece of a module is a TOP node too, which is what made the first version of
+                // this report empty: it recomputed the enclosing module for every top node and so
+                // threw the context away at exactly the nodes it was looking for.
+                recordIfPiece(node, outcome, insideModule, oneSided, differs);
+            }
+        }
+        else if (insideModule != null)
+        {
+            recordIfPiece(node, outcome, insideModule, oneSided, differs);
+        }
         if (!node.hasChildren())
         {
             return;
@@ -2837,7 +3034,7 @@ public final class BmComparisonHelper
         {
             if (child != null)
             {
-                walk(child, outcome, page);
+                walk(child, outcome, page, insideModule);
             }
         }
     }
