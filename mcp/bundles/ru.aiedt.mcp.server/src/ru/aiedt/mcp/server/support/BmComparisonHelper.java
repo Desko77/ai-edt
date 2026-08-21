@@ -1718,34 +1718,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Applies the decisions to the configuration, when that is what was asked for.
-     * <p>
-     * This is the only irreversible thing in this class, and everything about it is arranged so it
-     * cannot happen by accident: the caller has to ask by name, has to have supplied decisions
-     * (there is nothing to apply otherwise), and has to ask a second time in different words to
-     * proceed past a problem the environment called blocking.
-     * </p>
-     * <p>
-     * What blocks a merge is decided by the environment, not here, and this is measured rather than
-     * assumed: merge problems come out of a validation phase that runs as part of the merge itself,
-     * so before one is started there is nothing to read - {@code getMergeProblems} fails an internal
-     * assertion. A check made here would therefore always see zero problems and always pass, which
-     * is worse than no check at all. The two entry points differ exactly in whether the environment
-     * proceeds past its own objection, and that is the choice the intent carries.
-     * </p>
-     * <p>
-     * The merge is also scheduled rather than performed: {@code startMerge} returns OK as soon as
-     * the job is accepted. Reporting that status as the result would say "merged" before anything
-     * had been written - so the answer here is taken from the process state after the work ends.
-     * </p>
-     *
-     * @param manager the comparison service.
-     * @param handle the process.
-     * @param batch the batch that was compared.
-     * @param intent what the caller asked for.
-     * @param outcome the answer being built.
-     */
-    /**
      * Says why a configuration cannot be updated as an unchanged one.
      * <p>
      * The condition is strict on purpose, and all three counts matter. A zero for our own changes
@@ -1753,6 +1725,15 @@ public final class BmComparisonHelper
      * and UNKNOWN means there was no attribution at all - which is what a comparison without an
      * ancestor produces, and the case where taking the delivery whole would silently overwrite
      * work.
+     * </p>
+     *
+     * <p>
+     * <b>The whole safety of this route rests on the attribution being right.</b> Measured on a
+     * stand: a catalogue we had customised and the delivery had deleted used to be attributed to
+     * the vendor, which left all three counts at zero and would have let this run - taking the
+     * delivery whole and removing the customisation without a word. The one-sided rule was
+     * corrected for exactly that, and if it ever regresses this check goes back to being a promise
+     * it cannot keep.
      * </p>
      *
      * @param outcome what the comparison found.
@@ -1784,6 +1765,34 @@ public final class BmComparisonHelper
         return null;
     }
 
+    /**
+     * Applies the decisions to the configuration, when that is what was asked for.
+     * <p>
+     * This is the only irreversible thing in this class, and everything about it is arranged so it
+     * cannot happen by accident: the caller has to ask by name, has to have supplied decisions
+     * (there is nothing to apply otherwise), and has to ask a second time in different words to
+     * proceed past a problem the environment called blocking.
+     * </p>
+     * <p>
+     * What blocks a merge is decided by the environment, not here, and this is measured rather than
+     * assumed: merge problems come out of a validation phase that runs as part of the merge itself,
+     * so before one is started there is nothing to read - {@code getMergeProblems} fails an internal
+     * assertion. A check made here would therefore always see zero problems and always pass, which
+     * is worse than no check at all. The two entry points differ exactly in whether the environment
+     * proceeds past its own objection, and that is the choice the intent carries.
+     * </p>
+     * <p>
+     * The merge is also scheduled rather than performed: {@code startMerge} returns OK as soon as
+     * the job is accepted. Reporting that status as the result would say "merged" before anything
+     * had been written - so the answer here is taken from the process state after the work ends.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process.
+     * @param batch the batch that was compared.
+     * @param intent what the caller asked for.
+     * @param outcome the answer being built.
+     */
     private static void merge(IComparisonManager manager, ComparisonProcessHandle handle,
         CompareMergeProcessBatch batch, Intent intent, Outcome outcome)
     {
@@ -2349,44 +2358,24 @@ public final class BmComparisonHelper
                 // alone calls every vendor deletion our own work, and every deletion of ours a
                 // vendor addition, which turns the whole census inside out on exactly the objects
                 // an update is most likely to break.
-                boolean inAncestor = node.isAncestorObjectExists();
                 ComparisonSide side = node.getNodeSide();
-                if (side == ComparisonSide.OTHER)
+                if (side != ComparisonSide.OTHER && side != ComparisonSide.MAIN)
                 {
-                    return inAncestor ? "OURS" : "VENDOR"; //$NON-NLS-1$ //$NON-NLS-2$
+                    return AttributionRule.UNKNOWN;
                 }
-                if (side == ComparisonSide.MAIN)
-                {
-                    return inAncestor ? "VENDOR" : "OURS"; //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                return "UNKNOWN"; //$NON-NLS-1$
+                boolean presentOnMain = side == ComparisonSide.MAIN;
+                boolean inAncestor = node.isAncestorObjectExists();
+                return AttributionRule.forOneSided(presentOnMain, inAncestor,
+                    inAncestor && survivorDiffersFromAncestor(node, side));
             }
             ComparisonFlags flags = node.getComparisonFlags();
             if (flags == null)
             {
                 return "UNKNOWN"; //$NON-NLS-1$
             }
-            if (flags.hasDoubleChanges())
-            {
-                return "BOTH"; //$NON-NLS-1$
-            }
-            boolean ours =
-                flags.hasDifferences(ComparisonSide.MAIN, ComparisonSide.COMMON_ANCESTOR);
-            boolean vendor =
-                flags.hasDifferences(ComparisonSide.OTHER, ComparisonSide.COMMON_ANCESTOR);
-            if (ours && vendor)
-            {
-                return "BOTH"; //$NON-NLS-1$
-            }
-            if (ours)
-            {
-                return "OURS"; //$NON-NLS-1$
-            }
-            if (vendor)
-            {
-                return "VENDOR"; //$NON-NLS-1$
-            }
-            return "UNKNOWN"; //$NON-NLS-1$
+            return AttributionRule.forTwoSided(flags.hasDoubleChanges(),
+                flags.hasDifferences(ComparisonSide.MAIN, ComparisonSide.COMMON_ANCESTOR),
+                flags.hasDifferences(ComparisonSide.OTHER, ComparisonSide.COMMON_ANCESTOR));
         }
         catch (RuntimeException | LinkageError flagsRefused)
         {
@@ -2408,6 +2397,41 @@ public final class BmComparisonHelper
      * @param node the node.
      * @param change where to write the recommendation.
      */
+    /**
+     * Says whether the copy that survived a one-sided deletion was changed before it was deleted.
+     * <p>
+     * The question a deletion cannot answer by itself. An object the delivery removed matters
+     * differently depending on whether we had reworked it; an object we removed matters
+     * differently depending on whether the delivery had reworked it. Both are conflicts, and
+     * neither is visible in which side the node stands on.
+     * </p>
+     *
+     * @param node the one-sided node.
+     * @param side the side it survives on.
+     * @return <code>true</code> when the surviving copy differs from the ancestor
+     */
+    private static boolean survivorDiffersFromAncestor(ComparisonNode node, ComparisonSide side)
+    {
+        try
+        {
+            ComparisonFlags flags = node.getComparisonFlags();
+            if (flags == null)
+            {
+                // No flags is not evidence of no change. Answering false here would restore the
+                // very reading this method exists to correct, so the caller keeps the plain
+                // one-sided answer and nothing is invented.
+                return false;
+            }
+            return flags.hasDifferences(side, ComparisonSide.COMMON_ANCESTOR);
+        }
+        catch (RuntimeException | LinkageError flagsRefused)
+        {
+            Activator.logDebug("comparison: a one-sided node would not compare with its " //$NON-NLS-1$
+                + "ancestor: " + flagsRefused); //$NON-NLS-1$
+            return false;
+        }
+    }
+
     private static void readRecommendation(ComparisonNode node, Change change)
     {
         try
