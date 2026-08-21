@@ -44,9 +44,12 @@ public class SupportRegistryToolTest
         assertEquals("support_registry", tool.getName());
         assertEquals(IMcpTool.ResponseType.JSON, tool.getResponseType());
         String description = tool.getDescription();
-        assertTrue("the description must say the tool changes nothing, because the neighbouring "
-            + "operation that does change a mode decides what an update may overwrite",
-            description.contains("Read-only"));
+        assertTrue("the one operation that writes has to be named as such: a support mode decides "
+            + "what a vendor update may overwrite, and a caller reading this description is how "
+            + "the difference between reporting and writing gets noticed",
+            description.contains("restore_modes"));
+        assertTrue("and it has to say that writing needs asking for - the default reports and "
+            + "changes nothing", description.contains("apply=true"));
     }
 
     @Test

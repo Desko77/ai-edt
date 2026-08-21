@@ -36,6 +36,37 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 public class ThreeWayComparisonTool
     implements IMcpTool
 {
+    /**
+     * Says what the merge did to the vendor support modes, and how to undo it.
+     * <p>
+     * Three answers rather than two. Modes unchanged is one. Modes changed with a snapshot on disk
+     * names the file and the operation that puts them back. Modes changed with no snapshot is the
+     * one that must not be softened: the work is unprotected and there is nothing to restore from.
+     * </p>
+     *
+     * @param outcome what the comparison found.
+     * @return the sentence to put in the answer
+     */
+    private static String supportNote(BmComparisonHelper.Outcome outcome)
+    {
+        if (!outcome.supportModesChanged)
+        {
+            return "the vendor support modes are unchanged by this call"; //$NON-NLS-1$
+        }
+        String what = "this merge CHANGED the vendor support modes - compare supportModesBefore " //$NON-NLS-1$
+            + "with supportModesAfter, and read supportModesLost for the objects that lost one. " //$NON-NLS-1$
+            + "The environment writes the support model as part of the merge and its merge rules " //$NON-NLS-1$
+            + "do not prevent it. "; //$NON-NLS-1$
+        if (outcome.supportSnapshotFile == null)
+        {
+            return what + "No snapshot was written, so the previous modes cannot be restored from " //$NON-NLS-1$
+                + "this run."; //$NON-NLS-1$
+        }
+        return what + "The modes as they were before the merge are in " //$NON-NLS-1$
+            + outcome.supportSnapshotFile
+            + " - put them back with support_registry operation=restore_modes."; //$NON-NLS-1$
+    }
+
     @Override
     public String getName()
     {
@@ -110,6 +141,11 @@ public class ThreeWayComparisonTool
                     + "page names at most 500 of them.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "How many objects to name. Default and maximum 500.") //$NON-NLS-1$
+            .booleanProperty("closeSession", //$NON-NLS-1$
+                "Close the comparison after answering instead of keeping it open for further " //$NON-NLS-1$
+                    + "pages. Off by default: a comparison of a real configuration takes minutes, " //$NON-NLS-1$
+                    + "and walking what changed a page at a time would otherwise pay that cost " //$NON-NLS-1$
+                    + "per page. An open comparison expires by itself after 20 idle minutes.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
                 "Compare the sides even when they do not identify as the same configuration in " //$NON-NLS-1$
                     + "different versions. Off by default: an ancestor from another configuration " //$NON-NLS-1$
@@ -270,13 +306,18 @@ public class ThreeWayComparisonTool
             JsonUtils.extractBooleanArgument(params, "mustBeMergedOnly", false); //$NON-NLS-1$
         page.offset = JsonUtils.extractIntArgument(params, "offset", 0); //$NON-NLS-1$
         page.limit = JsonUtils.extractIntArgument(params, "limit", 0); //$NON-NLS-1$
+        boolean closeSession = JsonUtils.extractBooleanArgument(params, "closeSession", false); //$NON-NLS-1$
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
             ancestorPath, decisions, decisionsPath, decisionsFrom, intent, ignoreOriginMismatch,
-            page);
+            page, closeSession);
         if (outcome.cannotTell != null)
         {
             return ToolResult.error(outcome.cannotTell)
                 .put("threeWay", outcome.threeWay) //$NON-NLS-1$
+            // The comparison stays open under this key, so the next page costs nothing. Reused
+            // says whether this answer came from an open one or from a fresh comparison.
+            .put("sessionKey", outcome.sessionKey) //$NON-NLS-1$
+            .put("sessionReused", outcome.sessionReused) //$NON-NLS-1$
                 .put("status", outcome.status) //$NON-NLS-1$
                 .toJson();
         }
@@ -326,14 +367,23 @@ public class ThreeWayComparisonTool
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$
             .put("supportModesAfter", outcome.supportModesAfter) //$NON-NLS-1$
             .put("supportModesChanged", outcome.supportModesChanged) //$NON-NLS-1$
+            // Which objects lost the mode they had, not just how many. These are the ones somebody
+            // deliberately unlocked and the update locked again, and naming them is the difference
+            // between knowing damage happened and knowing which work is now unprotected.
+            .put("supportModesLost", outcome.supportModesLost) //$NON-NLS-1$
+            .put("supportModesLostCount", outcome.supportModesLostCount) //$NON-NLS-1$
+            // Objects the delivery brought take the update rules' default rather than a lost mode,
+            // and objects the update removed can take no mode at all. Both are ordinary, and
+            // counting them apart keeps them out of the damage figure.
+            .put("supportModesArrived", outcome.supportModesArrived) //$NON-NLS-1$
+            .put("supportModesGone", outcome.supportModesGone) //$NON-NLS-1$
+            // The route back. Written before the merge because a snapshot that lives only in the
+            // call dies with it, and the modes it recorded are then gone for good.
+            .put("supportSnapshotFile", outcome.supportSnapshotFile) //$NON-NLS-1$
+            .put("supportSnapshotNote", outcome.supportSnapshotNote) //$NON-NLS-1$
             // Said plainly, because a merge that quietly re-locks objects somebody deliberately
             // unlocked is the worst outcome this tool can produce, and it cannot be prevented.
-            .put("supportSettingsNote", outcome.supportModesChanged //$NON-NLS-1$
-                ? "this merge CHANGED the vendor support modes - compare supportModesBefore with " //$NON-NLS-1$
-                    + "supportModesAfter. The environment writes the support model as part of the " //$NON-NLS-1$
-                    + "merge and its merge rules do not prevent it. Restore the previous modes " //$NON-NLS-1$
-                    + "explicitly if they are required." //$NON-NLS-1$
-                : "the vendor support modes are unchanged by this call") //$NON-NLS-1$
+            .put("supportSettingsNote", supportNote(outcome)) //$NON-NLS-1$
             .put("decisionsWrittenTo", outcome.decisionsWrittenTo) //$NON-NLS-1$
             .put("decisionsNote", outcome.decisionsNote) //$NON-NLS-1$
             // Present only when decisions were restored from a file, so a caller who named

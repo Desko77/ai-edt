@@ -174,7 +174,7 @@ InfobaseAdminFacadeTool	start_client	allowSecondSession,applicationId,launchConf
 InfobaseAdminFacadeTool	sync_control	syncOperation	read in place
 InfobaseAdminFacadeTool	update_database	applicationId,autoFreeClients,autoRestructure,cancel,fullUpdate,ignoreBranchBinding,launchConfigurationName,projectName,runKey,timeoutSeconds	delegate DatabaseUpdater
 InsightsFacadeTool	compare_configurations	format,level,mode,objectFqn,projectName,scope,showRenames,target	delegate CompareConfigurationsTool
-InsightsFacadeTool	compare_three_way	ancestorPath,changedBy,decisions,decisionsFrom,decisionsPath,ignoreOriginMismatch,intent,limit,mustBeMergedOnly,offset,oneSided,otherPath,projectName,type	delegate ThreeWayComparisonTool
+InsightsFacadeTool	compare_three_way	ancestorPath,changedBy,closeSession,decisions,decisionsFrom,decisionsPath,ignoreOriginMismatch,intent,limit,mustBeMergedOnly,offset,oneSided,otherPath,projectName,type	delegate ThreeWayComparisonTool
 InsightsFacadeTool	dependency_graph	depth,direction,format,includeStandard,level,maxEdges,maxNodes,moduleFqn,objectFqn,projectName,scope,subsystemName	delegate DependencyGraphTool
 InsightsFacadeTool	describe_db_tables	includeFields,objectFqn,projectName	delegate DbTablesReader
 InsightsFacadeTool	detect_query_anti_patterns	batchSize,format,methodName,moduleFqn,projectName,rules,scope,severity_filter	delegate DetectQueryAntiPatternsTool
@@ -228,7 +228,9 @@ SecurityAuditFacadeTool	audit_role_rights	apply,format,includeRls,mode,objectFqn
 SecurityAuditFacadeTool	find_rls_violations	format,methodName,moduleFqn,projectName,roleName,scope,severity_filter	delegate FindRlsViolationsTool
 SecurityAuditFacadeTool	sensitive_data_scan	checks,customPatterns,format,moduleFqn,projectName,scope,severity_filter,subsystemName	delegate SensitiveDataScanTool
 SupportRegistryTool	list_objects	projectName	passed in as locals
-SupportRegistryTool	object_mode	operation,projectName	passed in as locals
+SupportRegistryTool	object_mode	projectName	passed in as locals
+SupportRegistryTool	restore_modes	operation,projectName	passed in as locals
+SupportRegistryTool	snapshot_modes	projectName	passed in as locals
 SupportRegistryTool	status	projectName	passed in as locals
 SyncControlTool	diagnose	projectName	passed in as locals
 SyncControlTool	diagnose_delta	projectName	passed in as locals

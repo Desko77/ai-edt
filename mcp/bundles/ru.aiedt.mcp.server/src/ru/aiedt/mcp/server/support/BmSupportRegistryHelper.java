@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.support;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,9 +16,14 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.Platform;
 import org.osgi.framework.Bundle;
 
+import com._1c.g5.v8.bm.core.IBmTransaction;
+import com._1c.g5.v8.bm.integration.AbstractBmTask;
+import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.wiring.ServiceAccess;
@@ -179,6 +185,332 @@ public final class BmSupportRegistryHelper
 
         /** Objects the environment would require to change mode alongside this one. */
         public final List<String> dependents = new ArrayList<>();
+    }
+
+    /**
+     * Takes a snapshot of every support mode in a project.
+     *
+     * @param projectName the project.
+     * @return the snapshot, or one carrying a refusal
+     */
+    public static SupportSnapshot snapshot(String projectName)
+    {
+        SupportSnapshot snapshot = new SupportSnapshot();
+        snapshot.projectName = projectName;
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            snapshot.cannotTell = ProjectResolver.describeNotFound(projectName);
+            return snapshot;
+        }
+        Service service = findService();
+        if (service.manager == null)
+        {
+            snapshot.cannotTell = service.failure;
+            return snapshot;
+        }
+        DistributionSupport support = service.manager.getDistributionSupport(project);
+        if (support == null)
+        {
+            snapshot.cannotTell = projectName + " is not on support, so there are no modes to take"; //$NON-NLS-1$
+            return snapshot;
+        }
+        Configuration configuration = configurationOf(project);
+        Map<UUID, String> names =
+            configuration == null ? Collections.emptyMap() : indexNames(configuration);
+        for (ParentConfigurationInfo info : support.getParentConfigurationInfos())
+        {
+            SupportSnapshot.Parent parent = new SupportSnapshot.Parent(
+                info.getId() == null ? info.getConfigName() : info.getId().toString(),
+                info.getConfigName(), info.getConfigRelease());
+            for (ParentConfigurationInfoItem item : info.getItems())
+            {
+                if (item.getUserId() == null)
+                {
+                    continue;
+                }
+                parent.modes.put(item.getUserId(),
+                    item.getUserMode() == null ? null : item.getUserMode().getName());
+                if (!names.containsKey(item.getUserId()))
+                {
+                    snapshot.unresolved++;
+                }
+            }
+            snapshot.parents.add(parent);
+        }
+        return snapshot;
+    }
+
+    /** What a restore did, or would have done. */
+    public static final class Restore
+    {
+        /** Why nothing could be done. Present only when the answer is a refusal. */
+        public String cannotTell;
+
+        /** How the project differs from the snapshot. */
+        public SupportSnapshot.Drift drift;
+
+        /** True when modes were written rather than only reported. */
+        public boolean applied;
+
+        /** How many objects were put back to the mode the snapshot recorded. */
+        public int restored;
+
+        /**
+         * Objects whose mode the environment would not take, and why.
+         * <p>
+         * Named rather than counted. A restore that reports a number and not the objects leaves a
+         * person unable to tell which of their work is still unprotected.
+         * </p>
+         */
+        public final List<String> refused = new ArrayList<>();
+
+        /** Objects the snapshot names that the configuration no longer has. */
+        public int missing;
+
+        /** Which form of the environment's write method was found, for the report. */
+        public String writeRoute;
+    }
+
+    /**
+     * Puts support modes back the way a snapshot recorded them.
+     * <p>
+     * <b>Writing is a separate decision from measuring.</b> Reporting the drift costs nothing and
+     * is always done; changing the support model is done only when the caller asks for it, because
+     * the only way back from a wrong restore is another snapshot.
+     * </p>
+     * <p>
+     * Vendor configurations before and after are matched on {@link ParentConfigurationInfo#getId()}
+     * and not on the version. An update is expected to change the version and keep the identity, so
+     * matching on version would find no vendor configuration at all after exactly the update this
+     * exists for.
+     * </p>
+     *
+     * @param projectName the project.
+     * @param before the snapshot to restore to.
+     * @param apply <code>true</code> to write, <code>false</code> to report what would be written.
+     * @return what was done, or a refusal
+     */
+    public static Restore restore(String projectName, SupportSnapshot before, boolean apply)
+    {
+        Restore restore = new Restore();
+        if (before == null || before.isEmpty())
+        {
+            restore.cannotTell = "there is no snapshot to restore from"; //$NON-NLS-1$
+            return restore;
+        }
+        SupportSnapshot now = snapshot(projectName);
+        if (now.cannotTell != null)
+        {
+            restore.cannotTell = now.cannotTell;
+            return restore;
+        }
+        restore.drift = SupportSnapshot.compare(before, now);
+        if (!apply || restore.drift.isClean())
+        {
+            return restore;
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        Configuration configuration = configurationOf(project);
+        if (configuration == null)
+        {
+            restore.cannotTell = "the configuration of " + projectName + " could not be read, so " //$NON-NLS-1$ //$NON-NLS-2$
+                + "there is nothing to write modes onto"; //$NON-NLS-1$
+            return restore;
+        }
+        write(project, before, now, restore);
+        return restore;
+    }
+
+    /**
+     * Writes the recorded modes back, inside one transaction.
+     *
+     * @param project the project.
+     * @param before the snapshot to restore to.
+     * @param now what the project holds, already read.
+     * @param restore where to record what happened.
+     */
+    private static void write(IProject project, SupportSnapshot before, SupportSnapshot now,
+        Restore restore)
+    {
+        IBmModelManager models = Activator.getDefault().getBmModelManager();
+        IBmModel model = models == null ? null : models.getModel(project);
+        if (model == null)
+        {
+            restore.cannotTell = "the object model is not loaded for " + project.getName(); //$NON-NLS-1$
+            return;
+        }
+        Method setter = findWriteMethod();
+        if (setter == null)
+        {
+            // Reflection because the arity differs between releases: three arguments through
+            // 2026.1 and four from 2026.2, which added the support model as a parameter. A direct
+            // call would compile to whichever the build saw and fail with NoSuchMethodError on the
+            // other. Measured against both bundles rather than assumed.
+            restore.cannotTell = "this EDT has no setObjectSupportModeForUser in a shape this " //$NON-NLS-1$
+                + "plugin can call - looked for three and four argument forms on " //$NON-NLS-1$
+                + IDistributionSupportManager.class.getName();
+            return;
+        }
+        restore.writeRoute = setter.getParameterCount() + "-argument setObjectSupportModeForUser"; //$NON-NLS-1$
+        model.execute(new AbstractBmTask<Void>("BmSupportRegistryHelper.restore") //$NON-NLS-1$
+        {
+            @Override
+            public Void execute(IBmTransaction tx, IProgressMonitor monitor)
+            {
+                applyInTransaction(project, before, now, restore, setter);
+                return null;
+            }
+        });
+        restore.applied = restore.restored > 0;
+    }
+
+    /**
+     * Sets each recorded mode that the project no longer holds.
+     *
+     * @param project the project.
+     * @param before the snapshot to restore to.
+     * @param now what the project holds.
+     * @param restore where to record what happened.
+     * @param setter the write method this release offers.
+     */
+    private static void applyInTransaction(IProject project, SupportSnapshot before,
+        SupportSnapshot now, Restore restore, Method setter)
+    {
+        Service service = findService();
+        if (service.manager == null)
+        {
+            restore.cannotTell = service.failure;
+            return;
+        }
+        DistributionSupport support = service.manager.getDistributionSupport(project);
+        Configuration configuration = configurationOf(project);
+        if (support == null || configuration == null)
+        {
+            restore.cannotTell = "the support model could not be read inside the transaction"; //$NON-NLS-1$
+            return;
+        }
+        Map<UUID, MdObject> objects = indexObjects(configuration);
+        for (ParentConfigurationInfo info : support.getParentConfigurationInfos())
+        {
+            String id = info.getId() == null ? info.getConfigName() : info.getId().toString();
+            SupportSnapshot.Parent was = before.parentById(id);
+            SupportSnapshot.Parent is = now.parentById(id);
+            if (was == null || is == null)
+            {
+                continue;
+            }
+            for (Map.Entry<UUID, String> recorded : was.modes.entrySet())
+            {
+                String held = is.modes.get(recorded.getKey());
+                if (!is.modes.containsKey(recorded.getKey()))
+                {
+                    restore.missing++;
+                    continue;
+                }
+                if (recorded.getValue() == null || recorded.getValue().equals(held))
+                {
+                    continue;
+                }
+                MdObject object = objects.get(recorded.getKey());
+                if (object == null)
+                {
+                    restore.missing++;
+                    continue;
+                }
+                setOne(service, setter, info, object, recorded, support, restore);
+            }
+        }
+    }
+
+    /**
+     * Sets one object's mode, recording a refusal rather than throwing.
+     *
+     * @param service the support manager.
+     * @param setter the write method this release offers.
+     * @param info the vendor configuration.
+     * @param object the object.
+     * @param recorded its identity and the mode to put back.
+     * @param support the support model, which the four argument form wants.
+     * @param restore where to record what happened.
+     */
+    private static void setOne(Service service, Method setter, ParentConfigurationInfo info,
+        MdObject object, Map.Entry<UUID, String> recorded, DistributionSupport support,
+        Restore restore)
+    {
+        UserSupportMode mode = UserSupportMode.getByName(recorded.getValue());
+        if (mode == null)
+        {
+            mode = UserSupportMode.get(recorded.getValue());
+        }
+        if (mode == null)
+        {
+            restore.refused.add(name(object, recorded.getKey()) + ": the snapshot records mode \"" //$NON-NLS-1$
+                + recorded.getValue() + "\", which this EDT does not have"); //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            if (setter.getParameterCount() == 4)
+            {
+                setter.invoke(service.manager, info, object, mode, support);
+            }
+            else
+            {
+                setter.invoke(service.manager, info, object, mode);
+            }
+            restore.restored++;
+        }
+        catch (ReflectiveOperationException | RuntimeException refused)
+        {
+            // Named, not swallowed. A restore that counts only its successes reports a complete run
+            // over a configuration where half the work is still unprotected.
+            Throwable cause = refused instanceof java.lang.reflect.InvocationTargetException
+                && refused.getCause() != null ? refused.getCause() : refused;
+            restore.refused.add(name(object, recorded.getKey()) + ": " //$NON-NLS-1$
+                + cause.getClass().getSimpleName()
+                + (cause.getMessage() == null ? "" : " " + cause.getMessage())); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Finds the write method in whichever shape this release offers.
+     *
+     * @return the method, or <code>null</code> when neither shape is there
+     */
+    private static Method findWriteMethod()
+    {
+        Method four = null;
+        Method three = null;
+        for (Method candidate : IDistributionSupportManager.class.getMethods())
+        {
+            if (!"setObjectSupportModeForUser".equals(candidate.getName())) //$NON-NLS-1$
+            {
+                continue;
+            }
+            if (candidate.getParameterCount() == 4)
+            {
+                four = candidate;
+            }
+            else if (candidate.getParameterCount() == 3)
+            {
+                three = candidate;
+            }
+        }
+        return four != null ? four : three;
+    }
+
+    /**
+     * Names an object for a report, falling back to its identity.
+     *
+     * @param object the object.
+     * @param identity its identity.
+     * @return a name a person can search the configuration for
+     */
+    private static String name(MdObject object, UUID identity)
+    {
+        String named = object == null ? null : object.getName();
+        return named == null || named.isEmpty() ? String.valueOf(identity) : named;
     }
 
     /** What one vendor configuration records about one object. */
@@ -715,6 +1047,50 @@ public final class BmSupportRegistryHelper
             }
         }
         return names;
+    }
+
+    /**
+     * Indexes the objects themselves, for a caller that has to hand one to the environment.
+     * <p>
+     * Same traversal as {@link #indexNames(Configuration)} and the same limit: subordinate entities
+     * are not indexed, so a snapshot entry that answers to one has no object to set a mode on and is
+     * reported as missing rather than quietly skipped.
+     * </p>
+     *
+     * @param configuration the configuration to index.
+     * @return identity to object
+     */
+    private static Map<UUID, MdObject> indexObjects(Configuration configuration)
+    {
+        Map<UUID, MdObject> objects = new LinkedHashMap<>();
+        if (configuration.getUuid() != null)
+        {
+            objects.put(configuration.getUuid(), configuration);
+        }
+        for (String type : MetadataTypeCatalog.getAllEnglishSingularNames())
+        {
+            List<? extends MdObject> found;
+            try
+            {
+                found = MetadataTypeCatalog.getObjects(configuration, type);
+            }
+            catch (RuntimeException noSuchCollection)
+            {
+                continue;
+            }
+            if (found == null)
+            {
+                continue;
+            }
+            for (MdObject object : found)
+            {
+                if (object != null && object.getUuid() != null)
+                {
+                    objects.put(object.getUuid(), object);
+                }
+            }
+        }
+        return objects;
     }
 
     /**

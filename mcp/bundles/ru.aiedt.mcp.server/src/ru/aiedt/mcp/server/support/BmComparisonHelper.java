@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -296,6 +297,18 @@ public final class BmComparisonHelper
         /** True when three sides took part rather than two. */
         public boolean threeWay;
 
+        /**
+         * The session this answer came from, to ask further questions of the same comparison.
+         * <p>
+         * A comparison of a real configuration takes minutes. Paging through what changed - the
+         * only way to enumerate what to protect - would otherwise cost one comparison per page.
+         * </p>
+         */
+        public String sessionKey;
+
+        /** True when an already open comparison answered instead of a fresh one. */
+        public boolean sessionReused;
+
         /** What the delivery being compared against turned out to be. */
         public String otherIs;
 
@@ -420,6 +433,37 @@ public final class BmComparisonHelper
         /** True when the merge changed what objects are allowed to have done to them. */
         public boolean supportModesChanged;
 
+        /**
+         * Objects that survived the merge and lost the support mode they had.
+         * <p>
+         * Named, not counted. These are the ones a person deliberately unlocked and the update
+         * locked again; a number says damage happened, a list says which work is now unprotected.
+         * Cut at a page, with the total beside it.
+         * </p>
+         */
+        public final List<String> supportModesLost = new ArrayList<>();
+
+        /** How many objects lost their mode in total, whatever the list holds. */
+        public int supportModesLostCount;
+
+        /** Objects the new delivery brought, which had no mode before and take the rules' default. */
+        public int supportModesArrived;
+
+        /** Objects the snapshot knew and the configuration no longer has; they take no mode. */
+        public int supportModesGone;
+
+        /**
+         * Where the pre-merge support modes were written down.
+         * <p>
+         * The only route back from a merge that overwrote them. Absent when there was nothing on
+         * support to record.
+         * </p>
+         */
+        public String supportSnapshotFile;
+
+        /** Why the modes could not be written down. Present only when the write failed. */
+        public String supportSnapshotNote;
+
         /** Where the decisions were written, when they were. */
         public String decisionsWrittenTo;
 
@@ -498,7 +542,7 @@ public final class BmComparisonHelper
      */
     public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
         List<Decision> decisions, String decisionsPath, String decisionsFrom, Intent intent,
-        boolean ignoreOriginMismatch, Page page)
+        boolean ignoreOriginMismatch, Page page, boolean closeSession)
     {
         Outcome outcome = new Outcome();
         if (page == null)
@@ -557,9 +601,30 @@ public final class BmComparisonHelper
                 return outcome;
             }
 
-            ComparisonProcessHandle handle = ancestor == null
-                ? new ComparisonProcessHandle(main, other, ComparisonScope.EMPTY_SCOPE)
-                : new ComparisonProcessHandle(main, other, ancestor, ComparisonScope.EMPTY_SCOPE);
+            // An open comparison of the same three sides is reused rather than made again. Only
+            // ones this server opened are candidates: the environment can list a comparison a
+            // person opened in the editor, and adopting that would mean applying decisions to
+            // somebody else's work or closing it under them.
+            String fingerprint =
+                ComparisonSessions.fingerprintOf(mainProjectName, otherPath, ancestorPath);
+            ComparisonSessions.Session session =
+                ComparisonSessions.findByFingerprint(fingerprint, System.currentTimeMillis());
+            ComparisonProcessHandle handle;
+            if (session != null && session.handle instanceof ComparisonProcessHandle)
+            {
+                handle = (ComparisonProcessHandle)session.handle;
+                outcome.sessionReused = true;
+            }
+            else
+            {
+                handle = ancestor == null
+                    ? new ComparisonProcessHandle(main, other, ComparisonScope.EMPTY_SCOPE)
+                    : new ComparisonProcessHandle(main, other, ancestor,
+                        ComparisonScope.EMPTY_SCOPE);
+                session = ComparisonSessions.open(fingerprint, handle,
+                    System.currentTimeMillis());
+            }
+            outcome.sessionKey = session.key;
             outcome.threeWay = handle.isThreeWay();
 
             ComparisonProcessSettings settings = settingsFor(manager, handle, decisionsFrom,
@@ -583,23 +648,40 @@ public final class BmComparisonHelper
             // support settings - that was tried and does not work - so the honest thing left is
             // to say what it did to them.
             censusSupport(mainProjectName, outcome.supportModesBefore);
+            // Counts say that damage happened; only a per-object snapshot says which objects it
+            // happened to, and only that can be put back. The merge takes the support model from
+            // the delivery and the environment's merge rules do not stop it - measured - so the
+            // snapshot is the whole of what makes a restore possible.
+            SupportSnapshot supportBefore = snapshotSupport(mainProjectName);
+            // Written to disk before the merge runs, not offered as an option. A snapshot that
+            // exists only in this call dies with it, and the modes it recorded are then
+            // unrecoverable - which is the exact loss the snapshot exists to undo.
+            keepSnapshot(mainProjectName, supportBefore, outcome);
             merge(manager, handle, batch, intent, outcome);
             censusSupport(mainProjectName, outcome.supportModesAfter);
             outcome.supportModesChanged =
                 !outcome.supportModesBefore.equals(outcome.supportModesAfter);
+            describeSupportDrift(mainProjectName, supportBefore, outcome);
             reportProjectState(mainProjectName, decisions, outcome);
-            // Read, decided, possibly merged - then let go. A finished comparison stays registered
-            // with the virtual project contexts it opened for the sources on disk, and nothing
-            // else will ever close it: the handle lives only inside this call. One call is
-            // harmless, a working day of them is an environment quietly filling up with
-            // comparisons nobody can name - and the day this tool learned that a pending
-            // comparison keeps a session from shutting down was expensive enough not to leave the
-            // successful ones lying about too.
+            // The comparison stays open, and its key goes out with the answer. Paging through
+            // tens of thousands of changed objects is the only way to enumerate what to protect,
+            // and closing here would charge a full comparison for every page.
             //
-            // It is also why deciding and merging happen in the same call: keeping the session
-            // alive between calls is what would have to be designed for, and this is the shape
-            // that needs no such thing.
-            release(manager, handle);
+            // What is closed is what the registry dropped - expired or evicted. A comparison that
+            // outlives its session keeps the environment's comparison store busy, and an EDT that
+            // cannot close is a worse outcome than a slow one. Closing happens here rather than
+            // inside the registry because it means calling the environment, and the registry holds
+            // a lock every other caller waits on.
+            closeDropped(manager);
+            if (closeSession)
+            {
+                ComparisonSessions.Session done = ComparisonSessions.close(outcome.sessionKey);
+                if (done != null && done.handle instanceof ComparisonProcessHandle)
+                {
+                    release(manager, (ComparisonProcessHandle)done.handle);
+                }
+                outcome.sessionKey = null;
+            }
             return outcome;
         }
         catch (NoClassDefFoundError absent)
@@ -959,6 +1041,111 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Takes a per-object snapshot of the support modes, guarded like the census.
+     *
+     * @param projectName the project.
+     * @return the snapshot, or <code>null</code> when there is no support subsystem to ask
+     */
+    private static SupportSnapshot snapshotSupport(String projectName)
+    {
+        try
+        {
+            if (org.eclipse.core.runtime.Platform
+                .getBundle("com.e1c.g5.v8.dt.distribution") == null) //$NON-NLS-1$
+            {
+                return null;
+            }
+            SupportSnapshot taken = BmSupportRegistryHelper.snapshot(projectName);
+            return taken.cannotTell == null ? taken : null;
+        }
+        catch (RuntimeException | LinkageError cannotTake)
+        {
+            Activator.logDebug("merge: support modes could not be snapshotted: " + cannotTake); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Writes the pre-merge snapshot into the project, where a restore can find it.
+     * <p>
+     * Beside the plugin's other project state in {@code .settings}, and stamped with the time so a
+     * second merge cannot overwrite the record of what the first one found. The file is the only
+     * thing that makes the loss reversible, so failing to write it is reported in the answer rather
+     * than logged and forgotten.
+     * </p>
+     *
+     * @param projectName the project.
+     * @param snapshot what was taken; may be <code>null</code> when there was nothing to take.
+     * @param outcome where to record the path or the reason there is none.
+     */
+    private static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)
+    {
+        if (snapshot == null || snapshot.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project == null || project.getLocation() == null)
+            {
+                return;
+            }
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss") //$NON-NLS-1$
+                .format(new java.util.Date());
+            Path path = project.getLocation().toFile().toPath()
+                .resolve(".settings").resolve("aiedt-support-snapshot-" + stamp + ".tsv"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            snapshot.write(path);
+            outcome.supportSnapshotFile = path.toString();
+        }
+        catch (IOException | RuntimeException cannotKeep)
+        {
+            outcome.supportSnapshotNote = "the support modes could not be written down before the " //$NON-NLS-1$
+                + "merge, so anything the merge overwrites cannot be put back: " + cannotKeep; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Says which objects lost the support mode they had.
+     *
+     * @param projectName the project.
+     * @param before the snapshot taken before the merge; may be <code>null</code>.
+     * @param outcome where to record what changed.
+     */
+    private static void describeSupportDrift(String projectName,
+        SupportSnapshot before, Outcome outcome)
+    {
+        if (before == null || before.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            SupportSnapshot now = BmSupportRegistryHelper.snapshot(projectName);
+            if (now.cannotTell != null)
+            {
+                return;
+            }
+            SupportSnapshot.Drift drift = SupportSnapshot.compare(before, now);
+            outcome.supportModesLostCount = drift.changed.size();
+            outcome.supportModesArrived = drift.arrived;
+            outcome.supportModesGone = drift.gone;
+            for (String lost : drift.changed)
+            {
+                if (outcome.supportModesLost.size() >= PAGE_LIMIT)
+                {
+                    break;
+                }
+                outcome.supportModesLost.add(lost);
+            }
+        }
+        catch (RuntimeException | LinkageError cannotCompare)
+        {
+            Activator.logDebug("merge: support drift could not be read: " + cannotCompare); //$NON-NLS-1$
+        }
+    }
+
+    /**
      * Counts the support modes of a project, by mode.
      * <p>
      * Guarded by a bundle check because the support subsystem is an optional dependency: an EDT
@@ -1226,6 +1413,28 @@ public final class BmComparisonHelper
      * @param manager the comparison service.
      * @param handle the process to close.
      */
+    /**
+     * Closes the comparisons the registry dropped.
+     * <p>
+     * Called on the way out of any comparison, because that is a moment when talking to the
+     * environment is already expected. A dropped session whose comparison is never closed leaves
+     * the environment holding a comparison nobody can name.
+     * </p>
+     *
+     * @param manager the comparison manager.
+     */
+    private static void closeDropped(IComparisonManager manager)
+    {
+        for (ComparisonSessions.Session dropped : ComparisonSessions.drainDropped())
+        {
+            if (dropped.handle instanceof ComparisonProcessHandle)
+            {
+                Activator.logDebug("closing dropped comparison session " + dropped.key); //$NON-NLS-1$
+                release(manager, (ComparisonProcessHandle)dropped.handle);
+            }
+        }
+    }
+
     private static void release(IComparisonManager manager, ComparisonProcessHandle handle)
     {
         try
