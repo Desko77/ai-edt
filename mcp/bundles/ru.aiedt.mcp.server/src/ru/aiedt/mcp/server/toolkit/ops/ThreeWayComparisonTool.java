@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.support.BmComparisonHelper;
+import ru.aiedt.mcp.server.support.UpdateReport;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -65,6 +66,25 @@ public class ThreeWayComparisonTool
         return what + "The modes as they were before the merge are in " //$NON-NLS-1$
             + outcome.supportSnapshotFile
             + " - put them back with support_registry operation=restore_modes."; //$NON-NLS-1$
+    }
+
+    /**
+     * Renders the update report, when the caller asked for one.
+     *
+     * @param outcome what the comparison found.
+     * @param params the call.
+     * @return the report, or <code>null</code> when none was asked for
+     */
+    private static String report(BmComparisonHelper.Outcome outcome, Map<String, String> params)
+    {
+        String want = JsonUtils.extractStringArgument(params, "report"); //$NON-NLS-1$
+        if (want == null || want.trim().isEmpty())
+        {
+            return null;
+        }
+        boolean full = "full".equalsIgnoreCase(want.trim()); //$NON-NLS-1$
+        boolean methodLevel = JsonUtils.extractBooleanArgument(params, "methodLevel", false); //$NON-NLS-1$
+        return UpdateReport.render(outcome, full, methodLevel);
     }
 
     @Override
@@ -163,6 +183,14 @@ public class ThreeWayComparisonTool
                     + "that there are no differences. An object renamed between the two sides " //$NON-NLS-1$
                     + "cannot be scoped - it is called one thing here and another in the " //$NON-NLS-1$
                     + "delivery - so compare the whole configuration for those.") //$NON-NLS-1$
+            .stringProperty("report", //$NON-NLS-1$
+                "Assemble the whole answer into one document a person can read before deciding " //$NON-NLS-1$
+                    + "to update: the sides and their releases, what moved and on whose side, " //$NON-NLS-1$
+                    + "what an update overwrites if nobody intervenes, the conflicts to decide by " //$NON-NLS-1$
+                    + "hand, the vendor support state, and what this run did NOT check. " //$NON-NLS-1$
+                    + "\"summary\" lists ten names per section and says how many it left out; " //$NON-NLS-1$
+                    + "\"full\" lists everything. Built from the same numbers as the fields " //$NON-NLS-1$
+                    + "beside it, so the two cannot disagree.") //$NON-NLS-1$
             .booleanProperty("methodLevel", //$NON-NLS-1$
                 "Look inside modules, so a change is named by the piece of the module it sits in " //$NON-NLS-1$
                     + "rather than as \"this module was changed by both sides\". Off by default: " //$NON-NLS-1$
@@ -474,6 +502,9 @@ public class ThreeWayComparisonTool
             .put("comparedInMs", outcome.comparedInMs) //$NON-NLS-1$
             .put("sections", outcome.sections) //$NON-NLS-1$
             .put("moreSections", outcome.moreSections) //$NON-NLS-1$
+            // The document, when it was asked for. Absent otherwise: a report nobody wanted is
+            // several kilobytes on every answer.
+            .put("report", report(outcome, params)) //$NON-NLS-1$
             // What the merge did to the vendor support settings, counted either side of it.
             // Not a promise that they were protected - that was tried and does not work.
             .put("supportModesBefore", outcome.supportModesBefore) //$NON-NLS-1$
