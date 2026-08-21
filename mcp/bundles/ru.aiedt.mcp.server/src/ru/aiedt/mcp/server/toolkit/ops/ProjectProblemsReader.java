@@ -216,6 +216,34 @@ public class ProjectProblemsReader
      * @return the number of ERROR-severity markers, or -1 when the marker service is unavailable
      *         and the question therefore has no answer rather than the answer zero
      */
+    /**
+     * Counts every error standing against a project, not only against named objects.
+     * <p>
+     * The baseline an irreversible operation is judged against. Counting only the objects that
+     * moved lets a project that was already broken come back clean, and hides an error the
+     * operation caused somewhere it did not touch directly - which is exactly where a dependency
+     * that travelled without its owner shows up.
+     * </p>
+     *
+     * @param projectName the project.
+     * @return the count, or -1 when the marker service cannot be reached - which is not zero, and
+     *         zero is what a clean project looks like
+     */
+    public static long countAllErrors(String projectName)
+    {
+        Activator activator = Activator.getDefault();
+        IMarkerManager markerManager = activator == null ? null : activator.getMarkerManager();
+        if (markerManager == null)
+        {
+            return -1L;
+        }
+        ICheckRepository checkRepository = activator == null ? null : activator.getCheckRepository();
+        Filter filter = new Filter(projectName, parseSeverityFilter("ERROR"), null, //$NON-NLS-1$
+            new HashSet<>(), new HashSet<>(), false, null);
+        return countMatching(markerManager, checkRepository, filter, targetProjects(projectName))
+            .value;
+    }
+
     public static long countErrorsOn(String projectName, List<String> objects)
     {
         if (objects == null || objects.isEmpty())

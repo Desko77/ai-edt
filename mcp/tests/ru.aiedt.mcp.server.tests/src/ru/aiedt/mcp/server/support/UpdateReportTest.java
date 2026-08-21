@@ -124,6 +124,38 @@ public class UpdateReportTest
         assertTrue(full.contains("Catalog.Ours24"));
     }
 
+    /**
+     * The health of the whole project, before against after.
+     * <p>
+     * Counting only the objects that moved lets a project that was already broken come back clean,
+     * and hides an error caused somewhere the operation did not touch directly - which is where a
+     * dependency that travelled without its owner shows up.
+     * </p>
+     */
+    @Test
+    public void projectHealthIsStatedAsBeforeAgainstAfter()
+    {
+        BmComparisonHelper.Outcome outcome = outcome();
+        outcome.projectErrorsBefore = 4;
+        outcome.projectErrorsAfter = 7;
+        String report = UpdateReport.render(outcome, true, true);
+        assertTrue(report, report.contains("## Errors in the project"));
+        assertTrue("the count it started from has to be there, or the one it ended with reads as "
+            + "the operation's doing: " + report, report.contains("before: 4"));
+        assertTrue(report, report.contains("after: 7"));
+        assertTrue("and the difference has to be named as what this operation accounts for",
+            report.contains("accounts for 3"));
+    }
+
+    /** Not knowing is not zero, and a report must not print it as a clean project. */
+    @Test
+    public void anUnreadableCountIsNotReportedAsHealth()
+    {
+        String report = UpdateReport.render(outcome(), true, true);
+        assertFalse("with no counts taken there is nothing to say, and a section saying zero "
+            + "would be a claim: " + report, report.contains("## Errors in the project"));
+    }
+
     @Test
     public void aScopeNameTheComparisonNeverSawIsCalledOut()
     {

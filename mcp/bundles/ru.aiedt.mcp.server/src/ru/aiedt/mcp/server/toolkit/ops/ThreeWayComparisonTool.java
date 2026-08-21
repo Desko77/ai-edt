@@ -182,7 +182,12 @@ public class ThreeWayComparisonTool
                     + "a scope of misspelled names compares nothing and would otherwise answer " //$NON-NLS-1$
                     + "that there are no differences. An object renamed between the two sides " //$NON-NLS-1$
                     + "cannot be scoped - it is called one thing here and another in the " //$NON-NLS-1$
-                    + "delivery - so compare the whole configuration for those.") //$NON-NLS-1$
+                    + "delivery - so compare the whole configuration for those. With a scope the " //$NON-NLS-1$
+                    + "answer also carries closureAdds: what the named objects cannot be carried " //$NON-NLS-1$
+                    + "without, followed outward through every reference the model records, " //$NON-NLS-1$
+                    + "transitively, cycles visited once. closureBlindSpots names what a " //$NON-NLS-1$
+                    + "reference walk structurally cannot find - metadata named as a string in " //$NON-NLS-1$
+                    + "code, inside a query or a template - and it is never omitted.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
                 "Assemble the whole answer into one document a person can read before deciding " //$NON-NLS-1$
                     + "to update: the sides and their releases, what moved and on whose side, " //$NON-NLS-1$
@@ -490,6 +495,20 @@ public class ThreeWayComparisonTool
             .put("scopeRequested", outcome.scopeRequested) //$NON-NLS-1$
             .put("scopeUnrecognised", outcome.scopeUnrecognised) //$NON-NLS-1$
             .put("scopeExtendedBy", outcome.scopeExtendedBy) //$NON-NLS-1$
+            // What a MOVE would have to carry along, as against what the environment added to make
+            // its own comparison work. Both matter, and they are not the same set.
+            .put("closureAdds", outcome.closureAdds) //$NON-NLS-1$
+            .put("closureAddsCount", outcome.closureAdds.size()) //$NON-NLS-1$
+            .put("closureTruncated", outcome.closureTruncated) //$NON-NLS-1$
+            .put("closureNote", outcome.closureNote) //$NON-NLS-1$
+            // Never omitted. A list of additions with no list of blind spots reads as the whole
+            // answer, and the dependencies written as strings are the ones that break a move.
+            .put("closureBlindSpots", outcome.closureBlindSpots) //$NON-NLS-1$
+            // The whole project, either side of the merge. errorsAfterMerge counts only the
+            // objects that moved, and on its own it lets a project that was already broken come
+            // back looking clean.
+            .put("projectErrorsBefore", outcome.projectErrorsBefore) //$NON-NLS-1$
+            .put("projectErrorsAfter", outcome.projectErrorsAfter) //$NON-NLS-1$
             // What an update on support is actually asked: how much of our work survives it, what
             // could not be kept, and what a person still has to decide.
             .put("protectedFromUpdate", outcome.protectedFromUpdate) //$NON-NLS-1$

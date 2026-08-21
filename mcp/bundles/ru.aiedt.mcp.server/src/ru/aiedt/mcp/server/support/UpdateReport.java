@@ -51,6 +51,7 @@ public final class UpdateReport
         atRisk(outcome, full, out);
         queue(outcome, full, out);
         support(outcome, out);
+        health(outcome, out);
         notChecked(outcome, full, methodLevel, out);
         return out.toString();
     }
@@ -175,6 +176,32 @@ public final class UpdateReport
                 .append(outcome.supportSnapshotFile)
                 .append("`; support_registry operation=restore_modes puts them back.\n\n"); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * What the merge did to the health of the whole project, against what it found.
+     *
+     * @param outcome what the comparison found.
+     * @param out where to write.
+     */
+    private static void health(BmComparisonHelper.Outcome outcome, StringBuilder out)
+    {
+        if (outcome.projectErrorsBefore < 0 && outcome.projectErrorsAfter < 0)
+        {
+            return;
+        }
+        out.append("## Errors in the project\n\n"); //$NON-NLS-1$
+        out.append("- before: ").append(outcome.projectErrorsBefore).append('\n'); //$NON-NLS-1$
+        out.append("- after: ").append(outcome.projectErrorsAfter).append('\n'); //$NON-NLS-1$
+        if (outcome.projectErrorsBefore >= 0 && outcome.projectErrorsAfter >= 0)
+        {
+            out.append("- **this operation accounts for ") //$NON-NLS-1$
+                .append(outcome.projectErrorsAfter - outcome.projectErrorsBefore)
+                .append("** of them\n"); //$NON-NLS-1$
+        }
+        out.append("\nCounted over the whole project on purpose. Counting only the objects that " //$NON-NLS-1$
+            + "moved lets a project that was already broken come back clean, and hides an error " //$NON-NLS-1$
+            + "caused somewhere the operation did not touch directly.\n\n"); //$NON-NLS-1$
     }
 
     /**
