@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 109 | a test class named after it |
+| direct | 111 | a test class named after it |
 | exercised | 50 | reached by some other test |
 | tool-sweep | 94 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 50 | needs a display or an extension point |
-| workspace-bound | 69 | drives a live EDT project or debug session |
+| workspace-bound | 70 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **372** | across 165 test classes |
+| **total** | **375** | across 167 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (69)
+## workspace-bound (70)
 
 **folders**
 - IClusterChangeObserver
@@ -66,6 +66,7 @@ _none_
 - BmXdtoHelper
 - BreakpointAccess
 - BslCallGraphHelper
+- BslSignatureReader
 - BuildTaskHelper
 - DcsExtensionExportHelper
 - DcsExtensionImportHelper
@@ -350,7 +351,7 @@ _none_
 - JsonRpcResponse
 - ToolsListResult
 
-## direct (109)
+## direct (111)
 
 **(root)**
 - OperatorSignal
@@ -381,6 +382,7 @@ _none_
 - EventLogFormat
 - EventLogReader
 - EventStubGenerator
+- ExtensionFitness
 - FailureShape
 - FormBaseSetup
 - FormEventRegistry
@@ -402,6 +404,7 @@ _none_
 - MetadataMutationLock
 - MetadataPathMapper
 - MetadataTypeCatalog
+- MethodSignature
 - ModalDialogWatch
 - MonopolyLock
 - MutatorIdempotency
@@ -496,14 +499,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 0 |
-| 3-4 | 14 |
+| 3-4 | 15 |
 | 5-8 | 35 |
-| 9-16 | 46 |
+| 9-16 | 47 |
 | 17+ | 14 |
 
-1741 test methods across 165 test classes; 109 classes have a test of their own, median 9 methods each.
+1753 test methods across 167 test classes; 111 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 109 of 372 classes have one: 94 are covered by the registry-wide contract sweep and 69 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 111 of 375 classes have one: 94 are covered by the registry-wide contract sweep and 70 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 

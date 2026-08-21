@@ -19,6 +19,7 @@ import org.eclipse.core.resources.IProject;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.ExtensionFitness;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmExtensionProjectHelper;
@@ -35,7 +36,7 @@ import ru.aiedt.mcp.server.support.ToolGate;
  * borrow_form_item, borrow_module, list_borrowed. Deployment (routes to the
  * standalone tools): install_extension, uninstall_extension, list_extension,
  * export_extension. Inspection (routes to the standalone tools):
- * extension_lifecycle, extension_diff, list_interceptors.
+ * extension_lifecycle, extension_diff, list_interceptors, check_release_fitness.
  * <p>
  * The borrow ops run through {@link BmExtensionHelper#attemptBorrow}. When the
  * EDT adopt service is not reachable, the response carries a structured
@@ -64,7 +65,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             + "borrow_form_item, borrow_module, list_borrowed. Deployment (into a " //$NON-NLS-1$
             + "project's infobase): install_extension, uninstall_extension, list_extension, " //$NON-NLS-1$
             + "export_extension. Inspection: extension_lifecycle, extension_diff, " //$NON-NLS-1$
-            + "list_interceptors. The deploy / inspect operations route to the matching " //$NON-NLS-1$
+            + "list_interceptors, check_release_fitness. The deploy / inspect operations route " //$NON-NLS-1$
+            + "to the matching " //$NON-NLS-1$
             + "standalone tools, which remain available. dryRun is not supported for the " //$NON-NLS-1$
             + "authoring operations; when the EDT adopt service is not reachable the " //$NON-NLS-1$
             + "response carries `adoptServiceNotFound` with a GUI workaround hint."; //$NON-NLS-1$
@@ -78,7 +80,8 @@ public class ExtensionWorkshopTool implements IMcpTool
                 "create_extension_project / borrow_object / borrow_objects / borrow_child / " //$NON-NLS-1$
                     + "borrow_form_item / borrow_module / list_borrowed / install_extension / " //$NON-NLS-1$
                     + "uninstall_extension / list_extension / export_extension / " //$NON-NLS-1$
-                    + "extension_lifecycle / extension_diff / list_interceptors / help", true) //$NON-NLS-1$
+                    + "extension_lifecycle / extension_diff / list_interceptors / " //$NON-NLS-1$
+                    + "check_release_fitness / help", true) //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Extension project name. For create_extension_project this is the NEW " //$NON-NLS-1$
                     + "extension's name (must not already exist); for borrow_* it is the " //$NON-NLS-1$
@@ -200,9 +203,64 @@ public class ExtensionWorkshopTool implements IMcpTool
                 return new ExtensionDiffTool().execute(params);
             case "list_interceptors": //$NON-NLS-1$
                 return new ListInterceptorsTool().execute(params);
+            case "check_release_fitness": //$NON-NLS-1$
+                return checkReleaseFitness(params);
             default:
                 return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Says what a new release breaks in an extension.
+     * <p>
+     * Every object the extension borrowed is looked up in the delivery: gone, or still there with a
+     * field missing or a field whose type moved. The interceptors are a separate question and
+     * {@code list_interceptors} with a base project answers it, down to whether each handler still
+     * matches its target's signature.
+     * </p>
+     *
+     * @param params the call.
+     * @return the answer as JSON
+     */
+    private static String checkReleaseFitness(Map<String, String> params)
+    {
+        String extension = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String base = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
+        if (extension == null || extension.isBlank() || base == null || base.isBlank())
+        {
+            return ToolResult.error("projectName (the extension) and baseProjectName (the " //$NON-NLS-1$
+                + "configuration the new delivery is loaded as) are both required.").toJson(); //$NON-NLS-1$
+        }
+        ExtensionFitness.Verdict verdict = ExtensionFitness.check(extension, base);
+        if (verdict.cannotTell != null)
+        {
+            return ToolResult.error(verdict.cannotTell).toJson();
+        }
+        List<Map<String, Object>> findings = new ArrayList<>();
+        for (ExtensionFitness.Finding finding : verdict.findings)
+        {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("object", finding.object); //$NON-NLS-1$
+            one.put("kind", finding.kind); //$NON-NLS-1$
+            one.put("what", finding.what); //$NON-NLS-1$
+            findings.add(one);
+        }
+        return ToolResult.success()
+            .put("extension", extension) //$NON-NLS-1$
+            .put("base", base) //$NON-NLS-1$
+            .put("adoptedObjects", verdict.adoptedObjects) //$NON-NLS-1$
+            .put("findings", findings) //$NON-NLS-1$
+            .put("findingsCount", verdict.findings.size()) //$NON-NLS-1$
+            .put("truncated", verdict.truncated) //$NON-NLS-1$
+            // Stated in the answer, not only in the description. An empty list here is the moment
+            // somebody decides to ship, and it is the moment the limit of this check matters most.
+            .put("note", "no findings does NOT mean the extension applies - only the platform " //$NON-NLS-1$ //$NON-NLS-2$
+                + "loading it says that. This reads declarations: an object borrowed, a field " //$NON-NLS-1$
+                + "borrowed, a type depended on. A dependency written as a string in code, a name " //$NON-NLS-1$
+                + "inside a query, or a controlled fragment whose text drifted is not a " //$NON-NLS-1$
+                + "declaration and is invisible here. Run list_interceptors with the same " //$NON-NLS-1$
+                + "baseProjectName for the handlers.") //$NON-NLS-1$
+            .toJson();
     }
 
     /**
@@ -574,6 +632,9 @@ public class ExtensionWorkshopTool implements IMcpTool
             sb.append("- extension_lifecycle - guided probe / adopt / generate / revalidate\n"); //$NON-NLS-1$
             sb.append("- extension_diff - what an extension changes vs the base configuration\n"); //$NON-NLS-1$
             sb.append("- list_interceptors - method interceptors declared by extensions\n\n"); //$NON-NLS-1$
+            sb.append("- check_release_fitness - what a new delivery breaks in an extension: an " //$NON-NLS-1$
+                + "adopted object gone, a borrowed field gone, a field whose type moved. Needs " //$NON-NLS-1$
+                + "baseProjectName. Finding nothing does NOT mean the extension applies.\n\n"); //$NON-NLS-1$
             sb.append("**Adopt API status:** ") //$NON-NLS-1$
                 .append(BmExtensionHelper.isAvailable()
                     ? ("found - " + BmExtensionHelper.resolvedAdoptServiceClass()) //$NON-NLS-1$
@@ -647,7 +708,7 @@ public class ExtensionWorkshopTool implements IMcpTool
             "borrow_form_item", "borrow_module", "list_borrowed", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "install_extension", "uninstall_extension", "list_extension", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "export_extension", "extension_lifecycle", "extension_diff", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "list_interceptors")) //$NON-NLS-1$
+            "list_interceptors", "check_release_fitness")) //$NON-NLS-1$
         {
             m.put(op, op);
         }
