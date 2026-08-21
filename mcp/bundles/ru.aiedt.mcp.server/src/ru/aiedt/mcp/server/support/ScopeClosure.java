@@ -115,6 +115,16 @@ public final class ScopeClosure
 
         /** How many references were followed. */
         public int referencesFollowed;
+
+        /**
+         * Nodes the walk reached that are not metadata objects.
+         * <p>
+         * The model's own furniture - a module's context index, a type node - reached through the
+         * same references. Counted rather than listed: they are not things a move carries, and
+         * naming them would make the move read as larger than it is.
+         * </p>
+         */
+        public int internalNodes;
     }
 
     private ScopeClosure()
@@ -233,12 +243,24 @@ public final class ScopeClosure
                 BmReferencesHelper.Direction.OUT, MAX_NODES, MAX_EDGES, depth, monitor::isCanceled);
             closure.truncated = found.truncated;
             closure.referencesFollowed = found.edges.size();
-            for (String reached : found.nodes.keySet())
+            for (java.util.Map.Entry<String, IBmObject> reached : found.nodes.entrySet())
             {
                 // The roots come back among the nodes; what a person weighs is what came WITH them.
-                if (!asked.contains(reached))
+                if (asked.contains(reached.getKey()))
                 {
-                    closure.added.add(reached);
+                    continue;
+                }
+                // Metadata objects only. Measured: the walk also returns the model's own
+                // furniture - a module's context index, a Type node, a ContextDef - and those are
+                // not things a move carries. A list a person cannot act on is worse than a short
+                // one, because it reads as if the move were larger than it is.
+                if (reached.getValue() instanceof MdObject)
+                {
+                    closure.added.add(reached.getKey());
+                }
+                else
+                {
+                    closure.internalNodes++;
                 }
             }
         }
