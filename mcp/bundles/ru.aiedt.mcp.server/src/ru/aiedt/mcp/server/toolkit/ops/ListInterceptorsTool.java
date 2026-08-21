@@ -26,6 +26,8 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.BslSignatureReader;
+import ru.aiedt.mcp.server.support.MethodSignature;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
@@ -81,7 +83,14 @@ public class ListInterceptorsTool implements IMcpTool
             + "before refactoring or merging. Pass baseProjectName to validate each " //$NON-NLS-1$
             + "interceptor: targetExists=false means the annotation target method is " //$NON-NLS-1$
             + "missing in the base module (a hallucinated / renamed target that would " //$NON-NLS-1$
-            + "fail at runtime) - a pre-merge barrier for multi-agent workflows."; //$NON-NLS-1$
+            + "fail at runtime) - a pre-merge barrier for multi-agent workflows. With a base " //$NON-NLS-1$
+            + "project each interceptor also carries targetSignature and handlerSignature read " //$NON-NLS-1$
+            + "from the BSL model, signatureBreaks for the differences that stop the handler " //$NON-NLS-1$
+            + "binding (a parameter appearing or disappearing, one that stopped being passed by " //$NON-NLS-1$
+            + "value, a method no longer exported) and signatureDiffersHarmlessly for the ones " //$NON-NLS-1$
+            + "that do not (a rename, a default gained or lost). FINDING NOTHING DOES NOT MEAN " //$NON-NLS-1$
+            + "THE EXTENSION APPLIES: only the platform loading it says that. This reads the " //$NON-NLS-1$
+            + "declarations, and a dependency written as a string in code is invisible to it."; //$NON-NLS-1$
     }
 
     @Override
@@ -275,12 +284,75 @@ public class ListInterceptorsTool implements IMcpTool
             }
             entry.put("baseModuleFound", true); //$NON-NLS-1$
             entry.put("targetExists", methodDeclared(baseSrc, target)); //$NON-NLS-1$
+            compareSignatures(entry, extFile, target, baseProject);
         }
         catch (Exception e)
         {
             entry.put("baseModuleFound", false); //$NON-NLS-1$
             entry.put("targetExists", false); //$NON-NLS-1$
             entry.put("validationNote", "base check failed: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Compares the handler's signature with the target's, through the BSL model.
+     * <p>
+     * <b>Why the model and not the text.</b> Whether a target method still exists can be answered
+     * with a search; whether it still has the shape the handler was written against cannot. An
+     * interceptor binds to its target by position, so a parameter appearing in the new release
+     * leaves the handler being called with something other than what it expects - and nothing in
+     * the source text of either side says so.
+     * </p>
+     * <p>
+     * What counts as a break, and what merely changed, is decided by {@link MethodSignature}: a
+     * renamed parameter keeps the binding, a parameter appearing or disappearing does not. Both are
+     * reported, separately, because a list where a rename sits beside a removal is a list nobody
+     * reads to the end.
+     * </p>
+     *
+     * @param entry the interceptor being described.
+     * @param extFile the extension module the handler sits in.
+     * @param target the method it intercepts.
+     * @param baseProject the configuration the new delivery is loaded as.
+     */
+    private static void compareSignatures(Map<String, Object> entry, IFile extFile, String target,
+        IProject baseProject)
+    {
+        try
+        {
+            String modulePath = extFile.getProjectRelativePath().toString();
+            MethodSignature inBase = BslSignatureReader.read(baseProject, modulePath, target);
+            if (inBase == null)
+            {
+                // Nothing to compare against. Whether that is because the target is gone is
+                // already said by targetExists; repeating it here under another name would report
+                // one break twice.
+                return;
+            }
+            entry.put("targetSignature", inBase.render()); //$NON-NLS-1$
+            Object handlerName = entry.get("handler"); //$NON-NLS-1$
+            if (handlerName == null)
+            {
+                return;
+            }
+            MethodSignature handler = BslSignatureReader.read(extFile.getProject(), modulePath,
+                String.valueOf(handlerName));
+            if (handler == null)
+            {
+                return;
+            }
+            entry.put("handlerSignature", handler.render()); //$NON-NLS-1$
+            List<String> breaks = MethodSignature.whatBreaks(handler, inBase);
+            List<String> harmless = MethodSignature.whatChangedHarmlessly(handler, inBase);
+            entry.put("signatureBreaks", breaks); //$NON-NLS-1$
+            entry.put("signatureDiffersHarmlessly", harmless); //$NON-NLS-1$
+            entry.put("signatureFits", breaks.isEmpty()); //$NON-NLS-1$
+        }
+        catch (RuntimeException | LinkageError cannotCompare)
+        {
+            // Named rather than silently absent: an interceptor whose signature nobody could read
+            // is not one that fits.
+            entry.put("signatureNote", "the signatures could not be compared: " + cannotCompare); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
