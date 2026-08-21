@@ -333,6 +333,51 @@ final class MiscOps
      * service via {@link BmExtensionHelper}; surfaces a graceful
      * {@code adoptServiceNotFound} tag when the API is missing.
      */
+    /**
+     * Builds the FQN of a child when the caller named its owner, its kind and its name.
+     * <p>
+     * <b>Measured on a stand, and it borrowed the wrong thing.</b> The schema has said since 1.43
+     * that adopt_child composes the FQN from ownerFqn, childKind and name when no full FQN is
+     * given. It did not: the FQN was taken from whichever of targetFqn, objectFqn or ownerFqn was
+     * present, and for a child call that is the OWNER. So
+     * {@code adopt_child objectFqn=Catalog.X childKind=Template name=Y} adopted the catalogue and
+     * answered "borrowed" - the template was never touched, and nothing said so.
+     * </p>
+     * <p>
+     * Only composed when the FQN really is a bare owner. A caller who passed the whole child FQN
+     * gets it through untouched, and so does an operation that adopts objects rather than children.
+     * </p>
+     *
+     * @param op the adopt operation.
+     * @param fqn the FQN resolved from the caller's arguments.
+     * @param params the call, which may carry the kind and the name separately.
+     * @return the child's FQN, or the one given when there is nothing to compose
+     */
+    static String composeChildFqn(String op, String fqn, Map<String, String> params)
+    {
+        if (!"adopt_child".equals(op) && !"adopt_form_item".equals(op)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return fqn;
+        }
+        String kind = JsonUtils.extractStringArgument(params, "childKind"); //$NON-NLS-1$
+        String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
+        if (name == null || name.isEmpty())
+        {
+            name = JsonUtils.extractStringArgument(params, "childName"); //$NON-NLS-1$
+        }
+        if (kind == null || kind.isEmpty() || name == null || name.isEmpty())
+        {
+            return fqn;
+        }
+        // Two segments is an object; anything longer already names a child, and appending to it
+        // would build a name nothing has.
+        if (fqn == null || fqn.split("\\.").length != 2) //$NON-NLS-1$
+        {
+            return fqn;
+        }
+        return fqn + "." + kind.trim() + "." + name.trim(); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     String opExtensionAdopt(String op, Map<String, String> params)
     {
         if (!BmExtensionHelper.isAvailable())
@@ -371,6 +416,7 @@ final class MiscOps
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
+        targetFqn = composeChildFqn(op, targetFqn, params);
         // adoptObjects accepts comma-separated FQN list; rest take a single FQN
         if ("adopt_objects".equals(op))
         {
