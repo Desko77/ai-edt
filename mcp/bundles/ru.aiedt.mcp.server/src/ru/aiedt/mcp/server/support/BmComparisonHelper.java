@@ -617,6 +617,15 @@ public final class BmComparisonHelper
          * answer says decided and merged, and a person reads that as the vendor's version having
          * arrived.
          * </p>
+         * <p>
+         * <b>It is a fact about the NODE, not about the platform.</b> That distinction was missed
+         * once and cost a false conclusion in the plan: a same-line conflict was written down as
+         * unresolvable toward the delivery by any rule. Measured again with the rule on the module
+         * instead of the method, {@code MERGE_PRIORITIZING_OTHER} took the delivery's version of
+         * the contested line AND kept a method only we had. The first measurement had put the rule
+         * on the object node, where it reaches neither - so it recorded the environment's defaults
+         * and read them as a limit.
+         * </p>
          */
         public final List<String> decisionsWithoutEffect = new ArrayList<>();
 
@@ -1735,10 +1744,18 @@ public final class BmComparisonHelper
                 return;
             }
             MergeRule instead = settings.getDefaultMergeRule();
+            // Says the way out, not just the refusal. Measured: this node will not move, and the
+            // node ABOVE it will - MERGE_PRIORITIZING_OTHER on the module took the delivery's
+            // version of the very line both sides had changed, and kept a method of ours the
+            // delivery does not have. A note that stops at "ours is kept" reads as "the delivery's
+            // version is unreachable", which is what it was read as here for a whole release.
             outcome.decisionsWithoutEffect.add(object + ": " + rule.name() //$NON-NLS-1$
-                + " was recorded, but both sides changed the same content and the environment " //$NON-NLS-1$
-                + "will keep ours" //$NON-NLS-1$
-                + (instead == null ? "" : " - it proposes " + instead.name())); //$NON-NLS-1$ //$NON-NLS-2$
+                + " was recorded, but both sides changed the same content and this node will " //$NON-NLS-1$
+                + "keep ours" //$NON-NLS-1$
+                + (instead == null ? "" : " - it proposes " + instead.name()) //$NON-NLS-1$ //$NON-NLS-2$
+                + ". The delivery's version is still reachable one level up: put the rule on the " //$NON-NLS-1$
+                + "containing node (the module rather than the method), where " //$NON-NLS-1$
+                + "MERGE_PRIORITIZING_OTHER merges the text and keeps what only we have."); //$NON-NLS-1$
         }
         catch (RuntimeException | LinkageError willNotSay)
         {
@@ -1748,7 +1765,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Reads back the rule a node carries.    /**
      * Reads back the rule a node carries.
      *
      * @param session the comparison.
