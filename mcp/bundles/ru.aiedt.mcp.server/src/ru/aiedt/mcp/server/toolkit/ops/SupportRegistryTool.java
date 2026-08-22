@@ -428,10 +428,24 @@ public class SupportRegistryTool
                 .put("vendorConfigurationsGone", restore.drift.parentsGone) //$NON-NLS-1$
                 .put("vendorConfigurationsNew", restore.drift.parentsNew); //$NON-NLS-1$
         }
-        return result.put("note", apply //$NON-NLS-1$
-            ? "the support model was written" //$NON-NLS-1$
-            : "nothing was written - pass apply=true to put these modes back") //$NON-NLS-1$
-            .toJson();
+        // Follows what happened, not what was asked for. It used to key on the apply ARGUMENT, so
+        // apply=true answered "the support model was written" while restored stood at 0 and the
+        // undo file had never been created - the counters said one thing and the sentence beside
+        // them said another.
+        String note;
+        if (!apply)
+        {
+            note = "nothing was written - pass apply=true to put these modes back"; //$NON-NLS-1$
+        }
+        else if (restore.restored > 0)
+        {
+            note = "the support model was written: " + restore.restored + " mode(s) put back"; //$NON-NLS-1$
+        }
+        else
+        {
+            note = "nothing was written - no mode needed putting back"; //$NON-NLS-1$
+        }
+        return result.put("note", note).toJson(); //$NON-NLS-1$
     }
 
     private static String buildHelp(String topic)

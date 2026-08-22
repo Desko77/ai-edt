@@ -279,4 +279,59 @@ public class SupportSnapshotTest
         snapshot.parents.add(new SupportSnapshot.Parent(id, "Standard", version)); //$NON-NLS-1$
         return snapshot;
     }
+
+    /**
+     * A replaced vendor is the least clean thing that can happen, and it used to read as clean.
+     * <p>
+     * isClean answered on the changed list alone, and that list is empty precisely when the vendor
+     * configuration itself is replaced: no object survives to compare a mode against, so the whole
+     * difference lands in the vendor lists and the counts. Measured on a stand - a merge took a
+     * configuration from another delivery, the project moved from one vendor to another, 10843
+     * entries out and 9088 in, and the drift came back clean. The restore then returned early
+     * without writing, which is the one recovery a snapshot exists for.
+     * </p>
+     */
+    @Test
+    public void aReplacedVendorReadsAsCleanAndIsNot()
+    {
+        SupportSnapshot.Drift drift = new SupportSnapshot.Drift();
+        drift.parentsGone.add("Demo 3.2.1.505");
+        drift.parentsNew.add("Demo 3.1.5.446");
+        drift.gone = 10843;
+        drift.arrived = 9088;
+        // isClean stays TRUE here, and correctly so - no surviving object changed a mode, because
+        // no object survived the vendor swap to be compared. That is exactly why the restore must
+        // ask vendorReplaced FIRST: leaning on isClean returned early from the one recovery the
+        // snapshot exists for, while the answer beside it said the model had been written.
+        assertTrue("nothing survived to change a mode", drift.isClean());
+        assertTrue("no vendor the snapshot knew is still there", drift.vendorReplaced());
+    }
+
+    @Test
+    public void nothingHavingHappenedIsNotAReplacement()
+    {
+        assertFalse(new SupportSnapshot.Drift().vendorReplaced());
+    }
+
+    @Test
+    public void aVendorStillThereIsNotAReplacement()
+    {
+        // Modes moved around under a vendor that is still there is ordinary drift, and the restore
+        // can act on it. Only losing the vendor entirely leaves nothing to write onto.
+        SupportSnapshot.Drift drift = new SupportSnapshot.Drift();
+        drift.parentsMatched.add("Demo 3.2.1.505");
+        drift.changed.add("Catalog.Products: Edited -> NotEditable");
+        assertFalse(drift.isClean());
+        assertFalse(drift.vendorReplaced());
+    }
+
+    @Test
+    public void aVendorAddedBesideTheKnownOneIsNotAReplacement()
+    {
+        // A second vendor arriving does not take the first one away.
+        SupportSnapshot.Drift drift = new SupportSnapshot.Drift();
+        drift.parentsMatched.add("Demo 3.2.1.505");
+        drift.parentsNew.add("Library 1.0");
+        assertFalse(drift.vendorReplaced());
+    }
 }

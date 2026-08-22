@@ -332,6 +332,28 @@ public final class BmSupportRegistryHelper
             return restore;
         }
         restore.drift = SupportSnapshot.compare(before, now);
+        // Asked BEFORE isClean, because they are different questions. isClean means "no surviving
+        // object changed its mode", and it is TRUE when the vendor configuration was replaced
+        // wholesale - there is no surviving object to compare against, so nothing lands in changed.
+        // Leaning on it here returned early from the one recovery a snapshot exists for, and the
+        // answer beside it said the support model had been written.
+        if (apply && restore.drift.vendorReplaced())
+        {
+            // Not a failure to report as zero. A mode belongs to a vendor configuration, and this
+            // project is no longer on the one the snapshot was taken from - so there is nothing to
+            // write the modes onto. Measured: a merge that took a whole configuration from another
+            // delivery moved the project between vendors, and a restore that answered "0 restored"
+            // read as "nothing needed doing".
+            restore.cannotTell = "the project is no longer on support from "  //$NON-NLS-1$
+                + String.join(", ", restore.drift.parentsGone) //$NON-NLS-1$
+                + ", which is where this snapshot's modes belong. It is on support from " //$NON-NLS-1$
+                + (restore.drift.parentsNew.isEmpty() ? "no vendor at all" //$NON-NLS-1$
+                    : String.join(", ", restore.drift.parentsNew)) //$NON-NLS-1$
+                + ", so there is nothing here to put them back onto. The support model was " //$NON-NLS-1$
+                + "replaced rather than edited - putting it back means restoring the " //$NON-NLS-1$
+                + "configuration, not the modes."; //$NON-NLS-1$
+            return restore;
+        }
         if (!apply || restore.drift.isClean())
         {
             return restore;

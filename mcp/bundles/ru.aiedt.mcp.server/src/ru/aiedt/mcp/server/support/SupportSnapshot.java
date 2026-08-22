@@ -176,12 +176,37 @@ public final class SupportSnapshot
 
         /**
          * Says whether every surviving object still holds the mode it had.
+         * <p>
+         * Deliberately narrow, and three tests spell out why: an object the delivery brought has no
+         * mode in the snapshot to lose, an object the update removed cannot hold one, and a vendor
+         * no longer listed leaves nothing to compare against. Counting any of those as damage
+         * inflates the figure a person uses to judge what an update cost.
+         * </p>
+         * <p>
+         * So this is not the question "is there anything to put back" - see {@link #vendorReplaced}
+         * for the case where there is nothing to put it back ONTO.
+         * </p>
          *
          * @return <code>true</code> when nothing that survived changed
          */
         public boolean isClean()
         {
             return changed.isEmpty();
+        }
+
+        /**
+         * Whether the project is on support from a different vendor configuration than the snapshot.
+         * <p>
+         * A mode belongs to a vendor. When the vendor is gone the modes cannot be put back onto it,
+         * and saying so is the whole answer - a count of what was restored would be zero either way,
+         * and zero reads as "nothing needed doing".
+         * </p>
+         *
+         * @return <code>true</code> when no vendor the snapshot knew is still there
+         */
+        public boolean vendorReplaced()
+        {
+            return parentsMatched.isEmpty() && !parentsGone.isEmpty();
         }
     }
 
