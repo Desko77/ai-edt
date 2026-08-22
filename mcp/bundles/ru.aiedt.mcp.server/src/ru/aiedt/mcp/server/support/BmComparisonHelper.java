@@ -630,6 +630,17 @@ public final class BmComparisonHelper
         public final List<String> decisionsWithoutEffect = new ArrayList<>();
 
         /**
+         * Says when the after-merge revalidation covered only part of what moved.
+         * <p>
+         * Silence here used to mean "everything was checked", and on a large update it was not: the
+         * set came from the paged list, capped. Measured - a run that wrote 5181 files revalidated
+         * at most 500 of them and reported errorsAfterMerge off that slice. A number that covers a
+         * slice has to say so, or it is read as covering the merge.
+         * </p>
+         */
+        public String revalidationNote;
+
+        /**
          * Errors standing against the WHOLE project before the merge.
          * <p>
          * The baseline. Counting only the objects that moved lets a project that was already
@@ -897,6 +908,7 @@ public final class BmComparisonHelper
         // cannot close is what that looks like from the outside.
         IComparisonManager manager = null;
         boolean keepSession = false;
+        ComparisonSessions.Session held = null;
         try
         {
             manager = ServiceAccess.get(IComparisonManager.class);
@@ -936,6 +948,8 @@ public final class BmComparisonHelper
             // read like a complete census.
             String fingerprint = ComparisonSessions.fingerprintOf(mainProjectName, otherPath,
                 ancestorPath) + " | " + describeScope(outcome.scopeRequested); //$NON-NLS-1$
+            // Taken for the duration of this call: a handle two calls hold at once is a handle
+            // whose decisions cross. A busy one is not offered, and this call opens its own.
             ComparisonSessions.Session session =
                 ComparisonSessions.findByFingerprint(fingerprint, System.currentTimeMillis());
             ComparisonProcessHandle handle;
@@ -956,6 +970,9 @@ public final class BmComparisonHelper
                 session = ComparisonSessions.open(fingerprint, handle,
                     System.currentTimeMillis());
             }
+            // Held for the duration of this call, whether it was found or just opened: a handle
+            // two calls work with at once is a handle whose decisions cross.
+            held = session;
             outcome.sessionKey = session.key;
             outcome.threeWay = handle.isThreeWay();
             outcome.sectionsWanted = page.methodLevel;
@@ -1047,7 +1064,12 @@ public final class BmComparisonHelper
             // comparison store of the environment, and if the person closes EDT before the idle
             // limit runs out, the environment waits on a transaction whose owner never comes back.
             // Measured: an EDT at no load for the better part of an hour, unable to shut down.
-            keepSession = !closeSession && intent == Intent.REPORT;
+            // A merge that ran out of the wait is still running. Stopping its handle here cuts a
+            // write in progress; forgetting the handle leaves it running with nothing able to
+            // release it. So an unfinished merge keeps its session whatever the intent, and the
+            // answer already carries mergeStatus for the caller to act on.
+            keepSession = !closeSession
+                && (intent == Intent.REPORT || mergeStillRunning(outcome));
             return outcome;
         }
         catch (NoClassDefFoundError absent)
@@ -1074,6 +1096,9 @@ public final class BmComparisonHelper
             // catches. Draining only on the path that worked was the defect - a comparison that
             // failed, timed out, was refused by a blocking problem or was cancelled kept its
             // transaction on the comparison store, and nothing ever came back to close it.
+            // Let go before anything else in here: a session left marked busy is never handed
+            // out again, and the sweep would keep finding it open forever.
+            ComparisonSessions.release(held);
             closeDropped(manager);
             if (keepSession)
             {
@@ -1145,11 +1170,20 @@ public final class BmComparisonHelper
         int closed = 0;
         try
         {
-            ComparisonSessions.expireIdle();
             IComparisonManager manager = ServiceAccess.get(IComparisonManager.class);
+            if (manager == null)
+            {
+                // Draining without a manager destroys the only handles that can release those
+                // transactions, and counts them closed. The registry then reads empty, the sweep
+                // stops arming itself, and the transactions stay held for the life of the process -
+                // the exact leak this sweep exists to close. Leave them queued for the next tick.
+                Activator.logDebug("idle sweep: no comparison manager, sessions left queued"); //$NON-NLS-1$
+                return 0;
+            }
+            ComparisonSessions.expireIdle();
             for (ComparisonSessions.Session dropped : ComparisonSessions.drainDropped())
             {
-                if (manager != null && dropped.handle instanceof ComparisonProcessHandle)
+                if (dropped.handle instanceof ComparisonProcessHandle)
                 {
                     release(manager, (ComparisonProcessHandle)dropped.handle);
                 }
@@ -1312,6 +1346,19 @@ public final class BmComparisonHelper
             // for exactly those merges would leave the ones somebody prepared by hand - the larger,
             // riskier ones - as the only merges whose result nobody looks at. The objects the
             // comparison found are the only ones that can have moved.
+            //
+            // But outcome.changed is the PAGE, capped, and a merge can move thousands. Measured: a
+            // run that wrote 5181 files revalidated at most 500 of them and reported
+            // errorsAfterMerge off that slice. The count is still taken - it is just no longer
+            // allowed to read as a statement about the whole merge.
+            if (outcome.moreChanged)
+            {
+                outcome.revalidationNote = "only the " + outcome.changed.size() //$NON-NLS-1$
+                    + " object(s) on this page were revalidated, out of " + outcome.objectsChanged //$NON-NLS-1$
+                    + " the comparison found. errorsAfterMerge counts that slice; " //$NON-NLS-1$
+                    + "projectErrorsBefore and projectErrorsAfter are the whole-project figures " //$NON-NLS-1$
+                    + "and are what the merge should be judged by."; //$NON-NLS-1$
+            }
             for (Change change : outcome.changed)
             {
                 String named = change.main != null && !change.main.isEmpty() ? change.main
@@ -1913,12 +1960,27 @@ public final class BmComparisonHelper
                 return null;
             }
             SupportSnapshot taken = BmSupportRegistryHelper.snapshot(projectName);
-            return taken.cannotTell == null ? taken : null;
+            if (taken.cannotTell == null)
+            {
+                return taken;
+            }
+            // "Not on support" and "the snapshot failed" both used to come back as null, and null
+            // means "nothing to write down" further along - so an ON-SUPPORT project whose snapshot
+            // failed merged with no recovery file at all. Only the first is a reason to carry on.
+            if (isNotOnSupport(taken.cannotTell))
+            {
+                return null;
+            }
+            SupportSnapshot failed = new SupportSnapshot();
+            failed.cannotTell = taken.cannotTell;
+            return failed;
         }
         catch (RuntimeException | LinkageError cannotTake)
         {
             Activator.logDebug("merge: support modes could not be snapshotted: " + cannotTake); //$NON-NLS-1$
-            return null;
+            SupportSnapshot failed = new SupportSnapshot();
+            failed.cannotTell = "the support modes could not be read: " + cannotTake; //$NON-NLS-1$
+            return failed;
         }
     }
 
@@ -1974,8 +2036,28 @@ public final class BmComparisonHelper
      * @param snapshot what was taken; may be <code>null</code> when there was nothing to take.
      * @param outcome where to record the path or the reason there is none.
      */
+    /**
+     * Whether a refusal to snapshot means the project simply is not on support.
+     *
+     * @param cannotTell what the snapshot said.
+     * @return <code>true</code> when there was nothing to take, rather than a failure to take it
+     */
+    private static boolean isNotOnSupport(String cannotTell)
+    {
+        return cannotTell != null && cannotTell.contains("is not on support"); //$NON-NLS-1$
+    }
+
     private static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)
     {
+        if (snapshot != null && snapshot.cannotTell != null)
+        {
+            // A precondition, not a note. This project IS on support and its modes could not be
+            // read, so a merge that takes the support model from the delivery would overwrite them
+            // with no record of what they were - the one loss nothing can make good.
+            outcome.supportSnapshotNote = "the support modes could not be read before the merge, " //$NON-NLS-1$
+                + "so anything it overwrites cannot be put back: " + snapshot.cannotTell; //$NON-NLS-1$
+            return;
+        }
         if (snapshot == null || snapshot.isEmpty())
         {
             return;
@@ -2402,6 +2484,26 @@ public final class BmComparisonHelper
      * @param outcome the answer being built.
      * @throws InterruptedException when the wait is interrupted
      */
+    /**
+     * Whether a merge was started and has not been seen to reach a terminal state.
+     * <p>
+     * The wait has a limit and a merge can outlive it. Treating that as finished stopped the
+     * handle mid-write, which is the one thing an irreversible operation must not have done to it
+     * from the outside.
+     * </p>
+     *
+     * @param outcome what the run recorded.
+     * @return <code>true</code> when a merge is, as far as this call knows, still going
+     */
+    private static boolean mergeStillRunning(Outcome outcome)
+    {
+        String status = outcome.mergeStatus;
+        return status != null
+            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name())
+            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_DISCARDED.name())
+            && !status.equals(ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED.name());
+    }
+
     private static void awaitMergeEnd(IComparisonManager manager, ComparisonProcessHandle handle,
         Outcome outcome) throws InterruptedException
     {

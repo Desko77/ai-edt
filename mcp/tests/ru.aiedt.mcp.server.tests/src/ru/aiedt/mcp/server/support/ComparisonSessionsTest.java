@@ -43,6 +43,10 @@ public class ComparisonSessionsTest
     {
         long now = 1_000L;
         ComparisonSessions.Session opened = ComparisonSessions.open(SIDES, "handle", now);
+        // The call that opened it lets go when it ends, which is what a finally does in the
+        // helper. Finding is a TAKE now, so without that release the next caller is refused - see
+        // aSessionSomebodyIsUsingIsNotHandedOut.
+        ComparisonSessions.release(opened);
         ComparisonSessions.Session found = ComparisonSessions.findByFingerprint(SIDES, now + 1);
         assertNotNull("reuse is the whole point: a page must not cost a comparison", found);
         assertEquals(opened.key, found.key);
@@ -87,9 +91,11 @@ public class ComparisonSessionsTest
     public void useKeepsASessionAlive()
     {
         long opened = 1_000L;
-        ComparisonSessions.open(SIDES, "handle", opened);
+        ComparisonSessions.release(ComparisonSessions.open(SIDES, "handle", opened));
         long nearlyExpired = opened + ComparisonSessions.IDLE_LIMIT_MS - 1;
-        assertNotNull(ComparisonSessions.findByFingerprint(SIDES, nearlyExpired));
+        ComparisonSessions.Session first = ComparisonSessions.findByFingerprint(SIDES, nearlyExpired);
+        assertNotNull(first);
+        ComparisonSessions.release(first);
         // Touched, so the clock restarts from there rather than from when it was opened.
         assertNotNull(ComparisonSessions.findByFingerprint(SIDES,
             nearlyExpired + ComparisonSessions.IDLE_LIMIT_MS - 1));
@@ -189,5 +195,42 @@ public class ComparisonSessionsTest
         assertNotEquals("two sessions opened in the same millisecond must still be tellable apart",
             first.key, second.key);
         assertFalse(first.key.isEmpty());
+    }
+
+    /**
+     * A comparison handle is not shareable, and it used to be shared.
+     * <p>
+     * Two calls for the same three sides - a second page, or another agent asking at the same
+     * moment - were handed the same handle while the first was still working with it. Both then
+     * start the comparison again, both write merge rules onto the same nodes, and either may close
+     * it under the other: answers cross, and a decision meant for one run lands in the other.
+     * </p>
+     */
+    @Test
+    public void aSessionSomebodyIsUsingIsNotHandedOut()
+    {
+        long now = 1_000L;
+        ComparisonSessions.open(SIDES, "handle", now);
+        assertNull("the opener still holds it",
+            ComparisonSessions.findByFingerprint(SIDES, now + 1));
+    }
+
+    @Test
+    public void aSessionIsBornHeldByWhoeverOpenedIt()
+    {
+        // Not marked on the way out but on the way in: a concurrent call finding it a heartbeat
+        // after it was made would take the handle out from under the call that made it.
+        assertTrue(ComparisonSessions.isInUse(ComparisonSessions.open(SIDES, "handle", 1_000L)));
+    }
+
+    @Test
+    public void lettingGoTwiceIsNotAnError()
+    {
+        // The release sits in a finally that can be reached more than once on some paths.
+        ComparisonSessions.Session session = ComparisonSessions.open(SIDES, "handle", 1_000L);
+        ComparisonSessions.release(session);
+        ComparisonSessions.release(session);
+        ComparisonSessions.release(null);
+        assertFalse(ComparisonSessions.isInUse(session));
     }
 }

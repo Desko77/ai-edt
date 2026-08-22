@@ -71,6 +71,18 @@ public final class ComparisonSessions
         /** How many objects the comparison found changed, so a page need not recount. */
         public int objectsChanged;
 
+        /**
+         * Whether a call is holding this session right now.
+         * <p>
+         * <b>A comparison handle is not shareable.</b> Two calls for the same three sides - a
+         * second page, or the same page from another agent - used to be handed the same handle
+         * while the first was still working with it. Both then start the comparison again, both
+         * write merge rules onto the same nodes, and either may close it under the other. The
+         * answers cross, and a decision meant for one run lands in the other.
+         * </p>
+         */
+        boolean inUse;
+
         Session(String key, String fingerprint, Object handle, long now)
         {
             this.key = key;
@@ -130,13 +142,43 @@ public final class ComparisonSessions
         expire(now);
         for (Session session : OPEN.values())
         {
-            if (session.fingerprint.equals(fingerprint))
+            if (session.fingerprint.equals(fingerprint) && !session.inUse)
             {
                 session.touchedAt = now;
+                session.inUse = true;
                 return session;
             }
         }
         return null;
+    }
+
+    /**
+     * Releases a session another call may now take.
+     * <p>
+     * Paired with every {@link #findByFingerprint} that returned one, and with
+     * {@link #remember}. A session left marked in use is never reused again - which is safe, and
+     * wasteful, so the release goes in a finally.
+     * </p>
+     *
+     * @param session the session to let go of; <code>null</code> is ignored.
+     */
+    public static synchronized void release(Session session)
+    {
+        if (session != null)
+        {
+            session.inUse = false;
+        }
+    }
+
+    /**
+     * Whether this session is being held by a call right now. For tests.
+     *
+     * @param session the session.
+     * @return <code>true</code> while a call holds it
+     */
+    static synchronized boolean isInUse(Session session)
+    {
+        return session != null && session.inUse;
     }
 
     /**
@@ -171,6 +213,10 @@ public final class ComparisonSessions
         String key = "cmp-" + Long.toHexString(++counter) //$NON-NLS-1$
             + Long.toHexString(now & 0xffffffL);
         Session session = new Session(key, fingerprint, handle, now);
+        // Held by its opener from the moment it exists. Otherwise a concurrent call for the same
+        // sides finds it a heartbeat later and takes the handle out from under the one that made
+        // it - the same crossing the in-use flag exists to prevent.
+        session.inUse = true;
         OPEN.put(key, session);
         evictOldest();
         return session;

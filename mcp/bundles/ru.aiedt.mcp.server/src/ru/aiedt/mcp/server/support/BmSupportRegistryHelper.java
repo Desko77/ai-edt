@@ -504,8 +504,24 @@ public final class BmSupportRegistryHelper
                     restore.missing++;
                     continue;
                 }
-                if (recorded.getValue() == null || recorded.getValue().equals(held))
+                if (java.util.Objects.equals(recorded.getValue(), held))
                 {
+                    continue;
+                }
+                if (recorded.getValue() == null)
+                {
+                    // The snapshot recorded no mode - the model default - and the project now
+                    // holds an explicit one. That IS drift, compare() reports it as such, and this
+                    // used to skip it: an apply=true restore answered "0 restored" and left the
+                    // changed mode standing. Named as refused rather than silently counted done,
+                    // because putting a mode back to "no mode" is not something this writes.
+                    if (restore.refused.size() < PAGE_LIMIT)
+                    {
+                        restore.refused.add(name(objects.get(recorded.getKey()), recorded.getKey())
+                            + ": the snapshot recorded no mode (the model default) and the " //$NON-NLS-1$
+                            + "project now holds '" + held + "'. Clearing a mode back to the " //$NON-NLS-1$
+                            + "default is not written from here - do it in the support dialog."); //$NON-NLS-1$
+                    }
                     continue;
                 }
                 MdObject object = objects.get(recorded.getKey());

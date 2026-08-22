@@ -35,6 +35,9 @@ public class IdleComparisonSweepTest
         // anything. Lifting it here is what keeps these assertions about the code.
         IdleComparisonSweep.shutdown();
         IdleComparisonSweep.allowRestartForTest();
+        // The registry is static and shared with every other suite that opens a session. Without
+        // this, "an empty registry does not arm the timer" is testing whoever ran first.
+        ComparisonSessions.forgetEverything();
     }
 
     @Test
