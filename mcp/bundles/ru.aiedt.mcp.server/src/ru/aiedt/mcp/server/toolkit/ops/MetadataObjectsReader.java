@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -67,7 +68,18 @@ public class MetadataObjectsReader
         GENERIC
     }
 
-    /** One collection to walk: its argument token, its type label, and how to read its modules. */
+    /**
+     * How each kind reports its modules. NOT the list of kinds that get walked.
+     * <p>
+     * <b>It used to be both, and the two drifted.</b> A kind added to
+     * {@link MetadataTypeCatalog} did not have to be added here, and fourteen never were - so
+     * {@code metadataType="all"} walked 36 of the catalogue's 50 and said nothing about the rest.
+     * Document journals and sequences were among them: a map of a configuration built from that
+     * answer simply had no journals in it, and nothing in the answer showed a gap. The walked set
+     * now comes from the catalogue, and this array only answers "does this kind have an object or
+     * manager module", defaulting to {@link Category#GENERIC} for a kind it does not name.
+     * </p>
+     */
     private static final Collector[] COLLECTORS = {
         new Collector("documents", "Document", Category.DB_OBJECT), //$NON-NLS-1$ //$NON-NLS-2$
         new Collector("catalogs", "Catalog", Category.DB_OBJECT), //$NON-NLS-1$ //$NON-NLS-2$
@@ -369,9 +381,10 @@ public class MetadataObjectsReader
         List<MetadataInfo> objects = new ArrayList<>();
         if (ALL.equals(typeLower))
         {
-            for (Collector collector : COLLECTORS)
+            for (String kind : MetadataTypeCatalog.getAllEnglishSingularNames())
             {
-                collectOne(configuration, collector, nameFilter, effectiveLanguage, objects);
+                collectOne(configuration, collectorFor(kind), nameFilter, effectiveLanguage,
+                    objects);
             }
         }
         else
@@ -535,6 +548,39 @@ public class MetadataObjectsReader
      * @param typeLower the lowercased type token
      * @return the matching collector, or <code>null</code>
      */
+    /**
+     * The collector for a kind, whether or not the category array names it.
+     * <p>
+     * A kind with no entry still gets walked - it just reports no object or manager module, which
+     * is the truth for most of the ones that were missing. Silence about a whole kind was not.
+     * </p>
+     *
+     * @param singular the catalogue's canonical name for the kind.
+     * @return a collector for it, never <code>null</code>
+     */
+    static Collector collectorFor(String singular)
+    {
+        for (Collector collector : COLLECTORS)
+        {
+            if (collector.typeName.equals(singular))
+            {
+                return collector;
+            }
+        }
+        return new Collector(singular.toLowerCase(Locale.ROOT), singular, Category.GENERIC);
+    }
+
+    /**
+     * Resolves a type token the way the tool does, for the reconciliation test.
+     *
+     * @param typeLower the token, lower-cased.
+     * @return the collector, or <code>null</code> when nothing of that name exists
+     */
+    static Collector findCollectorForTest(String typeLower)
+    {
+        return findCollector(typeLower);
+    }
+
     private static Collector findCollector(String typeLower)
     {
         for (Collector collector : COLLECTORS)
@@ -544,7 +590,12 @@ public class MetadataObjectsReader
                 return collector;
             }
         }
-        return null;
+        // Asked for by name rather than through "all". The catalogue resolves any spelling -
+        // singular, plural, Russian - so a kind this array does not carry is still addressable
+        // instead of being answered "unknown type".
+        MetadataTypeCatalog.MetadataTypeInfo known = MetadataTypeCatalog.resolve(typeLower);
+        return known == null ? null
+            : new Collector(typeLower, known.getEnglishSingular(), Category.GENERIC);
     }
 
     /**
@@ -606,14 +657,15 @@ public class MetadataObjectsReader
      */
     private static String unknownTypeError(String metadataType)
     {
-        return "Error: unrecognized metadata type: " + metadataType + ". Accepted values (case-insensitive): all, " //$NON-NLS-1$ //$NON-NLS-2$
-            + "documents, catalogs, informationRegisters, accumulationRegisters, commonModules, enums, " //$NON-NLS-1$
-            + "constants, reports, dataProcessors, exchangePlans, businessProcesses, tasks, " //$NON-NLS-1$
-            + "commonAttributes, eventSubscriptions, scheduledJobs, httpServices, webServices, " //$NON-NLS-1$
-            + "chartsOfAccounts, chartsOfCharacteristicTypes, chartsOfCalculationTypes, " //$NON-NLS-1$
-            + "calculationRegisters, accountingRegisters, xdtoPackages, commonForms, commonCommands, " //$NON-NLS-1$
-            + "commonTemplates, commonPictures, roles, subsystems, definedTypes, settingsStorages, " //$NON-NLS-1$
-            + "functionalOptions, filterCriteria, styleItems, languages, sessionParameters"; //$NON-NLS-1$
+        // Listed from the catalogue rather than typed out. The hand-written list went stale the
+        // moment the walked set stopped coming from the array: documentjournals and sequences were
+        // accepted and the message still said they were not, which is worse than saying nothing -
+        // a caller reads it and stops trying.
+        List<String> accepted = new ArrayList<>(MetadataTypeCatalog.getAllEnglishSingularNames());
+        Collections.sort(accepted);
+        return "Error: unrecognized metadata type: " + metadataType //$NON-NLS-1$
+            + ". Accepted values (case-insensitive, singular or plural): all, " //$NON-NLS-1$
+            + String.join(", ", accepted); //$NON-NLS-1$
     }
 
     /** One object, flattened to the six columns the table shows. */
@@ -644,13 +696,23 @@ public class MetadataObjectsReader
     }
 
     /** A collection to walk. */
-    private static final class Collector
+    static final class Collector
     {
         private final String token;
 
         private final String typeName;
 
         private final Category category;
+
+        /**
+         * The catalogue's canonical name for the kind this walks.
+         *
+         * @return the singular English name
+         */
+        String typeName()
+        {
+            return typeName;
+        }
 
         Collector(String token, String typeName, Category category)
         {
