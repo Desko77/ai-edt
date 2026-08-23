@@ -61,6 +61,21 @@ public final class SupportSnapshot
         public final Map<UUID, String> modes = new LinkedHashMap<>();
 
         /**
+         * Name by object identity, for whatever the walk could name.
+         * <p>
+         * The file used to carry identities and nothing else, and this file is the material of a
+         * restore - what somebody opens when an update has gone wrong. Rows of bare identities tell
+         * them nothing about which objects are involved.
+         * </p>
+         * <p>
+         * <b>Written, never read back into a decision.</b> A restore matches on identity because
+         * names move between releases and identities do not; the column exists for the person, not
+         * for the code.
+         * </p>
+         */
+        public final Map<UUID, String> names = new LinkedHashMap<>();
+
+        /**
          * Creates a record of one vendor configuration.
          *
          * @param id its identity.
@@ -94,13 +109,54 @@ public final class SupportSnapshot
     public final List<Parent> parents = new ArrayList<>();
 
     /**
-     * How many of the objects named here the configuration no longer has.
+     * How many of the entries here name something the configuration no longer has.
      * <p>
      * Counted because they cannot be restored: an object that is gone takes no mode. Saying so as a
      * number is the difference between a restore that is complete and one that quietly was not.
      * </p>
+     * <p>
+     * <b>Only meaningful while {@link #indexComplete} holds.</b> An entry the walk could not name
+     * is indistinguishable from one whose object was deleted, so when the walk was not whole every
+     * such entry is counted in {@link #unclassified} instead and this stays at zero. Reporting
+     * them here would state a deletion nobody established - and for a while it did, on a
+     * configuration that had every one of those objects.
+     * </p>
      */
     public int unresolved;
+
+    /**
+     * How many entries could not be classified because the walk of the model was not whole.
+     * <p>
+     * Distinct from {@link #unresolved} on purpose: that one says the object is gone, this one says
+     * we do not know. The reader of a restore acts differently on each - the first is a fact about
+     * the configuration, the second is a fault in the reading of it.
+     * </p>
+     */
+    public int unclassified;
+
+    /**
+     * How many entries the support registry holds without an identity of their own.
+     * <p>
+     * The environment allows an item with no user id, and such an entry cannot be written down or
+     * put back: there is nothing to set a mode on. It is counted rather than skipped so the totals
+     * add up, and it blocks an automatic merge, because a snapshot that silently omits an entry
+     * offers a way back it does not have.
+     * </p>
+     */
+    public int withoutAnIdentifier;
+
+    /**
+     * Whether the walk that produced the names saw the whole model.
+     * <p>
+     * False when the configuration would not load, when a whole kind of object refused to list, or
+     * when an object would not yield its contents. Any of the three makes an absent name mean
+     * nothing in particular, which is why the classification above turns on this.
+     * </p>
+     */
+    public boolean indexComplete = true;
+
+    /** How many objects refused to yield their contents. Diagnostic, not a count of entries. */
+    public int ownersThatWouldNotOpen;
 
     /**
      * How many modes the snapshot holds in total.
@@ -302,8 +358,15 @@ public final class SupportSnapshot
             lines.add(VENDOR + parent.id + "\t" + parent.name + "\t" + parent.version); //$NON-NLS-1$ //$NON-NLS-2$
             for (Map.Entry<UUID, String> mode : parent.modes.entrySet())
             {
+                // The name goes on as a fourth column, which every reader of the v1 format already
+                // tolerates: rows are split with no limit and read by position, parts[0] through
+                // parts[2], so a column past those is ignored rather than fatal. A snapshot taken
+                // by this build therefore still restores through an older one, and the version in
+                // the header stays where it is.
+                String named = parent.names.get(mode.getKey());
                 lines.add(parent.id + "\t" + mode.getKey() + "\t" //$NON-NLS-1$ //$NON-NLS-2$
-                    + (mode.getValue() == null ? "" : mode.getValue())); //$NON-NLS-1$
+                    + (mode.getValue() == null ? "" : mode.getValue()) //$NON-NLS-1$
+                    + "\t" + (named == null ? "" : named)); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
         if (path.getParent() != null)
@@ -371,7 +434,15 @@ public final class SupportSnapshot
             }
             try
             {
-                parent.modes.put(UUID.fromString(parts[1]), emptyToNull(parts[2]));
+                UUID identity = UUID.fromString(parts[1]);
+                parent.modes.put(identity, emptyToNull(parts[2]));
+                // Absent from a file written before the column existed, and that is not a defect -
+                // the restore never consults it. It is carried back only so a report of what a
+                // restore is about to do can name the objects.
+                if (parts.length >= 4 && emptyToNull(parts[3]) != null)
+                {
+                    parent.names.put(identity, parts[3]);
+                }
             }
             catch (IllegalArgumentException notAnIdentity)
             {

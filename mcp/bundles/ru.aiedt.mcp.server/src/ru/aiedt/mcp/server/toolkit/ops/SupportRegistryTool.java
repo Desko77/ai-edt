@@ -352,20 +352,28 @@ public class SupportRegistryTool
                 .put("snapshotPath", path.toString()) //$NON-NLS-1$
                 .put("entries", snapshot.entries()) //$NON-NLS-1$
                 .put("vendorConfigurations", snapshot.parents.size()) //$NON-NLS-1$
-                // Named for what it counts. It used to be reported as notInTheConfiguration,
-                // which says something untrue: these entries answer to subordinate entities -
-                // attributes, forms, templates - that ARE in the configuration and simply are not
-                // in the name index, which walks top-level objects on purpose so a listing does
-                // not load the whole model. Measured on a real configuration: 7239 of 10843,
-                // two thirds of the snapshot, reported as absent from a configuration that has
-                // every one of them.
-                .put("entriesWithoutAName", snapshot.unresolved) //$NON-NLS-1$
-                .put("entriesWithoutANameNote", snapshot.unresolved == 0 ? null //$NON-NLS-1$
-                    : "these entries belong to subordinate entities (attributes, forms, " //$NON-NLS-1$
-                        + "templates). They are recorded in the snapshot with their identities " //$NON-NLS-1$
-                        + "and can be restored; only their names are missing here, because the " //$NON-NLS-1$
-                        + "name index walks top-level objects so a listing does not load the " //$NON-NLS-1$
-                        + "whole model.") //$NON-NLS-1$
+                // Every entry falls in exactly one of the three, and the three add up to entries.
+                // They were one number until the walk of the model was fixed to go under each
+                // object: 7239 of 10843 on a real configuration had an identity and no name, and
+                // the answer called them absent from a configuration that had every one of them.
+                //
+                // notInTheModel is a statement about the configuration and unclassified is a
+                // statement about the reading of it, which is why they are not one field: a
+                // reader acts on the first and investigates the second.
+                .put("named", snapshot.entries() - snapshot.unresolved - snapshot.unclassified) //$NON-NLS-1$
+                .put("notInTheModel", snapshot.unresolved) //$NON-NLS-1$
+                .put("unclassifiedBecauseIndexIncomplete", snapshot.unclassified) //$NON-NLS-1$
+                .put("withoutAnIdentifier", snapshot.withoutAnIdentifier) //$NON-NLS-1$
+                .put("indexComplete", snapshot.indexComplete) //$NON-NLS-1$
+                // Not a total of entries - it counts objects, and one of them can hide any number
+                // of entries. Kept beside them because it is what explains a non-empty
+                // unclassified.
+                .put("ownersThatWouldNotOpen", snapshot.ownersThatWouldNotOpen) //$NON-NLS-1$
+                .put("withoutAnIdentifierNote", snapshot.withoutAnIdentifier == 0 ? null //$NON-NLS-1$
+                    : "the support registry holds " + snapshot.withoutAnIdentifier //$NON-NLS-1$
+                        + " entr(y/ies) with no identity of their own. They are not in this file " //$NON-NLS-1$
+                        + "and cannot be put back: there is nothing to set a mode on. A merge " //$NON-NLS-1$
+                        + "relying on this snapshot would lose them without saying so.") //$NON-NLS-1$
                 .toJson();
         }
         catch (IOException | RuntimeException cannotWrite)
