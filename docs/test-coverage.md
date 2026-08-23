@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 113 | a test class named after it |
-| exercised | 54 | reached by some other test |
-| tool-sweep | 92 | declaration checked by the registry-wide contract sweep |
+| exercised | 55 | reached by some other test |
+| tool-sweep | 91 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 50 | needs a display or an extension point |
 | workspace-bound | 68 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **377** | across 179 test classes |
+| **total** | **377** | across 182 test classes |
 
 ## untested (0)
 
@@ -179,7 +179,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (92)
+## tool-sweep (91)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -273,9 +273,8 @@ _none_
 - VanessaTool
 - XdtoWorkshopTool
 - YaxunitDebugRunner
-- YaxunitTestsTool
 
-## exercised (54)
+## exercised (55)
 
 **(root)**
 - Activator
@@ -343,6 +342,7 @@ _none_
 - SymbolInfoReader
 - ValidateForExportTool
 - WorkspaceMarksFacadeTool
+- YaxunitTestsTool
 
 **wire/jsonrpc**
 - InitializeResult
@@ -506,9 +506,9 @@ closes.
 | 9-16 | 46 |
 | 17+ | 15 |
 
-1827 test methods across 179 test classes; 113 classes have a test of their own, median 9 methods each.
+1843 test methods across 182 test classes; 113 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 113 of 377 classes have one: 92 are covered by the registry-wide contract sweep and 68 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 113 of 377 classes have one: 91 are covered by the registry-wide contract sweep and 68 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 

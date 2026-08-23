@@ -1287,21 +1287,7 @@ public final class BmSupportRegistryHelper
     {
         try
         {
-            java.util.Iterator<org.eclipse.emf.ecore.EObject> inside = owner.eAllContents();
-            while (inside.hasNext())
-            {
-                org.eclipse.emf.ecore.EObject child = inside.next();
-                if (!(child instanceof MdObject))
-                {
-                    continue;
-                }
-                MdObject subordinate = (MdObject)child;
-                if (subordinate.getUuid() == null)
-                {
-                    continue;
-                }
-                index.names.put(subordinate.getUuid(), pathTo(subordinate, owner, ownerFqn));
-            }
+            descend(owner, ownerFqn, index);
         }
         catch (RuntimeException | LinkageError refused)
         {
@@ -1322,27 +1308,106 @@ public final class BmSupportRegistryHelper
      * @param ownerFqn how that object is named.
      * @return the full path, owner first
      */
-    private static String pathTo(MdObject subordinate, MdObject owner, String ownerFqn)
+    /**
+     * Walks down from one object, naming what it finds as it goes.
+     * <p>
+     * <b>Built downwards rather than by walking back up from each entity.</b> The first attempt did
+     * the latter and stopped when it reached the object it started from - compared by reference,
+     * which never matched: the container chain hands back an instance of the owner that is not the
+     * one the walk began with, so the owner went into the path a second time and every subordinate
+     * came out as {@code Catalog.X.Catalog.X.Attribute.Y}. Measured against the sources on disk,
+     * which is how it was caught at all.
+     * </p>
+     * <p>
+     * Nodes that are not metadata objects are descended through without adding a step: a containment
+     * reference can hold a wrapper, and skipping its contents would lose everything under it.
+     * </p>
+     *
+     * @param node where to descend from.
+     * @param prefix the path built so far.
+     * @param index where to record what is found
+     */
+    private static void descend(org.eclipse.emf.ecore.EObject node, String prefix, NameIndex index)
     {
-        List<String> steps = new ArrayList<>();
-        org.eclipse.emf.ecore.EObject at = subordinate;
-        while (at != null && at != owner)
+        for (org.eclipse.emf.ecore.EObject child : node.eContents())
         {
-            if (at instanceof MdObject)
+            if (!(child instanceof MdObject))
             {
-                MdObject step = (MdObject)at;
-                steps.add(step.eClass().getName() + "." + step.getName()); //$NON-NLS-1$
+                descend(child, prefix, index);
+                continue;
             }
-            at = at.eContainer();
+            name((MdObject)child, prefix, index);
         }
-        Collections.reverse(steps);
-        StringBuilder path = new StringBuilder(ownerFqn);
-        for (String step : steps)
+        if (node instanceof com._1c.g5.v8.dt.metadata.mdclass.Subsystem)
         {
-            path.append('.').append(step);
+            // Nested subsystems do not arrive through eContents here, and they are not a rarity:
+            // 218 of the 236 subsystems of a real configuration are nested, and every one of them
+            // came back unnamed while the walk relied on contents alone. The typed accessor does
+            // return them - the FQN resolver elsewhere in this plugin has always used it - so the
+            // walk asks the same way rather than assuming the two are equivalent.
+            for (com._1c.g5.v8.dt.metadata.mdclass.Subsystem nested
+                : ((com._1c.g5.v8.dt.metadata.mdclass.Subsystem)node).getSubsystems())
+            {
+                name(nested, prefix, index);
+            }
         }
-        return path.toString();
     }
+
+    /**
+     * Records one entity under the path built for it, then descends through it.
+     *
+     * @param subordinate the entity to name.
+     * @param prefix the path of whatever contains it.
+     * @param index where to record what is found
+     */
+    private static void name(MdObject subordinate, String prefix, NameIndex index)
+    {
+        String here = prefix + "." + roleOf(subordinate) + "." + subordinate.getName(); //$NON-NLS-1$ //$NON-NLS-2$
+        if (subordinate.getUuid() != null)
+        {
+            index.names.put(subordinate.getUuid(), here);
+        }
+        descend(subordinate, here, index);
+    }
+
+    /**
+     * What to call a subordinate entity in a name.
+     * <p>
+     * <b>The model class is not the name.</b> It carries the owner's kind - {@code CatalogAttribute},
+     * {@code DocumentAttribute}, {@code TabularSectionAttribute} are three classes for one role -
+     * while a name people write, and the sources on disk, say {@code Attribute} once. Using the
+     * class name put {@code Catalog.X.CatalogAttribute.Y} in the answer, which no other part of this
+     * server would accept back.
+     * </p>
+     *
+     * @param subordinate the entity.
+     * @return the role, or the class name when it is not one of the known roles
+     */
+    private static String roleOf(MdObject subordinate)
+    {
+        String className = subordinate.eClass().getName();
+        for (String role : SUBORDINATE_ROLES)
+        {
+            if (className.equals(role) || className.endsWith(role))
+            {
+                return role;
+            }
+        }
+        return className;
+    }
+
+    /**
+     * The roles a subordinate entity can play, longest first.
+     * <p>
+     * Order matters: {@code AddressingAttribute} ends with {@code Attribute}, so the longer role has
+     * to be offered first or every addressing attribute would be called an attribute.
+     * </p>
+     */
+    private static final String[] SUBORDINATE_ROLES = {
+        "ExtDimensionAccountingFlag", "AddressingAttribute", "AccountingFlag", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "TabularSection", "Recalculation", "EnumValue", "URLTemplate", "Attribute", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "Dimension", "Resource", "Template", "Command", "Operation", "Aggregate", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        "Column", "Form" }; //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Indexes the objects themselves, for a caller that has to hand one to the environment.

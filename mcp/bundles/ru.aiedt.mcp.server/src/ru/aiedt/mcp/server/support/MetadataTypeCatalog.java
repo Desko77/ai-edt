@@ -173,7 +173,14 @@ public final class MetadataTypeCatalog
             "\u0421\u0435\u0440\u0432\u0438\u0441\u0418\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u0438"),
         BOT("Bot", "Bots", "bots", null, "\u0411\u043e\u0442", "\u0411\u043e\u0442\u044b"),
         WEB_SOCKET_CLIENT("WebSocketClient", "WebSocketClients", "webSocketClients", null,
-            "WebSocket\u041a\u043b\u0438\u0435\u043d\u0442");
+            "WebSocket\u041a\u043b\u0438\u0435\u043d\u0442"),
+        // Missing until the support registry was reconciled against the sources on disk: two
+        // entries of a real configuration answered to palette colours, and nothing here could name
+        // them because the kind was not listed at all - which also meant get_metadata_objects
+        // could not show one.
+        PALETTE_COLOR("PaletteColor", "PaletteColors", "paletteColors", null,
+            "\u0426\u0432\u0435\u0442\u041f\u0430\u043b\u0438\u0442\u0440\u044b",
+            "\u0426\u0432\u0435\u0442\u0430\u041f\u0430\u043b\u0438\u0442\u0440\u044b");
 
         private final String englishSingular;
 

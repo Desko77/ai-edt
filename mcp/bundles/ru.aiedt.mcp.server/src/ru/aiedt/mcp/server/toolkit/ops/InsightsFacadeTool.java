@@ -199,6 +199,10 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("ancestorPath", //$NON-NLS-1$
                 "compare_three_way: directory holding the delivery both sides came from. Omit for " //$NON-NLS-1$
                     + "a two-sided comparison.") //$NON-NLS-1$
+            .stringProperty("parentId", //$NON-NLS-1$
+                "compare_three_way: which vendor configuration of the project the deliveries are " //$NON-NLS-1$
+                    + "measured against, by id or by name. Required when the project descends " //$NON-NLS-1$
+                    + "from more than one, where the check is refused rather than guessed.") //$NON-NLS-1$
             .stringProperty("decisions", //$NON-NLS-1$
                 "compare_three_way: what to do with individual objects, as a JSON array of " //$NON-NLS-1$
                     + "{\"object\":\"...\",\"rule\":\"...\"}.") //$NON-NLS-1$
