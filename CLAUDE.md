@@ -10,8 +10,11 @@ AI-EDT is an Eclipse RCP plugin for 1C:EDT that implements the Model Context Pro
 assistants can work against the live EDT model instead of scraping project files. Java 17, OSGi.
 
 - **Plugin ID:** `ru.aiedt.mcp.server`
-- **Version:** poms carry `0.1.0-SNAPSHOT`; the shipped version comes from the release tag
-  (`v0.1.0` -> tycho-versions sets `0.1.0`), so the snapshot value in the tree is expected.
+- **Version:** poms carry the next release as a snapshot - one micro above the newest tag, so a tree
+  at `0.2.36-SNAPSHOT` sits on top of `v0.2.35`. The shipped version comes from the release tag
+  (tycho-versions rewrites every pom during the release run), so what the tree carries never reaches
+  a release; it exists so a local build outranks the release it will replace. Bump it once, right
+  after a release. Between releases only the timestamp qualifier moves.
 - **Target platform:** EDT 2026.1 (pulled from `edt.1c.ru` by `mcp/targets/default/default.target`)
 - **License:** AGPL-3.0-or-later. See `LICENSE`, the per-file headers, and `docs/PROVENANCE.md`.
 - **Origin:** the project began as a fork of `DitriXNew/EDT-MCP` and has since been fully
