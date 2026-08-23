@@ -775,8 +775,38 @@ public final class BmComparisonHelper
         /** Nodes both sides changed, for the same mode and for the queue. Not reported. */
         public final transient List<Long> bothNodes = new ArrayList<>();
 
+        /**
+         * Objects both sides changed which the delivery no longer has.
+         * <p>
+         * Kept apart from {@link #bothNodes} because the delivery's version of them is their
+         * absence. Putting the delivery in front here would carry out a deletion of something this
+         * side had worked on, so these are held and named rather than merged.
+         * </p>
+         */
+        public final transient List<Long> bothNodesGoneFromDelivery = new ArrayList<>();
+
         /** How many objects were held back from the update and confirmed to carry the rule. */
         public int protectedFromUpdate;
+
+        /**
+         * How many objects both sides changed were merged with the delivery in front.
+         * <p>
+         * Separate from {@link #protectedFromUpdate} because it answers a different question: that
+         * one counts what the delivery was kept away from, this one counts what the delivery was
+         * applied to while our own additions stayed. A mode that reports only the first looks like
+         * it worked while having updated nothing.
+         * </p>
+         */
+        public int mergedWithDelivery;
+
+        /**
+         * Objects both sides changed that would not take a merge and were held instead.
+         * <p>
+         * Named one by one: for each of these the delivery's change is NOT applied, and the answer
+         * has to say so rather than let a count of protected objects imply an update happened.
+         * </p>
+         */
+        public final List<String> deliveryNotApplied = new ArrayList<>();
 
         /**
          * Objects the environment would not hold back, named.
@@ -2541,12 +2571,56 @@ public final class BmComparisonHelper
             outcome.decisionsNote = "the comparison offered no session, so nothing was protected"; //$NON-NLS-1$
             return;
         }
+        // Objects only we touched are held. Objects BOTH sides touched are merged with the
+        // delivery in front, which is a different question and used to get the same answer.
+        //
+        // <b>Holding BOTH as well made the mode safe and sterile.</b> On a customised
+        // configuration almost every changed module is BOTH - we added a method, the vendor
+        // changed another - so protecting them wholesale meant the update applied nowhere it was
+        // needed. Measured: a merge that ran clean, protected 8 objects and took 0, leaving the
+        // vendor's change to Alpha unapplied because our unrelated Gamma sat in the same module.
+        //
+        // MERGE_PRIORITIZING_OTHER is what that case actually wants, and it was measured before
+        // being chosen: on a module node it resolves contested lines toward the delivery AND keeps
+        // methods of ours the delivery does not have. Where a node will not take it, the node is
+        // held instead and said out loud - a silent fallback would put the sterile behaviour back
+        // without anyone noticing.
+        for (Long nodeId : outcome.bothNodes)
+        {
+            mergeWithDeliveryInFront(session, nodeId, outcome);
+        }
+        // Held, not merged: for these the delivery's version is their absence, and putting it in
+        // front would delete work this side had done. Named one by one so the deletion the update
+        // did NOT perform is a decision somebody can take deliberately.
+        for (Long nodeId : outcome.bothNodesGoneFromDelivery)
+        {
+            if (outcome.deliveryNotApplied.size() < PAGE_LIMIT)
+            {
+                outcome.deliveryNotApplied.add(nameOf(session, nodeId)
+                    + " is not in the delivery at all and was changed here, so the delivery's " //$NON-NLS-1$
+                    + "version of it is its removal. It is HELD: nothing was deleted. Decide that " //$NON-NLS-1$
+                    + "one deliberately."); //$NON-NLS-1$
+            }
+        }
         List<Long> hold = new ArrayList<>(outcome.oursNodes);
-        hold.addAll(outcome.bothNodes);
+        hold.addAll(outcome.bothNodesGoneFromDelivery);
         for (Long nodeId : hold)
         {
             if (!session.setMergeRuleToSubtree(nodeId, MergeRule.DO_NOT_MERGE))
             {
+                // A refusal to SET is not a refusal to HOLD. The environment answers false when it
+                // changed nothing, and a node already carrying DO_NOT_MERGE is exactly that case -
+                // so the mode refused the whole update precisely because everything was already
+                // protected. Measured on a project of 38 nodes: three objects, all of them already
+                // at DO_NOT_MERGE and all of them named by the environment as accepting it.
+                //
+                // What matters is what the node carries afterwards, which is the same question the
+                // success path below already asks. Asking it here too is the whole fix.
+                if (ruleOn(session, nodeId) == MergeRule.DO_NOT_MERGE)
+                {
+                    outcome.protectedFromUpdate++;
+                    continue;
+                }
                 if (outcome.protectionRefused.size() < PAGE_LIMIT)
                 {
                     outcome.protectionRefused
@@ -2565,6 +2639,94 @@ public final class BmComparisonHelper
             }
             outcome.protectedFromUpdate++;
             outcome.decided++;
+        }
+    }
+
+    /**
+     * Decides which of the two things "both sides changed it" means for one object.
+     * <p>
+     * <b>They need opposite treatment.</b> Where the delivery still has the object, putting the
+     * delivery in front is what an update means. Where it does not, the delivery's version of that
+     * object is its absence, and putting that in front deletes work done here - measured: a
+     * catalogue customised on this side and removed by the delivery comes back with mustBeMerged
+     * set and GET_FROM_OTHER proposed, so the environment will carry the deletion out if asked.
+     * </p>
+     * <p>
+     * The two lists share one ceiling, because the ceiling exists to bound memory and counting
+     * them apart would let a configuration past it while each looked small.
+     * </p>
+     *
+     * @param outcome where the node is recorded.
+     * @param change what the comparison said about it
+     */
+    static void sortBothNode(Outcome outcome, Change change)
+    {
+        if (outcome.bothNodes.size() + outcome.bothNodesGoneFromDelivery.size() >= HOLD_LIMIT)
+        {
+            outcome.protectionTruncated = true;
+            return;
+        }
+        if (change.other != null && !change.other.isEmpty())
+        {
+            outcome.bothNodes.add(change.nodeId);
+        }
+        else
+        {
+            outcome.bothNodesGoneFromDelivery.add(change.nodeId);
+        }
+    }
+
+    /**
+     * Puts one object both sides changed under the delivery, keeping what only we have.
+     * <p>
+     * The rule was measured before it was chosen: on a module node
+     * {@link MergeRule#MERGE_PRIORITIZING_OTHER} resolves lines both sides touched toward the
+     * delivery and leaves methods the delivery does not carry in place. That is what an update
+     * with customisations preserved has to mean; holding the object instead means the delivery is
+     * never applied to anything anybody has worked on.
+     * </p>
+     * <p>
+     * <b>A node that will not take the rule is held and named.</b> Falling back quietly would
+     * restore the old behaviour object by object, and the answer would still say the update ran.
+     * </p>
+     *
+     * @param session the comparison.
+     * @param nodeId the node both sides changed.
+     * @param outcome where to record what was done and what was not
+     */
+    private static void mergeWithDeliveryInFront(IComparisonSession session, Long nodeId,
+        Outcome outcome)
+    {
+        if (session.setMergeRuleToSubtree(nodeId, MergeRule.MERGE_PRIORITIZING_OTHER)
+            && ruleOn(session, nodeId) == MergeRule.MERGE_PRIORITIZING_OTHER)
+        {
+            outcome.mergedWithDelivery++;
+            outcome.decided++;
+            return;
+        }
+        if (ruleOn(session, nodeId) == MergeRule.MERGE_PRIORITIZING_OTHER)
+        {
+            // Already carrying it: the environment answers false when it changes nothing.
+            outcome.mergedWithDelivery++;
+            return;
+        }
+        if (session.setMergeRuleToSubtree(nodeId, MergeRule.DO_NOT_MERGE)
+            || ruleOn(session, nodeId) == MergeRule.DO_NOT_MERGE)
+        {
+            outcome.protectedFromUpdate++;
+            if (outcome.deliveryNotApplied.size() < PAGE_LIMIT)
+            {
+                outcome.deliveryNotApplied.add(nameOf(session, nodeId)
+                    + " would not take a merge with the delivery in front, so it was held as it " //$NON-NLS-1$
+                    + "is and the delivery's change to it is NOT applied." //$NON-NLS-1$
+                    + describeAvailable(session, nodeId));
+            }
+            return;
+        }
+        if (outcome.protectionRefused.size() < PAGE_LIMIT)
+        {
+            outcome.protectionRefused
+                .add(nameOf(session, nodeId) + describeAvailable(session, nodeId));
         }
     }
 
@@ -3564,14 +3726,7 @@ public final class BmComparisonHelper
                 }
                 else if (AttributionRule.BOTH.equals(change.changedBy))
                 {
-                    if (outcome.bothNodes.size() < HOLD_LIMIT)
-                    {
-                        outcome.bothNodes.add(change.nodeId);
-                    }
-                    else
-                    {
-                        outcome.protectionTruncated = true;
-                    }
+                    sortBothNode(outcome, change);
                     if (outcome.conflictQueue.size() < PAGE_LIMIT)
                     {
                         outcome.conflictQueue.add(change.main != null && !change.main.isEmpty()

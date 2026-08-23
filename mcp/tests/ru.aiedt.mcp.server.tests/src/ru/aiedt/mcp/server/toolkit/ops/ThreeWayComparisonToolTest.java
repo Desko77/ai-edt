@@ -411,22 +411,40 @@ public class ThreeWayComparisonToolTest
     }
 
     /**
-     * The ordinary update on support has to protect conflicts too, not only our own changes.
+     * The ordinary update on support puts the delivery in front where both sides changed, and
+     * still refuses to carry out a deletion nobody asked for.
      * <p>
-     * Measured: a catalogue we had customised and the delivery had deleted comes back with
-     * mustBeMerged set and GET_FROM_OTHER proposed - the environment is willing to carry out the
-     * deletion. Protecting only the objects attributed to us would leave exactly that one exposed.
+     * <b>Holding everything both sides touched made the mode safe and useless.</b> On a customised
+     * configuration almost every changed module is BOTH - we added a method, the delivery changed
+     * another - so protecting them wholesale meant the update applied nowhere it was needed.
+     * Measured: a merge that ran clean, protected 8 objects and took 0. Those objects now take
+     * MERGE_PRIORITIZING_OTHER, which was itself measured first: on a module node it resolves
+     * contested lines toward the delivery and leaves methods only this side has in place.
+     * </p>
+     * <p>
+     * <b>The hazard the previous contract existed to prevent is still prevented, and it is a
+     * different one.</b> A catalogue we had customised and the delivery had deleted comes back
+     * with mustBeMerged set and GET_FROM_OTHER proposed - the environment is willing to carry out
+     * the deletion. For an object the delivery no longer has, putting the delivery in front means
+     * deleting our work, so those are held apart from the rest and named in deliveryNotApplied.
+     * The change of rule must never quietly extend to them.
      * </p>
      */
     @Test
-    public void keepingOurChangesHoldsTheConflictsAsWell()
+    public void keepingOurChangesPutsTheDeliveryInFrontButNeverDeletes()
     {
         String schema = new ThreeWayComparisonTool().getInputSchema();
         assertTrue("the mode has to be nameable", schema.contains("UPDATE_KEEPING_OURS")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue("and it has to say that conflicts are held and listed, not resolved by a " //$NON-NLS-1$
-            + "default while nobody is looking", schema.contains("conflictQueue")); //$NON-NLS-1$
-        assertTrue("and that it refuses rather than merging around an object it could not hold", //$NON-NLS-1$
-            schema.contains("refuses outright")); //$NON-NLS-1$
+        assertTrue("an update that takes nothing where both sides worked is not an update, so " //$NON-NLS-1$
+            + "the mode has to say it merges those with the delivery in front", //$NON-NLS-1$
+            schema.contains("merged with the delivery in front")); //$NON-NLS-1$
+        assertTrue("and it has to say our own methods survive that merge, which is the whole " //$NON-NLS-1$
+            + "reason this rule was chosen over taking the delivery whole", //$NON-NLS-1$
+            schema.contains("methods only this side has stay")); //$NON-NLS-1$
+        assertTrue("an object the merge could not be applied to must be named, not folded into a " //$NON-NLS-1$
+            + "count that reads as success", schema.contains("deliveryNotApplied")); //$NON-NLS-1$
+        assertTrue("and it still refuses rather than merging around an object of ours it could " //$NON-NLS-1$
+            + "not hold", schema.contains("refuses outright")); //$NON-NLS-1$
     }
 
     /**

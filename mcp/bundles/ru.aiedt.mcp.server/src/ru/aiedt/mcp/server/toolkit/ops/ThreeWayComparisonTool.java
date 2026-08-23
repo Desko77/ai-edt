@@ -235,12 +235,16 @@ public class ThreeWayComparisonTool
                     + "refused unless the comparison is three-sided, finished, and found nothing " //$NON-NLS-1$
                     + "changed here, on both sides, or unattributed. The tool checks that itself " //$NON-NLS-1$
                     + "rather than trusting the caller, and names the counts when it refuses. " //$NON-NLS-1$
-                    + "UPDATE_KEEPING_OURS is the ordinary update on support: objects only the " //$NON-NLS-1$
-                    + "delivery changed take the rule the environment proposes, everything this " //$NON-NLS-1$
-                    + "side reworked is held at DO_NOT_MERGE and read back to confirm it, and " //$NON-NLS-1$
-                    + "conflicts are held too and listed in conflictQueue for a person to decide. " //$NON-NLS-1$
-                    + "It refuses outright when any object could not be held, because merging " //$NON-NLS-1$
-                    + "then would overwrite named work.") //$NON-NLS-1$
+                    + "UPDATE_KEEPING_OURS is the ordinary update on support, and it treats three " //$NON-NLS-1$
+                    + "groups differently. Objects only the delivery changed take the rule the " //$NON-NLS-1$
+                    + "environment proposes. Objects only this side reworked are held at " //$NON-NLS-1$
+                    + "DO_NOT_MERGE and read back to confirm it. Objects BOTH sides changed are " //$NON-NLS-1$
+                    + "merged with the delivery in front - contested lines resolve toward it while " //$NON-NLS-1$
+                    + "methods only this side has stay - and are counted in mergedWithDelivery. " //$NON-NLS-1$
+                    + "An object that will not take that merge is held instead and named in " //$NON-NLS-1$
+                    + "deliveryNotApplied, because for it the delivery's change does NOT arrive. " //$NON-NLS-1$
+                    + "It refuses outright when an object of ours could not be held at all, " //$NON-NLS-1$
+                    + "because merging then would overwrite named work.") //$NON-NLS-1$
             .build();
     }
 
@@ -529,6 +533,11 @@ public class ThreeWayComparisonTool
             // could not be kept, and what a person still has to decide.
             .put("protectedFromUpdate", outcome.protectedFromUpdate) //$NON-NLS-1$
             .put("protectionRefused", outcome.protectionRefused) //$NON-NLS-1$
+            // Both counts are needed to read the outcome. Protected alone says what the delivery
+            // was kept away from, and a mode that took nothing at all reports a healthy-looking
+            // number of it - which is exactly how the sterile behaviour went unnoticed.
+            .put("mergedWithDelivery", outcome.mergedWithDelivery) //$NON-NLS-1$
+            .put("deliveryNotApplied", outcome.deliveryNotApplied) //$NON-NLS-1$
             .put("takenFromVendor", outcome.objectsChangedByVendor) //$NON-NLS-1$
             .put("conflictQueue", outcome.conflictQueue) //$NON-NLS-1$
             .put("conflictQueueCount", outcome.objectsChangedByBoth) //$NON-NLS-1$
