@@ -75,6 +75,22 @@ public final class OriginCheck
      */
     public static Verdict check(String projectName, String otherPath, String ancestorPath)
     {
+        return check(projectName, otherPath, ancestorPath, null);
+    }
+
+    /**
+     * The same check, told which vendor configuration to measure against.
+     *
+     * @param projectName the open project.
+     * @param otherPath the delivery to compare against.
+     * @param ancestorPath the delivery both sides came from; may be <code>null</code>.
+     * @param parentId which vendor configuration of the project to check against, by id or name.
+     *     Required when the project descends from more than one.
+     * @return what lined up and what did not
+     */
+    public static Verdict check(String projectName, String otherPath, String ancestorPath,
+        String parentId)
+    {
         Verdict verdict = new Verdict();
         verdict.other = identify(otherPath, verdict, "otherPath"); //$NON-NLS-1$
         if (ancestorPath != null && !ancestorPath.trim().isEmpty())
@@ -82,7 +98,7 @@ public final class OriginCheck
             verdict.ancestor = identify(ancestorPath, verdict, "ancestorPath"); //$NON-NLS-1$
         }
         compareSides(verdict);
-        compareWithProject(projectName, verdict);
+        compareWithProject(projectName, parentId, verdict);
         return verdict;
     }
 
@@ -171,29 +187,143 @@ public final class OriginCheck
      * @param projectName the project.
      * @param verdict where to record disagreement.
      */
-    private static void compareWithProject(String projectName, Verdict verdict)
+    private static void compareWithProject(String projectName, String parentId, Verdict verdict)
     {
+        if (org.eclipse.core.resources.ResourcesPlugin.getWorkspace() == null
+            || ProjectResolver.resolve(projectName) == null)
+        {
+            // No project at all is not a provenance question: there is nothing whose origin could
+            // disagree. Kept apart from the branches below because the registry reports both an
+            // absent project and an unreachable support service through one field, and refusing on
+            // that field alone refuses every comparison made outside a workspace.
+            return;
+        }
         BmSupportRegistryHelper.Registry registry;
         try
         {
             registry = BmSupportRegistryHelper.read(projectName);
         }
-        catch (RuntimeException | LinkageError noSupport)
+        catch (RuntimeException | LinkageError cannotAsk)
         {
-            // A project that cannot be asked about support is not a mismatch: plenty of
-            // comparisons are legitimately run against configurations on nobody's support.
+            // Named, not swallowed. This used to return in silence beside a comment saying a
+            // project that cannot be asked about support is not a mismatch - true of a project
+            // that is not on support, and not true of one whose support subsystem threw. The two
+            // are indistinguishable from here, and reading the second as the first turns a failed
+            // check into a passed one.
+            verdict.mismatches.add("the support state of " + projectName + " could not be read, " //$NON-NLS-1$ //$NON-NLS-2$
+                + "so where this project came from cannot be established: " + cannotAsk //$NON-NLS-1$
+                + ". Pass ignoreOriginMismatch to compare without that check."); //$NON-NLS-1$
             return;
         }
-        if (registry.cannotTell != null || !registry.onSupport || registry.parents.size() != 1)
+        if (registry.cannotTell != null)
+        {
+            verdict.mismatches.add("where this project came from cannot be established: " //$NON-NLS-1$
+                + registry.cannotTell
+                + ". Pass ignoreOriginMismatch to compare without that check."); //$NON-NLS-1$
+            return;
+        }
+        if (!registry.onSupport)
+        {
+            // The one branch that is legitimately quiet: there is no vendor to disagree with, so
+            // there is nothing to check rather than a check that failed. Said out loud so a reader
+            // can tell it apart from the two above.
+            verdict.projectDescendsFrom = "nothing - " + projectName + " is not on support"; //$NON-NLS-1$ //$NON-NLS-2$
+            return;
+        }
+        if (registry.parents.isEmpty())
+        {
+            verdict.mismatches.add(projectName + " is on support and names no vendor " //$NON-NLS-1$
+                + "configuration, which is a state nothing here can act on."); //$NON-NLS-1$
+            return;
+        }
+        BmSupportRegistryHelper.Parent parent = chooseParent(registry, parentId, verdict);
+        if (parent == null)
         {
             return;
         }
-        BmSupportRegistryHelper.Parent parent = registry.parents.get(0);
         verdict.projectDescendsFrom = parent.configName
             + (parent.configRelease == null ? "" : " " + parent.configRelease) //$NON-NLS-1$ //$NON-NLS-2$
             + (parent.providerName == null ? "" : " by " + parent.providerName); //$NON-NLS-1$ //$NON-NLS-2$
         checkAgainstParent(verdict.other, parent, "otherPath", verdict); //$NON-NLS-1$
         checkAgainstParent(verdict.ancestor, parent, "ancestorPath", verdict); //$NON-NLS-1$
+        checkAncestorRelease(verdict.ancestor, parent, verdict);
+    }
+
+    /**
+     * Picks which vendor configuration of the project to measure the deliveries against.
+     * <p>
+     * <b>With several vendors this used to skip the check entirely and say nothing.</b> A typical
+     * application sits on its vendor's support, which sits on a library's, and there the question
+     * of which one a delivery should match has an answer - it just is not one this code can guess.
+     * Guessing produces a refusal nobody can act on; staying silent produces a comparison whose
+     * provenance was never checked, which is worse.
+     * </p>
+     * <p>
+     * The identity of a vendor configuration is allowed to be absent, so matching falls back to the
+     * configuration name, and says so when it does.
+     * </p>
+     *
+     * @param registry the support state of the project.
+     * @param parentId what the caller named, or <code>null</code>.
+     * @param verdict where to record a refusal.
+     * @return the vendor configuration to check against, or <code>null</code> when there is no
+     *     unambiguous answer
+     */
+    private static BmSupportRegistryHelper.Parent chooseParent(
+        BmSupportRegistryHelper.Registry registry, String parentId, Verdict verdict)
+    {
+        String wanted = parentId == null || parentId.trim().isEmpty() ? null : parentId.trim();
+        if (wanted == null)
+        {
+            if (registry.parents.size() == 1)
+            {
+                return registry.parents.get(0);
+            }
+            verdict.mismatches.add("this project descends from " + registry.parents.size() //$NON-NLS-1$
+                + " vendor configurations (" + names(registry) + "), so which one the deliveries " //$NON-NLS-1$ //$NON-NLS-2$
+                + "should match is not decidable here. Pass parentId."); //$NON-NLS-1$
+            return null;
+        }
+        List<BmSupportRegistryHelper.Parent> hits = new ArrayList<>();
+        for (BmSupportRegistryHelper.Parent parent : registry.parents)
+        {
+            if (wanted.equals(parent.id) || wanted.equals(parent.configName))
+            {
+                hits.add(parent);
+            }
+        }
+        if (hits.isEmpty())
+        {
+            verdict.mismatches.add("no vendor configuration of this project answers to '" + wanted //$NON-NLS-1$
+                + "'. It descends from: " + names(registry)); //$NON-NLS-1$
+            return null;
+        }
+        if (hits.size() > 1)
+        {
+            // Two vendors with no identity and the same name. Rare, and the one case where a
+            // choice made here would be a coin toss over which support a delivery belongs to.
+            verdict.mismatches.add("'" + wanted + "' matches " + hits.size() //$NON-NLS-1$ //$NON-NLS-2$
+                + " vendor configurations of this project, so it does not name one."); //$NON-NLS-1$
+            return null;
+        }
+        return hits.get(0);
+    }
+
+    /**
+     * Names the vendor configurations a project descends from, for a refusal that has to list them.
+     *
+     * @param registry the support state.
+     * @return the names, comma separated
+     */
+    private static String names(BmSupportRegistryHelper.Registry registry)
+    {
+        List<String> named = new ArrayList<>();
+        for (BmSupportRegistryHelper.Parent parent : registry.parents)
+        {
+            named.add(parent.id == null ? parent.configName : parent.configName + " (" //$NON-NLS-1$
+                + parent.id + ")"); //$NON-NLS-1$
+        }
+        return String.join(", ", named); //$NON-NLS-1$
     }
 
     /**
@@ -220,6 +350,49 @@ public final class OriginCheck
         {
             verdict.mismatches.add(argument + " comes from " + identity.vendor //$NON-NLS-1$
                 + ", but this project is on the support of " + parent.providerName); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Checks that the ancestor is the release this project actually stands on.
+     * <p>
+     * <b>Everything else here compares the two deliveries with each other, or checks that they come
+     * from the right vendor. Nothing checked that the ancestor is THIS project's ancestor.</b> A
+     * delivery of the same configuration by the same vendor, one release older or newer, passed
+     * every check and then inverted the attribution silently: work of ours read as the vendor's,
+     * and the vendor's as ours. Every decision downstream is made on that reading.
+     * </p>
+     * <p>
+     * Only the ancestor is held to it. The other side is a different release by definition - that
+     * is what an update is.
+     * </p>
+     *
+     * @param ancestor the delivery both sides came from; may be <code>null</code>.
+     * @param parent what the project descends from.
+     * @param verdict where to record disagreement
+     */
+    // Package-visible for the test: it is the check that keeps attribution the right way round,
+    // and reaching it any other way needs a project on real vendor support.
+    static void checkAncestorRelease(DeliveryIdentity ancestor,
+        BmSupportRegistryHelper.Parent parent, Verdict verdict)
+    {
+        if (ancestor == null || ancestor.cannotTell != null)
+        {
+            return;
+        }
+        if (ancestor.version == null || parent.configRelease == null)
+        {
+            // Absence is not disagreement, as everywhere else here: a configuration may leave its
+            // release unset, and so will an export made from it. Saying nothing is right; the
+            // caller is told what the project descends from either way.
+            return;
+        }
+        if (!ancestor.version.equals(parent.configRelease))
+        {
+            verdict.mismatches.add("ancestorPath is release " + ancestor.version //$NON-NLS-1$
+                + ", but this project stands on " + parent.configRelease //$NON-NLS-1$
+                + ". Comparing against a release the project never had attributes changes to the " //$NON-NLS-1$
+                + "wrong side."); //$NON-NLS-1$
         }
     }
 

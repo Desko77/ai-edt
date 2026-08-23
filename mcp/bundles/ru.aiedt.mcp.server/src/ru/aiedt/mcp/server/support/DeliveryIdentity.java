@@ -60,7 +60,10 @@ public final class DeliveryIdentity
     /** Why nothing could be read. Present only when the answer is a refusal. */
     public String cannotTell;
 
-    private DeliveryIdentity()
+    // Built by read. Package-visible rather than private only so a test can state an identity
+    // directly: the checks that read one have to be exercised against a delivery of a named
+    // release, and producing that through read means a real configuration on disk per case.
+    DeliveryIdentity()
     {
         // Built by read.
     }

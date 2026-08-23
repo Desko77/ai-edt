@@ -128,6 +128,11 @@ public class ThreeWayComparisonTool
                 "Open project that plays our side (MAIN)", true) //$NON-NLS-1$
             .stringProperty("otherPath", //$NON-NLS-1$
                 "Directory holding the configuration to compare against (OTHER)", true) //$NON-NLS-1$
+            .stringProperty("parentId", //$NON-NLS-1$
+                "Which vendor configuration of the project the deliveries are measured " //$NON-NLS-1$
+                    + "against, by id or by name. Required when the project descends from " //$NON-NLS-1$
+                    + "more than one - with several vendors the check is refused rather " //$NON-NLS-1$
+                    + "than guessed.") //$NON-NLS-1$
             .stringProperty("ancestorPath", //$NON-NLS-1$
                 "Directory holding the common ancestor (COMMON_ANCESTOR). Omit for a two-sided " //$NON-NLS-1$
                     + "comparison.") //$NON-NLS-1$
@@ -417,9 +422,20 @@ public class ThreeWayComparisonTool
         page.limit = JsonUtils.extractIntArgument(params, "limit", 0); //$NON-NLS-1$
         boolean closeSession = JsonUtils.extractBooleanArgument(params, "closeSession", false); //$NON-NLS-1$
         page.methodLevel = JsonUtils.extractBooleanArgument(params, "methodLevel", false); //$NON-NLS-1$
-        BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(projectName, otherPath,
-            ancestorPath, decisions, decisionsPath, decisionsFrom, intent, ignoreOriginMismatch,
-            page, closeSession, readScope(params));
+        BmComparisonHelper.Request request = new BmComparisonHelper.Request();
+        request.mainProjectName = projectName;
+        request.otherPath = otherPath;
+        request.ancestorPath = ancestorPath;
+        request.decisions = decisions;
+        request.decisionsPath = decisionsPath;
+        request.decisionsFrom = decisionsFrom;
+        request.intent = intent;
+        request.ignoreOriginMismatch = ignoreOriginMismatch;
+        request.page = page;
+        request.closeSession = closeSession;
+        request.scopeNames = readScope(params);
+        request.parentId = JsonUtils.extractStringArgument(params, "parentId"); //$NON-NLS-1$
+        BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(request);
         if (outcome.cannotTell != null)
         {
             return ToolResult.error(outcome.cannotTell)

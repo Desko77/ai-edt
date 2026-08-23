@@ -114,7 +114,9 @@ public final class BmComparisonHelper
      * so a ceiling here was a ceiling on the whole task.
      * </p>
      */
-    private static final int PAGE_LIMIT = 500;
+    // Package-visible for the test that holds the normalising: asserting the cap by repeating 500
+    // in the test would let the two drift apart and still pass.
+    static final int PAGE_LIMIT = 500;
 
     /**
      * How many objects one decision about a class may cover.
@@ -198,6 +200,83 @@ public final class BmComparisonHelper
      * is the one thing these numbers must not do.
      * </p>
      */
+    /**
+     * Everything one comparison is asked to do.
+     * <p>
+     * <b>Eleven positional parameters were as far as that could go.</b> Six of them were strings
+     * and two were booleans, so any two of a kind swapped at a call site compiles without a word
+     * and changes what the comparison does - and the next thing needing a parameter of its own
+     * would have made twelve. Named fields make a swap visible where it is written.
+     * </p>
+     * <p>
+     * Normalising happens once, in {@link #normalise()}, rather than being spread through the
+     * comparison. The public schema of the tool does not change: this is an internal rearrangement,
+     * and behaviour that differs from the eleven-parameter form is a defect in the move, not an
+     * improvement.
+     * </p>
+     */
+    public static final class Request
+    {
+        /** The open project that plays our side. */
+        public String mainProjectName;
+
+        /** Directory holding the configuration to compare against. */
+        public String otherPath;
+
+        /** Directory holding the common ancestor; null for a two-sided comparison. */
+        public String ancestorPath;
+
+        /** What to do with named objects. */
+        public List<Decision> decisions;
+
+        /** Where to write the environment's own settings file. */
+        public String decisionsPath;
+
+        /** A settings file to take decisions from. */
+        public String decisionsFrom;
+
+        /** What the caller means to happen. */
+        public Intent intent;
+
+        /** Whether to go ahead when the sides do not look like one another's releases. */
+        public boolean ignoreOriginMismatch;
+
+        /** Which slice of the changed objects to report. */
+        public Page page;
+
+        /** Whether to close the comparison session when this call is done. */
+        public boolean closeSession;
+
+        /** Limit the comparison to these objects; every object when null or empty. */
+        public List<String> scopeNames;
+
+        /**
+         * Which vendor configuration of the project the deliveries are measured against.
+         * <p>
+         * Needed only when the project descends from more than one - a typical application on its
+         * vendor's support, which itself sits on a library's. With one vendor it is left unset.
+         * </p>
+         */
+        public String parentId;
+
+        /**
+         * Brings the request to the shape the comparison expects.
+         * <p>
+         * Kept here so it happens once and in one place. Spread through the comparison it was
+         * easy for a path to read a limit nobody had bounded.
+         * </p>
+         */
+        void normalise()
+        {
+            if (page == null)
+            {
+                page = new Page();
+            }
+            page.limit = page.limit <= 0 ? PAGE_LIMIT : Math.min(page.limit, PAGE_LIMIT);
+            page.offset = Math.max(0, page.offset);
+        }
+    }
+
     public static final class Page
     {
         /** Report only objects with this attribution; every attribution when null. */
@@ -901,21 +980,31 @@ public final class BmComparisonHelper
      *            two-sided comparison.
      * @return what the comparison found, or the reason it could not run
      */
-    public static Outcome compare(String mainProjectName, String otherPath, String ancestorPath,
-        List<Decision> decisions, String decisionsPath, String decisionsFrom, Intent intent,
-        boolean ignoreOriginMismatch, Page page, boolean closeSession, List<String> scopeNames)
+    public static Outcome compare(Request request)
     {
+        request.normalise();
+        // Unpacked once, under the names the body already used. The move is meant to change how
+        // the call is written and nothing else, and a body rewritten at the same time would make
+        // any difference in behaviour impossible to attribute to one or the other.
+        String mainProjectName = request.mainProjectName;
+        String otherPath = request.otherPath;
+        String ancestorPath = request.ancestorPath;
+        List<Decision> decisions = request.decisions;
+        String decisionsPath = request.decisionsPath;
+        String decisionsFrom = request.decisionsFrom;
+        Intent intent = request.intent;
+        boolean ignoreOriginMismatch = request.ignoreOriginMismatch;
+        Page page = request.page;
+        boolean closeSession = request.closeSession;
+        List<String> scopeNames = request.scopeNames;
+        String parentId = request.parentId;
+
         Outcome outcome = new Outcome();
-        if (page == null)
-        {
-            page = new Page();
-        }
-        page.limit = page.limit <= 0 ? PAGE_LIMIT : Math.min(page.limit, PAGE_LIMIT);
-        page.offset = Math.max(0, page.offset);
         outcome.changedOffset = page.offset;
         // Before anything is compared, and not after: an ancestor from the wrong configuration
         // inverts every attribution in the answer, and nothing downstream would notice.
-        OriginCheck.Verdict origin = OriginCheck.check(mainProjectName, otherPath, ancestorPath);
+        OriginCheck.Verdict origin =
+            OriginCheck.check(mainProjectName, otherPath, ancestorPath, parentId);
         outcome.otherIs = origin.other == null ? null : origin.other.toString();
         outcome.ancestorIs = origin.ancestor == null ? null : origin.ancestor.toString();
         outcome.projectDescendsFrom = origin.projectDescendsFrom;
@@ -2191,7 +2280,9 @@ public final class BmComparisonHelper
         }
     }
 
-    private static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)
+    // Package-visible for the test: it is the gate that decides whether an irreversible merge may
+    // go ahead, and reaching it any other way means running a real merge against a real project.
+    static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)
     {
         if (snapshot != null && snapshot.cannotTell != null)
         {
@@ -2204,6 +2295,19 @@ public final class BmComparisonHelper
         }
         if (snapshot == null || snapshot.isEmpty())
         {
+            return;
+        }
+        if (snapshot.withoutAnIdentifier > 0)
+        {
+            // A snapshot missing entries is not a snapshot. The registry can hold an item with no
+            // identity of its own, and there is nothing to write down for it and nothing to set a
+            // mode on afterwards - so the file offers a way back it does not have, and the merge
+            // that trusts it overwrites those modes for good. Counted was never enough: the count
+            // sat in the answer while the merge went ahead regardless.
+            outcome.supportSnapshotNote = snapshot.withoutAnIdentifier //$NON-NLS-1$
+                + " support entr(y/ies) have no identity of their own, so they cannot be written " //$NON-NLS-1$
+                + "down and cannot be put back. Merging would take their modes from the delivery " //$NON-NLS-1$
+                + "with no way to restore them."; //$NON-NLS-1$
             return;
         }
         try
@@ -2231,8 +2335,21 @@ public final class BmComparisonHelper
             try
             {
                 snapshot.write(staging);
-                java.nio.file.Files.move(staging, path,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                try
+                {
+                    java.nio.file.Files.move(staging, path,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                }
+                catch (java.nio.file.AtomicMoveNotSupportedException noAtomicMove)
+                {
+                    // Some filesystems and providers will not promise it. Refusing here would
+                    // refuse every merge on such a volume over a file that is already written and
+                    // complete - a much bigger loss than the guarantee being given up. What the
+                    // staging file buys is that a half-written one never reaches the published
+                    // name, and a plain move keeps that.
+                    java.nio.file.Files.move(staging, path,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
             }
             catch (IOException | RuntimeException cannotFinish)
             {

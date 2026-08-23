@@ -145,6 +145,45 @@ public class RefusedMergeLeavesNoSnapshotTest
     }
 
     @Test
+    public void anEntryThatCannotBeWrittenDownStopsTheMerge() throws Exception
+    {
+        // Counting it was never enough. The count sat in the answer while the merge went ahead and
+        // took those modes from the delivery, with nothing to put them back from - the one loss
+        // the snapshot exists to prevent. The plan said this blocked a merge before the code did,
+        // which is how it was found.
+        SupportSnapshot snapshot = new SupportSnapshot();
+        SupportSnapshot.Parent parent = new SupportSnapshot.Parent("v1", "Demo", "3.2.1.505"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        parent.modes.put(java.util.UUID.randomUUID(), "Edited"); //$NON-NLS-1$
+        snapshot.parents.add(parent);
+        snapshot.withoutAnIdentifier = 1;
+
+        BmComparisonHelper.Outcome outcome = new BmComparisonHelper.Outcome();
+        BmComparisonHelper.keepSnapshot("any", snapshot, outcome); //$NON-NLS-1$
+
+        assertNotNull("a snapshot missing entries is not a snapshot", //$NON-NLS-1$
+            outcome.supportSnapshotNote);
+        assertNull("and nothing may be written from it", outcome.supportSnapshotFile); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aCompleteSnapshotIsNotStopped() throws Exception
+    {
+        // The ordinary case has to stay ordinary: a registry where every entry has an identity
+        // must not be refused by the guard above.
+        SupportSnapshot snapshot = new SupportSnapshot();
+        SupportSnapshot.Parent parent = new SupportSnapshot.Parent("v1", "Demo", "3.2.1.505"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        parent.modes.put(java.util.UUID.randomUUID(), "Edited"); //$NON-NLS-1$
+        snapshot.parents.add(parent);
+        snapshot.withoutAnIdentifier = 0;
+
+        BmComparisonHelper.Outcome outcome = new BmComparisonHelper.Outcome();
+        BmComparisonHelper.keepSnapshot("no-such-project", snapshot, outcome); //$NON-NLS-1$
+
+        assertNull("an absent project is a different matter and not this guard's business", //$NON-NLS-1$
+            outcome.supportSnapshotNote);
+    }
+
+    @Test
     public void nothingHappensWhenNoSnapshotWasTaken()
     {
         BmComparisonHelper.Outcome outcome = new BmComparisonHelper.Outcome();

@@ -258,11 +258,30 @@ public class YaxunitTestsTool implements IMcpTool
         {
             // Markdown, which is the ordinary case for the runners. Fall through and wrap it.
         }
+        if (result.stripLeading().startsWith(RUNNER_ERROR))
+        {
+            // The runners report a refusal as markdown beginning with this, and wrapping every
+            // non-JSON answer as a success would hand a structured client success:true over a run
+            // that never started - a bare call with no projectName among them. The envelope has to
+            // carry the outcome, not only the text.
+            return ToolResult.error(result)
+                .put("operation", NAME) //$NON-NLS-1$
+                .toJson();
+        }
         return ToolResult.success()
             .put("operation", NAME) //$NON-NLS-1$
             .put("output", result) //$NON-NLS-1$
             .toJson();
     }
+
+    /**
+     * How {@code YaxunitTestRunner} opens a refusal.
+     * <p>
+     * Only the run-mode runner answers markdown; {@code YaxunitDebugRunner} declares JSON and
+     * builds JSON, so it passes through the check above untouched.
+     * </p>
+     */
+    private static final String RUNNER_ERROR = "**Error:**"; //$NON-NLS-1$
 
     /**
      * Ensures the YAxUnit engine extension is installed in the project's infobase. When
