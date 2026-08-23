@@ -641,6 +641,26 @@ public final class BmComparisonHelper
         public String revalidationNote;
 
         /**
+         * The platform version the project declared before the merge, when the merge moved it.
+         * <p>
+         * <b>A merge can take the delivery's platform version along with its objects, and nothing
+         * said so.</b> Measured: a merge that took a configuration built for 8.3 rewrote
+         * DT-INF/PROJECT.PMF from 8.5.1 to 8.3.27. The snapshot covers support modes and the
+         * report covers objects; this moved between them, unmentioned.
+         * </p>
+         * <p>
+         * What it costs is not obvious from the symptom. Undoing the merge by restoring the source
+         * tree - the natural way - leaves the project correct on disk and resolving against another
+         * platform, and the comparison then reports thousands of differences between trees that are
+         * byte-identical. An hour went into that before the file was looked at.
+         * </p>
+         */
+        public String runtimeVersionBefore;
+
+        /** The platform version the project declares after the merge, when it changed. */
+        public String runtimeVersionAfter;
+
+        /**
          * Errors standing against the WHOLE project before the merge.
          * <p>
          * The baseline. Counting only the objects that moved lets a project that was already
@@ -1032,6 +1052,7 @@ public final class BmComparisonHelper
                 // objects it touched do not read at all.
                 outcome.projectErrorsBefore = ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader
                     .countAllErrors(mainProjectName);
+                String runtimeBefore = runtimeVersionOf(mainProjectName);
                 SupportSnapshot supportBefore = snapshotSupport(mainProjectName);
                 // Written to disk before the merge runs, not offered as an option. A snapshot that
                 // exists only in this call dies with it, and the modes it recorded are then
@@ -1050,6 +1071,7 @@ public final class BmComparisonHelper
                 outcome.supportModesChanged =
                     !outcome.supportModesBefore.equals(outcome.supportModesAfter);
                 describeSupportDrift(mainProjectName, supportBefore, outcome);
+                noteRuntimeVersionMove(mainProjectName, runtimeBefore, outcome);
             }
             reportProjectState(mainProjectName, decisions, outcome);
             // A reporting comparison stays open, and its key goes out with the answer. Paging
@@ -2045,6 +2067,59 @@ public final class BmComparisonHelper
     private static boolean isNotOnSupport(String cannotTell)
     {
         return cannotTell != null && cannotTell.contains("is not on support"); //$NON-NLS-1$
+    }
+
+    /**
+     * The platform version a project declares, read from the file that carries it.
+     * <p>
+     * Read from {@code DT-INF/PROJECT.PMF} rather than asked of the environment, because what has
+     * to be compared is the value on disk before and after - the environment answers only for now.
+     * </p>
+     *
+     * @param projectName the project.
+     * @return the version, or <code>null</code> when the file will not say
+     */
+    private static String runtimeVersionOf(String projectName)
+    {
+        try
+        {
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project == null || project.getLocation() == null)
+            {
+                return null;
+            }
+            Path pmf = project.getLocation().toFile().toPath().resolve("DT-INF").resolve("PROJECT.PMF"); //$NON-NLS-1$ //$NON-NLS-2$
+            for (String line : java.nio.file.Files.readAllLines(pmf))
+            {
+                if (line.startsWith("Runtime-Version:")) //$NON-NLS-1$
+                {
+                    return line.substring("Runtime-Version:".length()).trim(); //$NON-NLS-1$
+                }
+            }
+        }
+        catch (IOException | RuntimeException willNotSay)
+        {
+            Activator.logDebug("merge: could not read the project's runtime version: " + willNotSay); //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Says when the merge moved the project to another platform version.
+     *
+     * @param projectName the project.
+     * @param before what it declared before the merge.
+     * @param outcome the answer being built.
+     */
+    private static void noteRuntimeVersionMove(String projectName, String before, Outcome outcome)
+    {
+        String after = runtimeVersionOf(projectName);
+        if (before == null || after == null || before.equals(after))
+        {
+            return;
+        }
+        outcome.runtimeVersionBefore = before;
+        outcome.runtimeVersionAfter = after;
     }
 
     private static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)

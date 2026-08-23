@@ -543,6 +543,18 @@ public class ThreeWayComparisonTool
             // call dies with it, and the modes it recorded are then gone for good.
             .put("supportSnapshotFile", outcome.supportSnapshotFile) //$NON-NLS-1$
             .put("supportSnapshotNote", outcome.supportSnapshotNote) //$NON-NLS-1$
+            // Said out loud, because it is the one thing a merge changes that lives outside both
+            // the object list and the support snapshot - and restoring the source tree does not
+            // put it back. Measured: a merge that took a delivery built for 8.3 moved the project
+            // from 8.5.1 to 8.3.27, silently.
+            .put("runtimeVersionBefore", outcome.runtimeVersionBefore) //$NON-NLS-1$
+            .put("runtimeVersionAfter", outcome.runtimeVersionAfter) //$NON-NLS-1$
+            .put("runtimeVersionNote", outcome.runtimeVersionAfter == null ? null //$NON-NLS-1$
+                : "the merge moved this project from platform " + outcome.runtimeVersionBefore //$NON-NLS-1$
+                    + " to " + outcome.runtimeVersionAfter + ", which is written in " //$NON-NLS-1$
+                    + "DT-INF/PROJECT.PMF and not in the source tree. Restoring src alone leaves " //$NON-NLS-1$
+                    + "the project resolving against the delivery's platform while its files say " //$NON-NLS-1$
+                    + "otherwise - restore DT-INF too.") //$NON-NLS-1$
             // Said plainly, because a merge that quietly re-locks objects somebody deliberately
             // unlocked is the worst outcome this tool can produce, and it cannot be prevented.
             .put("supportSettingsNote", supportNote(outcome)) //$NON-NLS-1$

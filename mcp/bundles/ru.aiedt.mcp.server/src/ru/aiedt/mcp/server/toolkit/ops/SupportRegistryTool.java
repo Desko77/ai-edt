@@ -342,10 +342,20 @@ public class SupportRegistryTool
                 .put("snapshotPath", path.toString()) //$NON-NLS-1$
                 .put("entries", snapshot.entries()) //$NON-NLS-1$
                 .put("vendorConfigurations", snapshot.parents.size()) //$NON-NLS-1$
-                // Subordinate entities carry their own support records and are not indexed by
-                // name, so they are counted here rather than dropped: a restore cannot set a mode
-                // on an object it cannot find, and a snapshot that hid that would look complete.
-                .put("notInTheConfiguration", snapshot.unresolved) //$NON-NLS-1$
+                // Named for what it counts. It used to be reported as notInTheConfiguration,
+                // which says something untrue: these entries answer to subordinate entities -
+                // attributes, forms, templates - that ARE in the configuration and simply are not
+                // in the name index, which walks top-level objects on purpose so a listing does
+                // not load the whole model. Measured on a real configuration: 7239 of 10843,
+                // two thirds of the snapshot, reported as absent from a configuration that has
+                // every one of them.
+                .put("entriesWithoutAName", snapshot.unresolved) //$NON-NLS-1$
+                .put("entriesWithoutANameNote", snapshot.unresolved == 0 ? null //$NON-NLS-1$
+                    : "these entries belong to subordinate entities (attributes, forms, " //$NON-NLS-1$
+                        + "templates). They are recorded in the snapshot with their identities " //$NON-NLS-1$
+                        + "and can be restored; only their names are missing here, because the " //$NON-NLS-1$
+                        + "name index walks top-level objects so a listing does not load the " //$NON-NLS-1$
+                        + "whole model.") //$NON-NLS-1$
                 .toJson();
         }
         catch (IOException | RuntimeException cannotWrite)
