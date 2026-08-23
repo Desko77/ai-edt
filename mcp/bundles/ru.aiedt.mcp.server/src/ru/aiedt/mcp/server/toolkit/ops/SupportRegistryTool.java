@@ -141,13 +141,23 @@ public class SupportRegistryTool
         String operation = JsonUtils.extractStringArgument(params, "operation"); //$NON-NLS-1$
         if (operation == null || operation.isBlank())
         {
-            return ToolResult.error("operation is required. Allowed: status / list_objects / " //$NON-NLS-1$
-                + "object_mode / help.").toJson(); //$NON-NLS-1$
+            // Built from the dispatch table rather than spelled out: the literal list had gone
+            // stale by two operations - snapshot_modes and restore_modes existed and this message
+            // did not name them, so the one place a caller is told what is allowed was wrong.
+            return ToolResult.error("operation is required. Allowed: " //$NON-NLS-1$
+                + String.join(" / ", OPS.keySet()) + " / help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+            // Wrapped, not returned raw. This tool declares ResponseType.JSON - right for its
+            // operations, which are structured - and the help it builds is markdown. Handed over
+            // unwrapped the router parses markdown as JSON and the caller gets
+            // MalformedJsonException instead of the catalog, which is the only way in to the
+            // list of operations.
+            return ToolResult.success()
+                .put("help", buildHelp(JsonUtils.extractStringArgument(params, "topic"))) //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
         }
         if (!OPS.containsKey(operation))
         {

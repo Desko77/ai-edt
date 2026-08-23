@@ -219,7 +219,49 @@ public class YaxunitTestsTool implements IMcpTool
         {
             result = mergeStringField(result, "installYaxunit", installSummary); //$NON-NLS-1$
         }
-        return result;
+        return asJsonEnvelope(result);
+    }
+
+    /**
+     * Puts a delegate's answer into this tool's declared shape.
+     * <p>
+     * <b>The runners answer markdown and this tool declares {@link ResponseType#JSON}.</b> Handed
+     * over unchanged the router parses markdown as JSON and the caller gets
+     * MalformedJsonException instead of an answer. Measured: {@code yaxunit_tests} called with no
+     * arguments failed that way.
+     * </p>
+     * <p>
+     * Nothing working is disturbed by wrapping: the markdown paths did not reach a caller at all
+     * before, and the paths that already answer a JSON object are passed through untouched. The
+     * envelope is the one {@link #renderHelp} has always used, whose javadoc states the intent -
+     * markdown inside JSON so clients can consume both.
+     * </p>
+     *
+     * @param result what the delegate returned.
+     * @return the same JSON object, or the text wrapped in one
+     */
+    private static String asJsonEnvelope(String result)
+    {
+        if (result == null || result.isEmpty())
+        {
+            return result;
+        }
+        try
+        {
+            JsonElement parsed = JsonParser.parseString(result);
+            if (parsed != null && parsed.isJsonObject())
+            {
+                return result;
+            }
+        }
+        catch (Exception notJson)
+        {
+            // Markdown, which is the ordinary case for the runners. Fall through and wrap it.
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("output", result) //$NON-NLS-1$
+            .toJson();
     }
 
     /**
