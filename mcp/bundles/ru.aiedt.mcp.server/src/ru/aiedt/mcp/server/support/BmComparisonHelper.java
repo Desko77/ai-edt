@@ -661,6 +661,22 @@ public final class BmComparisonHelper
         public String runtimeVersionAfter;
 
         /**
+         * Whether the environment could have begun writing.
+         * <p>
+         * Raised immediately before {@code startMerge}, and the whole of what decides the fate of
+         * the support snapshot. A merge refused before this point wrote nothing, so the snapshot it
+         * took records a state that is still current and can be taken again at any time - keeping
+         * it leaves a megabyte in the project for no reason, and three of them accumulated in a
+         * single day. Past this point the file may be the only way back, and it is kept whatever
+         * happened, including a timeout or an exception where the truth is simply not known.
+         * </p>
+         */
+        public boolean writeMayHaveStarted;
+
+        /** Why the snapshot was kept, when it was kept after a refusal. */
+        public String supportSnapshotKeptBecause;
+
+        /**
          * Errors standing against the WHOLE project before the merge.
          * <p>
          * The baseline. Counting only the objects that moved lets a project that was already
@@ -1074,6 +1090,7 @@ public final class BmComparisonHelper
                 noteRuntimeVersionMove(mainProjectName, runtimeBefore, outcome);
             }
             reportProjectState(mainProjectName, decisions, outcome);
+            dropSnapshotNothingNeeds(outcome);
             // A reporting comparison stays open, and its key goes out with the answer. Paging
             // through tens of thousands of changed objects is the only way to enumerate what to
             // protect, and closing here would charge a full comparison for every page. Only a
@@ -2122,6 +2139,58 @@ public final class BmComparisonHelper
         outcome.runtimeVersionAfter = after;
     }
 
+    /**
+     * Removes the support snapshot when the merge it was taken for never wrote anything.
+     * <p>
+     * <b>Measured: a refused merge left 976 KB in the project, and three of those accumulated in a
+     * day.</b> The snapshot is taken before the merge is attempted, and several refusals come
+     * later - no decisions to apply, objects that could not be held back, the protection list past
+     * its limit. Each of those wrote nothing at all, so the file records a state that is still the
+     * current one and can be taken again whenever it is wanted. Beside the code that writes it
+     * stands its own rule: reporting must leave no trace.
+     * </p>
+     * <p>
+     * <b>The test is not whether the merge was refused but whether writing could have begun.</b>
+     * Past {@link Outcome#writeMayHaveStarted} the file may be the only way back, and it is kept -
+     * including after a timeout or an exception, where what happened is simply not known. An
+     * unknown state is treated as written: a stray megabyte costs disk, a missing snapshot costs
+     * the support model.
+     * </p>
+     * <p>
+     * Only this call's own file is touched, and only the one whose path this call recorded. When
+     * the delete fails the path stays in the answer and says why, because an answer naming a file
+     * that is not there is worse than one naming a file nobody needs.
+     * </p>
+     *
+     * @param outcome the answer being built; its snapshot path is cleared when the file goes
+     */
+    // Package-visible for the test: the decision it makes is what stands between a stray megabyte
+    // and a lost support model, and it is reachable no other way without running a real merge.
+    static void dropSnapshotNothingNeeds(Outcome outcome)
+    {
+        if (outcome.supportSnapshotFile == null || outcome.mergeRefused == null)
+        {
+            return;
+        }
+        if (outcome.writeMayHaveStarted)
+        {
+            outcome.supportSnapshotKeptBecause = "the merge was refused after the environment had " //$NON-NLS-1$
+                + "been asked to start, so whether anything was written is not known from here. " //$NON-NLS-1$
+                + "The snapshot is kept: it is what puts the support model back."; //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            java.nio.file.Files.deleteIfExists(Paths.get(outcome.supportSnapshotFile));
+            outcome.supportSnapshotFile = null;
+        }
+        catch (IOException | RuntimeException staysOnDisk)
+        {
+            outcome.supportSnapshotKeptBecause = "the merge wrote nothing, so this snapshot was " //$NON-NLS-1$
+                + "not needed, and removing it failed: " + staysOnDisk; //$NON-NLS-1$
+        }
+    }
+
     private static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)
     {
         if (snapshot != null && snapshot.cannotTell != null)
@@ -2144,11 +2213,32 @@ public final class BmComparisonHelper
             {
                 return;
             }
+            // Seconds are not enough to tell two runs apart, and this file is now deleted again
+            // when a merge refuses before writing anything. Two calls in the same second used to
+            // resolve to one path; the one that refused would then delete the snapshot of the one
+            // that was merging - a worse defect than the litter being cleaned up. The suffix makes
+            // the file this call's own.
             String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss") //$NON-NLS-1$
-                .format(new java.util.Date());
-            Path path = project.getLocation().toFile().toPath()
-                .resolve(".settings").resolve("aiedt-support-snapshot-" + stamp + ".tsv"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            snapshot.write(path);
+                .format(new java.util.Date())
+                + "-" + java.util.UUID.randomUUID().toString().substring(0, 8); //$NON-NLS-1$
+            Path settings = project.getLocation().toFile().toPath().resolve(".settings"); //$NON-NLS-1$
+            Path path = settings.resolve("aiedt-support-snapshot-" + stamp + ".tsv"); //$NON-NLS-1$ //$NON-NLS-2$
+            // Written aside and moved into place, because a name that cannot collide still does not
+            // make the contents whole. A failure part-way through leaves a file whose header is
+            // correct and whose rows stop early, and the reader takes that for a usable snapshot -
+            // restoring a fraction of the modes while reporting success.
+            Path staging = settings.resolve(path.getFileName() + ".writing"); //$NON-NLS-1$
+            try
+            {
+                snapshot.write(staging);
+                java.nio.file.Files.move(staging, path,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (IOException | RuntimeException cannotFinish)
+            {
+                java.nio.file.Files.deleteIfExists(staging);
+                throw cannotFinish;
+            }
             outcome.supportSnapshotFile = path.toString();
         }
         catch (IOException | RuntimeException cannotKeep)
@@ -2497,6 +2587,12 @@ public final class BmComparisonHelper
         }
         try
         {
+            // Raised before the call, not after it. From here on nothing may assume the
+            // configuration is untouched: the environment can begin writing the moment it accepts
+            // the batch, and a flag raised after the call returns would miss exactly the window
+            // that matters. What reads it is the snapshot cleanup, which deletes only what it can
+            // prove was written for nothing.
+            outcome.writeMayHaveStarted = true;
             org.eclipse.core.runtime.IStatus scheduled =
                 intent == Intent.MERGE_IGNORING_PROBLEMS
                     ? manager.startMergeIgnoringProblems(batch,

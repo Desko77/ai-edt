@@ -542,6 +542,7 @@ public class ThreeWayComparisonTool
             // The route back. Written before the merge because a snapshot that lives only in the
             // call dies with it, and the modes it recorded are then gone for good.
             .put("supportSnapshotFile", outcome.supportSnapshotFile) //$NON-NLS-1$
+            .put("supportSnapshotKeptBecause", outcome.supportSnapshotKeptBecause) //$NON-NLS-1$
             .put("supportSnapshotNote", outcome.supportSnapshotNote) //$NON-NLS-1$
             // Said out loud, because it is the one thing a merge changes that lives outside both
             // the object list and the support snapshot - and restoring the source tree does not
