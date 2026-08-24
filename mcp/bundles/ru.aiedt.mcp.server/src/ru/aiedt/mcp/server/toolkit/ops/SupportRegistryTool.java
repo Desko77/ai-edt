@@ -110,7 +110,10 @@ public class SupportRegistryTool
                     + "can be.") //$NON-NLS-1$
             .stringProperty("userMode", //$NON-NLS-1$
                 "list_objects: report only objects in this mode - CHANGES_NOT_ALLOWED, " //$NON-NLS-1$
-                    + "CHANGES_ALLOWED or CANCELLED. Omit for every mode.") //$NON-NLS-1$
+                    + "CHANGES_ALLOWED or CANCELLED, spelled either that way or " //$NON-NLS-1$
+                    + "the way the answers spell it (ChangesNotAllowed). A word " //$NON-NLS-1$
+                    + "naming no mode is refused rather than answered with an " //$NON-NLS-1$
+                    + "empty page. Omit for every mode.") //$NON-NLS-1$
             .stringProperty("parentId", //$NON-NLS-1$
                 "list_objects: which vendor configuration the vendor modes come from, by id or " //$NON-NLS-1$
                     + "by name. Required when the configuration descends from more than one, " //$NON-NLS-1$

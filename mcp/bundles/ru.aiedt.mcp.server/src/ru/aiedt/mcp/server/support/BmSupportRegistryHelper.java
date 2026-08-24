@@ -1057,6 +1057,85 @@ public final class BmSupportRegistryHelper
      * @param limit how many to return, capped at {@link #PAGE_LIMIT}.
      * @return one page, or a refusal saying why nothing could be listed
      */
+    /**
+     * Whether a mode named in a request is the mode an item holds.
+     * <p>
+     * The two vocabularies differ: a request spells CHANGES_NOT_ALLOWED and the model answers
+     * ChangesNotAllowed. Compared as they stand they never matched, so every filtered listing
+     * came back as an empty page with success on it - which reads as "no object is in that mode"
+     * rather than as "the filter matched nothing it could have matched". Measured on a live
+     * configuration: 9088 objects listed unfiltered, 0 with any filter. Both spellings are taken.
+     * </p>
+     *
+     * @param asked the mode as the request spelled it, never <code>null</code>.
+     * @param actual the mode the item holds, <code>null</code> when it holds none.
+     * @return <code>true</code> when the two name one mode.
+     */
+    static boolean sameMode(String asked, String actual)
+    {
+        return actual != null && normaliseMode(asked).equals(normaliseMode(actual));
+    }
+
+    /**
+     * Reduces a mode name to what the two vocabularies agree on - its letters and digits, lower
+     * case - so that separators and capitalisation stop deciding the outcome.
+     *
+     * @param mode a mode name in any spelling, never <code>null</code>.
+     * @return the comparable form, empty when the name carried no letter or digit.
+     */
+    static String normaliseMode(String mode)
+    {
+        StringBuilder plain = new StringBuilder(mode.length());
+        for (int i = 0; i < mode.length(); i++)
+        {
+            char c = mode.charAt(i);
+            if (Character.isLetterOrDigit(c))
+            {
+                plain.append(Character.toLowerCase(c));
+            }
+        }
+        return plain.toString();
+    }
+
+    /**
+     * The mode a request asked for, whichever vocabulary it used.
+     *
+     * @param asked the mode as the request spelled it, never <code>null</code>.
+     * @return the mode, or <code>null</code> when this EDT has none by that name.
+     */
+    static UserSupportMode modeNamed(String asked)
+    {
+        String plain = normaliseMode(asked);
+        for (UserSupportMode mode : UserSupportMode.values())
+        {
+            if (plain.equals(normaliseMode(mode.getName()))
+                || plain.equals(normaliseMode(mode.getLiteral())))
+            {
+                return mode;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Every mode this EDT has, named the way the model names them, for a refusal to quote.
+     *
+     * @return the names, separated by commas.
+     */
+    static String modeNames()
+    {
+        StringBuilder names = new StringBuilder();
+        for (UserSupportMode mode : UserSupportMode.values())
+        {
+            if (names.length() > 0)
+            {
+                names.append(", "); //$NON-NLS-1$
+            }
+            names.append(mode.getName());
+        }
+        return names.toString();
+    }
+
     public static Listing listObjects(String projectName, String userModeFilter, String parentId,
         int offset, int limit)
     {
@@ -1095,6 +1174,15 @@ public final class BmSupportRegistryHelper
         }
         listing.parentId = scope.getId() == null ? null : scope.getId().toString();
         listing.parentName = scope.getConfigName();
+        String wanted = userModeFilter == null || userModeFilter.isBlank() ? null : userModeFilter;
+        if (wanted != null && modeNamed(wanted) == null)
+        {
+            // An empty page reported as a success reads as "no object is in that mode". A word
+            // this EDT has no mode for is a different answer and has to sound different.
+            listing.cannotTell = "no support mode is called \"" + wanted //$NON-NLS-1$
+                + "\"; this EDT has " + modeNames(); //$NON-NLS-1$
+            return listing;
+        }
         NameIndex index = indexNames(configuration);
         Map<UUID, String> names = index.names;
         listing.indexComplete = index.complete;
@@ -1103,7 +1191,7 @@ public final class BmSupportRegistryHelper
         for (ParentConfigurationInfoItem item : scope.getItems())
         {
             String userMode = item.getUserMode() == null ? null : item.getUserMode().getName();
-            if (userModeFilter != null && !userModeFilter.equalsIgnoreCase(userMode))
+            if (wanted != null && !sameMode(wanted, userMode))
             {
                 continue;
             }
