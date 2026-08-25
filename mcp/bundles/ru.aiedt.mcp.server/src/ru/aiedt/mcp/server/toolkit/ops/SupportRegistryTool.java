@@ -322,6 +322,13 @@ public class SupportRegistryTool
             .put("canEdit", state.canEdit) //$NON-NLS-1$
             .put("canDelete", state.canDelete) //$NON-NLS-1$
             .put("dependents", state.dependents) //$NON-NLS-1$
+            // The counts describe the WHOLE set, not the page. Said here because a reader
+            // who sees a page and a number naturally reads the number as the page.
+            .put("dependentsTotal", state.dependentsTotal) //$NON-NLS-1$
+            .put("dependentsShown", state.dependents.size()) //$NON-NLS-1$
+            .put("dependentsMore", state.dependentsMore) //$NON-NLS-1$
+            .put("dependentsUnnamed", state.dependentsUnnamed) //$NON-NLS-1$
+            .put("dependentsUnreadable", state.dependentsUnreadable) //$NON-NLS-1$
             .put("serviceRoute", state.serviceRoute) //$NON-NLS-1$
             .toJson();
     }

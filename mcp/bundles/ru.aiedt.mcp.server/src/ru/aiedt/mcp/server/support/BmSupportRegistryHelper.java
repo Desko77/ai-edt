@@ -183,8 +183,34 @@ public final class BmSupportRegistryHelper
         /** Whether the environment lets this object be deleted right now. */
         public boolean canDelete;
 
-        /** Objects the environment would require to change mode alongside this one. */
+        /**
+         * Objects the environment would require to change mode alongside this one - one page.
+         * <p>
+         * Paged because it is not small: measured on the root of a live configuration, 8769 names
+         * in one answer of 369 114 characters, which the client refused by size. The cap that the
+         * rest of this class already uses was simply not applied here.
+         * </p>
+         */
         public final List<String> dependents = new ArrayList<>();
+
+        /** How many dependents there are in total, named or not, page or no page. */
+        public int dependentsTotal;
+
+        /** True when the page stops short of the total. */
+        public boolean dependentsMore;
+
+        /**
+         * How many dependents have no name of their own.
+         * <p>
+         * Counted apart from the unreadable ones below, and both are counted apart from the rest.
+         * They used to share one outcome - a null quietly added to the list - so a failure to read
+         * an object looked exactly like an object without a name, and neither was visible.
+         * </p>
+         */
+        public int dependentsUnnamed;
+
+        /** How many could not be read at all. This is a failure, and it is counted as one. */
+        public int dependentsUnreadable;
     }
 
     /**
@@ -990,12 +1016,40 @@ public final class BmSupportRegistryHelper
         collectPerParent(support, object.getUuid(), state.perParent);
         state.canEdit = service.manager.canEdit(object);
         state.canDelete = service.manager.canDelete(object);
+        List<String> named = new ArrayList<>();
         for (MdObject dependent : service.manager.getDependentMdObjects(object))
         {
-            if (dependent != null)
+            if (dependent == null)
             {
-                state.dependents.add(nameOf(dependent));
+                state.dependentsUnreadable++;
+                continue;
             }
+            String name = nameOf(dependent);
+            if (name == null)
+            {
+                // Told apart by asking again in the one way that cannot fail: an object that has
+                // no name and an object that threw on being read are different answers, and a
+                // null in the list said neither.
+                state.dependentsUnnamed++;
+                named.add(withoutAName(dependent));
+            }
+            else
+            {
+                named.add(name);
+            }
+        }
+        // Sorted before the page is cut, or the page boundaries move between calls and a reader
+        // paging through sees some dependents twice and others not at all.
+        java.util.Collections.sort(named);
+        state.dependentsTotal = named.size();
+        for (String name : named)
+        {
+            if (state.dependents.size() >= PAGE_LIMIT)
+            {
+                state.dependentsMore = true;
+                break;
+            }
+            state.dependents.add(name);
         }
         return state;
     }
@@ -1040,23 +1094,6 @@ public final class BmSupportRegistryHelper
         }
     }
 
-    /**
-     * Lists objects by declared support mode.
-     * <p>
-     * The listing walks the metadata objects of the configuration rather than the entries of the
-     * support file, and asks the environment for the mode of each. The support file records
-     * identities without names, and an answer full of identities is of no use to whoever has to
-     * decide what to do with the objects.
-     * </p>
-     *
-     * @param projectName the project to list.
-     * @param userModeFilter list only objects in this user mode; all modes when <code>null</code>.
-     * @param parentId which vendor configuration the vendor modes should come from; may be
-     *            <code>null</code> only when the project descends from exactly one.
-     * @param offset how many matching objects to skip.
-     * @param limit how many to return, capped at {@link #PAGE_LIMIT}.
-     * @return one page, or a refusal saying why nothing could be listed
-     */
     /**
      * Whether a mode named in a request is the mode an item holds.
      * <p>
@@ -1136,6 +1173,23 @@ public final class BmSupportRegistryHelper
         return names.toString();
     }
 
+    /**
+     * Lists objects by declared support mode.
+     * <p>
+     * The listing walks the metadata objects of the configuration rather than the entries of the
+     * support file, and asks the environment for the mode of each. The support file records
+     * identities without names, and an answer full of identities is of no use to whoever has to
+     * decide what to do with the objects.
+     * </p>
+     *
+     * @param projectName the project to list.
+     * @param userModeFilter list only objects in this user mode; all modes when <code>null</code>.
+     * @param parentId which vendor configuration the vendor modes should come from; may be
+     *            <code>null</code> only when the project descends from exactly one.
+     * @param offset how many matching objects to skip.
+     * @param limit how many to return, capped at {@link #PAGE_LIMIT}.
+     * @return one page, or a refusal saying why nothing could be listed
+     */
     public static Listing listObjects(String projectName, String userModeFilter, String parentId,
         int offset, int limit)
     {
@@ -1699,6 +1753,39 @@ public final class BmSupportRegistryHelper
      * @param object the object.
      * @return its name, or <code>null</code> when it will not name itself
      */
+    /**
+     * A stable stand-in for a dependent that has no name.
+     * <p>
+     * Built from the object's own identity rather than from its position in the walk: a positional
+     * number changes between calls, and a list sorted on one would not page the same way twice.
+     * </p>
+     *
+     * @param object the dependent, never <code>null</code>.
+     * @return a designation that names the kind and the identity.
+     */
+    private static String withoutAName(MdObject object)
+    {
+        String type;
+        try
+        {
+            type = object.eClass() == null ? "object" : object.eClass().getName(); //$NON-NLS-1$
+        }
+        catch (RuntimeException unreadable)
+        {
+            type = "object"; //$NON-NLS-1$
+        }
+        String identity;
+        try
+        {
+            identity = object.getUuid() == null ? "unknown" : object.getUuid().toString(); //$NON-NLS-1$
+        }
+        catch (RuntimeException unreadable)
+        {
+            identity = "unknown"; //$NON-NLS-1$
+        }
+        return type + " without a name, " + identity; //$NON-NLS-1$
+    }
+
     private static String nameOf(MdObject object)
     {
         try
