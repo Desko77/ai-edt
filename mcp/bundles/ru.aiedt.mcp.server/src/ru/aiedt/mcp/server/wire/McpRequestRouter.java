@@ -1026,27 +1026,45 @@ public class McpRequestRouter
      * @param plainTextMode whether rich shapes must degrade to text
      * @return the tools/call result
      */
+    /**
+     * Marks an answer as a reported failure, leaving it alone otherwise.
+     *
+     * @param result the answer.
+     * @param failed whether the tool reported a failure.
+     * @return the same answer.
+     */
+    private static ToolCallResult mark(ToolCallResult result, boolean failed)
+    {
+        return failed && result != null ? result.asFailure() : result;
+    }
+
     private static ToolCallResult shapeResult(IMcpTool tool, Map<String, String> arguments,
         String rawResult, OperatorSignal signal, boolean plainTextMode)
     {
         String result = rawResult != null ? rawResult : EMPTY;
+        // Asked once, for every shape. The same reading that has always decided whether a call
+        // counted as a failure in the history now also reaches the client, which is where it was
+        // needed all along: a tool that refuses reports it in its own body, and a client with only
+        // the prose to go by cannot tell a refusal from a result.
+        boolean failed = FailureShape.looksFailed(result);
 
         switch (tool.getResponseType())
         {
         case IMAGE:
-            return shapeImage(tool, arguments, result);
+            return mark(shapeImage(tool, arguments, result), failed);
         case JSON:
-            return shapeStructured(result, signal, plainTextMode);
+            return mark(shapeStructured(result, signal, plainTextMode), failed);
         case MARKDOWN:
         {
             // The signal rides in the markdown itself, so plain-text mode carries it along.
             String annotated = withMarkdownSignal(result, signal);
-            return plainTextMode ? ToolCallResult.text(annotated)
-                : ToolCallResult.resource(embeddedUri(tool, arguments), MIME_MARKDOWN, annotated);
+            return mark(plainTextMode ? ToolCallResult.text(annotated)
+                : ToolCallResult.resource(embeddedUri(tool, arguments), MIME_MARKDOWN, annotated),
+                failed);
         }
         case TEXT:
         default:
-            return ToolCallResult.text(withPlainSignal(result, signal));
+            return mark(ToolCallResult.text(withPlainSignal(result, signal)), failed);
         }
     }
 

@@ -28,6 +28,22 @@ public class ToolCallResult
 
     private Object structuredContent;
 
+    /**
+     * Whether the tool reported a failure, in the field the protocol keeps for it.
+     * <p>
+     * <b>The server already knew and did not say.</b> Every answer passes through one shaper, and
+     * the same check that decides a call was a failure for the statistics - a JSON body carrying
+     * success false, or text opening with Error - was read there and used for the history record
+     * only. A client reading the answer had nothing to go by but the prose, which is how a refused
+     * write came close to being taken for a completed one.
+     * </p>
+     * <p>
+     * Null while the answer is being built and written out only when true, so an ordinary answer
+     * keeps the shape every existing client already parses.
+     * </p>
+     */
+    private Boolean isError;
+
     private ToolCallResult()
     {
         // use the factories
@@ -114,6 +130,27 @@ public class ToolCallResult
      *
      * @return the payload, or <code>null</code> when the result is not structured
      */
+    /**
+     * Marks this answer as a failure the tool reported rather than threw.
+     *
+     * @return this result, for chaining.
+     */
+    public ToolCallResult asFailure()
+    {
+        this.isError = Boolean.TRUE;
+        return this;
+    }
+
+    /**
+     * Whether this answer was marked a failure.
+     *
+     * @return <code>true</code> when it was, <code>null</code> when nothing was said.
+     */
+    public Boolean getIsError()
+    {
+        return isError;
+    }
+
     public Object getStructuredContent()
     {
         return structuredContent;
