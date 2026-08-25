@@ -249,45 +249,29 @@ public final class QlValidator
         return ValidationResult.of(filtered);
     }
 
+
     /**
-     * The project whose model a query should be resolved against.
+     * The configuration an extension extends, when there is a usable one to ask as well.
      * <p>
-     * For an extension project that is the configuration it extends, and the difference is not
-     * cosmetic - it is the difference between an answer and a false error. Measured on a stand,
-     * EDT 2026.2.0.289, over a borrowed catalogue:
-     * </p>
-     * <pre>
-     * ВЫБРАТЬ Ссылка, Наименование ИЗ Справочник._ДемоКонтрагенты
-     *   in the extension project    ERROR  Поле 'Наименование' не найдено
-     *   in the configuration        valid
-     * </pre>
-     * <p>
-     * The table resolves in the extension - it is the borrowed object's STANDARD fields that do
-     * not, because the extension's own view of the database holds what the extension declares and
-     * not what it inherits. The configuration's view holds both, the extension's objects included,
-     * which is why the same text is clean there. A query mixing a borrowed object with a standard
-     * table could therefore be validated nowhere at all.
-     * </p>
-     * <p>
-     * The same redirection {@code update_database} performs for an extension, and for the same
-     * reason: an extension has no model of its own to answer with.
+     * <b>Neither model can answer every query an extension can ask.</b> The extension's own view
+     * lacks the inherited fields of a borrowed object; the configuration's view lacks the objects
+     * the extension declares itself. Choosing between them without looking at the query traded one
+     * class of false error for another - measured on a stand, an extension's own information
+     * register came back as "table not found" from the configuration that had never held it. So
+     * the caller asks both and keeps the answer that accounts for the query.
      * </p>
      *
      * @param project the project the caller named.
-     * @return the project to validate in - the caller's, or its parent
+     * @return the parent configuration, or <code>null</code> when there is none worth asking.
      */
-    /**
-     * The project a query for this one is resolved in, when it is not this one.
-     * <p>
-     * Public so the answer can say it without anybody restating the rule. Two copies of "an
-     * extension resolves in its configuration" would be two places to change and one place to
-     * forget.
-     * </p>
-     *
-     * @param project the project the caller named; may be <code>null</code>.
-     * @return the other project's name, or <code>null</code> when the query resolves where it was
-     *         asked
-     */
+    public static IProject alsoAsk(IProject project)
+    {
+        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+        return parent != null && parent.exists() && parent.isOpen() && !parent.equals(project)
+            ? parent
+            : null;
+    }
+
     /**
      * Asks the project named and, when it is an extension, the configuration it extends, and
      * answers with whichever accounted for the query.
@@ -326,42 +310,6 @@ public final class QlValidator
         }
         above.resolvedInProject = alternative.getName();
         return above;
-    }
-
-
-    public static IProject queryModelProject(IProject project)
-    {
-        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
-        if (parent != null && parent.exists() && parent.isOpen())
-        {
-            return parent;
-        }
-        // No parent, or one that is closed. Validating in the extension is then the only thing on
-        // offer, and a real answer with a possible false error beats no answer at all - the caller
-        // is told nothing either way, so nothing here can mislead by silence.
-        return project;
-    }
-
-    /**
-     * The configuration an extension extends, when there is a usable one to ask as well.
-     * <p>
-     * <b>Neither model can answer every query an extension can ask.</b> The extension's own view
-     * lacks the inherited fields of a borrowed object; the configuration's view lacks the objects
-     * the extension declares itself. Choosing between them without looking at the query traded one
-     * class of false error for another - measured on a stand, an extension's own information
-     * register came back as "table not found" from the configuration that had never held it. So
-     * the caller asks both and keeps the answer that accounts for the query.
-     * </p>
-     *
-     * @param project the project the caller named.
-     * @return the parent configuration, or <code>null</code> when there is none worth asking.
-     */
-    public static IProject alsoAsk(IProject project)
-    {
-        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
-        return parent != null && parent.exists() && parent.isOpen() && !parent.equals(project)
-            ? parent
-            : null;
     }
 
     private static ValidationResult runValidation(IProject project, String queryText,
