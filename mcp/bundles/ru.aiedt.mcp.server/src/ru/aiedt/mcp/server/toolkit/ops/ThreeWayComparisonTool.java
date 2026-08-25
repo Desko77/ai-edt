@@ -243,6 +243,12 @@ public class ThreeWayComparisonTool
                     + "methods only this side has stay - and are counted in mergedWithDelivery. " //$NON-NLS-1$
                     + "An object that will not take that merge is held instead and named in " //$NON-NLS-1$
                     + "deliveryNotApplied, because for it the delivery's change does NOT arrive. " //$NON-NLS-1$
+            + "This applies only with methodLevel=true, where a decision can reach a method. " //$NON-NLS-1$
+            + "WITHOUT it the comparison stops at the object, nothing can promise a method only " //$NON-NLS-1$
+            + "this side has would survive, and such an object is HELD instead - the delivery's " //$NON-NLS-1$
+            + "change to it does not arrive and is named in deliveryNotApplied, together with the " //$NON-NLS-1$
+            + "call that decides it method by method. Measured: same material and scope, the flag " //$NON-NLS-1$
+            + "the only difference - with it the customisation survived, without it it was lost. " //$NON-NLS-1$
             + "Putting the delivery in front does NOT guarantee that work only this side had " //$NON-NLS-1$
             + "survives: where the delivery rewrote the whole of an object there is nothing " //$NON-NLS-1$
             + "of ours left to interleave, and that was measured on a real update. So every " //$NON-NLS-1$

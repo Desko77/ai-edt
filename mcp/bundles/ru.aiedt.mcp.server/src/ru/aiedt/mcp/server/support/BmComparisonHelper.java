@@ -188,6 +188,16 @@ public final class BmComparisonHelper
          * the customisation. So they are held and listed, because a conflict is work for a person,
          * not for a default.
          * </p>
+         * <p>
+         * <b>What happens to an object both sides changed depends on how finely the comparison can
+         * see.</b> With methodLevel the decision reaches the methods, and the object is merged with
+         * the delivery in front. Without it the comparison stops at the object, and nothing can
+         * then promise that a method only this side has will survive - measured on one material,
+         * the flag the only difference: with it the method survived and nothing was lost; without
+         * it the method was gone and ourContentLost named the object. So at the coarse grain the
+         * object is HELD: the delivery's change to it does not arrive, that is said in
+         * deliveryNotApplied, and the answer names the call that decides it method by method.
+         * </p>
          */
         UPDATE_KEEPING_OURS
     }
@@ -2887,9 +2897,29 @@ public final class BmComparisonHelper
         // methods of ours the delivery does not have. Where a node will not take it, the node is
         // held instead and said out loud - a silent fallback would put the sterile behaviour back
         // without anyone noticing.
+        //
+        // <b>And it is only safe where the decision can reach a method.</b> Without methodLevel the
+        // comparison stops at the object, so the rule goes on the module as a whole - and there is
+        // then nothing to prove a method only this side has will survive it. Measured on the same
+        // material, same scope, the flag the only difference:
+        //
+        //   methodLevel=true    protectedFromUpdate 1   ourContentLost 0   the method survived
+        //   without it          protectedFromUpdate 0   ourContentLost 1   the method was gone
+        //
+        // So at the coarse grain the object is HELD rather than merged. Not refused outright: a
+        // refusal would throw away the part of the release that was never in danger. The delivery
+        // for that one object does not arrive, it is said out loud, and the answer names the call
+        // that decides it method by method.
         for (Long nodeId : outcome.bothNodes)
         {
-            mergeWithDeliveryInFront(session, nodeId, outcome);
+            if (outcome.sectionsWanted)
+            {
+                mergeWithDeliveryInFront(session, nodeId, outcome);
+            }
+            else
+            {
+                holdUntilDecidedFiner(session, nodeId, outcome);
+            }
         }
         // Held, not merged: for these the delivery's version is their absence, and putting it in
         // front would delete work this side had done. Named one by one so the deletion the update
@@ -2996,6 +3026,65 @@ public final class BmComparisonHelper
      * @param nodeId the node both sides changed.
      * @param outcome where to record what was done and what was not
      */
+    /**
+     * Holds an object both sides changed, because at this granularity nothing can promise the work
+     * on this side will survive being merged.
+     * <p>
+     * The delivery's change to THIS node does not arrive - that is the cost, and it is named
+     * rather than absorbed. The alternative was measured and is worse: merging at the object grain
+     * took the module from the delivery whole and a method that existed only here went with it.
+     * </p>
+     * <p>
+     * <b>It says nothing about the rest of the object, and must not.</b> Measured on one held
+     * catalogue: its list settings, both list-form files and its help took the delivery, while its
+     * three modules stayed as they were. So the cost is narrower than "the object is not updated"
+     * and wider than "only the contested node stands still" - both readings were written here
+     * before being checked, and both were wrong.
+     * </p>
+     *
+     * @param session the comparison.
+     * @param nodeId the node.
+     * @param outcome the answer being built.
+     */
+    private static void holdUntilDecidedFiner(IComparisonSession session, Long nodeId,
+        Outcome outcome)
+    {
+        // Read back even when the setter said yes. A setter that returns true and a node that
+        // then does not carry the rule is the shape this whole class exists around: the other
+        // protection paths all confirm, and skipping the confirmation here would let a node be
+        // reported protected while the work in it stayed exposed.
+        boolean set = session.setMergeRuleToSubtree(nodeId, MergeRule.DO_NOT_MERGE);
+        boolean held = ruleOn(session, nodeId) == MergeRule.DO_NOT_MERGE;
+        if (held)
+        {
+            outcome.protectedFromUpdate++;
+            if (set)
+            {
+                // A decision was applied, and the count of applied decisions has to say so - a run
+                // made entirely of these otherwise answers decided=0 having decided every node.
+                outcome.decided++;
+            }
+            if (outcome.deliveryNotApplied.size() < PAGE_LIMIT)
+            {
+                outcome.deliveryNotApplied.add(nameOf(session, nodeId)
+                    + " was changed on both sides and is held, so the delivery's change to THIS " //$NON-NLS-1$
+                    + "node is not applied and nothing this side had in it was lost. What the " //$NON-NLS-1$
+                    + "rest of the object does is decided per node and is not implied by this " //$NON-NLS-1$
+                    + "line - measured on one object, its forms, help and list settings took the " //$NON-NLS-1$
+                    + "delivery while its modules stayed. To decide this node method by method, " //$NON-NLS-1$
+                    + "ask again with methodLevel and a scope naming the object."); //$NON-NLS-1$
+            }
+            return;
+        }
+        // A node that will not be held is the one case where holding cannot be promised, and the
+        // caller has to hear it in the same words the refusal path uses.
+        if (outcome.protectionRefused.size() < PAGE_LIMIT)
+        {
+            outcome.protectionRefused
+                .add(nameOf(session, nodeId) + describeAvailable(session, nodeId));
+        }
+    }
+
     private static void mergeWithDeliveryInFront(IComparisonSession session, Long nodeId,
         Outcome outcome)
     {

@@ -128,7 +128,10 @@ public final class UpdateReport
             + "that goes.\n\n"); //$NON-NLS-1$
         names(risky, full, out);
         out.append("\nintent=UPDATE_KEEPING_OURS holds all of them at DO_NOT_MERGE and reads the " //$NON-NLS-1$
-            + "rule back off each one.\n\n"); //$NON-NLS-1$
+            + "rule back off each one. Objects changed on BOTH sides are a separate group: with " //$NON-NLS-1$
+            + "methodLevel they are merged with the delivery in front, and without it they are " //$NON-NLS-1$
+            + "held whole, because at that grain nothing can promise work on this side would " //$NON-NLS-1$
+            + "survive the merge.\n\n"); //$NON-NLS-1$
     }
 
     /**
