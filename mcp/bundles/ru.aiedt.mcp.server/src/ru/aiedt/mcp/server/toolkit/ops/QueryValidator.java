@@ -278,22 +278,113 @@ public class QueryValidator
         }
     }
 
+    /**
+     * What one model said about the query: the issues it raised, or why it could not be asked.
+     */
+    private static final class Collected
+    {
+        private final List<QueryIssue> issues;
+
+        private final String failure;
+
+        private Collected(List<QueryIssue> issues, String failure)
+        {
+            this.issues = issues;
+            this.failure = failure;
+        }
+
+        static Collected of(List<QueryIssue> issues)
+        {
+            return new Collected(issues, null);
+        }
+
+        static Collected failed(String failure)
+        {
+            return new Collected(null, failure);
+        }
+
+        int errors()
+        {
+            if (issues == null)
+            {
+                return Integer.MAX_VALUE;
+            }
+            int errors = 0;
+            for (QueryIssue issue : issues)
+            {
+                if ("ERROR".equals(issue.severity)) //$NON-NLS-1$
+                {
+                    errors++;
+                }
+            }
+            return errors;
+        }
+    }
+
     private String doValidateQuery(IProject asked, String queryText, boolean dcsMode,
         boolean describeResult)
     {
-        // An extension has no model of its own to resolve a query against. Its own view of the
-        // database holds what it declares and not what it inherits, so a borrowed object's
-        // standard fields are missing from it - measured on a stand, EDT 2026.2.0.289:
+        // Neither model can answer every query an extension can ask, so both are asked and the
+        // answer that accounts for the query is the one returned.
+        //
+        // The extension's own view holds what it declares and not what it inherits, so a borrowed
+        // object's standard fields are missing from it - measured, EDT 2026.2.0.289:
         //
         //   ВЫБРАТЬ Ссылка, Наименование ИЗ Справочник._ДемоКонтрагенты
         //     named as the extension        ERROR  Поле 'Наименование' не найдено
         //     named as the configuration    valid
         //
-        // The table resolves either way; it is the inherited fields that do not. A query mixing a
-        // borrowed object with a standard table could therefore be validated nowhere. The
-        // configuration's model holds both, the extension's own objects included, so that is where
-        // the query goes - the same redirection update_database performs, for the same reason.
-        IProject project = QlValidator.queryModelProject(asked);
+        // Sending every query to the configuration instead was the first fix, and it broke the
+        // other half: the configuration has never held the objects an extension declares itself,
+        // so an extension's own register came back as "table not found" - measured on the same
+        // stand, and reported from a live project where the query it rejected runs in production.
+        // The claim that the configuration's model "holds both" was asserted rather than measured,
+        // and the four cases checked at the time could not have caught it.
+        //
+        // So: ask the extension, and only if it raised errors ask the configuration too. The
+        // configuration's answer is taken ONLY when it is clean.
+        //
+        // Ranking the two by how many diagnostics each produced was the first attempt and it is
+        // unsound: fewer complaints is not more understanding. A model that cannot find the table
+        // never looks at the fields, so it can answer with one "table not found" while the model
+        // that did find it reports a real error per bad field - and counting would then prefer the
+        // one that resolved nothing, and name it in resolvedInProject as the authority.
+        //
+        // Clean or not clean has no such failure mode. Neither model clean means the query is
+        // wrong somewhere, and then the answer kept is the one from the project the caller named:
+        // its diagnostics are about the objects that developer actually has in front of them. A
+        // query mixing a borrowed object's inherited field with an extension's own table fits
+        // neither model, and that is what it gets - not a clean answer nobody could stand behind.
+        IProject alternative = QlValidator.alsoAsk(asked);
+        Collected here = collectIssues(asked, queryText, dcsMode);
+        if (here.failure != null)
+        {
+            return here.failure;
+        }
+        IProject answered = asked;
+        Collected best = here;
+        if (alternative != null && here.errors() > 0)
+        {
+            Collected above = collectIssues(alternative, queryText, dcsMode);
+            if (above.failure == null && above.errors() == 0)
+            {
+                answered = alternative;
+                best = above;
+            }
+        }
+        return buildResult(answered, asked, queryText, best.issues, dcsMode, describeResult);
+    }
+
+    /**
+     * Asks one model about the query.
+     *
+     * @param project the model to ask.
+     * @param queryText the query.
+     * @param dcsMode whether to parse it as a data composition query.
+     * @return the issues it raised, or the reason it could not be asked.
+     */
+    private Collected collectIssues(IProject project, String queryText, boolean dcsMode)
+    {
         XtextResource resource = null;
         try
         {
@@ -301,15 +392,16 @@ public class QueryValidator
                 IResourceServiceProvider.Registry.INSTANCE.getResourceServiceProvider(QLDCS_LOOKUP_URI);
             if (rsp == null)
             {
-                return ToolResult
+                return Collected.failed(ToolResult
                     .error("QlDcs language support not available. Please ensure the QL plugin is installed.") //$NON-NLS-1$
-                    .toJson();
+                    .toJson());
             }
 
             IResourceSetProvider resourceSetProvider = rsp.get(IResourceSetProvider.class);
             if (resourceSetProvider == null)
             {
-                return ToolResult.error("Error: no resource-set provider is registered for this project").toJson(); //$NON-NLS-1$
+                return Collected.failed(
+                    ToolResult.error("Error: no resource-set provider is registered for this project").toJson()); //$NON-NLS-1$
             }
 
             ResourceSet resourceSet = resourceSetProvider.get(project);
@@ -326,8 +418,8 @@ public class QueryValidator
                 {
                     resourceSet.getResources().remove(created);
                 }
-                return ToolResult.error("Error: the query resource is not an Xtext resource (" //$NON-NLS-1$
-                    + (created == null ? "nothing was created" : created.getClass().getName()) + ")").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                return Collected.failed(ToolResult.error("Error: the query resource is not an Xtext resource (" //$NON-NLS-1$
+                    + (created == null ? "nothing was created" : created.getClass().getName()) + ")").toJson()); //$NON-NLS-1$ //$NON-NLS-2$
             }
             resource = (XtextResource)created;
 
@@ -346,7 +438,8 @@ public class QueryValidator
             IResourceValidator validator = rsp.get(IResourceValidator.class);
             if (validator == null)
             {
-                return ToolResult.error("Error: no query validator is registered for this project").toJson(); //$NON-NLS-1$
+                return Collected.failed(
+                    ToolResult.error("Error: no query validator is registered for this project").toJson()); //$NON-NLS-1$
             }
 
             List<QueryIssue> issues = new ArrayList<>();
@@ -388,17 +481,18 @@ public class QueryValidator
                     offset != null ? offset.intValue() : -1));
             }
 
-            return buildResult(project, asked, queryText, issues, dcsMode, describeResult);
+            return Collected.of(issues);
         }
         catch (IOException e)
         {
             Activator.logError("Error: the query text could not be loaded into a resource", e); //$NON-NLS-1$
-            return ToolResult.error("Error: could not load the query text: " + e.getMessage()).toJson(); //$NON-NLS-1$
+            return Collected.failed(
+                ToolResult.error("Error: could not load the query text: " + e.getMessage()).toJson()); //$NON-NLS-1$
         }
         catch (Exception e)
         {
             Activator.logError("Error: the query could not be validated", e); //$NON-NLS-1$
-            return ToolResult.error("Query rejected: " + e.getMessage()).toJson(); //$NON-NLS-1$
+            return Collected.failed(ToolResult.error("Query rejected: " + e.getMessage()).toJson()); //$NON-NLS-1$
         }
         finally
         {
@@ -507,14 +601,13 @@ public class QueryValidator
         result.addProperty("success", true); //$NON-NLS-1$
         result.addProperty("valid", issues.isEmpty()); //$NON-NLS-1$
         result.addProperty("dcsMode", dcsMode); //$NON-NLS-1$
-        // An extension has no model of its own to answer a query with, so the configuration it
-        // extends answers instead. Said out loud: a caller who sees a query pass has to be able to
-        // tell which model said so, and a redirection nobody mentions is the kind of helpfulness
-        // that becomes a puzzle later.
-        String elsewhere = QlValidator.resolvedElsewhere(asked);
-        if (elsewhere != null)
+        // The model that ACTUALLY answered, not the one a rule sent the query to. Both are asked
+        // for an extension, and which one accounted for the query is the single most useful thing
+        // in the reply when an object is reported missing: it says whether to look at the query or
+        // at where the object lives.
+        if (project != null && asked != null && !project.equals(asked))
         {
-            result.addProperty("resolvedInProject", elsewhere); //$NON-NLS-1$
+            result.addProperty("resolvedInProject", project.getName()); //$NON-NLS-1$
         }
         result.addProperty("errorCount", //$NON-NLS-1$
             issues.stream().filter(i -> "ERROR".equals(i.severity)).count()); //$NON-NLS-1$

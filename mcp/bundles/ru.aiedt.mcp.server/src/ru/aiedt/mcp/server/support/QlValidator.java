@@ -198,7 +198,7 @@ public final class QlValidator
         {
             return ValidationResult.unavailable("project not available"); //$NON-NLS-1$
         }
-        return resolvedIn(project, runValidation(queryModelProject(project), queryText, dcsMode));
+        return bestOfBothModels(project, queryText, dcsMode);
     }
 
     /**
@@ -226,7 +226,7 @@ public final class QlValidator
         // We surround with parentheses + alias so even malformed expressions
         // are syntactically wrapped.
         String wrapped = "ВЫБРАТЬ (" + expression + ") КАК __DcsExpressionProbe"; //$NON-NLS-1$
-        ValidationResult raw = runValidation(queryModelProject(project), wrapped, true);
+        ValidationResult raw = bestOfBothModels(project, wrapped, true);
         if (!raw.available)
         {
             return raw;
@@ -288,28 +288,46 @@ public final class QlValidator
      * @return the other project's name, or <code>null</code> when the query resolves where it was
      *         asked
      */
-    public static String resolvedElsewhere(IProject project)
-    {
-        IProject used = queryModelProject(project);
-        return used != null && project != null && !used.equals(project) ? used.getName() : null;
-    }
-
     /**
-     * Records which model answered, when it was not the one the caller named.
+     * Asks the project named and, when it is an extension, the configuration it extends, and
+     * answers with whichever accounted for the query.
+     * <p>
+     * The extension is asked first because a query written in one usually concerns it. The
+     * configuration is asked only when the extension raised errors, so the ordinary case pays for
+     * one validation and not two, and its answer is taken only when it is clean.
+     * </p>
+     * <p>
+     * Not ranked by diagnostic count: a model that cannot find the table never reaches the fields,
+     * so it can answer with one complaint while the model that did find it reports a real error per
+     * bad field. Counting would prefer the one that resolved nothing. Clean or not clean cannot go
+     * wrong that way, and when neither is clean the answer kept is the one from the project the
+     * caller named.
+     * </p>
      *
      * @param asked the project the caller named.
-     * @param result the validation result.
-     * @return the same result
+     * @param queryText the query.
+     * @param dcsMode whether to parse it as a data composition query.
+     * @return the better of the two answers, naming the model that gave it when that was not the
+     *         project the caller named.
      */
-    private static ValidationResult resolvedIn(IProject asked, ValidationResult result)
+    private static ValidationResult bestOfBothModels(IProject asked, String queryText,
+        boolean dcsMode)
     {
-        IProject used = queryModelProject(asked);
-        if (result != null && used != null && asked != null && !used.equals(asked))
+        ValidationResult here = runValidation(asked, queryText, dcsMode);
+        IProject alternative = alsoAsk(asked);
+        if (alternative == null || !here.available || here.errorCount == 0)
         {
-            result.resolvedInProject = used.getName();
+            return here;
         }
-        return result;
+        ValidationResult above = runValidation(alternative, queryText, dcsMode);
+        if (!above.available || above.errorCount != 0)
+        {
+            return here;
+        }
+        above.resolvedInProject = alternative.getName();
+        return above;
     }
+
 
     public static IProject queryModelProject(IProject project)
     {
@@ -322,6 +340,28 @@ public final class QlValidator
         // offer, and a real answer with a possible false error beats no answer at all - the caller
         // is told nothing either way, so nothing here can mislead by silence.
         return project;
+    }
+
+    /**
+     * The configuration an extension extends, when there is a usable one to ask as well.
+     * <p>
+     * <b>Neither model can answer every query an extension can ask.</b> The extension's own view
+     * lacks the inherited fields of a borrowed object; the configuration's view lacks the objects
+     * the extension declares itself. Choosing between them without looking at the query traded one
+     * class of false error for another - measured on a stand, an extension's own information
+     * register came back as "table not found" from the configuration that had never held it. So
+     * the caller asks both and keeps the answer that accounts for the query.
+     * </p>
+     *
+     * @param project the project the caller named.
+     * @return the parent configuration, or <code>null</code> when there is none worth asking.
+     */
+    public static IProject alsoAsk(IProject project)
+    {
+        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+        return parent != null && parent.exists() && parent.isOpen() && !parent.equals(project)
+            ? parent
+            : null;
     }
 
     private static ValidationResult runValidation(IProject project, String queryText,
