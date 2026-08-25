@@ -931,6 +931,49 @@ public final class BmComparisonHelper
          */
         public String supportSnapshotFile;
 
+        /**
+         * Objects whose own content did not survive the merge, named.
+         * <p>
+         * <b>The mirror of {@link #deliveryNotApplied}, and the one that was missing.</b> That
+         * list says where the delivery's change did not arrive; this one says where OUR work did
+         * not stay. Merging an object both sides changed puts the delivery in front, and where the
+         * delivery rewrote the whole of it there is nothing of ours left to interleave - measured
+         * on a real update, 3.1.5.446 to 3.2.1.505, where a method that existed only on this side
+         * came back byte for byte as the delivery's file while the answer reported success.
+         * </p>
+         * <p>
+         * The check is deliberately blunt: after the merge the object's file is compared with the
+         * delivery's copy of the same file, and equality means nothing of ours remains in it. It
+         * cannot see a partial loss and does not claim to.
+         * </p>
+         */
+        public final List<String> ourContentLost = new ArrayList<>();
+
+        /** How many objects lost their own content, whatever the list holds. */
+        public int ourContentLostCount;
+
+        /**
+         * Objects both sides changed that this check could not read on one side or the other.
+         * <p>
+         * Named rather than counted in with the ones that came through. An object whose file could
+         * not be found is not an object that survived - it is one nobody looked at, and the two
+         * must not reach the reader as one number.
+         * </p>
+         */
+        public final List<String> ourContentUnchecked = new ArrayList<>();
+
+        /**
+         * How many objects both sides changed were never looked at, because the list of them stops
+         * at a page.
+         * <p>
+         * A cap on a loss check is the worst place for a silent one: the objects past it are
+         * neither reported lost nor reported unchecked, and their absence from both lists reads as
+         * safety. So the number is carried out separately rather than left to be inferred from two
+         * lists that do not add up.
+         * </p>
+         */
+        public int ourContentBeyondThePage;
+
         /** Why the modes could not be written down. Present only when the write failed. */
         public String supportSnapshotNote;
 
@@ -1201,7 +1244,19 @@ public final class BmComparisonHelper
                     outcome.mergeRefused = "no merge was run: " + outcome.supportSnapshotNote; //$NON-NLS-1$
                     return outcome;
                 }
+                // Read before the merge: afterwards there is no way to tell an object the
+                // delivery rewrote from one that had always been the delivery's.
+                Map<String, Boolean> ourOwnBefore =
+                    whereOurSideDiffers(mainProjectName, otherPath, outcome.conflictQueue);
                 merge(manager, handle, batch, intent, outcome);
+                if (outcome.merged)
+                {
+                    // Only after a merge that terminally succeeded. A refused merge wrote
+                    // nothing, and a merge this call stopped waiting for is still writing -
+                    // reading files under either of those says nothing about what was lost
+                    // and would raise the section on a run where nothing happened at all.
+                    noteContentLost(mainProjectName, otherPath, ourOwnBefore, outcome);
+                }
                 censusSupport(mainProjectName, outcome.supportModesAfter);
                 outcome.supportModesChanged =
                     !outcome.supportModesBefore.equals(outcome.supportModesAfter);
@@ -2215,6 +2270,253 @@ public final class BmComparisonHelper
      * @param projectName the project.
      * @return the version, or <code>null</code> when the file will not say
      */
+    /**
+     * Which of the objects both sides changed still held something of ours, before the merge ran.
+     * <p>
+     * Keyed by the object's directory rather than by the name the comparison used, because one
+     * object reaches this list under several names - the object itself and each of its modules -
+     * and they all stand or fall together.
+     * </p>
+     *
+     * @param projectName our project.
+     * @param otherPath the delivery's directory.
+     * @param names the objects both sides changed, named as the comparison names them.
+     * @return each object directory mapped to whether ours differed from the delivery's; a
+     *         directory absent from the map is one that could not be read on one side or the other.
+     */
+    private static Map<String, Boolean> whereOurSideDiffers(String projectName, String otherPath,
+        List<String> names)
+    {
+        Map<String, Boolean> differs = new java.util.LinkedHashMap<>();
+        for (String name : names)
+        {
+            String relative = objectDirectoryOf(name);
+            if (relative == null || differs.containsKey(relative))
+            {
+                continue;
+            }
+            String ours = digestOf(ourSideDirectory(projectName, relative));
+            String theirs = digestOf(deliveryDirectory(otherPath, relative));
+            if (ours == null || theirs == null)
+            {
+                continue;
+            }
+            differs.put(relative, Boolean.valueOf(!ours.equals(theirs)));
+        }
+        return differs;
+    }
+
+    /**
+     * Names the objects that held something of ours and came out as the delivery's copy.
+     *
+     * @param projectName our project.
+     * @param otherPath the delivery's directory.
+     * @param differedBefore what {@link #whereOurSideDiffers} read before the merge.
+     * @param outcome the answer being built.
+     */
+    private static void noteContentLost(String projectName, String otherPath,
+        Map<String, Boolean> differedBefore, Outcome outcome)
+    {
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (String name : outcome.conflictQueue)
+        {
+            String relative = objectDirectoryOf(name);
+            if (relative == null)
+            {
+                unchecked(outcome, name);
+                continue;
+            }
+            if (!seen.add(relative))
+            {
+                continue;
+            }
+            Boolean hadOwn = differedBefore.get(relative);
+            if (hadOwn == null)
+            {
+                unchecked(outcome, name);
+                continue;
+            }
+            if (!hadOwn.booleanValue())
+            {
+                // Ours already matched the delivery, so the merge had nothing of ours to lose.
+                continue;
+            }
+            String ours = digestOf(ourSideDirectory(projectName, relative));
+            String theirs = digestOf(deliveryDirectory(otherPath, relative));
+            if (theirs == null)
+            {
+                unchecked(outcome, name);
+                continue;
+            }
+            if (ours == null)
+            {
+                outcome.ourContentLostCount++;
+                if (outcome.ourContentLost.size() < PAGE_LIMIT)
+                {
+                    outcome.ourContentLost.add(name
+                        + " is no longer in this project at all after the merge, and it held " //$NON-NLS-1$
+                        + "something this side had put there."); //$NON-NLS-1$
+                }
+                continue;
+            }
+            if (!ours.equals(theirs))
+            {
+                continue;
+            }
+            outcome.ourContentLostCount++;
+            if (outcome.ourContentLost.size() < PAGE_LIMIT)
+            {
+                outcome.ourContentLost.add(name
+                    + " came out of the merge file for file as the delivery's copy of it, so what " //$NON-NLS-1$
+                    + "this side held in it is gone. It differed from the delivery before the " //$NON-NLS-1$
+                    + "merge ran. Every file of the object was compared, not only its module."); //$NON-NLS-1$
+            }
+        }
+        // conflictQueue stops at a page, so on an update with more conflicts than that the objects
+        // past it were never read. Saying how many is the difference between a checked merge and
+        // one that looks checked.
+        int beyond = outcome.objectsChangedByBoth - outcome.conflictQueue.size();
+        outcome.ourContentBeyondThePage = Math.max(0, beyond);
+    }
+
+    /**
+     * Records an object this check could not read.
+     *
+     * @param outcome the answer being built.
+     * @param name the object.
+     */
+    private static void unchecked(Outcome outcome, String name)
+    {
+        if (outcome.ourContentUnchecked.size() < PAGE_LIMIT)
+        {
+            outcome.ourContentUnchecked.add(name);
+        }
+    }
+
+    /**
+     * The directory an object's files sit in, relative to {@code src/}.
+     * <p>
+     * Comparing one module file was not enough: an object also carries its {@code .mdo}, its forms
+     * and its templates, and a merge that overwrites the metadata while leaving the module alone
+     * would have gone unmentioned. The unit is the object.
+     * </p>
+     *
+     * @param fqn the object, named as the comparison names it - the object itself or one of its
+     *            parts.
+     * @return the relative directory, or <code>null</code> when the name does not open with a
+     *         metadata type this EDT knows.
+     */
+    static String objectDirectoryOf(String fqn)
+    {
+        if (fqn == null || fqn.isBlank())
+        {
+            return null;
+        }
+        String[] parts = fqn.trim().split("\\."); //$NON-NLS-1$
+        if (parts.length < 2 || parts[0].isEmpty() || parts[1].isEmpty())
+        {
+            return null;
+        }
+        String folder = MetadataTypeCatalog.getDirectoryName(parts[0]);
+        return folder == null || folder.isEmpty() ? null : folder + "/" + parts[1]; //$NON-NLS-1$
+    }
+
+    /**
+     * Our project's copy of an object's directory.
+     *
+     * @param projectName our project.
+     * @param relative the object directory, relative to {@code src/}.
+     * @return the path, or <code>null</code> when the project cannot be placed.
+     */
+    private static Path ourSideDirectory(String projectName, String relative)
+    {
+        try
+        {
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project == null || project.getLocation() == null)
+            {
+                return null;
+            }
+            return project.getLocation().toFile().toPath().resolve("src").resolve(relative); //$NON-NLS-1$
+        }
+        catch (RuntimeException willNotSay)
+        {
+            Activator.logDebug("merge: could not place " + relative + ": " + willNotSay); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+    }
+
+    /**
+     * The delivery's copy of the same directory.
+     *
+     * @param otherPath the delivery's directory.
+     * @param relative the object directory, relative to {@code src/}.
+     * @return the path, or <code>null</code> when the delivery cannot be placed.
+     */
+    private static Path deliveryDirectory(String otherPath, String relative)
+    {
+        if (otherPath == null || otherPath.isBlank())
+        {
+            return null;
+        }
+        try
+        {
+            return Paths.get(otherPath).resolve("src").resolve(relative); //$NON-NLS-1$
+        }
+        catch (RuntimeException willNotSay)
+        {
+            Activator.logDebug("merge: could not place " + relative //$NON-NLS-1$
+                + " in the delivery: " + willNotSay); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * One value standing for everything in a directory - the relative name of every file under it
+     * and the bytes of each.
+     *
+     * @param directory the directory; may be <code>null</code>.
+     * @return the digest, or <code>null</code> when the directory is absent or could not be read.
+     *         Absent and empty are told apart: an empty directory digests to a value like any
+     *         other, and only an unreadable one answers <code>null</code>.
+     */
+    private static String digestOf(Path directory)
+    {
+        if (directory == null || !java.nio.file.Files.isDirectory(directory))
+        {
+            return null;
+        }
+        try
+        {
+            java.security.MessageDigest sum = java.security.MessageDigest.getInstance("SHA-256"); //$NON-NLS-1$
+            List<Path> files = new ArrayList<>();
+            try (java.util.stream.Stream<Path> walk = java.nio.file.Files.walk(directory))
+            {
+                walk.filter(java.nio.file.Files::isRegularFile).forEach(files::add);
+            }
+            files.sort(java.util.Comparator.comparing(f -> directory.relativize(f).toString()));
+            for (Path file : files)
+            {
+                sum.update(directory.relativize(file).toString()
+                    .replace('\\', '/').getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                sum.update((byte)0);
+                sum.update(java.nio.file.Files.readAllBytes(file));
+                sum.update((byte)0);
+            }
+            StringBuilder hex = new StringBuilder();
+            for (byte b : sum.digest())
+            {
+                hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+            }
+            return hex.toString();
+        }
+        catch (IOException | java.security.NoSuchAlgorithmException | RuntimeException willNotSay)
+        {
+            Activator.logDebug("merge: could not digest " + directory + ": " + willNotSay); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+    }
+
     private static String runtimeVersionOf(String projectName)
     {
         try

@@ -131,9 +131,53 @@ public final class UpdateReport
             + "rule back off each one.\n\n"); //$NON-NLS-1$
     }
 
+    /**
+     * What the merge took from this side, which is the section nobody wants and everybody needs.
+     * <p>
+     * Rendered before the conflicts rather than after: a reader who stops early should hit the
+     * loss, not the list of things still to decide.
+     * </p>
+     *
+     * @param outcome the merge that ran.
+     * @param full whether to name everything rather than a first ten.
+     * @param out the document being built.
+     */
+    private static void lost(BmComparisonHelper.Outcome outcome, boolean full, StringBuilder out)
+    {
+        if (outcome.ourContentLost.isEmpty() && outcome.ourContentUnchecked.isEmpty()
+            && outcome.ourContentBeyondThePage == 0)
+        {
+            return;
+        }
+        out.append("## What this side lost\n\n"); //$NON-NLS-1$
+        if (!outcome.ourContentLost.isEmpty())
+        {
+            out.append(outcome.ourContentLostCount)
+                .append(" object(s) came out of the merge file for file as the delivery's copy, " //$NON-NLS-1$
+                    + "having differed from it before. Whatever this side held in them is gone.\n\n"); //$NON-NLS-1$
+            names(outcome.ourContentLost, full, out);
+            out.append('\n');
+        }
+        if (!outcome.ourContentUnchecked.isEmpty())
+        {
+            out.append("These were not checked either way - one side or the other could not be " //$NON-NLS-1$
+                + "read, and an object nobody looked at is not an object that survived:\n\n"); //$NON-NLS-1$
+            names(outcome.ourContentUnchecked, full, out);
+            out.append('\n');
+        }
+        if (outcome.ourContentBeyondThePage > 0)
+        {
+            out.append("A further ").append(outcome.ourContentBeyondThePage) //$NON-NLS-1$
+                .append(" object(s) changed on both sides were not examined at all: the list of " //$NON-NLS-1$
+                    + "conflicts stops at a page. Their absence from the two lists above is not " //$NON-NLS-1$
+                    + "evidence that they came through.\n\n"); //$NON-NLS-1$
+        }
+    }
+
     /** The conflicts, which are work for a person. */
     private static void queue(BmComparisonHelper.Outcome outcome, boolean full, StringBuilder out)
     {
+        lost(outcome, full, out);
         out.append("## Conflicts to decide by hand\n\n"); //$NON-NLS-1$
         if (outcome.objectsChangedByBoth == 0)
         {
@@ -146,8 +190,19 @@ public final class UpdateReport
             names(outcome.conflictQueue, full, out);
             out.append('\n');
         }
-        out.append("On a conflict where both sides changed the same content the environment " //$NON-NLS-1$
-            + "keeps ours whatever rule is asked for - measured. Such a decision comes back in " //$NON-NLS-1$
+        // What decides whether a conflict can be moved is mustBeMerged, not the conflict.
+        // An earlier reading of this said the environment keeps ours whatever rule is asked
+        // for, and that was an artefact of addressing: the rule had been set on the object
+        // node while a module's text lives in its own node underneath. Re-measured on the
+        // module node, MERGE_PRIORITIZING_OTHER resolves the contested lines toward the
+        // delivery and still keeps a method only this side has.
+        out.append("Whether a conflict can be moved is answered by mustBeMerged, and the " //$NON-NLS-1$
+            + "answer depends on which node the decision is addressed at. Measured: a rule " //$NON-NLS-1$
+            + "set on a module node resolves the contested lines toward the delivery under " //$NON-NLS-1$
+            + "MERGE_PRIORITIZING_OTHER and keeps a method only this side has; the same rule " //$NON-NLS-1$
+            + "set on the OBJECT node moves nothing, because the text is not there. A node " //$NON-NLS-1$
+            + "carrying mustBeMerged=false with DO_NOT_MERGE recommended cannot be moved by " //$NON-NLS-1$
+            + "any rule at all, and a decision aimed at one comes back in " //$NON-NLS-1$
             + "decisionsWithoutEffect rather than being reported as applied.\n\n"); //$NON-NLS-1$
     }
 

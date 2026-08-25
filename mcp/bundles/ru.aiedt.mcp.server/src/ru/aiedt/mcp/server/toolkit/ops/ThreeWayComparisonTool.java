@@ -243,6 +243,13 @@ public class ThreeWayComparisonTool
                     + "methods only this side has stay - and are counted in mergedWithDelivery. " //$NON-NLS-1$
                     + "An object that will not take that merge is held instead and named in " //$NON-NLS-1$
                     + "deliveryNotApplied, because for it the delivery's change does NOT arrive. " //$NON-NLS-1$
+            + "Putting the delivery in front does NOT guarantee that work only this side had " //$NON-NLS-1$
+            + "survives: where the delivery rewrote the whole of an object there is nothing " //$NON-NLS-1$
+            + "of ours left to interleave, and that was measured on a real update. So every " //$NON-NLS-1$
+            + "object both sides changed is read after the merge and compared with the " //$NON-NLS-1$
+            + "delivery's copy; the ones that came out identical to it are named in " //$NON-NLS-1$
+            + "ourContentLost, and the ones that could not be read either side in " //$NON-NLS-1$
+            + "ourContentUnchecked. " //$NON-NLS-1$
                     + "It refuses outright when an object of ours could not be held at all, " //$NON-NLS-1$
                     + "because merging then would overwrite named work.") //$NON-NLS-1$
             .build();
@@ -538,6 +545,12 @@ public class ThreeWayComparisonTool
             // number of it - which is exactly how the sterile behaviour went unnoticed.
             .put("mergedWithDelivery", outcome.mergedWithDelivery) //$NON-NLS-1$
             .put("deliveryNotApplied", outcome.deliveryNotApplied) //$NON-NLS-1$
+            // The mirror of the line above. Without it a merge that overwrote named work
+            // answered success and said nothing at all - measured on a real update.
+            .put("ourContentLost", outcome.ourContentLost) //$NON-NLS-1$
+            .put("ourContentLostCount", outcome.ourContentLostCount) //$NON-NLS-1$
+            .put("ourContentUnchecked", outcome.ourContentUnchecked) //$NON-NLS-1$
+            .put("ourContentBeyondThePage", outcome.ourContentBeyondThePage) //$NON-NLS-1$
             .put("takenFromVendor", outcome.objectsChangedByVendor) //$NON-NLS-1$
             .put("conflictQueue", outcome.conflictQueue) //$NON-NLS-1$
             .put("conflictQueueCount", outcome.objectsChangedByBoth) //$NON-NLS-1$
