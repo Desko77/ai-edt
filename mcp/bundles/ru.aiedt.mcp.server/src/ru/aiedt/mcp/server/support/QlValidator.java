@@ -55,6 +55,14 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class QlValidator
 {
+    /**
+     * The code the platform gives a name that resolves to no field.
+     * <p>
+     * A code, not a message: the message is localised and the code is not.
+     * </p>
+     */
+    private static final String FIELD_NOT_FOUND = "Field not found"; //$NON-NLS-1$
+
     private static final String V8_CONFIGURATION_NATURE = "com._1c.g5.v8.dt.core.V8ConfigurationNature"; //$NON-NLS-1$
 
     private static final String V8_EXTENSION_NATURE = "com._1c.g5.v8.dt.core.V8ExtensionNature"; //$NON-NLS-1$
@@ -80,12 +88,29 @@ public final class QlValidator
         public final int line;
         public final int column;
 
+        /**
+         * What kind of diagnostic this is, in a form that does not change with the language.
+         * <p>
+         * The message does change: the platform localises it, so "field not found" arrives in
+         * Russian on a Russian EDT and the same diagnostic reads differently elsewhere. Anything
+         * deciding what to do about a diagnostic has to read this instead - reading the message is
+         * how a check silently stops working on somebody else's install.
+         * </p>
+         */
+        public final String code;
+
         public QlIssue(String severity, String message, int line, int column)
+        {
+            this(severity, message, line, column, null);
+        }
+
+        public QlIssue(String severity, String message, int line, int column, String code)
         {
             this.severity = severity;
             this.message = message;
             this.line = line;
             this.column = column;
+            this.code = code;
         }
 
         public Map<String, Object> toMap()
@@ -95,6 +120,10 @@ public final class QlValidator
             m.put("message", message); //$NON-NLS-1$
             m.put("line", line); //$NON-NLS-1$
             m.put("column", column); //$NON-NLS-1$
+            if (code != null)
+            {
+                m.put("code", code); //$NON-NLS-1$
+            }
             return m;
         }
     }
@@ -260,7 +289,7 @@ public final class QlValidator
         {
             return ValidationResult.unavailable("project not available"); //$NON-NLS-1$
         }
-        return settledAnswer(project, queryText, dcsMode);
+        return settledAnswer(project, queryText, dcsMode, false);
     }
 
     /**
@@ -288,7 +317,7 @@ public final class QlValidator
         // We surround with parentheses + alias so even malformed expressions
         // are syntactically wrapped.
         String wrapped = "ВЫБРАТЬ (" + expression + ") КАК __DcsExpressionProbe"; //$NON-NLS-1$
-        ValidationResult raw = settledAnswer(project, wrapped, true);
+        ValidationResult raw = settledAnswer(project, wrapped, true, true);
         if (!raw.available || raw.unconfirmed)
         {
             return raw;
@@ -306,7 +335,7 @@ public final class QlValidator
             {
                 continue;
             }
-            filtered.add(i);
+            filtered.add(whatThisCannotJudge(i));
         }
         ValidationResult kept = ValidationResult.of(filtered);
         kept.parserObjected = raw.parserObjected;
@@ -356,6 +385,90 @@ public final class QlValidator
         {
             return new Pass(null);
         }
+    }
+
+    /**
+     * Rebuilds a result with the diagnostics this check could not have made demoted.
+     * <p>
+     * Rebuilt rather than edited, because a result counts its errors when it is made - which is
+     * the number everything downstream decides on.
+     * </p>
+     *
+     * @param result the result as reported.
+     * @return the same result, or a new one with the unjudgeable demoted.
+     */
+    private static ValidationResult withTheUnjudgeableDemoted(ValidationResult result)
+    {
+        if (!result.available || result.issues.isEmpty())
+        {
+            return result;
+        }
+        List<QlIssue> kept = new ArrayList<>();
+        boolean changed = false;
+        for (QlIssue issue : result.issues)
+        {
+            QlIssue demoted = whatThisCannotJudge(issue);
+            changed = changed || demoted != issue;
+            kept.add(demoted);
+        }
+        if (!changed)
+        {
+            return result;
+        }
+        ValidationResult rebuilt = result.unconfirmed
+            ? ValidationResult.unconfirmedWith(kept, result.unavailableReason)
+            : ValidationResult.of(kept);
+        rebuilt.parserObjected = result.parserObjected;
+        rebuilt.resolvedInProject = result.resolvedInProject;
+        return rebuilt;
+    }
+
+    /**
+     * Demotes a diagnostic this check was never in a position to make.
+     * <p>
+     * An expression is checked by wrapping it in a query with no FROM clause, because there is no
+     * dataset to point one at. So no field in it can resolve, and the checker duly reports every
+     * one of them as missing - which meant a calculated field of {@code Amount * 2} was refused,
+     * and so was every other expression naming a field, which is nearly all of them.
+     * </p>
+     * <p>
+     * The diagnostic is demoted rather than dropped, so it is still there for anything that reads
+     * the issues; it just stops being a reason to refuse the write. Measured, and worth saying
+     * plainly: the schema workshop attaches its validation data only when it refuses, so on a call
+     * that now goes through, nobody sees this warning. Surfacing it would mean reporting
+     * validation data on success too, which changes the shape of every successful answer - a
+     * larger change than this one, and not made here.
+     * </p>
+     * <p>
+     * Syntax errors and names that are not fields - a function that does not exist, say - are
+     * untouched, because those verdicts stand without a schema.
+     * </p>
+     * <p>
+     * Recognised by code rather than by message. The message is localised - this one reads
+     * "Поле ... не найдено" here - and a check written against the words silently stops working
+     * on an install in another language.
+     * </p>
+     * <p>
+     * <b>Known and left as it is.</b> An expression containing a nested SELECT with a FROM of its
+     * own gives its fields a scope that IS resolvable, and this demotes those too, so a wrong name
+     * inside such a subquery becomes a warning and gets written. Telling the two apart needs to
+     * know whether a diagnostic sits inside that nested scope, and the only cheap way to guess is
+     * to look for the FROM keyword in the text - which misfires on the word inside a string
+     * literal, and misfires toward refusing valid work, the worse of the two directions. The
+     * shape left open is a rare construct reported one level too gently; the shape avoided is
+     * every ordinary expression being refused.
+     * </p>
+     *
+     * @param issue the diagnostic as reported.
+     * @return the same diagnostic, demoted if this check could not have judged it.
+     */
+    private static QlIssue whatThisCannotJudge(QlIssue issue)
+    {
+        if (FIELD_NOT_FOUND.equals(issue.code) && "ERROR".equals(issue.severity)) //$NON-NLS-1$
+        {
+            return new QlIssue("WARNING", issue.message, issue.line, issue.column, issue.code); //$NON-NLS-1$
+        }
+        return issue;
     }
 
     /**
@@ -547,7 +660,7 @@ public final class QlValidator
      *         project the caller named.
      */
     private static ValidationResult settledAnswer(IProject asked, String queryText,
-        boolean dcsMode)
+        boolean dcsMode, boolean bareExpression)
     {
         // Everything validate_query does at its own door, done here too: this answer gates writes,
         // so an answer taken off a model in motion is worse here than there.
@@ -559,7 +672,7 @@ public final class QlValidator
         {
             if (watch == null)
             {
-                Pass probe = onePass(asked, queryText, dcsMode);
+                Pass probe = onePass(asked, queryText, dcsMode, bareExpression);
                 if (probe.answer != null && !probe.answer.available && !probe.answer.unconfirmed)
                 {
                     // No query support in this EDT at all. That verdict does not depend on any
@@ -573,7 +686,7 @@ public final class QlValidator
             for (int pass = 0; pass < 2; pass++)
             {
                 watch.reset();
-                Pass attempt = onePass(asked, queryText, dcsMode);
+                Pass attempt = onePass(asked, queryText, dcsMode, bareExpression);
                 if (attempt.answer == null)
                 {
                     // A model moved under this pass. Nothing it produced is worth reporting.
@@ -602,9 +715,19 @@ public final class QlValidator
      * @param dcsMode whether to parse it as a data composition query.
      * @return what the check found, or why it could not settle.
      */
-    private static Pass onePass(IProject asked, String queryText, boolean dcsMode)
+    private static Pass onePass(IProject asked, String queryText, boolean dcsMode,
+        boolean bareExpression)
     {
         ValidationResult here = runValidation(asked, queryText, dcsMode);
+        if (bareExpression)
+        {
+            // Demoted HERE, before anything counts the errors. Left until after the answer was
+            // settled, a handful of unjudgeable field diagnostics counted as errors, which sent
+            // the check to the other model to have them confirmed - and when that model could not
+            // be reached, an ordinary expression came back refused as unconfirmed. Nothing was
+            // ever going to confirm them: there is no FROM clause for a field to resolve against.
+            here = withTheUnjudgeableDemoted(here);
+        }
         if (!here.available)
         {
             // This EDT cannot check queries. Readiness has nothing to add to that, and asking about
@@ -656,6 +779,10 @@ public final class QlValidator
                         + " it names. " + otherNotReady)); //$NON-NLS-1$
             }
             ValidationResult above = runValidation(alternative, queryText, dcsMode);
+            if (bareExpression)
+            {
+                above = withTheUnjudgeableDemoted(above);
+            }
             if (other.moved())
             {
                 // Not an answer, and not a refusal either: this pass is void and the outer loop
@@ -678,6 +805,17 @@ public final class QlValidator
             above.resolvedInProject = alternative.getName();
             return Pass.of(above);
         }
+    }
+
+    /**
+     * Names the kind of a resource diagnostic without reading its message.
+     *
+     * @param diagnostic the diagnostic; never <code>null</code> when called.
+     * @return the class it arrived as, which says what went wrong in every language.
+     */
+    private static String kindOf(Resource.Diagnostic diagnostic)
+    {
+        return diagnostic.getClass().getSimpleName();
     }
 
     private static ValidationResult runValidation(IProject project, String queryText,
@@ -731,12 +869,13 @@ public final class QlValidator
             List<QlIssue> issues = found;
             for (Resource.Diagnostic d : resource.getErrors())
             {
-                issues.add(new QlIssue("ERROR", d.getMessage(), d.getLine(), d.getColumn())); //$NON-NLS-1$
+                issues.add(new QlIssue("ERROR", d.getMessage(), d.getLine(), d.getColumn(), //$NON-NLS-1$
+                    kindOf(d)));
             }
             for (Resource.Diagnostic d : resource.getWarnings())
             {
                 issues.add(new QlIssue("WARNING", d.getMessage(), d.getLine(), //$NON-NLS-1$
-                    d.getColumn()));
+                    d.getColumn(), kindOf(d)));
             }
             IParseResult parsed = resource.getParseResult();
             boolean parserObjected = parsed != null && parsed.hasSyntaxErrors();
@@ -778,7 +917,7 @@ public final class QlValidator
                 }
                 int line = i.getLineNumber() != null ? i.getLineNumber().intValue() : -1;
                 int col = i.getColumn() != null ? i.getColumn().intValue() : -1;
-                issues.add(new QlIssue(sev, i.getMessage(), line, col));
+                issues.add(new QlIssue(sev, i.getMessage(), line, col, i.getCode()));
             }
             ValidationResult settled = ValidationResult.of(issues);
             settled.parserObjected = parserObjected;

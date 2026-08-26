@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -49,6 +50,15 @@ import ru.aiedt.mcp.server.support.QlValidator;
  */
 public class DcsWorkshopTool implements IMcpTool
 {
+    /** The dataset property whose value is a whole query. */
+    private static final String QUERY_PROPERTY = "query"; //$NON-NLS-1$
+
+    /** A link property whose value is a DCS expression. */
+    private static final String SOURCE_EXPRESSION = "sourceExpression"; //$NON-NLS-1$
+
+    /** The other one. */
+    private static final String DESTINATION_EXPRESSION = "destinationExpression"; //$NON-NLS-1$
+
     public static final String NAME = "dcs_workshop"; //$NON-NLS-1$
 
     /**
@@ -300,19 +310,32 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Runs Xtext-based validation on queryText / expression for ops that
-     * accept them. Returns {@code null} on pass, or a JSON error response
-     * carrying the {@code queryValidation} or {@code expressionValidation}
-     * tag.
+     * Runs Xtext-based validation on the query or expression this call is about to write.
+     * <p>
+     * <b>What is checked is decided by what the call carries, not by which operation it is.</b>
+     * The list of operation names this used to switch on fell behind the operations twice over:
+     * {@code set_dataset_property property=query} wrote a whole query through the generic setter
+     * and was checked by nothing, and four expression writers - {@code set_calculated_field},
+     * {@code set_total_field}, {@code add_user_field}, {@code set_user_field} - were absent from
+     * the list because only their {@code add_} counterparts had been added to it. A list of names
+     * has to be extended by hand every time an operation is added, and nothing fails when it is
+     * not; asking the call what text it carries is right for operations that do not exist yet.
+     * </p>
+     *
+     * @param op the operation being run.
+     * @param params its arguments.
+     * @param project the project whose model settles the check.
+     * @return <code>null</code> on pass, or a JSON error carrying the {@code queryValidation} or
+     *         {@code expressionValidation} tag.
      */
     private String preflightValidate(String op, Map<String, String> params, IProject project)
     {
         boolean validateQuery = JsonUtils.extractBooleanArgument(params, "validate_query", true); //$NON-NLS-1$
         boolean validateExpr = JsonUtils.extractBooleanArgument(params, "validate_expression", //$NON-NLS-1$
             true);
-        if (validateQuery && ("add_dataset".equals(op) || "set_dataset_query".equals(op))) //$NON-NLS-1$ //$NON-NLS-2$
+        if (validateQuery)
         {
-            String queryText = JsonUtils.extractStringArgument(params, "queryText"); //$NON-NLS-1$
+            String queryText = queryThisCallWrites(op, params);
             if (queryText != null && !queryText.isEmpty())
             {
                 QlValidator.ValidationResult vr = QlValidator.validateQueryText(project,
@@ -330,7 +353,7 @@ public class DcsWorkshopTool implements IMcpTool
                 if (vr.hasErrors())
                 {
                     return ToolResult
-                        .error(op + " failed: queryText has " + vr.errorCount //$NON-NLS-1$
+                        .error(op + " failed: the query has " + vr.errorCount //$NON-NLS-1$
                             + " error(s); fix and retry") //$NON-NLS-1$
                         .put("operation", op) //$NON-NLS-1$
                         .put(ErrorTags.QUERY_VALIDATION.wire(), vr.toTagData())
@@ -338,10 +361,9 @@ public class DcsWorkshopTool implements IMcpTool
                 }
             }
         }
-        if (validateExpr && isExpressionOp(op))
+        if (validateExpr)
         {
-            String expression = JsonUtils.extractStringArgument(params, "expression"); //$NON-NLS-1$
-            if (expression != null && !expression.isEmpty())
+            for (String expression : expressionsThisCallWrites(op, params))
             {
                 QlValidator.ValidationResult vr = QlValidator.validateExpression(project,
                     expression);
@@ -366,18 +388,215 @@ public class DcsWorkshopTool implements IMcpTool
         return null;
     }
 
-    private static boolean isExpressionOp(String op)
+    /**
+     * What an operation writes, and which argument carries it.
+     * <p>
+     * One schema serves all 63 operations, so a call may carry arguments the operation it names
+     * will never look at - a reused argument map is enough. Deciding by argument alone would then
+     * refuse an ordinary rename over a stale {@code queryText} beside it. Deciding by operation
+     * alone is how this went wrong to begin with. Both, together, is what the handler actually
+     * does.
+     * </p>
+     */
+    private enum Written
     {
-        switch (op)
+        /** Neither a query nor an expression. */
+        NOTHING,
+
+        /** A query, arriving as {@code queryText}. */
+        QUERY_AS_QUERY_TEXT,
+
+        /** A query, arriving as {@code value} - but only when the property named is the query. */
+        QUERY_AS_VALUE_OF_THE_QUERY_PROPERTY,
+
+        /** An expression, stored as given. */
+        EXPRESSION,
+
+        /** An expression with an aggregate composed into it before it is stored. */
+        EXPRESSION_WITH_AN_AGGREGATE,
+
+        /** Two expressions at once - a link joins two datasets and can constrain both ends. */
+        EXPRESSIONS_OF_A_LINK,
+
+        /** An expression arriving as {@code value}, when the property named is one of a link's. */
+        EXPRESSION_AS_VALUE_OF_A_LINK_PROPERTY
+    }
+
+    /**
+     * The operations that write a query or an expression, and how.
+     * <p>
+     * Only the writers are here; everything else answers {@link Written#NOTHING}. That default is
+     * safe only because a test reconciles this map against the mutation registry and fails on any
+     * operation classified in neither direction - see the test named for what a call writes. An
+     * operation added without a decision made about it breaks that test rather than quietly
+     * skipping its check, which is exactly how four expression writers and one query writer came
+     * to be unchecked here.
+     * </p>
+     */
+    private static final Map<String, Written> WRITES = writesRegistry();
+
+    /**
+     * Builds the classification above.
+     *
+     * @return the writers, by operation name.
+     */
+    private static Map<String, Written> writesRegistry()
+    {
+        Map<String, Written> writes = new LinkedHashMap<>();
+        writes.put("add_dataset", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
+        writes.put("set_dataset_query", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
+        writes.put("set_dataset_property", Written.QUERY_AS_VALUE_OF_THE_QUERY_PROPERTY); //$NON-NLS-1$
+        writes.put("add_calculated_field", Written.EXPRESSION); //$NON-NLS-1$
+        writes.put("set_calculated_field", Written.EXPRESSION); //$NON-NLS-1$
+        writes.put("set_total_field", Written.EXPRESSION); //$NON-NLS-1$
+        writes.put("add_user_field", Written.EXPRESSION); //$NON-NLS-1$
+        writes.put("set_user_field", Written.EXPRESSION); //$NON-NLS-1$
+        // Both halves: applyParameterFields writes the expression, and add_parameter reaches it
+        // through the same helper set_parameter does.
+        writes.put("add_parameter", Written.EXPRESSION); //$NON-NLS-1$
+        writes.put("set_parameter", Written.EXPRESSION); //$NON-NLS-1$
+        writes.put("add_total", Written.EXPRESSION_WITH_AN_AGGREGATE); //$NON-NLS-1$
+        // A link constrains a join between two datasets, and each end can carry an expression.
+        // These arrive under their own argument names, which is how they went unnoticed while
+        // every other expression writer was being found by searching for the word.
+        writes.put("add_dataset_link", Written.EXPRESSIONS_OF_A_LINK); //$NON-NLS-1$
+        writes.put("set_dataset_link_property", Written.EXPRESSION_AS_VALUE_OF_A_LINK_PROPERTY); //$NON-NLS-1$
+        return writes;
+    }
+
+    /**
+     * What this operation is classified as writing.
+     *
+     * @param op the operation being run.
+     * @return its classification, never <code>null</code>.
+     */
+    static String writesForTest(String op)
+    {
+        return WRITES.getOrDefault(op, Written.NOTHING).name();
+    }
+
+    /**
+     * The query text this call is about to write, if it writes one.
+     *
+     * @param op the operation being run.
+     * @param params the call's arguments.
+     * @return the text, or <code>null</code> when this call writes no query.
+     */
+    static String queryThisCallWrites(String op, Map<String, String> params)
+    {
+        switch (WRITES.getOrDefault(op, Written.NOTHING))
         {
-            case "add_calculated_field": //$NON-NLS-1$
-            case "add_total": //$NON-NLS-1$
-            case "add_parameter": //$NON-NLS-1$
-            case "set_parameter": //$NON-NLS-1$
-                return true;
-            default:
-                return false;
+        case QUERY_AS_QUERY_TEXT:
+            return JsonUtils.extractStringArgument(params, "queryText"); //$NON-NLS-1$
+        case QUERY_AS_VALUE_OF_THE_QUERY_PROPERTY:
+            // This setter reaches any field by name, and only one of them is the query. A call
+            // renaming a dataset carries value too, and checking that as a query would refuse it.
+            if (QUERY_PROPERTY.equalsIgnoreCase(
+                JsonUtils.extractStringArgument(params, "property"))) //$NON-NLS-1$
+            {
+                return JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
+            }
+            return null;
+        default:
+            return null;
         }
+    }
+
+    /**
+     * The expressions this call is about to write, as they will be stored.
+     * <p>
+     * For {@code add_total} that is not the expression as given: an aggregate is composed into the
+     * text before it is stored, so checking the argument checked something that was never written.
+     * {@code expression=Amount, aggregateFunction=NoSuchFunction} passed while
+     * {@code NoSuchFunction(Amount)} went into the schema unchecked.
+     * </p>
+     * <p>
+     * A list rather than one text, because a dataset link can constrain both ends of the join at
+     * once and stores an expression for each.
+     * </p>
+     *
+     * @param op the operation being run.
+     * @param params the call's arguments.
+     * @return the texts, in the order they were found; empty when this call writes none.
+     */
+    static List<String> expressionsThisCallWrites(String op, Map<String, String> params)
+    {
+        List<String> written = new ArrayList<>();
+        switch (WRITES.getOrDefault(op, Written.NOTHING))
+        {
+        case EXPRESSION:
+            add(written, JsonUtils.extractStringArgument(params, "expression")); //$NON-NLS-1$
+            break;
+        case EXPRESSION_WITH_AN_AGGREGATE:
+            String expression = JsonUtils.extractStringArgument(params, "expression"); //$NON-NLS-1$
+            if (expression != null && !expression.isEmpty())
+            {
+                add(written, totalExpressionOf(expression,
+                    JsonUtils.extractStringArgument(params, "aggregateFunction"))); //$NON-NLS-1$
+            }
+            break;
+        case EXPRESSIONS_OF_A_LINK:
+            // Both ends, and either may be absent. Checking one and storing two is the shape of
+            // defect this whole method exists to close.
+            add(written, JsonUtils.extractStringArgument(params, SOURCE_EXPRESSION));
+            add(written, JsonUtils.extractStringArgument(params, DESTINATION_EXPRESSION));
+            break;
+        case EXPRESSION_AS_VALUE_OF_A_LINK_PROPERTY:
+            // By the shape of the name, not by a list of them. This setter reaches any property
+            // the link has, and the link has more expressions than the two an add_dataset_link
+            // call can set - startExpression and linkConditionExpression among them. Naming the
+            // ones known today would be one more list to fall behind, which is the whole reason
+            // this classification exists.
+            String property = JsonUtils.extractStringArgument(params, "property"); //$NON-NLS-1$
+            if (property != null && property.toLowerCase().endsWith("expression")) //$NON-NLS-1$
+            {
+                add(written, JsonUtils.extractStringArgument(params, "value")); //$NON-NLS-1$
+            }
+            break;
+        default:
+            break;
+        }
+        return written;
+    }
+
+    /**
+     * Adds a text to the list unless there is nothing there.
+     *
+     * @param texts the list to add to.
+     * @param text the text, which may be <code>null</code> or empty.
+     */
+    private static void add(List<String> texts, String text)
+    {
+        if (text != null && !text.isEmpty())
+        {
+            texts.add(text);
+        }
+    }
+
+    /**
+     * Composes what a total field stores from the expression and the aggregate asked for.
+     * <p>
+     * A total field has no separate aggregate property - only dataPath, expression and groups - so
+     * the aggregate is part of the expression text. An expression that already calls something is
+     * taken verbatim.
+     * </p>
+     * <p>
+     * One place on purpose: this used to live only inside the write, so the check upstream and the
+     * write downstream disagreed about what was going to be stored.
+     * </p>
+     *
+     * @param rawExpression the expression as given.
+     * @param aggregateFunction the aggregate to compose in, or <code>null</code>.
+     * @return the text that will be stored.
+     */
+    static String totalExpressionOf(String rawExpression, String aggregateFunction)
+    {
+        if (aggregateFunction != null && !aggregateFunction.isEmpty()
+            && !rawExpression.contains("(")) //$NON-NLS-1$
+        {
+            return aggregateFunction + "(" + rawExpression + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return rawExpression;
     }
 
     /**
@@ -959,16 +1178,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("DcsFactory.createDataCompositionSchemaTotalField not available"); //$NON-NLS-1$
         }
-        // A TotalField has no separate aggregateFunction property (only dataPath /
-        // expression / groups) - the aggregate is part of the expression text.
-        // When an aggregateFunction is supplied and the expression is a bare field
-        // (no call parens), compose it; otherwise use the expression verbatim.
-        String expression = rawExpression;
-        if (aggregateFunction != null && !aggregateFunction.isEmpty()
-            && !rawExpression.contains("(")) //$NON-NLS-1$
-        {
-            expression = aggregateFunction + "(" + rawExpression + ")"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
+        String expression = totalExpressionOf(rawExpression, aggregateFunction);
         BmDcsHelper.setProperty(field, "expression", expression); //$NON-NLS-1$
         applyOptionalProperty(field, "dataPath", params, "name"); //$NON-NLS-1$ //$NON-NLS-2$
         EList<EObject> totals = BmDcsHelper.getEObjectList(schema, "getTotalFields"); //$NON-NLS-1$
@@ -3725,7 +3935,7 @@ public class DcsWorkshopTool implements IMcpTool
         return "Structured error tags surfaced into the JSON response next to `error`.\n\n" //$NON-NLS-1$
             + "- `notFound` { name, kind } - target child not found.\n" //$NON-NLS-1$
             + "- `alreadyExists` { name, kind } - target child already exists.\n" //$NON-NLS-1$
-            + "- `queryValidation` { issues, statistics } - queryText has parse errors\n" //$NON-NLS-1$
+            + "- `queryValidation` { issues, statistics } - the query text has parse errors\n" //$NON-NLS-1$
             + "    (returned BEFORE the BM transaction opens).\n" //$NON-NLS-1$
             + "- `expressionValidation` { issues, statistics } - DCS expression has errors.\n" //$NON-NLS-1$
             + "- `fontColorGuard` { appearance, hint } - appearance was passed as JSON\n" //$NON-NLS-1$
@@ -3821,6 +4031,17 @@ public class DcsWorkshopTool implements IMcpTool
      * add_settings_selected_field, ...) are separate entries sharing one handler.
      */
     @SuppressWarnings("nls")
+    /**
+     * The operations this tool can run.
+     *
+     * @return their names, for the test that reconciles them against what each is classified as
+     *         writing.
+     */
+    java.util.Set<String> operationNamesForTest()
+    {
+        return this.mutations.keySet();
+    }
+
     private Map<String, MutationHandler> buildMutationRegistry()
     {
         Map<String, MutationHandler> m = new LinkedHashMap<>();

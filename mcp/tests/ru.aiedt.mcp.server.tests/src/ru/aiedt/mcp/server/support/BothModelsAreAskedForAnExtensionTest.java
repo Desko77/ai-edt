@@ -132,4 +132,23 @@ public class BothModelsAreAskedForAnExtensionTest
         assertFalse(QlValidator.ValidationResult.ok().unconfirmed);
         assertFalse(QlValidator.ValidationResult.of(new ArrayList<>()).unconfirmed);
     }
+
+    @Test
+    public void aDiagnosticCarriesACodeBesideItsLocalisedWords()
+    {
+        // The words are localised - "field not found" arrives in Russian on a Russian EDT - so
+        // anything deciding what to do about a diagnostic has to read the code instead. A check
+        // written against the message works here and silently stops working elsewhere.
+        QlValidator.QlIssue withCode =
+            new QlValidator.QlIssue("ERROR", "Поле 'Amount' не найдено", 1, 8, "Field not found"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals("Field not found", withCode.code); //$NON-NLS-1$
+        assertEquals("Field not found", withCode.toMap().get("code")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // And an older diagnostic that carries none says so by absence rather than by an empty
+        // string, so a reader can tell "no code" from "a code that is blank".
+        QlValidator.QlIssue withoutCode =
+            new QlValidator.QlIssue("ERROR", "unexpected token", 1, 7); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(withoutCode.code);
+        assertFalse(withoutCode.toMap().containsKey("code")); //$NON-NLS-1$
+    }
 }
