@@ -317,6 +317,16 @@ public class DcsWorkshopTool implements IMcpTool
             {
                 QlValidator.ValidationResult vr = QlValidator.validateQueryText(project,
                     queryText, true);
+                if (vr.unconfirmed)
+                {
+                    // Not the same as a clean check. Writing here would put text into the schema
+                    // that nothing has vouched for. What the check did find still goes back: half
+                    // an answer beats a bare reason when the half names the line to fix.
+                    return ToolResult.error(op + " not attempted: " + vr.unavailableReason) //$NON-NLS-1$
+                        .put("operation", op) //$NON-NLS-1$
+                        .put(ErrorTags.QUERY_VALIDATION.wire(), vr.toTagData())
+                        .toJson();
+                }
                 if (vr.hasErrors())
                 {
                     return ToolResult
@@ -335,6 +345,13 @@ public class DcsWorkshopTool implements IMcpTool
             {
                 QlValidator.ValidationResult vr = QlValidator.validateExpression(project,
                     expression);
+                if (vr.unconfirmed)
+                {
+                    return ToolResult.error(op + " not attempted: " + vr.unavailableReason) //$NON-NLS-1$
+                        .put("operation", op) //$NON-NLS-1$
+                        .put(ErrorTags.EXPRESSION_VALIDATION.wire(), vr.toTagData())
+                        .toJson();
+                }
                 if (vr.hasErrors())
                 {
                     return ToolResult
@@ -2961,6 +2978,19 @@ public class DcsWorkshopTool implements IMcpTool
         IProject project)
     {
         QlValidator.ValidationResult vr = QlValidator.validateQueryText(project, newQuery, true);
+        if (vr.unconfirmed)
+        {
+            // This one deliberately writes when validation is UNAVAILABLE - an EDT without query
+            // support would otherwise block every splice. Unconfirmed is the other thing: checking
+            // was possible and did not settle, so the splice waits.
+            Map<String, Object> unsettled = vr.toTagData();
+            unsettled.put("dataSet", dataSetName); //$NON-NLS-1$
+            unsettled.put("attemptedQuery", newQuery); //$NON-NLS-1$
+            throw new MetadataGuards.BlockedGuardException(MetadataGuards.Verdict.block(
+                "the spliced query could not be checked - edit not applied", //$NON-NLS-1$
+                vr.unavailableReason,
+                new MetadataGuards.ErrorTag(ErrorTags.QUERY_VALIDATION.wire(), unsettled)));
+        }
         if (vr.available && vr.hasErrors())
         {
             Map<String, Object> data = vr.toTagData();

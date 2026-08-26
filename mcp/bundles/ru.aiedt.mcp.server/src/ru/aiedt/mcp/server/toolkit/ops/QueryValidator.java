@@ -20,6 +20,7 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.xtext.parser.IParseResult;
 import org.eclipse.xtext.resource.IResourceServiceProvider;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.resource.IResourceSetProvider;
@@ -39,6 +40,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ProjectStateGuard;
 import ru.aiedt.mcp.server.support.QlValidator;
 import ru.aiedt.mcp.server.support.QueryResultSchema;
 import ru.aiedt.mcp.server.support.UiSync;
@@ -287,20 +289,32 @@ public class QueryValidator
 
         private final String failure;
 
-        private Collected(List<QueryIssue> issues, String failure)
+        /**
+         * Whether the parser itself objected, as opposed to the checker that resolves names.
+         * <p>
+         * The other model is consulted to settle errors about objects it might hold and this one
+         * might not. It cannot settle a query that does not parse: the text is the same text in
+         * both models. Refusing to answer over an unreachable second model in that case withholds
+         * a diagnostic nothing was ever going to change.
+         * </p>
+         */
+        private final boolean parserObjected;
+
+        private Collected(List<QueryIssue> issues, String failure, boolean parserObjected)
         {
             this.issues = issues;
             this.failure = failure;
+            this.parserObjected = parserObjected;
         }
 
-        static Collected of(List<QueryIssue> issues)
+        static Collected of(List<QueryIssue> issues, boolean parserObjected)
         {
-            return new Collected(issues, null);
+            return new Collected(issues, null, parserObjected);
         }
 
         static Collected failed(String failure)
         {
-            return new Collected(null, failure);
+            return new Collected(null, failure, false);
         }
 
         int errors()
@@ -355,24 +369,190 @@ public class QueryValidator
         // its diagnostics are about the objects that developer actually has in front of them. A
         // query mixing a borrowed object's inherited field with an extension's own table fits
         // neither model, and that is what it gets - not a clean answer nobody could stand behind.
-        IProject alternative = QlValidator.alsoAsk(asked);
+        // Refuse while the model is still being built, instead of answering from a half-built
+        // one. Measured: for the first seconds after EDT restarts, a query naming a table that
+        // certainly exists comes back "table not found", which is indistinguishable from a real
+        // mistake in the query. Neither /health nor the project listing reports this state: both
+        // answer ready while the answer is wrong.
+        String notReady = ProjectStateGuard.checkReadyOrError(asked);
+        if (notReady != null)
+        {
+            // Known and left as it is: a query that does not parse would get a settled verdict
+            // here if it were parsed first, and instead it is told the project is building.
+            // Parsing needs no model and could run ahead of this, but splitting the parse from
+            // the check that follows it buys a better-worded refusal, not a truer one - this
+            // answer is honest either way, and the caller sees the syntax error a moment later.
+            return ToolResult.error(notReady).toJson();
+        }
+        // Ready when asked is not the same as ready throughout. The gate above is a reading taken
+        // before the work; between it and the last line of the check the model can start being
+        // rebuilt, and the answer would then come off a model in motion.
+        //
+        // Reading readiness a second time afterwards would not catch it: a model can go ready,
+        // building, ready again while a query is being checked, and both readings say ready. What
+        // separates them is the record of the transitions in between, so the check runs under a
+        // watch that records every one.
+        //
+        // The order below is the whole of it, and it is the reverse of the obvious one. The watch
+        // goes on FIRST and readiness is read UNDER it, so that a build starting in between is
+        // caught by one or the other: read first and a build that starts before the listener is
+        // registered is announced to nobody, and the check runs to the end believing the model
+        // stood still. And the answer is composed inside the watch too, because describing the
+        // result reads the model again after the issues are collected.
+        try (ProjectStateGuard.ModelWatch watch = ProjectStateGuard.watchModel(asked))
+        {
+            if (watch == null)
+            {
+                // Not knowing whether the model held still is not the same as knowing it did.
+                // Readiness was granted above, so this is something coming apart underneath rather
+                // than an ordinary not-ready project, and an unwatched answer is exactly the kind
+                // this whole path exists to stop shipping.
+                return ToolResult
+                    .error("Cannot tell whether this project's model is holding still, so the" //$NON-NLS-1$
+                        + " query was not checked against it. Try again in a moment.") //$NON-NLS-1$
+                    .toJson();
+            }
+            for (int pass = 0; pass < 2; pass++)
+            {
+                watch.reset();
+                String movedSinceTheGate = ProjectStateGuard.checkReadyOrError(asked);
+                if (movedSinceTheGate != null)
+                {
+                    return ToolResult.error(movedSinceTheGate).toJson();
+                }
+                Attempt attempt = attempt(asked, queryText, dcsMode, describeResult, pass > 0, watch);
+                if (attempt.failure != null)
+                {
+                    return attempt.failure;
+                }
+                if (!attempt.moved)
+                {
+                    return attempt.answer;
+                }
+            }
+            // Twice in a row is not a coincidence to retry past. Something is actively rebuilding
+            // this project, and an answer taken now would say more about the timing than about the
+            // query.
+            return ToolResult
+                .error("The model kept changing while the query was being checked." //$NON-NLS-1$
+                    + " Wait for the build to settle and try again.") //$NON-NLS-1$
+                .toJson();
+        }
+    }
+
+    /**
+     * One pass of the check: the named project's model, and the other one when its answer would be
+     * used.
+     * <p>
+     * The other model gets exactly the treatment the named one gets - a watch opened before its
+     * readiness is read, a refusal when it cannot be watched, and the answer composed while the
+     * watch is still open, because describing a result reads that model again. Guarding one side
+     * and not the other would leave the same hole in half the calls.
+     * </p>
+     *
+     * @param asked the project the caller named.
+     * @param queryText the query.
+     * @param dcsMode whether to parse it as a data composition query.
+     * @param describeResult whether to describe the result columns.
+     * @param checkedAgain whether this is the pass taken after a model moved.
+     * @param askedWatch the watch on the named project, already open.
+     * @return the composed answer, a refusal, or word that a model moved and the pass is void.
+     */
+    private Attempt attempt(IProject asked, String queryText, boolean dcsMode,
+        boolean describeResult, boolean checkedAgain, ProjectStateGuard.ModelWatch askedWatch)
+    {
+        Attempt attempt = new Attempt();
         Collected here = collectIssues(asked, queryText, dcsMode);
         if (here.failure != null)
         {
-            return here.failure;
+            attempt.failure = here.failure;
+            return attempt;
         }
-        IProject answered = asked;
-        Collected best = here;
-        if (alternative != null && here.errors() > 0)
+        QlValidator.Companion companion = QlValidator.companionOf(asked);
+        if (here.errors() == 0 || here.parserObjected
+            || companion.kind == QlValidator.Companion.Kind.NONE)
         {
-            Collected above = collectIssues(alternative, queryText, dcsMode);
-            if (above.failure == null && above.errors() == 0)
-            {
-                answered = alternative;
-                best = above;
-            }
+            // Either nothing needs confirming, or there is no other model and none is wanted: a
+            // configuration project holds its own objects, so its errors are settled where they
+            // were found.
+            attempt.answer =
+                buildResult(asked, asked, queryText, here.issues, dcsMode, describeResult, checkedAgain);
+            attempt.moved = askedWatch.moved();
+            return attempt;
         }
-        return buildResult(answered, asked, queryText, best.issues, dcsMode, describeResult);
+        // The other model is reached for here, and not earlier, because only here would its answer
+        // be used: a clean answer from the named project settles the question on its own.
+        //
+        // And when it is reached for and cannot answer, the call is refused rather than answered.
+        // The errors above are exactly the ones this model exists to confirm or overturn - a query
+        // naming an inherited field fails in an extension and passes in its parent - so reporting
+        // them as valid=false would state as settled the one thing that was not established. That
+        // holds for every way of not reaching it: closed, missing, unknowable, still building, or
+        // moving while it was asked.
+        if (companion.kind != QlValidator.Companion.Kind.READY_TO_ASK)
+        {
+            attempt.failure = unconfirmed(companion.why);
+            return attempt;
+        }
+        IProject alternative = companion.project;
+        try (ProjectStateGuard.ModelWatch other = ProjectStateGuard.watchModel(alternative))
+        {
+            if (other == null)
+            {
+                attempt.failure = unconfirmed(
+                    "Cannot tell whether that model is holding still. Try again in a moment."); //$NON-NLS-1$
+                return attempt;
+            }
+            String notReady = ProjectStateGuard.checkReadyOrError(alternative);
+            if (notReady != null)
+            {
+                attempt.failure = unconfirmed(notReady);
+                return attempt;
+            }
+            Collected above = collectIssues(alternative, queryText, dcsMode);
+            if (above.failure != null)
+            {
+                // It was there, it was ready, and asking it still did not work. The errors found in
+                // the named project remain unconfirmed all the same.
+                attempt.failure = unconfirmed("That model could not be asked."); //$NON-NLS-1$
+                return attempt;
+            }
+            boolean fromAbove = above.errors() == 0;
+            attempt.answer = buildResult(fromAbove ? alternative : asked, asked, queryText,
+                fromAbove ? above.issues : here.issues, dcsMode, describeResult, checkedAgain);
+            attempt.moved = other.moved() || askedWatch.moved();
+            return attempt;
+        }
+    }
+
+    /**
+     * Refuses a query whose errors could not be confirmed against the model that holds the objects
+     * it names.
+     *
+     * @param why what stopped that model from being asked.
+     * @return the refusal, as the tool returns it.
+     */
+    private static String unconfirmed(String why)
+    {
+        return ToolResult
+            .error("This query could not be confirmed against the model that holds the objects it" //$NON-NLS-1$
+                + " names. " + why) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * What one pass of the check produced.
+     */
+    private static final class Attempt
+    {
+        /** The composed answer, when nothing moved under it. */
+        String answer;
+
+        /** A refusal that ends the call, or <code>null</code>. */
+        String failure;
+
+        /** Whether a model moved while this pass ran, which makes the answer void. */
+        boolean moved;
     }
 
     /**
@@ -435,12 +615,12 @@ public class QueryValidator
                 resource.load(is, null);
             }
 
-            IResourceValidator validator = rsp.get(IResourceValidator.class);
-            if (validator == null)
-            {
-                return Collected.failed(
-                    ToolResult.error("Error: no query validator is registered for this project").toJson()); //$NON-NLS-1$
-            }
+            // Asked of the parser directly. The resource's error list is not syntax alone -
+            // linking diagnostics land there too, and reading it as "the text does not parse"
+            // would treat an unresolved name as settled and skip the model that resolves it,
+            // which is the exact false verdict this whole path exists to stop.
+            IParseResult parsed = resource.getParseResult();
+            boolean parserObjected = parsed != null && parsed.hasSyntaxErrors();
 
             List<QueryIssue> issues = new ArrayList<>();
             for (Resource.Diagnostic error : resource.getErrors())
@@ -453,6 +633,20 @@ public class QueryValidator
                     new QueryIssue("WARNING", warning.getMessage(), warning.getLine(), warning.getColumn(), -1)); //$NON-NLS-1$
             }
 
+            IResourceValidator validator = rsp.get(IResourceValidator.class);
+            if (validator == null)
+            {
+                if (parserObjected)
+                {
+                    // The parser already settled this one, and nothing the missing checker would
+                    // have said could unsettle it. Returning a generic failure here threw away an
+                    // answer the caller can act on.
+                    return Collected.of(issues, true);
+                }
+                // Nothing settled, and nothing to report: a generic failure is the honest shape.
+                return Collected.failed(
+                    ToolResult.error("Error: no query validator is registered for this project").toJson()); //$NON-NLS-1$
+            }
             List<Issue> validationIssues = validator.validate(resource, CheckMode.ALL, CancelIndicator.NullImpl);
             for (Issue issue : validationIssues)
             {
@@ -481,7 +675,7 @@ public class QueryValidator
                     offset != null ? offset.intValue() : -1));
             }
 
-            return Collected.of(issues);
+            return Collected.of(issues, parserObjected);
         }
         catch (IOException e)
         {
@@ -595,7 +789,7 @@ public class QueryValidator
     }
 
     private String buildResult(IProject project, IProject asked, String queryText,
-        List<QueryIssue> issues, boolean dcsMode, boolean describeResult)
+        List<QueryIssue> issues, boolean dcsMode, boolean describeResult, boolean checkedAgain)
     {
         JsonObject result = new JsonObject();
         result.addProperty("success", true); //$NON-NLS-1$
@@ -608,6 +802,13 @@ public class QueryValidator
         if (project != null && asked != null && !project.equals(asked))
         {
             result.addProperty("resolvedInProject", project.getName()); //$NON-NLS-1$
+        }
+        if (checkedAgain)
+        {
+            // The first pass ran while the model was being rebuilt and was thrown away. This is the
+            // second one, taken after it settled - worth saying, because it is the difference
+            // between an answer about the query and an answer about the timing.
+            result.addProperty("recheckedAfterTheModelMoved", Boolean.TRUE); //$NON-NLS-1$
         }
         result.addProperty("errorCount", //$NON-NLS-1$
             issues.stream().filter(i -> "ERROR".equals(i.severity)).count()); //$NON-NLS-1$

@@ -12,6 +12,7 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 
 import com._1c.g5.v8.derived.DerivedDataStatus;
 import com._1c.g5.v8.derived.IDerivedDataManager;
+import com._1c.g5.v8.derived.IDerivedDataStatusListener;
 import com._1c.g5.v8.dt.core.platform.IDerivedDataManagerProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
@@ -212,9 +213,8 @@ public final class ProjectStateGuard
 
         if (!ddManager.isIdle())
         {
-            DerivedDataStatus status = ddManager.getDerivedDataStatus();
-            String detail = status != null ? status.toString() : "in progress"; //$NON-NLS-1$
-            return new ProjectStateResult(ProjectState.BUILDING, "Project is still building: " + detail); //$NON-NLS-1$
+            return new ProjectStateResult(ProjectState.BUILDING,
+                "Project is still building: " + describe(ddManager.getDerivedDataStatus())); //$NON-NLS-1$
         }
         if (!ddManager.isAllComputed())
         {
@@ -309,6 +309,133 @@ public final class ProjectStateGuard
             return null;
         }
         return checkReadyOrWait(findProject(projectName), timeoutMs);
+    }
+
+    /**
+     * Watches one project's model for the length of an operation, and says afterwards whether it
+     * moved.
+     * <p>
+     * <b>Checking readiness twice does not answer this.</b> A model can go ready, building, ready
+     * again while an operation runs, and both checks would see ready - the operation still read a
+     * model that was being rebuilt underneath it. What separates the two is not a second reading
+     * but a record of every transition in between, which is what the derived-data manager
+     * publishes to a listener.
+     * </p>
+     * <p>
+     * A watch that could not be opened says so rather than saying nothing moved: not knowing and
+     * knowing that nothing happened are different answers, and only one of them is safe to act on.
+     * </p>
+     */
+    public static final class ModelWatch implements AutoCloseable
+    {
+        private final IDerivedDataManager manager;
+
+        private final IDerivedDataStatusListener listener;
+
+        private volatile boolean moved;
+
+        private ModelWatch(IDerivedDataManager manager)
+        {
+            this.manager = manager;
+            this.listener = status -> this.moved = true;
+            manager.addStatusListener(this.listener);
+        }
+
+        /**
+         * Whether the model published a status change since the watch opened.
+         *
+         * @return <code>true</code> if it moved
+         */
+        public boolean moved()
+        {
+            return this.moved;
+        }
+
+        /**
+         * Forgets what was seen so far, so one watch can cover a second attempt.
+         */
+        public void reset()
+        {
+            this.moved = false;
+        }
+
+        @Override
+        public void close()
+        {
+            try
+            {
+                this.manager.removeStatusListener(this.listener);
+            }
+            catch (RuntimeException e)
+            {
+                Activator.logError("Could not stop watching a project model", e); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /**
+     * Opens a watch on a project's model.
+     *
+     * @param project the project to watch; may be <code>null</code>
+     * @return the watch, or <code>null</code> when the model cannot be watched - in which case a
+     *         caller knows it cannot tell, rather than being told nothing moved
+     */
+    public static ModelWatch watchModel(IProject project)
+    {
+        try
+        {
+            IDtProjectManager projects = dtProjectManager();
+            IDerivedDataManagerProvider provider = derivedDataManagerProvider();
+            if (project == null || projects == null || provider == null)
+            {
+                return null;
+            }
+            IDtProject dtProject = projects.getDtProject(project);
+            if (dtProject == null)
+            {
+                return null;
+            }
+            IDerivedDataManager manager = provider.get(dtProject);
+            return manager != null ? new ModelWatch(manager) : null;
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logError("Could not start watching a project model", e); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Puts the build status into words, or says plainly that there are none to give.
+     * <p>
+     * The status class does not override toString, so asking it directly yields the default
+     * identity form - a class name and a hash. That was reaching callers as the named reason a
+     * refusal is supposed to carry, which is no reason at all, and reads like a leak of something
+     * internal rather than an answer.
+     * </p>
+     *
+     * @param status the build status; may be <code>null</code>
+     * @return wording a caller can act on, never <code>null</code>
+     */
+    private static String describe(DerivedDataStatus status)
+    {
+        String said = status != null ? status.toString() : null;
+        if (said == null || said.isEmpty() || said.equals(defaultToString(status)))
+        {
+            return "derived data is still being computed"; //$NON-NLS-1$
+        }
+        return said;
+    }
+
+    /**
+     * Builds what toString would return had the class not overridden it.
+     *
+     * @param value the object to describe; never <code>null</code> when called
+     * @return the default identity form
+     */
+    static String defaultToString(Object value)
+    {
+        return value.getClass().getName() + '@' + Integer.toHexString(value.hashCode());
     }
 
     /**

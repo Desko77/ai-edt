@@ -6,7 +6,14 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.Test;
 
@@ -51,5 +58,78 @@ public class BothModelsAreAskedForAnExtensionTest
         // Finding out whether there is a second model must not itself become a null dereference:
         // this is called on every query, extension or not.
         assertNull(QlValidator.alsoAsk(null));
+    }
+
+    @Test
+    public void absentAndUnusableAreDifferentAnswers()
+    {
+        // The whole point of the three-way answer. A configuration project has no other model and
+        // needs none, so its errors are settled where they were found. An extension whose parent is
+        // closed or missing HAS one and cannot reach it, and its errors are settled by nothing -
+        // a query naming an inherited field fails in the extension and passes in the parent.
+        //
+        // While both answers were the same null, those two cases were indistinguishable, and the
+        // second one shipped unconfirmed errors as a verdict.
+        assertEquals(4, QlValidator.Companion.Kind.values().length);
+        assertNotNull(QlValidator.Companion.Kind.NONE);
+        assertNotNull(QlValidator.Companion.Kind.READY_TO_ASK);
+        assertNotNull(QlValidator.Companion.Kind.UNUSABLE);
+        assertNotNull(QlValidator.Companion.Kind.CANNOT_TELL);
+    }
+
+    @Test
+    public void nothingNamedIsNothingToConfirm()
+    {
+        // No project, no claim about extensions - and specifically not "unusable", which would
+        // refuse every call made before a project name is resolved.
+        QlValidator.Companion companion = QlValidator.companionOf(null);
+        assertNotNull(companion);
+        assertEquals(QlValidator.Companion.Kind.NONE, companion.kind);
+        assertNull(companion.project);
+    }
+
+    @Test
+    public void aShrugAndARefusalAreToldApart()
+    {
+        // These two share a false `available` and mean opposite things to a caller that writes.
+        //
+        // Unavailable is an EDT that cannot check queries at all - dcs_workshop has always written
+        // anyway, because blocking every edit on such an install would make the tool useless.
+        // Unconfirmed is a check that was possible and did not settle. Writing on that is writing
+        // text nothing vouched for, and while both were the same flag, that is what happened.
+        QlValidator.ValidationResult cannotCheckHere =
+            QlValidator.ValidationResult.unavailable("no query language in this EDT"); //$NON-NLS-1$
+        assertFalse(cannotCheckHere.available);
+        assertFalse("an absent language is not an unsettled answer", //$NON-NLS-1$
+            cannotCheckHere.unconfirmed);
+
+        QlValidator.ValidationResult didNotSettle =
+            QlValidator.ValidationResult.unconfirmed("the other model is still building"); //$NON-NLS-1$
+        assertFalse(didNotSettle.available);
+        assertTrue(didNotSettle.unconfirmed);
+    }
+
+    @Test
+    public void whatWasFoundSurvivesNotBeingSettled()
+    {
+        // Half an answer is still worth reporting: the syntax errors found before the semantic
+        // checker turned out to be missing are real, and a caller should see them while being told
+        // the rest was never asked.
+        List<QlValidator.QlIssue> found = new ArrayList<>();
+        found.add(new QlValidator.QlIssue("ERROR", "unexpected token", 1, 7)); //$NON-NLS-1$ //$NON-NLS-2$
+        QlValidator.ValidationResult partial = QlValidator.ValidationResult.unconfirmedWith(found,
+            "the checker that resolves names was not available"); //$NON-NLS-1$
+
+        assertTrue(partial.unconfirmed);
+        assertEquals(1, partial.errorCount);
+        assertTrue(partial.hasErrors());
+        assertEquals(1, partial.issues.size());
+    }
+
+    @Test
+    public void anOrdinaryAnswerClaimsNothingUnsettled()
+    {
+        assertFalse(QlValidator.ValidationResult.ok().unconfirmed);
+        assertFalse(QlValidator.ValidationResult.of(new ArrayList<>()).unconfirmed);
     }
 }

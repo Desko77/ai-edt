@@ -15,9 +15,11 @@ import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.xtext.parser.IParseResult;
 import org.eclipse.xtext.resource.IResourceServiceProvider;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.resource.IResourceSetProvider;
@@ -25,6 +27,10 @@ import org.eclipse.xtext.util.CancelIndicator;
 import org.eclipse.xtext.validation.CheckMode;
 import org.eclipse.xtext.validation.IResourceValidator;
 import org.eclipse.xtext.validation.Issue;
+
+import com._1c.g5.v8.dt.core.platform.IExtensionProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -49,6 +55,10 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class QlValidator
 {
+    private static final String V8_CONFIGURATION_NATURE = "com._1c.g5.v8.dt.core.V8ConfigurationNature"; //$NON-NLS-1$
+
+    private static final String V8_EXTENSION_NATURE = "com._1c.g5.v8.dt.core.V8ExtensionNature"; //$NON-NLS-1$
+
     private static final String QLDCS_LOOKUP_URI =
         "/nopr/dcs_workshop_validate.qldcs"; //$NON-NLS-1$
 
@@ -95,6 +105,24 @@ public final class QlValidator
     public static final class ValidationResult
     {
         public final boolean available; // false when QlDcs language not present
+
+        /**
+         * Whether what is reported here can be acted on.
+         * <p>
+         * Distinct from {@link #available}, and the distinction is the point. Unavailable means
+         * this EDT cannot check queries at all, which callers have always tolerated by writing
+         * anyway. Unconfirmed means a check was possible and its answer is not settled - the model
+         * that would confirm it could not be asked, or the semantic checker that finds bad
+         * references was absent. Sharing one flag between those made a refusal indistinguishable
+         * from a shrug, and a write went through on both.
+         * </p>
+         */
+        public final boolean unconfirmed;
+
+        /**
+         * Whether the parser objected, which no second model can overturn.
+         */
+        public boolean parserObjected;
         public final List<QlIssue> issues;
         public final int errorCount;
         public final int warningCount;
@@ -113,6 +141,13 @@ public final class QlValidator
 
         private ValidationResult(boolean available, List<QlIssue> issues, String reason)
         {
+            this(available, issues, reason, false);
+        }
+
+        private ValidationResult(boolean available, List<QlIssue> issues, String reason,
+            boolean unconfirmed)
+        {
+            this.unconfirmed = unconfirmed;
             this.available = available;
             this.issues = issues != null ? issues : new ArrayList<>();
             this.unavailableReason = reason;
@@ -148,6 +183,29 @@ public final class QlValidator
             return new ValidationResult(true, issues, null);
         }
 
+        /**
+         * A check whose answer cannot be acted on, with nothing to report.
+         *
+         * @param reason what stopped it from being settled.
+         * @return the result.
+         */
+        public static ValidationResult unconfirmed(String reason)
+        {
+            return new ValidationResult(false, new ArrayList<>(), reason, true);
+        }
+
+        /**
+         * A check that found something and still cannot be acted on.
+         *
+         * @param issues what it did find, which is worth reporting even so.
+         * @param reason what stopped the rest from being settled.
+         * @return the result.
+         */
+        public static ValidationResult unconfirmedWith(List<QlIssue> issues, String reason)
+        {
+            return new ValidationResult(true, issues, reason, true);
+        }
+
         public static ValidationResult unavailable(String reason)
         {
             return new ValidationResult(false, new ArrayList<>(), reason);
@@ -170,8 +228,12 @@ public final class QlValidator
             stats.put("errors", errorCount); //$NON-NLS-1$
             stats.put("warnings", warningCount); //$NON-NLS-1$
             stats.put("available", available); //$NON-NLS-1$
-            if (!available && unavailableReason != null)
+            stats.put("unconfirmed", unconfirmed); //$NON-NLS-1$
+            if (unavailableReason != null)
             {
+                // Reported whenever there is one. It used to be withheld unless the whole check
+                // was unavailable, which hid the reason exactly where it matters most: a partial
+                // answer that looks complete.
                 stats.put("reason", unavailableReason); //$NON-NLS-1$
             }
             data.put("statistics", stats); //$NON-NLS-1$
@@ -198,7 +260,7 @@ public final class QlValidator
         {
             return ValidationResult.unavailable("project not available"); //$NON-NLS-1$
         }
-        return bestOfBothModels(project, queryText, dcsMode);
+        return settledAnswer(project, queryText, dcsMode);
     }
 
     /**
@@ -226,8 +288,8 @@ public final class QlValidator
         // We surround with parentheses + alias so even malformed expressions
         // are syntactically wrapped.
         String wrapped = "ВЫБРАТЬ (" + expression + ") КАК __DcsExpressionProbe"; //$NON-NLS-1$
-        ValidationResult raw = bestOfBothModels(project, wrapped, true);
-        if (!raw.available)
+        ValidationResult raw = settledAnswer(project, wrapped, true);
+        if (!raw.available || raw.unconfirmed)
         {
             return raw;
         }
@@ -246,7 +308,9 @@ public final class QlValidator
             }
             filtered.add(i);
         }
-        return ValidationResult.of(filtered);
+        ValidationResult kept = ValidationResult.of(filtered);
+        kept.parserObjected = raw.parserObjected;
+        return kept;
     }
 
 
@@ -266,10 +330,198 @@ public final class QlValidator
      */
     public static IProject alsoAsk(IProject project)
     {
-        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
-        return parent != null && parent.exists() && parent.isOpen() && !parent.equals(project)
-            ? parent
-            : null;
+        Companion companion = companionOf(project);
+        return companion.kind == Companion.Kind.READY_TO_ASK ? companion.project : null;
+    }
+
+    /**
+     * What one pass of the check produced: an answer, or word that a model moved under it.
+     */
+    private static final class Pass
+    {
+        /** The answer, or <code>null</code> when the pass is void. */
+        final ValidationResult answer;
+
+        private Pass(ValidationResult answer)
+        {
+            this.answer = answer;
+        }
+
+        static Pass of(ValidationResult answer)
+        {
+            return new Pass(answer);
+        }
+
+        static Pass voided()
+        {
+            return new Pass(null);
+        }
+    }
+
+    /**
+     * Reads what a project is from its nature, when the project layer cannot say.
+     * <p>
+     * A configuration holds its own objects: nothing else confirms or overturns what its model
+     * reports, so there is no companion to want. An extension has one by definition, and if this
+     * is all we know, we know we cannot reach it.
+     * </p>
+     *
+     * @param project the project; never <code>null</code> when called
+     * @return the verdict its nature supports, never <code>null</code>
+     */
+    private static Companion fromNatureAlone(IProject project)
+    {
+        try
+        {
+            if (project.hasNature(V8_EXTENSION_NATURE))
+            {
+                return Companion.cannotTell("This project extends another, and which one could" //$NON-NLS-1$
+                    + " not be established."); //$NON-NLS-1$
+            }
+            if (project.hasNature(V8_CONFIGURATION_NATURE))
+            {
+                return Companion.none();
+            }
+        }
+        catch (CoreException e)
+        {
+            Activator.logWarning("Could not read a project's nature: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return Companion.cannotTell("What this project is could not be established."); //$NON-NLS-1$
+    }
+
+    /**
+     * What other model, if any, can be asked about a query alongside the named project.
+     * <p>
+     * <b>Absent and unusable are different answers.</b> A configuration project has no other model
+     * and needs none - its errors are settled. An extension whose parent is closed, missing, or
+     * unknowable has one and cannot reach it, and its errors are settled by nothing: a query naming
+     * an inherited field fails in the extension and passes in the parent. Answering the same way to
+     * both is how an unconfirmed error gets reported as a verdict.
+     * </p>
+     *
+     * @param project the project the caller named; may be <code>null</code>
+     * @return the verdict, never <code>null</code>
+     */
+    public static Companion companionOf(IProject project)
+    {
+        if (project == null)
+        {
+            return Companion.none();
+        }
+        if (!project.isOpen())
+        {
+            return Companion.unusable("The project is not open."); //$NON-NLS-1$
+        }
+        Activator activator = Activator.getDefault();
+        IV8ProjectManager projectManager = activator == null ? null : activator.getV8ProjectManager();
+        if (projectManager == null)
+        {
+            // Losing that service need not blind us. A project carries its own nature, and a
+            // configuration's nature already settles the question: it holds its own objects and
+            // wants no second model. Refusing every failing query in every configuration because
+            // one service is away would turn a narrow gap into an outage.
+            return fromNatureAlone(project);
+        }
+        try
+        {
+            IV8Project v8Project = projectManager.getProject(project);
+            if (v8Project == null)
+            {
+                // Not the same as "not an extension". During start-up the project layer answers
+                // null for projects it has not taken in yet, and reading that as a configuration
+                // is how an extension's unconfirmed errors get reported as a verdict.
+                return fromNatureAlone(project);
+            }
+            if (!(v8Project instanceof IExtensionProject))
+            {
+                return Companion.none();
+            }
+            IProject parent = ((IExtensionProject)v8Project).getParentProject();
+            if (parent == null)
+            {
+                return Companion.unusable("This extension names no configuration to extend."); //$NON-NLS-1$
+            }
+            if (parent.equals(project))
+            {
+                return Companion.unusable("This extension names itself as the configuration it" //$NON-NLS-1$
+                    + " extends."); //$NON-NLS-1$
+            }
+            if (!parent.exists())
+            {
+                return Companion.unusable("The configuration this extension extends is not in the" //$NON-NLS-1$
+                    + " workspace: " + parent.getName()); //$NON-NLS-1$
+            }
+            if (!parent.isOpen())
+            {
+                return Companion.unusable("The configuration this extension extends is closed: " //$NON-NLS-1$
+                    + parent.getName());
+            }
+            return Companion.readyToAsk(parent);
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("Could not establish what this project extends: " + e.getMessage()); //$NON-NLS-1$
+            return fromNatureAlone(project);
+        }
+    }
+
+    /**
+     * The other model that may hold the objects a query names, and whether it can be asked.
+     */
+    public static final class Companion
+    {
+        /** Which of the three situations this is. */
+        public enum Kind
+        {
+            /** There is no other model, and none is needed. */
+            NONE,
+
+            /** There is one and it can be asked. */
+            READY_TO_ASK,
+
+            /** There is one and it cannot be asked. */
+            UNUSABLE,
+
+            /** Whether there is one could not be established. */
+            CANNOT_TELL
+        }
+
+        /** Which situation this is. */
+        public final Kind kind;
+
+        /** The model to ask, set only for {@link Kind#READY_TO_ASK}. */
+        public final IProject project;
+
+        /** Why it cannot be asked, set for {@link Kind#UNUSABLE} and {@link Kind#CANNOT_TELL}. */
+        public final String why;
+
+        private Companion(Kind kind, IProject project, String why)
+        {
+            this.kind = kind;
+            this.project = project;
+            this.why = why;
+        }
+
+        static Companion none()
+        {
+            return new Companion(Kind.NONE, null, null);
+        }
+
+        static Companion readyToAsk(IProject project)
+        {
+            return new Companion(Kind.READY_TO_ASK, project, null);
+        }
+
+        static Companion unusable(String why)
+        {
+            return new Companion(Kind.UNUSABLE, null, why);
+        }
+
+        static Companion cannotTell(String why)
+        {
+            return new Companion(Kind.CANNOT_TELL, null, why);
+        }
     }
 
     /**
@@ -294,28 +546,148 @@ public final class QlValidator
      * @return the better of the two answers, naming the model that gave it when that was not the
      *         project the caller named.
      */
-    private static ValidationResult bestOfBothModels(IProject asked, String queryText,
+    private static ValidationResult settledAnswer(IProject asked, String queryText,
         boolean dcsMode)
     {
+        // Everything validate_query does at its own door, done here too: this answer gates writes,
+        // so an answer taken off a model in motion is worse here than there.
+        //
+        // The watch goes on before readiness is read, and the pass is repeated once if the model
+        // moved under it. Reading readiness twice would not do: a model can go ready, building,
+        // ready again while one check runs, and both readings say ready.
+        try (ProjectStateGuard.ModelWatch watch = ProjectStateGuard.watchModel(asked))
+        {
+            if (watch == null)
+            {
+                Pass probe = onePass(asked, queryText, dcsMode);
+                if (probe.answer != null && !probe.answer.available && !probe.answer.unconfirmed)
+                {
+                    // No query support in this EDT at all. That verdict does not depend on any
+                    // model holding still, and callers have always been allowed to write through it.
+                    return probe.answer;
+                }
+                return ValidationResult.unconfirmed(
+                    "Cannot tell whether this project's model is holding still, so this query was" //$NON-NLS-1$
+                        + " not checked against it. Try again in a moment."); //$NON-NLS-1$
+            }
+            for (int pass = 0; pass < 2; pass++)
+            {
+                watch.reset();
+                Pass attempt = onePass(asked, queryText, dcsMode);
+                if (attempt.answer == null)
+                {
+                    // A model moved under this pass. Nothing it produced is worth reporting.
+                    continue;
+                }
+                if (!attempt.answer.available && !attempt.answer.unconfirmed)
+                {
+                    return attempt.answer;
+                }
+                if (!watch.moved())
+                {
+                    return attempt.answer;
+                }
+            }
+            return ValidationResult.unconfirmed("The model kept changing while this query was" //$NON-NLS-1$
+                + " being checked. Wait for the build to settle and try again."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * One pass of the check: the named project's model, and the other one when its answer would be
+     * used.
+     *
+     * @param asked the project the caller named.
+     * @param queryText the query.
+     * @param dcsMode whether to parse it as a data composition query.
+     * @return what the check found, or why it could not settle.
+     */
+    private static Pass onePass(IProject asked, String queryText, boolean dcsMode)
+    {
         ValidationResult here = runValidation(asked, queryText, dcsMode);
-        IProject alternative = alsoAsk(asked);
-        if (alternative == null || !here.available || here.errorCount == 0)
+        if (!here.available)
         {
-            return here;
+            // This EDT cannot check queries. Readiness has nothing to add to that, and asking about
+            // it first would turn a build in progress into a block on an install where the policy
+            // is to write anyway.
+            return Pass.of(here);
         }
-        ValidationResult above = runValidation(alternative, queryText, dcsMode);
-        if (!above.available || above.errorCount != 0)
+        String notReady = ProjectStateGuard.checkReadyOrError(asked);
+        if (notReady != null)
         {
-            return here;
+            // Checked after the answer, not before it, and it still governs: right after EDT
+            // restarts this model reports missing tables that exist, and it can as easily report
+            // nothing wrong with a query that is wrong.
+            return Pass.of(ValidationResult.unconfirmed(notReady));
         }
-        above.resolvedInProject = alternative.getName();
-        return above;
+        if (here.unconfirmed || here.errorCount == 0 || here.parserObjected)
+        {
+            // Parsing settled it: the other model would be parsing the same text.
+            return Pass.of(here);
+        }
+        Companion companion = companionOf(asked);
+        if (companion.kind == Companion.Kind.NONE)
+        {
+            return Pass.of(here);
+        }
+        if (companion.kind != Companion.Kind.READY_TO_ASK)
+        {
+            // There is a model that would confirm or overturn these errors and it cannot be
+            // reached. Reporting them as findings would have a caller reject a query that the
+            // other model would have passed, and this result gates writes.
+            return Pass.of(ValidationResult.unconfirmed(
+                "This query could not be confirmed against the model that holds the objects it" //$NON-NLS-1$
+                    + " names. " + companion.why)); //$NON-NLS-1$
+        }
+        IProject alternative = companion.project;
+        try (ProjectStateGuard.ModelWatch other = ProjectStateGuard.watchModel(alternative))
+        {
+            if (other == null)
+            {
+                return Pass.of(ValidationResult.unconfirmed(
+                    "This query could not be confirmed against the model that holds the objects" //$NON-NLS-1$
+                        + " it names. Cannot tell whether that model is holding still.")); //$NON-NLS-1$
+            }
+            String otherNotReady = ProjectStateGuard.checkReadyOrError(alternative);
+            if (otherNotReady != null)
+            {
+                return Pass.of(ValidationResult.unconfirmed(
+                    "This query could not be confirmed against the model that holds the objects" //$NON-NLS-1$
+                        + " it names. " + otherNotReady)); //$NON-NLS-1$
+            }
+            ValidationResult above = runValidation(alternative, queryText, dcsMode);
+            if (other.moved())
+            {
+                // Not an answer, and not a refusal either: this pass is void and the outer loop
+                // gets to try again. Refusing outright would spend the retry on a model that may
+                // well have settled by the time a second pass ran.
+                return Pass.voided();
+            }
+            if (!above.available || above.unconfirmed)
+            {
+                // It was there, it was ready, and asking it did not work. The errors found in the
+                // named project stay unconfirmed all the same.
+                return Pass.of(ValidationResult.unconfirmed(
+                    "This query could not be confirmed against the model that holds the objects" //$NON-NLS-1$
+                        + " it names. That model could not be asked.")); //$NON-NLS-1$
+            }
+            if (above.errorCount != 0)
+            {
+                return Pass.of(here);
+            }
+            above.resolvedInProject = alternative.getName();
+            return Pass.of(above);
+        }
     }
 
     private static ValidationResult runValidation(IProject project, String queryText,
         boolean dcsMode)
     {
         XtextResource resource = null;
+        // Held outside the try so a throw part-way can still report what was found before it,
+        // and so a settled parser verdict survives whatever came apart after it.
+        List<QlIssue> found = new ArrayList<>();
+        boolean parserObjectedBeforeTheThrow = false;
         try
         {
             URI lookup = URI.createURI(QLDCS_LOOKUP_URI);
@@ -356,7 +728,7 @@ public final class QlValidator
             {
                 resource.load(in, null);
             }
-            List<QlIssue> issues = new ArrayList<>();
+            List<QlIssue> issues = found;
             for (Resource.Diagnostic d : resource.getErrors())
             {
                 issues.add(new QlIssue("ERROR", d.getMessage(), d.getLine(), d.getColumn())); //$NON-NLS-1$
@@ -366,36 +738,68 @@ public final class QlValidator
                 issues.add(new QlIssue("WARNING", d.getMessage(), d.getLine(), //$NON-NLS-1$
                     d.getColumn()));
             }
+            IParseResult parsed = resource.getParseResult();
+            boolean parserObjected = parsed != null && parsed.hasSyntaxErrors();
+            parserObjectedBeforeTheThrow = parserObjected;
+
             IResourceValidator validator = rsp.get(IResourceValidator.class);
-            if (validator != null)
+            if (validator == null)
             {
-                List<Issue> semantic = validator.validate(resource, CheckMode.ALL,
-                    CancelIndicator.NullImpl);
-                for (Issue i : semantic)
+                if (parserObjected)
                 {
-                    String sev;
-                    switch (i.getSeverity())
-                    {
-                        case ERROR:
-                            sev = "ERROR"; break; //$NON-NLS-1$
-                        case WARNING:
-                            sev = "WARNING"; break; //$NON-NLS-1$
-                        case INFO:
-                            sev = "INFO"; break; //$NON-NLS-1$
-                        default:
-                            sev = "WARNING"; break; //$NON-NLS-1$
-                    }
-                    int line = i.getLineNumber() != null ? i.getLineNumber().intValue() : -1;
-                    int col = i.getColumn() != null ? i.getColumn().intValue() : -1;
-                    issues.add(new QlIssue(sev, i.getMessage(), line, col));
+                    // The text does not parse. No checker of names was going to change that, so
+                    // this verdict is settled and saying otherwise would send a caller back to
+                    // retry a query that will fail the same way every time.
+                    ValidationResult settledByTheParser = ValidationResult.of(issues);
+                    settledByTheParser.parserObjected = true;
+                    return settledByTheParser;
                 }
+                // Parsing found what parsing finds. Whether the query names objects that exist was
+                // never asked, and answering "no problems" would say it was.
+                return ValidationResult.unconfirmedWith(issues,
+                    "The checker that resolves names against metadata was not available, so only" //$NON-NLS-1$
+                        + " the syntax of this query was checked."); //$NON-NLS-1$
             }
-            return ValidationResult.of(issues);
+            List<Issue> semantic = validator.validate(resource, CheckMode.ALL,
+                CancelIndicator.NullImpl);
+            for (Issue i : semantic)
+            {
+                String sev;
+                switch (i.getSeverity())
+                {
+                    case ERROR:
+                        sev = "ERROR"; break; //$NON-NLS-1$
+                    case WARNING:
+                        sev = "WARNING"; break; //$NON-NLS-1$
+                    case INFO:
+                        sev = "INFO"; break; //$NON-NLS-1$
+                    default:
+                        sev = "WARNING"; break; //$NON-NLS-1$
+                }
+                int line = i.getLineNumber() != null ? i.getLineNumber().intValue() : -1;
+                int col = i.getColumn() != null ? i.getColumn().intValue() : -1;
+                issues.add(new QlIssue(sev, i.getMessage(), line, col));
+            }
+            ValidationResult settled = ValidationResult.of(issues);
+            settled.parserObjected = parserObjected;
+            return settled;
         }
         catch (Exception e)
         {
             Activator.logWarning("QlValidator failed: " + e.getMessage()); //$NON-NLS-1$
-            return ValidationResult.unavailable(e.getMessage());
+            if (parserObjectedBeforeTheThrow)
+            {
+                // Whatever came apart, it came apart after the parser had already refused the
+                // text. That verdict stands on its own.
+                ValidationResult settledByTheParser = ValidationResult.of(found);
+                settledByTheParser.parserObjected = true;
+                return settledByTheParser;
+            }
+            // Not unavailable: this EDT can check queries, and this one check came apart. Saying
+            // otherwise would have callers write through it, and would drop whatever parsing had
+            // already found.
+            return ValidationResult.unconfirmedWith(found, "Checking this query failed part-way: " //$NON-NLS-1$
+                + e.getMessage());
         }
         finally
         {
