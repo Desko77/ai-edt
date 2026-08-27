@@ -101,4 +101,36 @@ public class FormEventRegistryTest
         assertTrue("the parameters have to be there or the platform will not bind the handler", //$NON-NLS-1$
             stub.contains(spec.signature));
     }
+
+    /**
+     * The clear button on an input field.
+     * <p>
+     * Reported from a workspace where the event was refused as unknown: {@code Clearing} appears 109
+     * times in the forms of a shipped configuration, and every one of them had to be written into
+     * the .form by hand. Its neighbours on the same field extension were missing with it.
+     * </p>
+     */
+    @Test
+    public void theClearButtonAndItsNeighboursAreKnownEvents()
+    {
+        for (String event : new String[] {"Clearing", "Очистка", //$NON-NLS-1$ //$NON-NLS-2$
+            "TextEditEnd", "Opening"}) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            assertNotNull(event + " is a platform event and must resolve", //$NON-NLS-1$
+                FormEventRegistry.lookup(event));
+        }
+    }
+
+    @Test
+    public void aFieldEventTakesTheElementFirst()
+    {
+        // Every field event the platform documents without an element still receives one as the
+        // first argument of the handler. Clearing is documented as Clearing(StandardProcessing).
+        EventSpec spec = FormEventRegistry.lookup("Clearing"); //$NON-NLS-1$
+
+        assertNotNull(spec);
+        assertTrue(spec.signature, spec.signature.startsWith("Элемент")); //$NON-NLS-1$
+        assertTrue(spec.signature,
+            spec.signature.contains("СтандартнаяОбработка")); //$NON-NLS-1$
+    }
 }

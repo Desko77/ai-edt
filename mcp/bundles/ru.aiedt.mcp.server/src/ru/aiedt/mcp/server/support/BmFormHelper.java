@@ -4133,38 +4133,101 @@ public class BmFormHelper
         }
     }
 
+    /**
+     * Fills a new page's extInfo the way the EDT wizard does.
+     * <p>
+     * A page created with an empty extInfo carries its title in the model and shows a tab without
+     * one: the platform prints the caption only when showTitle is set. Typical forms carry
+     * showTitle=true beside group=Vertical, and PageGroupExtInfo declares both
+     * ({@code setShowTitle(boolean)}, {@code setGroup(FormChildrenGroup)}) in 2026.1 and 2026.2.
+     * </p>
+     *
+     * @param extInfo the freshly created PageGroupExtInfo
+     */
+    private static void applyPageDefaults(Object extInfo)
+    {
+        try
+        {
+            extInfo.getClass().getMethod("setShowTitle", boolean.class).invoke(extInfo, true); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("page showTitle not applied: " + e.getMessage()); //$NON-NLS-1$
+        }
+        try
+        {
+            Class<?> childrenGroup =
+                Class.forName("com._1c.g5.v8.dt.form.model.FormChildrenGroup"); //$NON-NLS-1$
+            for (Object constant : childrenGroup.getEnumConstants())
+            {
+                if ("Vertical".equalsIgnoreCase(constant.toString())) //$NON-NLS-1$
+                {
+                    extInfo.getClass().getMethod("setGroup", childrenGroup) //$NON-NLS-1$
+                        .invoke(extInfo, constant);
+                    return;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("page group not applied: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Which FormFactory method makes the extInfo a group type needs.
+     * <p>
+     * Order carries the whole decision, because the names overlap: "pages" contains "page". The
+     * branch that used to guard the container with {@code && !lower.contains("page")} could
+     * therefore never fire, and every Pages group was built with a single page's extInfo - EDT
+     * reported "Illegal extension type for group type 'Pages'" and the platform would not open the
+     * form.
+     * </p>
+     *
+     * @param groupType the requested group type, as the caller wrote it
+     * @return the factory method name; never <code>null</code>
+     */
+    static String groupExtInfoFactory(String groupType)
+    {
+        String lower = groupType == null ? "" : groupType.toLowerCase(); //$NON-NLS-1$
+        if (lower.contains("pages")) //$NON-NLS-1$
+        {
+            return "createPagesGroupExtInfo"; //$NON-NLS-1$
+        }
+        if (lower.contains("page")) //$NON-NLS-1$
+        {
+            return "createPageGroupExtInfo"; //$NON-NLS-1$
+        }
+        if (lower.contains("column")) //$NON-NLS-1$
+        {
+            return "createColumnGroupExtInfo"; //$NON-NLS-1$
+        }
+        if (lower.contains("command")) //$NON-NLS-1$
+        {
+            return "createCommandBarExtInfo"; //$NON-NLS-1$
+        }
+        if (lower.contains("button")) //$NON-NLS-1$
+        {
+            return "createButtonGroupExtInfo"; //$NON-NLS-1$
+        }
+        if (lower.contains("popup")) //$NON-NLS-1$
+        {
+            return "createPopupGroupExtInfo"; //$NON-NLS-1$
+        }
+        return "createUsualGroupExtInfo"; //$NON-NLS-1$
+    }
+
     private void setGroupExtInfo(Object group, String groupType) throws Exception
     {
-        String lower = groupType.toLowerCase();
-        Object extInfo;
+        String factory = groupExtInfoFactory(groupType);
+        Object extInfo = ffClass.getMethod(factory).invoke(formFactory);
 
-        if (lower.contains("pages") && !lower.contains("page")) //$NON-NLS-1$ //$NON-NLS-2$
+        if ("createPageGroupExtInfo".equals(factory)) //$NON-NLS-1$
         {
-            extInfo = ffClass.getMethod("createPagesGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
+            applyPageDefaults(extInfo);
         }
-        else if (lower.contains("page")) //$NON-NLS-1$
+        else if ("createUsualGroupExtInfo".equals(factory)) //$NON-NLS-1$
         {
-            extInfo = ffClass.getMethod("createPageGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
-        }
-        else if (lower.contains("column")) //$NON-NLS-1$
-        {
-            extInfo = ffClass.getMethod("createColumnGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
-        }
-        else if (lower.contains("command") || lower.contains("commandbar")) //$NON-NLS-1$ //$NON-NLS-2$
-        {
-            extInfo = ffClass.getMethod("createCommandBarExtInfo").invoke(formFactory); //$NON-NLS-1$
-        }
-        else if (lower.contains("button")) //$NON-NLS-1$
-        {
-            extInfo = ffClass.getMethod("createButtonGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
-        }
-        else if (lower.contains("popup")) //$NON-NLS-1$
-        {
-            extInfo = ffClass.getMethod("createPopupGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
-        }
-        else
-        {
-            extInfo = ffClass.getMethod("createUsualGroupExtInfo").invoke(formFactory); //$NON-NLS-1$
             for (String[] pair : USUAL_GROUP_DEFAULTS)
             {
                 setScalarProperty(extInfo, pair[0], pair[1]);

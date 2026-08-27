@@ -745,7 +745,7 @@ public class EditFormTool implements IMcpTool
                     continue;
                 }
                 String fieldType = col.isBoolean ? "CheckBoxField" : "InputField"; //$NON-NLS-1$ //$NON-NLS-2$
-                Object field = helper.createFormField(fieldName, col.name, fieldType);
+                Object field = helper.createFormField(fieldName, col.title, fieldType);
                 helper.setDataPath(field, dataPath + "." + col.name); //$NON-NLS-1$
                 helper.addToContainer(table, field);
                 // A generated column is a FormField inside a Table - apply the same
@@ -774,13 +774,48 @@ public class EditFormTool implements IMcpTool
     private static final class ColumnSpec
     {
         final String name;
+        final String title;
         final boolean isBoolean;
 
-        ColumnSpec(String name, boolean isBoolean)
+        ColumnSpec(String name, String title, boolean isBoolean)
         {
             this.name = name;
+            this.title = title;
             this.isBoolean = isBoolean;
         }
+    }
+
+    /**
+     * The caption a column carries, if it carries one.
+     * <p>
+     * A column of a form attribute holds it in {@code getTitle()}, an attribute of a tabular section
+     * in {@code getSynonym()}; both are localized holders the shared helper unwraps. Absent means
+     * absent: a generated column with no caption of its own must be left without a title tag, so the
+     * platform shows the attribute's own presentation instead of a name in camel case.
+     * </p>
+     *
+     * @param column the column or attribute object from the model
+     * @return the caption, or <code>null</code> when there is none
+     */
+    private static String captionOf(Object column)
+    {
+        for (String accessor : new String[] { "getTitle", "getSynonym" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            try
+            {
+                Object held = column.getClass().getMethod(accessor).invoke(column);
+                String text = ru.aiedt.mcp.server.support.LocalizedStringUtils.text(held);
+                if (text != null && !text.isEmpty())
+                {
+                    return text;
+                }
+            }
+            catch (Exception ignored)
+            {
+                // Not every column type has both; the next accessor gets its turn.
+            }
+        }
+        return null;
     }
 
     /**
@@ -852,7 +887,7 @@ public class EditFormTool implements IMcpTool
                             {
                                 continue;
                             }
-                            result.add(new ColumnSpec(n, isBooleanColumn(col)));
+                            result.add(new ColumnSpec(n, captionOf(col), isBooleanColumn(col)));
                         }
                         catch (Exception ignored)
                         {
@@ -1391,7 +1426,9 @@ public class EditFormTool implements IMcpTool
 
         sb.append("### addButton\n"); //$NON-NLS-1$
         sb.append("Add a button with linked command.\n"); //$NON-NLS-1$
-        sb.append("- **name** (required): Button name (command: name + 'Command')\n"); //$NON-NLS-1$
+        sb.append("- **name** (required): Button name. The command created with the button carries " //$NON-NLS-1$
+            + "the SAME name, without a suffix - form items and form commands live in separate name " //$NON-NLS-1$
+            + "spaces, so the two may share it.\n"); //$NON-NLS-1$
         sb.append("- **title**: Button caption\n"); //$NON-NLS-1$
         sb.append("- **parentName**: Parent container\n"); //$NON-NLS-1$
         sb.append("- **beforeName**: Insert before this element\n\n"); //$NON-NLS-1$

@@ -106,6 +106,16 @@ public final class FormEventRegistry
             "&НаКлиенте", Scope.FIELD); //$NON-NLS-1$
         register(m, "OnEditEnd", "ПриОкончанииРедактирования", //$NON-NLS-1$ //$NON-NLS-2$
             "Элемент, ОтменаРедактирования", "&НаКлиенте", Scope.FIELD); //$NON-NLS-1$ //$NON-NLS-2$
+        // The clear button and Shift+F4. Documented on the input field's form-item extension as
+        // Clearing(StandardProcessing); the element comes first here the way it does for every other
+        // field event above.
+        register(m, "Clearing", "Очистка", //$NON-NLS-1$ //$NON-NLS-2$
+            "Элемент, СтандартнаяОбработка", "&НаКлиенте", Scope.FIELD); //$NON-NLS-1$ //$NON-NLS-2$
+        register(m, "TextEditEnd", "ОкончаниеВводаТекста", //$NON-NLS-1$ //$NON-NLS-2$
+            "Элемент, Текст, ДанныеВыбора, ПараметрыПолученияДанных, СтандартнаяОбработка", //$NON-NLS-1$
+            "&НаКлиенте", Scope.FIELD); //$NON-NLS-1$
+        register(m, "Opening", "Открытие", //$NON-NLS-1$ //$NON-NLS-2$
+            "Элемент, СтандартнаяОбработка", "&НаКлиенте", Scope.FIELD); //$NON-NLS-1$ //$NON-NLS-2$
 
         // Table events.
         register(m, "BeforeAddRow", "ПередНачаломДобавления", //$NON-NLS-1$ //$NON-NLS-2$

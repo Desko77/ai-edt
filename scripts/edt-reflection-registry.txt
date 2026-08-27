@@ -85,6 +85,7 @@ com._1c.g5.v8.dt.form.model.ExtendedTooltip
 com._1c.g5.v8.dt.form.model.ExtendedTooltipHolder setExtendedTooltip
 com._1c.g5.v8.dt.form.model.FieldExtInfo
 com._1c.g5.v8.dt.form.model.Form getAttributes,getCommandInterface,getFormCommands,getParameters
+com._1c.g5.v8.dt.form.model.FormChildrenGroup
 com._1c.g5.v8.dt.form.model.FormCommand getId,setId,setRepresentation
 com._1c.g5.v8.dt.form.model.FormCommandInterface getCommandBar,getNavigationPanel
 com._1c.g5.v8.dt.form.model.FormCommandInterfaceItems getCmiFragmentRecord
@@ -100,7 +101,7 @@ com._1c.g5.v8.dt.form.model.ManagedFormButtonType
 com._1c.g5.v8.dt.form.model.ManagedFormDecorationType get
 com._1c.g5.v8.dt.form.model.ManagedFormFieldType
 com._1c.g5.v8.dt.form.model.ManagedFormGroupType
-com._1c.g5.v8.dt.form.model.PageGroupExtInfo
+com._1c.g5.v8.dt.form.model.PageGroupExtInfo setGroup,setShowTitle
 com._1c.g5.v8.dt.form.model.Table
 com._1c.g5.v8.dt.form.model.Titled getTitle
 com._1c.g5.v8.dt.form.model.Visible setEnabled,setUserVisible,setVisible
