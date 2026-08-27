@@ -294,7 +294,14 @@ public class ModuleSourceWriter implements IMcpTool
         if (modulePath.contains("..")) //$NON-NLS-1$
             return "Error: modulePath is not allowed to contain '..'"; //$NON-NLS-1$
         if (!modulePath.endsWith(".bsl")) //$NON-NLS-1$
-            return "Error: writes are only supported for .bsl module files"; //$NON-NLS-1$
+        {
+            // Saying what is not taken leaves the caller guessing the shape. An FQN is what they
+            // reach for, so name the path that FQN corresponds to.
+            return "Error: modulePath is a path to a .bsl file inside the project, such as " //$NON-NLS-1$
+                + "CommonModules/<name>/Module.bsl or Catalogs/<name>/ObjectModule.bsl. " //$NON-NLS-1$
+                + "A leading src/ is accepted and stripped. An FQN is not a path: got '" //$NON-NLS-1$
+                + modulePath + "'."; //$NON-NLS-1$
+        }
 
         // --- step 5: resolve project ---
         IProject project = ProjectResolver.resolve(projectName);

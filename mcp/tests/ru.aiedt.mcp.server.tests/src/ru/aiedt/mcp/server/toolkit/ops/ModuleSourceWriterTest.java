@@ -430,4 +430,28 @@ public class ModuleSourceWriterTest
         assertFalse(result.contains("oldSource is required"));
         assertTrue(result.contains("Project not found"));
     }
+
+    /**
+     * What the refusal says when modulePath is not a path.
+     * <p>
+     * An FQN is the first thing a caller reaches for, and the refusal used to answer only that .bsl
+     * files are what writes support - saying what is not taken, not what is. The check runs before
+     * the project is resolved, so this needs no workspace.
+     * </p>
+     */
+    @Test
+    public void aRefusedModulePathSaysWhatAPathLooksLike()
+    {
+        String answer = freshTool().execute(params(
+            "projectName", "AnyProject", //$NON-NLS-1$ //$NON-NLS-2$
+            "modulePath", "CommonModule.SomeModule", //$NON-NLS-1$ //$NON-NLS-2$
+            "source", "// text", //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "replace")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("Module.bsl")); //$NON-NLS-1$
+        assertTrue("the refusal shows the shape a path takes", //$NON-NLS-1$
+            answer.contains("CommonModules/")); //$NON-NLS-1$
+        assertTrue("and echoes what it was given, so the caller sees the difference", //$NON-NLS-1$
+            answer.contains("CommonModule.SomeModule")); //$NON-NLS-1$
+    }
 }

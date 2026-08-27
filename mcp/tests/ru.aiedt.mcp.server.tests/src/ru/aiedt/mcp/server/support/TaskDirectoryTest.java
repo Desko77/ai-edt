@@ -115,6 +115,7 @@ public class TaskDirectoryTest
         assertEquals("one run is one task", first.taskId, second.taskId); //$NON-NLS-1$
         release.countDown();
         awaitCompletion(key);
+        awaitSettled(first.taskId);
         assertEquals("shared", directory.poll(first.taskId).result); //$NON-NLS-1$
         assertEquals("shared", directory.poll(second.taskId).result); //$NON-NLS-1$
     }
@@ -250,6 +251,37 @@ public class TaskDirectoryTest
             Thread.sleep(20L);
         }
         assertTrue("the work never finished", entry.isDone()); //$NON-NLS-1$
+    }
+
+    /**
+     * Waits for a task to have taken the answer, not merely for the work to have finished.
+     * <p>
+     * The two are different moments. A task settles from the future's {@code whenComplete} callback,
+     * which by definition runs AFTER the future reports itself done - so a poll issued between the
+     * two sees a task that has not recorded anything yet. Waiting on {@code isDone} alone made this
+     * suite fail about once in a long run of green ones.
+     * </p>
+     * <p>
+     * The production order is the other way round and is deliberate: {@code settle} writes the
+     * result before the status, so a reader that sees COMPLETED finds the result already there.
+     * Nothing here is working around a defect - the test was watching the wrong signal.
+     * </p>
+     *
+     * @param taskId the task to wait for
+     * @throws InterruptedException when the wait is cut short
+     */
+    private void awaitSettled(String taskId) throws InterruptedException
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            String status = directory.poll(taskId).status;
+            if (TaskDirectory.COMPLETED.equals(status) || TaskDirectory.FAILED.equals(status))
+            {
+                return;
+            }
+            Thread.sleep(20L);
+        }
+        assertTrue("the task never recorded what the work produced", false); //$NON-NLS-1$
     }
 
     private static Map<String, String> args()

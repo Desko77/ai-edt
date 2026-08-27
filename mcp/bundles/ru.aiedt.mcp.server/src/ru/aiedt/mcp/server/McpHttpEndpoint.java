@@ -42,6 +42,7 @@ import com.sun.net.httpserver.HttpServer;
 
 import ru.aiedt.mcp.server.settings.McpAuth;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.wire.GsonHolder;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.McpServerMeta;
@@ -1454,8 +1455,12 @@ public class McpHttpEndpoint
                 // A tool threw, or the protocol layer did. Either way the agent gets a JSON-RPC error
                 // in a perfectly good HTTP response - it asked a question and this is the answer.
                 Activator.logError("MCP request handling failed", e); //$NON-NLS-1$
-                deliver(exchange,
-                    JsonUtils.buildJsonRpcError(McpServerMeta.ERROR_INTERNAL, e.getMessage(), null), initialize);
+                // safeMessage, not getMessage: an exception with no message of its own left this
+                // null, and the builder turned null into the literal words "Unknown error" - which
+                // is what a caller got for a failing searchReplace, replaceLines or
+                // read_method_source. The type name is the least this can say.
+                deliver(exchange, JsonUtils.buildJsonRpcError(McpServerMeta.ERROR_INTERNAL,
+                    TextSuggest.safeMessage(e), null), initialize);
                 return;
             }
 
