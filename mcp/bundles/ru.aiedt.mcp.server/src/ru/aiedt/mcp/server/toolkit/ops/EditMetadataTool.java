@@ -222,6 +222,12 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("server", //$NON-NLS-1$
                 "create_object CommonModule: the Server context. Defaults to true when no context is given - " //$NON-NLS-1$
                 + "the common-module-type check requires one.") //$NON-NLS-1$ //$NON-NLS-1$
+            .booleanProperty("externalConnection", //$NON-NLS-1$
+                "create_object CommonModule: the External connection context.") //$NON-NLS-1$
+            .booleanProperty("clientOrdinaryApplication", //$NON-NLS-1$
+                "create_object CommonModule: the Client (ordinary application) context.") //$NON-NLS-1$
+            .booleanProperty("serverCall", //$NON-NLS-1$
+                "create_object CommonModule: whether server procedures are callable from the client.") //$NON-NLS-1$
             .booleanProperty("global", //$NON-NLS-1$
                 "create_object CommonModule: the Global flag. Not an execution context on its own.") //$NON-NLS-1$
             .booleanProperty("privileged", //$NON-NLS-1$

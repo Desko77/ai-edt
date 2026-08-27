@@ -82,7 +82,7 @@
 | `EditMetadataTool` | `clear_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opSetObjectReference |
 | `EditMetadataTool` | `create_form` | `dryRun`, `formName`, `formType`, `layout`, `name`, `ownerFqn`, `projectName`, `purpose`, `setAsDefault` | handler FormCreateOps.opCreateForm |
 | `EditMetadataTool` | `create_http_service` | `aliases`, `createModule`, `dryRun`, `handler`, `httpMethod`, `methodName`, `name`, `projectName`, `reuseSessions`, `rootURL`, `sessionMaxAge`, `urlTemplate`, `urlTemplateName`, `withHandlerStub` | handler ServiceOps.opCreateHttpService |
-| `EditMetadataTool` | `create_object` | `dryRun`, `global`, `name`, `objectType`, `privileged`, `projectName`, `server`, `synonym` | handler ObjectOps.opCreateObject |
+| `EditMetadataTool` | `create_object` | `clientOrdinaryApplication`, `dryRun`, `externalConnection`, `global`, `name`, `objectType`, `privileged`, `projectName`, `server`, `serverCall`, `synonym` | handler ObjectOps.opCreateObject |
 | `EditMetadataTool` | `create_object_command` | `commandParameterType`, `dryRun`, `name`, `ownerFqn`, `picture`, `projectName`, `title`, `tooltip` | handler SpecializedOps.opCreateObjectCommand |
 | `EditMetadataTool` | `create_route_map` | `bpFqn`, `dryRun`, `overwrite`, `ownerFqn`, `points`, `projectName`, `transitions` | handler RouteMapOps.opCreateRouteMap |
 | `EditMetadataTool` | `create_web_service` | `createModule`, `dryRun`, `handler`, `name`, `namespace`, `operationName`, `projectName`, `transactional`, `withHandlerStub` | handler ServiceOps.opCreateWebService |

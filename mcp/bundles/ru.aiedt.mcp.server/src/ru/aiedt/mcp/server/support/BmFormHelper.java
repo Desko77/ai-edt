@@ -2281,6 +2281,14 @@ public class BmFormHelper
             try
             {
                 Object converted = coerceFormValue(value, paramType);
+                if (converted == null && paramType.isPrimitive())
+                {
+                    // Same hole as BmObjectHelper.setProperty: a primitive has no null, and passing
+                    // one surfaces as an NPE about sun.invoke.util.ValueConversions rather than as
+                    // the missing value it is.
+                    return "Cannot set " + property + ": it takes a " + paramType.getName() //$NON-NLS-1$ //$NON-NLS-2$
+                        + " and no value was supplied. Pass propertyValue."; //$NON-NLS-1$
+                }
                 m.invoke(item, converted);
                 return null;
             }

@@ -1003,7 +1003,18 @@ public final class BmObjectHelper
             }
             try
             {
-                Object converted = coerceValue(value, m.getParameterTypes()[0]);
+                Class<?> paramType = m.getParameterTypes()[0];
+                Object converted = coerceValue(value, paramType);
+                if (converted == null && paramType.isPrimitive())
+                {
+                    // A primitive has no null. Passing one reaches the JDK as
+                    // "Cannot invoke java.lang.Number.intValue() because the return value of
+                    // sun.invoke.util.ValueConversions.primitiveConversion(...) is null" - a message
+                    // about JDK internals, which reads as a defect in the model rather than as a
+                    // value that was never supplied. Say which value is missing instead.
+                    return "Cannot set " + propertyName + ": it takes a " //$NON-NLS-1$ //$NON-NLS-2$
+                        + paramType.getName() + " and no value was supplied. Pass propertyValue."; //$NON-NLS-1$
+                }
                 m.invoke(obj, converted);
                 return null;
             }

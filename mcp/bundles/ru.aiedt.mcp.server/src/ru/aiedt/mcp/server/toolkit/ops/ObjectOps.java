@@ -64,14 +64,29 @@ final class ObjectOps
      * because the setters live on the mdclass EMF object.
      */
     private static void applyCommonModuleFlags(MdObject module, Boolean privileged, Boolean global,
-        Boolean server)
+        Boolean server, Boolean externalConnection, Boolean clientOrdinaryApplication,
+        Boolean serverCall)
     {
-        // Default server=true whenever the caller did not set it: EDT's common-module-type
-        // check requires an execution context (server/client/externalConnection/serverCall),
-        // and `global` is NOT one, so defaulting server=false on a global-only request would
-        // leave the module contextless and invalid. An explicit server wins.
-        boolean effectiveServer = server != null ? server : true;
-        setBooleanProperty(module, "setServer", effectiveServer); //$NON-NLS-1$
+        // Default server=true only when the caller named NO execution context at all: EDT's
+        // common-module-type check requires one, and `global` is not one, so a global-only request
+        // would otherwise leave the module contextless and invalid. Any context the caller did name
+        // wins - defaulting server on top of an explicit externalConnection would write a module
+        // nobody asked for. Measured on 2026.2: every one of these setters takes a bare boolean.
+        setBooleanProperty(module, "setServer", //$NON-NLS-1$
+            serverFlagToWrite(server, externalConnection, clientOrdinaryApplication, serverCall));
+        if (externalConnection != null)
+        {
+            setBooleanProperty(module, "setExternalConnection", externalConnection); //$NON-NLS-1$
+        }
+        if (clientOrdinaryApplication != null)
+        {
+            setBooleanProperty(module, "setClientOrdinaryApplication", //$NON-NLS-1$
+                clientOrdinaryApplication);
+        }
+        if (serverCall != null)
+        {
+            setBooleanProperty(module, "setServerCall", serverCall); //$NON-NLS-1$
+        }
         if (global != null)
         {
             setBooleanProperty(module, "setGlobal", global); //$NON-NLS-1$
@@ -80,6 +95,34 @@ final class ObjectOps
         {
             setBooleanProperty(module, "setPrivileged", privileged); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * What to write to Server, given the execution contexts the caller named.
+     * <p>
+     * True when the caller asked for it, and true when the caller turned no other context ON - the
+     * common-module-type check requires one, and Global is not one. A caller who did turn another
+     * context on does not get Server on top of it. A context named as false leaves the module with
+     * none, so it does not suppress the default: the point of defaulting is that the tool never
+     * writes a module the check rejects.
+     * </p>
+     *
+     * @param server the Server flag as asked for, or <code>null</code>
+     * @param externalConnection the External connection flag as asked for, or <code>null</code>
+     * @param clientOrdinaryApplication the Client (ordinary application) flag, or <code>null</code>
+     * @param serverCall the Server call flag as asked for, or <code>null</code>
+     * @return the value to write
+     */
+    static boolean serverFlagToWrite(Boolean server, Boolean externalConnection,
+        Boolean clientOrdinaryApplication, Boolean serverCall)
+    {
+        if (server != null)
+        {
+            return server;
+        }
+        return !Boolean.TRUE.equals(externalConnection)
+            && !Boolean.TRUE.equals(clientOrdinaryApplication)
+            && !Boolean.TRUE.equals(serverCall);
     }
 
     private static void setBooleanProperty(Object target, String setter, boolean value)
@@ -151,6 +194,12 @@ final class ObjectOps
             ? JsonUtils.extractBooleanArgumentNullable(params, "global") : null; //$NON-NLS-1$
         final Boolean cmServer = isCommonModule
             ? JsonUtils.extractBooleanArgumentNullable(params, "server") : null; //$NON-NLS-1$
+        final Boolean cmExternalConnection = isCommonModule
+            ? JsonUtils.extractBooleanArgumentNullable(params, "externalConnection") : null; //$NON-NLS-1$
+        final Boolean cmClientOrdinaryApplication = isCommonModule
+            ? JsonUtils.extractBooleanArgumentNullable(params, "clientOrdinaryApplication") : null; //$NON-NLS-1$
+        final Boolean cmServerCall = isCommonModule
+            ? JsonUtils.extractBooleanArgumentNullable(params, "serverCall") : null; //$NON-NLS-1$
         if (isCommonModule)
         {
             try
@@ -217,7 +266,8 @@ final class ObjectOps
                     synonymRef.set(EditMetadataTool.applyMdObjectSynonym(created, synonym, name, project));
                     if (isCommonModule)
                     {
-                        applyCommonModuleFlags(created, cmPrivileged, cmGlobal, cmServer);
+                        applyCommonModuleFlags(created, cmPrivileged, cmGlobal, cmServer,
+                            cmExternalConnection, cmClientOrdinaryApplication, cmServerCall);
                     }
                     if (!BmObjectHelper.addToConfiguration(config, created))
                     {
