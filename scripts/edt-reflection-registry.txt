@@ -186,3 +186,4 @@ probe com._1c.g5.v8.dt.template.model.SpreadsheetDocument
 probe com._1c.g5.v8.dt.template.model.TemplateFactory
 probe com._1c.g5.v8.dt.ui.platform.PlatformPictures
 com._1c.g5.wiring.ServiceAccess get
+com.e1c.g5.v8.dt.internal.distribution.DistributionPlugin getDefault,getInjector
