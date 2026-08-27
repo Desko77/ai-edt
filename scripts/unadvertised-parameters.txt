@@ -21,6 +21,7 @@ EditMetadataTool:customSignature
 EditMetadataTool:eventName
 EditMetadataTool:filter
 EditMetadataTool:format
+EditMetadataTool:index
 EditMetadataTool:kind
 EditMetadataTool:language
 EditMetadataTool:objectName

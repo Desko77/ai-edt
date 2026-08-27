@@ -405,6 +405,23 @@ CONSTANT = re.compile(r'\b([A-Z][A-Z0-9_]*)\s*=\s*"((?:com\._1c\.g5|com\.e1c\.g5
 CLASS_INTO_VARIABLE = re.compile(
     r'\b(\w+)\s*=[^;]*?(?:Class\.forName|loadClass)\s*\(\s*([\w."$]+?)\s*[,)]', re.S)
 MEMBER_ON_VARIABLE = re.compile(r'\b(\w+)\.get(?:Declared)?(?:Method|Field)\s*\(\s*"([\w$]+)"')
+# The same lookup written on an instance rather than on a class variable. The class is whatever the
+# instance turns out to be at run time, so it cannot be paired from the sources - but it has to be
+# COUNTED, which the pattern above cannot do: it needs a bare word before the dot, and here the dot
+# follows a closing parenthesis. Measured 2026-08-27: 201 lookups in 39 files were reaching neither
+# the pairs nor the unattached count, among them the getItems that three form command interface
+# operations fail on under EDT 2026.2.
+MEMBER_ON_INSTANCE = re.compile(
+    r'\b(\w+)\s*\.\s*getClass\s*\(\s*\)\s*\.\s*get(?:Declared)?(?:Method|Field)\s*\(\s*"([\w$]+)"')
+# The lookup chained straight onto the literal, with no variable in between. The class IS knowable
+# here, so this pairs rather than merely counts. The optional comment is for the NON-NLS marker the
+# sources carry between the two calls.
+MEMBER_ON_FORNAME = re.compile(
+    r'(?:Class\.forName|loadClass)\s*\(\s*"([\w.$]+)"\s*\)\s*(?://[^\n]*)?\s*'
+    r'\.\s*get(?:Declared)?(?:Method|Field)\s*\(\s*"([\w$]+)"')
+# Every lookup, however written. What this finds and the patterns above do not is invisibility
+# itself: a spelling nobody anticipated would otherwise be added and say nothing.
+ANY_MEMBER_LOOKUP = re.compile(r'\.\s*get(?:Declared)?(?:Method|Field)\s*\(\s*"([\w$]+)"')
 
 
 def reflective_pairs_in_sources():
@@ -419,10 +436,12 @@ def reflective_pairs_in_sources():
     Those are counted and reported rather than guessed at, because a wrong pairing would send the
     census looking for a member on the wrong type and report a defect that is not there.
 
-    @return the pairs, and the member names that could not be attached to any class
+    @return the pairs, the member names that could not be attached to any class, and the lookups no
+            pattern here accounted for at all
     """
     pairs = set()
     unattached = set()
+    unseen = set()
     for base, _dirs, names in os.walk(SOURCES):
         for name in names:
             if not name.endswith(".java"):
@@ -441,13 +460,39 @@ def reflective_pairs_in_sources():
                 if fqn and fqn.startswith(EDT_PACKAGES):
                     holders[match.group(1)] = fqn
 
+            # Where in the file each pattern read a member name. Kept so the leftover below is the
+            # lookups themselves, not name collisions between two spellings of the same call.
+            accounted = set()
+
             for match in MEMBER_ON_VARIABLE.finditer(text):
+                accounted.add(match.span(2))
                 variable, member = match.group(1), match.group(2)
                 if variable in holders:
                     pairs.add((holders[variable], member))
                 else:
                     unattached.add((name, member))
-    return pairs, unattached
+
+            # Written on an instance: the class is not knowable here, so it joins the unattached
+            # rather than being guessed at. Counting it is the point - it used to vanish.
+            for match in MEMBER_ON_INSTANCE.finditer(text):
+                accounted.add(match.span(2))
+                unattached.add((name, match.group(2)))
+
+            # Chained onto the literal: the class is right there, so this pairs.
+            for match in MEMBER_ON_FORNAME.finditer(text):
+                accounted.add(match.span(2))
+                fqn = match.group(1)
+                if fqn.startswith(EDT_PACKAGES):
+                    pairs.add((fqn, match.group(2)))
+                else:
+                    unattached.add((name, match.group(2)))
+
+            # Whatever neither pattern reached, by position. Recorded so a spelling nobody
+            # anticipated shows up as a number instead of as silence.
+            for match in ANY_MEMBER_LOOKUP.finditer(text):
+                if match.span(1) not in accounted:
+                    unseen.add((name, match.group(1)))
+    return pairs, unattached, unseen
 
 
 def reflective_classes_in_sources():
@@ -541,7 +586,7 @@ def main():
     # registry marks as expected-absent.
     unverifiable = {fqn for kind, fqn, _member in entries if kind in ("probe", "id")}
     unregistered = sorted(reflective_classes_in_sources() - registered)
-    pairs, unattached = reflective_pairs_in_sources()
+    pairs, unattached, unseen = reflective_pairs_in_sources()
     unregistered_pairs = sorted(pair for pair in pairs
                                 if pair not in registered_pairs and pair[0] not in unverifiable)
 
@@ -552,6 +597,9 @@ def main():
             if unattached:
                 log("%d member lookups could not be attached to a class and are not checked"
                     % len(unattached))
+            if unseen:
+                log("%d member lookups matched no pattern here and were not even counted"
+                    % len(unseen))
             return 0
         for fqn in unregistered:
             log("    reached by name, not registered: %s" % fqn)

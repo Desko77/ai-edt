@@ -267,10 +267,15 @@ final class FormCommandInterfaceOps
             {
                 return "Error: form panel '" + panelLc + "' is not initialised."; //$NON-NLS-1$ //$NON-NLS-2$
             }
-            Object items = panelObject.getClass().getMethod("getItems").invoke(panelObject); //$NON-NLS-1$
+            // Measured against the 2026.1 and 2026.2 bundles: FormCommandInterfaceItems declares
+            // EList<FormCommandInterfaceItem> getCmiFragmentRecord() and no getItems() in either
+            // release, so every call here refused with a NoSuchMethodException naming
+            // FormCommandInterfaceItemsImpl.
+            Object items =
+                panelObject.getClass().getMethod("getCmiFragmentRecord").invoke(panelObject); //$NON-NLS-1$
             if (!(items instanceof org.eclipse.emf.common.util.EList))
             {
-                return "Error: panel.getItems() did not return an EList."; //$NON-NLS-1$
+                return "Error: panel.getCmiFragmentRecord() did not return an EList."; //$NON-NLS-1$
             }
             org.eclipse.emf.common.util.EList<Object> itemList =
                 (org.eclipse.emf.common.util.EList<Object>) items;

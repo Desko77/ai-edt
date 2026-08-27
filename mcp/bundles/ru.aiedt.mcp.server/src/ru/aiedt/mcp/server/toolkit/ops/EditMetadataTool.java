@@ -219,6 +219,13 @@ public class EditMetadataTool implements IMcpTool
                 "Synonym for a newly created object or field. Auto-generated from the name when omitted, the " //$NON-NLS-1$
                 + "way the EDT wizard does it; a JSON object keyed by language code sets several languages at " //$NON-NLS-1$
                 + "once. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+            .booleanProperty("server", //$NON-NLS-1$
+                "create_object CommonModule: the Server context. Defaults to true when no context is given - " //$NON-NLS-1$
+                + "the common-module-type check requires one.") //$NON-NLS-1$ //$NON-NLS-1$
+            .booleanProperty("global", //$NON-NLS-1$
+                "create_object CommonModule: the Global flag. Not an execution context on its own.") //$NON-NLS-1$
+            .booleanProperty("privileged", //$NON-NLS-1$
+                "create_object CommonModule: privileged mode.") //$NON-NLS-1$
             .stringProperty("propertyName", //$NON-NLS-1$
                 "set_object_property: which property to set. A few names take a shaped value rather than a " //$NON-NLS-1$
                 + "plain one - fillValue, inputByString, choiceParameters, choiceParameterLinks. Full text: " //$NON-NLS-1$

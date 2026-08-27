@@ -47,7 +47,7 @@ DISPATCH = re.compile(r"switch\s*\((operation|action|op|mode)\)")
 CASE_LABEL = re.compile(r'case\s+"([a-z0-9_]+)"\s*:')
 # The delegate is the tool, whatever wraps params on the way in - some facades rewrite first.
 DELEGATE = re.compile(r"new\s+(\w+)\(\)\.execute\(")
-EXTRACT = re.compile(r'extract\w*Argument\(\s*params\s*,\s*"([A-Za-z0-9_]+)"')
+EXTRACT = re.compile(r'extract\w*\(\s*params\s*,\s*"([A-Za-z0-9_]+)"')
 SCHEMA_PROP = re.compile(r'\.(?:string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 CALLS = re.compile(r"\b([a-z]\w+)\s*\(")
 
@@ -234,7 +234,7 @@ def locals_bound_to_parameters(source: str) -> dict[str, str]:
     """
     bound: dict[str, str] = {}
     for match in re.finditer(
-            r"\b(\w+)\s*=\s*[^;]*?extract\w*Argument\(\s*params\s*,\s*\"([A-Za-z0-9_]+)\"", source):
+            r"\b(\w+)\s*=\s*[^;]*?extract\w*\(\s*params\s*,\s*\"([A-Za-z0-9_]+)\"", source):
         bound[match.group(1)] = match.group(2)
     for match in re.finditer(r"\b(\w+)\s*=\s*([^;]+);", source):
         target, expression = match.group(1), match.group(2)
@@ -271,7 +271,7 @@ def dispatches_otherwise() -> list[str]:
 REGISTRY_ENTRY = re.compile(
     r'reg\(\s*\w+\s*,\s*"([a-z0-9_]+)"\s*,\s*"[^"]*"\s*,\s*"[^"]*"\s*,\s*\w+\s*->\s*(?:(\w+)\.)?(\w+)\(')
 FIELD_TYPE = re.compile(r"\b(?:private|protected|public)\s+(?:final\s+)?(\w+)\s+(\w+)\s*[=;]")
-EXTRACT_ANY = re.compile(r'extract\w*Argument\(\s*\w+\s*,\s*"([A-Za-z0-9_]+)"')
+EXTRACT_ANY = re.compile(r'extract\w*\(\s*\w+\s*,\s*"([A-Za-z0-9_]+)"')
 
 
 def registry_operations(path: pathlib.Path, source: str) -> dict[str, dict[str, object]]:
