@@ -149,6 +149,107 @@ public class EditMetadataTool implements IMcpTool
         "Templates", "BusinessProcess route map", "Extensions", "DCS", "Common" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
     };
 
+    /**
+     * Parameters a batch operation takes from the outer call when it does not carry its own.
+     * <p>
+     * Named in one place because the facade's description promises inheritance, and this list is
+     * what the promise means. What identifies WHERE an operation acts belongs here; what says WHAT
+     * it writes does not.
+     * </p>
+     */
+    static final String[] SHARED_BATCH_PARAMS = {
+        "projectName", "ownerFqn", "formFqn", "dryRun" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    };
+
+    /** How many failed operations a batch names in its message before it says how many are left. */
+    private static final int FAILURES_NAMED = 5;
+
+    /**
+     * Why each failed operation failed, for the message the batch demotes itself with.
+     * <p>
+     * The message used to point at batchResults[] instead of carrying this. The array is there, in
+     * the structured payload - but the text channel gets a summary, and for a failure that summary
+     * is the failure text alone. A caller reading text was therefore sent to an array it had not
+     * been given, and the only way left was to reissue the operations one at a time, which is what
+     * a batch exists to avoid.
+     * </p>
+     *
+     * @param results one entry per operation, as put into batchResults
+     * @return the lines naming the failures; never <code>null</code>
+     */
+    /**
+     * The reason one failed batch entry carries.
+     * <p>
+     * An operation rejected before dispatch puts it in {@code error}; one that ran and refused puts
+     * its whole answer in {@code response}, and the reason is that answer's own error member.
+     * </p>
+     *
+     * @param entry the failed entry
+     * @return the reason, or a stated absence; never <code>null</code>
+     */
+    static String reasonOf(Map<String, Object> entry)
+    {
+        Object direct = entry.get("error"); //$NON-NLS-1$
+        if (direct != null && !direct.toString().isEmpty())
+        {
+            return direct.toString();
+        }
+        Object response = entry.get("response"); //$NON-NLS-1$
+        if (response != null)
+        {
+            try
+            {
+                com.google.gson.JsonObject obj =
+                    com.google.gson.JsonParser.parseString(response.toString()).getAsJsonObject();
+                for (String member : new String[] { "error", "message" }) //$NON-NLS-1$ //$NON-NLS-2$
+                {
+                    if (obj.has(member) && !obj.get(member).isJsonNull())
+                    {
+                        String text = obj.get(member).getAsString();
+                        if (!text.isEmpty())
+                        {
+                            return text;
+                        }
+                    }
+                }
+            }
+            catch (Exception notJson)
+            {
+                return response.toString();
+            }
+        }
+        return "failed without saying why"; //$NON-NLS-1$
+    }
+
+    private static String whyEachFailed(List<Map<String, Object>> results)
+    {
+        StringBuilder sb = new StringBuilder();
+        int named = 0;
+        int unnamed = 0;
+        for (Map<String, Object> entry : results)
+        {
+            if (!Boolean.FALSE.equals(entry.get("ok"))) //$NON-NLS-1$
+            {
+                continue;
+            }
+            if (named == FAILURES_NAMED)
+            {
+                unnamed++;
+                continue;
+            }
+            sb.append("  [").append(entry.get("index")).append("] ") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .append(entry.get("operation")).append(": ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(reasonOf(entry)).append('\n');
+            named++;
+        }
+        if (unnamed > 0)
+        {
+            sb.append("  ...and ").append(unnamed) //$NON-NLS-1$
+                .append(" more, each in batchResults[].\n"); //$NON-NLS-1$
+        }
+        return sb.toString();
+    }
+
     @Override
     public String getName()
     {
@@ -499,7 +600,7 @@ public class EditMetadataTool implements IMcpTool
                 + "Already-committed operations are NOT rolled back. Default false.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("operations", //$NON-NLS-1$
                 "batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that " //$NON-NLS-1$
-                + "op's own params}. Per-item params override the inherited ones. Full text: operation=help " //$NON-NLS-1$
+                + "op's own params}. Per-item params override the inherited projectName / ownerFqn / formFqn / dryRun. Full text: operation=help " //$NON-NLS-1$
                 + "topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
             .build();
     }
@@ -634,9 +735,11 @@ public class EditMetadataTool implements IMcpTool
             }
             // Store the normalized op so downstream dispatch sees snake_case.
             opParams.put("operation", subOp); //$NON-NLS-1$
-            // Inherit shared parameters (projectName, ownerFqn, dryRun) from the
-            // outer call when individual ops omit them.
-            for (String shared : new String[] { "projectName", "ownerFqn", "dryRun" }) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            // Inherit shared parameters from the outer call when individual ops omit them.
+            // formFqn belongs here as much as ownerFqn does: every Forms operation requires it, so
+            // without it a batch of them fails whole while the same operations pass one at a time -
+            // reported from two workspaces in two days.
+            for (String shared : SHARED_BATCH_PARAMS)
             {
                 if (!opParams.containsKey(shared) && params.containsKey(shared))
                 {
@@ -729,8 +832,8 @@ public class EditMetadataTool implements IMcpTool
         {
             batchResult = batchResult.demote(failCount + " of " //$NON-NLS-1$
                 + (okCount + failCount + skippedCount)
-                + " operations failed - see batchResults[] for each. Operations are NOT " //$NON-NLS-1$
-                + "rolled back: the ones that succeeded are already applied."); //$NON-NLS-1$
+                + " operations failed. Operations are NOT rolled back: the ones that succeeded " //$NON-NLS-1$
+                + "are already applied.\n" + whyEachFailed(results)); //$NON-NLS-1$
         }
         return batchResult.toJson();
         }
@@ -2115,7 +2218,7 @@ public class EditMetadataTool implements IMcpTool
         sb.append("### attributeName\n\n"); //$NON-NLS-1$
         sb.append("Form attribute name for add_dynamic_list_table / add_form_attribute_column and for set_property targeting an attribute's extInfo (e.g. a DynamicList's queryText / customQuery). For add_form_attribute_column prefer parentAttributeName; attributeName is accepted as an alias.\n\n"); //$NON-NLS-1$
         sb.append("### batch\n\n"); //$NON-NLS-1$
-        sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
+        sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
         sb.append("### cascadeDependencies\n\n"); //$NON-NLS-1$
         sb.append("set_role_right: when granting (value=true), ALSO grant the rights this one REQUIRES per the platform dependency model (Update->Read, Posting->Read+Update, InteractiveInsert->Insert+View+Edit, ...) so the role stays consistent. Grant-direction only - never revokes, never over-grants (granting Read never implies Update). Auto-added prerequisites are listed in cascadedRights. Default false.\n\n"); //$NON-NLS-1$
         sb.append("### commands\n\n"); //$NON-NLS-1$
@@ -2135,7 +2238,7 @@ public class EditMetadataTool implements IMcpTool
         sb.append("### group\n\n"); //$NON-NLS-1$
         sb.append("set_command_placement: the target command-interface group. Either a friendly name - Important / Normal / SeeAlso / Create / Reports / Service - a bare or StandardCommandGroup.-prefixed platform token (NavigationPanelImportant / NavigationPanelOrdinary / NavigationPanelSeeAlso / ActionsPanelCreate / ActionsPanelReports / ActionsPanelTools), or a custom group FQN CommandGroup.<name>. set_command_order: same group selection (one group, reordered).\n\n"); //$NON-NLS-1$
         sb.append("### operations\n\n"); //$NON-NLS-1$
-        sb.append("batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that op's params}. Per-item params override the inherited projectName / ownerFqn / dryRun. Numbers may be JSON numbers or strings. Example - a whole Catalog in one call with outer ownerFqn=Catalog.X: [{\"operation\":\"create_object\",\"objectType\":\"Catalog\",\"name\":\"X\"},{\"operation\":\"add_object_attribute\",\"name\":\"Сумма\",\"type\":\"Number\",\"precision\":15,\"fractionDigits\":2,\"fillChecking\":\"ShowError\"},{\"operation\":\"add_tabular_section\",\"name\":\"Строки\"},{\"operation\":\"add_tabular_section_attribute\",\"tabularSectionName\":\"Строки\",\"name\":\"Товар\",\"type\":\"CatalogRef.Номенклатура\"},{\"operation\":\"create_form\",\"purpose\":\"ListForm\",\"formName\":\"ФормаСписка\"}].\n\n"); //$NON-NLS-1$
+        sb.append("batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that op's params}. Per-item params override the inherited projectName / ownerFqn / formFqn / dryRun. Numbers may be JSON numbers or strings. Example - a whole Catalog in one call with outer ownerFqn=Catalog.X: [{\"operation\":\"create_object\",\"objectType\":\"Catalog\",\"name\":\"X\"},{\"operation\":\"add_object_attribute\",\"name\":\"Сумма\",\"type\":\"Number\",\"precision\":15,\"fractionDigits\":2,\"fillChecking\":\"ShowError\"},{\"operation\":\"add_tabular_section\",\"name\":\"Строки\"},{\"operation\":\"add_tabular_section_attribute\",\"tabularSectionName\":\"Строки\",\"name\":\"Товар\",\"type\":\"CatalogRef.Номенклатура\"},{\"operation\":\"create_form\",\"purpose\":\"ListForm\",\"formName\":\"ФормаСписка\"}].\n\n"); //$NON-NLS-1$
         sb.append("### order\n\n"); //$NON-NLS-1$
         sb.append("add_predefined_item (ChartOfAccounts): account display order. set_command_placement: 0-based target position within the group (applied to both the CommandsPlacement fragment and, only when given, the separate CommandsOrder overlay); omit to just append/leave the command's position untouched and skip CommandsOrder entirely. Optional.\n\n"); //$NON-NLS-1$
         sb.append("### ownerFqn\n\n"); //$NON-NLS-1$
