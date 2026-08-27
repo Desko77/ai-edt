@@ -57,5 +57,8 @@ CLAUDE.local.md
 # Positioning drafts and README rewrites under review (do not commit - working material)
 /docs/marketing/
 
+# Release-note drafts written by hand before publishing (working material)
+/docs/releases/
+
 # Python bytecode, wherever it lands
 __pycache__/

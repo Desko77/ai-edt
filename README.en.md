@@ -58,6 +58,8 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🧪 **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
 | 🛡️ **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
 | 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. |
+| 🔀 **Update a configuration on support** | Compare the project with a new delivery and their common ancestor, decide per object or per method, and apply the update keeping local changes. Read the vendor support registry and record object modes to a file before merging. |
+| 🧯 **Check an extension before an update** | Get the extension objects that stop applying after a new delivery, with the reason for each: a changed signature on an intercepted method, a target that is gone, a borrowed object that no longer matches. |
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
@@ -397,12 +399,13 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `edit_metadata` | Metadata, forms, commands, roles, services, templates and other model mutations. |
 | `launch_debugger` | Launch/attach, breakpoints, stepping, variables, expression evaluation and profiling. |
 | `diagnostics` | Project problems, check documentation, cleanup and targeted revalidation. |
-| `insights` | Dependencies, metrics, anti-patterns, comparison and impact analysis. |
+| `insights` | Dependencies, metrics, anti-patterns, three-way comparison with a delivery and merging, impact analysis. |
 | `security_audit` | Role rights, RLS violations and sensitive-data scanning. |
 | `project_admin` / `infobase_admin` | Workspace projects, launch configurations, database updates and synchronization. |
 | `dcs_workshop` / `mxl_workshop` / `xdto_workshop` | Programmatic builders for complex 1C artifacts. |
 | `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |
+| `support_registry` | Vendor support state: parent configurations and their releases, object modes, recording and restoring them. |
 
 Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
 
@@ -501,7 +504,7 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 
 - AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
 - The server is available only while EDT is running.
-- Some semantic tools require project indexing to be complete.
+- Some semantic tools require project indexing to be complete; while it runs, such a tool refuses with the reason named.
 - By default the endpoint listens on loopback and asks for no authentication. A bearer token and a bind-to-every-interface setting exist, but turning them on is a deliberate act - see the safety section.
 - The update site is published automatically on release. Builds made between releases install from source or from a local P2 repository.
 
