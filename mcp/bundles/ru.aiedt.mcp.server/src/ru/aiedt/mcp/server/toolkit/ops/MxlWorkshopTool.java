@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -55,9 +56,9 @@ public class MxlWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "MXL spreadsheet template constructor. 7 operations: create_template, " //$NON-NLS-1$
+        return "MXL spreadsheet template constructor. 10 operations: create_template, " //$NON-NLS-1$
             + "set_cell, format_cells, merge_cells, draw, add_drawing, remove_drawing, " //$NON-NLS-1$
-            + "read_template. " //$NON-NLS-1$
+            + "read_template, add_named_area, list_named_areas, remove_named_area. " //$NON-NLS-1$
             + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
             + "SpreadsheetDocument model directly. read_template returns dimensions, " //$NON-NLS-1$
             + "the populated cell map, merged ranges and drawing ids. " //$NON-NLS-1$
@@ -72,7 +73,7 @@ public class MxlWorkshopTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "create_template / set_cell / merge_cells / draw / add_drawing / remove_drawing / read_template / help", //$NON-NLS-1$
+                "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / help", //$NON-NLS-1$
                 true)
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("ownerFqn", //$NON-NLS-1$
@@ -85,6 +86,12 @@ public class MxlWorkshopTool implements IMcpTool
             .stringProperty("text", "Cell text content") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("language", //$NON-NLS-1$
                 "Language tag for the LocalString content (default 'ru')") //$NON-NLS-1$
+            .stringProperty("areaName", //$NON-NLS-1$
+                "Named area name for the named-area operations. The mechanism that loads data from a " //$NON-NLS-1$
+                + "file reads a template by these: the area name becomes the loaded column name.") //$NON-NLS-1$
+            .stringProperty("areaKind", //$NON-NLS-1$
+                "add_named_area: columns (default for a load template), rows, or rect. Bounds come " //$NON-NLS-1$
+                + "from fromRow/fromCol/toRow/toCol; columns reads the column pair, rows the row pair.") //$NON-NLS-1$
             .integerProperty("fromRow", "Merge range from-row") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("fromCol", "Merge range from-col") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("toRow", "Merge range to-row") //$NON-NLS-1$ //$NON-NLS-2$
@@ -169,6 +176,12 @@ public class MxlWorkshopTool implements IMcpTool
                 return opAddDrawing(params);
             case "remove_drawing": //$NON-NLS-1$
                 return opRemoveDrawing(params);
+            case "add_named_area": //$NON-NLS-1$
+                return opAddNamedArea(params);
+            case "list_named_areas": //$NON-NLS-1$
+                return opListNamedAreas(params);
+            case "remove_named_area": //$NON-NLS-1$
+                return opRemoveNamedArea(params);
             case "read_template": //$NON-NLS-1$
                 return opReadTemplate(params);
             default:
@@ -315,6 +328,190 @@ public class MxlWorkshopTool implements IMcpTool
     /**
      * 1.42.2: native cell merge via the moxel SpreadsheetDocument model.
      */
+    /**
+     * Names an area of a template.
+     * <p>
+     * The mechanism that loads data from a file reads a template by its named areas: an area name
+     * becomes the name of a loaded column. Without them a template is unusable for loading, so a
+     * template built through this tool had to be finished by editing the .mxlx by hand.
+     * </p>
+     *
+     * @param params the call parameters
+     * @return the answer as JSON
+     */
+    private String opAddNamedArea(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("add_named_area"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        String areaName = JsonUtils.extractStringArgument(params, "areaName"); //$NON-NLS-1$
+        String kind = JsonUtils.extractStringArgument(params, "areaKind"); //$NON-NLS-1$
+        int fromRow = JsonUtils.extractIntArgument(params, "fromRow", -1); //$NON-NLS-1$
+        int fromCol = JsonUtils.extractIntArgument(params, "fromCol", -1); //$NON-NLS-1$
+        int toRow = JsonUtils.extractIntArgument(params, "toRow", -1); //$NON-NLS-1$
+        int toCol = JsonUtils.extractIntArgument(params, "toCol", -1); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+
+        if (projectName == null || ownerFqn == null || templateName == null || areaName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn, templateName and areaName " //$NON-NLS-1$
+                + "are required").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+        final String kindF = kind;
+        final String areaNameF = areaName;
+        final int fromRowF = fromRow;
+        final int fromColF = fromCol;
+        final int toRowF = toRow;
+        final int toColF = toCol;
+        final String[] persistErrorRef = { null };
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                BmTemplateHelper.addNamedArea(doc, areaNameF, kindF, fromRowF, fromColF, toRowF,
+                    toColF);
+                if (!dryRun)
+                {
+                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                        templateName, doc);
+                    if (pErr != null)
+                    {
+                        persistErrorRef[0] = pErr;
+                    }
+                }
+                return areaNameF;
+            });
+        if (persistErrorRef[0] != null && r.tags != null)
+        {
+            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+        }
+        return formatResult(r, "add_named_area"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a named area.
+     *
+     * @param params the call parameters
+     * @return the answer as JSON
+     */
+    private String opRemoveNamedArea(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("remove_named_area"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        String areaName = JsonUtils.extractStringArgument(params, "areaName"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+
+        if (projectName == null || ownerFqn == null || templateName == null || areaName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn, templateName and areaName " //$NON-NLS-1$
+                + "are required").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+        final String areaNameF = areaName;
+        final boolean[] removedRef = { false };
+        final String[] persistErrorRef = { null };
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                removedRef[0] = BmTemplateHelper.removeNamedArea(doc, areaNameF);
+                if (!removedRef[0])
+                {
+                    // Removing what is not there is not a write, and reporting it as one would be
+                    // the silent success this project keeps paying for.
+                    throw new IllegalArgumentException("no named area called " + areaNameF //$NON-NLS-1$
+                        + " in template " + templateName); //$NON-NLS-1$
+                }
+                if (!dryRun)
+                {
+                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                        templateName, doc);
+                    if (pErr != null)
+                    {
+                        persistErrorRef[0] = pErr;
+                    }
+                }
+                return areaNameF;
+            });
+        if (persistErrorRef[0] != null && r.tags != null)
+        {
+            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+        }
+        return formatResult(r, "remove_named_area"); //$NON-NLS-1$
+    }
+
+    /**
+     * The named areas a template carries.
+     * <p>
+     * Read-only, and the same reading read_template now reports. Without it a template written
+     * elsewhere cannot be read back and repeated.
+     * </p>
+     *
+     * @param params the call parameters
+     * @return the answer as JSON
+     */
+    private String opListNamedAreas(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("list_named_areas"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+        @SuppressWarnings("unchecked")
+        final List<Map<String, Object>>[] areasRef = new List[] { null };
+        // dryRun=true runs the reader and rolls the get-or-create model touch back.
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                areasRef[0] = BmTemplateHelper.listNamedAreas(doc);
+                return templateName;
+            });
+        if (!r.ok)
+        {
+            return formatResult(r, "list_named_areas"); //$NON-NLS-1$
+        }
+        List<Map<String, Object>> areas =
+            areasRef[0] == null ? new ArrayList<>() : areasRef[0];
+        return ToolResult.success()
+            .put("operation", "list_named_areas") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("ownerFqn", ownerFqn) //$NON-NLS-1$
+            .put("templateName", templateName) //$NON-NLS-1$
+            .put("count", areas.size()) //$NON-NLS-1$
+            .put("namedAreas", areas) //$NON-NLS-1$
+            .toJson();
+    }
+
     private String opMergeCells(Map<String, String> params)
     {
         if (!BmTemplateHelper.cellOpsAvailable())
@@ -997,7 +1194,12 @@ public class MxlWorkshopTool implements IMcpTool
                         + "4. draw layout='{\"cells\":[{\"row\":1,\"col\":1," //$NON-NLS-1$
                         + "\"text\":\"Title\"}],\"merges\":[{\"fromRow\":1," //$NON-NLS-1$
                         + "\"fromCol\":1,\"toRow\":1,\"toCol\":5}]}' " //$NON-NLS-1$
-                        + "(batch mode - one BM transaction)\n").toJson(); //$NON-NLS-1$
+                        + "(batch mode - one BM transaction)\n" //$NON-NLS-1$
+                        + "5. add_named_area areaName=Nomenclature areaKind=columns fromCol=1 " //$NON-NLS-1$
+                        + "toCol=1 - a template the load-data-from-a-file mechanism reads is read " //$NON-NLS-1$
+                        + "by these: the area name becomes the loaded column name\n" //$NON-NLS-1$
+                        + "6. list_named_areas reads them back; read_template reports them too\n") //$NON-NLS-1$
+                    .toJson();
             case "errortags": //$NON-NLS-1$
                 return ToolResult.success().put("topic", topic) //$NON-NLS-1$
                     .put("text", "Tags surfaced by mxl_workshop:\n" //$NON-NLS-1$ //$NON-NLS-2$
@@ -1017,7 +1219,8 @@ public class MxlWorkshopTool implements IMcpTool
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList("create_template", "set_cell", "format_cells", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "merge_cells", "draw", //$NON-NLS-1$ //$NON-NLS-2$
-            "add_drawing", "remove_drawing", "read_template")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "add_drawing", "remove_drawing", "read_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "add_named_area", "list_named_areas", "remove_named_area")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         {
             m.put(op, op);
         }

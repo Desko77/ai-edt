@@ -42,6 +42,12 @@ import com._1c.g5.v8.dt.moxel.Columns;
 import com._1c.g5.v8.dt.moxel.content.TextPlacement;
 import org.eclipse.emf.common.util.EList;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
+import com._1c.g5.v8.dt.moxel.ColumnsArea;
+import com._1c.g5.v8.dt.moxel.NamedItem;
+import com._1c.g5.v8.dt.moxel.NamedItemCells;
+import com._1c.g5.v8.dt.moxel.RectArea;
+import com._1c.g5.v8.dt.moxel.RowsArea;
+import com._1c.g5.v8.dt.moxel.content.Area;
 import com._1c.g5.v8.dt.moxel.Rect;
 import com._1c.g5.v8.dt.moxel.Row;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
@@ -1417,6 +1423,167 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The named areas a template carries, in the order the document holds them.
+     * <p>
+     * A named area is what the "load data from a file" mechanism reads a template by: the area name
+     * becomes the name of the loaded column. A template without them cannot be used for loading,
+     * whatever its cells say.
+     * </p>
+     * <p>
+     * Bounds are reported 1-based, the way every other coordinate on this class is. An area kind
+     * this method does not recognise is reported by its class name without bounds, not dropped.
+     * </p>
+     *
+     * @param doc the document; may be <code>null</code>
+     * @return one map per area, with name, kind and bounds; never <code>null</code>
+     */
+    public static List<Map<String, Object>> listNamedAreas(SpreadsheetDocument doc)
+    {
+        List<Map<String, Object>> areas = new ArrayList<>();
+        if (doc == null)
+        {
+            return areas;
+        }
+        for (Map.Entry<String, NamedItem> held : doc.getNamedItems())
+        {
+            Map<String, Object> area = new LinkedHashMap<>();
+            area.put("name", held.getKey()); //$NON-NLS-1$
+            describeNamedItem(held.getValue(), area);
+            areas.add(area);
+        }
+        return areas;
+    }
+
+    private static void describeNamedItem(NamedItem item, Map<String, Object> into)
+    {
+        if (!(item instanceof NamedItemCells))
+        {
+            into.put("kind", item == null ? "empty" //$NON-NLS-1$ //$NON-NLS-2$
+                : item.getClass().getSimpleName());
+            return;
+        }
+        Area area = ((NamedItemCells)item).getArea();
+        if (area instanceof ColumnsArea)
+        {
+            ColumnsArea columns = (ColumnsArea)area;
+            into.put("kind", "columns"); //$NON-NLS-1$ //$NON-NLS-2$
+            into.put("fromCol", Integer.valueOf(columns.getBegin() + 1)); //$NON-NLS-1$
+            into.put("toCol", Integer.valueOf(columns.getEnd() + 1)); //$NON-NLS-1$
+        }
+        else if (area instanceof RowsArea)
+        {
+            RowsArea rows = (RowsArea)area;
+            into.put("kind", "rows"); //$NON-NLS-1$ //$NON-NLS-2$
+            into.put("fromRow", Integer.valueOf(rows.getBegin() + 1)); //$NON-NLS-1$
+            into.put("toRow", Integer.valueOf(rows.getEnd() + 1)); //$NON-NLS-1$
+        }
+        else if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
+        {
+            Rect position = ((RectArea)area).getPosition();
+            into.put("kind", "rect"); //$NON-NLS-1$ //$NON-NLS-2$
+            into.put("fromRow", Integer.valueOf(position.getY() + 1)); //$NON-NLS-1$
+            into.put("fromCol", Integer.valueOf(position.getX() + 1)); //$NON-NLS-1$
+            into.put("toRow", Integer.valueOf(position.getY() + position.getHeight())); //$NON-NLS-1$
+            into.put("toCol", Integer.valueOf(position.getX() + position.getWidth())); //$NON-NLS-1$
+        }
+        else
+        {
+            into.put("kind", area == null ? "empty" //$NON-NLS-1$ //$NON-NLS-2$
+                : area.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Names an area of the template, replacing an area of that name when there is one.
+     *
+     * @param doc the document
+     * @param name the area name - this is what the loading mechanism reads
+     * @param kind columns, rows or rect
+     * @param fromRow first row, 1-based; unused for columns
+     * @param fromCol first column, 1-based; unused for rows
+     * @param toRow last row, 1-based; unused for columns
+     * @param toCol last column, 1-based; unused for rows
+     */
+    public static void addNamedArea(SpreadsheetDocument doc, String name, String kind, int fromRow,
+        int fromCol, int toRow, int toCol)
+    {
+        if (doc == null)
+        {
+            throw new IllegalArgumentException("doc must not be null"); //$NON-NLS-1$
+        }
+        if (name == null || name.trim().isEmpty())
+        {
+            throw new IllegalArgumentException("an area with no name cannot be looked up"); //$NON-NLS-1$
+        }
+        String lower = kind == null ? "rect" : kind.trim().toLowerCase(); //$NON-NLS-1$
+        NamedItemCells item = MoxelFactory.eINSTANCE.createNamedItemCells();
+        item.setArea(areaOf(lower, fromRow, fromCol, toRow, toCol));
+        // An EMap put replaces the value under a key that is already there, so naming an area twice
+        // moves it instead of leaving two areas contending for one name.
+        doc.getNamedItems().put(name, item);
+    }
+
+    private static Area areaOf(String kind, int fromRow, int fromCol, int toRow, int toCol)
+    {
+        if ("columns".equals(kind)) //$NON-NLS-1$
+        {
+            requireRange("column", fromCol, toCol); //$NON-NLS-1$
+            ColumnsArea columns = MoxelFactory.eINSTANCE.createColumnsArea();
+            columns.setBegin(fromCol - 1);
+            columns.setEnd(toCol - 1);
+            return columns;
+        }
+        if ("rows".equals(kind)) //$NON-NLS-1$
+        {
+            requireRange("row", fromRow, toRow); //$NON-NLS-1$
+            RowsArea rows = MoxelFactory.eINSTANCE.createRowsArea();
+            rows.setBegin(fromRow - 1);
+            rows.setEnd(toRow - 1);
+            return rows;
+        }
+        if (!"rect".equals(kind)) //$NON-NLS-1$
+        {
+            throw new IllegalArgumentException("unknown area kind: " + kind //$NON-NLS-1$
+                + ". Allowed: columns, rows, rect."); //$NON-NLS-1$
+        }
+        requireRange("row", fromRow, toRow); //$NON-NLS-1$
+        requireRange("column", fromCol, toCol); //$NON-NLS-1$
+        RectArea rect = MoxelFactory.eINSTANCE.createRectArea();
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(fromCol - 1);
+        position.setY(fromRow - 1);
+        position.setWidth(toCol - fromCol + 1);
+        position.setHeight(toRow - fromRow + 1);
+        rect.setPosition(position);
+        return rect;
+    }
+
+    private static void requireRange(String what, int from, int to)
+    {
+        if (from < 1 || to < from)
+        {
+            throw new IllegalArgumentException("invalid " + what + " range: " + from + ".." + to //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " - 1-based, and the end must not precede the start"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Removes a named area.
+     *
+     * @param doc the document
+     * @param name the area name
+     * @return <code>true</code> when an area of that name was there and is gone
+     */
+    public static boolean removeNamedArea(SpreadsheetDocument doc, String name)
+    {
+        if (doc == null || name == null)
+        {
+            return false;
+        }
+        return doc.getNamedItems().removeKey(name) != null;
+    }
+
+    /**
      * Reads a {@link SpreadsheetDocument} into a plain map - the inverse of
      * {@link #setCellText} / {@link #mergeCells}. Read-only. The moxel row/cell
      * maps are sparse (only populated rows/cols exist), so {@code rowCount} /
@@ -1516,6 +1683,9 @@ public final class BmTemplateHelper
         out.put("cells", cells); //$NON-NLS-1$
         out.put("merges", merges); //$NON-NLS-1$
         out.put("drawings", drawings); //$NON-NLS-1$
+        // Without these a template written elsewhere cannot be read back and repeated, which is
+        // exactly what building a load template from an existing one needs.
+        out.put("namedAreas", listNamedAreas(doc)); //$NON-NLS-1$
         return out;
     }
 
