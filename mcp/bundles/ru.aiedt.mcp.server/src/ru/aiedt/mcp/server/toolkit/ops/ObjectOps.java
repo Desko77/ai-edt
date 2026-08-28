@@ -935,6 +935,7 @@ final class ObjectOps
         String type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
+        final boolean[] typeSkipped = { false };
         BmDefinedTypeHelper.QualifierOptions qualifiers = new BmDefinedTypeHelper.QualifierOptions();
         qualifiers.length = JsonUtils.extractIntegerArgument(params, "length"); //$NON-NLS-1$
         qualifiers.precision = JsonUtils.extractIntegerArgument(params, "precision"); //$NON-NLS-1$
@@ -1003,6 +1004,7 @@ final class ObjectOps
                 BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.setTypes(
                     target, project, config, Collections.singletonList(type), qualifiers);
                 typeApplied[0] = tr.ok;
+                typeSkipped[0] = tr.idempotentSkip;
                 if (tr.resolved != null)
                 {
                     typeResolved.addAll(tr.resolved);
@@ -1022,7 +1024,13 @@ final class ObjectOps
 
         Map<String, Object> typeApply = new LinkedHashMap<>();
         typeApply.put("requested", type); //$NON-NLS-1$
-        typeApply.put("applied", typeApplied[0]); //$NON-NLS-1$
+        // A type that was already what was asked for is not a type this call applied. Reporting the
+        // two the same way is how a request that wrote nothing read as a success.
+        typeApply.put("applied", Boolean.valueOf(typeApplied[0] && !typeSkipped[0])); //$NON-NLS-1$
+        if (typeSkipped[0])
+        {
+            typeApply.put("idempotentSkip", Boolean.TRUE); //$NON-NLS-1$
+        }
         if (!typeResolved.isEmpty())
         {
             typeApply.put("resolved", typeResolved); //$NON-NLS-1$

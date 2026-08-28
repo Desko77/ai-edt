@@ -302,10 +302,18 @@ public final class BmDefinedTypeHelper
             return r;
         }
 
-        // 2. Idempotency check
+        // 2. Idempotency check.
+        //
+        // The type names alone do not decide this. A qualifier - precision, length, the date parts -
+        // is part of what the caller asked for, and changing only a qualifier leaves the names
+        // identical. Skipping on the names alone therefore returned ok for a request that wrote
+        // nothing: measured on the stand, Number(2,0) asked to become Number(5,2) answered
+        // applied:true and the .mdo kept precision 2. Where a qualifier is named, the type items are
+        // rebuilt and the qualifier goes on with them.
         Set<String> currentSet = readCurrentTypeNames(typesList);
         Set<String> requestedSet = new HashSet<>(requested);
-        if (currentSet.equals(requestedSet))
+        boolean qualifiersAsked = qualifierOptions != null && qualifierOptions.anyRequested();
+        if (currentSet.equals(requestedSet) && !qualifiersAsked)
         {
             r.ok = true;
             r.idempotentSkip = true;
@@ -1242,6 +1250,17 @@ public final class BmDefinedTypeHelper
         public Boolean nonNegative;       // Number sign restriction
         public String dateFractions;      // Date / DateTime / Time
         public String allowedLength;      // Variable / Fixed (String)
+
+        /**
+         * Whether the caller named any qualifier at all.
+         *
+         * @return <code>true</code> when at least one is set
+         */
+        public boolean anyRequested()
+        {
+            return length != null || precision != null || fractionDigits != null
+                || nonNegative != null || dateFractions != null || allowedLength != null;
+        }
     }
 
     /**

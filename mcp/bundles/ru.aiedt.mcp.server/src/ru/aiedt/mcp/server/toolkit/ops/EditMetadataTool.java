@@ -39,6 +39,7 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.GsonHolder;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.UnreadArguments;
 import ru.aiedt.mcp.server.support.MetadataMutationLock;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -1063,6 +1064,17 @@ public class EditMetadataTool implements IMcpTool
         if (entry == null)
         {
             return ToolResult.error("Operation routed but not implemented: " + op).toJson(); //$NON-NLS-1$
+        }
+        // An argument this operation does not read is refused rather than dropped in silence. A
+        // typo in a name and a property the operation does not support used to come back the way a
+        // correct call did, so the caller could not tell what had been carried out. Where the
+        // parameter map has no entry for an operation nothing is checked - the map states its own
+        // gaps, and guessing at them would turn working calls away.
+        List<String> unread = UnreadArguments.of("EditMetadataTool", op, params); //$NON-NLS-1$
+        if (!unread.isEmpty())
+        {
+            return ToolResult.error(UnreadArguments.refusal(op, unread,
+                UnreadArguments.readBy("EditMetadataTool", op))).toJson(); //$NON-NLS-1$
         }
         return entry.handler.apply(params);
     }
