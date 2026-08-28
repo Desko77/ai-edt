@@ -317,11 +317,19 @@ public final class BmExternalObjectProjectHelper
                 after.removeAll(before);
                 if (after.isEmpty())
                 {
-                    r.error = "The import reported no error but nothing was added to '" //$NON-NLS-1$
-                        + targetProjectName + "'. The file may not be an external data processor " //$NON-NLS-1$
-                        + "or report, or it may have been built by a platform version this " //$NON-NLS-1$
-                        + "installation does not have. Importing it through the EDT UI reports " //$NON-NLS-1$
-                        + "the reason."; //$NON-NLS-1$
+                    // What is known is that the API returned without error and the project
+                    // gained nothing. The two causes this used to name - a file that is not an
+                    // external object, and one built by an absent platform version - are guesses,
+                    // and both were false the one time this was measured: the file had been built
+                    // by this plugin on this platform seconds earlier, and EDT logged the start of
+                    // the conversion and then nothing at all. Naming a cause that is not
+                    // established sends the caller after the wrong thing.
+                    r.error = "The import returned without an error and '" + targetProjectName //$NON-NLS-1$
+                        + "' gained no object. Why is not established here: EDT's importer reports " //$NON-NLS-1$
+                        + "nothing back. Its own trace is in the workspace log " //$NON-NLS-1$
+                        + "(.metadata/.log), where the conversion of the binary to XML is logged " //$NON-NLS-1$
+                        + "as it runs; importing the same file through the EDT UI surfaces what " //$NON-NLS-1$
+                        + "the API withholds."; //$NON-NLS-1$
                     r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
                     return r;
                 }

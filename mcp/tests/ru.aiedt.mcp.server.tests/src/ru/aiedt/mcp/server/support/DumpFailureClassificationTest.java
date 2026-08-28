@@ -33,6 +33,9 @@ public class DumpFailureClassificationTest
             + "\u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439 " //$NON-NLS-1$
             + "\u0431\u0430\u0437\u044b \u0434\u043b\u044f \u043f\u0440\u043e\u0435\u043a\u0442\u0430"; //$NON-NLS-1$
 
+    /** The newline the platform separates its report with. */
+    private static final String LINE = "\n"; //$NON-NLS-1$
+
     private static DumpInvocation classify(String message)
     {
         DumpInvocation invocation = new DumpInvocation();
@@ -86,5 +89,42 @@ public class DumpFailureClassificationTest
         BmExternalObjectDumpHelper.classifyFailure(invocation, wrapped);
 
         assertEquals("noInfobase", invocation.failureKind); //$NON-NLS-1$
+    }
+
+    /**
+     * The platform reports in a block of lines, and the reason is not the first of them.
+     * <p>
+     * Measured on the stand: an attribute typed Stirng made the dump fail, and the platform said so
+     * seven lines into its report - after the version header, the command and two paths. The answer
+     * kept the first line alone, so the caller read a sentence ending in a colon and nothing else,
+     * while the reason sat in the workspace log.
+     * </p>
+     */
+    @Test
+    public void theReasonBelowTheHeaderReachesTheCaller()
+    {
+        String platformReport = "Interaction with 1C:Enterprise 8.3.27.2214 failed:" //$NON-NLS-1$
+            + LINE + "Platform process log [error code 1]:" //$NON-NLS-1$
+            + LINE + "Loading an external data processor or report from XML." //$NON-NLS-1$
+            + LINE + "Root export file: C:/Temp/whatever.xml" //$NON-NLS-1$
+            + LINE + LINE + "Unknown type name - Stirng" //$NON-NLS-1$
+            + LINE + "Unknown type name - Stirng"; //$NON-NLS-1$
+
+        String answer = classify(platformReport).error;
+
+        assertTrue(answer, answer.contains("Unknown type name - Stirng")); //$NON-NLS-1$
+        assertTrue("the header is still there, it just is not all there is", //$NON-NLS-1$
+            answer.contains("8.3.27.2214")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theReasonIsNotRepeatedBackTwice()
+    {
+        // The platform says it once in its summary and once in the detail.
+        String answer = classify("header:" + LINE + "same line" + LINE + "same line").error; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        int first = answer.indexOf("same line"); //$NON-NLS-1$
+        assertEquals("one mention is enough", //$NON-NLS-1$
+            -1, answer.indexOf("same line", first + 1)); //$NON-NLS-1$
     }
 }

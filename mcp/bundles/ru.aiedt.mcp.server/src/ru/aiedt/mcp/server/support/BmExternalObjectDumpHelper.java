@@ -369,15 +369,55 @@ public final class BmExternalObjectDumpHelper
         return sb.toString();
     }
 
+    private static final String NEWLINE = "\n"; //$NON-NLS-1$
+
+    /** How much of the platform's own report to carry back, in characters. */
+    private static final int DETAIL_BUDGET = 700;
+
+    /**
+     * The platform's report, kept whole enough to name the reason.
+     * <p>
+     * It arrives as a block of lines: a header naming the platform version, the command that ran,
+     * the paths it used, and - at the end - what actually went wrong. Taking the first line alone
+     * returned the header: a sentence ending in a colon with nothing after it. The caller was told
+     * the build failed and never told why, while the reason sat in the log.
+     * </p>
+     * <p>
+     * Measured on the stand: an attribute typed Stirng made the dump fail with "unknown type name -
+     * Stirng" seven lines in, and the answer stopped at "1C:Enterprise 8.3.27.2214:".
+     * </p>
+     *
+     * @param s the cause chain text; may be <code>null</code>
+     * @return the lines worth reading, joined by " | "; never <code>null</code>
+     */
     private static String firstLine(String s)
     {
         if (s == null)
         {
             return ""; //$NON-NLS-1$
         }
-        int nl = s.indexOf('\n');
-        String line = nl >= 0 ? s.substring(0, nl) : s;
-        return line.length() > 400 ? line.substring(0, 400) + "..." : line; //$NON-NLS-1$
+        StringBuilder sb = new StringBuilder();
+        java.util.Set<String> alreadySaid = new java.util.LinkedHashSet<>();
+        for (String raw : s.split(NEWLINE))
+        {
+            String line = raw.trim();
+            // The platform says the reason twice - once in its summary, once in the detail.
+            if (line.isEmpty() || !alreadySaid.add(line))
+            {
+                continue;
+            }
+            if (sb.length() > 0)
+            {
+                sb.append(" | "); //$NON-NLS-1$
+            }
+            sb.append(line);
+            if (sb.length() >= DETAIL_BUDGET)
+            {
+                sb.append("..."); //$NON-NLS-1$
+                break;
+            }
+        }
+        return sb.toString();
     }
 
     private static String names(Collection<MdObject> objs)
