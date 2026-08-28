@@ -915,6 +915,52 @@ public class BmFormHelper
      * @return the created decoration object
      * @throws Exception if creation fails
      */
+    /**
+     * The constant of an EMF enum named either the Java way or the way the platform spells it.
+     * <p>
+     * An EMF-generated enum overrides {@code toString()} to return its LITERAL - "Label", "Picture",
+     * "Left" - while the Java constant is SCREAMING_SNAKE. Code that compared a hardcoded "LABEL"
+     * against {@code toString()} therefore matched nothing, left the property unset, and the object
+     * kept the model default. Measured on the stand 2026-08-28: a Label decoration carried
+     * LabelDecorationExtInfo with no type written at all, so EDT read the type as Picture and
+     * reported MAJOR "Illegal extension type for decoration type 'Picture'". The Picture branch had
+     * the same flaw and got away with it, because Picture is the default it failed into.
+     * </p>
+     *
+     * @param enumClass the EMF enum class
+     * @param wanted the constant, in either spelling; case is ignored
+     * @return the constant, or <code>null</code> when the enum has none by that name
+     */
+    /**
+     * {@link #enumConstantNamed} for the test that pins the two spellings apart.
+     *
+     * @param enumClass the EMF enum class
+     * @param wanted the constant, in either spelling
+     * @return the constant, or <code>null</code>
+     */
+    static Object enumConstantNamedForTest(Class<?> enumClass, String wanted)
+    {
+        return enumConstantNamed(enumClass, wanted);
+    }
+
+    private static Object enumConstantNamed(Class<?> enumClass, String wanted)
+    {
+        Object[] constants = enumClass.getEnumConstants();
+        if (constants == null || wanted == null)
+        {
+            return null;
+        }
+        for (Object constant : constants)
+        {
+            if (wanted.equalsIgnoreCase(String.valueOf(constant))
+                || (constant instanceof Enum && wanted.equalsIgnoreCase(((Enum<?>)constant).name())))
+            {
+                return constant;
+            }
+        }
+        return null;
+    }
+
     public Object createDecoration(String name, String title, String decorationType) throws Exception
     {
         return createDecoration(name, title, decorationType, null);
@@ -960,13 +1006,10 @@ public class BmFormHelper
         if ("Picture".equalsIgnoreCase(decorationType)) //$NON-NLS-1$
         {
             // Set type to PICTURE
-            for (Object constant : decoTypeClass.getEnumConstants())
+            Object pictureType = enumConstantNamed(decoTypeClass, "PICTURE"); //$NON-NLS-1$
+            if (pictureType != null)
             {
-                if ("PICTURE".equals(constant.toString())) //$NON-NLS-1$
-                {
-                    decorationIface.getMethod("setType", decoTypeClass).invoke(decoration, constant); //$NON-NLS-1$
-                    break;
-                }
+                decorationIface.getMethod("setType", decoTypeClass).invoke(decoration, pictureType); //$NON-NLS-1$
             }
             Object extInfo = ffClass.getMethod("createPictureDecorationExtInfo").invoke(formFactory); //$NON-NLS-1$
             decorationIface.getMethod("setExtInfo", decoExtInfoClass).invoke(decoration, extInfo); //$NON-NLS-1$
@@ -982,13 +1025,10 @@ public class BmFormHelper
         else
         {
             // Default to LABEL
-            for (Object constant : decoTypeClass.getEnumConstants())
+            Object labelType = enumConstantNamed(decoTypeClass, "LABEL"); //$NON-NLS-1$
+            if (labelType != null)
             {
-                if ("LABEL".equals(constant.toString())) //$NON-NLS-1$
-                {
-                    decorationIface.getMethod("setType", decoTypeClass).invoke(decoration, constant); //$NON-NLS-1$
-                    break;
-                }
+                decorationIface.getMethod("setType", decoTypeClass).invoke(decoration, labelType); //$NON-NLS-1$
             }
             Object extInfo = ffClass.getMethod("createLabelDecorationExtInfo").invoke(formFactory); //$NON-NLS-1$
             decorationIface.getMethod("setExtInfo", decoExtInfoClass).invoke(decoration, extInfo); //$NON-NLS-1$
@@ -2451,14 +2491,11 @@ public class BmFormHelper
         {
             Class<?> labelExtClass = Class.forName("com._1c.g5.v8.dt.form.model.LabelDecorationExtInfo"); //$NON-NLS-1$
             Class<?> hAlignClass = Class.forName("com._1c.g5.v8.dt.form.model.ItemHorizontalAlignment"); //$NON-NLS-1$
-            for (Object constant : hAlignClass.getEnumConstants())
+            Object left = enumConstantNamed(hAlignClass, "LEFT"); //$NON-NLS-1$
+            if (left != null)
             {
-                if ("LEFT".equals(constant.toString())) //$NON-NLS-1$
-                {
-                    labelExtClass.getMethod("setHorizontalAlign", hAlignClass) //$NON-NLS-1$
-                        .invoke(extInfo, constant);
-                    break;
-                }
+                labelExtClass.getMethod("setHorizontalAlign", hAlignClass) //$NON-NLS-1$
+                    .invoke(extInfo, left);
             }
         }
         catch (Exception e)
