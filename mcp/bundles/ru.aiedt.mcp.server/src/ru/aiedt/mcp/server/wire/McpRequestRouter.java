@@ -1038,7 +1038,7 @@ public class McpRequestRouter
         return failed && result != null ? result.asFailure() : result;
     }
 
-    private static ToolCallResult shapeResult(IMcpTool tool, Map<String, String> arguments,
+    static ToolCallResult shapeResult(IMcpTool tool, Map<String, String> arguments,
         String rawResult, OperatorSignal signal, boolean plainTextMode)
     {
         String result = rawResult != null ? rawResult : EMPTY;
@@ -1058,7 +1058,14 @@ public class McpRequestRouter
         {
             // The signal rides in the markdown itself, so plain-text mode carries it along.
             String annotated = withMarkdownSignal(result, signal);
-            return mark(plainTextMode ? ToolCallResult.text(annotated)
+            // A refusal goes as text, never as a resource on its own. A client handed isError with
+            // no text block in the content array has nothing to render and says so in its own
+            // words, while the message sits unread inside the resource. Measured 2026-08-28: a
+            // write_module_source refusal reached Claude Code as the words "Unknown error" with the
+            // real sentence - which named the argument and the shape it wanted - never shown. It is
+            // why three modes of that tool looked like they threw on a large module: they were
+            // refusing, and the refusal was invisible.
+            return mark(failed || plainTextMode ? ToolCallResult.text(annotated)
                 : ToolCallResult.resource(embeddedUri(tool, arguments), MIME_MARKDOWN, annotated),
                 failed);
         }
