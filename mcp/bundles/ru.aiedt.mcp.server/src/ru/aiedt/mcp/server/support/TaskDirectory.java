@@ -327,8 +327,18 @@ public final class TaskDirectory
                 return;
             }
             PendingWorkRegistry registry = PendingWorkRegistry.domainOf(runKey);
-            if (registry != null && registry.get(runKey) != null)
+            PendingWorkRegistry.PendingEntry running =
+                registry != null ? registry.get(runKey) : null;
+            if (running != null)
             {
+                // Work with steps says where it has got to. Carrying that here is what makes a
+                // poll worth issuing: without it every poll of a long run answers the same
+                // sentence, and the caller learns only that time has passed.
+                if (running.progressNote != null)
+                {
+                    statusMessage = running.progressNote;
+                    lastUpdatedAt = System.currentTimeMillis();
+                }
                 return;
             }
             // The run is in no domain and nothing settled this task. Either the answer was redeemed

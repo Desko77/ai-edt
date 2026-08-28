@@ -599,6 +599,14 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("stopOnError", //$NON-NLS-1$
                 "batch only: stop at the first failing operation instead of running the rest. " //$NON-NLS-1$
                 + "Already-committed operations are NOT rolled back. Default false.") //$NON-NLS-1$ //$NON-NLS-1$
+            .stringProperty("runKey", //$NON-NLS-1$
+                "Handle to a run already going, from a previous answer that came back " //$NON-NLS-1$
+                + "status=Pending. Re-call with it to collect that run's result; the work is not " //$NON-NLS-1$
+                + "restarted and nothing is applied twice. Without it a call is a fresh request.") //$NON-NLS-1$
+            .integerProperty("timeoutSeconds", //$NON-NLS-1$
+                "How long to wait before answering status=Pending with a runKey instead of the " //$NON-NLS-1$
+                + "result. 5 to 120, default 25. The work continues either way - this bounds the " //$NON-NLS-1$
+                + "wait, not the operation.") //$NON-NLS-1$
             .stringProperty("operations", //$NON-NLS-1$
                 "batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that " //$NON-NLS-1$
                 + "op's own params}. Per-item params override the inherited projectName / ownerFqn / formFqn / dryRun. Full text: operation=help " //$NON-NLS-1$
@@ -646,6 +654,120 @@ public class EditMetadataTool implements IMcpTool
                 .toJson();
         }
 
+        // On the UI thread already - run it here. Handing the work to a pool thread that then needs
+        // this same thread would deadlock, and a caller that is on the UI thread is not an MCP
+        // client with a patience to run out.
+        if (Display.getCurrent() != null)
+        {
+            return applyOne(op, params);
+        }
+        return executeSinglePending(op, params);
+    }
+
+    /**
+     * Runs one operation, handing back a runKey if it outlives the caller's patience.
+     * <p>
+     * On a configuration of some 13 thousand objects a single write can take longer than a client
+     * will wait. What was reported is not a slow answer but a wrong one: the client stopped waiting
+     * and said the operation had timed out, while the attribute it asked for was already on disk.
+     * Nothing the server writes into a response can reach a caller who has stopped reading, so the
+     * answer has to arrive earlier - a runKey, with the work still running behind it.
+     * </p>
+     *
+     * @param op the normalized operation name, never {@code null}
+     * @param params the call parameters, never {@code null}
+     * @return the operation result when it finishes in time, a Pending answer otherwise
+     */
+    /** Separator between the key and the value in a call identity. */
+    private static final char EQUALS = '=';
+
+    /** Separator between one key-value pair and the next in a call identity. */
+    private static final char SEPARATOR = ';';
+
+    private String executeSinglePending(String op, Map<String, String> params)
+    {
+        long softTimeoutMs = Math.max(5, Math.min(120,
+            JsonUtils.extractIntArgument(params, "timeoutSeconds", 25))) * 1000L; //$NON-NLS-1$
+        String providedRunKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        PendingWorkRegistry reg = PendingWorkRegistry.UPDATE;
+        reg.pruneExpired();
+        String runKey = (providedRunKey != null && !providedRunKey.isEmpty())
+            ? providedRunKey
+            : PendingWorkRegistry.computeRunKey("edit_metadata", op, callIdentity(params)); //$NON-NLS-1$
+
+        PendingWorkRegistry.PendingEntry entry;
+        if (providedRunKey != null && !providedRunKey.isEmpty())
+        {
+            entry = reg.get(runKey);
+            if (entry == null)
+            {
+                return ToolResult.error("runKey not found - the operation either finished and its " //$NON-NLS-1$
+                    + "result was already retrieved, or it expired. Re-issue it without runKey.") //$NON-NLS-1$
+                    .toJson();
+            }
+        }
+        else
+        {
+            // The same call issued twice in a row is two requests, not one: the second must run
+            // against the project as it stands now and answer for itself. Only a poll by runKey
+            // replays what an earlier call started.
+            PendingWorkRegistry.PendingEntry prior = reg.get(runKey);
+            if (prior != null && prior.isDone())
+            {
+                reg.remove(runKey);
+            }
+            entry = reg.getOrStart(runKey, job -> applyOne(op, params));
+        }
+
+        String result = entry.await(softTimeoutMs);
+        if (result != null)
+        {
+            reg.remove(runKey);
+            return result;
+        }
+        return ToolResult.success()
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
+            .put("operation", op) //$NON-NLS-1$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("message", "The operation is still running. Re-call edit_metadata with this " //$NON-NLS-1$
+                + "runKey to collect its result. It has not been abandoned and it has not " //$NON-NLS-1$
+                + "failed: whatever it writes is written whether or not this key is collected.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The parameters that make two calls the same call.
+     *
+     * @param params the call parameters, never {@code null}
+     * @return a stable rendering, never {@code null}
+     */
+    static String callIdentity(Map<String, String> params)
+    {
+        StringBuilder sb = new StringBuilder();
+        for (String key : new java.util.TreeSet<>(params.keySet()))
+        {
+            // Neither of these says what is being asked for - one is how long to wait, the other
+            // is the handle to a run already going.
+            if ("runKey".equals(key) || "timeoutSeconds".equals(key)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                continue;
+            }
+            sb.append(key).append(EQUALS).append(params.get(key)).append(SEPARATOR);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Applies one operation on the UI thread, under the mutation lock.
+     *
+     * @param op the normalized operation name, never {@code null}
+     * @param params the call parameters, never {@code null}
+     * @return the operation result as JSON, never {@code null}
+     */
+    private String applyOne(String op, Map<String, String> params)
+    {
         // All operations require BM access on the UI thread. Hold the mutation lock across it so a
         // single op cannot slip in between two sub-operations of a concurrent batch (and vice versa).
         AtomicReference<String> resultRef = new AtomicReference<>();
@@ -687,7 +809,8 @@ public class EditMetadataTool implements IMcpTool
      * lines, each {@code "<operation> key1=value1 key2=value2"}. JSON-array
      * parsing is also accepted: {@code operations=[{"operation":"...", ...}]}.
      */
-    private String executeBatch(Map<String, String> params)
+    private String executeBatch(Map<String, String> params,
+        PendingWorkRegistry.PendingEntry job)
     {
         String operationsRaw = JsonUtils.extractStringArgument(params, "operations"); //$NON-NLS-1$
         if (operationsRaw == null || operationsRaw.isEmpty())
@@ -718,6 +841,7 @@ public class EditMetadataTool implements IMcpTool
             // normalize the sub-operation as well.
             String subOp = JsonUtils.normalizeOperationToken(
                 JsonUtils.extractStringArgument(opParams, "operation")); //$NON-NLS-1$
+            noteProgress(job, i, ops.size(), subOp, okCount, failCount);
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("index", i); //$NON-NLS-1$
             entry.put("operation", subOp); //$NON-NLS-1$
@@ -902,7 +1026,7 @@ public class EditMetadataTool implements IMcpTool
             {
                 reg.remove(runKey);
             }
-            entry = reg.getOrStart(runKey, () -> executeBatch(params));
+            entry = reg.getOrStart(runKey, job -> executeBatch(params, job));
         }
 
         String result = entry.await(softTimeoutMs);
@@ -912,14 +1036,50 @@ public class EditMetadataTool implements IMcpTool
             return result;
         }
         // Still running past the soft timeout - hand back a runKey to poll with.
-        return ToolResult.success()
+        ToolResult pending = ToolResult.success()
             .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
             .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
             .put("batch", true) //$NON-NLS-1$
             .put("runKey", runKey) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
             .put("message", "Batch still running - ops apply on a worker thread. Re-call edit_metadata " //$NON-NLS-1$
-                + "with batch=true and this runKey (same operations) to fetch batchResults.").toJson(); //$NON-NLS-1$
+                + "with batch=true and this runKey (same operations) to fetch batchResults. " //$NON-NLS-1$
+                + "`progress` says how far it has got; the operations it names as applied are " //$NON-NLS-1$
+                + "committed already, because a batch commits each operation separately."); //$NON-NLS-1$
+        if (entry.progressNote != null)
+        {
+            pending.put("progress", entry.progressNote); //$NON-NLS-1$
+        }
+        return pending.toJson();
+    }
+
+    /**
+     * Records how far the batch has got, for whoever is holding its runKey.
+     * <p>
+     * A batch commits each operation on its own, so a run that is still going has already changed
+     * the project. Without this the Pending answer carried only elapsed milliseconds, and a caller
+     * whose batch outlived the timeout three times over had no way to learn that four of its six
+     * operations were on disk - reported from a configuration of some 13 thousand objects, where
+     * every batch outlives the timeout.
+     * </p>
+     *
+     * @param job the entry to publish into; {@code null} when the batch runs outside the registry
+     * @param index 0-based position of the operation about to run
+     * @param total how many operations the batch holds
+     * @param operation the one about to run; may be <code>null</code> for a malformed entry
+     * @param okCount how many have succeeded so far
+     * @param failCount how many have failed so far
+     */
+    static void noteProgress(PendingWorkRegistry.PendingEntry job, int index, int total,
+        String operation, int okCount, int failCount)
+    {
+        if (job == null)
+        {
+            return;
+        }
+        job.progressNote = index + " of " + total + " done (" + okCount + " applied, " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + failCount + " failed); now running " //$NON-NLS-1$
+            + (operation != null && !operation.isEmpty() ? operation : "an unnamed operation"); //$NON-NLS-1$
     }
 
     /**

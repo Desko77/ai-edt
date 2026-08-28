@@ -21,6 +21,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.Activator;
@@ -187,6 +188,19 @@ public final class PendingWorkRegistry
      */
     public PendingEntry getOrStart(String runKey, Supplier<String> work)
     {
+        return getOrStart(runKey, entry -> work.get());
+    }
+
+    /**
+     * As {@link #getOrStart(String, Supplier)}, for work that reports its progress.
+     *
+     * @param runKey the coalescing key, never {@code null}
+     * @param work the body, handed the entry it runs under so it can set
+     *            {@link PendingEntry#progressNote}; never {@code null}
+     * @return the entry, whether freshly started or already running
+     */
+    public PendingEntry getOrStart(String runKey, Function<PendingEntry, String> work)
+    {
         // Capture just the calling (worker) thread's cancellation flag so the async work can expose
         // it and a cooperative loop on the executor thread bails out when the operator cancels. We
         // capture the flag, not the whole scope, so the future does not pin the RunningToolCall (and
@@ -210,7 +224,7 @@ public final class PendingWorkRegistry
                 }
                 try
                 {
-                    return work.get();
+                    return work.apply(entry);
                 }
                 catch (Throwable t)
                 {
@@ -477,6 +491,17 @@ public final class PendingWorkRegistry
         /** Set when the cached result exceeds the oversized threshold (short TTL). */
         public volatile boolean oversized;
         public volatile long completedAt;
+        /**
+         * What the run has finished so far, for a caller that is still waiting.
+         * <p>
+         * A run that outlives the soft timeout answers Pending, and until this field existed that
+         * answer carried the elapsed milliseconds and nothing else: the caller could not tell a run
+         * that had applied five of six operations from one that had applied none. Work with steps
+         * publishes a line here after each; work without steps leaves it null and the answer is
+         * unchanged.
+         * </p>
+         */
+        public volatile String progressNote;
 
         PendingEntry(String runKey)
         {
