@@ -2307,6 +2307,56 @@ public class BmFormHelper
      * setter's parameter type via {@link #coerceFormValue}. Returns {@code null} on
      * success, an error description otherwise (setter absent / coercion failed).
      */
+    /**
+     * Whether the value written by the last {@link #setScalarProperty} equals the model default.
+     * <p>
+     * EDT does not serialize a feature whose value is the default, so such a write leaves no trace
+     * in the .form file. The write happened - the model carries it and the form reads it back - but
+     * anybody comparing the file sees nothing and concludes the call did nothing. Two external
+     * reviewers read a `visible=false` that way, and a report of a group whose `group=Horizontal`
+     * "was not applied" turned out to be this and not a defect: Horizontal is the default of
+     * FormChildrenGroup, and Vertical writes a tag from the same code path.
+     * </p>
+     */
+    private boolean wroteTheModelDefault;
+
+    /**
+     * Whether the last write put in a value the model already had as its default.
+     *
+     * @return <code>true</code> when the value will not be serialized
+     */
+    public boolean lastWriteEqualsModelDefault()
+    {
+        return wroteTheModelDefault;
+    }
+
+    /**
+     * Asks EMF whether a feature is set after the write.
+     *
+     * @param target the object written to
+     * @param property the feature name
+     * @return <code>true</code> when the feature is not set, meaning the value equals the default
+     */
+    private static boolean equalsModelDefault(Object target, String property)
+    {
+        if (!(target instanceof org.eclipse.emf.ecore.EObject))
+        {
+            return false;
+        }
+        try
+        {
+            org.eclipse.emf.ecore.EObject eObject = (org.eclipse.emf.ecore.EObject)target;
+            org.eclipse.emf.ecore.EStructuralFeature feature =
+                eObject.eClass().getEStructuralFeature(property);
+            return feature != null && !eObject.eIsSet(feature);
+        }
+        catch (Exception notAnAnswer)
+        {
+            // A model that will not answer is not a model saying "default".
+            return false;
+        }
+    }
+
     String setScalarProperty(Object item, String property, String value)
     {
         String setter = "set" + Character.toUpperCase(property.charAt(0)) //$NON-NLS-1$
@@ -2330,6 +2380,7 @@ public class BmFormHelper
                         + " and no value was supplied. Pass propertyValue."; //$NON-NLS-1$
                 }
                 m.invoke(item, converted);
+                wroteTheModelDefault = equalsModelDefault(item, property);
                 return null;
             }
             catch (Exception e)

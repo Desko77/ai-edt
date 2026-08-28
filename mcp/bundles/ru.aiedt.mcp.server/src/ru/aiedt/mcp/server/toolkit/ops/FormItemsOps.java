@@ -1144,9 +1144,14 @@ final class FormItemsOps
         // so the response can carry them without a second BM round-trip.
         java.util.List<String> tipTags = new java.util.ArrayList<>();
         java.util.List<String> warningTags = new java.util.ArrayList<>();
+        // Whether the value written is the one the model already had as its default. EDT writes no
+        // tag for such a value, so the answer has to say so or a diff of the file reads as "nothing
+        // happened".
+        final boolean[] wroteDefault = { false };
         final BmFormHelper helperFinal = helper;
         String result = helperFinal.executeFormOperation(project, formFqn, formDryRun, (tx, form) -> {
             String setErr = helperFinal.setItemProperty(form, itemName, propertyName, propertyValue);
+            wroteDefault[0] = helperFinal.lastWriteEqualsModelDefault();
             if (setErr != null)
             {
                 throw new RuntimeException(setErr);
@@ -1168,6 +1173,16 @@ final class FormItemsOps
             .put("propertyName", propertyName) //$NON-NLS-1$
             .put("propertyValue", propertyValue != null ? propertyValue : "") //$NON-NLS-1$ //$NON-NLS-2$
             .put("message", result); //$NON-NLS-1$
+        if (wroteDefault[0])
+        {
+            // EDT does not serialize a value equal to the model default, so the .form file gains
+            // nothing and a reader comparing files concludes the call did nothing. It did: the model
+            // carries the value and get_form_structure reads it back.
+            tr = tr.put("serializedAsDefault", true) //$NON-NLS-1$
+                .put("note", "The value equals the model default, so EDT writes no tag for it. " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "The property is set - get_form_structure reports it - and a diff of the " //$NON-NLS-1$
+                    + "form file shows nothing."); //$NON-NLS-1$
+        }
         if (!tipTags.isEmpty())
         {
             tr.put("formatHelp", tipTags.get(0)); //$NON-NLS-1$
