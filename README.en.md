@@ -402,7 +402,10 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `insights` | Dependencies, metrics, anti-patterns, three-way comparison with a delivery and merging, impact analysis. |
 | `security_audit` | Role rights, RLS violations and sensitive-data scanning. |
 | `project_admin` / `infobase_admin` | Workspace projects, launch configurations, database updates and synchronization. |
-| `dcs_workshop` / `mxl_workshop` / `xdto_workshop` | Programmatic builders for complex 1C artifacts. |
+| `config_io` | Configuration and single-artifact import and export. |
+| `docs_lookup` | Platform documentation and built-in 1C object help. |
+| `workspace_marks` | Tags, objects by tag, bookmarks and tasks. |
+| `dcs_workshop` / `mxl_workshop` / `xdto_workshop` / `external_data_source_workshop` | Programmatic builders for complex 1C artifacts. |
 | `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |
 | `support_registry` | Vendor support state: parent configurations and their releases, object modes, recording and restoring them. |
@@ -410,6 +413,14 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
 
 ![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
+
+### Long-running operations
+
+A call that does not finish within the wait returns `status=Pending` and a `runKey`. Re-calling with that key returns the result; the work is not restarted. `timeoutSeconds` sets the wait - 5 to 120 seconds, 25 by default.
+
+An `edit_metadata batch` answer also carries `progress`: how many operations are done, applied and rejected, and which one is running. A batch commits each operation separately, so the ones it reports as applied are already written.
+
+A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
 
 ## 🔐 Tool presets and safety
 

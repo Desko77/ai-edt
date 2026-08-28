@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: AI-EDT Tests
 Bundle-SymbolicName: ru.aiedt.mcp.server.tests
-Bundle-Version: 0.2.37.qualifier
+Bundle-Version: 0.2.38.qualifier
 Bundle-Vendor: AI-EDT
 Fragment-Host: ru.aiedt.mcp.server;bundle-version="0.1.0"
 Bundle-RequiredExecutionEnvironment: JavaSE-17
