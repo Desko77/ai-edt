@@ -70,6 +70,28 @@ public final class BmObjectHelper
      * response so AI agents can branch on them without parsing the
      * {@link #error} text.
      */
+    /**
+     * Why a property could not be set from text.
+     * <p>
+     * Colour, font and border are composite values in the model, not scalars: the setter takes a
+     * built object, and text cannot become one here. Until they are supported, the answer names
+     * the property and the shape it wants rather than passing out the reflection failure, which
+     * said only "argument type mismatch" and sent the caller looking for a defect.
+     * </p>
+     *
+     * @param propertyName the property that was being set, never <code>null</code>
+     * @param paramType the type its setter takes, never <code>null</code>
+     * @return the refusal text, never <code>null</code>
+     */
+    static String compositeRefusal(String propertyName, Class<?> paramType)
+    {
+        String wanted = paramType.getSimpleName();
+        return "Cannot set " + propertyName + " from text: it takes " + wanted //$NON-NLS-1$ //$NON-NLS-2$
+            + ", which is a composite value built from parts rather than written as one string. " //$NON-NLS-1$
+            + "Composite properties - colour, font, border and the like - are not settable through " //$NON-NLS-1$
+            + "this operation. Nothing was changed."; //$NON-NLS-1$
+    }
+
     public static final class Result
     {
         public boolean ok;
@@ -1015,14 +1037,26 @@ public final class BmObjectHelper
                     return "Cannot set " + propertyName + ": it takes a " //$NON-NLS-1$ //$NON-NLS-2$
                         + paramType.getName() + " and no value was supplied. Pass propertyValue."; //$NON-NLS-1$
                 }
+                if (converted == null && value != null)
+                {
+                    return compositeRefusal(propertyName, paramType);
+                }
                 m.invoke(obj, converted);
                 return null;
+            }
+            catch (IllegalArgumentException typeMismatch)
+            {
+                // The setter took the value and the model refused it. Reaching the caller as
+                // "argument type mismatch" - the JDK's own words - names neither the property nor
+                // what it wanted, and reads as a defect rather than as a value of the wrong shape.
+                return compositeRefusal(propertyName, m.getParameterTypes()[0]);
             }
             catch (Exception e)
             {
                 return "Failed to set " + propertyName + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
+
         // No setXxx() found. Localized properties (synonym, toolTip, explanation)
         // have no setter on the object - they are an EMap<lang,text> reached via
         // getXxx() (synonym is an EMF EMap, NOT a LocalString-with-setter). When

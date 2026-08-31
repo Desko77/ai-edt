@@ -2379,9 +2379,20 @@ public class BmFormHelper
                     return "Cannot set " + property + ": it takes a " + paramType.getName() //$NON-NLS-1$ //$NON-NLS-2$
                         + " and no value was supplied. Pass propertyValue."; //$NON-NLS-1$
                 }
+                if (converted == null && value != null && !value.isEmpty())
+                {
+                    return BmObjectHelper.compositeRefusal(property, paramType);
+                }
                 m.invoke(item, converted);
                 wroteTheModelDefault = equalsModelDefault(item, property);
                 return null;
+            }
+            catch (IllegalArgumentException typeMismatch)
+            {
+                // The model refused the value. "argument type mismatch" - the JDK's own words -
+                // names neither the property nor the shape it wanted, and reads as a defect in the
+                // plugin. Colour, font and border arrive here; measured on the stand 30.08.
+                return BmObjectHelper.compositeRefusal(property, m.getParameterTypes()[0]);
             }
             catch (Exception e)
             {
