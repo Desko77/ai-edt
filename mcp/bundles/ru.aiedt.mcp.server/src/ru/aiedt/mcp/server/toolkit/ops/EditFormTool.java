@@ -634,6 +634,87 @@ public class EditFormTool implements IMcpTool
         return buildSuccess("edit_form", name, "add_button", body.toString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * Why a table cannot be bound to this path, checked before anything is created.
+     * <p>
+     * A table was created and put on the form before its {@code dataPath} was looked at, so a path
+     * that names nothing produced a table bound to nothing and a successful answer - measured
+     * 30.08 with a made-up attribute name. The user then sees an empty spot where a table should
+     * be, and the project looks healthy.
+     * </p>
+     * <p>
+     * Only the ROOT segment is judged. Deeper segments are not: a standard attribute such as
+     * {@code Object.Posted} is not in {@code getAttributes()} and would resolve to nothing though
+     * it exists, so refusing on a deep miss would refuse valid work. A root that is neither
+     * {@code Object} nor a form attribute cannot become a table under any reading.
+     * </p>
+     *
+     * @param form the form being edited, never <code>null</code>
+     * @param ownerObject the metadata object owning the form; may be <code>null</code>
+     * @param dataPath the requested binding; may be <code>null</code> or empty
+     * @return the refusal text, or <code>null</code> when the root is known or absent
+     */
+    static String refusalForUnknownTableRoot(Object form, Object ownerObject,
+        String dataPath)
+    {
+        if (dataPath == null || dataPath.isEmpty())
+        {
+            return null;
+        }
+        String root = dataPath.split("\\.")[0]; //$NON-NLS-1$
+        if ("Object".equalsIgnoreCase(root)) //$NON-NLS-1$
+        {
+            return ownerObject == null
+                ? "dataPath starts with Object, but this form has no owner object to bind to. " //$NON-NLS-1$
+                    + "A common form has only its own attributes." //$NON-NLS-1$
+                : null;
+        }
+        java.util.List<String> known = new java.util.ArrayList<>();
+        try
+        {
+            Object attrs = form.getClass().getMethod("getAttributes").invoke(form); //$NON-NLS-1$
+            if (attrs instanceof Iterable)
+            {
+                for (Object a : (Iterable<?>)attrs)
+                {
+                    Object n = a.getClass().getMethod("getName").invoke(a); //$NON-NLS-1$
+                    if (n != null)
+                    {
+                        known.add(n.toString());
+                    }
+                }
+            }
+        }
+        catch (Exception cannotList)
+        {
+            // The form does not answer for its attributes, so there is nothing to judge against
+            // and nothing to refuse on: let the write through rather than block it on a guess.
+            return null;
+        }
+        if (known.contains(root))
+        {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("dataPath '").append(dataPath).append("' starts with '").append(root) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .append("', and this form has no such attribute, so the table would be bound to " //$NON-NLS-1$
+                + "nothing and show the user an empty spot. Nothing was created. "); //$NON-NLS-1$
+        if (known.isEmpty())
+        {
+            sb.append("The form has no attributes yet - add one first, or drop dataPath to " //$NON-NLS-1$
+                + "place an unbound table."); //$NON-NLS-1$
+        }
+        else
+        {
+            sb.append("Form attributes: ").append(String.join(", ", known)); //$NON-NLS-1$ //$NON-NLS-2$
+            if (ownerObject != null)
+            {
+                sb.append("; or start the path with Object."); //$NON-NLS-1$
+            }
+        }
+        return sb.toString();
+    }
+
     private String executeAddTable(Object form, Object ownerObject, String name, String title,
         String dataPath, String parentName, String beforeName, boolean autoGenerateColumns)
         throws Exception
@@ -641,6 +722,12 @@ public class EditFormTool implements IMcpTool
         if (title == null || title.isEmpty())
         {
             title = name;
+        }
+
+        String rootRefusal = refusalForUnknownTableRoot(form, ownerObject, dataPath);
+        if (rootRefusal != null)
+        {
+            return buildError(rootRefusal);
         }
 
         Object table = helper.createTable(name, title);
