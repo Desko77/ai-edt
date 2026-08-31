@@ -875,6 +875,31 @@ public class DcsWorkshopTool implements IMcpTool
         return removed;
     }
 
+    /**
+     * Finds a dataset field by the path it carries.
+     *
+     * @param dataSet the dataset to search, never {@code null}
+     * @param dataPath the path to look for, never {@code null}
+     * @return the field carrying that path, or {@code null} when the dataset has none
+     */
+    private EObject findFieldByDataPath(EObject dataSet, String dataPath)
+    {
+        EList<EObject> existing = BmDcsHelper.getEObjectList(dataSet, "getFields"); //$NON-NLS-1$
+        if (existing == null)
+        {
+            return null;
+        }
+        for (EObject f : existing)
+        {
+            Object dp = invokeGetter(f, "getDataPath"); //$NON-NLS-1$
+            if (dp != null && dataPath.equals(dp.toString()))
+            {
+                return f;
+            }
+        }
+        return null;
+    }
+
     private Object doAddField(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -884,7 +909,12 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw notFoundTag(dataSetName, "dataSet"); //$NON-NLS-1$
         }
-        if (BmDcsHelper.findByNameInList(dataSet, "getFields", name) != null) //$NON-NLS-1$
+        // A dataset field is identified by its dataPath, not by a name: the class has no getName
+        // at all. The lookup by name therefore matched nothing and the check never fired, so a
+        // repeated call added a second field carrying the same dataPath - measured 31.08, the
+        // same name stood twice in the .dcs. A dataset with two identically pathed fields is not
+        // valid. The user-field path next door already compares getDataPath.
+        if (findFieldByDataPath(dataSet, name) != null)
         {
             throw alreadyExistsTag(name, "field"); //$NON-NLS-1$
         }

@@ -37,6 +37,31 @@ final class TemplateOps
      * @param params the tool parameters
      * @return the JSON result document
      */
+    /**
+     * Why a data composition schema is not made here.
+     * <p>
+     * This operation creates the template object and nothing inside it. For every other type that
+     * is right - the content arrives through its own workshop afterwards. For a schema it is not:
+     * the template comes out empty, this call reports success, and the schema workshop then
+     * answers that no schema exists by that FQN. One operation makes both halves, so the caller is
+     * sent there instead of being handed a shell.
+     * </p>
+     *
+     * @param canonicalType the resolved template type; may be <code>null</code>
+     * @return the refusal text, or <code>null</code> when this type is made here
+     */
+    static String refusalForSchemaTemplate(String canonicalType)
+    {
+        if (!"DataCompositionSchema".equals(canonicalType)) //$NON-NLS-1$
+        {
+            return null;
+        }
+        return "add_template does not make a data composition schema: it would create the template " //$NON-NLS-1$
+            + "object with nothing inside, and dcs_workshop would then answer that no schema " //$NON-NLS-1$
+            + "exists by that FQN. Use dcs_workshop operation=create_schema - it makes the " //$NON-NLS-1$
+            + "template and the schema together."; //$NON-NLS-1$
+    }
+
     String opAddTemplate(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -62,6 +87,11 @@ final class TemplateOps
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
         String canonicalType = BmTemplateHelper.canonicalTemplateType(templateTypeAlias);
+        String schemaRefusal = refusalForSchemaTemplate(canonicalType);
+        if (schemaRefusal != null)
+        {
+            return ToolResult.error(schemaRefusal).toJson();
+        }
         final String resolvedTemplateName = templateName;
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
