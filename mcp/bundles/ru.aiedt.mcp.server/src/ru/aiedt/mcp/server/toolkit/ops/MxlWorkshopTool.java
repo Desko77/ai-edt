@@ -320,7 +320,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "set_cell"); //$NON-NLS-1$
     }
@@ -392,7 +392,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "add_named_area"); //$NON-NLS-1$
     }
@@ -453,7 +453,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "remove_named_area"); //$NON-NLS-1$
     }
@@ -562,7 +562,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "merge_cells"); //$NON-NLS-1$
     }
@@ -662,7 +662,7 @@ public class MxlWorkshopTool implements IMcpTool
         }
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "format_cells"); //$NON-NLS-1$
     }
@@ -814,7 +814,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "draw"); //$NON-NLS-1$
     }
@@ -916,7 +916,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         if (r.ok && r.tags != null && drawingIdRef[0] > 0)
         {
@@ -974,7 +974,7 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
-            r.tags.put("templateMutationPersistWarning", persistErrorRef[0]); //$NON-NLS-1$
+            failOnPersist(r, persistErrorRef[0]);
         }
         if (r.ok && r.tags != null && !removedRef[0])
         {
@@ -1045,6 +1045,35 @@ public class MxlWorkshopTool implements IMcpTool
      * Locates the named Template MdObject inside the owner. Throws when the
      * owner has no Templates collection or the named template is missing.
      */
+    /**
+     * Turns a write that never reached the file into a failure.
+     * <p>
+     * The mutation lands in the in-memory moxel model first and is then written to
+     * {@code Template.mxlx}. When that write fails the model still carries the change, so the
+     * operation looked successful and carried the reason as a note beside it. The file is what
+     * survives a restart and what reaches version control, so a change that did not get there did
+     * not happen: reporting it as done is the failure this codebase keeps meeting.
+     * </p>
+     *
+     * @param r the result to demote; may be <code>null</code>
+     * @param persistError the reason the file write failed, or <code>null</code> when it did not
+     */
+    static void failOnPersist(BmObjectHelper.Result r, String persistError)
+    {
+        if (r == null || persistError == null)
+        {
+            return;
+        }
+        r.ok = false;
+        r.error = "the template was changed in memory but the change did not reach " //$NON-NLS-1$
+            + "Template.mxlx, so it will not survive a restart and will not reach version " //$NON-NLS-1$
+            + "control: " + persistError; //$NON-NLS-1$
+        if (r.tags != null)
+        {
+            r.tags.put("templateMutationPersistFailed", persistError); //$NON-NLS-1$
+        }
+    }
+
     private static MdObject resolveTemplate(MdObject owner, String templateName)
     {
         @SuppressWarnings("unchecked")

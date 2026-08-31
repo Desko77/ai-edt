@@ -358,14 +358,16 @@ final class TemplateOps
                 return result.toJson();
             }
         }
-        // Layout service is reachable on this build - mutation lands when
-        // BmTemplateHelper writers are wired (1.40.x patch). For now surface
-        // a structured response indicating layout service is detected.
-        return ToolResult.success()
-            .put("operation", op)
-            .put("status", "LayoutServiceDetected")
-            .put("layoutService", BmTemplateHelper.resolvedLayoutServiceClass())
-            .put("hint", "Cell-level mutation lands in 1.40.x patch when BmTemplateHelper writers are wired through the layout service.")
+        // These three names never wrote anything. They answered success with a note saying the
+        // write would arrive in a later build, so a caller was told the template had changed when
+        // it had not - and no parameters were ever declared for them, so there was no way to say
+        // which cell to write either. Cell writing lives in mxl_workshop, works, and takes the
+        // coordinates; the caller is sent there rather than handed another success that is not one.
+        return ToolResult.error("edit_metadata " + op + " does not change a template: it never " //$NON-NLS-1$ //$NON-NLS-2$
+            + "wrote anything and declares no coordinates to write by. Use mxl_workshop - " //$NON-NLS-1$
+            + "operation=set_cell (row, col, text), operation=merge_cells (fromRow, fromCol, " //$NON-NLS-1$
+            + "toRow, toCol) or operation=draw (layout).") //$NON-NLS-1$
+            .put("operation", op) //$NON-NLS-1$
             .toJson();
     }
 }
