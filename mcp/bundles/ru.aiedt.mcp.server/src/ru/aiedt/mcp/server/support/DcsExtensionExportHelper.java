@@ -14,6 +14,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.Arrays;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -69,6 +70,14 @@ public final class DcsExtensionExportHelper
         public boolean notFound;
         public String filePath;
         public int bytesWritten;
+        /** Size of the .dcs before this write, or -1 when it did not exist. */
+        public int bytesBefore;
+        /** Whether the serialized model is byte-identical to what the file already held. */
+        public boolean contentUnchanged;
+        /** What the mutation named as written, when it named anything. */
+        public String declared;
+        /** Whether {@link #declared} is absent from the bytes just written. */
+        public boolean declaredMissing;
         public long totalMs;
         public String error;
         public Object schemaEClass;
@@ -78,9 +87,34 @@ public final class DcsExtensionExportHelper
      * Reads the schema from BM, serializes via DcsV8Serializer, writes to .dcs
      * on disk. Returns a Result with diagnostics.
      */
-    public static Result exportSchemaToDisk(IBmModelManager manager, IProject project, String schemaFqn)
+    public static Result exportSchemaToDisk(IBmModelManager manager, IProject project,
+        String schemaFqn)
+    {
+        return exportSchemaToDisk(manager, project, schemaFqn, null);
+    }
+
+    /**
+     * Exports the schema and reports whether the file it wrote carries {@code declared}.
+     * <p>
+     * A mutation that names what it added gets its claim checked against the bytes that reached
+     * disk. This catches the loss that {@link Result#contentUnchanged} cannot see: an element that
+     * IS written and then vanishes because a later export serializes a model snapshot without it.
+     * There the file changes at every step, so comparing it with its previous content accuses
+     * nothing.
+     * </p>
+     *
+     * @param manager the object model manager.
+     * @param project the project owning the schema.
+     * @param schemaFqn FQN of the schema to export.
+     * @param declared what the caller says the file must now contain, or <code>null</code> to
+     *            check nothing.
+     * @return the export result, carrying {@code declaredMissing} when the claim does not hold
+     */
+    public static Result exportSchemaToDisk(IBmModelManager manager, IProject project,
+        String schemaFqn, String declared)
     {
         Result r = new Result();
+        r.declared = declared;
         r.schemaFqn = schemaFqn;
         long t0 = System.currentTimeMillis();
 
@@ -169,6 +203,14 @@ public final class DcsExtensionExportHelper
                 return r;
             }
             r.filePath = dcsFile.getFullPath().toOSString();
+            byte[] before = readExisting(dcsFile);
+            r.bytesBefore = before == null ? -1 : before.length;
+            r.contentUnchanged = before != null && Arrays.equals(before, bytes);
+            // Computed against the bytes about to be written; re-checked against the file after
+            // the write below, because another export can overwrite it in between.
+            r.declaredMissing = declared != null && !declared.isEmpty()
+                && !new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+                    .contains(declared);
             ensureParents(dcsFile);
             ByteArrayInputStream in = new ByteArrayInputStream(bytes);
             if (dcsFile.exists())
@@ -182,6 +224,20 @@ public final class DcsExtensionExportHelper
                     (IProgressMonitor) new NullProgressMonitor());
             }
             r.ok = true;
+            byte[] landed = readExisting(dcsFile);
+            if (landed != null)
+            {
+                // What a later reader will see. An export that overlapped this one may already
+                // have replaced the file with a serialization that does not carry this mutation,
+                // and reporting the bytes we handed out would call that a success.
+                r.bytesWritten = landed.length;
+                if (declared != null && !declared.isEmpty())
+                {
+                    r.declaredMissing = !new String(landed,
+                        java.nio.charset.StandardCharsets.UTF_8).contains(declared);
+                }
+                r.contentUnchanged = before != null && Arrays.equals(before, landed);
+            }
         }
         catch (Throwable t)
         {
@@ -461,6 +517,41 @@ public final class DcsExtensionExportHelper
         IPath path = new Path("src/" + dirName + "/" + objectName //$NON-NLS-1$ //$NON-NLS-2$
             + "/Templates/" + templateName + "/Template.dcs"); //$NON-NLS-1$ //$NON-NLS-2$
         return project.getFile(path);
+    }
+
+    /**
+     * Reads what the .dcs holds right now, so the write can say whether it changed anything.
+     * <p>
+     * A serialization that matches the file byte for byte means the model does not carry the
+     * mutation this call reported: the caller asked for a change, and the schema on disk is the
+     * one it already had. Answering that as a plain success is how a lost write stays invisible.
+     * </p>
+     *
+     * @param file the .dcs about to be overwritten.
+     * @return its bytes, or <code>null</code> when it does not exist or cannot be read
+     */
+    private static byte[] readExisting(IFile file)
+    {
+        if (!file.exists())
+        {
+            return null;
+        }
+        try (InputStream in = file.getContents(true))
+        {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1)
+            {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        }
+        catch (Exception cannotRead)
+        {
+            // Unreadable is not "unchanged": leave the comparison unable to accuse the write.
+            return null;
+        }
     }
 
     private static void ensureParents(IFile file) throws Exception

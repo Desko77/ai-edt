@@ -46,6 +46,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.SupportSnapshotStore;
 import ru.aiedt.mcp.server.support.TextSuggest;
 
 /**
@@ -128,7 +129,12 @@ public class SyncControlTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", "status | diagnose | diagnose_delta | suppress | reseed_baseline | " //$NON-NLS-1$ //$NON-NLS-2$
-                + "mark_synchronized | diagnose_stuck_locks | recover_stuck_merge (required)", true) //$NON-NLS-1$
+                + "mark_synchronized | diagnose_stuck_locks | recover_stuck_merge | " //$NON-NLS-1$
+                + "list_support_snapshots | release_support_snapshot (required)", true) //$NON-NLS-1$
+            .stringProperty("name", "For operation=release_support_snapshot: the snapshot's file " //$NON-NLS-1$ //$NON-NLS-2$
+                + "name, as list_support_snapshots reports it. A protected snapshot is the only way back " //$NON-NLS-1$
+                + "from a merge whose outcome is not known here; releasing it says that merge has been " //$NON-NLS-1$
+                + "dealt with, after which the limit may remove it.") //$NON-NLS-1$
             .stringProperty("projectName", "Project name (required). For 'only update the extension', " //$NON-NLS-1$ //$NON-NLS-2$
                 + "target the MAIN configuration project here.", true) //$NON-NLS-1$
             .booleanProperty("enabled", "For operation=suppress: true = suppress synchronization for the " //$NON-NLS-1$ //$NON-NLS-2$
@@ -195,10 +201,15 @@ public class SyncControlTool implements IMcpTool
                 return doDiagnoseStuckLocks(project);
             case "recover_stuck_merge": //$NON-NLS-1$
                 return doRecoverStuckMerge(project, params);
+            case "list_support_snapshots": //$NON-NLS-1$
+                return doListSupportSnapshots(project);
+            case "release_support_snapshot": //$NON-NLS-1$
+                return doReleaseSupportSnapshot(project, params);
             default:
                 return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
                     + "'. Valid: status, diagnose, diagnose_delta, suppress, reseed_baseline, mark_synchronized, " //$NON-NLS-1$
-                    + "diagnose_stuck_locks, recover_stuck_merge.").toJson(); //$NON-NLS-1$
+                    + "diagnose_stuck_locks, recover_stuck_merge, list_support_snapshots, " //$NON-NLS-1$
+                    + "release_support_snapshot.").toJson(); //$NON-NLS-1$
         }
     }
 
@@ -950,6 +961,128 @@ public class SyncControlTool implements IMcpTool
      * flow-active flag is stuck (project != null). Only infobases touched this session appear -
      * inherent to an in-memory-only map.
      */
+    /**
+     * Lists the support-mode snapshots a project holds, saying which cleanup will not touch.
+     * <p>
+     * The names matter, not the count. A protected snapshot is released one at a time, by the file
+     * it belongs to, and after a restart there is nothing else to name it by.
+     * </p>
+     *
+     * @param project the project.
+     * @return the snapshots, newest first
+     */
+    private String doListSupportSnapshots(IProject project)
+    {
+        java.nio.file.Path settings = settingsOf(project);
+        if (settings == null)
+        {
+            return ToolResult.error("project '" + project.getName() //$NON-NLS-1$
+                + "' has no location on disk, so it holds no snapshots.").toJson(); //$NON-NLS-1$
+        }
+        java.util.List<java.util.Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (java.nio.file.Path file : SupportSnapshotStore.list(settings))
+        {
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("name", file.getFileName().toString()); //$NON-NLS-1$
+            row.put("protected", SupportSnapshotStore.isProtected(file)); //$NON-NLS-1$
+            try
+            {
+                row.put("bytes", java.nio.file.Files.size(file)); //$NON-NLS-1$
+            }
+            catch (java.io.IOException | RuntimeException sizeUnknown)
+            {
+                row.put("bytes", -1L); //$NON-NLS-1$
+            }
+            rows.add(row);
+        }
+        return ToolResult.success()
+            .put("operation", "list_support_snapshots") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("projectName", project.getName()) //$NON-NLS-1$
+            .put("kept", SupportSnapshotStore.KEPT) //$NON-NLS-1$
+            .put("snapshots", rows) //$NON-NLS-1$
+            .put("message", "A protected snapshot is the only way back from a merge whose outcome " //$NON-NLS-1$
+                + "is not known here, so cleanup leaves it. Release one with " //$NON-NLS-1$
+                + "operation=release_support_snapshot name=<file> once that merge has been dealt " //$NON-NLS-1$
+                + "with; it then becomes ordinary and the limit applies to it.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Takes the protection off one snapshot, after which the limit may remove it.
+     * <p>
+     * Deliberate and one at a time. The protection says nobody has yet established what a merge
+     * left behind, and only a person can establish it - so this is the one step the plugin will not
+     * take on its own.
+     * </p>
+     *
+     * @param project the project.
+     * @param params the call's arguments; {@code name} names the snapshot.
+     * @return what happened
+     */
+    private String doReleaseSupportSnapshot(IProject project, java.util.Map<String, String> params)
+    {
+        String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
+        if (name == null || name.isEmpty())
+        {
+            return ToolResult.error("release_support_snapshot requires name - the snapshot's file " //$NON-NLS-1$
+                + "name, as list_support_snapshots reports it.").toJson(); //$NON-NLS-1$
+        }
+        if (name.contains("/") || name.contains("\\") || name.contains("..")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            return ToolResult.error("name is a file name inside the project's settings, not a " //$NON-NLS-1$
+                + "path.").toJson(); //$NON-NLS-1$
+        }
+        java.nio.file.Path settings = settingsOf(project);
+        if (settings == null)
+        {
+            return ToolResult.error("project '" + project.getName() //$NON-NLS-1$
+                + "' has no location on disk, so it holds no snapshots.").toJson(); //$NON-NLS-1$
+        }
+        java.nio.file.Path file = settings.resolve(name);
+        // Named among the project's snapshots, not merely present in the directory. A typo naming
+        // some other file was answered as a successful release, and if that file happened to carry
+        // the protection comment it was rewritten - a settings file edited by a call that was
+        // supposed to touch one snapshot.
+        boolean listed = false;
+        for (java.nio.file.Path known : SupportSnapshotStore.list(settings))
+        {
+            if (known.getFileName().toString().equals(name))
+            {
+                listed = true;
+                break;
+            }
+        }
+        if (!listed)
+        {
+            return ToolResult.error("'" + name + "' is not one of this project's support " //$NON-NLS-1$ //$NON-NLS-2$
+                + "snapshots. Ask list_support_snapshots for the names.").toJson(); //$NON-NLS-1$
+        }
+        String stillProtected = SupportSnapshotStore.clearProtection(file);
+        if (stillProtected != null)
+        {
+            return ToolResult.error("'" + name + "' is still protected: " + stillProtected).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        int removed = SupportSnapshotStore.prune(settings, SupportSnapshotStore.KEPT);
+        return ToolResult.success()
+            .put("operation", "release_support_snapshot") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("projectName", project.getName()) //$NON-NLS-1$
+            .put("name", name) //$NON-NLS-1$
+            .put("removedByLimit", removed) //$NON-NLS-1$
+            .put("message", "'" + name + "' is an ordinary snapshot now, and the limit of " //$NON-NLS-1$ //$NON-NLS-2$
+                + SupportSnapshotStore.KEPT + " applies to it.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /** Where a project keeps its settings, or <code>null</code> when it has no location. */
+    private static java.nio.file.Path settingsOf(IProject project)
+    {
+        if (project == null || project.getLocation() == null)
+        {
+            return null;
+        }
+        return project.getLocation().toFile().toPath().resolve(".settings"); //$NON-NLS-1$
+    }
+
     private String doDiagnoseStuckLocks(IProject project)
     {
         try

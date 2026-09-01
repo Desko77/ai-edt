@@ -64,6 +64,65 @@ public final class MonopolyLock implements AutoCloseable
     }
 
     /**
+     * What this instance holds right now, by infobase.
+     * <p>
+     * The tracking future is NOT this. Cancelling a run removes its registry entry while the
+     * platform call carries on - {@code CompletableFuture.cancel} does not interrupt the worker -
+     * so after a cancellation nothing in the registry says the infobase is still being written to.
+     * This does, because it is cleared by {@link #close}, which runs when the blocking call
+     * finally returns. That return is the confirmed stop; nothing before it is.
+     * </p>
+     * <p>
+     * Keyed by infobase, so work on one says nothing about another.
+     * </p>
+     */
+    private static final java.util.Map<String, Outstanding> HELD_HERE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** What one infobase is busy with, and since when. */
+    public static final class Outstanding
+    {
+        /** The operation that took the lock. */
+        public final String operation;
+
+        /** When it took it. */
+        public final long since;
+
+        Outstanding(String operation, long since)
+        {
+            this.operation = operation;
+            this.since = since;
+        }
+
+        /** @return how long it has been held, in milliseconds */
+        public long heldMs()
+        {
+            return System.currentTimeMillis() - since;
+        }
+    }
+
+    /**
+     * What this instance is holding on one infobase, if anything.
+     *
+     * @param subject identity of the infobase.
+     * @return the outstanding work, or <code>null</code> when this instance holds nothing on it
+     */
+    public static Outstanding outstandingHere(String subject)
+    {
+        return subject == null || subject.isEmpty() ? null : HELD_HERE.get(subject);
+    }
+
+    /**
+     * Every infobase this instance is holding.
+     *
+     * @return a snapshot, keyed by infobase identity; never <code>null</code>
+     */
+    public static java.util.Map<String, Outstanding> outstandingHere()
+    {
+        return new java.util.LinkedHashMap<>(HELD_HERE);
+    }
+
+    /**
      * Set once released, so a second {@link #close()} does nothing.
      * <p>
      * Not merely tidiness. Without it the sequence "we release, somebody else takes it, we close
@@ -113,11 +172,20 @@ public final class MonopolyLock implements AutoCloseable
         this(file, holding, null);
     }
 
+    /** The infobase this lock is on, when it is a real lock on one. */
+    private final String subject;
+
     private MonopolyLock(Path file, Holding holding, String unprotected)
+    {
+        this(file, holding, unprotected, null);
+    }
+
+    private MonopolyLock(Path file, Holding holding, String unprotected, String subject)
     {
         this.file = file;
         this.holding = holding;
         this.unprotected = unprotected;
+        this.subject = subject;
     }
 
     /**
@@ -147,9 +215,11 @@ public final class MonopolyLock implements AutoCloseable
          *
          * @param path the file to lock; created when absent.
          * @return the holding, or {@code null} when it is held elsewhere
+         * @param heldHere set when the lock could not be taken because THIS process holds it.
          * @throws IOException when the file cannot be opened at all
          */
-        static Holding tryTake(Path path) throws IOException
+        static Holding tryTake(Path path, java.util.concurrent.atomic.AtomicBoolean heldHere)
+            throws IOException
         {
             java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(path,
                 StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
@@ -165,9 +235,12 @@ public final class MonopolyLock implements AutoCloseable
             }
             catch (java.nio.channels.OverlappingFileLockException mine)
             {
-                // Held by THIS process already - a second tool call on the same infobase. From the
-                // caller's side that is the same answer as a neighbour holding it: not now.
+                // Held by THIS process already. That is NOT the same answer as a neighbour holding
+                // it. A neighbour finishes and the next attempt succeeds; this one is us, and if
+                // the call that took it is not coming back, no attempt will ever succeed. Telling
+                // the caller to run it again would be advice that cannot work.
                 channel.close();
+                heldHere.set(true);
                 return null;
             }
             catch (IOException | RuntimeException failed)
@@ -217,6 +290,20 @@ public final class MonopolyLock implements AutoCloseable
      */
     public static Optional<MonopolyLock> take(String subject, String operation)
     {
+        return take(subject, operation, new java.util.concurrent.atomic.AtomicBoolean());
+    }
+
+    /**
+     * Takes the claim, reporting separately when the refusal came from this same process.
+     *
+     * @param subject identity of the infobase.
+     * @param operation what the claim is for.
+     * @param heldHere set when the refusal is this process holding its own lock.
+     * @return the claim, or empty
+     */
+    public static Optional<MonopolyLock> take(String subject, String operation,
+        java.util.concurrent.atomic.AtomicBoolean heldHere)
+    {
         if (subject == null || subject.isEmpty())
         {
             // Nothing to claim. Better to let the operation through than to invent a key and
@@ -234,7 +321,7 @@ public final class MonopolyLock implements AutoCloseable
             // wedged, and between deciding a claim is stale and replacing it there is a window.
             // An exclusive lock on a file has none of that, and it is released by the kernel when
             // the holder dies - including when it dies without releasing anything.
-            holding = Holding.tryTake(lockFileFor(subject));
+            holding = Holding.tryTake(lockFileFor(subject), heldHere);
             if (holding == null)
             {
                 return Optional.empty();
@@ -264,8 +351,9 @@ public final class MonopolyLock implements AutoCloseable
                 Files.deleteIfExists(pending);
                 throw failed;
             }
-            MonopolyLock taken = new MonopolyLock(file, holding);
+            MonopolyLock taken = new MonopolyLock(file, holding, null, subject);
             holding = null;
+            HELD_HERE.put(subject, new Outstanding(operation, System.currentTimeMillis()));
             return Optional.of(taken);
         }
         catch (java.nio.file.FileAlreadyExistsException raced)
@@ -335,6 +423,26 @@ public final class MonopolyLock implements AutoCloseable
             return held != null;
         }
 
+        /**
+         * The whole sentence to refuse with, so no caller has to decide who the holder is.
+         * <p>
+         * Seven call sites each prefixed "Another AI-EDT instance is working on this infobase"
+         * unconditionally. That is wrong whenever the holder is this instance, and every one of
+         * them would have had to be remembered when the distinction was introduced - only one was.
+         * </p>
+         *
+         * @return the refusal, or <code>null</code> when this claim was granted
+         */
+        public String refusal()
+        {
+            if (granted())
+            {
+                return null;
+            }
+            return isHeldByThisInstance(heldBy) ? heldBy
+                : "Another AI-EDT instance is working on this infobase. " + heldBy; //$NON-NLS-1$
+        }
+
         @Override
         public void close()
         {
@@ -352,6 +460,60 @@ public final class MonopolyLock implements AutoCloseable
      * @param operation what is being done to it.
      * @return the outcome, never {@code null}
      */
+    /**
+     * What a caller is told when this instance holds the lock and is not giving it back.
+     * <p>
+     * Kept as a constant because it is the one refusal a caller must not answer by repeating the
+     * call, and something has to be able to recognise it.
+     * </p>
+     */
+    public static final String HELD_BY_THIS_INSTANCE =
+        "This AI-EDT instance is holding the infobase itself"; //$NON-NLS-1$
+
+    /**
+     * Whether a refusal is the one no retry can clear.
+     *
+     * @param heldBy the text from a refused {@link Claim}.
+     * @return true when repeating the call is pointless
+     */
+    public static boolean isHeldByThisInstance(String heldBy)
+    {
+        return heldBy != null && heldBy.contains(HELD_BY_THIS_INSTANCE);
+    }
+
+    /**
+     * The refusal for a lock this instance holds.
+     * <p>
+     * It does NOT say a retry is pointless. Two tool calls on one infobase are ordinary
+     * contention, and there the holder finishes and the next attempt succeeds. What a caller
+     * cannot tell apart from outside is that case from a call that is never coming back, so this
+     * hands them what decides it - which operation, and for how long - and states the condition
+     * instead of the verdict.
+     * </p>
+     *
+     * @param fromClaimRecord what the claim file says, which names this instance; may be
+     *            <code>null</code> when the record is gone, as it is after a cancellation.
+     * @param outstanding what this instance holds on the infobase, or <code>null</code>.
+     * @return the sentence a caller is shown
+     */
+    private static String heldByThisInstance(String fromClaimRecord, Outstanding outstanding)
+    {
+        StringBuilder said = new StringBuilder();
+        if (fromClaimRecord != null && !fromClaimRecord.isEmpty())
+        {
+            said.append(fromClaimRecord).append(" "); //$NON-NLS-1$
+        }
+        said.append(HELD_BY_THIS_INSTANCE);
+        if (outstanding != null)
+        {
+            said.append(": ").append(outstanding.operation).append(", for ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(outstanding.heldMs() / 1000).append("s"); //$NON-NLS-1$
+        }
+        said.append(". If that operation is not going to return, repeating this call will not " //$NON-NLS-1$
+            + "clear it - stop it, or restart the environment."); //$NON-NLS-1$
+        return said.toString();
+    }
+
     public static Claim claim(String subject, String operation)
     {
         if (subject == null || subject.isEmpty())
@@ -362,14 +524,28 @@ public final class MonopolyLock implements AutoCloseable
             // caller proceeds unclaimed, exactly as it did before claims existed.
             return new Claim(new MonopolyLock("nothing was claimed: no subject was given"), null); //$NON-NLS-1$
         }
-        Optional<MonopolyLock> taken = take(subject, operation);
+        java.util.concurrent.atomic.AtomicBoolean heldHere =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        Optional<MonopolyLock> taken = take(subject, operation, heldHere);
         if (taken.isPresent())
         {
             return new Claim(taken.get(), null);
         }
+        if (heldHere.get())
+        {
+            // Asked BEFORE the claim record, not after. While this instance holds the lock its own
+            // claim is still lying there, so reading the record first answers "another AI-EDT
+            // instance is working on this infobase" about ourselves - the exact sentence the field
+            // report quoted - and the branch below would never be reached.
+            return new Claim(null, heldByThisInstance(heldBy(subject), outstandingHere(subject)));
+        }
         String who = heldBy(subject);
-        return new Claim(null, who != null ? who
-            : "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$
+        if (who != null)
+        {
+            return new Claim(null, who);
+        }
+        return new Claim(null,
+            "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$
     }
 
     /**
@@ -416,6 +592,10 @@ public final class MonopolyLock implements AutoCloseable
         // Released before the claim is removed, and released even when there is no claim file to
         // remove. The lock is what actually keeps the next caller out; the claim only tells them
         // who to go and ask.
+        if (subject != null)
+        {
+            HELD_HERE.remove(subject);
+        }
         if (holding != null)
         {
             holding.release();

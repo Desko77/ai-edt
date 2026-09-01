@@ -664,6 +664,14 @@ public class ValidateForExportTool implements IMcpTool
             && content != null && !content.contains("<containedObjects"); //$NON-NLS-1$
     }
 
+    /** {@code <defaultObjectForm>Type.Name.Form.X</defaultObjectForm>} and its siblings. */
+    private static final Pattern MDO_DEFAULT_FORM =
+        Pattern.compile("<(default[A-Za-z]*Form)>([^<]+)</\\1>"); //$NON-NLS-1$
+
+    /** The {@code <name>} inside a {@code <forms>} block - what the object actually declares. */
+    private static final Pattern MDO_FORM_NAME =
+        Pattern.compile("<forms\\b[^>]*>\\s*<name>([^<]+)</name>"); //$NON-NLS-1$
+
     private void scanMdo(String content, String relPath, String fqn, String checkFilterLower,
         List<Map<String, Object>> findings, IFile file)
     {
@@ -706,6 +714,22 @@ public class ValidateForExportTool implements IMcpTool
                 + "on update_database with \"Отсутствует внутренняя информация (узел InternalInfo)\" " //$NON-NLS-1$
                 + "and names a /Configuration.xml this project does not have. A configuration " //$NON-NLS-1$
                 + "carries seven, one per platform class id, each with an objectId of its own."); //$NON-NLS-1$
+        }
+
+        // A default form that names a form the object does not declare. Measured 31.08: a
+        // document kept <defaultObjectForm> after its whole <forms> block was gone - EDT had
+        // rewritten the .mdo from its own model after being killed - and every check passed.
+        // validate_for_export answered no findings on 254 files, revalidate and get_project_errors
+        // were clean, and update_database died in the platform with
+        // "Неизвестный объект метаданных - Document.X.Form.ФормаДокумента". This is the class the
+        // whole tool exists for: valid in EDT, refused by the infobase.
+        for (String missing : danglingDefaultForms(content, fqn))
+        {
+            add(findings, checkFilterLower, relPath, fqn,
+                "mdo-dangling-default-form", "ERROR", lineOf(content, content.indexOf(missing)), //$NON-NLS-1$ //$NON-NLS-2$
+                "a default form names '" + missing + "', which this object does not declare in " //$NON-NLS-1$ //$NON-NLS-2$
+                + "<forms> - the platform refuses the update with \"Неизвестный объект " //$NON-NLS-1$
+                + "метаданных\". Declare the form, or drop the reference to it."); //$NON-NLS-1$
         }
 
         Matcher m = MDO_EMPTY_NUMBER_FILLVALUE.matcher(content);
@@ -760,6 +784,54 @@ public class ValidateForExportTool implements IMcpTool
     }
 
     // ---- .dcs -----------------------------------------------------------
+
+
+    /**
+     * Which forms a default-form reference names that the object never declares.
+     * <p>
+     * Only a reference to this object's OWN form is judged. A reference reaching another object -
+     * a common form, a form of a different type - resolves elsewhere and is not this file's to
+     * answer for; treating it as missing here would refuse a configuration that loads.
+     * </p>
+     *
+     * @param content the .mdo text.
+     * @param fqn the object's own FQN, as the scan resolved it.
+     * @return the form names referenced and not declared, in the order they appear
+     */
+    static java.util.List<String> danglingDefaultForms(String content, String fqn)
+    {
+        java.util.List<String> dangling = new java.util.ArrayList<>();
+        if (content == null || fqn == null || fqn.isEmpty())
+        {
+            return dangling;
+        }
+        java.util.Set<String> declared = new java.util.LinkedHashSet<>();
+        Matcher declaredForms = MDO_FORM_NAME.matcher(content);
+        while (declaredForms.find())
+        {
+            declared.add(declaredForms.group(1).trim());
+        }
+        String ownPrefix = fqn + ".Form.";
+        Matcher references = MDO_DEFAULT_FORM.matcher(content);
+        while (references.find())
+        {
+            String target = references.group(2).trim();
+            if (!target.startsWith(ownPrefix))
+            {
+                continue;
+            }
+            String formName = target.substring(ownPrefix.length());
+            if (formName.isEmpty() || formName.indexOf('.') >= 0)
+            {
+                continue;
+            }
+            if (!declared.contains(formName) && !dangling.contains(formName))
+            {
+                dangling.add(formName);
+            }
+        }
+        return dangling;
+    }
 
     private void scanDcs(String content, String relPath, String fqn, String checkFilterLower,
         List<Map<String, Object>> findings)

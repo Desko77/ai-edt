@@ -931,7 +931,10 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("DataSet.getFields() not available"); //$NON-NLS-1$
         }
         fields.add((EObject) field);
-        return dataSetName + "." + name; //$NON-NLS-1$
+        // The dataPath is what the serialization carries for THIS field, and it is compared with
+        // its delimiters so a longer name that contains it does not answer for it.
+        return new BmDcsHelper.Wrote(dataSetName + "." + name, ">" + name + "<", fields.size(), //$NON-NLS-1$ //$NON-NLS-2$
+            "dataSet:" + dataSetName); //$NON-NLS-1$
     }
 
     private Object doAddParameter(Map<String, String> params, EObject schema, IProject project)

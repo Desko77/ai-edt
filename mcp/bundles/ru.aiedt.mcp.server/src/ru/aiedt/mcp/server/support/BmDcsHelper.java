@@ -497,6 +497,101 @@ public final class BmDcsHelper
     }
 
     /**
+     * What a mutation did, when it can name something the file must carry afterwards.
+     * <p>
+     * A mutation may keep returning a plain message. Returning this instead adds a claim that is
+     * checked against the bytes written to disk, which is the only way a write that lands and is
+     * later overwritten can be told apart from one that stuck.
+     * </p>
+     */
+    public static final class Wrote
+    {
+        /** The human-readable message, unchanged from what a plain return would give. */
+        public final String message;
+        /** Text the exported file must contain for this mutation to have held. */
+        public final String mustAppear;
+
+        /**
+         * How many siblings the collection held once this mutation had been applied, or -1.
+         * <p>
+         * Read INSIDE the write transaction, which is the only place it means anything: it is
+         * what the snapshot this write was applied to actually contained.
+         * </p>
+         */
+        public final int countAfterWrite;
+
+        /**
+         * Which collection {@link #countAfterWrite} counted.
+         * <p>
+         * A schema holds many collections and each has its own size, so the count is meaningless
+         * without it.
+         * </p>
+         */
+        public final String countScope;
+
+        public Wrote(String message, String mustAppear)
+        {
+            this(message, mustAppear, -1, null);
+        }
+
+        public Wrote(String message, String mustAppear, int countAfterWrite, String countScope)
+        {
+            this.message = message;
+            this.mustAppear = mustAppear;
+            this.countAfterWrite = countAfterWrite;
+            this.countScope = countScope;
+        }
+
+        @Override
+        public String toString()
+        {
+            return message;
+        }
+    }
+
+    /**
+     * How many times a write is run again when the file says its change did not land.
+     * <p>
+     * The oracle is the file, not a remembered count. A count of what a previous write left is
+     * only as good as the commit that produced it, and once a commit has been overwritten such a
+     * memory refuses every later write for good - measured, twice.
+     * </p>
+     */
+    private static final int LOST_WRITE_RETRIES = 4;
+
+    /** Pauses between attempts, in milliseconds. */
+    private static final long[] LOST_WRITE_BACKOFF_MS = {200L, 400L, 800L, 1600L};
+
+    /**
+     * Whether the file says this call changed nothing of what it named.
+     * <p>
+     * Only these two. A schema that did not change at all is a different thing - the value asked
+     * for may simply have been set already - and repeating that would burn the backoff to reach
+     * the same answer.
+     * </p>
+     *
+     * @param r the result just judged by {@link #noteDiskSave}.
+     * @return true when running the write again is worth it
+     */
+    static boolean theFileDidNotTakeIt(Result r)
+    {
+        return r.tags.containsKey("declaredContentMissing") //$NON-NLS-1$
+            || r.tags.containsKey("schemaDidNotGrow"); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a guard refused because the element is already there.
+     *
+     * @param blocked the guard's refusal.
+     * @return true when the model already carries what this call wanted to add
+     */
+    static boolean becauseItIsAlreadyThere(MetadataGuards.BlockedGuardException blocked)
+    {
+        return blocked.verdict != null && blocked.verdict.tag != null
+            && ErrorTags.ALREADY_EXISTS.wire().equals(blocked.verdict.tag.name);
+    }
+
+    /**
      * Action executed inside a BM read-write transaction with the schema EObject
      * already resolved.
      */
@@ -552,8 +647,15 @@ public final class BmDcsHelper
             return r;
         }
 
+        final String[] declared = new String[1];
+        int attempts = 0;
         try
         {
+            while (true)
+            {
+            boolean retrying = attempts > 0;
+            try
+            {
             model.execute(new AbstractBmTask<Void>("dcs_workshop.write") //$NON-NLS-1$
             {
                 @Override
@@ -570,6 +672,25 @@ public final class BmDcsHelper
                         if (res != null)
                         {
                             r.message = res.toString();
+                        }
+                        if (res instanceof Wrote)
+                        {
+                            declared[0] = ((Wrote)res).mustAppear;
+                            int after = ((Wrote)res).countAfterWrite;
+                            if (after >= 0)
+                            {
+                                // Reported, not judged. What the snapshot held is the evidence
+                                // that a write can be applied to a state predating the previous
+                                // commit; it is NOT a basis for refusing, because a remembered
+                                // count is itself only as good as the commit that produced it.
+                                r.tags.put("modelCountAfterWrite", Integer.valueOf(after)); //$NON-NLS-1$
+                                if (((Wrote)res).countScope != null)
+                                {
+                                    // A schema holds several collections, each with its own size,
+                                    // so the number alone does not say what it counted.
+                                    r.tags.put("modelCountScope", ((Wrote)res).countScope); //$NON-NLS-1$
+                                }
+                            }
                         }
                         if (dryRun)
                         {
@@ -592,15 +713,65 @@ public final class BmDcsHelper
                     return null;
                 }
             });
+            }
+            catch (RuntimeException thrown)
+            {
+                // Unwrapped, not caught by type. IBmModel.execute wraps what the task threw, which
+                // is the whole reason BlockedGuardException.unwrap exists; catching the exact type
+                // here would miss the already-exists a retry is meant to recognise and would
+                // answer with that refusal instead of re-exporting.
+                MetadataGuards.BlockedGuardException blocked =
+                    MetadataGuards.BlockedGuardException.unwrap(thrown);
+                if (!retrying || blocked == null || !becauseItIsAlreadyThere(blocked))
+                {
+                    throw thrown;
+                }
+                // The model already carries it - the first attempt DID land there, and only the
+                // file missed it. Re-adding is not what is wanted; re-exporting is.
+                r.tags.put("writeAlreadyInModel", Boolean.TRUE); //$NON-NLS-1$
+            }
             r.ok = true;
             // Force-write the .dcs to disk for BOTH extensions and configurations:
             // EDT does not auto-sync a programmatic BM write back to the .dcs source,
             // so without this the schema stays BM-only (the file on disk stays empty,
             // the editor shows nothing, and nothing reaches git / the infobase).
-            if (!dryRun)
+            if (dryRun)
             {
-                r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm, project, schemaFqn);
-                noteDiskSave(r);
+                break;
+            }
+            r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm,
+                project, schemaFqn, declared[0]);
+            noteDiskSave(r);
+            if (r.ok || attempts >= LOST_WRITE_RETRIES || !theFileDidNotTakeIt(r))
+            {
+                break;
+            }
+            // The write was applied to a state that predates the previous commit, and committing
+            // it dropped what that commit added. Nothing here can make the model settle, but the
+            // next transaction gets a fresh snapshot - and a pause is what decides whether that
+            // snapshot carries the commit before it. Measured: without one, a run of nine adds
+            // loses several; with one, none.
+            try
+            {
+                Thread.sleep(LOST_WRITE_BACKOFF_MS[attempts]);
+            }
+            catch (InterruptedException interrupted)
+            {
+                // Nothing is cleared before this point, so the answer keeps the refusal and the
+                // tag that say what went missing. Clearing first and breaking here left ok=false
+                // with no reason attached to it.
+                Thread.currentThread().interrupt();
+                r.tags.put("retryInterrupted", Integer.valueOf(attempts)); //$NON-NLS-1$
+                break;
+            }
+            r.error = null;
+            r.tags.remove("declaredContentMissing"); //$NON-NLS-1$
+            r.tags.remove("schemaDidNotGrow"); //$NON-NLS-1$
+            attempts++;
+            }
+            if (attempts > 0)
+            {
+                r.tags.put("writeRetries", Integer.valueOf(attempts)); //$NON-NLS-1$
             }
         }
         catch (DryRunAbort dra)
@@ -1507,10 +1678,16 @@ public final class BmDcsHelper
     }
 
     /**
-     * If the direct disk-save failed, surface it as a tag so the caller (and
-     * the MCP response) sees it instead of a silent success.
+     * Judges the disk-save and refuses a write that changed nothing.
+     * <p>
+     * Two outcomes are not a success. A save that FAILED is tagged {@code diskSaveFailed}. A save
+     * that wrote a file byte-identical to the one already there is tagged {@code schemaUnchanged}
+     * and refused: the call asked for a change and the schema does not carry one.
+     * </p>
+     *
+     * @param r the result to annotate, whose {@code ok} this may clear
      */
-    private static void noteDiskSave(Result r)
+    static void noteDiskSave(Result r)
     {
         DcsExtensionExportHelper.Result ds = r.directSave;
         if (ds != null && !ds.ok)
@@ -1523,6 +1700,56 @@ public final class BmDcsHelper
                 info.put("filePath", ds.filePath); //$NON-NLS-1$
             }
             r.tags.put("diskSaveFailed", info); //$NON-NLS-1$
+            return;
+        }
+        if (ds != null && ds.ok && ds.declaredMissing)
+        {
+            // The mutation named what it added and the file does not carry it. Unlike an
+            // unchanged file, this catches a write that landed and was then overwritten.
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("declared", ds.declared); //$NON-NLS-1$
+            info.put("filePath", ds.filePath); //$NON-NLS-1$
+            info.put("bytes", ds.bytesWritten); //$NON-NLS-1$
+            r.tags.put("declaredContentMissing", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = "the schema was written, but " + ds.declared + " is absent from the file " //$NON-NLS-1$ //$NON-NLS-2$
+                + "that reached disk. The change did not survive. Read the schema back before " //$NON-NLS-1$
+                + "repeating it."; //$NON-NLS-1$
+            return;
+        }
+        if (ds != null && ds.ok && ds.declared != null && !ds.declared.isEmpty()
+            && ds.bytesBefore >= 0 && ds.bytesWritten <= ds.bytesBefore)
+        {
+            // The mutation added something and the file did not grow. Its own element is present
+            // - declaredMissing would have fired otherwise - so something else left the file to
+            // make room for it. Checking only the caller's own claim cannot see that: the element
+            // that vanishes belongs to an earlier call, which has already answered.
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("declared", ds.declared); //$NON-NLS-1$
+            info.put("bytesBefore", ds.bytesBefore); //$NON-NLS-1$
+            info.put("bytesWritten", ds.bytesWritten); //$NON-NLS-1$
+            info.put("filePath", ds.filePath); //$NON-NLS-1$
+            r.tags.put("schemaDidNotGrow", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = ds.declared + " was added and the file did not grow (" //$NON-NLS-1$ //$NON-NLS-2$
+                + ds.bytesBefore + " to " + ds.bytesWritten + " bytes), so something else is no " //$NON-NLS-1$ //$NON-NLS-2$
+                + "longer in it. Read the schema back and re-add what is missing."; //$NON-NLS-1$
+            return;
+        }
+        if (ds != null && ds.ok && ds.contentUnchanged)
+        {
+            // The serialization of the model matches the file byte for byte, so this call
+            // changed nothing - either the value asked for was already there, or the write
+            // to the model was lost. Which of the two it is cannot be told from here, and
+            // reporting either one as a plain success is what makes a lost write invisible.
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("filePath", ds.filePath); //$NON-NLS-1$
+            info.put("bytes", ds.bytesWritten); //$NON-NLS-1$
+            r.tags.put("schemaUnchanged", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = "the schema on disk is byte-identical to what it held before this call, " //$NON-NLS-1$
+                + "so nothing was changed. Either the value asked for was already set, or the " //$NON-NLS-1$
+                + "write did not reach the model. Read the schema back before repeating it."; //$NON-NLS-1$
         }
     }
 

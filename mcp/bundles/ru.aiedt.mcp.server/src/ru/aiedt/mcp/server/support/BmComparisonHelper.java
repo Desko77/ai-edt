@@ -941,6 +941,18 @@ public final class BmComparisonHelper
          */
         public String supportSnapshotFile;
 
+        /** How many ordinary snapshots the limit removed once this merge settled. */
+        public int supportSnapshotsRemoved;
+
+        /**
+         * Snapshots this project holds that cleanup will not touch, by file name.
+         * <p>
+         * Named in the answer rather than counted, because after a restart a count is
+         * nothing to act on: releasing one needs the file it belongs to.
+         * </p>
+         */
+        public java.util.List<String> supportSnapshotsHeld;
+
         /**
          * Objects whose own content did not survive the merge, named.
          * <p>
@@ -1275,6 +1287,7 @@ public final class BmComparisonHelper
             }
             reportProjectState(mainProjectName, decisions, outcome);
             dropSnapshotNothingNeeds(outcome);
+            settleSnapshotAfterMerge(mainProjectName, outcome);
             // A reporting comparison stays open, and its key goes out with the answer. Paging
             // through tens of thousands of changed objects is the only way to enumerate what to
             // protect, and closing here would charge a full comparison for every page. Only a
@@ -2597,6 +2610,57 @@ public final class BmComparisonHelper
      */
     // Package-visible for the test: the decision it makes is what stands between a stray megabyte
     // and a lost support model, and it is reachable no other way without running a real merge.
+    /**
+     * Settles the snapshot once the merge has reached a known state.
+     * <p>
+     * A merge that finished is a known state, so the snapshot it took stops being the only way back
+     * and becomes an ordinary one - subject to the limit, like the ones before it. A merge whose
+     * outcome is not known keeps its protection, and only a person takes it off.
+     * </p>
+     * <p>
+     * Cleanup runs here rather than before a snapshot is taken. Cleaning ahead would remove the
+     * previous way back for a merge that then refuses before writing anything, leaving the project
+     * with neither.
+     * </p>
+     *
+     * @param projectName the project whose snapshots are being settled.
+     * @param outcome the answer being built.
+     */
+    static void settleSnapshotAfterMerge(String projectName, Outcome outcome)
+    {
+        // Gated on the merge having FINISHED, not on whether writing began. writeMayHaveStarted is
+        // raised before startMerge for every merge, successful ones included - it exists to say
+        // "assume nothing is untouched from here" - so reading it as "the outcome is unknown" made
+        // this method return every time and settled nothing at all.
+        if (outcome.supportSnapshotFile == null || outcome.mergeRefused != null || !outcome.merged)
+        {
+            return;
+        }
+        Path file = Paths.get(outcome.supportSnapshotFile);
+        String stillProtected = SupportSnapshotStore.clearProtection(file);
+        if (stillProtected != null)
+        {
+            outcome.supportSnapshotKeptBecause = stillProtected;
+            return;
+        }
+        Path settings = file.getParent();
+        int removed = SupportSnapshotStore.prune(settings, SupportSnapshotStore.KEPT);
+        if (removed > 0)
+        {
+            outcome.supportSnapshotsRemoved = removed;
+        }
+        List<Path> held = SupportSnapshotStore.protectedIn(settings);
+        if (!held.isEmpty())
+        {
+            List<String> names = new ArrayList<>();
+            for (Path one : held)
+            {
+                names.add(one.getFileName().toString());
+            }
+            outcome.supportSnapshotsHeld = names;
+        }
+    }
+
     static void dropSnapshotNothingNeeds(Outcome outcome)
     {
         if (outcome.supportSnapshotFile == null || outcome.mergeRefused == null)
@@ -2676,7 +2740,15 @@ public final class BmComparisonHelper
             Path staging = settings.resolve(path.getFileName() + ".writing"); //$NON-NLS-1$
             try
             {
-                snapshot.write(staging);
+                // Published ALREADY protected, and the mark is inside the file, so there is no
+                // instant at which a snapshot exists without it. Marking after the move would leave
+                // a window: a crash inside it produces a snapshot cleanup takes for an ordinary one
+                // and removes - the only way back, gone, in the one case it is needed.
+                //
+                // Pessimistic on purpose. Protection comes off only when the merge settles into a
+                // known state; any crash therefore leaves it on, at the cost of a file and one
+                // deliberate act by a person.
+                snapshot.write(staging, true);
                 try
                 {
                     java.nio.file.Files.move(staging, path,

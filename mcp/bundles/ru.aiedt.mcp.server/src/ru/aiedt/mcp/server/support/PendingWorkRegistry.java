@@ -379,6 +379,48 @@ public final class PendingWorkRegistry
     }
 
     /**
+     * Stops tracking every run still going for one subject, without needing a runKey.
+     * <p>
+     * A finished result that nobody has collected is LEFT ALONE. It carries the error text of a
+     * failed run, and that text is the whole reason a caller comes back for it; dropping it here
+     * to make a counter look tidy would destroy the one thing worth keeping.
+     * </p>
+     * <p>
+     * Like {@link #cancel}, this detaches tracking and does not stop the work. The platform call
+     * carries on and still holds the infobase; what it holds is readable from
+     * {@code MonopolyLock.outstandingHere}.
+     * </p>
+     *
+     * @param subject what the runs are about; nothing happens when it is null or empty.
+     * @return how many runs stopped being tracked
+     */
+    public int stopTrackingFor(String subject)
+    {
+        if (subject == null || subject.isEmpty())
+        {
+            return 0;
+        }
+        int stopped = 0;
+        Iterator<Map.Entry<String, PendingEntry>> it = entries.entrySet().iterator();
+        while (it.hasNext())
+        {
+            PendingEntry entry = it.next().getValue();
+            if (!subject.equals(entry.subject) || entry.completedAt > 0)
+            {
+                continue;
+            }
+            if (entry.future != null && !entry.future.isDone() && entry.future.cancel(true))
+            {
+                // Removed only when the cancellation actually won. A run that finished between
+                // the check and the call has a result waiting, and this method promises to keep it.
+                it.remove();
+                stopped++;
+            }
+        }
+        return stopped;
+    }
+
+    /**
      * Evicts entries past their TTL.
      */
     public void pruneExpired()
@@ -502,6 +544,16 @@ public final class PendingWorkRegistry
          * </p>
          */
         public volatile String progressNote;
+
+        /**
+         * What the run is about, for a caller that has no runKey.
+         * <p>
+         * A refused call never returns one, which left the only exit addressed by something the
+         * caller could not obtain. Set by whoever starts the work; null leaves the entry
+         * unaddressable this way, exactly as before.
+         * </p>
+         */
+        public volatile String subject;
 
         PendingEntry(String runKey)
         {

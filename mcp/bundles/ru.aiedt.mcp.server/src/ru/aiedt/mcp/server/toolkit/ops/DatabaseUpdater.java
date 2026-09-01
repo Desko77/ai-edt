@@ -141,9 +141,11 @@ public class DatabaseUpdater implements IMcpTool
                     + "runKey is supplied. A fresh call without runKey always executes again - it never returns a stale " //$NON-NLS-1$
                     + "cached result.") //$NON-NLS-1$
             .booleanProperty("cancel", //$NON-NLS-1$
-                "Combined with runKey: detach and stop tracking that update. BEST-EFFORT only - it makes the server stop " //$NON-NLS-1$
-                    + "waiting on and caching the result, but does NOT guarantee that an update already " //$NON-NLS-1$
-                    + "in progress against the infobase gets aborted (a structural update can keep running and still commit).") //$NON-NLS-1$
+                "Detach and stop tracking. With runKey it stops that one update; with projectName and no runKey it stops " //$NON-NLS-1$
+                    + "every update still running for that project - the exit for a caller whose failed call never " //$NON-NLS-1$
+                    + "returned a runKey. BEST-EFFORT only: it makes the server stop waiting on and caching the result, " //$NON-NLS-1$
+                    + "but does NOT abort an update already in progress (it can keep running, still commit, and it holds " //$NON-NLS-1$
+                    + "the infobase until it returns). A finished result nobody has collected is left in place.") //$NON-NLS-1$
             .build();
     }
 
@@ -153,10 +155,52 @@ public class DatabaseUpdater implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * The exit for a caller that has no runKey, because the call that failed never returned one.
+     * <p>
+     * This stops TRACKING. It does not free the infobase and must not claim to: the platform call
+     * keeps running and only its own return releases the lock. Those are two different things, and
+     * conflating them is what would let a second updater into a database the first is still
+     * writing to.
+     * </p>
+     *
+     * @param projectName the project whose runs should stop being tracked.
+     * @return the JSON answer
+     */
+    private String stopTrackingByProject(String projectName)
+    {
+        if (projectName == null || projectName.isEmpty())
+        {
+            return ToolResult.error("cancel without runKey needs projectName - it is what " //$NON-NLS-1$
+                + "addresses the run when the call that failed never returned a runKey.").toJson(); //$NON-NLS-1$
+        }
+        int stopped = PendingWorkRegistry.UPDATE.stopTrackingFor(projectName);
+        // What this instance holds is keyed by infobase; the runs stopped here are keyed by
+        // project, and nothing ties the two. Reporting whatever came first would tell a caller
+        // cancelling project A that it still holds an operation belonging to project B, so this
+        // answer names no holding at all. MonopolyLock.outstandingHere() reports them properly.
+        ToolResult result = ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("stoppedTracking", stopped) //$NON-NLS-1$
+            .put("note", stopped > 0 //$NON-NLS-1$
+                ? "Stopped tracking " + stopped + " update(s). The work itself is NOT stopped: a " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "platform update keeps running and can still commit, and it holds the " //$NON-NLS-1$
+                    + "infobase until it returns." //$NON-NLS-1$
+                : "Nothing was being tracked for this project. A finished result nobody has " //$NON-NLS-1$
+                    + "collected is deliberately left in place - ask for it with its runKey."); //$NON-NLS-1$
+        return result.toJson();
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
         String runKeyParam = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if ((runKeyParam == null || runKeyParam.isEmpty())
+            && JsonUtils.extractBooleanArgument(params, "cancel", false)) //$NON-NLS-1$
+        {
+            return stopTrackingByProject(JsonUtils.extractStringArgument(params, "projectName")); //$NON-NLS-1$
+        }
         if (runKeyParam != null && !runKeyParam.isEmpty())
         {
             boolean cancel = JsonUtils.extractBooleanArgument(params, "cancel", false); //$NON-NLS-1$ //$NON-NLS-2$
@@ -185,6 +229,9 @@ public class DatabaseUpdater implements IMcpTool
         boolean autoFreeClients = JsonUtils.extractBooleanArgument(params, "autoFreeClients", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean ignoreBranchBinding =
             JsonUtils.extractBooleanArgument(params, "ignoreBranchBinding", false); //$NON-NLS-1$
+        // Same word the .cf dump uses for the same guard, so one habit covers both.
+        boolean skipValidation =
+            JsonUtils.extractBooleanArgument(params, "skipValidation", false); //$NON-NLS-1$
 
         boolean hasName = configName != null && !configName.isEmpty();
         if (!hasName)
@@ -246,6 +293,7 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fRestr = autoRestructure;
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
+        final boolean fSkipValidation = skipValidation;
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
         // to a caller who had said to go ahead.
@@ -267,7 +315,10 @@ public class DatabaseUpdater implements IMcpTool
             registry.remove(runKey);
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch));
+            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+                fSkipValidation));
+        // So a caller who never got the runKey can still address this run.
+        entry.subject = fProjectName;
 
         String result = entry.await(timeoutMs);
         if (result != null)
@@ -388,9 +439,16 @@ public class DatabaseUpdater implements IMcpTool
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
-        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding)
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
+        boolean skipValidation)
     {
+        String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
+        if (blocked != null)
+        {
+            return blocked;
+        }
         String applicationId = requestedApplicationId;
+
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
         // Held across the whole attempt and released in the finally below, so a throw halfway
@@ -493,20 +551,25 @@ public class DatabaseUpdater implements IMcpTool
             // that looks like without a claim is a platform error about a locked configuration, or a
             // wait that ends in a timeout - neither of which names anybody.
             String infobaseIdentity = InfobaseIdentity.of(application);
-            java.util.Optional<MonopolyLock> claim =
-                MonopolyLock.take(infobaseIdentity, "update_database"); //$NON-NLS-1$
+            // claim, not take: take discards which side the refusal came from, and this path is
+            // the one that reported "another AI-EDT instance is working on this infobase" about
+            // an update THIS instance had left holding the lock.
+            MonopolyLock.Claim infobaseAttempt =
+                MonopolyLock.claim(infobaseIdentity, "update_database"); //$NON-NLS-1$
+            java.util.Optional<MonopolyLock> claim = infobaseAttempt.granted()
+                ? java.util.Optional.of(infobaseAttempt.held) : java.util.Optional.empty();
             infobaseClaim = claim.orElse(null);
             if (infobaseIdentity != null && claim.isEmpty())
             {
-                // Asked again, and the answer may have changed: the holder can finish between the
-                // failed claim and this question. Pasting a null into the sentence produced
-                // "Another instance is working on this infobase. null", which reads as a defect in
-                // the tool rather than as what it is - a race the caller can simply retry.
-                String holder = MonopolyLock.heldBy(infobaseIdentity);
-                ToolResult taken = ToolResult.error("Another AI-EDT instance is working on this " //$NON-NLS-1$
-                    + "infobase. " + (holder != null ? holder //$NON-NLS-1$
-                        : "It has finished since this call tried to claim it - run the update " //$NON-NLS-1$
-                            + "again.")); //$NON-NLS-1$
+                // The sentence comes from the attempt, which is the only thing that knows WHICH
+                // side refused. Naming a neighbour when the holder is this instance is what the
+                // field report quoted, and it sent the reader looking for a process next door.
+                boolean ours = MonopolyLock.isHeldByThisInstance(infobaseAttempt.heldBy);
+                ToolResult taken = ToolResult.error(infobaseAttempt.refusal());
+                if (ours)
+                {
+                    taken.put("heldByThisInstance", Boolean.TRUE); //$NON-NLS-1$
+                }
                 taken.put("tag", ErrorTags.BUSY.wire()); //$NON-NLS-1$
                 taken.put("applicationId", applicationId); //$NON-NLS-1$
                 putHolders(taken, applicationId, ownerNames);
@@ -706,6 +769,67 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * Stops an update the platform is going to refuse anyway, while the reason is still readable.
+     * <p>
+     * The scan exists for defects that pass every check EDT runs and then break the platform. Until
+     * now nothing called it before an update: the caller learned of the defect from the platform, in
+     * the platform's words, naming a file the project does not have - and on the measured case not
+     * even that, because the update did not return and the answer was a timeout.
+     * </p>
+     * <p>
+     * Opting out is the same word the .cf dump uses, {@code ignoreBranchBinding} being taken: pass
+     * nothing and the scan runs. A scan that CANNOT run also blocks, for the same reason it blocks
+     * the dump - a guard that did not run has cleared nothing.
+     * </p>
+     *
+     * @param projectName the project about to be written to an infobase.
+     * @param skip whether the caller asked to go ahead unchecked.
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    private static String refuseWhatTheInfobaseWillRefuse(String projectName, boolean skip)
+    {
+        if (skip)
+        {
+            return null;
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            // Not this guard's business: the caller below reports an unknown project properly.
+            return null;
+        }
+        ValidateForExportTool.ExportScan scan;
+        try
+        {
+            scan = new ValidateForExportTool().scanForExport(project, null, null, 25);
+        }
+        catch (RuntimeException | LinkageError cannotScan)
+        {
+            return ToolResult.error("The pre-update scan could not run, so nothing vouches for this " //$NON-NLS-1$
+                + "project: " + cannotScan + ". Run validate_for_export to see it in full, or pass " //$NON-NLS-1$
+                + "skipValidation=true to update unchecked.").toJson(); //$NON-NLS-1$
+        }
+        if (scan.error != null)
+        {
+            return ToolResult.error("The pre-update scan could not complete, so nothing vouches for " //$NON-NLS-1$
+                + "this project: " + scan.error + ". Run validate_for_export to see it in full, or " //$NON-NLS-1$
+                + "pass skipValidation=true to update unchecked.").toJson(); //$NON-NLS-1$
+        }
+        if (scan.findingsCount == 0)
+        {
+            return null;
+        }
+        return ToolResult.error(scan.findingsCount + " export-breaker(s) found - the database was " //$NON-NLS-1$
+            + "NOT updated. These pass get_project_errors and are refused by the platform. Fix " //$NON-NLS-1$
+            + "them, or pass skipValidation=true to update unchecked.")
+            .put("findingsCount", scan.findingsCount) //$NON-NLS-1$
+            .put("findings", scan.findings) //$NON-NLS-1$
+            .put("findingsShown", scan.findings.size()) //$NON-NLS-1$
+            .put("findingsLimited", scan.limited) //$NON-NLS-1$
+            .toJson();
     }
 
     /**

@@ -82,7 +82,7 @@
 | `EditMetadataTool` | `clear_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opSetObjectReference |
 | `EditMetadataTool` | `create_form` | `dryRun`, `formName`, `formType`, `layout`, `name`, `ownerFqn`, `projectName`, `purpose`, `setAsDefault` | handler FormCreateOps.opCreateForm |
 | `EditMetadataTool` | `create_http_service` | `aliases`, `createModule`, `dryRun`, `handler`, `httpMethod`, `methodName`, `name`, `projectName`, `reuseSessions`, `rootURL`, `sessionMaxAge`, `urlTemplate`, `urlTemplateName`, `withHandlerStub` | handler ServiceOps.opCreateHttpService |
-| `EditMetadataTool` | `create_object` | `clientOrdinaryApplication`, `dryRun`, `externalConnection`, `global`, `name`, `objectType`, `privileged`, `projectName`, `server`, `serverCall`, `synonym` | handler ObjectOps.opCreateObject |
+| `EditMetadataTool` | `create_object` | `clientOrdinaryApplication`, `dryRun`, `externalConnection`, `global`, `name`, `objectType`, `privileged`, `projectName`, `properties`, `server`, `serverCall`, `synonym` | handler ObjectOps.opCreateObject |
 | `EditMetadataTool` | `create_object_command` | `commandParameterType`, `dryRun`, `name`, `ownerFqn`, `picture`, `projectName`, `title`, `tooltip` | handler SpecializedOps.opCreateObjectCommand |
 | `EditMetadataTool` | `create_route_map` | `bpFqn`, `dryRun`, `overwrite`, `ownerFqn`, `points`, `projectName`, `transitions` | handler RouteMapOps.opCreateRouteMap |
 | `EditMetadataTool` | `create_web_service` | `createModule`, `dryRun`, `handler`, `name`, `namespace`, `operationName`, `projectName`, `transactional`, `withHandlerStub` | handler ServiceOps.opCreateWebService |
@@ -217,12 +217,15 @@
 | `LaunchDebuggerTool` | `terminate_launch` | `all`, `applicationId` | delegate LaunchTerminator |
 | `LaunchDebuggerTool` | `wait_for_break` | `applicationId`, `timeoutMs`, `timeoutSeconds` | delegate SuspendWaiter |
 | `MxlWorkshopTool` | `add_drawing` | `beginColumn`, `beginColumnOffset`, `beginRow`, `beginRowOffset`, `drawingType`, `dryRun`, `endColumn`, `endColumnOffset`, `endRow`, `endRowOffset`, `formatIndex`, `language`, `ownerFqn`, `projectName`, `templateName`, `text`, `zOrder` | read in place |
+| `MxlWorkshopTool` | `add_named_area` | `areaKind`, `areaName`, `dryRun`, `fromCol`, `fromRow`, `ownerFqn`, `projectName`, `templateName`, `toCol`, `toRow` | read in place |
 | `MxlWorkshopTool` | `create_template` | `dryRun`, `ownerFqn`, `projectName`, `templateName`, `templateType` | read in place |
 | `MxlWorkshopTool` | `draw` | `dryRun`, `layout`, `ownerFqn`, `projectName`, `templateName` | read in place |
 | `MxlWorkshopTool` | `format_cells` | `autoColumnWidth`, `col`, `dryRun`, `fromCol`, `fromRow`, `ownerFqn`, `projectName`, `row`, `templateName`, `textPlacement`, `toCol`, `toRow` | read in place |
+| `MxlWorkshopTool` | `list_named_areas` | `ownerFqn`, `projectName`, `templateName` | read in place |
 | `MxlWorkshopTool` | `merge_cells` | `dryRun`, `fromCol`, `fromRow`, `ownerFqn`, `projectName`, `templateName`, `toCol`, `toRow` | read in place |
 | `MxlWorkshopTool` | `read_template` | `language`, `ownerFqn`, `projectName`, `templateName` | read in place |
 | `MxlWorkshopTool` | `remove_drawing` | `drawingId`, `dryRun`, `ownerFqn`, `projectName`, `templateName` | read in place |
+| `MxlWorkshopTool` | `remove_named_area` | `areaName`, `dryRun`, `ownerFqn`, `projectName`, `templateName` | read in place |
 | `MxlWorkshopTool` | `set_cell` | `col`, `dryRun`, `language`, `ownerFqn`, `projectName`, `row`, `templateName`, `text` | read in place |
 | `ProjectAdminFacadeTool` | `create_project` | `projectName`, `version` | delegate ProjectCreator |
 | `ProjectAdminFacadeTool` | `delete_project` | `deleteContent`, `projectName` | delegate ProjectRemover |
@@ -244,8 +247,10 @@
 | `SyncControlTool` | `diagnose` | `projectName` | passed in as locals |
 | `SyncControlTool` | `diagnose_delta` | `projectName` | passed in as locals |
 | `SyncControlTool` | `diagnose_stuck_locks` | `projectName` | passed in as locals |
+| `SyncControlTool` | `list_support_snapshots` | `projectName` | passed in as locals |
 | `SyncControlTool` | `mark_synchronized` | `projectName` | passed in as locals |
-| `SyncControlTool` | `recover_stuck_merge` | `operation`, `projectName` | passed in as locals |
+| `SyncControlTool` | `recover_stuck_merge` | `projectName` | passed in as locals |
+| `SyncControlTool` | `release_support_snapshot` | `operation`, `projectName` | passed in as locals |
 | `SyncControlTool` | `reseed_baseline` | `projectName` | passed in as locals |
 | `SyncControlTool` | `status` | `projectName` | passed in as locals |
 | `SyncControlTool` | `suppress` | `projectName` | passed in as locals |
