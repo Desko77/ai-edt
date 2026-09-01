@@ -6,8 +6,10 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
@@ -106,6 +108,48 @@ public class ARetryThatCannotWorkSaysSoTest
             assertNotNull(again.heldBy);
             assertFalse("a named holder is not the no-retry state",
                 MonopolyLock.isHeldByThisInstance(again.heldBy));
+        }
+    }
+
+    @Test
+    public void whatThisInstanceHoldsSurvivesCancellationAndNamesTheInfobase() throws Exception
+    {
+        assertNull("nothing is held before anything is taken",
+            MonopolyLock.outstandingHere(SUBJECT));
+
+        try (MonopolyLock stuck = MonopolyLock.take(SUBJECT, "update_database").orElseThrow())
+        {
+            MonopolyLock.Outstanding held = MonopolyLock.outstandingHere(SUBJECT);
+            assertNotNull("the infobase has to say it is busy", held);
+            assertEquals("update_database", held.operation);
+            assertTrue("and for how long", held.heldMs() >= 0);
+
+            // What cancelling a run does: the tracking entry goes, the claim record goes, and the
+            // platform call carries on. The record must NOT go with them.
+            dropTheClaimRecordsKeepingTheLockFiles();
+            assertNotNull("cancellation must not clear it",
+                MonopolyLock.outstandingHere(SUBJECT));
+
+            assertNull("and it says nothing about another infobase",
+                MonopolyLock.outstandingHere("file:e:/bases/elsewhere"));
+        }
+
+        assertNull("the confirmed stop is the call returning, and only then is it clear",
+            MonopolyLock.outstandingHere(SUBJECT));
+    }
+
+    @Test
+    public void theRefusalNamesWhatIsHoldingTheInfobase() throws Exception
+    {
+        try (MonopolyLock stuck = MonopolyLock.take(SUBJECT, "update_database").orElseThrow())
+        {
+            dropTheClaimRecordsKeepingTheLockFiles();
+
+            MonopolyLock.Claim again = MonopolyLock.claim(SUBJECT, "update_database");
+
+            assertTrue(MonopolyLock.isHeldByThisInstance(again.heldBy));
+            assertTrue("the caller is told what has it",
+                again.heldBy.contains("update_database"));
         }
     }
 

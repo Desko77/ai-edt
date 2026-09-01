@@ -64,6 +64,65 @@ public final class MonopolyLock implements AutoCloseable
     }
 
     /**
+     * What this instance holds right now, by infobase.
+     * <p>
+     * The tracking future is NOT this. Cancelling a run removes its registry entry while the
+     * platform call carries on - {@code CompletableFuture.cancel} does not interrupt the worker -
+     * so after a cancellation nothing in the registry says the infobase is still being written to.
+     * This does, because it is cleared by {@link #close}, which runs when the blocking call
+     * finally returns. That return is the confirmed stop; nothing before it is.
+     * </p>
+     * <p>
+     * Keyed by infobase, so work on one says nothing about another.
+     * </p>
+     */
+    private static final java.util.Map<String, Outstanding> HELD_HERE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** What one infobase is busy with, and since when. */
+    public static final class Outstanding
+    {
+        /** The operation that took the lock. */
+        public final String operation;
+
+        /** When it took it. */
+        public final long since;
+
+        Outstanding(String operation, long since)
+        {
+            this.operation = operation;
+            this.since = since;
+        }
+
+        /** @return how long it has been held, in milliseconds */
+        public long heldMs()
+        {
+            return System.currentTimeMillis() - since;
+        }
+    }
+
+    /**
+     * What this instance is holding on one infobase, if anything.
+     *
+     * @param subject identity of the infobase.
+     * @return the outstanding work, or <code>null</code> when this instance holds nothing on it
+     */
+    public static Outstanding outstandingHere(String subject)
+    {
+        return subject == null || subject.isEmpty() ? null : HELD_HERE.get(subject);
+    }
+
+    /**
+     * Every infobase this instance is holding.
+     *
+     * @return a snapshot, keyed by infobase identity; never <code>null</code>
+     */
+    public static java.util.Map<String, Outstanding> outstandingHere()
+    {
+        return new java.util.LinkedHashMap<>(HELD_HERE);
+    }
+
+    /**
      * Set once released, so a second {@link #close()} does nothing.
      * <p>
      * Not merely tidiness. Without it the sequence "we release, somebody else takes it, we close
@@ -113,11 +172,20 @@ public final class MonopolyLock implements AutoCloseable
         this(file, holding, null);
     }
 
+    /** The infobase this lock is on, when it is a real lock on one. */
+    private final String subject;
+
     private MonopolyLock(Path file, Holding holding, String unprotected)
+    {
+        this(file, holding, unprotected, null);
+    }
+
+    private MonopolyLock(Path file, Holding holding, String unprotected, String subject)
     {
         this.file = file;
         this.holding = holding;
         this.unprotected = unprotected;
+        this.subject = subject;
     }
 
     /**
@@ -283,8 +351,9 @@ public final class MonopolyLock implements AutoCloseable
                 Files.deleteIfExists(pending);
                 throw failed;
             }
-            MonopolyLock taken = new MonopolyLock(file, holding);
+            MonopolyLock taken = new MonopolyLock(file, holding, null, subject);
             holding = null;
+            HELD_HERE.put(subject, new Outstanding(operation, System.currentTimeMillis()));
             return Optional.of(taken);
         }
         catch (java.nio.file.FileAlreadyExistsException raced)
@@ -391,7 +460,23 @@ public final class MonopolyLock implements AutoCloseable
      */
     public static boolean isHeldByThisInstance(String heldBy)
     {
-        return HELD_BY_THIS_INSTANCE.equals(heldBy);
+        return heldBy != null && heldBy.startsWith(HELD_BY_THIS_INSTANCE);
+    }
+
+    /**
+     * The refusal, with what is being held appended when that is known.
+     *
+     * @param outstanding what this instance holds on the infobase, or <code>null</code>.
+     * @return the sentence a caller is shown
+     */
+    private static String heldByThisInstance(Outstanding outstanding)
+    {
+        if (outstanding == null)
+        {
+            return HELD_BY_THIS_INSTANCE;
+        }
+        return HELD_BY_THIS_INSTANCE + " Holding it: " + outstanding.operation + ", for " //$NON-NLS-1$ //$NON-NLS-2$
+            + (outstanding.heldMs() / 1000) + "s."; //$NON-NLS-1$
     }
 
     public static Claim claim(String subject, String operation)
@@ -422,7 +507,7 @@ public final class MonopolyLock implements AutoCloseable
             // operation that took it has not given it back. Retrying cannot clear that, and the
             // old answer said to retry - which is how a caller ends up repeating one call without
             // end. Name the state instead, and where the way out is.
-            return new Claim(null, HELD_BY_THIS_INSTANCE);
+            return new Claim(null, heldByThisInstance(outstandingHere(subject)));
         }
         return new Claim(null,
             "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$
@@ -472,6 +557,10 @@ public final class MonopolyLock implements AutoCloseable
         // Released before the claim is removed, and released even when there is no claim file to
         // remove. The lock is what actually keeps the next caller out; the claim only tells them
         // who to go and ask.
+        if (subject != null)
+        {
+            HELD_HERE.remove(subject);
+        }
         if (holding != null)
         {
             holding.release();
