@@ -245,6 +245,58 @@ public final class JsonUtils
     }
 
     /**
+     * Says why an object argument cannot be used, when one was supplied at all.
+     * <p>
+     * {@link #extractObjectArgument} is forgiving on purpose: text that is not an object reads as
+     * no members, which is right for a caller that wants to look and move on. It is wrong for a
+     * caller that promises all of the request or none of it - there, "nothing came back" and
+     * "nothing was asked" have to be told apart, or a malformed object silently becomes an object
+     * nobody asked for. Ask this first, and refuse before doing any work.
+     * </p>
+     *
+     * @param params the tool parameters; may be <code>null</code>
+     * @param argumentName the argument name
+     * @return the reason, or <code>null</code> when the argument is absent or fully usable
+     */
+    public static String objectArgumentProblem(Map<String, String> params, String argumentName)
+    {
+        String raw = extractStringArgument(params, argumentName);
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        JsonElement parsed;
+        try
+        {
+            parsed = JsonParser.parseString(raw.trim());
+        }
+        catch (RuntimeException notJson)
+        {
+            return "'" + argumentName + "' is not JSON: " + notJson.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!parsed.isJsonObject())
+        {
+            return "'" + argumentName + "' has to be a JSON object of name to value, and this is " //$NON-NLS-1$ //$NON-NLS-2$
+                + (parsed.isJsonArray() ? "an array." : "not one."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        List<String> unusable = new ArrayList<>();
+        for (Map.Entry<String, JsonElement> member : parsed.getAsJsonObject().entrySet())
+        {
+            if (!member.getValue().isJsonPrimitive())
+            {
+                unusable.add(member.getKey());
+            }
+        }
+        if (!unusable.isEmpty())
+        {
+            return "'" + argumentName + "' carries a value that is not a single value for: " //$NON-NLS-1$ //$NON-NLS-2$
+                + String.join(", ", unusable) //$NON-NLS-1$
+                + ". Each name takes one value - text, a number or true/false."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
      * Reads a list argument, accepting either spelling clients use: a JSON array
      * (<code>["a","b"]</code>) or a comma-separated string (<code>a, b</code>).
      * <p>

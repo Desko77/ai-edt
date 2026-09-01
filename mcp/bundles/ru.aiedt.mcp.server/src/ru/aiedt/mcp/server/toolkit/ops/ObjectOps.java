@@ -172,6 +172,41 @@ final class ObjectOps
     }
 
     /**
+     * Says which folded flag carries a value the boolean reader will not recognise.
+     * <p>
+     * These six are read as arguments rather than applied as properties, so the generic setter -
+     * which would have refused an unusable value - never sees them. The boolean reader answers
+     * "not given" to anything outside true/false/1/0/yes/no, and "not given" is indistinguishable
+     * from a flag the caller left out.
+     * </p>
+     *
+     * @param declared the members of the properties object.
+     * @param isCommonModule whether the object being created reads these as arguments.
+     * @return the refusal text, or <code>null</code> when every folded flag is readable
+     */
+    static String unreadableFlag(Map<String, String> declared, boolean isCommonModule)
+    {
+        if (!isCommonModule)
+        {
+            return null;
+        }
+        for (Map.Entry<String, String> given : declared.entrySet())
+        {
+            if (!COMMON_MODULE_FLAGS.contains(given.getKey()))
+            {
+                continue;
+            }
+            if (JsonUtils.extractBooleanArgumentNullable(
+                Collections.singletonMap(given.getKey(), given.getValue()), given.getKey()) == null)
+            {
+                return "'" + given.getKey() + "' takes true or false, and '" + given.getValue() //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' is neither. Nothing was created."; //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
      * Says which property was given twice with two different values.
      *
      * @param params the call's arguments.
@@ -278,6 +313,14 @@ final class ObjectOps
                 .toJson();
         }
 
+        // Asked before anything is read out of it. A properties object that cannot be used reads
+        // as no properties at all, and creating the object anyway would answer success for a
+        // request that was never carried out - the very thing this argument exists to stop.
+        String unusable = JsonUtils.objectArgumentProblem(params, "properties"); //$NON-NLS-1$
+        if (unusable != null)
+        {
+            return ToolResult.error(unusable + " Nothing was created.").toJson(); //$NON-NLS-1$
+        }
         // A property named twice - once as an argument, once in the properties object - with two
         // different values is a contradiction, and picking one of them silently would write
         // something the caller did not ask for. Equal values are not a contradiction.
@@ -296,6 +339,16 @@ final class ObjectOps
             effective.putIfAbsent(given.getKey(), given.getValue());
         }
 
+        // A flag folded in from the properties object goes through the boolean reader, and that
+        // reader answers "not given" to anything it does not recognise. Without this check
+        // {"server":"tru"} would read as an unnamed context, the default would be written, and the
+        // call would succeed as though the property had never been asked for.
+        String unreadable = unreadableFlag(declared, "CommonModule".equals(englishType)); //$NON-NLS-1$
+        if (unreadable != null)
+        {
+            return ToolResult.error(unreadable).toJson();
+        }
+
         // 3.8.2: extension CommonModule guards (privileged, global+server). The flags are
         // hoisted to finals so the BM task below can also APPLY them to the created module
         // - without that the module is created with no execution context and fails EDT's
@@ -304,8 +357,17 @@ final class ObjectOps
 
         final Map<String, String> remaining = propertiesToApply(declared, isCommonModule);
         // Named in the answer, because "success" on its own does not say which properties reached
-        // the object - and that is exactly what could not be told apart before.
+        // the object - and that is exactly what could not be told apart before. A flag folded into
+        // the arguments belongs here too: it was asked for in the properties object and it was
+        // written, and leaving it out would say the opposite of what happened.
         final List<String> applied = new ArrayList<>();
+        for (String property : declared.keySet())
+        {
+            if (!remaining.containsKey(property) && !SERVICE_ARGUMENTS.contains(property))
+            {
+                applied.add(property);
+            }
+        }
         final Boolean cmPrivileged = isCommonModule
             ? JsonUtils.extractBooleanArgumentNullable(effective, "privileged") : null; //$NON-NLS-1$
         final Boolean cmGlobal = isCommonModule

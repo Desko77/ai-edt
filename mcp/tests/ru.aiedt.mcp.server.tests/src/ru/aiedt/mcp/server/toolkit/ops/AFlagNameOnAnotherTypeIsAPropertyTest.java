@@ -7,6 +7,8 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -90,5 +92,47 @@ public class AFlagNameOnAnotherTypeIsAPropertyTest
     {
         assertTrue(ObjectOps.propertiesToApply(map(), false).isEmpty());
         assertTrue(ObjectOps.propertiesToApply(map(), true).isEmpty());
+    }
+
+    /**
+     * A folded flag never reaches the generic setter, so nothing downstream would refuse a value
+     * the boolean reader cannot read. It answers "not given" to anything outside true/false, and
+     * "not given" is what a flag the caller left out looks like - so the default context would be
+     * written and the call would succeed as though the property had not been asked for.
+     */
+    @Test
+    public void aFlagValueThatIsNotBooleanIsRefused()
+    {
+        String refused = ObjectOps.unreadableFlag(map("server", "tru"), true);
+        assertNotNull(refused);
+        assertTrue(refused.contains("server"));
+        assertTrue(refused.contains("tru"));
+        assertTrue(refused.contains("Nothing was created"));
+    }
+
+    @Test
+    public void theSpellingsTheReaderAcceptsPassThrough()
+    {
+        for (String spelling : new String[] { "true", "false", "1", "0", "yes", "no", "TRUE" })
+        {
+            assertNull("'" + spelling + "' is a value the reader takes",
+                ObjectOps.unreadableFlag(map("global", spelling), true));
+        }
+    }
+
+    /**
+     * On any other type the same name is an ordinary property, and the generic setter judges the
+     * value. Refusing it here would reject a property the object may well have.
+     */
+    @Test
+    public void aFlagValueIsNotJudgedOnAnotherType()
+    {
+        assertNull(ObjectOps.unreadableFlag(map("server", "tru"), false));
+    }
+
+    @Test
+    public void aPropertyThatIsNotAFlagIsNotJudgedHere()
+    {
+        assertNull(ObjectOps.unreadableFlag(map("methodName", "CommonModule.A.B"), true));
     }
 }

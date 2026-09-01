@@ -7,6 +7,8 @@
 package ru.aiedt.mcp.server.wire;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -90,5 +92,47 @@ public class AnObjectArgumentIsReadBackTest
             .isEmpty());
         assertTrue(JsonUtils.extractObjectArgument(withProperties("{broken"), "properties")
             .isEmpty());
+    }
+
+    /**
+     * Reading leniently is right for a caller that wants to look; it is wrong for one that
+     * promises all of the request or none of it. Those two answers - "nothing came back" and
+     * "nothing was asked" - are the same map, so a caller has to be able to ask which it was.
+     */
+    @Test
+    public void nothingSuppliedIsNotAProblem()
+    {
+        assertNull(JsonUtils.objectArgumentProblem(withProperties(null), "properties"));
+        assertNull(JsonUtils.objectArgumentProblem(withProperties(""), "properties"));
+        assertNull(JsonUtils.objectArgumentProblem(withProperties("{}"), "properties"));
+        assertNull(JsonUtils.objectArgumentProblem(withProperties("{\"use\":false}"), "properties"));
+    }
+
+    @Test
+    public void textThatIsNotJsonIsAProblem()
+    {
+        String said = JsonUtils.objectArgumentProblem(withProperties("{broken"), "properties");
+        assertNotNull("a malformed object must not read as no properties at all", said);
+        assertTrue(said.contains("properties"));
+    }
+
+    @Test
+    public void jsonThatIsNotAnObjectIsAProblem()
+    {
+        assertNotNull(JsonUtils.objectArgumentProblem(withProperties("[1,2]"), "properties"));
+        assertTrue(JsonUtils.objectArgumentProblem(withProperties("[1,2]"), "properties")
+            .contains("array"));
+        assertNotNull(JsonUtils.objectArgumentProblem(withProperties("\"text\""), "properties"));
+    }
+
+    /** A member that was going to be dropped is named, rather than quietly left out. */
+    @Test
+    public void aMemberThatIsNotOneValueIsNamed()
+    {
+        String said = JsonUtils.objectArgumentProblem(
+            withProperties("{\"use\":true,\"nested\":{\"a\":1},\"list\":[1,2]}"), "properties");
+        assertNotNull(said);
+        assertTrue(said.contains("nested"));
+        assertTrue(said.contains("list"));
     }
 }

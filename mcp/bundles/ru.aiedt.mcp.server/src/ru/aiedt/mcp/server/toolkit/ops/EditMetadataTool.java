@@ -321,7 +321,7 @@ public class EditMetadataTool implements IMcpTool
                 "Synonym for a newly created object or field. Auto-generated from the name when omitted, the " //$NON-NLS-1$
                 + "way the EDT wizard does it; a JSON object keyed by language code sets several languages at " //$NON-NLS-1$
                 + "once. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
-            .stringProperty("properties", //$NON-NLS-1$
+            .objectProperty("properties", //$NON-NLS-1$
                 "create_object: a JSON object of property name to value, applied to the new object before it " //$NON-NLS-1$
                 + "joins the configuration - e.g. {\"methodName\":\"CommonModule.A.B\",\"use\":false} on a " //$NON-NLS-1$
                 + "ScheduledJob. A property the object's type does not have is refused and NOTHING is created. " //$NON-NLS-1$

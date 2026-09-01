@@ -202,6 +202,27 @@ public class SchemaComposer
     }
 
     /**
+     * Declares a parameter whose value is an object of names to scalar values.
+     * <p>
+     * Declared as an object rather than as a string carrying JSON, because a client that builds
+     * calls from the schema goes by the declared type: told "string", it either refuses the object
+     * the description asks for or encodes it twice, and the tool then reads a quoted blob instead
+     * of members.
+     * </p>
+     *
+     * @param name the parameter name
+     * @param description what the parameter means, as the client will show it
+     * @return this builder
+     */
+    public SchemaComposer objectProperty(String name, String description)
+    {
+        Map<String, Object> definition = new LinkedHashMap<>();
+        definition.put(KEY_TYPE, TYPE_OBJECT);
+        definition.put(KEY_DESCRIPTION, description);
+        return addProperty(name, definition, false);
+    }
+
+    /**
      * Renders the schema.
      * <p>
      * {@code properties} and {@code required} are always present, empty if nothing was declared.
