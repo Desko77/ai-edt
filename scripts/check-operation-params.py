@@ -412,13 +412,38 @@ def write_report(found: dict[str, dict[str, object]]) -> None:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join(lines), encoding="utf-8")
 
+    RESOURCE.parent.mkdir(parents=True, exist_ok=True)
+    RESOURCE.write_text(resource_text(found), encoding="utf-8")
+
+
+def resource_text(found: dict[str, dict[str, object]]) -> str:
+    """The map as it is shipped, built the one way both writing and checking use."""
     rows = ["# derived by scripts/check-operation-params.py - do not edit"]
     for _, row in sorted(found.items()):
         rows.append("\t".join((str(row["facade"]), str(row["operation"]),
                                ",".join(row["parameters"]), str(row["how"]))))
     rows.append("")
-    RESOURCE.parent.mkdir(parents=True, exist_ok=True)
-    RESOURCE.write_text("\n".join(rows), encoding="utf-8")
+    return "\n".join(rows)
+
+
+def stale(found: dict[str, dict[str, object]]) -> bool:
+    """
+    Whether the shipped map still describes the sources it was derived from.
+
+    The map is read at run time by UnreadArguments, so a stale one is not a documentation
+    problem: an operation missing from it is an operation whose arguments nothing checks.
+    The check used to derive the map afresh and never compare it with the file, so the
+    resource drifted through a whole release - the three named-area operations shipped in
+    0.2.38 were never in it, and CI stayed green. Measured 2026-09-01.
+    """
+    if not RESOURCE.exists():
+        print("the operation map is not there at all", file=sys.stderr)
+        return True
+    if RESOURCE.read_text(encoding="utf-8") == resource_text(found):
+        return False
+    print("the shipped operation map does not match the sources - run the script without "
+          "--check and commit what it writes", file=sys.stderr)
+    return True
 
 
 def main() -> int:
@@ -438,7 +463,10 @@ def main() -> int:
                   f"  [{row['how'] or 'unknown'}]")
 
     missing = unknowns(found)
-    if not args.check:
+    if args.check:
+        if stale(found):
+            return 1
+    else:
         write_report(found)
 
     hidden = unadvertised(found)
