@@ -2628,8 +2628,11 @@ public final class BmComparisonHelper
      */
     static void settleSnapshotAfterMerge(String projectName, Outcome outcome)
     {
-        if (outcome.supportSnapshotFile == null || outcome.mergeRefused != null
-            || outcome.writeMayHaveStarted)
+        // Gated on the merge having FINISHED, not on whether writing began. writeMayHaveStarted is
+        // raised before startMerge for every merge, successful ones included - it exists to say
+        // "assume nothing is untouched from here" - so reading it as "the outcome is unknown" made
+        // this method return every time and settled nothing at all.
+        if (outcome.supportSnapshotFile == null || outcome.mergeRefused != null || !outcome.merged)
         {
             return;
         }

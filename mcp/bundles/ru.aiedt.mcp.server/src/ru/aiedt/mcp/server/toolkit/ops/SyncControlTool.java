@@ -1039,6 +1039,24 @@ public class SyncControlTool implements IMcpTool
                 + "' has no location on disk, so it holds no snapshots.").toJson(); //$NON-NLS-1$
         }
         java.nio.file.Path file = settings.resolve(name);
+        // Named among the project's snapshots, not merely present in the directory. A typo naming
+        // some other file was answered as a successful release, and if that file happened to carry
+        // the protection comment it was rewritten - a settings file edited by a call that was
+        // supposed to touch one snapshot.
+        boolean listed = false;
+        for (java.nio.file.Path known : SupportSnapshotStore.list(settings))
+        {
+            if (known.getFileName().toString().equals(name))
+            {
+                listed = true;
+                break;
+            }
+        }
+        if (!listed)
+        {
+            return ToolResult.error("'" + name + "' is not one of this project's support " //$NON-NLS-1$ //$NON-NLS-2$
+                + "snapshots. Ask list_support_snapshots for the names.").toJson(); //$NON-NLS-1$
+        }
         String stillProtected = SupportSnapshotStore.clearProtection(file);
         if (stillProtected != null)
         {
