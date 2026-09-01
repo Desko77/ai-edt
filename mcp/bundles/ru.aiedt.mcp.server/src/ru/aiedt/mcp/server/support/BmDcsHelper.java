@@ -714,11 +714,17 @@ public final class BmDcsHelper
                 }
             });
             }
-            catch (MetadataGuards.BlockedGuardException blocked)
+            catch (RuntimeException thrown)
             {
-                if (!retrying || !becauseItIsAlreadyThere(blocked))
+                // Unwrapped, not caught by type. IBmModel.execute wraps what the task threw, which
+                // is the whole reason BlockedGuardException.unwrap exists; catching the exact type
+                // here would miss the already-exists a retry is meant to recognise and would
+                // answer with that refusal instead of re-exporting.
+                MetadataGuards.BlockedGuardException blocked =
+                    MetadataGuards.BlockedGuardException.unwrap(thrown);
+                if (!retrying || blocked == null || !becauseItIsAlreadyThere(blocked))
                 {
-                    throw blocked;
+                    throw thrown;
                 }
                 // The model already carries it - the first attempt DID land there, and only the
                 // file missed it. Re-adding is not what is wanted; re-exporting is.
@@ -745,18 +751,22 @@ public final class BmDcsHelper
             // next transaction gets a fresh snapshot - and a pause is what decides whether that
             // snapshot carries the commit before it. Measured: without one, a run of nine adds
             // loses several; with one, none.
-            r.error = null;
-            r.tags.remove("declaredContentMissing"); //$NON-NLS-1$
-            r.tags.remove("schemaDidNotGrow"); //$NON-NLS-1$
             try
             {
                 Thread.sleep(LOST_WRITE_BACKOFF_MS[attempts]);
             }
             catch (InterruptedException interrupted)
             {
+                // Nothing is cleared before this point, so the answer keeps the refusal and the
+                // tag that say what went missing. Clearing first and breaking here left ok=false
+                // with no reason attached to it.
                 Thread.currentThread().interrupt();
+                r.tags.put("retryInterrupted", Integer.valueOf(attempts)); //$NON-NLS-1$
                 break;
             }
+            r.error = null;
+            r.tags.remove("declaredContentMissing"); //$NON-NLS-1$
+            r.tags.remove("schemaDidNotGrow"); //$NON-NLS-1$
             attempts++;
             }
             if (attempts > 0)
