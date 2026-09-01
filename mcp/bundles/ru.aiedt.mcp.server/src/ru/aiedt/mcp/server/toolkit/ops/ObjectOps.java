@@ -125,15 +125,110 @@ final class ObjectOps
             && !Boolean.TRUE.equals(serverCall);
     }
 
+    /**
+     * What steers the call rather than describing the object. None of these is a property of
+     * anything, so a properties object carrying one has nothing to apply.
+     */
+    private static final Set<String> SERVICE_ARGUMENTS =
+        Collections.unmodifiableSet(new java.util.HashSet<>(Arrays.asList(
+            "projectName", "objectType", "name", "synonym", "dryRun", "properties"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+
+    /**
+     * The execution contexts a common module takes as arguments of its own. Only that type reads
+     * them by name; on any other type a property of the same name is an ordinary property.
+     */
+    private static final Set<String> COMMON_MODULE_FLAGS =
+        Collections.unmodifiableSet(new java.util.HashSet<>(Arrays.asList(
+            "server", "externalConnection", "clientOrdinaryApplication", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "global", "privileged", "serverCall"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /**
+     * What the properties object still has to write itself.
+     * <p>
+     * The service arguments come out always: they steer the call and describe no object. The module
+     * flags come out ONLY for a common module, the one type that reads them as arguments of its own.
+     * </p>
+     * <p>
+     * <b>Taking the flags out for every type would drop a property named {@code server} on a
+     * catalogue without a word</b> - the silent loss this whole change exists to end, reintroduced
+     * one method away from where it was fixed. Caught reading the change back, not by a test, which
+     * is why there is one now.
+     * </p>
+     *
+     * @param declared the members of the properties object.
+     * @param isCommonModule whether the object being created is a common module.
+     * @return the properties to apply one by one, in the order they were given
+     */
+    static Map<String, String> propertiesToApply(Map<String, String> declared,
+        boolean isCommonModule)
+    {
+        Map<String, String> remaining = new LinkedHashMap<>(declared);
+        remaining.keySet().removeAll(SERVICE_ARGUMENTS);
+        if (isCommonModule)
+        {
+            remaining.keySet().removeAll(COMMON_MODULE_FLAGS);
+        }
+        return remaining;
+    }
+
+    /**
+     * Says which property was given twice with two different values.
+     *
+     * @param params the call's arguments.
+     * @param declared the members of the properties object.
+     * @return the refusal text, or <code>null</code> when nothing contradicts
+     */
+    static String contradictingProperty(Map<String, String> params,
+        Map<String, String> declared)
+    {
+        if (params == null || declared.isEmpty())
+        {
+            return null;
+        }
+        for (Map.Entry<String, String> given : declared.entrySet())
+        {
+            String named = params.get(given.getKey());
+            if (named != null && !named.equals(given.getValue()))
+            {
+                return "'" + given.getKey() + "' was given twice and the two disagree: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "the argument says '" + named + "', properties says '" //$NON-NLS-1$ //$NON-NLS-2$
+                    + given.getValue() + "'. Nothing was created. Give it once, or give the same " //$NON-NLS-1$
+                    + "value in both."; //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Writes one boolean flag, and fails the call when it cannot.
+     * <p>
+     * <b>This used to swallow every exception into a log line.</b> A flag the caller asked for
+     * could go unwritten - a setter renamed between EDT builds, a value the model refused - and
+     * {@code create_object} still answered success. Nothing in the answer said which flag was
+     * dropped; the log is not somewhere a caller looks, and by the time anyone read the file the
+     * module had already failed EDT's own check. Found by reconciliation on 01.09.
+     * </p>
+     * <p>
+     * Raised rather than collected: the caller creates the object in one transaction, and a flag
+     * that cannot be written has to stop that transaction before the object is attached, so
+     * nothing half-made reaches the configuration.
+     * </p>
+     *
+     * @param target the object being built.
+     * @param setter the setter's name.
+     * @param value the value to write.
+     */
     private static void setBooleanProperty(Object target, String setter, boolean value)
     {
         try
         {
             target.getClass().getMethod(setter, boolean.class).invoke(target, value);
         }
-        catch (Exception e)
+        catch (ReflectiveOperationException | RuntimeException notApplied)
         {
-            Activator.logWarning("CommonModule " + setter + " not applied: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            throw new RuntimeException("CommonModule flag " + setter.substring(3) //$NON-NLS-1$
+                + " could not be written: " + notApplied.getMessage() //$NON-NLS-1$
+                + ". The module was not created.", notApplied); //$NON-NLS-1$
         }
     }
 
@@ -183,23 +278,46 @@ final class ObjectOps
                 .toJson();
         }
 
+        // A property named twice - once as an argument, once in the properties object - with two
+        // different values is a contradiction, and picking one of them silently would write
+        // something the caller did not ask for. Equal values are not a contradiction.
+        Map<String, String> declared = JsonUtils.extractObjectArgument(params, "properties"); //$NON-NLS-1$
+        String contradiction = contradictingProperty(params, declared);
+        if (contradiction != null)
+        {
+            return ToolResult.error(contradiction).toJson();
+        }
+        // Folded into the arguments rather than applied separately, so a flag written this way
+        // reaches the same defaulting the named argument goes through. Applying it afterwards
+        // would let the default for an unnamed context overwrite it.
+        Map<String, String> effective = new LinkedHashMap<>(params);
+        for (Map.Entry<String, String> given : declared.entrySet())
+        {
+            effective.putIfAbsent(given.getKey(), given.getValue());
+        }
+
         // 3.8.2: extension CommonModule guards (privileged, global+server). The flags are
         // hoisted to finals so the BM task below can also APPLY them to the created module
         // - without that the module is created with no execution context and fails EDT's
         // "common-module-type" check on UpdateDBCfg (hindsight A10).
         final boolean isCommonModule = "CommonModule".equals(englishType);
+
+        final Map<String, String> remaining = propertiesToApply(declared, isCommonModule);
+        // Named in the answer, because "success" on its own does not say which properties reached
+        // the object - and that is exactly what could not be told apart before.
+        final List<String> applied = new ArrayList<>();
         final Boolean cmPrivileged = isCommonModule
-            ? JsonUtils.extractBooleanArgumentNullable(params, "privileged") : null; //$NON-NLS-1$
+            ? JsonUtils.extractBooleanArgumentNullable(effective, "privileged") : null; //$NON-NLS-1$
         final Boolean cmGlobal = isCommonModule
-            ? JsonUtils.extractBooleanArgumentNullable(params, "global") : null; //$NON-NLS-1$
+            ? JsonUtils.extractBooleanArgumentNullable(effective, "global") : null; //$NON-NLS-1$
         final Boolean cmServer = isCommonModule
-            ? JsonUtils.extractBooleanArgumentNullable(params, "server") : null; //$NON-NLS-1$
+            ? JsonUtils.extractBooleanArgumentNullable(effective, "server") : null; //$NON-NLS-1$
         final Boolean cmExternalConnection = isCommonModule
-            ? JsonUtils.extractBooleanArgumentNullable(params, "externalConnection") : null; //$NON-NLS-1$
+            ? JsonUtils.extractBooleanArgumentNullable(effective, "externalConnection") : null; //$NON-NLS-1$
         final Boolean cmClientOrdinaryApplication = isCommonModule
-            ? JsonUtils.extractBooleanArgumentNullable(params, "clientOrdinaryApplication") : null; //$NON-NLS-1$
+            ? JsonUtils.extractBooleanArgumentNullable(effective, "clientOrdinaryApplication") : null; //$NON-NLS-1$
         final Boolean cmServerCall = isCommonModule
-            ? JsonUtils.extractBooleanArgumentNullable(params, "serverCall") : null; //$NON-NLS-1$
+            ? JsonUtils.extractBooleanArgumentNullable(effective, "serverCall") : null; //$NON-NLS-1$
         if (isCommonModule)
         {
             try
@@ -268,6 +386,22 @@ final class ObjectOps
                     {
                         applyCommonModuleFlags(created, cmPrivileged, cmGlobal, cmServer,
                             cmExternalConnection, cmClientOrdinaryApplication, cmServerCall);
+                    }
+                    // Applied BEFORE the object joins the configuration and before it is attached
+                    // as a top object. A property that cannot be written then stops the call while
+                    // the object exists nowhere but in this transaction, so a refusal leaves no
+                    // half-made object behind - which is what "the whole request or none of it"
+                    // means here. A scheduled job created with a name and nothing else is the case
+                    // this exists for: it fails EDT's own check the moment it appears.
+                    for (Map.Entry<String, String> property : remaining.entrySet())
+                    {
+                        String refused =
+                            BmObjectHelper.setProperty(created, property.getKey(), property.getValue());
+                        if (refused != null)
+                        {
+                            throw new RuntimeException(refused + " Nothing was created."); //$NON-NLS-1$
+                        }
+                        applied.add(property.getKey());
                     }
                     if (!BmObjectHelper.addToConfiguration(config, created))
                     {
@@ -342,6 +476,7 @@ final class ObjectOps
             .put("operation", "create_object") //$NON-NLS-1$ //$NON-NLS-2$
             .put("objectType", englishType) //$NON-NLS-1$
             .put("name", name) //$NON-NLS-1$
+            .put("propertiesApplied", applied) //$NON-NLS-1$
             .put("dryRun", dryRun) //$NON-NLS-1$
             .put("message", dryRun //$NON-NLS-1$
                 ? "Dry run: " + englishType + "." + name + " would be created." //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$

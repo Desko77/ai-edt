@@ -194,6 +194,57 @@ public final class JsonUtils
     }
 
     /**
+     * Reads an argument that carries a JSON object of name to scalar value.
+     * <p>
+     * A tool is handed text, so a nested object arrives as its compact JSON form and has to be
+     * parsed back. Only primitive members are taken, each in its string form: a nested object or
+     * array under a property name has no meaning for the callers of this - they set one value per
+     * property - and taking it would hand the setter a string of JSON.
+     * </p>
+     * <p>
+     * Insertion order is kept, so a refusal names the properties in the order the caller wrote
+     * them rather than in whatever order a hash landed on.
+     * </p>
+     *
+     * @param params the tool parameters; may be <code>null</code>
+     * @param argumentName the argument name
+     * @return the members in the order given, or an empty map when the argument is missing, empty,
+     *         not an object, or carries no primitive member
+     */
+    public static Map<String, String> extractObjectArgument(Map<String, String> params,
+        String argumentName)
+    {
+        String raw = extractStringArgument(params, argumentName);
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return new java.util.LinkedHashMap<>();
+        }
+        Map<String, String> members = new java.util.LinkedHashMap<>();
+        try
+        {
+            JsonElement parsed = JsonParser.parseString(raw.trim());
+            if (!parsed.isJsonObject())
+            {
+                return members;
+            }
+            for (Map.Entry<String, JsonElement> member : parsed.getAsJsonObject().entrySet())
+            {
+                if (member.getValue().isJsonPrimitive())
+                {
+                    members.put(member.getKey(), member.getValue().getAsString());
+                }
+            }
+        }
+        catch (RuntimeException notJson)
+        {
+            // A value that does not parse carries nothing this can use. The caller reports the
+            // argument as unusable; guessing at a shape here would invent members nobody wrote.
+            return new java.util.LinkedHashMap<>();
+        }
+        return members;
+    }
+
+    /**
      * Reads a list argument, accepting either spelling clients use: a JSON array
      * (<code>["a","b"]</code>) or a comma-separated string (<code>a, b</code>).
      * <p>
