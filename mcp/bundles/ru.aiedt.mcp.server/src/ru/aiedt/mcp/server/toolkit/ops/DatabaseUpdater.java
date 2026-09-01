@@ -141,9 +141,11 @@ public class DatabaseUpdater implements IMcpTool
                     + "runKey is supplied. A fresh call without runKey always executes again - it never returns a stale " //$NON-NLS-1$
                     + "cached result.") //$NON-NLS-1$
             .booleanProperty("cancel", //$NON-NLS-1$
-                "Combined with runKey: detach and stop tracking that update. BEST-EFFORT only - it makes the server stop " //$NON-NLS-1$
-                    + "waiting on and caching the result, but does NOT guarantee that an update already " //$NON-NLS-1$
-                    + "in progress against the infobase gets aborted (a structural update can keep running and still commit).") //$NON-NLS-1$
+                "Detach and stop tracking. With runKey it stops that one update; with projectName and no runKey it stops " //$NON-NLS-1$
+                    + "every update still running for that project - the exit for a caller whose failed call never " //$NON-NLS-1$
+                    + "returned a runKey. BEST-EFFORT only: it makes the server stop waiting on and caching the result, " //$NON-NLS-1$
+                    + "but does NOT abort an update already in progress (it can keep running, still commit, and it holds " //$NON-NLS-1$
+                    + "the infobase until it returns). A finished result nobody has collected is left in place.") //$NON-NLS-1$
             .build();
     }
 
@@ -153,10 +155,60 @@ public class DatabaseUpdater implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * The exit for a caller that has no runKey, because the call that failed never returned one.
+     * <p>
+     * This stops TRACKING. It does not free the infobase and must not claim to: the platform call
+     * keeps running and only its own return releases the lock. Those are two different things, and
+     * conflating them is what would let a second updater into a database the first is still
+     * writing to.
+     * </p>
+     *
+     * @param projectName the project whose runs should stop being tracked.
+     * @return the JSON answer
+     */
+    private String stopTrackingByProject(String projectName)
+    {
+        if (projectName == null || projectName.isEmpty())
+        {
+            return ToolResult.error("cancel without runKey needs projectName - it is what " //$NON-NLS-1$
+                + "addresses the run when the call that failed never returned a runKey.").toJson(); //$NON-NLS-1$
+        }
+        int stopped = PendingWorkRegistry.UPDATE.stopTrackingFor(projectName);
+        MonopolyLock.Outstanding held = null;
+        for (Map.Entry<String, MonopolyLock.Outstanding> each : MonopolyLock.outstandingHere()
+            .entrySet())
+        {
+            held = each.getValue();
+            break;
+        }
+        ToolResult result = ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("stoppedTracking", stopped) //$NON-NLS-1$
+            .put("note", stopped > 0 //$NON-NLS-1$
+                ? "Stopped tracking " + stopped + " update(s). The work itself is NOT stopped: a " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "platform update keeps running and can still commit, and it holds the " //$NON-NLS-1$
+                    + "infobase until it returns." //$NON-NLS-1$
+                : "Nothing was being tracked for this project. A finished result nobody has " //$NON-NLS-1$
+                    + "collected is deliberately left in place - ask for it with its runKey."); //$NON-NLS-1$
+        if (held != null)
+        {
+            result.put("stillHolding", held.operation) //$NON-NLS-1$
+                .put("heldForSeconds", held.heldMs() / 1000); //$NON-NLS-1$
+        }
+        return result.toJson();
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
         String runKeyParam = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if ((runKeyParam == null || runKeyParam.isEmpty())
+            && JsonUtils.extractBooleanArgument(params, "cancel", false)) //$NON-NLS-1$
+        {
+            return stopTrackingByProject(JsonUtils.extractStringArgument(params, "projectName")); //$NON-NLS-1$
+        }
         if (runKeyParam != null && !runKeyParam.isEmpty())
         {
             boolean cancel = JsonUtils.extractBooleanArgument(params, "cancel", false); //$NON-NLS-1$ //$NON-NLS-2$
@@ -273,6 +325,8 @@ public class DatabaseUpdater implements IMcpTool
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
                 fSkipValidation));
+        // So a caller who never got the runKey can still address this run.
+        entry.subject = fProjectName;
 
         String result = entry.await(timeoutMs);
         if (result != null)
