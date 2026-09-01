@@ -35,6 +35,9 @@ public final class SupportSnapshot
     /** First line of the file, so a wrong file is refused rather than half-read. */
     static final String HEADER = "# AI-EDT support mode snapshot v1"; //$NON-NLS-1$
 
+    /** Marks a snapshot that cleanup must not remove. See {@link #write(Path, boolean)}. */
+    static final String PROTECTED = "# protected"; //$NON-NLS-1$
+
     private static final String VENDOR = "# vendor\t"; //$NON-NLS-1$
 
     private static final String PROJECT = "# project\t"; //$NON-NLS-1$
@@ -349,8 +352,35 @@ public final class SupportSnapshot
      */
     public void write(Path path) throws IOException
     {
+        write(path, false);
+    }
+
+    /**
+     * Writes the snapshot, optionally marked as the only way back.
+     * <p>
+     * The mark goes into the file rather than beside it, because the file is published by moving it
+     * into place: a mark written afterwards would leave a window in which a crash produces a
+     * snapshot the cleanup takes for an ordinary one and deletes. Written inside, it is there the
+     * instant the snapshot exists.
+     * </p>
+     * <p>
+     * It is a comment line, which every reader of this format already skips, so a snapshot marked
+     * by this build still restores through an older one.
+     * </p>
+     *
+     * @param path where to write.
+     * @param protectedSnapshot whether the snapshot must survive cleanup until someone says the
+     *            merge it belongs to has been dealt with.
+     * @throws IOException when the file cannot be written
+     */
+    public void write(Path path, boolean protectedSnapshot) throws IOException
+    {
         List<String> lines = new ArrayList<>();
         lines.add(HEADER);
+        if (protectedSnapshot)
+        {
+            lines.add(PROTECTED);
+        }
         lines.add(PROJECT + projectName);
         lines.add("# objects no longer in the configuration\t" + unresolved); //$NON-NLS-1$
         for (Parent parent : parents)

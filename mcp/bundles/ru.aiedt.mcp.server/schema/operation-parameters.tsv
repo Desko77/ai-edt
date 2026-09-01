@@ -240,8 +240,10 @@ SupportRegistryTool	status	projectName	passed in as locals
 SyncControlTool	diagnose	projectName	passed in as locals
 SyncControlTool	diagnose_delta	projectName	passed in as locals
 SyncControlTool	diagnose_stuck_locks	projectName	passed in as locals
+SyncControlTool	list_support_snapshots	projectName	passed in as locals
 SyncControlTool	mark_synchronized	projectName	passed in as locals
-SyncControlTool	recover_stuck_merge	operation,projectName	passed in as locals
+SyncControlTool	recover_stuck_merge	projectName	passed in as locals
+SyncControlTool	release_support_snapshot	operation,projectName	passed in as locals
 SyncControlTool	reseed_baseline	projectName	passed in as locals
 SyncControlTool	status	projectName	passed in as locals
 SyncControlTool	suppress	projectName	passed in as locals
