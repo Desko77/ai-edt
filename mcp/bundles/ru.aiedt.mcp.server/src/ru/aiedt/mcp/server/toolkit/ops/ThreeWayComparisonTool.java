@@ -588,6 +588,11 @@ public class ThreeWayComparisonTool
             .put("supportSnapshotFile", outcome.supportSnapshotFile) //$NON-NLS-1$
             .put("supportSnapshotKeptBecause", outcome.supportSnapshotKeptBecause) //$NON-NLS-1$
             .put("supportSnapshotNote", outcome.supportSnapshotNote) //$NON-NLS-1$
+            // What the limit took, and what it left for a person to release. Held without
+            // being named is not actionable: releasing one needs the file it belongs to,
+            // and after a restart there is nothing else to name it by.
+            .put("supportSnapshotsRemoved", outcome.supportSnapshotsRemoved) //$NON-NLS-1$
+            .put("supportSnapshotsHeld", outcome.supportSnapshotsHeld) //$NON-NLS-1$
             // Said out loud, because it is the one thing a merge changes that lives outside both
             // the object list and the support snapshot - and restoring the source tree does not
             // put it back. Measured: a merge that took a delivery built for 8.3 moved the project

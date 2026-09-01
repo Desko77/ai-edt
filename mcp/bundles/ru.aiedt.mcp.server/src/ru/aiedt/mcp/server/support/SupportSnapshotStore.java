@@ -68,7 +68,10 @@ public final class SupportSnapshotStore
         {
             for (Path entry : entries)
             {
-                found.add(entry);
+                if (isSnapshotName(entry.getFileName().toString()))
+                {
+                    found.add(entry);
+                }
             }
         }
         catch (IOException | RuntimeException cannotList)
@@ -79,6 +82,32 @@ public final class SupportSnapshotStore
         }
         found.sort(Comparator.comparing((Path p) -> p.getFileName().toString()).reversed());
         return found;
+    }
+
+    /**
+     * Whether the file name is a merge snapshot rather than something named after one.
+     * <p>
+     * <b>The pattern alone is not enough.</b> Restoring support modes writes its undo record beside
+     * the snapshot it restored from, as {@code <snapshot>.before-restore.tsv} - which begins with
+     * the same prefix and ends with the same extension. That record is the only way to reverse a
+     * restore, and cleanup counting it as an ordinary snapshot would delete exactly that.
+     * </p>
+     * <p>
+     * A snapshot's own name carries one dot, the one before the extension. Anything with more has
+     * been named after a snapshot by something else.
+     * </p>
+     *
+     * @param fileName the file's name, without a directory.
+     * @return <code>true</code> when this is a merge snapshot
+     */
+    static boolean isSnapshotName(String fileName)
+    {
+        if (fileName == null || !fileName.startsWith(PREFIX) || !fileName.endsWith(SUFFIX))
+        {
+            return false;
+        }
+        String stamp = fileName.substring(PREFIX.length(), fileName.length() - SUFFIX.length());
+        return !stamp.isEmpty() && stamp.indexOf('.') < 0;
     }
 
     /**

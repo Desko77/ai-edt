@@ -185,9 +185,15 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("syncOperation", //$NON-NLS-1$
                 "sync_control's OWN action - status / diagnose / diagnose_delta / suppress / " //$NON-NLS-1$
                     + "reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
-                    + "recover_stuck_merge (required when operation=sync_control). Kept " //$NON-NLS-1$
+                    + "recover_stuck_merge / list_support_snapshots / " //$NON-NLS-1$
+                    + "release_support_snapshot (required when operation=sync_control). Kept " //$NON-NLS-1$
                     + "separate from this facade's routing operation on purpose - sync_control " //$NON-NLS-1$
                     + "has its own operation concept.") //$NON-NLS-1$
+            .stringProperty("name", //$NON-NLS-1$
+                "sync_control syncOperation=release_support_snapshot: the snapshot's file name, as " //$NON-NLS-1$
+                    + "syncOperation=list_support_snapshots reports it. A protected snapshot is the " //$NON-NLS-1$
+                    + "only way back from a merge whose outcome is not known here; releasing it says " //$NON-NLS-1$
+                    + "that merge has been dealt with.") //$NON-NLS-1$
             .booleanProperty("enabled", //$NON-NLS-1$
                 "sync_control syncOperation=suppress: true = suppress synchronization for " //$NON-NLS-1$
                     + "the project (skip it on update), false = re-enable.") //$NON-NLS-1$
@@ -285,7 +291,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         {
             return ToolResult.error("operation=sync_control requires syncOperation (status / " //$NON-NLS-1$
                 + "diagnose / diagnose_delta / suppress / reseed_baseline / " //$NON-NLS-1$
-                + "mark_synchronized / diagnose_stuck_locks / recover_stuck_merge) - " //$NON-NLS-1$
+                + "mark_synchronized / diagnose_stuck_locks / recover_stuck_merge / " //$NON-NLS-1$
+                + "list_support_snapshots / release_support_snapshot) - " //$NON-NLS-1$
                 + "sync_control has its own inner operation, kept separate from this facade's " //$NON-NLS-1$
                 + "routing operation.").toJson(); //$NON-NLS-1$
         }

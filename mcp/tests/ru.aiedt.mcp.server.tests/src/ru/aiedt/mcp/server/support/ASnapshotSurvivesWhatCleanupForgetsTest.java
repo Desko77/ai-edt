@@ -179,6 +179,40 @@ public class ASnapshotSurvivesWhatCleanupForgetsTest
         assertEquals(1, SupportSnapshotStore.list(settings).size());
     }
 
+    /**
+     * Restoring support modes writes its undo record beside the snapshot it restored from, named
+     * after it. That record is the only way to reverse a restore, and the file pattern alone counts
+     * it as an ordinary snapshot - so cleanup would delete exactly that.
+     */
+    @Test
+    public void anUndoRecordIsNotASnapshot() throws IOException
+    {
+        Path snapshotFile = snapshot("20260101-000000-00000001", false);
+        String undoName = snapshotFile.getFileName() + ".before-restore.tsv";
+        Path undo = settings.resolve(undoName);
+        Files.write(undo, Arrays.asList(SupportSnapshot.HEADER), StandardCharsets.UTF_8);
+        Path secondUndo = settings.resolve(snapshotFile.getFileName() + ".before-restore.2.tsv");
+        Files.write(secondUndo, Arrays.asList(SupportSnapshot.HEADER), StandardCharsets.UTF_8);
+
+        assertEquals("only the snapshot itself is ours", 1, SupportSnapshotStore.list(settings).size());
+        SupportSnapshotStore.prune(settings, 0);
+        assertTrue("the undo record survives cleanup", Files.exists(undo));
+        assertTrue("and so does a numbered one", Files.exists(secondUndo));
+    }
+
+    @Test
+    public void whatIsNamedLikeASnapshotButIsNotIsLeftAlone()
+    {
+        assertTrue(SupportSnapshotStore.isSnapshotName("aiedt-support-snapshot-20260101-000000-a1.tsv"));
+        assertFalse(SupportSnapshotStore
+            .isSnapshotName("aiedt-support-snapshot-20260101-000000-a1.tsv.before-restore.tsv"));
+        assertFalse(SupportSnapshotStore
+            .isSnapshotName("aiedt-support-snapshot-20260101-000000-a1.tsv.writing"));
+        assertFalse(SupportSnapshotStore.isSnapshotName("aiedt-support-snapshot-.tsv.other.tsv"));
+        assertFalse(SupportSnapshotStore.isSnapshotName("aiedt-markers.yaml"));
+        assertFalse(SupportSnapshotStore.isSnapshotName(null));
+    }
+
     @Test
     public void nothingThereIsNotAFailure()
     {
