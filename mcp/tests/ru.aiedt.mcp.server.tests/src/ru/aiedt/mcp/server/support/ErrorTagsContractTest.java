@@ -30,8 +30,8 @@ import org.junit.Test;
  */
 public class ErrorTagsContractTest
 {
-    /** Total number of {@link ErrorTags} constants this test covers: 6 reliability + 51 folded. */
-    private static final int EXPECTED_CONSTANT_COUNT = 57;
+    /** Total number of {@link ErrorTags} constants this test covers: 6 reliability + 52 folded. */
+    private static final int EXPECTED_CONSTANT_COUNT = 58;
 
     private static Map<String, String> goldenWireStrings()
     {
@@ -48,6 +48,7 @@ public class ErrorTagsContractTest
         // -- Folded set: MetadataGuards.ErrorTag / BM guards --
         golden.put("PROPERTY_MISMATCH", "propertyMismatch"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("KIND_MISMATCH", "kindMismatch"); //$NON-NLS-1$ //$NON-NLS-2$
+        golden.put("NOT_APPLICABLE_HERE", "notApplicableHere"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("REQUIRES_CASCADE_FORMS", "requiresCascadeForms"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("NOT_FOUND", "notFound"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("ALREADY_EXISTS", "alreadyExists"); //$NON-NLS-1$ //$NON-NLS-2$

@@ -51,6 +51,7 @@ com._1c.g5.v8.dt.dcs.model.core.DcsFactory
 com._1c.g5.v8.dt.dcs.model.schema.DataCompositionSchema
 com._1c.g5.v8.dt.dcs.model.schema.DcsFactory
 com._1c.g5.v8.dt.dcs.model.settings.DcsFactory
+com._1c.g5.v8.dt.dcs.util.DcsUtil createDefaultDataCompositionSettings
 com._1c.g5.v8.dt.dcs.util.DcsV8Serializer runtimeVersionSupport,serializeXML
 probe com._1c.g5.v8.dt.debug.bsl.model.BslLineBreakpoint
 id com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID

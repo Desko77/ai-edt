@@ -67,6 +67,11 @@ public enum ErrorTags
      * the resolved root object's actual EClass. */
     KIND_MISMATCH("kindMismatch"), //$NON-NLS-1$
 
+    /** The operation exists but does not apply to the target it was aimed at -
+     * a schema operation sent at a form's dynamic list, which carries settings
+     * and no schema. The refusal names the operations that do apply. */
+    NOT_APPLICABLE_HERE("notApplicableHere"), //$NON-NLS-1$
+
     /** Removing an attribute (or other child) would leave dangling form
      * items; retry with {@code cascadeForms=true} to remove them too. */
     REQUIRES_CASCADE_FORMS("requiresCascadeForms"), //$NON-NLS-1$

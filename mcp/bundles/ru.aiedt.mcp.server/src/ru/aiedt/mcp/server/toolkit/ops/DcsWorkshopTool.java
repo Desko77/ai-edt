@@ -7,11 +7,14 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
@@ -30,6 +33,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
+import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -70,6 +74,28 @@ public class DcsWorkshopTool implements IMcpTool
      */
     private final Map<String, MutationHandler> mutations = buildMutationRegistry();
 
+    /**
+     * The operations that act on composition settings rather than on a schema, and so apply to a
+     * form's dynamic list as well as to a schema in a template.
+     * <p>
+     * Every one of these reaches its target through {@code ensureDefaultSettings}, which is what
+     * makes the second address work without a handler being copied. An operation absent from this
+     * set is refused on a list by name; an operation added to the tool that belongs here must be
+     * added here too, and {@code DynamicListTakesOnlySettingsOperationsTest} holds the set to the
+     * shape of the catalog.
+     * </p>
+     */
+    static final Set<String> SETTINGS_OPS = Collections.unmodifiableSet(
+        new LinkedHashSet<>(Arrays.asList(
+            "add_appearance", "add_chart", "add_filter", "add_filter_group", "add_grouping", "add_order",
+            "add_settings_chart", "add_settings_filter_group", "add_settings_order",
+            "add_settings_selected_field", "add_settings_table", "add_user_field",
+            "clear_settings_selected_fields", "deselect_field", "remove_appearance",
+            "remove_conditional_appearance", "remove_settings_filter", "remove_settings_item",
+            "remove_settings_order", "remove_settings_selected_field", "remove_user_field",
+            "select_field", "set_output_param", "set_output_parameter", "set_param_value",
+            "set_settings_item_user_mode", "set_settings_parameter", "set_user_field")));
+
     /** Advertised operation catalog (allowlist + help + suggest), derived from the registry. */
     private final Map<String, String> OPS = buildOpsCatalog();
 
@@ -103,6 +129,11 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("objectName", //$NON-NLS-1$
                 "Owner FQN (Report.X / DataProcessor.X) or full schema FQN") //$NON-NLS-1$
+            .stringProperty("formFqn", //$NON-NLS-1$
+                "Form holding a dynamic list, e.g. Catalog.X.Form.ListForm. Pass with " //$NON-NLS-1$
+                    + "attributeName instead of objectName to work on the list's settings") //$NON-NLS-1$
+            .stringProperty("attributeName", //$NON-NLS-1$
+                "Dynamic-list attribute on formFqn whose settings the operation applies to") //$NON-NLS-1$
             .stringProperty("templateName", //$NON-NLS-1$
                 "DCS template name. Default follows the configuration script variant: " //$NON-NLS-1$
                     + "ОсновнаяСхемаКомпоновкиДанных (Russian) / MainDataCompositionSchema (English)") //$NON-NLS-1$
@@ -280,33 +311,159 @@ public class DcsWorkshopTool implements IMcpTool
      * and records a short message in {@link BmDcsHelper.Result#message}. Errors
      * surface as {@link MetadataGuards.BlockedGuardException} with structured tags.
      */
+    /**
+     * Whether the call is aimed at a form's dynamic list rather than at a schema in a template.
+     *
+     * @param formFqn the form, when one was given.
+     * @param attributeName the dynamic-list attribute, when one was given.
+     * @return true when both halves of the list address are present
+     */
+    static boolean addressesAList(String formFqn, String attributeName)
+    {
+        return formFqn != null && !formFqn.isEmpty()
+            && attributeName != null && !attributeName.isEmpty();
+    }
+
+    /**
+     * What is wrong with the target the caller named, if anything.
+     * <p>
+     * There are two ways to name a target and they do not mix: a schema is an object plus a
+     * template, a dynamic list is a form plus an attribute. Half an address, or both addresses at
+     * once, is answered by saying so - picking one silently would report on a target the caller did
+     * not mean.
+     * </p>
+     *
+     * @param projectName the project, needed either way.
+     * @param objectName the schema owner, for the schema address.
+     * @param formFqn the form, for the list address.
+     * @param attributeName the attribute, for the list address.
+     * @return the refusal to answer with, or <code>null</code> when the address is usable
+     */
+    static String addressRefusal(String projectName, String objectName, String formFqn,
+        String attributeName)
+    {
+        boolean hasForm = formFqn != null && !formFqn.isEmpty();
+        boolean hasAttribute = attributeName != null && !attributeName.isEmpty();
+        if (hasForm != hasAttribute)
+        {
+            return "A form's dynamic list is addressed by formFqn AND attributeName together; only " //$NON-NLS-1$
+                + (hasForm ? "formFqn" : "attributeName") + " was given"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        boolean hasObject = objectName != null && !objectName.isEmpty();
+        if (hasForm && hasObject)
+        {
+            return "objectName addresses a schema and formFqn + attributeName address a form's " //$NON-NLS-1$
+                + "dynamic list; pass one or the other, not both"; //$NON-NLS-1$
+        }
+        if (projectName == null || projectName.isEmpty())
+        {
+            return "projectName is required"; //$NON-NLS-1$
+        }
+        if (!hasForm && !hasObject)
+        {
+            return "projectName and objectName are required, or formFqn and attributeName to work " //$NON-NLS-1$
+                + "on a form's dynamic list instead"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
     private String opSchemaMutation(String op, Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String objectName = JsonUtils.extractStringArgument(params, "objectName"); //$NON-NLS-1$
         String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
+        String attributeName = JsonUtils.extractStringArgument(params, "attributeName"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
-        if (projectName == null || objectName == null)
+        String badAddress = addressRefusal(projectName, objectName, formFqn, attributeName);
+        if (badAddress != null)
         {
-            return ToolResult.error("projectName and objectName are required").toJson(); //$NON-NLS-1$
+            return ToolResult.error(badAddress).toJson();
         }
+        boolean onAList = addressesAList(formFqn, attributeName);
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
-
-        // Phase 5.4 pre-flight: validate queryText / expression BEFORE the BM
-        // transaction opens. Cheaper than rolling back the model on a parse
-        // error and avoids running Xtext validation inside the BM tx.
+        // Pre-flight: validate queryText / expression BEFORE the BM transaction opens. Cheaper
+        // than rolling back the model on a parse error, and it avoids running Xtext validation
+        // inside the BM tx. It runs for both addresses: a user field written into a list's settings
+        // carries an expression exactly as one written into a schema does.
         String preFlightError = preflightValidate(op, params, project);
         if (preFlightError != null)
         {
             return preFlightError;
         }
+        if (onAList)
+        {
+            return applyToDynamicList(op, params, project, formFqn, attributeName, dryRun);
+        }
         BmDcsHelper.Result r = BmDcsHelper.executeWriteOnSchema(project, objectName, templateName,
             dryRun, (tx, schema) -> applySchemaMutation(op, params, schema, project));
         return formatResult(r, op);
+    }
+
+    /**
+     * Runs a settings operation against a form's dynamic list.
+     * <p>
+     * A dynamic list carries composition settings of the same shape a schema carries, so every
+     * settings handler applies to it unchanged once the settings object is in hand. What differs is
+     * only how the target is reached: a schema is one top object resolved by FQN, a list's settings
+     * hang off a form attribute. Operations that shape a schema itself - datasets, parameters,
+     * variants - have nothing to act on here and are refused by name rather than left to fail on a
+     * missing collection.
+     * </p>
+     *
+     * @param op the settings operation, spelled as on the schema route.
+     * @param params its arguments.
+     * @param project the project holding the form.
+     * @param formFqn the form.
+     * @param attributeName the dynamic-list attribute on it.
+     * @param dryRun whether to discard the change.
+     * @return the JSON answer
+     */
+    private String applyToDynamicList(String op, Map<String, String> params, IProject project,
+        String formFqn, String attributeName, boolean dryRun)
+    {
+        if (!SETTINGS_OPS.contains(op))
+        {
+            return ToolResult.error("'" + op + "' shapes a composition schema, and a dynamic list " //$NON-NLS-1$ //$NON-NLS-2$
+                + "has no schema to shape - it has settings only. Operations that work on a list: " //$NON-NLS-1$
+                + String.join(", ", SETTINGS_OPS)) //$NON-NLS-1$
+                .put("operation", op) //$NON-NLS-1$
+                .put(ErrorTags.NOT_APPLICABLE_HERE.wire(), op)
+                .toJson();
+        }
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+        String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
+            Object settings = helper.listSettingsFor(tx, form, attributeName);
+            if (settings == null)
+            {
+                return "Error: '" + attributeName + "' is not a dynamic-list attribute of " //$NON-NLS-1$ //$NON-NLS-2$
+                    + formFqn + ", or its settings could not be created."; //$NON-NLS-1$
+            }
+            Object applied = applySchemaMutation(op, params, (EObject)settings, project);
+            return applied == null ? "" : applied.toString(); //$NON-NLS-1$
+        });
+        if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return ToolResult.error(outcome)
+                .put("operation", op) //$NON-NLS-1$
+                .put("formFqn", formFqn) //$NON-NLS-1$
+                .put("attributeName", attributeName) //$NON-NLS-1$
+                .toJson();
+        }
+        return ToolResult.success()
+            .put("operation", op) //$NON-NLS-1$
+            .put("formFqn", formFqn) //$NON-NLS-1$
+            .put("attributeName", attributeName) //$NON-NLS-1$
+            .put("message", outcome == null ? "" : outcome) //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
     }
 
     /**
@@ -2738,9 +2895,7 @@ public class DcsWorkshopTool implements IMcpTool
     private Object doRemoveUserField(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
-        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
-        Object variant = (variants != null && !variants.isEmpty()) ? variants.get(0) : null;
-        Object settings = variant != null ? invokeGetter(variant, "getSettings") : null; //$NON-NLS-1$
+        Object settings = ensureDefaultSettings(schema);
         Object userFieldsContainer =
             settings != null ? invokeGetter(settings, "getUserFields") : null; //$NON-NLS-1$
         EList<EObject> items = userFieldsContainer != null
@@ -2781,9 +2936,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("set_user_field: pass expression and/or title to update"); //$NON-NLS-1$
         }
-        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
-        Object variant = (variants != null && !variants.isEmpty()) ? variants.get(0) : null;
-        Object settings = variant != null ? invokeGetter(variant, "getSettings") : null; //$NON-NLS-1$
+        Object settings = ensureDefaultSettings(schema);
         Object userFieldsContainer =
             settings != null ? invokeGetter(settings, "getUserFields") : null; //$NON-NLS-1$
         EList<EObject> items = userFieldsContainer != null
@@ -3683,8 +3836,55 @@ public class DcsWorkshopTool implements IMcpTool
      * by always creating an "Основной" variant. Reuses the first existing variant or
      * creates "Основной".
      */
+    /**
+     * Whether this object IS the settings, rather than something holding them.
+     * <p>
+     * Told apart by shape, not by class name: a settings container carries the filter, order and
+     * conditional-appearance children the handlers write into, and has no settings variants above
+     * it. Asking for the type by name would tie this to one model version.
+     * </p>
+     *
+     * @param candidate what the caller handed in.
+     * @return true when the handlers can write into it directly
+     */
+    private static boolean alreadyASettingsContainer(EObject candidate)
+    {
+        if (candidate == null)
+        {
+            return false;
+        }
+        boolean hasVariants = false;
+        boolean hasSettingsChildren = false;
+        for (java.lang.reflect.Method m : candidate.getClass().getMethods())
+        {
+            if (m.getParameterCount() != 0)
+            {
+                continue;
+            }
+            String name = m.getName();
+            if ("getSettingsVariants".equals(name)) //$NON-NLS-1$
+            {
+                hasVariants = true;
+            }
+            else if ("getConditionalAppearance".equals(name) || "getFilter".equals(name)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                hasSettingsChildren = true;
+            }
+        }
+        return hasSettingsChildren && !hasVariants;
+    }
+
     private Object ensureDefaultSettings(EObject schema)
     {
+        if (alreadyASettingsContainer(schema))
+        {
+            // Handed the settings themselves rather than a schema to dig them out of. That is how
+            // a dynamic list arrives: its settings are their own top object, reached from the form
+            // attribute, and there is no schema above them to ask for variants. Every handler
+            // funnels through here, so recognising this makes all of them work on a list without
+            // one of them being copied.
+            return schema;
+        }
         EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
         if (variants == null)
         {
@@ -3843,6 +4043,13 @@ public class DcsWorkshopTool implements IMcpTool
             sb.append("**Compatibility aliases** (same behavior, older names): add_data_source, " //$NON-NLS-1$
                 + "remove_data_source, set_data_source_property, add_chart, select_field, " //$NON-NLS-1$
                 + "deselect_field, add_variant, set_param_value.\n"); //$NON-NLS-1$
+            sb.append("**A form's dynamic list.** Pass formFqn + attributeName instead of " //$NON-NLS-1$
+                + "objectName + templateName and the operation applies to that list's settings: " //$NON-NLS-1$
+                + "formFqn=Catalog.X.Form.ListForm, attributeName=List. ") //$NON-NLS-1$
+                .append(SETTINGS_OPS.size())
+                .append(" operations work this way - the settings half of the catalog. ") //$NON-NLS-1$
+                .append("An operation that shapes a schema (datasets, parameters, variants) is " //$NON-NLS-1$
+                    + "refused with notApplicableHere.\n"); //$NON-NLS-1$
             sb.append("**Topics:** workflow, dcsWorkflow, propertyValues, examples, errorTags\n"); //$NON-NLS-1$
             return ToolResult.success().put("help", sb.toString()).toJson(); //$NON-NLS-1$
         }
