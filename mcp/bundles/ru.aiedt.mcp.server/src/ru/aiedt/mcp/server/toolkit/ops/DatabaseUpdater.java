@@ -185,6 +185,9 @@ public class DatabaseUpdater implements IMcpTool
         boolean autoFreeClients = JsonUtils.extractBooleanArgument(params, "autoFreeClients", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean ignoreBranchBinding =
             JsonUtils.extractBooleanArgument(params, "ignoreBranchBinding", false); //$NON-NLS-1$
+        // Same word the .cf dump uses for the same guard, so one habit covers both.
+        boolean skipValidation =
+            JsonUtils.extractBooleanArgument(params, "skipValidation", false); //$NON-NLS-1$
 
         boolean hasName = configName != null && !configName.isEmpty();
         if (!hasName)
@@ -246,6 +249,7 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fRestr = autoRestructure;
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
+        final boolean fSkipValidation = skipValidation;
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
         // to a caller who had said to go ahead.
@@ -267,7 +271,8 @@ public class DatabaseUpdater implements IMcpTool
             registry.remove(runKey);
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch));
+            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+                fSkipValidation));
 
         String result = entry.await(timeoutMs);
         if (result != null)
@@ -388,9 +393,16 @@ public class DatabaseUpdater implements IMcpTool
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
-        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding)
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
+        boolean skipValidation)
     {
+        String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
+        if (blocked != null)
+        {
+            return blocked;
+        }
         String applicationId = requestedApplicationId;
+
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
         // Held across the whole attempt and released in the finally below, so a throw halfway
@@ -706,6 +718,67 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * Stops an update the platform is going to refuse anyway, while the reason is still readable.
+     * <p>
+     * The scan exists for defects that pass every check EDT runs and then break the platform. Until
+     * now nothing called it before an update: the caller learned of the defect from the platform, in
+     * the platform's words, naming a file the project does not have - and on the measured case not
+     * even that, because the update did not return and the answer was a timeout.
+     * </p>
+     * <p>
+     * Opting out is the same word the .cf dump uses, {@code ignoreBranchBinding} being taken: pass
+     * nothing and the scan runs. A scan that CANNOT run also blocks, for the same reason it blocks
+     * the dump - a guard that did not run has cleared nothing.
+     * </p>
+     *
+     * @param projectName the project about to be written to an infobase.
+     * @param skip whether the caller asked to go ahead unchecked.
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    private static String refuseWhatTheInfobaseWillRefuse(String projectName, boolean skip)
+    {
+        if (skip)
+        {
+            return null;
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            // Not this guard's business: the caller below reports an unknown project properly.
+            return null;
+        }
+        ValidateForExportTool.ExportScan scan;
+        try
+        {
+            scan = new ValidateForExportTool().scanForExport(project, null, null, 25);
+        }
+        catch (RuntimeException | LinkageError cannotScan)
+        {
+            return ToolResult.error("The pre-update scan could not run, so nothing vouches for this " //$NON-NLS-1$
+                + "project: " + cannotScan + ". Run validate_for_export to see it in full, or pass " //$NON-NLS-1$
+                + "skipValidation=true to update unchecked.").toJson(); //$NON-NLS-1$
+        }
+        if (scan.error != null)
+        {
+            return ToolResult.error("The pre-update scan could not complete, so nothing vouches for " //$NON-NLS-1$
+                + "this project: " + scan.error + ". Run validate_for_export to see it in full, or " //$NON-NLS-1$
+                + "pass skipValidation=true to update unchecked.").toJson(); //$NON-NLS-1$
+        }
+        if (scan.findingsCount == 0)
+        {
+            return null;
+        }
+        return ToolResult.error(scan.findingsCount + " export-breaker(s) found - the database was " //$NON-NLS-1$
+            + "NOT updated. These pass get_project_errors and are refused by the platform. Fix " //$NON-NLS-1$
+            + "them, or pass skipValidation=true to update unchecked.")
+            .put("findingsCount", scan.findingsCount) //$NON-NLS-1$
+            .put("findings", scan.findings) //$NON-NLS-1$
+            .put("findingsShown", scan.findings.size()) //$NON-NLS-1$
+            .put("findingsLimited", scan.limited) //$NON-NLS-1$
+            .toJson();
     }
 
     /**
