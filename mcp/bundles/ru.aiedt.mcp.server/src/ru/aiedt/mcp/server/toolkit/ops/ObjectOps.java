@@ -37,6 +37,7 @@ import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmFormResourceHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
+import ru.aiedt.mcp.server.support.ConfigurationListProperties;
 import ru.aiedt.mcp.server.support.BmSubsystemHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
@@ -676,6 +677,7 @@ final class ObjectOps
         String propertyName = JsonUtils.extractStringArgument(params, "propertyName"); //$NON-NLS-1$
         String propertyValue = JsonUtils.extractStringArgument(params, "propertyValue"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String listModeArg = JsonUtils.extractStringArgument(params, "listMode"); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -683,6 +685,13 @@ final class ObjectOps
         if (!err.isEmpty())
         {
             return ToolResult.error(err.trim()).toJson();
+        }
+        final ConfigurationListProperties.ListMode listMode =
+            ConfigurationListProperties.ListMode.parse(listModeArg);
+        if (listMode == null)
+        {
+            return ToolResult.error("listMode takes one of: " //$NON-NLS-1$
+                + ConfigurationListProperties.ListMode.spelled()).toJson();
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -713,6 +722,8 @@ final class ObjectOps
         // choiceParameters / choiceParameterLinks: structured list-valued props
         // whose items are {name,value} / {name,field} - parsed from a JSON-array
         // propertyValue and applied to the (child) attribute target.
+        // What a list-shaped property holds after the call, filled in by the write below.
+        final com.google.gson.JsonElement[] listShape = { null };
         final boolean isChoiceParams = "choiceParameters".equalsIgnoreCase(propertyName); //$NON-NLS-1$
         final boolean isChoiceLinks = "choiceParameterLinks".equalsIgnoreCase(propertyName); //$NON-NLS-1$
         // synonym: a MultiLanguageText (EMap<lang,text>), not a plain scalar. A
@@ -801,6 +812,20 @@ final class ObjectOps
                     throw new RuntimeException("synonym not applied" //$NON-NLS-1$
                         + (sr.error != null ? ": " + sr.error : "")); //$NON-NLS-1$ //$NON-NLS-2$
                 }
+                if (ConfigurationListProperties.isListShaped(target, propertyName))
+                {
+                    // A list is not written by a setter: it is emptied, appended to or taken from,
+                    // and which of those was asked for is what listMode says.
+                    ConfigurationListProperties.Outcome outcome = ConfigurationListProperties.apply(
+                        target, propertyName, propertyValue, listMode, dryRun,
+                        EditMetadataTool.defaultLanguageCode(project));
+                    if (!outcome.ok())
+                    {
+                        throw new RuntimeException(outcome.refusal);
+                    }
+                    listShape[0] = outcome.value;
+                    return outcome.message;
+                }
                 String setErr = BmObjectHelper.setProperty(target, propertyName, propertyValue);
                 if (setErr != null)
                 {
@@ -845,6 +870,13 @@ final class ObjectOps
         if (isSynonym)
         {
             EditMetadataTool.addSynonymTags(r, synonymOut[0]);
+        }
+        if (listShape[0] != null)
+        {
+            // The property in its own shape - an array for a list, an object for the one property
+            // that holds lists inside it - so a caller can see what a dry run would leave behind
+            // without reading the model back.
+            r.tags.put(dryRun ? "wouldWrite" : "listValue", listShape[0]); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return EditMetadataTool.formatResult(r, "set_object_property"); //$NON-NLS-1$
     }

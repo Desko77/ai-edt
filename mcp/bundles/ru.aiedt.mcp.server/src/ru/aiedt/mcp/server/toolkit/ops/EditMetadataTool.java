@@ -344,7 +344,15 @@ public class EditMetadataTool implements IMcpTool
                 + "plain one - fillValue, inputByString, choiceParameters, choiceParameterLinks. Full text: " //$NON-NLS-1$
                 + "operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("propertyValue", //$NON-NLS-1$
-                "Property value for setObjectProperty (string; coerced to setter type).") //$NON-NLS-1$
+                "Property value for setObjectProperty (string; coerced to setter type). For a " //$NON-NLS-1$
+                + "list-shaped property it is JSON: an array of literals, an array of objects, or " //$NON-NLS-1$
+                + "an object naming inner lists.") //$NON-NLS-1$
+            .stringProperty("listMode", //$NON-NLS-1$
+                "set_object_property on a list-shaped property: replace (default), add, remove, " //$NON-NLS-1$
+                + "clear. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
+                + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
+                + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
+                + "usedMobileApplicationFunctionalities.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "Type for the attribute-creating operations and set_object_type. A primitive (String / Number " //$NON-NLS-1$
                 + "/ Date / Boolean / UUID), a reference (CatalogRef.X), or a composite as one comma-separated " //$NON-NLS-1$
@@ -1676,6 +1684,37 @@ public class EditMetadataTool implements IMcpTool
         return true;
     }
 
+    /**
+     * The language code a text belongs to when the caller did not name one.
+     * <p>
+     * The map is keyed by the language CODE, not by the language object's name: where a
+     * configuration names its language differently from its code the name produces an entry under a
+     * language that does not exist.
+     * </p>
+     *
+     * @param project the project whose configuration is asked.
+     * @return the configuration's default language code, or {@code ru} when there is none
+     */
+    static String defaultLanguageCode(IProject project)
+    {
+        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
+        Configuration config = cp != null ? cp.getConfiguration(project) : null;
+        if (config != null && config.getDefaultLanguage() != null)
+        {
+            String code = config.getDefaultLanguage().getLanguageCode();
+            if (code != null && !code.isEmpty())
+            {
+                return code;
+            }
+            String name = config.getDefaultLanguage().getName();
+            if (name != null && !name.isEmpty())
+            {
+                return name;
+            }
+        }
+        return "ru"; //$NON-NLS-1$
+    }
+
     static SynonymResult applyMdObjectSynonym(MdObject mdObject, String explicitSynonym,
         String name, IProject project)
     {
@@ -1750,13 +1789,7 @@ public class EditMetadataTool implements IMcpTool
         // language object's name. In configurations where the Language object is
         // named differently from its code (e.g. name "Русский" / code "ru") using
         // getName() produced a dangling synonym under a non-existent language.
-        String lang = "ru"; //$NON-NLS-1$
-        if (config != null && config.getDefaultLanguage() != null)
-        {
-            String code = config.getDefaultLanguage().getLanguageCode();
-            lang = (code != null && !code.isEmpty()) ? code
-                : config.getDefaultLanguage().getName();
-        }
+        String lang = defaultLanguageCode(project);
         try
         {
             mdObject.getSynonym().put(lang, synonymValue);
@@ -2425,7 +2458,7 @@ public class EditMetadataTool implements IMcpTool
         sb.append("### property\n\n"); //$NON-NLS-1$
         sb.append("Reference property name. For add_object_reference / remove_object_reference it is a LIST-valued reference (registerRecords on a Document = its movements, owners on a Catalog, basedOn, baseCalculationTypes on a ChartOfCalculationTypes; also registeredDocuments on a DocumentJournal, and documents / registerRecords on a Sequence - each takes a top-level object FQN in valueFqn). For set_object_reference / clear_object_reference it is a SCALAR reference (e.g. extDimensionTypes on a ChartOfAccounts = a ChartOfCharacteristicTypes; addressing / currentPerformer on a Task; mainAddressingAttribute on a Task = a child AddressingAttribute).\n\n"); //$NON-NLS-1$
         sb.append("### propertyName\n\n"); //$NON-NLS-1$
-        sb.append("Property name for setObjectProperty (coerced from propertyValue: enum literals, booleans, localized synonym / toolTip). Special: propertyName=fillValue builds a type-aware default value - propertyValue is Boolean (true/false) / Number / String per the attribute's type, empty or 'Undefined' clears it (Date / reference defaults not supported). Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y).\n\n"); //$NON-NLS-1$
+        sb.append("Property name for setObjectProperty (coerced from propertyValue: enum literals, booleans, localized synonym / toolTip). Special: propertyName=fillValue builds a type-aware default value - propertyValue is Boolean (true/false) / Number / String per the attribute's type, empty or 'Undefined' clears it (Date / reference defaults not supported). Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y). Special: a list-shaped property takes listMode - replace (default), add, remove, clear - and a JSON propertyValue. On the configuration root (ownerFqn=Configuration) those are usePurposes and requiredMobileApplicationPermissions (arrays of literals), requiredMobileApplicationPermissions8315 (array of {permission,use,description}) and usedMobileApplicationFunctionalities (an object naming its inner lists functionality and permissionMessage). A description is a string or an object of language to text. Every element is checked before anything is written, and dryRun answers with wouldWrite in the property's own shape.\n\n"); //$NON-NLS-1$
         sb.append("### purpose\n\n"); //$NON-NLS-1$
         sb.append("create_form: form purpose driving the EDT form generator (renderable form with main attribute + default layout). Values: ItemForm/ObjectForm (OBJECT), ListForm (LIST), ChoiceForm (CHOICE), FolderForm (FOLDER), FolderChoiceForm (FOLDER_CHOICE), RecordSetForm (RECORD_SET), RecordForm (RECORD), Generic (GENERIC); RU synonyms accepted. When omitted the purpose is derived from the owner type and the form name (object-owning types -> OBJECT, registers -> RECORD_SET, a 'Список'/'List' name -> LIST, a 'Выбор'/'Choice' name -> CHOICE, DataProcessor/Report and ExternalDataProcessor/ExternalReport -> OBJECT (main form, Объект attr; pass purpose=Generic for a custom empty form), CommonForm -> GENERIC). Optional. Ignored for ORDINARY forms and when the generator is unavailable (the form is then created empty).\n\n"); //$NON-NLS-1$
         sb.append("### rightName\n\n"); //$NON-NLS-1$
