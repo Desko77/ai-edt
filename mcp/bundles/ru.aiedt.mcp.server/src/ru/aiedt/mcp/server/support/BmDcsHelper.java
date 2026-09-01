@@ -550,6 +550,48 @@ public final class BmDcsHelper
     }
 
     /**
+     * How many times a write is run again when the file says its change did not land.
+     * <p>
+     * The oracle is the file, not a remembered count. A count of what a previous write left is
+     * only as good as the commit that produced it, and once a commit has been overwritten such a
+     * memory refuses every later write for good - measured, twice.
+     * </p>
+     */
+    private static final int LOST_WRITE_RETRIES = 4;
+
+    /** Pauses between attempts, in milliseconds. */
+    private static final long[] LOST_WRITE_BACKOFF_MS = {200L, 400L, 800L, 1600L};
+
+    /**
+     * Whether the file says this call changed nothing of what it named.
+     * <p>
+     * Only these two. A schema that did not change at all is a different thing - the value asked
+     * for may simply have been set already - and repeating that would burn the backoff to reach
+     * the same answer.
+     * </p>
+     *
+     * @param r the result just judged by {@link #noteDiskSave}.
+     * @return true when running the write again is worth it
+     */
+    static boolean theFileDidNotTakeIt(Result r)
+    {
+        return r.tags.containsKey("declaredContentMissing") //$NON-NLS-1$
+            || r.tags.containsKey("schemaDidNotGrow"); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a guard refused because the element is already there.
+     *
+     * @param blocked the guard's refusal.
+     * @return true when the model already carries what this call wanted to add
+     */
+    static boolean becauseItIsAlreadyThere(MetadataGuards.BlockedGuardException blocked)
+    {
+        return blocked.verdict != null && blocked.verdict.tag != null
+            && ErrorTags.ALREADY_EXISTS.wire().equals(blocked.verdict.tag.name);
+    }
+
+    /**
      * Action executed inside a BM read-write transaction with the schema EObject
      * already resolved.
      */
@@ -606,8 +648,14 @@ public final class BmDcsHelper
         }
 
         final String[] declared = new String[1];
+        int attempts = 0;
         try
         {
+            while (true)
+            {
+            boolean retrying = attempts > 0;
+            try
+            {
             model.execute(new AbstractBmTask<Void>("dcs_workshop.write") //$NON-NLS-1$
             {
                 @Override
@@ -665,16 +713,55 @@ public final class BmDcsHelper
                     return null;
                 }
             });
+            }
+            catch (MetadataGuards.BlockedGuardException blocked)
+            {
+                if (!retrying || !becauseItIsAlreadyThere(blocked))
+                {
+                    throw blocked;
+                }
+                // The model already carries it - the first attempt DID land there, and only the
+                // file missed it. Re-adding is not what is wanted; re-exporting is.
+                r.tags.put("writeAlreadyInModel", Boolean.TRUE); //$NON-NLS-1$
+            }
             r.ok = true;
             // Force-write the .dcs to disk for BOTH extensions and configurations:
             // EDT does not auto-sync a programmatic BM write back to the .dcs source,
             // so without this the schema stays BM-only (the file on disk stays empty,
             // the editor shows nothing, and nothing reaches git / the infobase).
-            if (!dryRun)
+            if (dryRun)
             {
-                r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm,
-                    project, schemaFqn, declared[0]);
-                noteDiskSave(r);
+                break;
+            }
+            r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm,
+                project, schemaFqn, declared[0]);
+            noteDiskSave(r);
+            if (r.ok || attempts >= LOST_WRITE_RETRIES || !theFileDidNotTakeIt(r))
+            {
+                break;
+            }
+            // The write was applied to a state that predates the previous commit, and committing
+            // it dropped what that commit added. Nothing here can make the model settle, but the
+            // next transaction gets a fresh snapshot - and a pause is what decides whether that
+            // snapshot carries the commit before it. Measured: without one, a run of nine adds
+            // loses several; with one, none.
+            r.error = null;
+            r.tags.remove("declaredContentMissing"); //$NON-NLS-1$
+            r.tags.remove("schemaDidNotGrow"); //$NON-NLS-1$
+            try
+            {
+                Thread.sleep(LOST_WRITE_BACKOFF_MS[attempts]);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            attempts++;
+            }
+            if (attempts > 0)
+            {
+                r.tags.put("writeRetries", Integer.valueOf(attempts)); //$NON-NLS-1$
             }
         }
         catch (DryRunAbort dra)
