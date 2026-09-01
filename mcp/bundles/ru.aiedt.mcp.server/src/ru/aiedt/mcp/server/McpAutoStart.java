@@ -10,6 +10,7 @@ import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.ui.IStartup;
 
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.SupportSnapshotStore;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
 
 /**
@@ -63,6 +64,12 @@ public class McpAutoStart
             // told. It never throws, so the endpoint below is not at its mercy.
             ReleaseSweep.get().start();
 
+            // The second of the two moments cleanup runs; the other is when a merge settles.
+            // A session that ended without settling one leaves its snapshot behind, and the
+            // next start is the first chance anything has to look. Protected snapshots are
+            // left alone here as everywhere: only the ordinary ones past the limit go.
+            pruneSupportSnapshots();
+
             if (!preferences.getBoolean(PrefKeys.PREF_AUTO_START))
             {
                 return;
@@ -79,6 +86,42 @@ public class McpAutoStart
         catch (Exception e)
         {
             Activator.logError("AI-EDT endpoint could not come up automatically", e); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Removes the ordinary support snapshots that sit past the limit, in every open project.
+     * <p>
+     * Never throws and never blocks the rest of start-up: a directory that cannot be read is one
+     * project's snapshots left where they are, which costs disk and nothing else.
+     * </p>
+     */
+    private static void pruneSupportSnapshots()
+    {
+        try
+        {
+            int removed = 0;
+            for (org.eclipse.core.resources.IProject project : org.eclipse.core.resources.ResourcesPlugin
+                .getWorkspace().getRoot().getProjects())
+            {
+                if (!project.isOpen() || project.getLocation() == null)
+                {
+                    continue;
+                }
+                removed += SupportSnapshotStore.prune(
+                    project.getLocation().toFile().toPath().resolve(".settings"), //$NON-NLS-1$
+                    SupportSnapshotStore.KEPT);
+            }
+            if (removed > 0)
+            {
+                Activator.logInfo("Removed " + removed + " support snapshot(s) past the limit of " //$NON-NLS-1$ //$NON-NLS-2$
+                    + SupportSnapshotStore.KEPT + "; protected ones were left."); //$NON-NLS-1$
+            }
+        }
+        catch (Exception | LinkageError cannotSweep)
+        {
+            Activator.logWarning("support snapshots could not be swept at start-up: " //$NON-NLS-1$
+                + cannotSweep);
         }
     }
 }
