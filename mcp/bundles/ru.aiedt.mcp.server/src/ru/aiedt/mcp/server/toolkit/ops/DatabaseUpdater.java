@@ -564,10 +564,8 @@ public class DatabaseUpdater implements IMcpTool
                 // The sentence comes from the attempt, which is the only thing that knows WHICH
                 // side refused. Naming a neighbour when the holder is this instance is what the
                 // field report quoted, and it sent the reader looking for a process next door.
-                String holder = infobaseAttempt.heldBy;
-                boolean ours = MonopolyLock.isHeldByThisInstance(holder);
-                ToolResult taken = ToolResult.error(ours ? holder
-                    : "Another AI-EDT instance is working on this infobase. " + holder); //$NON-NLS-1$
+                boolean ours = MonopolyLock.isHeldByThisInstance(infobaseAttempt.heldBy);
+                ToolResult taken = ToolResult.error(infobaseAttempt.refusal());
                 if (ours)
                 {
                     taken.put("heldByThisInstance", Boolean.TRUE); //$NON-NLS-1$

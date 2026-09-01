@@ -165,6 +165,32 @@ public class ARetryThatCannotWorkSaysSoTest
         }
     }
 
+    /**
+     * The refusal sentence is formed once, by the claim, not by each caller.
+     * <p>
+     * Seven call sites used to prefix "Another AI-EDT instance is working on this infobase"
+     * unconditionally, which is wrong whenever the holder is this instance.
+     * </p>
+     */
+    @Test
+    public void theClaimFormsTheWholeRefusal() throws Exception
+    {
+        try (MonopolyLock held = MonopolyLock.take(SUBJECT, "update_database").orElseThrow())
+        {
+            MonopolyLock.Claim ours = MonopolyLock.claim(SUBJECT, "export_extension");
+
+            assertNotNull(ours.refusal());
+            assertFalse("our own hold must not be called a neighbour",
+                ours.refusal().contains("Another AI-EDT instance"));
+            assertEquals("the refusal is the sentence itself", ours.heldBy, ours.refusal());
+        }
+
+        MonopolyLock.Claim free = MonopolyLock.claim(SUBJECT, "update_database");
+        assertTrue(free.granted());
+        assertNull("a granted claim refuses nothing", free.refusal());
+        free.close();
+    }
+
     @Test
     public void aFreeInfobaseIsGranted()
     {

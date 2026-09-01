@@ -423,6 +423,26 @@ public final class MonopolyLock implements AutoCloseable
             return held != null;
         }
 
+        /**
+         * The whole sentence to refuse with, so no caller has to decide who the holder is.
+         * <p>
+         * Seven call sites each prefixed "Another AI-EDT instance is working on this infobase"
+         * unconditionally. That is wrong whenever the holder is this instance, and every one of
+         * them would have had to be remembered when the distinction was introduced - only one was.
+         * </p>
+         *
+         * @return the refusal, or <code>null</code> when this claim was granted
+         */
+        public String refusal()
+        {
+            if (granted())
+            {
+                return null;
+            }
+            return isHeldByThisInstance(heldBy) ? heldBy
+                : "Another AI-EDT instance is working on this infobase. " + heldBy; //$NON-NLS-1$
+        }
+
         @Override
         public void close()
         {

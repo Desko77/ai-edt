@@ -128,8 +128,7 @@ public final class BmInfobaseExtensionHelper
                 MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "list_extension"); //$NON-NLS-1$
             if (!claim.granted())
             {
-                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
-                    + claim.heldBy;
+                r.error = claim.refusal();
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
@@ -194,8 +193,7 @@ public final class BmInfobaseExtensionHelper
                 MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "uninstall_extension"); //$NON-NLS-1$
             if (!claim.granted())
             {
-                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
-                    + claim.heldBy;
+                r.error = claim.refusal();
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
@@ -336,8 +334,7 @@ public final class BmInfobaseExtensionHelper
                 MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "unpack_external_binary"); //$NON-NLS-1$
             if (!claim.granted())
             {
-                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
-                    + claim.heldBy;
+                r.error = claim.refusal();
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
@@ -522,8 +519,7 @@ public final class BmInfobaseExtensionHelper
                 MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_extension"); //$NON-NLS-1$
             if (!claim.granted())
             {
-                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
-                    + claim.heldBy;
+                r.error = claim.refusal();
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
@@ -644,8 +640,7 @@ public final class BmInfobaseExtensionHelper
                 MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_configuration_to_cf"); //$NON-NLS-1$
             if (!claim.granted())
             {
-                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
-                    + claim.heldBy;
+                r.error = claim.refusal();
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
@@ -863,8 +858,7 @@ public final class BmInfobaseExtensionHelper
                 MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "install_extension"); //$NON-NLS-1$
             if (!claim.granted())
             {
-                r.error = "Another AI-EDT instance is working on this infobase. " //$NON-NLS-1$
-                    + claim.heldBy;
+                r.error = claim.refusal();
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
