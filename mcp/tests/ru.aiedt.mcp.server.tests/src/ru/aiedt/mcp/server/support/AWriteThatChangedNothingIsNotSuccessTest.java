@@ -55,6 +55,80 @@ public class AWriteThatChangedNothingIsNotSuccessTest
     }
 
     @Test
+    public void aWriteThatVanishedFromTheFileIsRefused()
+    {
+        DcsExtensionExportHelper.Result s = save(true, false);
+        s.declared = "Bt3";
+        s.declaredMissing = true;
+        BmDcsHelper.Result r = resultWith(s);
+        BmDcsHelper.noteDiskSave(r);
+
+        assertFalse("a change that did not survive must not stay ok", r.ok);
+        assertNotNull(r.error);
+        assertTrue("the refusal names what went missing", r.error.contains("Bt3"));
+        assertNotNull(r.tags.get("declaredContentMissing"));
+        assertNull("and it is not also called unchanged", r.tags.get("schemaUnchanged"));
+    }
+
+    @Test
+    public void anAddThatDidNotGrowTheFileIsRefused()
+    {
+        DcsExtensionExportHelper.Result s = save(true, false);
+        s.declared = "Bt4";
+        s.declaredMissing = false;
+        s.bytesBefore = 1761;
+        s.bytesWritten = 1761;
+        BmDcsHelper.Result r = resultWith(s);
+        BmDcsHelper.noteDiskSave(r);
+
+        assertFalse("an add that did not grow the file must not stay ok", r.ok);
+        assertNotNull(r.tags.get("schemaDidNotGrow"));
+        assertTrue("the refusal gives both sizes",
+            r.error.contains("1761 to 1761"));
+    }
+
+    @Test
+    public void anAddThatGrewTheFileIsNotRefused()
+    {
+        DcsExtensionExportHelper.Result s = save(true, false);
+        s.declared = "Bt4";
+        s.bytesBefore = 1761;
+        s.bytesWritten = 1869;
+        BmDcsHelper.Result r = resultWith(s);
+        BmDcsHelper.noteDiskSave(r);
+
+        assertTrue("a growing add stays a success", r.ok);
+        assertNull(r.tags.get("schemaDidNotGrow"));
+    }
+
+    @Test
+    public void aWriteWithNoClaimIsNotSizeJudged()
+    {
+        DcsExtensionExportHelper.Result s = save(true, false);
+        s.declared = null;
+        s.bytesBefore = 1761;
+        s.bytesWritten = 1700;
+        BmDcsHelper.Result r = resultWith(s);
+        BmDcsHelper.noteDiskSave(r);
+
+        assertTrue("a remove shrinks the file and claims nothing", r.ok);
+        assertNull(r.tags.get("schemaDidNotGrow"));
+    }
+
+    @Test
+    public void aClaimThatHoldsIsNotRefused()
+    {
+        DcsExtensionExportHelper.Result s = save(true, false);
+        s.declared = "Bt3";
+        s.declaredMissing = false;
+        BmDcsHelper.Result r = resultWith(s);
+        BmDcsHelper.noteDiskSave(r);
+
+        assertTrue("a claim the file carries stays a success", r.ok);
+        assertNull(r.tags.get("declaredContentMissing"));
+    }
+
+    @Test
     public void aFileThatGrewIsLeftAlone()
     {
         BmDcsHelper.Result r = resultWith(save(true, false));

@@ -497,6 +497,34 @@ public final class BmDcsHelper
     }
 
     /**
+     * What a mutation did, when it can name something the file must carry afterwards.
+     * <p>
+     * A mutation may keep returning a plain message. Returning this instead adds a claim that is
+     * checked against the bytes written to disk, which is the only way a write that lands and is
+     * later overwritten can be told apart from one that stuck.
+     * </p>
+     */
+    public static final class Wrote
+    {
+        /** The human-readable message, unchanged from what a plain return would give. */
+        public final String message;
+        /** Text the exported file must contain for this mutation to have held. */
+        public final String mustAppear;
+
+        public Wrote(String message, String mustAppear)
+        {
+            this.message = message;
+            this.mustAppear = mustAppear;
+        }
+
+        @Override
+        public String toString()
+        {
+            return message;
+        }
+    }
+
+    /**
      * Action executed inside a BM read-write transaction with the schema EObject
      * already resolved.
      */
@@ -552,6 +580,7 @@ public final class BmDcsHelper
             return r;
         }
 
+        final String[] declared = new String[1];
         try
         {
             model.execute(new AbstractBmTask<Void>("dcs_workshop.write") //$NON-NLS-1$
@@ -570,6 +599,10 @@ public final class BmDcsHelper
                         if (res != null)
                         {
                             r.message = res.toString();
+                        }
+                        if (res instanceof Wrote)
+                        {
+                            declared[0] = ((Wrote)res).mustAppear;
                         }
                         if (dryRun)
                         {
@@ -599,7 +632,8 @@ public final class BmDcsHelper
             // the editor shows nothing, and nothing reaches git / the infobase).
             if (!dryRun)
             {
-                r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm, project, schemaFqn);
+                r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm,
+                    project, schemaFqn, declared[0]);
                 noteDiskSave(r);
             }
         }
@@ -1529,6 +1563,40 @@ public final class BmDcsHelper
                 info.put("filePath", ds.filePath); //$NON-NLS-1$
             }
             r.tags.put("diskSaveFailed", info); //$NON-NLS-1$
+            return;
+        }
+        if (ds != null && ds.ok && ds.declaredMissing)
+        {
+            // The mutation named what it added and the file does not carry it. Unlike an
+            // unchanged file, this catches a write that landed and was then overwritten.
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("declared", ds.declared); //$NON-NLS-1$
+            info.put("filePath", ds.filePath); //$NON-NLS-1$
+            info.put("bytes", ds.bytesWritten); //$NON-NLS-1$
+            r.tags.put("declaredContentMissing", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = "the schema was written, but " + ds.declared + " is absent from the file " //$NON-NLS-1$ //$NON-NLS-2$
+                + "that reached disk. The change did not survive. Read the schema back before " //$NON-NLS-1$
+                + "repeating it."; //$NON-NLS-1$
+            return;
+        }
+        if (ds != null && ds.ok && ds.declared != null && !ds.declared.isEmpty()
+            && ds.bytesBefore >= 0 && ds.bytesWritten <= ds.bytesBefore)
+        {
+            // The mutation added something and the file did not grow. Its own element is present
+            // - declaredMissing would have fired otherwise - so something else left the file to
+            // make room for it. Checking only the caller's own claim cannot see that: the element
+            // that vanishes belongs to an earlier call, which has already answered.
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("declared", ds.declared); //$NON-NLS-1$
+            info.put("bytesBefore", ds.bytesBefore); //$NON-NLS-1$
+            info.put("bytesWritten", ds.bytesWritten); //$NON-NLS-1$
+            info.put("filePath", ds.filePath); //$NON-NLS-1$
+            r.tags.put("schemaDidNotGrow", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = ds.declared + " was added and the file did not grow (" //$NON-NLS-1$ //$NON-NLS-2$
+                + ds.bytesBefore + " to " + ds.bytesWritten + " bytes), so something else is no " //$NON-NLS-1$ //$NON-NLS-2$
+                + "longer in it. Read the schema back and re-add what is missing."; //$NON-NLS-1$
             return;
         }
         if (ds != null && ds.ok && ds.contentUnchanged)

@@ -74,6 +74,10 @@ public final class DcsExtensionExportHelper
         public int bytesBefore;
         /** Whether the serialized model is byte-identical to what the file already held. */
         public boolean contentUnchanged;
+        /** What the mutation named as written, when it named anything. */
+        public String declared;
+        /** Whether {@link #declared} is absent from the bytes just written. */
+        public boolean declaredMissing;
         public long totalMs;
         public String error;
         public Object schemaEClass;
@@ -83,9 +87,34 @@ public final class DcsExtensionExportHelper
      * Reads the schema from BM, serializes via DcsV8Serializer, writes to .dcs
      * on disk. Returns a Result with diagnostics.
      */
-    public static Result exportSchemaToDisk(IBmModelManager manager, IProject project, String schemaFqn)
+    public static Result exportSchemaToDisk(IBmModelManager manager, IProject project,
+        String schemaFqn)
+    {
+        return exportSchemaToDisk(manager, project, schemaFqn, null);
+    }
+
+    /**
+     * Exports the schema and reports whether the file it wrote carries {@code declared}.
+     * <p>
+     * A mutation that names what it added gets its claim checked against the bytes that reached
+     * disk. This catches the loss that {@link Result#contentUnchanged} cannot see: an element that
+     * IS written and then vanishes because a later export serializes a model snapshot without it.
+     * There the file changes at every step, so comparing it with its previous content accuses
+     * nothing.
+     * </p>
+     *
+     * @param manager the object model manager.
+     * @param project the project owning the schema.
+     * @param schemaFqn FQN of the schema to export.
+     * @param declared what the caller says the file must now contain, or <code>null</code> to
+     *            check nothing.
+     * @return the export result, carrying {@code declaredMissing} when the claim does not hold
+     */
+    public static Result exportSchemaToDisk(IBmModelManager manager, IProject project,
+        String schemaFqn, String declared)
     {
         Result r = new Result();
+        r.declared = declared;
         r.schemaFqn = schemaFqn;
         long t0 = System.currentTimeMillis();
 
@@ -177,6 +206,9 @@ public final class DcsExtensionExportHelper
             byte[] before = readExisting(dcsFile);
             r.bytesBefore = before == null ? -1 : before.length;
             r.contentUnchanged = before != null && Arrays.equals(before, bytes);
+            r.declaredMissing = declared != null && !declared.isEmpty()
+                && !new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+                    .contains(declared);
             ensureParents(dcsFile);
             ByteArrayInputStream in = new ByteArrayInputStream(bytes);
             if (dcsFile.exists())
