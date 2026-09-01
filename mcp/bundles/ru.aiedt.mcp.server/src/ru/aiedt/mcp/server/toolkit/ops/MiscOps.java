@@ -222,12 +222,16 @@ final class MiscOps
         String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
         String itemName = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        final String target = formFqn != null && !formFqn.isEmpty() ? formFqn : containerFqn;
-        if (target == null || target.isEmpty() || itemName == null || itemName.isEmpty())
+        String named = formFqn != null && !formFqn.isEmpty() ? formFqn : containerFqn;
+        if (named == null || named.isEmpty() || itemName == null || itemName.isEmpty())
         {
             return ToolResult.error("move_item requires name plus formFqn (or containerFqn) " //$NON-NLS-1$
                 + "naming the form that holds it.").toJson(); //$NON-NLS-1$
         }
+        // Normalized once, and the SAME string is what gets resolved. Deciding the scope on a
+        // canonical FQN and then resolving the caller's spelling would accept a Russian root here
+        // and answer "no such form" a moment later.
+        final String target = MetadataTypeCatalog.normalizeFqn(named);
         // One parse of the path decides this, shared with remove_item. The two used to read the FQN
         // separately - one accepted a common form, the other did not - so the same container got
         // two answers depending on which operation was asked.

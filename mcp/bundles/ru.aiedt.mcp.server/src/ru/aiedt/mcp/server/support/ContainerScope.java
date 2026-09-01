@@ -25,6 +25,13 @@ package ru.aiedt.mcp.server.support;
  * reads them by position. A catalogue whose NAME is "TemplateSettings" carries nothing at an index
  * where a kind would be, and a form whose name happens to be "Template" is still a form.
  * </p>
+ * <p>
+ * <b>Kind segments are matched in English only, deliberately.</b> The root type is normalized on the
+ * way in, so a Russian ROOT resolves; a Russian KIND is normalized nowhere, so accepting one here
+ * would classify a container that the operations downstream then fail to resolve - a call answered
+ * "this is a form" and then "no such form". Reading a spelling this project cannot yet act on is a
+ * promise it cannot keep.
+ * </p>
  */
 public enum ContainerScope
 {
@@ -97,8 +104,7 @@ public enum ContainerScope
     private static boolean isFormKind(String segment)
     {
         return "Form".equals(segment) //$NON-NLS-1$
-            || "Forms".equals(segment) //$NON-NLS-1$
-            || "Форма".equals(segment); //$NON-NLS-1$
+            || "Forms".equals(segment); //$NON-NLS-1$
     }
 
     /**
@@ -110,7 +116,6 @@ public enum ContainerScope
     private static boolean isTemplateKind(String segment)
     {
         return "Template".equals(segment) //$NON-NLS-1$
-            || "Templates".equals(segment) //$NON-NLS-1$
-            || "Макет".equals(segment); //$NON-NLS-1$
+            || "Templates".equals(segment); //$NON-NLS-1$
     }
 }
