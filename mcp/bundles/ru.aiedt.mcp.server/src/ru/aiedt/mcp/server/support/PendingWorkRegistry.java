@@ -409,9 +409,10 @@ public final class PendingWorkRegistry
             {
                 continue;
             }
-            if (entry.future != null && !entry.future.isDone())
+            if (entry.future != null && !entry.future.isDone() && entry.future.cancel(true))
             {
-                entry.future.cancel(true);
+                // Removed only when the cancellation actually won. A run that finished between
+                // the check and the call has a result waiting, and this method promises to keep it.
                 it.remove();
                 stopped++;
             }

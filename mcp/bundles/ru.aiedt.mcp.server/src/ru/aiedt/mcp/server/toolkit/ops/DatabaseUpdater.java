@@ -175,13 +175,10 @@ public class DatabaseUpdater implements IMcpTool
                 + "addresses the run when the call that failed never returned a runKey.").toJson(); //$NON-NLS-1$
         }
         int stopped = PendingWorkRegistry.UPDATE.stopTrackingFor(projectName);
-        MonopolyLock.Outstanding held = null;
-        for (Map.Entry<String, MonopolyLock.Outstanding> each : MonopolyLock.outstandingHere()
-            .entrySet())
-        {
-            held = each.getValue();
-            break;
-        }
+        // What this instance holds is keyed by infobase; the runs stopped here are keyed by
+        // project, and nothing ties the two. Reporting whatever came first would tell a caller
+        // cancelling project A that it still holds an operation belonging to project B, so this
+        // answer names no holding at all. MonopolyLock.outstandingHere() reports them properly.
         ToolResult result = ToolResult.success()
             .put("operation", NAME) //$NON-NLS-1$
             .put("projectName", projectName) //$NON-NLS-1$
@@ -192,11 +189,6 @@ public class DatabaseUpdater implements IMcpTool
                     + "infobase until it returns." //$NON-NLS-1$
                 : "Nothing was being tracked for this project. A finished result nobody has " //$NON-NLS-1$
                     + "collected is deliberately left in place - ask for it with its runKey."); //$NON-NLS-1$
-        if (held != null)
-        {
-            result.put("stillHolding", held.operation) //$NON-NLS-1$
-                .put("heldForSeconds", held.heldMs() / 1000); //$NON-NLS-1$
-        }
         return result.toJson();
     }
 
@@ -559,20 +551,27 @@ public class DatabaseUpdater implements IMcpTool
             // that looks like without a claim is a platform error about a locked configuration, or a
             // wait that ends in a timeout - neither of which names anybody.
             String infobaseIdentity = InfobaseIdentity.of(application);
-            java.util.Optional<MonopolyLock> claim =
-                MonopolyLock.take(infobaseIdentity, "update_database"); //$NON-NLS-1$
+            // claim, not take: take discards which side the refusal came from, and this path is
+            // the one that reported "another AI-EDT instance is working on this infobase" about
+            // an update THIS instance had left holding the lock.
+            MonopolyLock.Claim infobaseAttempt =
+                MonopolyLock.claim(infobaseIdentity, "update_database"); //$NON-NLS-1$
+            java.util.Optional<MonopolyLock> claim = infobaseAttempt.granted()
+                ? java.util.Optional.of(infobaseAttempt.held) : java.util.Optional.empty();
             infobaseClaim = claim.orElse(null);
             if (infobaseIdentity != null && claim.isEmpty())
             {
-                // Asked again, and the answer may have changed: the holder can finish between the
-                // failed claim and this question. Pasting a null into the sentence produced
-                // "Another instance is working on this infobase. null", which reads as a defect in
-                // the tool rather than as what it is - a race the caller can simply retry.
-                String holder = MonopolyLock.heldBy(infobaseIdentity);
-                ToolResult taken = ToolResult.error("Another AI-EDT instance is working on this " //$NON-NLS-1$
-                    + "infobase. " + (holder != null ? holder //$NON-NLS-1$
-                        : "It has finished since this call tried to claim it - run the update " //$NON-NLS-1$
-                            + "again.")); //$NON-NLS-1$
+                // The sentence comes from the attempt, which is the only thing that knows WHICH
+                // side refused. Naming a neighbour when the holder is this instance is what the
+                // field report quoted, and it sent the reader looking for a process next door.
+                String holder = infobaseAttempt.heldBy;
+                boolean ours = MonopolyLock.isHeldByThisInstance(holder);
+                ToolResult taken = ToolResult.error(ours ? holder
+                    : "Another AI-EDT instance is working on this infobase. " + holder); //$NON-NLS-1$
+                if (ours)
+                {
+                    taken.put("heldByThisInstance", Boolean.TRUE); //$NON-NLS-1$
+                }
                 taken.put("tag", ErrorTags.BUSY.wire()); //$NON-NLS-1$
                 taken.put("applicationId", applicationId); //$NON-NLS-1$
                 putHolders(taken, applicationId, ownerNames);

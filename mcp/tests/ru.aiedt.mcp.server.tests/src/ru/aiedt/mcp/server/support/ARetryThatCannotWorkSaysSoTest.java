@@ -97,8 +97,16 @@ public class ARetryThatCannotWorkSaysSoTest
         }
     }
 
+    /**
+     * A hold by this instance is reported as such even while its claim record is still there.
+     * <p>
+     * The claim record survives for as long as the lock does, so reading it first answered
+     * "another AI-EDT instance is working on this infobase" about ourselves. This test used to
+     * assert exactly that, which is how the wrong behaviour looked correct.
+     * </p>
+     */
     @Test
-    public void aClaimThatNamesItsHolderStillNamesThem() throws Exception
+    public void aHoldByThisInstanceIsNamedAsOursNotAsANeighbour() throws Exception
     {
         try (MonopolyLock held = MonopolyLock.take(SUBJECT, "update_database").orElseThrow())
         {
@@ -106,8 +114,12 @@ public class ARetryThatCannotWorkSaysSoTest
 
             assertFalse(again.granted());
             assertNotNull(again.heldBy);
-            assertFalse("a named holder is not the no-retry state",
+            assertTrue("the refusal has to say the holder is us",
                 MonopolyLock.isHeldByThisInstance(again.heldBy));
+            assertTrue("and it still names what is holding it",
+                again.heldBy.contains("update_database"));
+            assertFalse("ordinary contention must not be called unclearable",
+                again.heldBy.contains("cannot clear"));
         }
     }
 

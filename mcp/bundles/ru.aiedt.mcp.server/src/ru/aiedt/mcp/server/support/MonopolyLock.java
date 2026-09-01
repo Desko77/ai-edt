@@ -448,9 +448,7 @@ public final class MonopolyLock implements AutoCloseable
      * </p>
      */
     public static final String HELD_BY_THIS_INSTANCE =
-        "this AI-EDT instance is still holding this infobase from an earlier operation that has " //$NON-NLS-1$
-            + "not returned. Repeating the call cannot clear it. Check what is running, and stop " //$NON-NLS-1$
-            + "that operation or restart the environment."; //$NON-NLS-1$
+        "This AI-EDT instance is holding the infobase itself"; //$NON-NLS-1$
 
     /**
      * Whether a refusal is the one no retry can clear.
@@ -460,23 +458,40 @@ public final class MonopolyLock implements AutoCloseable
      */
     public static boolean isHeldByThisInstance(String heldBy)
     {
-        return heldBy != null && heldBy.startsWith(HELD_BY_THIS_INSTANCE);
+        return heldBy != null && heldBy.contains(HELD_BY_THIS_INSTANCE);
     }
 
     /**
-     * The refusal, with what is being held appended when that is known.
+     * The refusal for a lock this instance holds.
+     * <p>
+     * It does NOT say a retry is pointless. Two tool calls on one infobase are ordinary
+     * contention, and there the holder finishes and the next attempt succeeds. What a caller
+     * cannot tell apart from outside is that case from a call that is never coming back, so this
+     * hands them what decides it - which operation, and for how long - and states the condition
+     * instead of the verdict.
+     * </p>
      *
+     * @param fromClaimRecord what the claim file says, which names this instance; may be
+     *            <code>null</code> when the record is gone, as it is after a cancellation.
      * @param outstanding what this instance holds on the infobase, or <code>null</code>.
      * @return the sentence a caller is shown
      */
-    private static String heldByThisInstance(Outstanding outstanding)
+    private static String heldByThisInstance(String fromClaimRecord, Outstanding outstanding)
     {
-        if (outstanding == null)
+        StringBuilder said = new StringBuilder();
+        if (fromClaimRecord != null && !fromClaimRecord.isEmpty())
         {
-            return HELD_BY_THIS_INSTANCE;
+            said.append(fromClaimRecord).append(" "); //$NON-NLS-1$
         }
-        return HELD_BY_THIS_INSTANCE + " Holding it: " + outstanding.operation + ", for " //$NON-NLS-1$ //$NON-NLS-2$
-            + (outstanding.heldMs() / 1000) + "s."; //$NON-NLS-1$
+        said.append(HELD_BY_THIS_INSTANCE);
+        if (outstanding != null)
+        {
+            said.append(": ").append(outstanding.operation).append(", for ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(outstanding.heldMs() / 1000).append("s"); //$NON-NLS-1$
+        }
+        said.append(". If that operation is not going to return, repeating this call will not " //$NON-NLS-1$
+            + "clear it - stop it, or restart the environment."); //$NON-NLS-1$
+        return said.toString();
     }
 
     public static Claim claim(String subject, String operation)
@@ -496,18 +511,18 @@ public final class MonopolyLock implements AutoCloseable
         {
             return new Claim(taken.get(), null);
         }
+        if (heldHere.get())
+        {
+            // Asked BEFORE the claim record, not after. While this instance holds the lock its own
+            // claim is still lying there, so reading the record first answers "another AI-EDT
+            // instance is working on this infobase" about ourselves - the exact sentence the field
+            // report quoted - and the branch below would never be reached.
+            return new Claim(null, heldByThisInstance(heldBy(subject), outstandingHere(subject)));
+        }
         String who = heldBy(subject);
         if (who != null)
         {
             return new Claim(null, who);
-        }
-        if (heldHere.get())
-        {
-            // No claim record names a holder, and the lock is held by this very instance: the
-            // operation that took it has not given it back. Retrying cannot clear that, and the
-            // old answer said to retry - which is how a caller ends up repeating one call without
-            // end. Name the state instead, and where the way out is.
-            return new Claim(null, heldByThisInstance(outstandingHere(subject)));
         }
         return new Claim(null,
             "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$

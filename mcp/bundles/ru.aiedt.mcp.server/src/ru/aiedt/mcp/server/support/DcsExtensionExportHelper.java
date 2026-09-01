@@ -206,6 +206,8 @@ public final class DcsExtensionExportHelper
             byte[] before = readExisting(dcsFile);
             r.bytesBefore = before == null ? -1 : before.length;
             r.contentUnchanged = before != null && Arrays.equals(before, bytes);
+            // Computed against the bytes about to be written; re-checked against the file after
+            // the write below, because another export can overwrite it in between.
             r.declaredMissing = declared != null && !declared.isEmpty()
                 && !new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
                     .contains(declared);
@@ -222,6 +224,20 @@ public final class DcsExtensionExportHelper
                     (IProgressMonitor) new NullProgressMonitor());
             }
             r.ok = true;
+            byte[] landed = readExisting(dcsFile);
+            if (landed != null)
+            {
+                // What a later reader will see. An export that overlapped this one may already
+                // have replaced the file with a serialization that does not carry this mutation,
+                // and reporting the bytes we handed out would call that a success.
+                r.bytesWritten = landed.length;
+                if (declared != null && !declared.isEmpty())
+                {
+                    r.declaredMissing = !new String(landed,
+                        java.nio.charset.StandardCharsets.UTF_8).contains(declared);
+                }
+                r.contentUnchanged = before != null && Arrays.equals(before, landed);
+            }
         }
         catch (Throwable t)
         {

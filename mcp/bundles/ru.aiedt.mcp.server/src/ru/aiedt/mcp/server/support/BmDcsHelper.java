@@ -511,10 +511,35 @@ public final class BmDcsHelper
         /** Text the exported file must contain for this mutation to have held. */
         public final String mustAppear;
 
+        /**
+         * How many siblings the collection held once this mutation had been applied, or -1.
+         * <p>
+         * Read INSIDE the write transaction, which is the only place it means anything: it is
+         * what the snapshot this write was applied to actually contained.
+         * </p>
+         */
+        public final int countAfterWrite;
+
+        /**
+         * Which collection {@link #countAfterWrite} counted.
+         * <p>
+         * A schema holds many collections and each has its own size, so the count is meaningless
+         * without it.
+         * </p>
+         */
+        public final String countScope;
+
         public Wrote(String message, String mustAppear)
+        {
+            this(message, mustAppear, -1, null);
+        }
+
+        public Wrote(String message, String mustAppear, int countAfterWrite, String countScope)
         {
             this.message = message;
             this.mustAppear = mustAppear;
+            this.countAfterWrite = countAfterWrite;
+            this.countScope = countScope;
         }
 
         @Override
@@ -603,6 +628,21 @@ public final class BmDcsHelper
                         if (res instanceof Wrote)
                         {
                             declared[0] = ((Wrote)res).mustAppear;
+                            int after = ((Wrote)res).countAfterWrite;
+                            if (after >= 0)
+                            {
+                                // Reported, not judged. What the snapshot held is the evidence
+                                // that a write can be applied to a state predating the previous
+                                // commit; it is NOT a basis for refusing, because a remembered
+                                // count is itself only as good as the commit that produced it.
+                                r.tags.put("modelCountAfterWrite", Integer.valueOf(after)); //$NON-NLS-1$
+                                if (((Wrote)res).countScope != null)
+                                {
+                                    // A schema holds several collections, each with its own size,
+                                    // so the number alone does not say what it counted.
+                                    r.tags.put("modelCountScope", ((Wrote)res).countScope); //$NON-NLS-1$
+                                }
+                            }
                         }
                         if (dryRun)
                         {
