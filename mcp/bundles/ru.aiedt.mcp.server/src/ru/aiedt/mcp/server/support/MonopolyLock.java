@@ -147,9 +147,11 @@ public final class MonopolyLock implements AutoCloseable
          *
          * @param path the file to lock; created when absent.
          * @return the holding, or {@code null} when it is held elsewhere
+         * @param heldHere set when the lock could not be taken because THIS process holds it.
          * @throws IOException when the file cannot be opened at all
          */
-        static Holding tryTake(Path path) throws IOException
+        static Holding tryTake(Path path, java.util.concurrent.atomic.AtomicBoolean heldHere)
+            throws IOException
         {
             java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(path,
                 StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
@@ -165,9 +167,12 @@ public final class MonopolyLock implements AutoCloseable
             }
             catch (java.nio.channels.OverlappingFileLockException mine)
             {
-                // Held by THIS process already - a second tool call on the same infobase. From the
-                // caller's side that is the same answer as a neighbour holding it: not now.
+                // Held by THIS process already. That is NOT the same answer as a neighbour holding
+                // it. A neighbour finishes and the next attempt succeeds; this one is us, and if
+                // the call that took it is not coming back, no attempt will ever succeed. Telling
+                // the caller to run it again would be advice that cannot work.
                 channel.close();
+                heldHere.set(true);
                 return null;
             }
             catch (IOException | RuntimeException failed)
@@ -217,6 +222,20 @@ public final class MonopolyLock implements AutoCloseable
      */
     public static Optional<MonopolyLock> take(String subject, String operation)
     {
+        return take(subject, operation, new java.util.concurrent.atomic.AtomicBoolean());
+    }
+
+    /**
+     * Takes the claim, reporting separately when the refusal came from this same process.
+     *
+     * @param subject identity of the infobase.
+     * @param operation what the claim is for.
+     * @param heldHere set when the refusal is this process holding its own lock.
+     * @return the claim, or empty
+     */
+    public static Optional<MonopolyLock> take(String subject, String operation,
+        java.util.concurrent.atomic.AtomicBoolean heldHere)
+    {
         if (subject == null || subject.isEmpty())
         {
             // Nothing to claim. Better to let the operation through than to invent a key and
@@ -234,7 +253,7 @@ public final class MonopolyLock implements AutoCloseable
             // wedged, and between deciding a claim is stale and replacing it there is a window.
             // An exclusive lock on a file has none of that, and it is released by the kernel when
             // the holder dies - including when it dies without releasing anything.
-            holding = Holding.tryTake(lockFileFor(subject));
+            holding = Holding.tryTake(lockFileFor(subject), heldHere);
             if (holding == null)
             {
                 return Optional.empty();
@@ -352,6 +371,29 @@ public final class MonopolyLock implements AutoCloseable
      * @param operation what is being done to it.
      * @return the outcome, never {@code null}
      */
+    /**
+     * What a caller is told when this instance holds the lock and is not giving it back.
+     * <p>
+     * Kept as a constant because it is the one refusal a caller must not answer by repeating the
+     * call, and something has to be able to recognise it.
+     * </p>
+     */
+    public static final String HELD_BY_THIS_INSTANCE =
+        "this AI-EDT instance is still holding this infobase from an earlier operation that has " //$NON-NLS-1$
+            + "not returned. Repeating the call cannot clear it. Check what is running, and stop " //$NON-NLS-1$
+            + "that operation or restart the environment."; //$NON-NLS-1$
+
+    /**
+     * Whether a refusal is the one no retry can clear.
+     *
+     * @param heldBy the text from a refused {@link Claim}.
+     * @return true when repeating the call is pointless
+     */
+    public static boolean isHeldByThisInstance(String heldBy)
+    {
+        return HELD_BY_THIS_INSTANCE.equals(heldBy);
+    }
+
     public static Claim claim(String subject, String operation)
     {
         if (subject == null || subject.isEmpty())
@@ -362,14 +404,28 @@ public final class MonopolyLock implements AutoCloseable
             // caller proceeds unclaimed, exactly as it did before claims existed.
             return new Claim(new MonopolyLock("nothing was claimed: no subject was given"), null); //$NON-NLS-1$
         }
-        Optional<MonopolyLock> taken = take(subject, operation);
+        java.util.concurrent.atomic.AtomicBoolean heldHere =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        Optional<MonopolyLock> taken = take(subject, operation, heldHere);
         if (taken.isPresent())
         {
             return new Claim(taken.get(), null);
         }
         String who = heldBy(subject);
-        return new Claim(null, who != null ? who
-            : "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$
+        if (who != null)
+        {
+            return new Claim(null, who);
+        }
+        if (heldHere.get())
+        {
+            // No claim record names a holder, and the lock is held by this very instance: the
+            // operation that took it has not given it back. Retrying cannot clear that, and the
+            // old answer said to retry - which is how a caller ends up repeating one call without
+            // end. Name the state instead, and where the way out is.
+            return new Claim(null, HELD_BY_THIS_INSTANCE);
+        }
+        return new Claim(null,
+            "It has finished since this call tried to claim it - run the operation again."); //$NON-NLS-1$
     }
 
     /**
