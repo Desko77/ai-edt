@@ -17,6 +17,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmFormHelper;
+import ru.aiedt.mcp.server.support.ContainerScope;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -227,13 +228,16 @@ final class MiscOps
             return ToolResult.error("move_item requires name plus formFqn (or containerFqn) " //$NON-NLS-1$
                 + "naming the form that holds it.").toJson(); //$NON-NLS-1$
         }
-        if (target.contains(".Template") || target.contains(".DCS")) //$NON-NLS-1$ //$NON-NLS-2$
+        // One parse of the path decides this, shared with remove_item. The two used to read the FQN
+        // separately - one accepted a common form, the other did not - so the same container got
+        // two answers depending on which operation was asked.
+        ContainerScope scope = ContainerScope.of(target);
+        if (scope == ContainerScope.TEMPLATE)
         {
             return ToolResult.error("move_item works inside a form. For a composition schema " //$NON-NLS-1$
                 + "use dcs_workshop (moveSchemaParameter / moveSettingsItem).").toJson(); //$NON-NLS-1$
         }
-        if (!target.contains(".Forms.") && !target.contains(".Form.") //$NON-NLS-1$ //$NON-NLS-2$
-            && !target.startsWith("CommonForm.")) //$NON-NLS-1$
+        if (scope != ContainerScope.FORM)
         {
             return ToolResult.error("move_item works inside a form, and '" + target //$NON-NLS-1$
                 + "' is not one. To reorder the content of a metadata object use the " //$NON-NLS-1$
@@ -280,10 +284,23 @@ final class MiscOps
     }
 
     /**
-     * 1.40: universal {@code removeItem} - routes by container FQN shape
-     * the same way {@link #opMoveItem(Map)} does. For metadata-objects
-     * (Catalog/Document/etc.) it forwards to {@code removeObjectAttribute}
-     * or {@code removeTabularSection} based on container shape.
+     * The universal {@code remove_item}, which removes nothing and says so.
+     * <p>
+     * Every context it can be pointed at - a form, a template, a metadata object - has its own
+     * removal operation, and this one forwards to none of them. That is a decision, not a gap: the
+     * typed operations resolve their own containers and report their own failures, and a router
+     * that mutated on their behalf would have to duplicate both.
+     * </p>
+     * <p>
+     * <b>What was wrong is the answer, not the routing.</b> All three branches came back
+     * {@code success: true} carrying a sentence that named another operation. A caller reading the
+     * success flag - which is what a caller reads - took the item for removed. Measured on a stand
+     * 31.08: the element stayed on the form and the marker EDT had raised on it stayed with it,
+     * through two identical calls.
+     * </p>
+     *
+     * @param params the call's arguments.
+     * @return a refusal naming the operation that does the work, in every context
      */
     String opRemoveItem(Map<String, String> params)
     {
@@ -293,35 +310,57 @@ final class MiscOps
         {
             return ToolResult.error("removeItem requires containerFqn and name parameters.").toJson(); //$NON-NLS-1$
         }
-        // Form scope - advisory router: form / DCS / typed-metadata contexts have
-        // dedicated remove operations, so surface the right one instead of mutating
-        // here (the previous formParams map was built and never forwarded - dead code).
-        if (containerFqn.contains(".Forms.") || containerFqn.contains(".Form."))
-        {
-            return ToolResult.success()
-                .put("message", "removeItem routed to form context - call edit_form operation=removeItem with formFqn="
-                    + containerFqn + " name=" + itemName)
-                .put("removeItemRouting", java.util.Collections.singletonMap("scope", "form"))
-                .toJson();
-        }
-        // DCS scope
-        if (containerFqn.contains(".Template") || containerFqn.contains(".DCS"))
-        {
-            return ToolResult.success()
-                .put("message", "removeItem routed to DCS context - call dcs_workshop operation=remove_item")
-                .put("removeItemRouting", java.util.Collections.singletonMap("scope", "dcs"))
-                .toJson();
-        }
-        // Metadata-object scope - try to route to attribute or TS removal
-        // by checking whether the parent owner has a TS with this name first.
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("containerFqn", containerFqn);
-        data.put("itemName", itemName);
-        data.put("hint", "For attributes use removeObjectAttribute, for tabular sections use removeTabularSection.");
-        return ToolResult.success()
-            .put("message", "removeItem in metadata-object context - use the typed remove operation")
-            .put("removeItemRouting", data)
+        ContainerScope scope = ContainerScope.of(containerFqn);
+        Map<String, Object> routing = new LinkedHashMap<>();
+        routing.put("containerFqn", containerFqn); //$NON-NLS-1$
+        routing.put("itemName", itemName); //$NON-NLS-1$
+        routing.put("scope", scope.name().toLowerCase(java.util.Locale.ROOT)); //$NON-NLS-1$
+        return ToolResult.error(removalRefusal(scope, containerFqn, itemName))
+            .put("removeItemRouting", routing) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The sentence that says nothing was removed and names what removes it.
+     * <p>
+     * Two of the three name more than one operation, and that is not vagueness. A template's
+     * contents are reached through a different workshop depending on what the template holds, and
+     * for a metadata object the name alone does not say whether it is an attribute or a tabular
+     * section - the two have separate operations. Naming one of them would be a guess presented as
+     * an instruction.
+     * </p>
+     *
+     * @param scope what the container FQN names.
+     * @param containerFqn the container, repeated into the sentence so the caller can see what was
+     *            read.
+     * @param itemName the item the caller wanted gone.
+     * @return the refusal text
+     */
+    private static String removalRefusal(ContainerScope scope, String containerFqn, String itemName)
+    {
+        StringBuilder said = new StringBuilder("Nothing was removed. "); //$NON-NLS-1$
+        switch (scope)
+        {
+            case FORM:
+                said.append("'").append(containerFqn).append("' names a form, and remove_item does ") //$NON-NLS-1$ //$NON-NLS-2$
+                    .append("not touch one. Call edit_form operation=remove_item with formFqn=") //$NON-NLS-1$
+                    .append(containerFqn).append(" name=").append(itemName).append('.'); //$NON-NLS-1$
+                break;
+            case TEMPLATE:
+                said.append("'").append(containerFqn).append("' names a template. Which operation ") //$NON-NLS-1$ //$NON-NLS-2$
+                    .append("removes from it depends on what the template holds: dcs_workshop for ") //$NON-NLS-1$
+                    .append("a composition schema (remove_dataset, remove_parameter, ") //$NON-NLS-1$
+                    .append("remove_settings_item and the rest, one per kind of item), ") //$NON-NLS-1$
+                    .append("mxl_workshop operation=remove_named_area for a spreadsheet document."); //$NON-NLS-1$
+                break;
+            default:
+                said.append("'").append(containerFqn).append("' names a metadata object, and the ") //$NON-NLS-1$ //$NON-NLS-2$
+                    .append("operation depends on what '").append(itemName).append("' is: ") //$NON-NLS-1$ //$NON-NLS-2$
+                    .append("remove_object_attribute for an attribute, remove_tabular_section for ") //$NON-NLS-1$
+                    .append("a tabular section. The name on its own does not say which."); //$NON-NLS-1$
+                break;
+        }
+        return said.toString();
     }
     // -----------------------------------------------------------------------
     // 1.40: Extensions group (5 ops via BmExtensionHelper)
