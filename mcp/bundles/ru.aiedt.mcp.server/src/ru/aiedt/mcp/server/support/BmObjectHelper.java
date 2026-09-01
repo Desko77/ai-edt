@@ -83,6 +83,43 @@ public final class BmObjectHelper
      * @param paramType the type its setter takes, never <code>null</code>
      * @return the refusal text, never <code>null</code>
      */
+    /**
+     * Whether a written value is the one the model already had as its default.
+     * <p>
+     * A value equal to the default is not serialized, so the property reaches the object and the
+     * file shows nothing. Measured live 01.09: {@code create_object} on a scheduled job answered
+     * three properties applied and the .mdo carried two - {@code use=false} is the default and went
+     * unwritten. Read against the file, that looks like a property lost on the way.
+     * </p>
+     * <p>
+     * Asked of EMF rather than guessed: a feature that is not set after a write held that value
+     * already.
+     * </p>
+     *
+     * @param target the object written to.
+     * @param property the feature name.
+     * @return <code>true</code> when the value will not appear in the file
+     */
+    public static boolean equalsModelDefault(Object target, String property)
+    {
+        if (!(target instanceof EObject) || property == null)
+        {
+            return false;
+        }
+        try
+        {
+            EObject eObject = (EObject)target;
+            org.eclipse.emf.ecore.EStructuralFeature feature =
+                eObject.eClass().getEStructuralFeature(property);
+            return feature != null && !eObject.eIsSet(feature);
+        }
+        catch (RuntimeException notAnAnswer)
+        {
+            // A model that will not answer is not a model saying "default".
+            return false;
+        }
+    }
+
     static String compositeRefusal(String propertyName, Class<?> paramType)
     {
         String wanted = paramType.getSimpleName();

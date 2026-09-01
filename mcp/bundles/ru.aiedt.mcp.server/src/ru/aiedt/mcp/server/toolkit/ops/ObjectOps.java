@@ -361,6 +361,8 @@ final class ObjectOps
         // the arguments belongs here too: it was asked for in the properties object and it was
         // written, and leaving it out would say the opposite of what happened.
         final List<String> applied = new ArrayList<>();
+        // Those among them the file will not carry, because the value is the model's own default.
+        final List<String> atModelDefault = new ArrayList<>();
         for (String property : declared.keySet())
         {
             if (!remaining.containsKey(property) && !SERVICE_ARGUMENTS.contains(property))
@@ -464,6 +466,14 @@ final class ObjectOps
                             throw new RuntimeException(refused + " Nothing was created."); //$NON-NLS-1$
                         }
                         applied.add(property.getKey());
+                        // A value the model already had as its default is not serialized, so it
+                        // reaches the object and the file shows nothing. Said out loud, because a
+                        // reader comparing the answer with the diff otherwise sees a property lost
+                        // on the way. Measured live 01.09 on a scheduled job's use=false.
+                        if (BmObjectHelper.equalsModelDefault(created, property.getKey()))
+                        {
+                            atModelDefault.add(property.getKey());
+                        }
                     }
                     if (!BmObjectHelper.addToConfiguration(config, created))
                     {
@@ -543,6 +553,13 @@ final class ObjectOps
             .put("message", dryRun //$NON-NLS-1$
                 ? "Dry run: " + englishType + "." + name + " would be created." //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 : englishType + "." + name + " created."); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!atModelDefault.isEmpty())
+        {
+            ok.put("propertiesAtModelDefault", atModelDefault) //$NON-NLS-1$
+                .put("propertiesAtModelDefaultNote", "these carry the value the model already had, " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "so EDT writes nothing for them and the file will not show them. They did " //$NON-NLS-1$
+                    + "reach the object."); //$NON-NLS-1$
+        }
         // Expose synonym outcome so the agent does not have to guess - explicit
         // value, auto-generated value, or a setter failure are all reported.
         EditMetadataTool.SynonymResult sr = synonymRef.get();

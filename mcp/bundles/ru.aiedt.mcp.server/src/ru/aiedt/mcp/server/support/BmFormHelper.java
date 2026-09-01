@@ -2339,22 +2339,9 @@ public class BmFormHelper
      */
     private static boolean equalsModelDefault(Object target, String property)
     {
-        if (!(target instanceof org.eclipse.emf.ecore.EObject))
-        {
-            return false;
-        }
-        try
-        {
-            org.eclipse.emf.ecore.EObject eObject = (org.eclipse.emf.ecore.EObject)target;
-            org.eclipse.emf.ecore.EStructuralFeature feature =
-                eObject.eClass().getEStructuralFeature(property);
-            return feature != null && !eObject.eIsSet(feature);
-        }
-        catch (Exception notAnAnswer)
-        {
-            // A model that will not answer is not a model saying "default".
-            return false;
-        }
+        // One answer to this question, shared with the object path: create_object had the same
+        // problem and would otherwise have grown a second copy of it.
+        return BmObjectHelper.equalsModelDefault(target, property);
     }
 
     String setScalarProperty(Object item, String property, String value)
