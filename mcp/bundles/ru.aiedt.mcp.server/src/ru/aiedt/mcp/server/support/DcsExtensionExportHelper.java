@@ -14,6 +14,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.Arrays;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -69,6 +70,10 @@ public final class DcsExtensionExportHelper
         public boolean notFound;
         public String filePath;
         public int bytesWritten;
+        /** Size of the .dcs before this write, or -1 when it did not exist. */
+        public int bytesBefore;
+        /** Whether the serialized model is byte-identical to what the file already held. */
+        public boolean contentUnchanged;
         public long totalMs;
         public String error;
         public Object schemaEClass;
@@ -169,6 +174,9 @@ public final class DcsExtensionExportHelper
                 return r;
             }
             r.filePath = dcsFile.getFullPath().toOSString();
+            byte[] before = readExisting(dcsFile);
+            r.bytesBefore = before == null ? -1 : before.length;
+            r.contentUnchanged = before != null && Arrays.equals(before, bytes);
             ensureParents(dcsFile);
             ByteArrayInputStream in = new ByteArrayInputStream(bytes);
             if (dcsFile.exists())
@@ -461,6 +469,41 @@ public final class DcsExtensionExportHelper
         IPath path = new Path("src/" + dirName + "/" + objectName //$NON-NLS-1$ //$NON-NLS-2$
             + "/Templates/" + templateName + "/Template.dcs"); //$NON-NLS-1$ //$NON-NLS-2$
         return project.getFile(path);
+    }
+
+    /**
+     * Reads what the .dcs holds right now, so the write can say whether it changed anything.
+     * <p>
+     * A serialization that matches the file byte for byte means the model does not carry the
+     * mutation this call reported: the caller asked for a change, and the schema on disk is the
+     * one it already had. Answering that as a plain success is how a lost write stays invisible.
+     * </p>
+     *
+     * @param file the .dcs about to be overwritten.
+     * @return its bytes, or <code>null</code> when it does not exist or cannot be read
+     */
+    private static byte[] readExisting(IFile file)
+    {
+        if (!file.exists())
+        {
+            return null;
+        }
+        try (InputStream in = file.getContents(true))
+        {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1)
+            {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        }
+        catch (Exception cannotRead)
+        {
+            // Unreadable is not "unchanged": leave the comparison unable to accuse the write.
+            return null;
+        }
     }
 
     private static void ensureParents(IFile file) throws Exception

@@ -1507,10 +1507,16 @@ public final class BmDcsHelper
     }
 
     /**
-     * If the direct disk-save failed, surface it as a tag so the caller (and
-     * the MCP response) sees it instead of a silent success.
+     * Judges the disk-save and refuses a write that changed nothing.
+     * <p>
+     * Two outcomes are not a success. A save that FAILED is tagged {@code diskSaveFailed}. A save
+     * that wrote a file byte-identical to the one already there is tagged {@code schemaUnchanged}
+     * and refused: the call asked for a change and the schema does not carry one.
+     * </p>
+     *
+     * @param r the result to annotate, whose {@code ok} this may clear
      */
-    private static void noteDiskSave(Result r)
+    static void noteDiskSave(Result r)
     {
         DcsExtensionExportHelper.Result ds = r.directSave;
         if (ds != null && !ds.ok)
@@ -1523,6 +1529,22 @@ public final class BmDcsHelper
                 info.put("filePath", ds.filePath); //$NON-NLS-1$
             }
             r.tags.put("diskSaveFailed", info); //$NON-NLS-1$
+            return;
+        }
+        if (ds != null && ds.ok && ds.contentUnchanged)
+        {
+            // The serialization of the model matches the file byte for byte, so this call
+            // changed nothing - either the value asked for was already there, or the write
+            // to the model was lost. Which of the two it is cannot be told from here, and
+            // reporting either one as a plain success is what makes a lost write invisible.
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("filePath", ds.filePath); //$NON-NLS-1$
+            info.put("bytes", ds.bytesWritten); //$NON-NLS-1$
+            r.tags.put("schemaUnchanged", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = "the schema on disk is byte-identical to what it held before this call, " //$NON-NLS-1$
+                + "so nothing was changed. Either the value asked for was already set, or the " //$NON-NLS-1$
+                + "write did not reach the model. Read the schema back before repeating it."; //$NON-NLS-1$
         }
     }
 
