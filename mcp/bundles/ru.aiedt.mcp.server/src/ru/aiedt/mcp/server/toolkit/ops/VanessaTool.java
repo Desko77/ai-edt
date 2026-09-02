@@ -96,9 +96,17 @@ public class VanessaTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("featurePath", //$NON-NLS-1$
-                "Path to a .feature file or a directory of feature files. Required to start a run; " //$NON-NLS-1$
-                    + "a call that carries a runKey does not take it. A relative path is resolved " //$NON-NLS-1$
-                    + "against the project when projectName is given.") //$NON-NLS-1$
+                "Path to a .feature file or a directory of feature files. Required to start a run " //$NON-NLS-1$
+                    + "unless scenarioText is given; a call that carries a runKey takes neither. A " //$NON-NLS-1$
+                    + "relative path is resolved against the project when projectName is given.") //$NON-NLS-1$
+            .stringProperty("scenarioText", //$NON-NLS-1$
+                "The scenario itself in place of a file: Gherkin text written to the run's own " //$NON-NLS-1$
+                    + "temporary directory and played from there. For a caller that reaches this " //$NON-NLS-1$
+                    + "server over MCP and has no way to put a file on the machine - a form in a " //$NON-NLS-1$
+                    + "running 1C is photographed by a scenario that opens it and captures. The " //$NON-NLS-1$
+                    + "step wording is Vanessa's own and differs between its versions, so it is " //$NON-NLS-1$
+                    + "yours to give, the same way the vanessaParams names are. Given together " //$NON-NLS-1$
+                    + "with featurePath, both are refused.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "1C infobase connection string (required), e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
                     + "'Srvr=\"host\";Ref=\"base\";'. A Pwd is refused: it would reach the " //$NON-NLS-1$
@@ -261,9 +269,13 @@ public class VanessaTool implements IMcpTool
             return ToolResult.error(paramsRefusal[0]).toJson();
         }
         String featurePathArg = JsonUtils.extractStringArgument(params, "featurePath"); //$NON-NLS-1$
-        if (featurePathArg == null || featurePathArg.trim().isEmpty())
+        String scenarioText = JsonUtils.extractStringArgument(params, "scenarioText"); //$NON-NLS-1$
+        boolean hasPath = featurePathArg != null && !featurePathArg.trim().isEmpty();
+        boolean hasText = scenarioText != null && !scenarioText.trim().isEmpty();
+        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText);
+        if (badlyNamed != null)
         {
-            return ToolResult.error("featurePath is required (a .feature file or a directory).").toJson(); //$NON-NLS-1$
+            return ToolResult.error(badlyNamed).toJson();
         }
 
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -281,11 +293,17 @@ public class VanessaTool implements IMcpTool
             }
         }
 
-        File featurePath = resolveFeaturePath(featurePathArg.trim(), workingDir);
-        if (!featurePath.exists())
+        File featurePath = null;
+        if (hasPath)
         {
-            return ToolResult.error("featurePath not found: " + featurePath.getAbsolutePath()).toJson(); //$NON-NLS-1$
+            featurePath = resolveFeaturePath(featurePathArg.trim(), workingDir);
+            if (!featurePath.exists())
+            {
+                return ToolResult.error("featurePath not found: " //$NON-NLS-1$
+                    + featurePath.getAbsolutePath()).toJson();
+            }
         }
+        final String composedScenario = hasText ? scenarioText : null;
 
         boolean screenshots = JsonUtils.extractBooleanArgument(params, "screenshots", true); //$NON-NLS-1$
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
@@ -306,6 +324,7 @@ public class VanessaTool implements IMcpTool
         final int settledTimeout = timeoutSec;
         final File settledExe = exeFile;
         final File settledEpf = epfFile;
+        final File settledFeature = featurePath;
         // One key per run, not one per set of arguments. Coalescing belongs to reads whose
         // result can be handed to a second caller; a run drives a client against an infobase, so
         // two identical calls are two runs - and the second is refused below while the first goes.
@@ -320,8 +339,9 @@ public class VanessaTool implements IMcpTool
             // No key: the caller is holding the connection and is never handed one, and an async
             // run with these same arguments owns this key. Registering both under it would let a
             // cancel meant for that run destroy this client instead.
-            return play(settledExe, settledEpf, connectionString, featurePath, screenshots,
-                keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob, null);
+            return play(settledExe, settledEpf, connectionString, settledFeature, composedScenario,
+                screenshots, keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob,
+                null);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -337,8 +357,9 @@ public class VanessaTool implements IMcpTool
                 return ToolResult.error(alreadyGoing(going)).toJson();
             }
             entry = registry.getOrStart(jobKey,
-                () -> play(settledExe, settledEpf, connectionString, featurePath, screenshots,
-                    keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob, jobKey));
+                () -> play(settledExe, settledEpf, connectionString, settledFeature,
+                    composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
+                    extraVaParams, runDirForJob, jobKey));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -365,7 +386,9 @@ public class VanessaTool implements IMcpTool
      * @param exeFile the client.
      * @param epfFile the Vanessa data processor it runs.
      * @param connectionString the infobase.
-     * @param featurePath the scenarios.
+     * @param featurePath the scenarios, when they are a file that already exists.
+     * @param composedScenario the scenarios as text, written into this run's own directory;
+     *            exactly one of the two is given.
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
      * @param stepDelay the pause between steps, in seconds.
@@ -376,8 +399,8 @@ public class VanessaTool implements IMcpTool
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
-        boolean screenshots, boolean keepOpen, int stepDelay, int timeoutSec,
-        JsonObject extraVaParams, File workingDir, String jobKey)
+        String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
+        int timeoutSec, JsonObject extraVaParams, File workingDir, String jobKey)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -408,8 +431,9 @@ public class VanessaTool implements IMcpTool
             shotsDir.mkdirs();
             File junitFile = new File(outDir.toFile(), "junit.xml"); //$NON-NLS-1$
             File paramsFile = new File(outDir.toFile(), "VAParams.json"); //$NON-NLS-1$
+            File playing = scenarioFileFor(outDir.toFile(), featurePath, composedScenario);
 
-            String vaParamsJson = buildVaParams(featurePath, junitFile, shotsDir, screenshots,
+            String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
                 keepOpen, stepDelay, extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
@@ -506,6 +530,58 @@ public class VanessaTool implements IMcpTool
         }
         // The output dir (junit.xml + screenshots) is intentionally NOT deleted: the
         // agent reads the returned screenshot paths. It is a temp dir the OS reclaims.
+    }
+
+    /**
+     * Why neither way of naming the scenario will do, when neither will.
+     * <p>
+     * Both given is refused rather than resolved by precedence: nothing in the call says which was
+     * meant, and running the wrong one drives a client against a live infobase.
+     * </p>
+     *
+     * @param hasPath whether a feature path was given.
+     * @param hasText whether the scenario arrived as text.
+     * @return the refusal, or {@code null} when exactly one of them was given
+     */
+    static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText)
+    {
+        if (hasPath && hasText)
+        {
+            return "featurePath and scenarioText both name what to play, and only one of them " //$NON-NLS-1$
+                + "can be it. Pass the path to a file that exists, or the scenario text to be " //$NON-NLS-1$
+                + "written for this run."; //$NON-NLS-1$
+        }
+        if (!hasPath && !hasText)
+        {
+            return "featurePath is required (a .feature file or a directory), or scenarioText " //$NON-NLS-1$
+                + "with the scenario itself."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * The file this run plays.
+     * <p>
+     * A scenario that arrived as text becomes a file in the run's own directory, beside the report
+     * and the screenshots. A caller reaching this server over MCP has nowhere else to put one.
+     * </p>
+     *
+     * @param outDir the run's own directory.
+     * @param featurePath the file the caller named, or {@code null} when the scenario is text.
+     * @param composedScenario the scenario text, or {@code null} when a file was named.
+     * @return the file to play
+     * @throws Exception when the composed scenario cannot be written
+     */
+    static File scenarioFileFor(File outDir, File featurePath, String composedScenario)
+        throws Exception
+    {
+        if (featurePath != null)
+        {
+            return featurePath;
+        }
+        File composed = new File(outDir, "composed.feature"); //$NON-NLS-1$
+        writeUtf8Bom(composed, composedScenario);
+        return composed;
     }
 
     /** Resolves a relative featurePath against the project dir; leaves absolute paths as-is. */
