@@ -554,6 +554,27 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("containerFqn", //$NON-NLS-1$
                 "remove_item: the form item holding the one named by `name`. move_item: the form itself, with " //$NON-NLS-1$
                 + "parentName naming the destination container.") //$NON-NLS-1$ //$NON-NLS-1$
+            // ---- Parameters of the operations handed to a standalone tool
+            //      (add_metadata_attribute / rename_metadata_object) ----
+            .stringProperty("parentFqn", //$NON-NLS-1$
+                "add_metadata_attribute: the object the attribute is added to, for example " //$NON-NLS-1$
+                    + "'Catalog.Products' or 'Document.SalesOrder'. Type names may be given in " //$NON-NLS-1$
+                    + "Russian. A register field, which carries a kind and a type, is added by " //$NON-NLS-1$
+                    + "add_register_field instead.") //$NON-NLS-1$
+            .stringProperty("newName", //$NON-NLS-1$
+                "rename_metadata_object: the name to give the object.") //$NON-NLS-1$
+            .stringProperty("disableIndices", //$NON-NLS-1$
+                "rename_metadata_object: indices of change points to leave out, comma-separated " //$NON-NLS-1$
+                    + "(taken from the dry-run list). Only skippable changes may be turned off. " //$NON-NLS-1$
+                    + "Example: '2,3,5'") //$NON-NLS-1$
+            .integerProperty("maxResults", //$NON-NLS-1$
+                "rename_metadata_object: upper bound on how many change points the dry run lists " //$NON-NLS-1$
+                    + "(default 20). 0 removes the cap.") //$NON-NLS-1$
+            .booleanProperty("scanLeftovers", //$NON-NLS-1$
+                "rename_metadata_object: once the rename is confirmed, comb BSL modules for " //$NON-NLS-1$
+                    + "whole-word plain-text traces of the FORMER name (string literals / query " //$NON-NLS-1$
+                    + "text / comments) that the semantic refactoring leaves untouched. Default " //$NON-NLS-1$
+                    + "true; listed as items to review by hand.") //$NON-NLS-1$
             // ---- Form-operation parameters (add_field / add_button / add_table /
             //      add_decoration / add_dynamic_list_table / set_property / ...) ----
             .stringProperty("itemName", //$NON-NLS-1$
