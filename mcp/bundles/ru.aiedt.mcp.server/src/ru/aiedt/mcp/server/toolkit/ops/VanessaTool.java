@@ -97,7 +97,10 @@ public class VanessaTool implements IMcpTool
                     + "path is resolved against the project when projectName is given.", true) //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "1C infobase connection string (required), e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
-                    + "'Srvr=\"host\";Ref=\"base\";'.", true) //$NON-NLS-1$
+                    + "'Srvr=\"host\";Ref=\"base\";'. A Pwd is refused: it would reach the " //$NON-NLS-1$
+                    + "client as a command-line argument, readable by every process on the machine. " //$NON-NLS-1$
+                    + "Use an infobase that needs no password, or one that accepts the operating " //$NON-NLS-1$
+                    + "system's authentication.", true) //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Optional EDT project name - used to resolve a relative featurePath and as the " //$NON-NLS-1$
                     + "working directory.") //$NON-NLS-1$
@@ -149,6 +152,11 @@ public class VanessaTool implements IMcpTool
         {
             return ToolResult.error("connectionString is required (the 1C infobase connection " //$NON-NLS-1$
                 + "string, e.g. File=\"C:\\ib\"; ).").toJson(); //$NON-NLS-1$
+        }
+        String secretRefusal = whyASecretCannotBePassed(connectionString);
+        if (secretRefusal != null)
+        {
+            return ToolResult.error(secretRefusal).toJson();
         }
         String featurePathArg = JsonUtils.extractStringArgument(params, "featurePath"); //$NON-NLS-1$
         if (featurePathArg == null || featurePathArg.trim().isEmpty())
@@ -459,6 +467,58 @@ public class VanessaTool implements IMcpTool
      * Masks the password out of anything that may carry a 1C connection string
      * ({@code Pwd="..."} or {@code Pwd=...}) before it is logged or returned.
      */
+    /**
+     * Whether a connection string carries a secret, and why that cannot be accepted.
+     * <p>
+     * The connection string reaches the client as a command-line argument, and a command line is
+     * readable by every process on the machine - through the task list, through
+     * {@code Win32_Process}. The masking applied elsewhere covers this plugin's log and its answer;
+     * it does not reach the process the operating system has already started.
+     * </p>
+     * <p>
+     * The environment's own launch configuration does carry credentials, but it cannot run an
+     * external data processor - its 26 attributes include a startup option and no equivalent of
+     * {@code /Execute} - so a scenario run cannot go through it. What remains is not to take the
+     * secret: a base reached without a password, or one that accepts the operating system's own
+     * authentication.
+     * </p>
+     *
+     * @param connectionString what the caller passed.
+     * @return the refusal, or <code>null</code> when nothing secret was passed
+     */
+    static String whyASecretCannotBePassed(String connectionString)
+    {
+        if (!carriesASecret(connectionString))
+        {
+            return null;
+        }
+        return "The connection string carries a password, and it is not accepted: it would reach " //$NON-NLS-1$
+            + "the client as a command-line argument, where every process on this machine can read " //$NON-NLS-1$
+            + "it. Run against an infobase that needs no password, or one that accepts the " //$NON-NLS-1$
+            + "operating system's authentication, and leave Pwd out of the connection string."; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a connection string names a password.
+     * <p>
+     * Both spellings the platform accepts are looked for - the quoted one and the bare one - in any
+     * case, and the value is not read: what is being decided is whether a secret is present, and
+     * reading it would put it somewhere.
+     * </p>
+     *
+     * @param connectionString what the caller passed; <code>null</code> carries nothing.
+     * @return true when a password is named
+     */
+    static boolean carriesASecret(String connectionString)
+    {
+        if (connectionString == null || connectionString.isEmpty())
+        {
+            return false;
+        }
+        return connectionString.matches("(?is).*(^|[;\\s])Pwd\\s*=.*") //$NON-NLS-1$
+            || connectionString.matches("(?is).*(^|[;\\s])/P\\s*[^\\s].*"); //$NON-NLS-1$
+    }
+
     private static String redactSecrets(String s)
     {
         if (s == null || s.isEmpty())
