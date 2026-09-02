@@ -26,6 +26,8 @@ import org.eclipse.jface.preference.IPreferenceStore;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.InfobaseAddress;
+import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -85,7 +87,8 @@ public class VanessaTool implements IMcpTool
             + "running infobase and reports which scenario step failed and why (+ failure " //$NON-NLS-1$
             + "screenshots). Complements yaxunit_tests (code from the inside) by driving the UI " //$NON-NLS-1$
             + "from the outside. Pass featurePath (a .feature file or a directory of them) and " //$NON-NLS-1$
-            + "connectionString (the 1C infobase connection string, e.g. File=...; or Srvr=...;Ref=...). " //$NON-NLS-1$
+            + "projectName - the infobase the project is bound to is the one played against, " //$NON-NLS-1$
+            + "or connectionString to name another. " //$NON-NLS-1$
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
             + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
             + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
@@ -122,12 +125,14 @@ public class VanessaTool implements IMcpTool
                 "The step that gets a client to work in. Defaults to launching TestClient or " //$NON-NLS-1$
                     + "attaching to one already running.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
-                "1C infobase connection string (required), e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
-                    + "'Srvr=\"host\";Ref=\"base\";'. A Pwd is refused: it would reach the " //$NON-NLS-1$
+                "1C infobase connection string, e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
+                    + "'Srvr=\"host\";Ref=\"base\";'. Omitted, the infobase the named project is " //$NON-NLS-1$
+                    + "bound to is used - EDT knows it already. A server infobase has to be named " //$NON-NLS-1$
+                    + "here. A Pwd is refused: it would reach the " //$NON-NLS-1$
                     + "client as a command-line argument, readable by every process on the machine. " //$NON-NLS-1$
                     + "Use an infobase that needs no password, or one that accepts the operating " //$NON-NLS-1$
-                    + "system's authentication. Required to start a run; a call that carries a " //$NON-NLS-1$
-                    + "runKey does not take it.") //$NON-NLS-1$
+                    + "system's authentication. A call that carries a runKey does not take " //$NON-NLS-1$
+                    + "it.") //$NON-NLS-1$
             .booleanProperty("async", //$NON-NLS-1$
                 "Hand back a runKey instead of waiting out the run. Come back with that runKey " //$NON-NLS-1$
                     + "for the result, or with runKey and cancel=true to stop the client.") //$NON-NLS-1$
@@ -265,10 +270,27 @@ public class VanessaTool implements IMcpTool
         }
 
         String connectionString = JsonUtils.extractStringArgument(params, "connectionString"); //$NON-NLS-1$
+        String infobaseFrom = null;
         if (connectionString == null || connectionString.trim().isEmpty())
         {
-            return ToolResult.error("connectionString is required (the 1C infobase connection " //$NON-NLS-1$
-                + "string, e.g. File=\"C:\\ib\"; ).").toJson(); //$NON-NLS-1$
+            // The caller has EDT open, and EDT already knows which infobase the project belongs to
+            // - it is the one update_database writes into. Making them type it again is asking for
+            // what the environment holds, and a typed string can name a different infobase.
+            String projectForInfobase = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+            IProject project = projectForInfobase == null || projectForInfobase.trim().isEmpty()
+                ? null : ProjectResolver.resolve(projectForInfobase);
+            connectionString = InfobaseAddress.ofProject(project);
+            if (connectionString != null)
+            {
+                infobaseFrom = InfobaseAddress.nameOfProjectInfobase(project);
+            }
+        }
+        if (connectionString == null || connectionString.trim().isEmpty())
+        {
+            return ToolResult.error("The infobase is not named. Pass projectName and the " //$NON-NLS-1$
+                + "infobase the project is bound to is used, or connectionString to name one " //$NON-NLS-1$
+                + "directly. A project with no infobase application, or one bound to a server " //$NON-NLS-1$
+                + "infobase, has to be named directly.").toJson(); //$NON-NLS-1$
         }
         String secretRefusal = whyASecretCannotBePassed(connectionString);
         if (secretRefusal != null)
@@ -327,6 +349,8 @@ public class VanessaTool implements IMcpTool
             }
         }
         final String composedScenario = hasText ? scenarioText : null;
+        final String settledInfobase = infobaseFrom;
+        final String settledConnection = connectionString;
 
         boolean screenshots = JsonUtils.extractBooleanArgument(params, "screenshots", true); //$NON-NLS-1$
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
@@ -362,9 +386,9 @@ public class VanessaTool implements IMcpTool
             // No key: the caller is holding the connection and is never handed one, and an async
             // run with these same arguments owns this key. Registering both under it would let a
             // cancel meant for that run destroy this client instead.
-            return play(settledExe, settledEpf, connectionString, settledFeature, composedScenario,
+            return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
                 screenshots, keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob,
-                null);
+                null, settledInfobase);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -380,9 +404,9 @@ public class VanessaTool implements IMcpTool
                 return ToolResult.error(alreadyGoing(going)).toJson();
             }
             entry = registry.getOrStart(jobKey,
-                () -> play(settledExe, settledEpf, connectionString, settledFeature,
+                () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
-                    extraVaParams, runDirForJob, jobKey));
+                    extraVaParams, runDirForJob, jobKey, settledInfobase));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -419,11 +443,14 @@ public class VanessaTool implements IMcpTool
      * @param extraVaParams what the caller added to the Vanessa document.
      * @param workingDir where to run.
      * @param jobKey the key this run is cancelled by.
+     * @param infobaseName the infobase this resolved from the project, or <code>null</code>
+     *            when the caller named the connection string itself.
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
-        int timeoutSec, JsonObject extraVaParams, File workingDir, String jobKey)
+        int timeoutSec, JsonObject extraVaParams, File workingDir, String jobKey,
+        String infobaseName)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -545,6 +572,9 @@ public class VanessaTool implements IMcpTool
 
             ToolResult ok = ToolResult.success()
                 .put("operation", NAME) //$NON-NLS-1$
+                // Named when this worked it out from the project rather than being told: a run
+                // against the wrong infobase looks exactly like a run against the right one.
+                .put("infobase", infobaseName) //$NON-NLS-1$
                 .put("passed", results.isPassed()) //$NON-NLS-1$
                 .put("summary", summary) //$NON-NLS-1$
                 .put("total", results.getTotal()) //$NON-NLS-1$
