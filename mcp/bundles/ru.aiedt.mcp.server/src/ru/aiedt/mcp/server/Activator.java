@@ -21,6 +21,7 @@ import com._1c.g5.v8.dt.core.platform.IDerivedDataManagerProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
 import com._1c.g5.v8.dt.core.platform.IExtensionProjectManager;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProjectManager;
+import com._1c.g5.v8.dt.import_.IImportOperationFactory;
 import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectRestorer;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.core.resource.IResourceStoreManager;
@@ -155,6 +156,8 @@ public class Activator
         IExternalObjectProjectManager> externalObjectProjectManagerTracker;
 
     private ServiceTracker<IExternalObjectRestorer, IExternalObjectRestorer> externalObjectRestorerTracker;
+
+    private ServiceTracker<IImportOperationFactory, IImportOperationFactory> importOperationFactoryTracker;
 
     private ServiceTracker<Object, Object> exportConfigurationFilesApiTracker;
 
@@ -574,6 +577,20 @@ public class Activator
     }
 
     /**
+     * The factory that turns an external object's XML into an object inside a container project.
+     * <p>
+     * The restorer next door only converts the binary to XML; this is what the environment's own
+     * Import menu calls afterwards, and without it the converted XML is written and never read.
+     * </p>
+     *
+     * @return the factory, or <code>null</code> when this runtime does not publish it
+     */
+    public IImportOperationFactory getImportOperationFactory()
+    {
+        return service(importOperationFactoryTracker);
+    }
+
+    /**
      * Returns the EDT command-line API that exports a configuration to XML files.
      * <p>
      * Untyped on purpose: see the note on this class. The caller reflects on it.
@@ -730,6 +747,7 @@ public class Activator
         configurationProjectManagerTracker = openTracker(context, IConfigurationProjectManager.class);
         externalObjectProjectManagerTracker = openTracker(context, IExternalObjectProjectManager.class);
         externalObjectRestorerTracker = openTracker(context, IExternalObjectRestorer.class);
+        importOperationFactoryTracker = openTracker(context, IImportOperationFactory.class);
 
         // By name, so that this bundle does not depend on the CLI API plugin at build time.
         exportConfigurationFilesApiTracker = openTracker(context, CLI_EXPORT_CONFIGURATION_FILES_API);
@@ -770,6 +788,7 @@ public class Activator
         configurationProjectManagerTracker = closeTracker(configurationProjectManagerTracker);
         externalObjectProjectManagerTracker = closeTracker(externalObjectProjectManagerTracker);
         externalObjectRestorerTracker = closeTracker(externalObjectRestorerTracker);
+        importOperationFactoryTracker = closeTracker(importOperationFactoryTracker);
         exportConfigurationFilesApiTracker = closeTracker(exportConfigurationFilesApiTracker);
         importConfigurationFilesApiTracker = closeTracker(importConfigurationFilesApiTracker);
     }

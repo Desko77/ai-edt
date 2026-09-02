@@ -160,8 +160,8 @@ ExternalDataSourceWorkshopTool	list	projectName	read in place
 ExternalDataSourceWorkshopTool	remove_field	dryRun,name,projectName	read in place
 ExternalDataSourceWorkshopTool	remove_function	dryRun,name,projectName	read in place
 ExternalObjectWorkshopTool	create	kind,name,parentProjectName	read in place
-ExternalObjectWorkshopTool	help	inputPath,kind,name,operation,parentProjectName,targetProjectName	passed in as locals
-ExternalObjectWorkshopTool	import_external_object	inputPath,targetProjectName	read in place
+ExternalObjectWorkshopTool	help	baseProjectName,inputPath,kind,name,operation,parentProjectName,targetProjectName	passed in as locals
+ExternalObjectWorkshopTool	import_external_object	baseProjectName,inputPath,targetProjectName	read in place
 FormCommandInterfaceOps	add	commandFqn,group,index,panel,visible	passed in as locals
 FormCommandInterfaceOps	remove	commandFqn,panel	passed in as locals
 FormCommandInterfaceOps	set_property	commandFqn,group,index,panel,propertyName,visible	passed in as locals
