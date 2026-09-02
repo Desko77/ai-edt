@@ -161,6 +161,10 @@ public class VanessaTool implements IMcpTool
                 "Name of the 1C user the run signs in as. A base with users defined meets a " //$NON-NLS-1$
                     + "client that names none with a login window, and the run then waits out " //$NON-NLS-1$
                     + "its whole deadline. A password cannot be passed here.") //$NON-NLS-1$
+            .booleanProperty("testClient", //$NON-NLS-1$
+                "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
+                    + "Measured on one stand: with the block present Vanessa writes no report " //$NON-NLS-1$
+                    + "at all, for any scenario; without it the same scenarios play.") //$NON-NLS-1$
             .integerProperty("testClientPort", //$NON-NLS-1$
                 "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
                     + "run or another EDT already holds it.") //$NON-NLS-1$
@@ -386,6 +390,8 @@ public class VanessaTool implements IMcpTool
                 + "a port is 1 to " + HIGHEST_PORT + ". Read as a number it cannot be, the " //$NON-NLS-1$ //$NON-NLS-2$
                 + "run would have started on the default port instead of the one named.").toJson(); //$NON-NLS-1$
         }
+        final boolean settledWantsTestClient =
+            JsonUtils.extractBooleanArgument(params, "testClient", false); //$NON-NLS-1$
         final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
         String portRefusal = whyThePortCannotBeUsed(settledClientPort);
         if (portRefusal != null)
@@ -424,7 +430,8 @@ public class VanessaTool implements IMcpTool
             // cancel meant for that run destroy this client instead.
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
                 screenshots, keepOpen, stepDelay, settledTimeout, settledClientPort,
-                extraVaParams, runDirForJob, null, settledInfobase, settledAddress);
+                extraVaParams, runDirForJob, null, settledInfobase, settledAddress,
+                settledWantsTestClient);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -443,7 +450,7 @@ public class VanessaTool implements IMcpTool
                 () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
                     settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
-                    settledAddress));
+                    settledAddress, settledWantsTestClient));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -485,12 +492,13 @@ public class VanessaTool implements IMcpTool
      *            when the caller named the connection string itself.
      * @param infobaseAddress the infobase EDT holds, as it was resolved once, or
      *            <code>null</code> when the caller named the connection string itself.
+     * @param withTestClient whether to name a test client for the start step to launch.
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
         int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
-        String infobaseName, InfobaseAddress.Address infobaseAddress)
+        String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -541,7 +549,8 @@ public class VanessaTool implements IMcpTool
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
-                keepOpen, stepDelay, connectionString, clientPort, timeoutSec, extraVaParams);
+                keepOpen, stepDelay, connectionString, clientPort, timeoutSec, withTestClient,
+                extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
@@ -968,19 +977,27 @@ public class VanessaTool implements IMcpTool
      * @param clientPort the port the test client listens on.
      * @param clientTimeoutSec the whole budget of the run; the client share of it is taken by
      *            {@link #clientWaitWithin(int)}.
+     * @param withTestClient whether to name a test client for the start step to launch.
      * @param extra what the caller added to the Vanessa document, merged last.
      * @return the document, ready to be written
      */
     static String buildVaParams(File featurePath, File junitFile, File shotsDir,
         boolean screenshots, boolean keepOpen, int stepDelay, String connectionString,
-        int clientPort, int clientTimeoutSec, JsonObject extra)
+        int clientPort, int clientTimeoutSec, boolean withTestClient, JsonObject extra)
     {
         JsonObject o = new JsonObject();
+        // Measured on this stand: with the block present Vanessa writes no report at all, for
+        // any scenario, including one whose only step is a three second wait. Without it the
+        // same scenarios play and a failing step is reported by name. It is therefore off
+        // unless the caller asks for it.
         // The step that starts TestClient has no client to start without this block: the run
         // answers "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0,
         // because the UI-testing types exist only once a client runs under the test manager.
-        o.add("TestClient", //$NON-NLS-1$
-            testClient(connectionString, clientPort, clientWaitWithin(clientTimeoutSec)));
+        if (withTestClient)
+        {
+            o.add("TestClient", //$NON-NLS-1$
+                testClient(connectionString, clientPort, clientWaitWithin(clientTimeoutSec)));
+        }
         // Without this Vanessa opens its own window and waits there. Every run then spends its
         // whole time budget on a form nobody is looking at, ends killed, and writes no report -
         // which reads exactly like a scenario that never started.
