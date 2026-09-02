@@ -554,6 +554,38 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("containerFqn", //$NON-NLS-1$
                 "remove_item: the form item holding the one named by `name`. move_item: the form itself, with " //$NON-NLS-1$
                 + "parentName naming the destination container.") //$NON-NLS-1$ //$NON-NLS-1$
+            // ---- Composition settings, for the operations run by dcs_workshop under an alias ----
+            .stringProperty("parentPath", //$NON-NLS-1$
+                "add_settings_group: the group to nest the new one inside, as dot-separated " //$NON-NLS-1$
+                    + "group names. Omitted means the root of the structure; an unnamed group is " //$NON-NLS-1$
+                    + "addressed by its position at its level, as [0].") //$NON-NLS-1$
+            .stringProperty("variantName", //$NON-NLS-1$
+                "set_settings_parameter: the settings variant to work on. Omitted means the " //$NON-NLS-1$
+                    + "default settings, which is the first variant.") //$NON-NLS-1$
+            .stringProperty("userSettingID", //$NON-NLS-1$
+                "set_settings_parameter: the identifier under which the parameter appears in user " //$NON-NLS-1$
+                    + "settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
+            // ---- Parameters of the operations handed to a standalone tool
+            //      (add_metadata_attribute / rename_metadata_object) ----
+            .stringProperty("parentFqn", //$NON-NLS-1$
+                "add_metadata_attribute: the object the attribute is added to, for example " //$NON-NLS-1$
+                    + "'Catalog.Products' or 'Document.SalesOrder'. Type names may be given in " //$NON-NLS-1$
+                    + "Russian. A register field, which carries a kind and a type, is added by " //$NON-NLS-1$
+                    + "add_register_field instead.") //$NON-NLS-1$
+            .stringProperty("newName", //$NON-NLS-1$
+                "rename_metadata_object: the name to give the object.") //$NON-NLS-1$
+            .stringProperty("disableIndices", //$NON-NLS-1$
+                "rename_metadata_object: indices of change points to leave out, comma-separated " //$NON-NLS-1$
+                    + "(taken from the dry-run list). Only skippable changes may be turned off. " //$NON-NLS-1$
+                    + "Example: '2,3,5'") //$NON-NLS-1$
+            .integerProperty("maxResults", //$NON-NLS-1$
+                "rename_metadata_object: upper bound on how many change points the dry run lists " //$NON-NLS-1$
+                    + "(default 20). 0 removes the cap.") //$NON-NLS-1$
+            .booleanProperty("scanLeftovers", //$NON-NLS-1$
+                "rename_metadata_object: once the rename is confirmed, comb BSL modules for " //$NON-NLS-1$
+                    + "whole-word plain-text traces of the FORMER name (string literals / query " //$NON-NLS-1$
+                    + "text / comments) that the semantic refactoring leaves untouched. Default " //$NON-NLS-1$
+                    + "true; listed as items to review by hand.") //$NON-NLS-1$
             // ---- Form-operation parameters (add_field / add_button / add_table /
             //      add_decoration / add_dynamic_list_table / set_property / ...) ----
             .stringProperty("itemName", //$NON-NLS-1$

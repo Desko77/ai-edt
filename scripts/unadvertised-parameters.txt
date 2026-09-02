@@ -52,3 +52,55 @@ SecurityAuditFacadeTool:objectFqn
 SecurityAuditFacadeTool:scope
 SecurityAuditFacadeTool:subsystemName
 
+# The composition parameters. edit_metadata runs 51 composition operations by renaming the
+# operation and handing the call to dcs_workshop, whose schema advertises every one of these.
+# They are reachable and documented under that tool; what edit_metadata carries are its alias
+# names for the same operations. The map records them because the alias reads them.
+EditMetadataTool:aggregateFunction
+EditMetadataTool:appearance
+EditMetadataTool:childName
+EditMetadataTool:comparisonType
+EditMetadataTool:connectionString
+EditMetadataTool:container
+EditMetadataTool:dataSet
+EditMetadataTool:dataSetName
+EditMetadataTool:dataSetType
+EditMetadataTool:dataSourceType
+EditMetadataTool:destinationDataSet
+EditMetadataTool:destinationExpression
+EditMetadataTool:direction
+EditMetadataTool:expression
+EditMetadataTool:field
+EditMetadataTool:groupType
+EditMetadataTool:groupingType
+EditMetadataTool:itemPath
+EditMetadataTool:nestedSchemaName
+EditMetadataTool:newIndex
+EditMetadataTool:orderType
+EditMetadataTool:presentation
+EditMetadataTool:queryText
+EditMetadataTool:sourceDataSet
+EditMetadataTool:sourceExpression
+EditMetadataTool:sourceName
+EditMetadataTool:target
+EditMetadataTool:userSettingPresentation
+EditMetadataTool:viewMode
+
+# Reached the same way: what a facade reads before it dispatches now belongs to each of its
+# operations, and the operations edit_metadata runs under an alias carry the parameters of
+# the tool that runs them - dcs_workshop and edit_form, whose schemas advertise these.
+# EditFormTool:dryRun is the preview flag every call may carry.
+EditFormTool:dryRun
+EditMetadataTool:conditionType
+EditMetadataTool:conditionValue
+EditMetadataTool:dataObjectName
+EditMetadataTool:deleteDataItems
+EditMetadataTool:groupName
+EditMetadataTool:groupName2
+EditMetadataTool:header
+EditMetadataTool:rowIndex
+EditMetadataTool:schemaTemplateName
+EditMetadataTool:templateType2
+EditMetadataTool:url
+EditMetadataTool:validate_expression
+EditMetadataTool:validate_query

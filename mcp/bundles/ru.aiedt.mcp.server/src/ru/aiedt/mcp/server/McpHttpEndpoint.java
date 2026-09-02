@@ -2136,7 +2136,8 @@ public class McpHttpEndpoint
      * </p>
      */
     private static final java.util.Set<String> SECRET_MEMBERS =
-        java.util.Set.of("password", "additionalparameters", "connectionstring", "vanessaparams"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        java.util.Set.of("password", "additionalparameters", "connectionstring", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "vanessaparams", "scenariotext"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Reads the JSON-RPC id out of a request, without insisting that the request make sense.

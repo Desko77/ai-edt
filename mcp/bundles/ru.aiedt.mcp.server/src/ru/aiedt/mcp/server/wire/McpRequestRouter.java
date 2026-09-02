@@ -55,7 +55,8 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * Turns a JSON-RPC document into a tool call and the tool's answer back into a JSON-RPC document.
  * <p>
  * The methods recognized are {@code initialize}, {@code notifications/initialized},
- * {@code tools/list}, {@code tools/call}, {@code ping}, {@code resources/list},
+ * {@code tools/list}, {@code tools/call}, {@code ping}, {@code prompts/list},
+ * {@code resources/templates/list}, {@code resources/list},
  * {@code resources/read}, {@code server/discover} and the three {@code tasks/*} methods of the task
  * extension - everything else is a method-not-found. Transport
  * concerns (sockets, CORS, authentication, HTTP status, SSE framing) belong to the server that owns
@@ -212,6 +213,21 @@ public class McpRequestRouter
             if (McpServerMeta.METHOD_RESOURCES_READ.equals(method))
             {
                 return readResource(request, requestId, era);
+            }
+            if (McpServerMeta.METHOD_RESOURCES_TEMPLATES_LIST.equals(method))
+            {
+                // Part of the resources capability this server declares. It holds no templates -
+                // every resource it returns is named by the call that produced it - so the list is
+                // empty, which is an answer; "method not found" would contradict the declaration.
+                java.util.Map<String, Object> templates = new java.util.LinkedHashMap<>();
+                templates.put("resourceTemplates", new java.util.ArrayList<>()); //$NON-NLS-1$
+                return answer(requestId, templates, era);
+            }
+            if (McpServerMeta.METHOD_PROMPTS_LIST.equals(method))
+            {
+                java.util.Map<String, Object> prompts = new java.util.LinkedHashMap<>();
+                prompts.put("prompts", new java.util.ArrayList<>()); //$NON-NLS-1$
+                return answer(requestId, prompts, era);
             }
             if (McpServerMeta.METHOD_TASKS_GET.equals(method)
                 || McpServerMeta.METHOD_TASKS_CANCEL.equals(method)
@@ -1011,14 +1027,16 @@ public class McpRequestRouter
             return false;
         }
         String lc = key.toLowerCase();
-        // connectionstring and vanessaparams do not contain any of the words below, and both can
-        // carry a password: the platform names one Pwd, WSP or DBPwd inside a connection string,
-        // and a scenario parameter can be a user password under a name Vanessa chooses. Deciding
-        // by the name of the ARGUMENT is why they have to be named here.
+        // connectionstring, vanessaparams and scenariotext contain none of the words below and
+        // all three can carry a password: the platform names one Pwd, WSP or DBPwd inside a
+        // connection string, a scenario parameter can be a user password under a name Vanessa
+        // chooses, and a scenario types into fields - one of which can be a password. Deciding by
+        // the name of the ARGUMENT is why they have to be named here.
         return lc.contains("password") || lc.contains("passwd") || lc.contains("pwd") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             || lc.contains("token") || lc.contains("secret") || lc.contains("apikey") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             || lc.contains("credential") || lc.contains("authorization") //$NON-NLS-1$ //$NON-NLS-2$
-            || lc.contains("connectionstring") || lc.contains("vanessaparams"); //$NON-NLS-1$ //$NON-NLS-2$
+            || lc.contains("connectionstring") || lc.contains("vanessaparams") //$NON-NLS-1$ //$NON-NLS-2$
+            || lc.contains("scenariotext"); //$NON-NLS-1$
     }
 
     /**

@@ -20,6 +20,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExportHelper;
+import ru.aiedt.mcp.server.support.ExportedFiles;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
 /**
@@ -57,7 +58,10 @@ public class DiskResynchronizer implements IMcpTool
             + "(and child resources) and refresh the workspace. Use when EDT shows the object " //$NON-NLS-1$
             + "as valid but the disk is stale/missing - before update_database or configuration " //$NON-NLS-1$
             + "export - to avoid 'valid in EDT, fails in IB' / zip:/// not-found errors. " //$NON-NLS-1$
-            + "BM->disk export only; does NOT strip Configuration.mdo references."; //$NON-NLS-1$
+            + "Writes the model over the files on disk and never reads disk into the model: a " //$NON-NLS-1$
+            + "change made in a .mdo, .dcs or .bsl by hand is replaced, and the answer names the " //$NON-NLS-1$
+            + "files it wrote over in overwrittenPaths. Does NOT strip Configuration.mdo " //$NON-NLS-1$
+            + "references."; //$NON-NLS-1$
     }
 
     @Override
@@ -116,6 +120,11 @@ public class DiskResynchronizer implements IMcpTool
             return ToolResult.error("BM model manager is not available").toJson(); //$NON-NLS-1$
         }
 
+        // Read before the export so the answer can name what it replaced. An edit made on disk by
+        // hand is overwritten by the model, and saying nothing about it is how such an edit
+        // disappears without the caller ever learning it was there.
+        Map<String, String> before = ExportedFiles.snapshot(project, objects);
+
         BmExportHelper.Result r = BmExportHelper.forceExportAndWait(manager, project, objects, waitMs);
 
         String refreshNote = null;
@@ -143,6 +152,30 @@ public class DiskResynchronizer implements IMcpTool
             .put("syncFlushPending", r.syncFlushPending) //$NON-NLS-1$
             .put("totalMs", r.totalMs) //$NON-NLS-1$
             .put("refreshed", refresh && r.isOk() && !r.syncFlushPending && refreshNote == null); //$NON-NLS-1$
+        if (r.syncFlushPending)
+        {
+            // The save is still going, so reading the files now would compare against a directory
+            // half written. Named as pending rather than answered with a list that would be wrong.
+            tool.put("diskChanges", "pending"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else
+        {
+            ExportedFiles.Changes changes = ExportedFiles.since(before, project, objects);
+            tool.put("overwrittenPaths", changes.written()) //$NON-NLS-1$
+                .put("createdPaths", changes.created()) //$NON-NLS-1$
+                .put("removedPaths", changes.removed()); //$NON-NLS-1$
+            List<String> unplaced = ExportedFiles.notPlaced(objects);
+            if (!unplaced.isEmpty())
+            {
+                tool.put("pathsNotCompared", unplaced); //$NON-NLS-1$
+            }
+            if (changes.any())
+            {
+                tool.put("diskChangeHint", "The model was written over these files. A change made " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "in them by hand is gone: this operation exports the model to disk and " //$NON-NLS-1$
+                    + "never reads disk into the model."); //$NON-NLS-1$
+            }
+        }
         if (r.syncFlushPending)
         {
             // Row 42: the disk flush did not confirm within waitTimeoutMs. The

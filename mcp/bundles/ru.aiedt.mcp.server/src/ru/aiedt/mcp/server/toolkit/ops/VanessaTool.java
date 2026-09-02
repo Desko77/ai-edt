@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -424,6 +425,16 @@ public class VanessaTool implements IMcpTool
                 alreadyGoing(PendingWorkRegistry.VANESSA.unfinishedKeys())).toJson();
         }
         Path outDir = null;
+        // Deleted when the run is over, whatever ended it. The directory itself is kept - the
+        // caller reads the report and the screenshots out of it - and a scenario typing a
+        // password would otherwise sit there beside them for as long as the directory does.
+        File composedFile = null;
+        String leftBehind = null;
+        // Once the client is launched it may be reading the scenario, and an interrupt throws
+        // out of the wait without stopping it. Raised by the launch itself, at the one point a
+        // process exists: a missing executable and a denied start both throw on the way there,
+        // and neither leaves anything holding the file.
+        AtomicBoolean clientLaunched = new AtomicBoolean(false);
         try
         {
             outDir = Files.createTempDirectory("ai-edt-vanessa"); //$NON-NLS-1$
@@ -431,7 +442,14 @@ public class VanessaTool implements IMcpTool
             shotsDir.mkdirs();
             File junitFile = new File(outDir.toFile(), "junit.xml"); //$NON-NLS-1$
             File paramsFile = new File(outDir.toFile(), "VAParams.json"); //$NON-NLS-1$
-            File playing = scenarioFileFor(outDir.toFile(), featurePath, composedScenario);
+            File playing = scenarioFileFor(outDir.toFile(), featurePath);
+            if (playing != featurePath)
+            {
+                // Recorded before the write, not after: a write that throws halfway leaves a
+                // partial scenario, and nothing would be tracking it to remove.
+                composedFile = playing;
+                writeUtf8Bom(playing, composedScenario);
+            }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
                 keepOpen, stepDelay, extraVaParams);
@@ -443,7 +461,11 @@ public class VanessaTool implements IMcpTool
             Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
                 + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
 
-            ProcessResult pr = runVanessa(command, runDir, timeoutSec, jobKey);
+            ProcessResult pr = runVanessa(command, runDir, timeoutSec, jobKey, clientLaunched);
+            // Removed here rather than in the finally: every answer below is built before a
+            // finally runs, and the paths that need this most are the ones that go wrong.
+            leftBehind = removeComposed(composedFile);
+            composedFile = null;
             if (pr.cancelledBeforeLaunch)
             {
                 return ToolResult.success()
@@ -467,13 +489,15 @@ public class VanessaTool implements IMcpTool
                     return ToolResult.error("Vanessa run timed out after " + timeoutSec + "s" //$NON-NLS-1$ //$NON-NLS-2$
                         + (keepOpen ? " (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)." //$NON-NLS-1$
                             : ". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog.") //$NON-NLS-1$
-                        + " " + tail(pr.output)).toJson(); //$NON-NLS-1$
+                        + " " + tail(pr.output))
+                        .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
                 }
                 return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
                     + "). The run may not have started (bad connectionString, an unadopted Vanessa " //$NON-NLS-1$
                     + "extension in the infobase, a login window, or Vanessa-version-specific launch " //$NON-NLS-1$
                     + "parameters - the launched command and VAParams.json are in the EDT .log). " //$NON-NLS-1$
-                    + tail(pr.output)).toJson(); //$NON-NLS-1$
+                    + tail(pr.output))
+                    .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
             }
 
             JUnitRunOutcome results = JUnitXmlReader.parse(junitFile);
@@ -507,6 +531,7 @@ public class VanessaTool implements IMcpTool
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
                 .put("junitXmlPath", junitFile.getAbsolutePath()) //$NON-NLS-1$
                 .put("screenshots", shots) //$NON-NLS-1$
+                .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
                 .put("screenshotsByStep", attributed.byStep()) //$NON-NLS-1$
                 .put("screenshotsNotAttributed", attributed.unattributed()) //$NON-NLS-1$
                 .put("markdown", JUnitReportFormatter.format(results) //$NON-NLS-1$
@@ -516,10 +541,19 @@ public class VanessaTool implements IMcpTool
         catch (Exception e)
         {
             Activator.logError("Error in vanessa", e); //$NON-NLS-1$
-            return ToolResult.error("Error running Vanessa: " + TextSuggest.safeMessage(e)).toJson(); //$NON-NLS-1$
+            String stillHere = scenarioAfterFailure(clientLaunched.get(), leftBehind, composedFile);
+            composedFile = null;
+            return ToolResult.error("Error running Vanessa: " + TextSuggest.safeMessage(e)) //$NON-NLS-1$
+                .put("composedScenarioLeftBehind", stillHere).toJson(); //$NON-NLS-1$
         }
         finally
         {
+            String stillThere = removeComposed(composedFile);
+            if (stillThere != null)
+            {
+                Activator.logWarning("vanessa: the composed scenario could not be removed: " //$NON-NLS-1$
+                    + stillThere);
+            }
             THE_CLIENT.release();
             if (jobKey != null)
             {
@@ -560,28 +594,43 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The file this run plays.
+     * Where this run's scenario lives.
      * <p>
-     * A scenario that arrived as text becomes a file in the run's own directory, beside the report
-     * and the screenshots. A caller reaching this server over MCP has nowhere else to put one.
+     * The file the caller named, or - when the scenario arrived as text - the place in the run's
+     * own directory it will be written to, beside the report and the screenshots. Naming the place
+     * without writing it is deliberate: the caller records the path first, so a write that fails
+     * halfway still leaves something to remove.
      * </p>
      *
      * @param outDir the run's own directory.
      * @param featurePath the file the caller named, or {@code null} when the scenario is text.
-     * @param composedScenario the scenario text, or {@code null} when a file was named.
-     * @return the file to play
-     * @throws Exception when the composed scenario cannot be written
+     * @return the file to play; the same object when the caller named one
      */
-    static File scenarioFileFor(File outDir, File featurePath, String composedScenario)
-        throws Exception
+    static File scenarioFileFor(File outDir, File featurePath)
     {
-        if (featurePath != null)
+        return featurePath != null ? featurePath : new File(outDir, "composed.feature"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a scenario this run composed.
+     *
+     * @param composed the file, or {@code null} when the caller named their own.
+     * @return the path when the file is still there afterwards, or {@code null} when it is gone
+     */
+    static String removeComposed(File composed)
+    {
+        if (composed == null || !composed.exists())
         {
-            return featurePath;
+            return null;
         }
-        File composed = new File(outDir, "composed.feature"); //$NON-NLS-1$
-        writeUtf8Bom(composed, composedScenario);
-        return composed;
+        if (composed.delete() || !composed.exists())
+        {
+            return null;
+        }
+        // Held by the client that has not fully exited, or by a scanner. Said out loud rather than
+        // swallowed: the directory is kept for the report, so a scenario that typed a password
+        // stays beside it until somebody removes it.
+        return composed.getAbsolutePath();
     }
 
     /** Resolves a relative featurePath against the project dir; leaves absolute paths as-is. */
@@ -1151,11 +1200,13 @@ public class VanessaTool implements IMcpTool
      * @param workingDir where to run.
      * @param timeoutSec how long to wait for the client.
      * @param runKey the key this run is cancelled by; null when nobody can cancel it.
+     * @param launched raised once a process exists, so a caller can tell a client that may be
+     *            reading its scenario from a launch that never happened.
      * @return how the client ended and what it printed
      * @throws Exception when the client cannot be launched or the wait is interrupted
      */
     private static ProcessResult runVanessa(List<String> command, File workingDir, int timeoutSec,
-        String runKey) throws Exception
+        String runKey, AtomicBoolean launched) throws Exception
     {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
@@ -1174,6 +1225,7 @@ public class VanessaTool implements IMcpTool
                 return stopped;
             }
             proc = pb.start();
+            launched.set(true);
             if (runKey != null)
             {
                 // Remembered only while it runs: this process is what stopClient goes looking for,
@@ -1301,6 +1353,39 @@ public class VanessaTool implements IMcpTool
         String r = redactSecrets(s);
         String t = r.length() > OUTPUT_TAIL ? r.substring(r.length() - OUTPUT_TAIL) : r;
         return "Output tail: " + t.trim(); //$NON-NLS-1$
+    }
+
+    /**
+     * What becomes of a composed scenario when the run ends in an exception.
+     * <p>
+     * A launched client may be reading the file: an interrupt - the endpoint shutting its executor
+     * down, for one - throws out of the wait without stopping it, and a synchronous run registers
+     * no key, so nothing here can stop that process either. Then the file stays and the answer
+     * names it, because breaking a live run to tidy up is the worse of the two.
+     * </p>
+     * <p>
+     * Nothing holds it before the launch, and a launch can fail before there is anything to hold
+     * it with - a missing executable, a start the operating system refuses. A scenario carries
+     * whatever the caller composed, so one nobody is reading is taken away rather than left in the
+     * run directory.
+     * </p>
+     *
+     * @param clientLaunched whether a process was actually started.
+     * @param leftBehind a path an earlier removal already reported, or <code>null</code>.
+     * @param composed the composed scenario, or <code>null</code> when the caller named its own.
+     * @return the path still on disk, or <code>null</code> when nothing was left
+     */
+    static String scenarioAfterFailure(boolean clientLaunched, String leftBehind, File composed)
+    {
+        if (!clientLaunched)
+        {
+            return removeComposed(composed);
+        }
+        if (leftBehind != null)
+        {
+            return leftBehind;
+        }
+        return composed != null && composed.exists() ? composed.getAbsolutePath() : null;
     }
 
     /**

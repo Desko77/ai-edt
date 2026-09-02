@@ -109,4 +109,17 @@ public class ASecretNeverReachesTheLogTest
         assertTrue("the project name is not a secret", masked.contains("Demo")); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse(masked.contains("s3cret")); //$NON-NLS-1$
     }
+
+    @Test
+    public void aComposedScenarioIsMaskedLikeAnythingElseThatCanCarryAPassword()
+    {
+        // A scenario types into fields, and one of them can be a password. The argument added to
+        // let a caller send the scenario itself therefore carries what connectionString and
+        // vanessaParams carry, and this is decided by the member's NAME - nothing reads the value.
+        String masked = McpHttpEndpoint.redactSecrets(
+            "{\"scenarioText\":\"Я ввожу текст 's3cret'\"}"); //$NON-NLS-1$
+
+        assertFalse("the request journal keeps what a scenario types out of the clear: " + masked, //$NON-NLS-1$
+            masked.contains("s3cret")); //$NON-NLS-1$
+    }
 }

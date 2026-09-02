@@ -47,7 +47,31 @@ DISPATCH = re.compile(r"switch\s*\((operation|action|op|mode)\)")
 CASE_LABEL = re.compile(r'case\s+"([a-z0-9_]+)"\s*:')
 # The delegate is the tool, whatever wraps params on the way in - some facades rewrite first.
 DELEGATE = re.compile(r"new\s+(\w+)\(\)\.execute\(")
-EXTRACT = re.compile(r'extract\w*\(\s*params\s*,\s*"([A-Za-z0-9_]+)"')
+# Every helper that reads an argument by name, and every helper of the same shape that does not.
+# Both lists are kept because neither side can be guessed: `addTypedCollectionChild(params,
+# "Dimension")` passes a collection and `branchArgument(params, onDisk)` a value, so matching "any
+# call taking the map and a literal" would put those in the map and in the help; while reading
+# `extract*` alone missed 81 reads through `required`, and adding that one still left `strictInt`.
+# A read set short of what an operation needs is what makes the guard refuse a call that works, so
+# a helper of this shape belonging to neither list fails the check - see unclassified_helpers.
+READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalInt", "boolArg",
+                  "intArg", "isTrue", "parseNumericArgument", "objectArgumentProblem")
+NOT_READERS = ("addContentEntry", "addTypedCollectionChild", "bind", "unbind", "branchArgument",
+               "doBorrow", "pathOf", "put", "removeContentEntry", "withMode")
+READERS = r"\b(?:extract\w*|" + "|".join(READER_HELPERS) + r")"
+HELPER_SIGNATURE = re.compile(r"\b(\w+)\(Map<String, ?String> \w+, String \w+")
+SRC = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server"
+
+
+def unclassified_helpers() -> list[str]:
+    """Helpers taking the argument map and a name that neither list accounts for."""
+    seen: set[str] = set()
+    for path in sorted(SRC.rglob("*.java")):
+        seen |= set(HELPER_SIGNATURE.findall(path.read_text(encoding="utf-8")))
+    return sorted(name for name in seen
+                  if not name.startswith("extract")
+                  and name not in READER_HELPERS and name not in NOT_READERS)
+EXTRACT = re.compile(READERS + r'\(\s*params\s*,\s*(?://[^\n]*\n\s*)*"([A-Za-z0-9_]+)"')
 SCHEMA_PROP = re.compile(r'\.(?:string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 CALLS = re.compile(r"\b([a-z]\w+)\s*\(")
 
@@ -149,21 +173,42 @@ def schema_parameters(class_name: str) -> set[str] | None:
     return names or None
 
 
+LOOP_OVER_CONST = re.compile(r"for\s*\(\s*(?:final\s+)?String\s+(\w+)\s*:\s*(\w+)\s*\)")
+CONST_ARRAY = re.compile(r"static final String\[\]\s+(\w+)\s*=\s*\{([^}]*)\}", re.S)
+
+
+def names_read_through_a_loop(body: str, source: str) -> set[str]:
+    """Parameter names a body reads by looping over a constant list of them.
+
+    `for (String prop : ATTRIBUTE_FEATURE_PROPERTIES) { ... extract(params, prop) ... }` reads five
+    parameters and names none of them at the point of reading. A scan for a literal beside the map
+    finds nothing there, so those five were absent from the map and the guard refused every call
+    that set fillChecking on an attribute.
+    """
+    constants = {name: re.findall(r'"([A-Za-z0-9_]+)"', values)
+                 for name, values in CONST_ARRAY.findall(source)}
+    names: set[str] = set()
+    for variable, constant in LOOP_OVER_CONST.findall(body):
+        if constant not in constants:
+            continue
+        if re.search(READERS + r"\(\s*\w+\s*,\s*" + re.escape(variable) + r"\b", body):
+            names |= set(constants[constant])
+    return names
+
+
 def method_body(source: str, name: str) -> str:
-    """The body of a method by name, braces matched. Empty when it is not in this file."""
+    """The body of a method by name, braces matched. Empty when it is not in this file.
+
+    Braces are matched with strings, character literals and comments skipped: a message ending in
+    a brace closed the body early, and everything the method read after that point went missing -
+    which for an operation means a guard that refuses the arguments it did not see.
+    """
     signature = re.search(r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w., ]+)?\{", source)
     if not signature:
         return ""
     start = source.find("{", signature.end() - 1)
-    depth = 0
-    for i in range(start, len(source)):
-        if source[i] == "{":
-            depth += 1
-        elif source[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return source[start:i]
-    return ""
+    end = balanced_span(source, start, "{", "}")
+    return source[start:end - 1] if end > 0 else ""
 
 
 def parameters_of(branch: str, source: str) -> tuple[set[str], str]:
@@ -203,12 +248,27 @@ def parameters_of(branch: str, source: str) -> tuple[set[str], str]:
     # method called from the branch pulled in what unrelated ones read: call_hierarchy came back
     # claiming `operation` and `topic`, which are the help branch's, because both call the same
     # formatting helper. A wrong parameter list is worse than a missing one, and harder to notice.
-    for called in set(re.findall(r"\b(\w+)\s*\(\s*params\b", branch)):
+    # The map need not be the first argument - `applyParameterFields(parameter, params, project)`
+    # hands it along just as much - and a consuming match swallows a nested call, so the name is
+    # taken with a lookahead over the argument text.
+    for called in set(re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", branch)):
         if called in ("if", "for", "while", "switch", "return", "catch", "new"):
             continue
         body = method_body(source, called)
+        holder = source
+        if not body:
+            # A static helper on another class - `EditMetadataTool.applyAttributeFeatureProperties(
+            # attribute, params, applied)`. What it reads is in that file, and looking only in this
+            # one lost the five properties it applies.
+            owner = re.search(r"\b([A-Z]\w+)\s*\.\s*" + re.escape(called) + r"\s*\(", branch)
+            if owner:
+                path = OPS / f"{owner.group(1)}.java"
+                if path.is_file():
+                    holder = path.read_text(encoding="utf-8")
+                    body = method_body(holder, called)
         if body:
             names |= set(EXTRACT.findall(body))
+            names |= names_read_through_a_loop(body, holder)
     if names:
         return names, "read in place"
     # A facade that reads its arguments BEFORE dispatching and hands them down as locals - which is
@@ -268,10 +328,250 @@ def dispatches_otherwise() -> list[str]:
     return skipped
 
 
-REGISTRY_ENTRY = re.compile(
-    r'reg\(\s*\w+\s*,\s*"([a-z0-9_]+)"\s*,\s*"[^"]*"\s*,\s*"[^"]*"\s*,\s*\w+\s*->\s*(?:(\w+)\.)?(\w+)\(')
+REG_CALL = re.compile(r'\breg\(\s*\w+\s*,\s*"([a-z0-9_]+)"')
+SIMPLE_CALL = re.compile(r"^(?:(\w+)\.)?(\w+)\s*\(")
 FIELD_TYPE = re.compile(r"\b(?:private|protected|public)\s+(?:final\s+)?(\w+)\s+(\w+)\s*[=;]")
-EXTRACT_ANY = re.compile(r'extract\w*\(\s*\w+\s*,\s*"([A-Za-z0-9_]+)"')
+EXTRACT_ANY = re.compile(READERS + r'\(\s*\w+\s*,\s*(?://[^\n]*\n\s*)*"([A-Za-z0-9_]+)"')
+
+
+def balanced_span(source: str, start: int, opener: str, closer: str) -> int:
+    """The index just past the closer matching the opener at `start`, or -1.
+
+    Java carries brackets inside strings, character literals and comments - a help text ending in
+    a parenthesis, a regex, a brace in a sentence - so those are skipped rather than counted.
+    """
+    depth = 0
+    i = start
+    n = len(source)
+    while i < n:
+        c = source[i]
+        if c == '"' or c == "'":
+            quote = c
+            i += 1
+            while i < n and source[i] != quote:
+                i += 2 if source[i] == "\\" else 1
+        elif c == "/" and i + 1 < n and source[i + 1] == "/":
+            while i < n and source[i] != "\n":
+                i += 1
+            continue
+        elif c == "/" and i + 1 < n and source[i + 1] == "*":
+            closed = source.find("*/", i + 2)
+            if closed < 0:
+                return -1
+            i = closed + 1
+        elif c == opener:
+            depth += 1
+        elif c == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return -1
+
+
+def outside_strings(text: str, token: str) -> int:
+    """Where `token` first appears outside a string, a character literal or a comment, or -1."""
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"' or c == "'":
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            closed = text.find("*/", i + 2)
+            if closed < 0:
+                return -1
+            i = closed + 1
+        elif text.startswith(token, i):
+            return i
+        i += 1
+    return -1
+
+
+def registry_entries(source: str) -> list[tuple[str, str]]:
+    """Every `reg(...)` registration and the body of the lambda it hands the call to.
+
+    Two call shapes are in use - a name with a group and a help string, and a name on its own - and
+    the lambda is written either as an expression or as a block. Matching the whole call and taking
+    what follows the arrow covers all four. A regex that expected a call immediately after the
+    arrow read 103 of 181 registrations and dropped the other 78 without naming one of them: the
+    three that delegate to a standalone tool, and every operation of the composition workshop.
+    """
+    entries = []
+    for match in REG_CALL.finditer(source):
+        opened = source.index("(", match.start())
+        body = lambda_body_at(source, opened)
+        if body is not None:
+            entries.append((match.group(1), body))
+    entries.extend(looped_registrations(source))
+    return entries
+
+
+def lambda_body_at(source: str, opened: int) -> str | None:
+    """The body of the lambda inside the call whose opening parenthesis is at `opened`."""
+    end = balanced_span(source, opened, "(", ")")
+    if end < 0:
+        return None
+    call = source[opened:end]
+    arrow = outside_strings(call, "->")
+    if arrow < 0:
+        return None
+    body = call[arrow + 2:].strip()
+    if body.startswith("{"):
+        closed = balanced_span(body, 0, "{", "}")
+        if closed > 0:
+            body = body[1:closed - 1]
+    return body
+
+
+LOOP_HEAD = re.compile(r"for\s*\(\s*(?:final\s+)?String\s+(\w+)\s*:\s*Arrays\.asList\(")
+
+
+def looped_registrations(source: str) -> list[tuple[str, str]]:
+    """Registrations whose name is a loop variable rather than a literal.
+
+    `edit_metadata` registers its five extension operations and 51 composition ones by running one
+    `reg` call over a list of names. The name is then an identifier, so a scan for a string literal
+    finds nothing - and those 56 are on the one facade that does consult the map, which is where a
+    missing row means an argument goes unchecked and help has no answer.
+    """
+    entries: list[tuple[str, str]] = []
+    for head in LOOP_HEAD.finditer(source):
+        variable = head.group(1)
+        list_open = source.index("(", head.end() - 1)
+        list_end = balanced_span(source, list_open, "(", ")")
+        if list_end < 0:
+            continue
+        names = re.findall(r'"([a-z0-9_]+)"', source[list_open:list_end])
+        brace = source.find("{", list_end)
+        if brace < 0 or not names:
+            continue
+        block_end = balanced_span(source, brace, "{", "}")
+        if block_end < 0:
+            continue
+        block = source[brace:block_end]
+        call = re.search(r"\breg\(\s*\w+\s*,\s*" + re.escape(variable) + r"\s*,", block)
+        if not call:
+            continue
+        body = lambda_body_at(block, block.index("(", call.start()))
+        if body is None:
+            continue
+        for name in names:
+            entries.append((name, body))
+    return entries
+
+
+CONTROL_WORDS = ("if", "for", "while", "switch", "return", "catch", "new", "synchronized")
+# Keys the call carries rather than the operation - they steer dispatch, preview and batching, and
+# UnreadArguments exempts every one of them. A facade reads them once for all its operations, so
+# attributing them to each adds nothing the guard uses and puts seven names of plumbing in front of
+# a caller who asked what one operation reads. Subtracted from the facade-wide set only: an
+# operation that reads one of these itself keeps it.
+CALL_KEYS = frozenset(("operation", "batch", "operations", "stopOnError", "runKey",
+                       "timeoutSeconds", "topic", "confirm"))
+ALIAS_PUT = re.compile(r'\bput\(\s*"([a-z0-9_]+)"\s*,\s*"([a-z0-9_]+)"\s*\)')
+
+
+def forwarded_operation(handler: str, holder_source: str, operation: str) -> tuple[str, str] | None:
+    """The facade and operation a handler hands the whole call to under another name.
+
+    `edit_metadata` runs its 51 composition operations by renaming the operation and passing the
+    call to the composition workshop. Reading that as "delegates to the workshop" and taking the
+    workshop's whole schema gave each of the 51 the parameters of all the others - 62 of them for
+    an operation that reads three. The alias map beside the handler says which single operation the
+    call becomes, and that operation's own row is the answer.
+    """
+    if ".execute(" not in handler or 'put("operation"' not in handler:
+        return None
+    targets = re.findall(r"new\s+(\w+Tool)\(\)", handler)
+    if not targets:
+        return None
+    aliases = dict(ALIAS_PUT.findall(holder_source))
+    return targets[0], aliases.get(operation, operation)
+
+
+def facade_common_reads(source: str, handlers: set[str], depth: int = 5) -> set[str]:
+    """What a facade reads on the way from `execute` down to a registry handler.
+
+    A facade that resolves the thing before dispatching reads the arguments that name it and hands
+    the handler the resolved object, so no handler mentions them and every call carries them. The
+    composition workshop takes objectName, templateName, formFqn and nestedSchemaName two calls
+    below `execute` and passes a schema down; attributed to nothing, the guard would refuse the one
+    argument that says which schema to work on, on every operation the facade has.
+
+    Registry handlers are left out of the walk - what they read is theirs alone, and folding it in
+    would give every operation the parameters of all the others.
+    """
+    names: set[str] = set()
+    seen: set[str] = set()
+    frontier = ["execute"]
+    for _ in range(depth):
+        following: list[str] = []
+        for method in frontier:
+            if method in seen or method in handlers or method in CONTROL_WORDS:
+                continue
+            seen.add(method)
+            body = method_body(source, method)
+            if not body:
+                continue
+            names |= set(EXTRACT.findall(body))
+            # Lookahead rather than a consuming match: `resultRef.set(dispatch(op, params))` has
+            # the call that matters nested inside another, and a consuming match swallows it.
+            following.extend(re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", body))
+        frontier = following
+    return names
+
+
+def registration_read_set(body: str, source: str, facade: str, fields: dict[str, str],
+                          operation: str = "") -> tuple[set[str], str, tuple[str, str] | None]:
+    """What one registration reads, and how that was established.
+
+    Everything established is added together rather than chosen between. For the guard that refuses
+    unread arguments a set that is too wide only refuses less; one that is too narrow refuses calls
+    that work, which is the failure this whole map exists to prevent.
+    """
+    names: set[str] = set()
+    how = ""
+    simple = SIMPLE_CALL.match(body.strip())
+    if simple:
+        receiver, method = simple.group(1), simple.group(2)
+        holder_source, holder_name = source, facade
+        if receiver and receiver in fields:
+            holder = OPS / f"{fields[receiver]}.java"
+            if holder.is_file():
+                holder_source = holder.read_text(encoding="utf-8")
+                holder_name = fields[receiver]
+        handler = method_body(holder_source, method)
+        if handler:
+            renamed = forwarded_operation(handler, holder_source, operation)
+            names = set(EXTRACT_ANY.findall(handler))
+            names |= names_read_through_a_loop(handler, holder_source)
+            how = f"handler {holder_name}.{method}"
+            forwarded_names, forwarded = parameters_of(handler, holder_source)
+            if forwarded_names:
+                names |= forwarded_names
+                if forwarded:
+                    how += f", {forwarded}"
+            if renamed:
+                how += f", renamed to {renamed[1]}"
+            return names, how, renamed
+    # The lambda does the work itself, or checks a preset gate before handing the call to a
+    # standalone tool - `new AttributeAdder().execute(p)`, whose own schema names the parameters.
+    names = set(EXTRACT_ANY.findall(body))
+    delegated, delegation = parameters_of(body, source)
+    if delegated:
+        names |= delegated
+        how = f"registration, {delegation}" if delegation else "registration"
+    elif names:
+        how = "registration"
+    return names, how, None
 
 
 def registry_operations(path: pathlib.Path, source: str) -> dict[str, dict[str, object]]:
@@ -281,32 +581,24 @@ def registry_operations(path: pathlib.Path, source: str) -> dict[str, dict[str, 
     handler through a lambda. Its 161 operations carry the schema this whole exercise exists to
     shrink, so leaving them out would make the map cover everything except the part that matters.
     """
-    entries = REGISTRY_ENTRY.findall(source)
+    entries = registry_entries(source)
     if not entries:
         return {}
     fields = {name: type_name for type_name, name in FIELD_TYPE.findall(source)}
+    handler_methods = set()
+    for _, registration in entries:
+        simple = SIMPLE_CALL.match(registration.strip())
+        if simple:
+            handler_methods.add(simple.group(2))
+    common = facade_common_reads(source, handler_methods) - CALL_KEYS
     found: dict[str, dict[str, object]] = {}
-    for operation, receiver, method in entries:
-        names: set[str] = set()
-        how = ""
-        holder_source = source
-        holder_name = path.stem
-        if receiver and receiver in fields:
-            holder = OPS / f"{fields[receiver]}.java"
-            if holder.is_file():
-                holder_source = holder.read_text(encoding="utf-8")
-                holder_name = fields[receiver]
-        body = method_body(holder_source, method)
-        if body:
-            names = set(EXTRACT_ANY.findall(body))
-            how = f"handler {holder_name}.{method}"
-            if not names:
-                # A handler that only forwards - `delegateToEditForm("add_field", p)` hands the whole
-                # request to another facade under that name. The parameters are that facade's, and
-                # the same resolution the switch branches get applies here.
-                names, forwarded = parameters_of(body, holder_source)
-                how = f"handler {holder_name}.{method}" + (f", {forwarded}" if forwarded else "")
+    for operation, body in entries:
+        names, how, renamed = registration_read_set(body, source, path.stem, fields, operation)
+        if common:
+            names = set(names) | common
         found[f"{path.stem}:{operation}"] = {
+            "renamed": renamed,
+            "common": sorted(common),
             "facade": path.stem,
             "operation": operation,
             "parameters": sorted(names),
@@ -323,8 +615,14 @@ def collect() -> dict[str, dict[str, object]]:
         body = dispatch_body(source)
         if not body:
             continue
+        # A facade that dispatches with a switch reads its shared arguments before it, exactly as a
+        # registry one does - the form facade takes formFqn there and every branch works on the form
+        # it found. Left out, the operations another facade delegates to these lose the argument
+        # that names the form, and the guard refuses every call carrying it.
+        common = facade_common_reads(source, set()) - CALL_KEYS
         for operation, branch in branches(body).items():
             names, how = parameters_of(branch, source)
+            names = set(names) | common
             key = f"{path.stem}:{operation}"
             result[key] = {
                 "facade": path.stem,
@@ -332,7 +630,31 @@ def collect() -> dict[str, dict[str, object]]:
                 "parameters": sorted(names),
                 "how": how,
             }
+    resolve_renamed(result)
     return result
+
+
+def resolve_renamed(rows: dict[str, dict[str, object]]) -> None:
+    """Fill in the rows whose call is handed to another facade under another name.
+
+    Done after every facade has been read, because the target row is another facade's and may not
+    exist yet while this one is being worked out.
+    """
+    for row in rows.values():
+        renamed = row.pop("renamed", None)
+        common = row.pop("common", [])
+        if not renamed:
+            continue
+        target = rows.get(f"{renamed[0]}:{renamed[1]}")
+        if not target:
+            # The rename points at a row nobody produced - the target facade dispatches some other
+            # way, or the alias names an operation that is gone. Whatever the reason, the answer is
+            # not a set of three: what the handler itself reads is already in place, and leaving it
+            # is the difference between a guard that lets a working call through and one that
+            # refuses it.
+            row["how"] += " - target row not found, read from the handler instead"
+            continue
+        row["parameters"] = sorted(set(target["parameters"]) | set(common))
 
 
 def unadvertised(found: dict[str, dict[str, object]]) -> list[str]:
@@ -359,6 +681,40 @@ def unadvertised(found: dict[str, dict[str, object]]) -> list[str]:
             if name not in advertised:
                 missing.append(f"{facade}:{name}")
     return missing
+
+
+def narrowed(found: dict[str, dict[str, object]]) -> list[str]:
+    """Operations that would come out reading LESS than the committed map says they read.
+
+    Every other check here asks whether the map is complete. This one asks whether a change to the
+    derivation took something away, which is the failure with teeth: the guard refuses an argument
+    the map does not name, so a parameter that drops out of a row turns a call that worked into a
+    refusal. Caught this way once already - resolving a renamed delegation whose target row did not
+    exist replaced four rows with three parameters each, and one of the four was the form.
+
+    Compared against the committed resource, so it answers "did my edit take something away",
+    not "is the file on disk current" - which is what `stale` is for.
+    """
+    import subprocess
+    previous = subprocess.run(
+        ["git", "show", f"HEAD:{RESOURCE.relative_to(ROOT).as_posix()}"],
+        capture_output=True, text=True, encoding="utf-8", cwd=ROOT)
+    if previous.returncode != 0:
+        return []
+    was: dict[tuple[str, str], set[str]] = {}
+    for line in previous.stdout.split("\n"):
+        cells = line.split("\t")
+        if len(cells) >= 3 and not line.startswith("#"):
+            was[(cells[0], cells[1])] = {name for name in cells[2].split(",") if name}
+    lost = []
+    for row in found.values():
+        key = (str(row["facade"]), str(row["operation"]))
+        if key not in was:
+            continue
+        missing = was[key] - set(row["parameters"]) - CALL_KEYS
+        if missing:
+            lost.append(f"{key[0]}:{key[1]} no longer reads {', '.join(sorted(missing))}")
+    return sorted(lost)
 
 
 def baseline() -> set[str]:
@@ -450,6 +806,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--no-narrowing", action="store_true",
+                        help="fail when a row would read less than the committed map says")
     args = parser.parse_args()
 
     found = collect()
@@ -468,6 +826,26 @@ def main() -> int:
             return 1
     else:
         write_report(found)
+
+    if args.no_narrowing:
+        lost = narrowed(found)
+        if lost:
+            print("these would read less than the committed map says they do:", file=sys.stderr)
+            for line in lost:
+                print(f"  {line}", file=sys.stderr)
+            print("a parameter dropping out of a row turns a call that worked into a refusal",
+                  file=sys.stderr)
+            return 1
+
+    stray = unclassified_helpers()
+    if stray:
+        print("these take the argument map and a name, and nothing says whether they read it:",
+              file=sys.stderr)
+        for name in stray:
+            print(f"  {name}", file=sys.stderr)
+        print("add each to READER_HELPERS or to NOT_READERS in this script - a reader left out "
+              "makes the map short, and a short map refuses calls that work", file=sys.stderr)
+        return 1
 
     hidden = unadvertised(found)
     known = baseline()

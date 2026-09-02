@@ -226,6 +226,27 @@ public final class McpServerMeta
     public static final String METHOD_RESOURCES_READ = "resources/read"; //$NON-NLS-1$
 
     /**
+     * The templates half of the resources capability.
+     * <p>
+     * Declared capabilities are a promise: this server advertises {@code resources}, so a client
+     * may call every method of that capability. Answering one of them with "method not found"
+     * makes the server look broken to a client that reads the promise and asks - which is what a
+     * Cursor discovery pass does before it will show any tool at all.
+     * </p>
+     */
+    public static final String METHOD_RESOURCES_TEMPLATES_LIST = "resources/templates/list"; //$NON-NLS-1$
+
+    /**
+     * Asked by clients that probe rather than read the declared capabilities.
+     * <p>
+     * This server declares no prompts, so a client that goes by the capabilities never sends this.
+     * Some send it anyway and take the error for a failed handshake, and an empty list costs
+     * nothing to return.
+     * </p>
+     */
+    public static final String METHOD_PROMPTS_LIST = "prompts/list"; //$NON-NLS-1$
+
+    /**
      * The scheme this server's resources are addressed under.
      * <p>
      * Its own scheme rather than {@code file:} on purpose: a description may be packaged inside the

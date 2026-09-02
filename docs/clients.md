@@ -33,6 +33,10 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 }
 ```
 
+Новый сервер Cursor не загружает, пока он не одобрен: `cursor-agent mcp list` показывает его как `not loaded (needs approval)`, а в редакторе он остаётся пустым. Одобрить - в интерфейсе Cursor либо командой `cursor-agent mcp enable AI-EDT`. После одобрения `cursor-agent mcp list-tools AI-EDT` перечисляет инструменты.
+
+`"type": "sse"` в записи **не указывать**. Замерено 02.09.2026 на Cursor CLI: с одним `url` сервер отвечает `ready` и отдаёт полный список инструментов, а с `"type": "sse"` - `Error: Connection failed`. Сервер отвечает по Streamable HTTP, и значение `sse` переводит клиента на прежний транспорт, которого он здесь не получит.
+
 ## VS Code / GitHub Copilot
 
 `.vscode/mcp.json`:

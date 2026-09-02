@@ -158,6 +158,19 @@ public class DcsWorkshopTool implements IMcpTool
                 "Destination expression for add_dataset_link") //$NON-NLS-1$
             .stringProperty("property", "Property name for set_*_property ops") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("value", "Property/parameter value for set_* ops") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("parentPath", //$NON-NLS-1$
+                "add_grouping: the group to nest the new one inside, as dot-separated group " //$NON-NLS-1$
+                    + "names ('Объект.Статья'). Omitted means the root of the structure. Space " //$NON-NLS-1$
+                    + "around a step is ignored. A group a name cannot reach - one with no name, " //$NON-NLS-1$
+                    + "with a dot in it, or one of two with the same name - is addressed by its " //$NON-NLS-1$
+                    + "position at its level, as [0].") //$NON-NLS-1$
+            .stringProperty("variantName", //$NON-NLS-1$
+                "set_settings_parameter: the settings variant to work on. Omitted means the " //$NON-NLS-1$
+                    + "default settings, which is the first variant. A dynamic list has no " //$NON-NLS-1$
+                    + "variants and refuses this argument.") //$NON-NLS-1$
+            .stringProperty("userSettingID", //$NON-NLS-1$
+                "set_settings_parameter: the identifier under which the parameter appears in " //$NON-NLS-1$
+                    + "user settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
             .integerProperty("index", //$NON-NLS-1$
                 "0-based item index for remove/set settings-item ops") //$NON-NLS-1$
             .stringProperty("viewMode", //$NON-NLS-1$
@@ -2711,14 +2724,119 @@ public class DcsWorkshopTool implements IMcpTool
         // Give the group an Auto order + Auto selection (like the EDT wizard) so its
         // "Сортировка" and "Выбранные поля" tabs show <Авто> instead of being empty.
         addGroupAutoOrderSelection(group);
-        // Grouping structure items live directly on DataCompositionSettings.getItems().
-        EList<EObject> structureItems = BmDcsHelper.getEObjectList(settings, "getItems"); //$NON-NLS-1$
-        if (structureItems == null)
-        {
-            throw new RuntimeException("DefaultSettings.getItems() not available"); //$NON-NLS-1$
-        }
+        String parentPath = JsonUtils.extractStringArgument(params, "parentPath"); //$NON-NLS-1$
+        EList<EObject> structureItems = structureToAddTo(settings, parentPath);
         structureItems.add((EObject) group);
-        return "grouping by " + field + " (" + groupingType + ")"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return "grouping by " + field + " (" + groupingType + ")" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + (parentPath == null || parentPath.isEmpty() ? "" : " inside " + parentPath); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The structure a new item is added to: the root of the settings, or a group named by a path.
+     * <p>
+     * Every item used to go to {@code settings.getItems()}, so a second call put a second grouping
+     * beside the first instead of inside it and there was no way to build a hierarchy but to move
+     * the XML by hand. A step is a group's name; an unnamed group - the detail records the wizard
+     * leaves nameless - is addressed by its position at its level as {@code [0]}.
+     * </p>
+     *
+     * @param settings the settings to work in.
+     * @param parentPath dot-separated group names, empty or <code>null</code> for the root.
+     * @return the list to add to, never <code>null</code>
+     */
+    private EList<EObject> structureToAddTo(Object settings, String parentPath)
+    {
+        EList<EObject> level = BmDcsHelper.getEObjectList(settings, "getItems"); //$NON-NLS-1$
+        if (level == null)
+        {
+            throw new RuntimeException("Settings.getItems() not available"); //$NON-NLS-1$
+        }
+        if (parentPath == null || parentPath.trim().isEmpty())
+        {
+            return level;
+        }
+        StringBuilder walked = new StringBuilder();
+        // Split keeping the trailing empties: 'Объект.' would otherwise come back as one step and
+        // put the grouping inside Объект, which is not what a path ending in a separator says.
+        for (String rawStep : parentPath.split("\\.", -1)) //$NON-NLS-1$
+        {
+            String step = rawStep.trim();
+            if (step.isEmpty())
+            {
+                throw new RuntimeException("parentPath has an empty step: '" + parentPath //$NON-NLS-1$
+                    + "'. Steps are group names separated by a dot."); //$NON-NLS-1$
+            }
+            EObject group = groupAt(level, step, walked.toString());
+            EList<EObject> inside = BmDcsHelper.getEObjectList(group, "getItems"); //$NON-NLS-1$
+            if (inside == null)
+            {
+                throw new RuntimeException("'" + step //$NON-NLS-1$
+                    + "' holds no structure of its own, so nothing can go inside it"); //$NON-NLS-1$
+            }
+            if (walked.length() > 0)
+            {
+                walked.append('.');
+            }
+            walked.append(step);
+            level = inside;
+        }
+        return level;
+    }
+
+    /**
+     * One step of a structure path.
+     *
+     * @param level the items to look in.
+     * @param step a group name, or a position in brackets.
+     * @param walked the path so far, for the refusal to quote.
+     * @return the group that step names
+     */
+    private EObject groupAt(EList<EObject> level, String step, String walked)
+    {
+        String where = walked.isEmpty() ? "the root" : "'" + walked + "'"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (step.startsWith("[") && step.endsWith("]")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            int index;
+            try
+            {
+                index = Integer.parseInt(step.substring(1, step.length() - 1).trim());
+            }
+            catch (NumberFormatException e)
+            {
+                throw new RuntimeException("'" + step + "' is not a position - write it as [0]"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (index < 0 || index >= level.size())
+            {
+                throw new RuntimeException(where + " holds " + level.size() //$NON-NLS-1$
+                    + " item(s), so " + step + " addresses nothing"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return level.get(index);
+        }
+        List<EObject> matches = new ArrayList<>();
+        List<String> present = new ArrayList<>();
+        for (int i = 0; i < level.size(); i++)
+        {
+            EObject candidate = level.get(i);
+            Object candidateName = invokeGetter(candidate, "getName"); //$NON-NLS-1$
+            String asText = candidateName == null ? "" : String.valueOf(candidateName); //$NON-NLS-1$
+            present.add(asText.isEmpty() ? "[" + i + "]" : asText); //$NON-NLS-1$ //$NON-NLS-2$
+            if (step.equals(asText))
+            {
+                matches.add(candidate);
+            }
+        }
+        if (matches.isEmpty())
+        {
+            throw notFoundTag(step + " in " + where + " (available: " + present //$NON-NLS-1$ //$NON-NLS-2$
+                + "; an unnamed group is addressed by its position, as [0])", //$NON-NLS-1$
+                "settingsStructureItem"); //$NON-NLS-1$
+        }
+        if (matches.size() > 1)
+        {
+            throw new RuntimeException(where + " holds " + matches.size() + " groups named '" //$NON-NLS-1$ //$NON-NLS-2$
+                + step + "' - address the one you mean by its position, as [0]"); //$NON-NLS-1$
+        }
+        return matches.get(0);
     }
 
     /**
@@ -3093,23 +3211,187 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.41 / 4c: locates an existing parameter in
-     * {@code Settings.getDataParameters().getItems()} by name and overwrites
-     * its value.
+     * A settings entry for a data parameter the schema declares.
+     * <p>
+     * A {@code SettingsParameterValue} rather than the plain carrier: it is the one that holds a
+     * {@code userSettingID}, which is what puts the parameter in front of a user.
+     * </p>
+     *
+     * @param schema the schema whose parameters are the ones that may be set.
+     * @param name the parameter to set.
+     * @param present the keys already in the settings, for the refusal to name.
+     * @return the new entry, not yet added to anything
+     */
+    private EObject newParameterEntry(EObject schema, String name, List<String> present)
+    {
+        EList<EObject> schemaParameters = BmDcsHelper.getEObjectList(schema, "getParameters"); //$NON-NLS-1$
+        if (schemaParameters == null)
+        {
+            // A dynamic list's settings are their own top object: there is no schema above them to
+            // declare anything, so there is nothing to check the name against. Refusing every name
+            // for want of a list would leave the operation unable to set a parameter at all.
+            return namedEntry(name);
+        }
+        List<String> declared = new ArrayList<>();
+        for (EObject parameter : schemaParameters)
+        {
+            Object parameterName = invokeGetter(parameter, "getName"); //$NON-NLS-1$
+            if (parameterName != null)
+            {
+                declared.add(String.valueOf(parameterName));
+            }
+        }
+        // Matched the way an existing entry is matched, which ignores case; the key then takes the
+        // spelling the schema declares, so a parameter set by a differently cased name still
+        // addresses the one the schema has rather than sitting beside it under another spelling.
+        String asDeclared = null;
+        for (String candidate : declared)
+        {
+            if (candidate.equalsIgnoreCase(name))
+            {
+                asDeclared = candidate;
+                break;
+            }
+        }
+        if (asDeclared == null)
+        {
+            throw notFoundTag(name + " (the settings carry " + present //$NON-NLS-1$
+                + "; the schema declares " + declared //$NON-NLS-1$
+                + " - add_parameter declares one)", "settingsParameter"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return namedEntry(asDeclared);
+    }
+
+    /**
+     * A settings entry carrying one parameter name.
+     *
+     * @param name the name to put on it.
+     * @return the entry, not yet added to anything
+     */
+    private EObject namedEntry(String name)
+    {
+        Object entry = BmDcsHelper.createElement("createSettingsParameterValue"); //$NON-NLS-1$
+        Object key = BmDcsHelper.createElement("createDataCompositionParameter"); //$NON-NLS-1$
+        if (entry == null || key == null)
+        {
+            throw new RuntimeException("A settings parameter value could not be created"); //$NON-NLS-1$
+        }
+        String keyError = BmDcsHelper.setProperty(key, "value", name); //$NON-NLS-1$
+        String entryError = BmDcsHelper.setProperty(entry, "parameter", key); //$NON-NLS-1$
+        if (keyError != null || entryError != null)
+        {
+            throw new RuntimeException("A settings parameter value could not be named '" + name //$NON-NLS-1$
+                + "': " + (keyError != null ? keyError : entryError)); //$NON-NLS-1$
+        }
+        return (EObject)entry;
+    }
+
+    /**
+     * The settings a call works on: those of a named variant, or the default ones.
+     * <p>
+     * Without {@code variantName} this is what every other settings operation uses - the first
+     * variant, created when the schema has none. A dynamic list's settings are their own top object
+     * with no variants above them, so naming one there is refused rather than ignored.
+     * </p>
+     *
+     * @param schema the schema, or a settings container in the case of a dynamic list.
+     * @param params the call.
+     * @return the settings to work on, never <code>null</code>
+     */
+    private Object settingsToWorkOn(EObject schema, Map<String, String> params)
+    {
+        String variantName = JsonUtils.extractStringArgument(params, "variantName"); //$NON-NLS-1$
+        if (variantName == null || variantName.isEmpty())
+        {
+            Object settings = ensureDefaultSettings(schema);
+            if (settings == null)
+            {
+                throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
+            }
+            return settings;
+        }
+        if (alreadyASettingsContainer(schema))
+        {
+            throw new RuntimeException("variantName names a settings variant, and a dynamic " //$NON-NLS-1$
+                + "list has none - its settings are the whole of it. Drop variantName."); //$NON-NLS-1$
+        }
+        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
+        if (variants == null)
+        {
+            throw new RuntimeException("Schema.getSettingsVariants() not available"); //$NON-NLS-1$
+        }
+        EObject variant = BmDcsHelper.findByNameInList(schema, "getSettingsVariants", variantName); //$NON-NLS-1$
+        if (variant == null && variants.isEmpty())
+        {
+            // A schema with no variants at all gets one, the same way a call without variantName
+            // gets one - refusing here while the default path creates a variant named the very
+            // same thing would be two answers to one question.
+            Object made = BmDcsHelper.createElement("createSettingsVariant"); //$NON-NLS-1$
+            if (made == null)
+            {
+                throw new RuntimeException("The schema has no settings variants and one could " //$NON-NLS-1$
+                    + "not be created"); //$NON-NLS-1$
+            }
+            BmDcsHelper.setProperty(made, "name", variantName); //$NON-NLS-1$
+            setPresentationProperty(made, "presentation", variantName); //$NON-NLS-1$
+            variants.add((EObject)made);
+            variant = (EObject)made;
+        }
+        if (variant == null)
+        {
+            List<String> available = new ArrayList<>();
+            for (EObject candidate : variants)
+            {
+                Object candidateName = invokeGetter(candidate, "getName"); //$NON-NLS-1$
+                if (candidateName != null)
+                {
+                    available.add(String.valueOf(candidateName));
+                }
+            }
+            throw notFoundTag(variantName + " (available: " + available + ")", //$NON-NLS-1$ //$NON-NLS-2$
+                "settingsVariant"); //$NON-NLS-1$
+        }
+        Object settings = invokeGetter(variant, "getSettings"); //$NON-NLS-1$
+        if (settings == null)
+        {
+            settings = BmDcsHelper.createElement("createDataCompositionSettings"); //$NON-NLS-1$
+            if (settings == null || BmDcsHelper.setProperty(variant, "settings", settings) != null) //$NON-NLS-1$
+            {
+                throw new RuntimeException("Variant '" + variantName //$NON-NLS-1$
+                    + "' has no settings and they could not be created"); //$NON-NLS-1$
+            }
+        }
+        return settings;
+    }
+
+    /**
+     * Sets a data parameter of the default settings or of a named variant.
+     * <p>
+     * The container and the entry are created when they are not there. An absent container used to
+     * be reported as {@code getDataParameters() not available}, which named the wrong thing: the
+     * property exists on every settings object and carries nothing until something is put in it.
+     * </p>
+     * <p>
+     * An entry is created only for a parameter the schema declares. Creating one for a name the
+     * schema does not know would write a setting nothing reads, and the caller would see success.
+     * </p>
      */
     private Object doSetSettingsParameter(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
-        Object settings = ensureDefaultSettings(schema);
-        if (settings == null)
-        {
-            throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
-        }
+        String userSettingID = JsonUtils.extractStringArgument(params, "userSettingID"); //$NON-NLS-1$
+        Object settings = settingsToWorkOn(schema, params);
         Object dataParameters = invokeGetter(settings, "getDataParameters"); //$NON-NLS-1$
         if (dataParameters == null)
         {
-            throw new RuntimeException("DefaultSettings.getDataParameters() not available"); //$NON-NLS-1$
+            dataParameters = BmDcsHelper.createElement("createDataCompositionDataParameterValues"); //$NON-NLS-1$
+            if (dataParameters == null
+                || BmDcsHelper.setProperty(settings, "dataParameters", dataParameters) != null) //$NON-NLS-1$
+            {
+                throw new RuntimeException("The settings carry no data parameters and the " //$NON-NLS-1$
+                    + "container could not be created"); //$NON-NLS-1$
+            }
         }
         EList<EObject> items = BmDcsHelper.getEObjectList(dataParameters, "getItems"); //$NON-NLS-1$
         if (items == null)
@@ -3137,10 +3419,20 @@ public class DcsWorkshopTool implements IMcpTool
                 break;
             }
         }
-        if (found == null)
+        boolean created = found == null;
+        if (created)
         {
-            throw notFoundTag(name + " (available: " + availableKeys + ")", //$NON-NLS-1$ //$NON-NLS-2$
-                "settingsParameter"); //$NON-NLS-1$
+            found = newParameterEntry(schema, name, availableKeys);
+            items.add(found);
+        }
+        if (userSettingID != null && !userSettingID.isEmpty())
+        {
+            String idError = BmDcsHelper.setProperty(found, "userSettingID", userSettingID); //$NON-NLS-1$
+            if (idError != null)
+            {
+                throw new RuntimeException("userSettingID could not be set on '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                    + idError);
+            }
         }
         EList<EObject> vals = BmDcsHelper.getEObjectList(found, "getValues"); //$NON-NLS-1$
         if (vals == null)
@@ -3154,7 +3446,7 @@ public class DcsWorkshopTool implements IMcpTool
             vals.add((EObject) lv);
         }
         BmDcsHelper.setProperty(found, "use", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-        return "settings parameter '" + name + "' set"; //$NON-NLS-1$ //$NON-NLS-2$
+        return "settings parameter '" + name + (created ? "' added and set" : "' set"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
     /**
