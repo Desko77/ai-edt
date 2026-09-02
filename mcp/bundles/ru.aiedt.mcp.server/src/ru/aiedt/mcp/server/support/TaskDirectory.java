@@ -163,18 +163,52 @@ public final class TaskDirectory
     }
 
     /**
-     * Evicts tasks past their TTL.
+     * Evicts tasks past their own lifetime, which is at least {@link #TTL_MS} and at least as
+     * long as their domain keeps the run.
      */
     public void prune()
     {
         long now = System.currentTimeMillis();
+        boolean domainsPruned = false;
         Iterator<Map.Entry<String, Task>> it = tasks.entrySet().iterator();
         while (it.hasNext())
         {
-            if (now - it.next().getValue().createdAt > TTL_MS)
+            Task task = it.next().getValue();
+            if (now - task.createdAt <= task.lifetimeMs)
             {
-                it.remove();
+                continue;
             }
+            if (task.isTerminal())
+            {
+                if (now - task.lastUpdatedAt <= TTL_MS)
+                {
+                    // It finished after its nominal lifetime had passed, which the lifetime does
+                    // not account for. Dropping it here would destroy a result nobody has had the
+                    // chance to collect.
+                    continue;
+                }
+            }
+            else
+            {
+                if (!domainsPruned)
+                {
+                    // Nothing else prunes a domain when the only caller left is a task poll, and
+                    // an entry kept past its own lifetime would keep this task alive forever.
+                    for (PendingWorkRegistry domain : PendingWorkRegistry.domains())
+                    {
+                        domain.pruneExpired();
+                    }
+                    domainsPruned = true;
+                }
+                if (PendingWorkRegistry.domainOf(task.runKey) != null)
+                {
+                    // Its run is still tracked, so the handle to it stays whatever the clock says.
+                    // A task's lifetime counts from when it opened and a run's age counts from
+                    // when it began, so a run that waited before starting outlives its handle.
+                    continue;
+                }
+            }
+            it.remove();
         }
     }
 
@@ -206,6 +240,18 @@ public final class TaskDirectory
         /** When the task was opened. */
         public final long createdAt = System.currentTimeMillis();
 
+        /**
+         * How long this task is kept.
+         * <p>
+         * At least {@link TaskDirectory#TTL_MS}, and never less than its domain keeps the run
+         * itself: a task dropped while its run is still executing leaves the caller holding a
+         * handle to a run it can no longer reach. Fixed when the task opens, because a domain is
+         * found by looking the key up among the runs it holds, and that stops answering the moment
+         * the run ends.
+         * </p>
+         */
+        public final long lifetimeMs;
+
         /** When it last moved. */
         public volatile long lastUpdatedAt = System.currentTimeMillis();
 
@@ -224,6 +270,8 @@ public final class TaskDirectory
         Task(String runKey, String operation, String toolName, Map<String, String> arguments)
         {
             this.runKey = runKey;
+            PendingWorkRegistry domain = PendingWorkRegistry.domainOf(runKey);
+            this.lifetimeMs = domain == null ? TTL_MS : Math.max(TTL_MS, domain.abandonedTtlMs());
             this.operation = operation;
             this.toolName = toolName;
             this.arguments = arguments == null ? new LinkedHashMap<>() : new LinkedHashMap<>(arguments);
@@ -243,15 +291,41 @@ public final class TaskDirectory
                 return;
             }
             PendingWorkRegistry registry = PendingWorkRegistry.domainOf(runKey);
-            if (registry != null)
-            {
-                registry.cancel(runKey);
-            }
-            statusMessage = "Cancellation was asked for and this server stopped waiting on the run. " //$NON-NLS-1$
-                + "The work itself may still be finishing: a Designer-mode process cannot be " //$NON-NLS-1$
-                + "interrupted once started."; //$NON-NLS-1$
+            PendingWorkRegistry.StopOutcome stopping = registry == null
+                ? PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP
+                : registry.cancelAndStop(runKey);
+            statusMessage = cancellationMessage(stopping);
             status = CANCELLED;
             lastUpdatedAt = System.currentTimeMillis();
+        }
+
+        /**
+         * What the caller is told, according to what stopping actually came to.
+         * <p>
+         * Read from the outcome rather than from whether the domain has a stopper at all: a
+         * stopper that asked and was refused is not a stopper that stopped anything, and a caller
+         * told otherwise reads the run as done with whatever it was holding.
+         * </p>
+         *
+         * @param stopping what the domain reported.
+         * @return the sentence for the caller
+         */
+        private static String cancellationMessage(PendingWorkRegistry.StopOutcome stopping)
+        {
+            if (stopping == PendingWorkRegistry.StopOutcome.STOPPED)
+            {
+                return "Cancellation was asked for. This server stopped waiting on the run, and " //$NON-NLS-1$
+                    + "the domain stopped the work it had started. What that work had already " //$NON-NLS-1$
+                    + "written stays written."; //$NON-NLS-1$
+            }
+            if (stopping == PendingWorkRegistry.StopOutcome.STILL_RUNNING)
+            {
+                return "Cancellation was asked for and the work was told to stop, but it had " //$NON-NLS-1$
+                    + "not stopped. It may still be running and still writing."; //$NON-NLS-1$
+            }
+            return "Cancellation was asked for and this server stopped waiting on the run. The " //$NON-NLS-1$
+                + "work itself may still be finishing: a Designer-mode process cannot be " //$NON-NLS-1$
+                + "interrupted once started."; //$NON-NLS-1$
         }
 
         /**
