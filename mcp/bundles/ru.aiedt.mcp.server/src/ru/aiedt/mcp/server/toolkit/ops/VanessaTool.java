@@ -26,6 +26,7 @@ import org.eclipse.jface.preference.IPreferenceStore;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.AllureResultReader;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InfobaseAddress;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
@@ -600,9 +601,11 @@ public class VanessaTool implements IMcpTool
             Activator.logInfo("vanessa: exit=" + pr.exitCode + " timedOut=" + pr.timedOut //$NON-NLS-1$ //$NON-NLS-2$
                 + " output:\n" + redactSecrets(pr.output)); //$NON-NLS-1$
 
-            // A kept-open (or slow) run may have written the JUnit report before the process
-            // was killed on timeout - prefer a real report over a bare timeout error.
-            if (!junitFile.isFile())
+            // A kept-open (or slow) run may have written the report before the process was
+            // killed on timeout - prefer a real report over a bare timeout error.
+            File resultDir = junitFile.getAbsoluteFile().getParentFile();
+            boolean vanessaReported = AllureResultReader.resultsIn(resultDir).length > 0;
+            if (!vanessaReported && !junitFile.isFile())
             {
                 if (pr.timedOut)
                 {
@@ -627,7 +630,8 @@ public class VanessaTool implements IMcpTool
                     .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
             }
 
-            JUnitRunOutcome results = JUnitXmlReader.parse(junitFile);
+            JUnitRunOutcome results = vanessaReported
+                ? AllureResultReader.parse(resultDir) : JUnitXmlReader.parse(junitFile);
             List<String> shots = collectScreenshots(shotsDir);
             java.util.Map<String, String> pathByName = new java.util.LinkedHashMap<>();
             for (String path : shots)
@@ -1010,8 +1014,13 @@ public class VanessaTool implements IMcpTool
         {
             o.addProperty("ФайлСценария", featurePath.getAbsolutePath()); //$NON-NLS-1$
         }
-        o.addProperty("СохранятьРезультатыВФорматеJUnit", true); //$NON-NLS-1$
-        o.addProperty("ПутьКФайлуРезультатовJUnit", junitFile.getAbsolutePath()); //$NON-NLS-1$
+        // Vanessa has no JUnit parameters of its own: its documented keys for a machine
+        // readable result are the Allure pair, and the xml it writes there is what a JUnit
+        // reader consumes. Asked under the names below, it writes nothing and reports nothing,
+        // which reads as a run that produced no result.
+        o.addProperty("ДелатьОтчетВФорматеАллюр", true); //$NON-NLS-1$
+        o.addProperty("КаталогOutputAllureБазовый", //$NON-NLS-1$
+            junitFile.getAbsoluteFile().getParentFile().getAbsolutePath());
         o.addProperty("ДелатьСкриншотПриОшибке", screenshots); //$NON-NLS-1$
         o.addProperty("КаталогСохраненияСкриншотов", shotsDir.getAbsolutePath()); //$NON-NLS-1$
         o.addProperty("ЗакрыватьTestClientПослеПрогона", !keepOpen); //$NON-NLS-1$
@@ -1751,6 +1760,42 @@ public class VanessaTool implements IMcpTool
                 RUNNING.remove(runKey, proc);
             }
         }
+    }
+
+    /**
+     * The result file of a run: the one this asked for, or the xml Vanessa wrote beside it.
+     * <p>
+     * Vanessa names the files it writes itself, so the run directory is searched when the
+     * expected name is not there. The newest is taken: a directory of this run holds only
+     * what this run put in it.
+     * </p>
+     *
+     * @param asked the file this run asked Vanessa for.
+     * @return that file when it exists, otherwise the newest xml beside it, otherwise the
+     *         file that was asked for
+     */
+    static File theResultOf(File asked)
+    {
+        if (asked == null || asked.isFile())
+        {
+            return asked;
+        }
+        File dir = asked.getAbsoluteFile().getParentFile();
+        File[] xml = dir == null ? null
+            : dir.listFiles((d, name) -> name.toLowerCase(Locale.ROOT).endsWith(".xml")); //$NON-NLS-1$
+        if (xml == null || xml.length == 0)
+        {
+            return asked;
+        }
+        File newest = xml[0];
+        for (File one : xml)
+        {
+            if (one.lastModified() > newest.lastModified())
+            {
+                newest = one;
+            }
+        }
+        return newest;
     }
 
     /** Seconds to wait for a stopped client to actually be gone. */
