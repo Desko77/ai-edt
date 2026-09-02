@@ -207,6 +207,36 @@ public class McpRequestRouterTest
             request(1, McpServerMeta.METHOD_INITIALIZED, null)));
     }
 
+    // ---- what a declared capability promises ----
+
+    @Test
+    public void theTemplatesHalfOfResourcesIsAnsweredRatherThanRefused()
+    {
+        // The handshake declares the resources capability, so a client may call every method of
+        // it. Answering one with "method not found" makes the server look broken to a client that
+        // reads the declaration and asks - and a discovery pass that fails shows no tools at all.
+        JsonObject result = send(request(1, McpServerMeta.METHOD_RESOURCES_TEMPLATES_LIST, null))
+            .getAsJsonObject("result");
+
+        assertNotNull("a declared capability answers its own methods", result); //$NON-NLS-1$
+        assertTrue("the answer carries the list, empty though it is", //$NON-NLS-1$
+            result.has("resourceTemplates")); //$NON-NLS-1$
+        assertEquals("this server holds no resource templates", //$NON-NLS-1$
+            0, result.getAsJsonArray("resourceTemplates").size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void promptsAreAnsweredEmptyForAClientThatProbes()
+    {
+        JsonObject result = send(request(1, McpServerMeta.METHOD_PROMPTS_LIST, null))
+            .getAsJsonObject("result");
+
+        assertNotNull("a client that asks before reading the capabilities gets an answer", //$NON-NLS-1$
+            result);
+        assertEquals("there are none, which is not the same as a missing method", //$NON-NLS-1$
+            0, result.getAsJsonArray("prompts").size()); //$NON-NLS-1$
+    }
+
     // ---- tools/list ----
 
     @Test

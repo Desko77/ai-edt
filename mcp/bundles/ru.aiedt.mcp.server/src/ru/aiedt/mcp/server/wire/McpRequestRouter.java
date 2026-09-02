@@ -55,7 +55,8 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * Turns a JSON-RPC document into a tool call and the tool's answer back into a JSON-RPC document.
  * <p>
  * The methods recognized are {@code initialize}, {@code notifications/initialized},
- * {@code tools/list}, {@code tools/call}, {@code ping}, {@code resources/list},
+ * {@code tools/list}, {@code tools/call}, {@code ping}, {@code prompts/list},
+ * {@code resources/templates/list}, {@code resources/list},
  * {@code resources/read}, {@code server/discover} and the three {@code tasks/*} methods of the task
  * extension - everything else is a method-not-found. Transport
  * concerns (sockets, CORS, authentication, HTTP status, SSE framing) belong to the server that owns
@@ -212,6 +213,21 @@ public class McpRequestRouter
             if (McpServerMeta.METHOD_RESOURCES_READ.equals(method))
             {
                 return readResource(request, requestId, era);
+            }
+            if (McpServerMeta.METHOD_RESOURCES_TEMPLATES_LIST.equals(method))
+            {
+                // Part of the resources capability this server declares. It holds no templates -
+                // every resource it returns is named by the call that produced it - so the list is
+                // empty, which is an answer; "method not found" would contradict the declaration.
+                java.util.Map<String, Object> templates = new java.util.LinkedHashMap<>();
+                templates.put("resourceTemplates", new java.util.ArrayList<>()); //$NON-NLS-1$
+                return answer(requestId, templates, era);
+            }
+            if (McpServerMeta.METHOD_PROMPTS_LIST.equals(method))
+            {
+                java.util.Map<String, Object> prompts = new java.util.LinkedHashMap<>();
+                prompts.put("prompts", new java.util.ArrayList<>()); //$NON-NLS-1$
+                return answer(requestId, prompts, era);
             }
             if (McpServerMeta.METHOD_TASKS_GET.equals(method)
                 || McpServerMeta.METHOD_TASKS_CANCEL.equals(method)
