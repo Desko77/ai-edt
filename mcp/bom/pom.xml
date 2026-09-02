@@ -56,7 +56,7 @@
               <artifact>
                 <groupId>ru.aiedt.mcp</groupId>
                 <artifactId>default</artifactId>
-                <version>0.2.40-SNAPSHOT</version>
+                <version>0.2.41-SNAPSHOT</version>
               </artifact>
             </target>
             <dependency-resolution>
