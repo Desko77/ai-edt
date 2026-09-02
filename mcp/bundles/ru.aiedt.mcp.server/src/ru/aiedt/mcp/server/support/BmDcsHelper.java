@@ -56,6 +56,18 @@ public final class BmDcsHelper
     // (a String cannot be assigned where a DataCompositionField/Presentation is
     // expected). Package com._1c.g5.v8.dt.dcs.model.core must be in Import-Package.
     private static final String DCS_CORE_FACTORY = "com._1c.g5.v8.dt.dcs.model.core.DcsFactory"; //$NON-NLS-1$
+
+    /**
+     * The factory for the body of a template: its rows, its cells and what stands in them.
+     * <p>
+     * A separate factory from the schema's own, so a lookup that asks only the schema, the settings
+     * and the core factories finds none of these.
+     * </p>
+     */
+    private static final String DCS_AREA_TEMPLATE_FACTORY =
+        "com._1c.g5.v8.dt.dcs.model.areaTemplate.DcsFactory"; //$NON-NLS-1$
+
+    private static volatile Object cachedAreaTemplateFactory;
     private static final String DCS_SCHEMA = "com._1c.g5.v8.dt.dcs.model.schema.DataCompositionSchema"; //$NON-NLS-1$
     // 1.43.x DCS batch 4a: the mcore value model holds the literal value carriers
     // (StringValue / Value) that settings parameter values and filter right-values
@@ -1476,6 +1488,32 @@ public final class BmDcsHelper
      * e.g. {@code "createDataSetQuery"}. Resolves it on the cached
      * {@link #getFactory()} instance through reflection.
      */
+    /**
+     * The area-template factory instance, or <code>null</code> when this runtime has no such model.
+     *
+     * @return the factory
+     */
+    private static Object getAreaTemplateFactory()
+    {
+        Object cached = cachedAreaTemplateFactory;
+        if (cached != null)
+        {
+            return cached;
+        }
+        try
+        {
+            Class<?> factoryClass = Class.forName(DCS_AREA_TEMPLATE_FACTORY);
+            Object f = factoryClass.getField("eINSTANCE").get(null); //$NON-NLS-1$
+            cachedAreaTemplateFactory = f;
+            return f;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("BmDcsHelper.getAreaTemplateFactory failed: " + e.getMessage()); //$NON-NLS-1$
+            return null;
+        }
+    }
+
     public static Object createElement(String factoryMethodName)
     {
         // Schema-level elements live on the schema factory, settings-level on the
@@ -1494,10 +1532,17 @@ public final class BmDcsHelper
         // 1.43.x DCS catch-up: core factory (DataCompositionField / Presentation /
         // appearance value-carriers) is the third element source.
         result = invokeFactoryMethod(getCoreFactory(), factoryMethodName);
+        if (result != null)
+        {
+            return result;
+        }
+        // The body of a template - rows, cells, the fields standing in them - comes from its own
+        // factory, which is none of the three above.
+        result = invokeFactoryMethod(getAreaTemplateFactory(), factoryMethodName);
         if (result == null)
         {
             Activator.logWarning("DcsFactory." + factoryMethodName //$NON-NLS-1$
-                + " not found on schema, settings, or core factory"); //$NON-NLS-1$
+                + " not found on the schema, settings, core or area-template factory"); //$NON-NLS-1$
         }
         return result;
     }

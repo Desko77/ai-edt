@@ -47,6 +47,7 @@ com._1c.g5.v8.dt.core.platform.IExtensionProject
 com._1c.g5.v8.dt.core.platform.IResourceLookup
 com._1c.g5.v8.dt.core.platform.management.IDtHostResourceManager
 com._1c.g5.v8.dt.core.resource.IDtProjectAware setDtProject
+com._1c.g5.v8.dt.dcs.model.areaTemplate.DcsFactory eINSTANCE
 com._1c.g5.v8.dt.dcs.model.core.DcsFactory
 com._1c.g5.v8.dt.dcs.model.schema.DataCompositionSchema
 com._1c.g5.v8.dt.dcs.model.schema.DcsFactory

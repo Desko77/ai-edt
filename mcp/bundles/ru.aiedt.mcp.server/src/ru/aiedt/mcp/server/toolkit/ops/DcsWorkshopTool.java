@@ -215,6 +215,19 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("dataObjectName", //$NON-NLS-1$
                 "add_union_item dataSetType=Object: the object that child dataset reads. Distinct " //$NON-NLS-1$
                     + "from objectName, which names the owner whose schema is being edited.") //$NON-NLS-1$
+            .stringProperty("groupName", //$NON-NLS-1$
+                "add_group_template / remove_group_template: the grouping being drawn.") //$NON-NLS-1$
+            .booleanProperty("header", //$NON-NLS-1$
+                "add_group_template / remove_group_template: the grouping's header rather than " //$NON-NLS-1$
+                    + "its body. Default false.") //$NON-NLS-1$
+            .stringProperty("templateType", //$NON-NLS-1$
+                "add_group_template: Header / Footer / HierarchicalHeader / HierarchicalFooter / " //$NON-NLS-1$
+                    + "OverallHeader / OverallFooter.") //$NON-NLS-1$
+            .integerProperty("rowIndex", //$NON-NLS-1$
+                "add_template_cell: which row of the template body, 0-based. Default the last.") //$NON-NLS-1$
+            .stringProperty("schemaTemplateName", //$NON-NLS-1$
+                "The template INSIDE the schema that an operation works on. Distinct from " //$NON-NLS-1$
+                    + "templateName, which names the configuration template the schema lives in.") //$NON-NLS-1$
             .stringProperty("nestedSchemaName", //$NON-NLS-1$
                 "Name of a nested schema to work inside. Without it an operation applies to the " //$NON-NLS-1$
                     + "schema itself; with it, to the schema of that name within it.") //$NON-NLS-1$
@@ -1242,6 +1255,529 @@ public class DcsWorkshopTool implements IMcpTool
      * @param schema the schema root.
      * @return the name removed
      */
+    /**
+     * Adds a named template to the schema, with an empty body.
+     * <p>
+     * A schema names its templates and then says which field or grouping is drawn with each. The
+     * body is filled by add_template_row and add_template_cell.
+     * </p>
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    /**
+     * An integer argument, refusing a value that is not one.
+     * <p>
+     * A malformed value is not an absent value: reading {@code rowIndex=0.5} as "the default" puts
+     * the cell in a row the caller did not name and reports success.
+     * </p>
+     *
+     * @param params the arguments.
+     * @param key the argument name.
+     * @param fallback what an ABSENT argument means.
+     * @return the number asked for
+     */
+    private static int strictInt(Map<String, String> params, String key, int fallback)
+    {
+        String raw = JsonUtils.extractStringArgument(params, key);
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return fallback;
+        }
+        try
+        {
+            return Integer.parseInt(raw.trim());
+        }
+        catch (NumberFormatException notANumber)
+        {
+            throw new RuntimeException("'" + key + "' takes a whole number; '" + raw //$NON-NLS-1$ //$NON-NLS-2$
+                + "' is not one."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A true-or-false argument, refusing anything else.
+     *
+     * @param params the arguments.
+     * @param key the argument name.
+     * @param fallback what an ABSENT argument means.
+     * @return what was asked for
+     */
+    private static boolean strictFlag(Map<String, String> params, String key, boolean fallback)
+    {
+        String raw = JsonUtils.extractStringArgument(params, key);
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return fallback;
+        }
+        String value = raw.trim();
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return Boolean.parseBoolean(value);
+        }
+        throw new RuntimeException("'" + key + "' takes true or false; '" + raw //$NON-NLS-1$ //$NON-NLS-2$
+            + "' is neither."); //$NON-NLS-1$
+    }
+
+    /**
+     * What the schema still says is drawn with the named template, or <code>null</code>.
+     *
+     * @param schema the schema root.
+     * @param templateName the template.
+     * @return a readable list of what still names it
+     */
+    private String whatIsStillDrawnWith(EObject schema, String templateName)
+    {
+        StringBuilder using = new StringBuilder();
+        String[][] where = {
+            {"getFieldTemplates", "getField"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"getGroupTemplates", "getGroupName"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"getGroupHeaderTemplates", "getGroupName"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"getTotalFieldsTemplates", "getGroupName1"}}; //$NON-NLS-1$ //$NON-NLS-2$
+        for (String[] pair : where)
+        {
+            EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, pair[0]);
+            if (bindings == null)
+            {
+                continue;
+            }
+            for (EObject binding : bindings)
+            {
+                // The template was found without regard to case, so a binding naming it in
+                // another case still names it. Comparing exactly here let the removal through and
+                // left the binding pointing at nothing.
+                if (!templateName.equalsIgnoreCase(
+                    String.valueOf(invokeGetter(binding, "getTemplate")))) //$NON-NLS-1$
+                {
+                    continue;
+                }
+                Object what = invokeGetter(binding, pair[1]);
+                if (using.length() > 0)
+                {
+                    using.append(", "); //$NON-NLS-1$
+                }
+                using.append(what instanceof EObject ? fieldPathOf(what) : String.valueOf(what));
+            }
+        }
+        return using.length() > 0 ? using.toString() : null;
+    }
+
+    /**
+     * The area type the model gives a group template that was not told one.
+     *
+     * @param binding an entry of the collection.
+     * @return the default as text, or <code>null</code> when the model names none
+     */
+    private static String defaultAreaType(EObject binding)
+    {
+        org.eclipse.emf.ecore.EStructuralFeature feature =
+            binding.eClass().getEStructuralFeature("templateType"); //$NON-NLS-1$
+        Object fallback = feature == null ? null : feature.getDefaultValue();
+        return fallback == null ? null : String.valueOf(fallback);
+    }
+
+    /**
+     * The binding that says how a grouping is drawn, if there is one of that type.
+     *
+     * @param bindings the group templates of one collection.
+     * @param groupName the grouping.
+     * @param templateType the kind of area, or <code>null</code> for the model's default.
+     * @return the binding, or <code>null</code>
+     */
+    private EObject groupTemplateFor(EList<EObject> bindings, String groupName, String templateType)
+    {
+        for (EObject existing : bindings)
+        {
+            if (!groupName.equalsIgnoreCase(
+                String.valueOf(invokeGetter(existing, "getGroupName")))) //$NON-NLS-1$
+            {
+                continue;
+            }
+            Object heldType = invokeGetter(existing, "getTemplateType"); //$NON-NLS-1$
+            String held = heldType == null ? null : String.valueOf(heldType);
+            // An entry made without an area type does not carry none - it carries whatever the
+            // model gives it. So a call that names no type means that same default, and the
+            // default is read off the feature rather than assumed to be any particular one.
+            String asked = templateType == null || templateType.isEmpty()
+                ? defaultAreaType(existing) : templateType;
+            if (asked == null)
+            {
+                // The model offers no default either, so the only entry that can be meant is one
+                // carrying nothing.
+                if (held == null || held.isEmpty())
+                {
+                    return existing;
+                }
+                continue;
+            }
+            if (held != null && asked.equalsIgnoreCase(held))
+            {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    private Object doAddSchemaTemplate(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        mustNotLookLikeAPath(name, "template"); //$NON-NLS-1$
+        EList<EObject> templates = BmDcsHelper.getEObjectList(schema, "getTemplates"); //$NON-NLS-1$
+        if (templates == null)
+        {
+            throw new RuntimeException("Schema.getTemplates() not available"); //$NON-NLS-1$
+        }
+        if (BmDcsHelper.findByNameInList(schema, "getTemplates", name) != null) //$NON-NLS-1$
+        {
+            throw alreadyExistsTag(name, "template"); //$NON-NLS-1$
+        }
+        Object description =
+            BmDcsHelper.createElement("createDataCompositionSchemaTemplateDescription"); //$NON-NLS-1$
+        if (description == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaTemplateDescription not available"); //$NON-NLS-1$
+        }
+        mustSet(description, "name", name); //$NON-NLS-1$
+        // A description with no body names a template that draws nothing, and nothing else creates
+        // the body afterwards.
+        Object body = BmDcsHelper.createElement("createDataCompositionAreaTemplate"); //$NON-NLS-1$
+        if (body == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionAreaTemplate not available"); //$NON-NLS-1$
+        }
+        mustSet(description, "template", body); //$NON-NLS-1$
+        templates.add((EObject)description);
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), templates.size(),
+            "templates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a named template.
+     * <p>
+     * What referred to it by name is left alone: a field template naming a template that is gone
+     * reads as a defect of the schema, which is what it is, rather than being silently rewritten.
+     * </p>
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveSchemaTemplate(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        EList<EObject> templates = BmDcsHelper.getEObjectList(schema, "getTemplates"); //$NON-NLS-1$
+        if (templates == null)
+        {
+            throw new RuntimeException("Schema.getTemplates() not available"); //$NON-NLS-1$
+        }
+        Object found = BmDcsHelper.findByNameInList(schema, "getTemplates", name); //$NON-NLS-1$
+        if (found == null)
+        {
+            throw notFoundTag(name, "template"); //$NON-NLS-1$
+        }
+        // A binding holds the name as text, so removing the template would leave the schema drawing
+        // a field with something that is not there and nothing would say so. Naming what still uses
+        // it beats both breaking the schema and silently rewriting the bindings.
+        String stillUsedBy = whatIsStillDrawnWith(schema, name);
+        if (stillUsedBy != null)
+        {
+            throw new RuntimeException("'" + name + "' is still what draws " + stillUsedBy //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Take those back first, or they would name a template that is gone."); //$NON-NLS-1$
+        }
+        templates.remove(found);
+        return new BmDcsHelper.Wrote(name, null, templates.size(), "templates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds a row to the body of a named template.
+     *
+     * @param params schemaTemplateName.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddTemplateRow(Map<String, String> params, EObject schema)
+    {
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        EList<EObject> rows = templateRowsOf(schema, templateName);
+        Object row = BmDcsHelper.createElement("createDataCompositionAreaTemplateTableRow"); //$NON-NLS-1$
+        if (row == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionAreaTemplateTableRow not available"); //$NON-NLS-1$
+        }
+        rows.add((EObject)row);
+        return new BmDcsHelper.Wrote("row " + rows.size() + " of " + templateName, null, //$NON-NLS-1$ //$NON-NLS-2$
+            rows.size(), "rows of " + templateName); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds a cell to a row of a named template, and what stands in it.
+     * <p>
+     * A cell with nothing in it draws a blank, so a field may be given: it becomes what the cell
+     * shows.
+     * </p>
+     *
+     * @param params schemaTemplateName, rowIndex and optionally field.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddTemplateCell(Map<String, String> params, EObject schema)
+    {
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        // A cell shows a field, and expression already means the expression of a calculated field.
+        String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
+        EList<EObject> rows = templateRowsOf(schema, templateName);
+        int rowIndex = strictInt(params, "rowIndex", rows.size() - 1); //$NON-NLS-1$
+        if (rowIndex < 0 || rowIndex >= rows.size())
+        {
+            throw new RuntimeException("'" + templateName + "' has " + rows.size() //$NON-NLS-1$ //$NON-NLS-2$
+                + " row(s); add one with add_template_row before putting a cell in it."); //$NON-NLS-1$
+        }
+        EList<EObject> cells = BmDcsHelper.getEObjectList(rows.get(rowIndex), "getCells"); //$NON-NLS-1$
+        if (cells == null)
+        {
+            throw new RuntimeException("the row does not hold cells in this model"); //$NON-NLS-1$
+        }
+        Object cell = BmDcsHelper.createElement("createDataCompositionAreaTemplateTableCell"); //$NON-NLS-1$
+        if (cell == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionAreaTemplateTableCell not available"); //$NON-NLS-1$
+        }
+        if (field != null && !field.isEmpty())
+        {
+            Object item = BmDcsHelper.createElement("createDataCompositionAreaTemplateField"); //$NON-NLS-1$
+            if (item == null)
+            {
+                throw new RuntimeException(
+                    "DcsFactory.createDataCompositionAreaTemplateField not available"); //$NON-NLS-1$
+            }
+            setFieldProperty(item, "value", field); //$NON-NLS-1$
+            if (invokeGetter(item, "getValue") == null) //$NON-NLS-1$
+            {
+                throw new RuntimeException("the field the cell shows could not be written"); //$NON-NLS-1$
+            }
+            EList<EObject> items = BmDcsHelper.getEObjectList(cell, "getItem"); //$NON-NLS-1$
+            if (items == null)
+            {
+                throw new RuntimeException("the cell does not hold items in this model"); //$NON-NLS-1$
+            }
+            items.add((EObject)item);
+        }
+        cells.add((EObject)cell);
+        // A cell showing a field puts that field in the file, which is something the guards can
+        // look for. An empty cell writes nothing that tells it apart from any other empty cell.
+        return new BmDcsHelper.Wrote("cell " + cells.size() + " in row " + rowIndex + " of " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + templateName, field != null && !field.isEmpty() ? asWrittenInTheFile(field) : null,
+            cells.size(), "cells of row " + rowIndex + " of " + templateName); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Says which named template draws a field.
+     *
+     * @param params field and schemaTemplateName.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddFieldTemplate(Map<String, String> params, EObject schema)
+    {
+        String field = required(params, "field"); //$NON-NLS-1$
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        mustNameATemplateThatExists(schema, templateName);
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getFieldTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getFieldTemplates() not available"); //$NON-NLS-1$
+        }
+        if (fieldTemplateFor(bindings, field) != null)
+        {
+            throw alreadyExistsTag(field, "fieldTemplate"); //$NON-NLS-1$
+        }
+        Object binding = BmDcsHelper.createElement("createDataCompositionSchemaFieldTemplate"); //$NON-NLS-1$
+        if (binding == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaFieldTemplate not available"); //$NON-NLS-1$
+        }
+        setFieldProperty(binding, "field", field); //$NON-NLS-1$
+        if (invokeGetter(binding, "getField") == null) //$NON-NLS-1$
+        {
+            throw new RuntimeException("the field could not be written"); //$NON-NLS-1$
+        }
+        mustSet(binding, "template", templateName); //$NON-NLS-1$
+        bindings.add((EObject)binding);
+        return new BmDcsHelper.Wrote(field + " drawn with " + templateName, //$NON-NLS-1$
+            asWrittenInTheFile(field), bindings.size(), "fieldTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Takes back what said a field is drawn with a template.
+     *
+     * @param params field.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveFieldTemplate(Map<String, String> params, EObject schema)
+    {
+        String field = required(params, "field"); //$NON-NLS-1$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getFieldTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getFieldTemplates() not available"); //$NON-NLS-1$
+        }
+        EObject found = fieldTemplateFor(bindings, field);
+        if (found == null)
+        {
+            throw notFoundTag(field, "fieldTemplate"); //$NON-NLS-1$
+        }
+        bindings.remove(found);
+        return new BmDcsHelper.Wrote(field, null, bindings.size(), "fieldTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Says which named template draws a grouping, as its header or as its body.
+     *
+     * @param params groupName, schemaTemplateName, templateType and header.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddGroupTemplate(Map<String, String> params, EObject schema)
+    {
+        String groupName = required(params, "groupName"); //$NON-NLS-1$
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        String templateType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        boolean header = strictFlag(params, "header", false); //$NON-NLS-1$
+        mustNameATemplateThatExists(schema, templateName);
+        String collection = header ? "getGroupHeaderTemplates" : "getGroupTemplates"; //$NON-NLS-1$ //$NON-NLS-2$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, collection);
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema." + collection + "() not available"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // A grouping is drawn differently in its header, its footer and its overall lines, so
+        // the entry is the grouping AND the type - not the grouping alone.
+        if (groupTemplateFor(bindings, groupName, templateType) != null)
+        {
+            throw alreadyExistsTag(groupName
+                + (templateType != null && !templateType.isEmpty() ? " " + templateType : ""), //$NON-NLS-1$ //$NON-NLS-2$
+                "groupTemplate"); //$NON-NLS-1$
+        }
+        Object binding = BmDcsHelper.createElement("createDataCompositionSchemaGroupTemplate"); //$NON-NLS-1$
+        if (binding == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaGroupTemplate not available"); //$NON-NLS-1$
+        }
+        mustSet(binding, "groupName", groupName); //$NON-NLS-1$
+        mustSet(binding, "template", templateName); //$NON-NLS-1$
+        if (templateType != null && !templateType.isEmpty())
+        {
+            mustSet(binding, "templateType", templateType); //$NON-NLS-1$
+        }
+        bindings.add((EObject)binding);
+        return new BmDcsHelper.Wrote(groupName + " drawn with " + templateName, //$NON-NLS-1$
+            asWrittenInTheFile(groupName), bindings.size(), collection);
+    }
+
+    /**
+     * Takes back what said a grouping is drawn with a template.
+     *
+     * @param params groupName and header.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveGroupTemplate(Map<String, String> params, EObject schema)
+    {
+        String groupName = required(params, "groupName"); //$NON-NLS-1$
+        String templateType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        boolean header = strictFlag(params, "header", false); //$NON-NLS-1$
+        String collection = header ? "getGroupHeaderTemplates" : "getGroupTemplates"; //$NON-NLS-1$ //$NON-NLS-2$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, collection);
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema." + collection + "() not available"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        EObject found = groupTemplateFor(bindings, groupName, templateType);
+        if (found == null)
+        {
+            throw notFoundTag(groupName, "groupTemplate"); //$NON-NLS-1$
+        }
+        bindings.remove(found);
+        return new BmDcsHelper.Wrote(groupName, null, bindings.size(), collection);
+    }
+
+    /**
+     * The rows of the body of a named template.
+     *
+     * @param schema the schema root.
+     * @param templateName the template.
+     * @return its rows, never <code>null</code>
+     */
+    private EList<EObject> templateRowsOf(EObject schema, String templateName)
+    {
+        Object description = BmDcsHelper.findByNameInList(schema, "getTemplates", templateName); //$NON-NLS-1$
+        if (description == null)
+        {
+            throw notFoundTag(templateName, "template"); //$NON-NLS-1$
+        }
+        Object body = invokeGetter(description, "getTemplate"); //$NON-NLS-1$
+        if (body == null)
+        {
+            throw new RuntimeException("'" + templateName + "' has no body to put rows in."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        EList<EObject> rows = BmDcsHelper.getEObjectList(body, "getItems"); //$NON-NLS-1$
+        if (rows == null)
+        {
+            throw new RuntimeException("the body of '" + templateName //$NON-NLS-1$
+                + "' does not hold rows in this model."); //$NON-NLS-1$
+        }
+        return rows;
+    }
+
+    /**
+     * Refuses a binding that names a template the schema does not have.
+     * <p>
+     * The binding holds the name as text, so nothing else would notice - the schema would carry a
+     * field drawn with a template that is not there.
+     * </p>
+     *
+     * @param schema the schema root.
+     * @param templateName the template named.
+     */
+    private void mustNameATemplateThatExists(EObject schema, String templateName)
+    {
+        if (BmDcsHelper.findByNameInList(schema, "getTemplates", templateName) == null) //$NON-NLS-1$
+        {
+            throw notFoundTag(templateName, "template"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The binding that says how a field is drawn, if there is one.
+     *
+     * @param bindings the field templates of the schema.
+     * @param field the field path.
+     * @return the binding, or <code>null</code>
+     */
+    private EObject fieldTemplateFor(EList<EObject> bindings, String field)
+    {
+        for (EObject existing : bindings)
+        {
+            // The field is an object, not a string: its own toString names neither the path nor
+            // anything stable. fieldPathOf reads the path out of it, which is what every other
+            // comparison in this tool uses.
+            String held = fieldPathOf(invokeGetter(existing, "getField")); //$NON-NLS-1$
+            if (held != null && field.equalsIgnoreCase(held))
+            {
+                return existing;
+            }
+        }
+        return null;
+    }
+
     private Object doRemoveNestedSchema(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -4491,6 +5027,14 @@ public class DcsWorkshopTool implements IMcpTool
             sb.append("**Compatibility aliases** (same behavior, older names): add_data_source, " //$NON-NLS-1$
                 + "remove_data_source, set_data_source_property, add_chart, select_field, " //$NON-NLS-1$
                 + "deselect_field, add_variant, set_param_value.\n"); //$NON-NLS-1$
+            sb.append("**Templates of the schema.** add_schema_template (name) creates one with " //$NON-NLS-1$
+                + "an empty body and remove_schema_template takes it away, refusing while anything " //$NON-NLS-1$
+                + "is still drawn with it. add_template_row and add_template_cell " //$NON-NLS-1$
+                + "(schemaTemplateName, rowIndex, field) fill the body. add_field_template and " //$NON-NLS-1$
+                + "remove_field_template say which template draws a field; add_group_template and " //$NON-NLS-1$
+                + "remove_group_template (groupName, templateType, header) say which draws a " //$NON-NLS-1$
+                + "grouping - header=true is a collection of its own. schemaTemplateName names the " //$NON-NLS-1$
+                + "template INSIDE the schema, not the configuration template holding it.\n\n"); //$NON-NLS-1$
             sb.append("**Schemas inside a schema.** add_nested_schema (name, url, title) and " //$NON-NLS-1$
                 + "remove_nested_schema work on the nested schemas of the root; a nested schema is " //$NON-NLS-1$
                 + "created with a composition schema of its own. add_union_item and " //$NON-NLS-1$
@@ -4768,6 +5312,14 @@ public class DcsWorkshopTool implements IMcpTool
         Map<String, MutationHandler> m = new LinkedHashMap<>();
         reg(m, "add_dataset", (p, s, pr) -> doAddDataSet(p, s));
         reg(m, "add_nested_schema", (p, s, pr) -> doAddNestedSchema(p, s));
+        reg(m, "add_schema_template", (p, s, pr) -> doAddSchemaTemplate(p, s));
+        reg(m, "remove_schema_template", (p, s, pr) -> doRemoveSchemaTemplate(p, s));
+        reg(m, "add_template_row", (p, s, pr) -> doAddTemplateRow(p, s));
+        reg(m, "add_template_cell", (p, s, pr) -> doAddTemplateCell(p, s));
+        reg(m, "add_field_template", (p, s, pr) -> doAddFieldTemplate(p, s));
+        reg(m, "remove_field_template", (p, s, pr) -> doRemoveFieldTemplate(p, s));
+        reg(m, "add_group_template", (p, s, pr) -> doAddGroupTemplate(p, s));
+        reg(m, "remove_group_template", (p, s, pr) -> doRemoveGroupTemplate(p, s));
         reg(m, "remove_nested_schema", (p, s, pr) -> doRemoveNestedSchema(p, s));
         reg(m, "add_union_item", (p, s, pr) -> doAddUnionItem(p, s));
         reg(m, "remove_union_item", (p, s, pr) -> doRemoveUnionItem(p, s));

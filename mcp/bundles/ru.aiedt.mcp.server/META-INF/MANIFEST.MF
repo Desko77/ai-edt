@@ -129,4 +129,5 @@ Import-Package: com._1c.g5.v8.bm.common.collections,
  com._1c.g5.v8.dt.dcs.model.settings;resolution:=optional,
  com._1c.g5.v8.dt.dcs.model.core;resolution:=optional,
  com._1c.g5.v8.dt.dcs.model.common;resolution:=optional,
+ com._1c.g5.v8.dt.dcs.model.areaTemplate;resolution:=optional,
  org.osgi.framework
