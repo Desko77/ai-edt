@@ -251,7 +251,9 @@ public class GetFormStructureTool implements IMcpTool
      * {@code Form.getAttributes()}, not the UI items tree) with their main table
      * and query, so an agent can read the current query before modifying it.
      * A very long query is truncated (with {@code queryLength} / {@code queryTruncated})
-     * to keep the response bounded. Returns an empty array when the form has no
+     * to keep the response bounded. Each list also carries its composition settings under
+     * {@code settings} - order, filter, grouping and appearance, named the way the operations that
+     * write them name their arguments. Returns an empty array when the form has no
      * dynamic lists or reflection is unavailable.
      */
     private static com.google.gson.JsonArray collectDynamicLists(Object form)
@@ -315,6 +317,7 @@ public class GetFormStructureTool implements IMcpTool
                         o.addProperty("queryText", q); //$NON-NLS-1$
                     }
                 }
+                o.add("settings", readListSettings(extInfo)); //$NON-NLS-1$
                 arr.add(o);
             }
         }
@@ -323,6 +326,52 @@ public class GetFormStructureTool implements IMcpTool
             // form exposes no getAttributes / reflection failure - return what we have
         }
         return arr;
+    }
+
+    /**
+     * The list's composition settings - its order, filter, grouping and appearance.
+     * <p>
+     * Reached through the model feature rather than a transaction: the settings are a top object of
+     * their own, and this is a read. When they are there and resolved they are read; when they are
+     * a proxy the answer says so, because reporting an unread setting as an empty one would say the
+     * list is unsorted and unfiltered when nobody has looked.
+     * </p>
+     *
+     * @param extInfo the attribute's dynamic-list ext info.
+     * @return what the settings hold, or why they were not read
+     */
+    private static JsonObject readListSettings(Object extInfo)
+    {
+        try
+        {
+            if (!(extInfo instanceof org.eclipse.emf.ecore.EObject))
+            {
+                return ru.aiedt.mcp.server.support.DynamicListSettingsReader.read(null,
+                    "the list's ext info is not a model object"); //$NON-NLS-1$
+            }
+            org.eclipse.emf.ecore.EObject held = (org.eclipse.emf.ecore.EObject)extInfo;
+            org.eclipse.emf.ecore.EStructuralFeature feature =
+                held.eClass().getEStructuralFeature("listSettings"); //$NON-NLS-1$
+            if (feature == null)
+            {
+                // A model without the feature is not a list without settings, and saying the
+                // second about the first sends the reader looking at the list.
+                return ru.aiedt.mcp.server.support.DynamicListSettingsReader.read(null,
+                    "this model has no listSettings feature"); //$NON-NLS-1$
+            }
+            return ru.aiedt.mcp.server.support.DynamicListSettingsReader.read(held.eGet(feature));
+        }
+        catch (Exception reading)
+        {
+            // Contained here rather than left to the caller's catch: resolving a settings proxy
+            // can throw, and the loop that calls this would then drop every list after this one
+            // as well as this one. The rest of the form is still worth answering with.
+            JsonObject failed = new JsonObject();
+            failed.addProperty("settingsRead", false); //$NON-NLS-1$
+            failed.addProperty("why", "reading the settings failed: " //$NON-NLS-1$
+                + ru.aiedt.mcp.server.support.TextSuggest.safeMessage(reading));
+            return failed;
+        }
     }
 
     private static com.google.gson.JsonArray collectPanelItems(Object ci, String panelGetter)
