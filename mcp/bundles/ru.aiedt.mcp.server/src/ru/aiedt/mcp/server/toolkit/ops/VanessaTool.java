@@ -273,7 +273,7 @@ public class VanessaTool implements IMcpTool
         {
             return ToolResult.error("Configured Vanessa Automation .epf not found: " + epf).toJson(); //$NON-NLS-1$
         }
-        File exeFile = theClientToLaunch(new File(exe));
+        File exeFile = new File(exe);
         if (!exeFile.isFile())
         {
             return ToolResult.error("Configured 1C thick client not found: " + exe).toJson(); //$NON-NLS-1$
@@ -872,43 +872,6 @@ public class VanessaTool implements IMcpTool
             + "    @screenshot\n" //$NON-NLS-1$
             + "    Когда " + opening.replace("{form}", form) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
             + "    И Я закрываю все окна клиентского приложения\n"; //$NON-NLS-1$
-    }
-
-    /** What the platform calls its thin client. */
-    private static final String THIN_CLIENT = "1cv8c.exe"; //$NON-NLS-1$
-
-    /** What the platform calls the client that is both. */
-    private static final String EITHER_CLIENT = "1cv8.exe"; //$NON-NLS-1$
-
-    /**
-     * The client to launch: the thin one beside the configured executable when it is there.
-     * <p>
-     * Measured on an infobase the client could not open, because EDT held the file: 1cv8.exe
-     * waits without showing anything and has to be killed at the deadline, while 1cv8c.exe
-     * reaches the login, says the file access mode is wrong and exits. A run that ends with a
-     * reason beats one that ends with a deadline.
-     * </p>
-     * <p>
-     * Vanessa drives a thin client either way - the TestClient block written above names
-     * ClientType Thin. A preference already pointing at the thin client is left alone.
-     * </p>
-     *
-     * @param configured what the preference names.
-     * @return the thin client beside it, or the configured one when there is none
-     */
-    static File theClientToLaunch(File configured)
-    {
-        if (configured == null || !EITHER_CLIENT.equalsIgnoreCase(configured.getName()))
-        {
-            return configured;
-        }
-        File beside = configured.getParentFile();
-        if (beside == null)
-        {
-            return configured;
-        }
-        File thin = new File(beside, THIN_CLIENT);
-        return thin.isFile() ? thin : configured;
     }
 
     /**

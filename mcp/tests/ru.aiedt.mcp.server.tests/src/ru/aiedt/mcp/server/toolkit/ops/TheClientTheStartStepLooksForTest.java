@@ -204,26 +204,4 @@ public class TheClientTheStartStepLooksForTest
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, null));
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, "   ")); //$NON-NLS-1$
     }
-
-    /**
-     * A preference naming the client that is both is read as the thin one when that sits beside
-     * it. Given an infobase it cannot open, the thin client says so and exits, while the other
-     * waits without a window until the deadline kills it.
-     */
-    @Test
-    public void theThinClientBesideTheConfiguredOneIsPreferred() throws Exception
-    {
-        File bin = java.nio.file.Files.createTempDirectory("aiedt-bin").toFile(); //$NON-NLS-1$
-        File either = new File(bin, "1cv8.exe"); //$NON-NLS-1$
-        File thin = new File(bin, "1cv8c.exe"); //$NON-NLS-1$
-        assertTrue(either.createNewFile());
-        assertEquals(either, VanessaTool.theClientToLaunch(either));
-        assertTrue(thin.createNewFile());
-        assertEquals(thin, VanessaTool.theClientToLaunch(either));
-        assertEquals(thin, VanessaTool.theClientToLaunch(thin));
-        assertNull(VanessaTool.theClientToLaunch(null));
-        thin.delete();
-        either.delete();
-        bin.delete();
-    }
 }
