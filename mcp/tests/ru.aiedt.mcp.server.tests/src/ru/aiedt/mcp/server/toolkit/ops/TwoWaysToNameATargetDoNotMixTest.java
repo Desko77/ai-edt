@@ -87,6 +87,16 @@ public class TwoWaysToNameATargetDoNotMixTest
     }
 
     @Test
+    public void anEmptyOptionalIsTheSameAsNotSendingIt()
+    {
+        // A client that fills every optional with "" must not be refused for it. The nested-schema
+        // address is checked the same way everywhere: empty means absent.
+        assertNull(DcsWorkshopTool.addressRefusal(PROJECT, OBJECT, "", "")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(DcsWorkshopTool.addressRefusal(PROJECT, "", FORM, ATTRIBUTE)); //$NON-NLS-1$
+        assertFalse(DcsWorkshopTool.addressesAList("", "")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
     public void namingNoTargetAtAllIsRefused()
     {
         String none = DcsWorkshopTool.addressRefusal(PROJECT, null, null, null);

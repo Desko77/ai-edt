@@ -49,7 +49,8 @@ public class WhatTheCallWritesIsWhatIsCheckedTest
 {
     /** Operations that write a query. */
     private static final Set<String> WRITE_A_QUERY = new LinkedHashSet<>(Arrays.asList(
-        "add_dataset", "set_dataset_query", "set_dataset_property")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "add_dataset", "add_union_item", "set_dataset_query", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "set_dataset_property")); //$NON-NLS-1$
 
     /** Operations that write a DCS expression. */
     private static final Set<String> WRITE_AN_EXPRESSION = new LinkedHashSet<>(Arrays.asList(
@@ -65,7 +66,7 @@ public class WhatTheCallWritesIsWhatIsCheckedTest
      * </p>
      */
     private static final Set<String> WRITE_NEITHER = new LinkedHashSet<>(Arrays.asList(
-        "add_appearance", "add_chart", "add_data_source", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "add_appearance", "add_chart", "add_data_source", "add_nested_schema", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         "add_field", "add_filter", "add_filter_group", "add_grouping", "add_order", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         "add_query_condition", "add_query_field", "add_settings_chart", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "add_settings_filter_group", "add_settings_order", //$NON-NLS-1$ //$NON-NLS-2$
@@ -76,7 +77,8 @@ public class WhatTheCallWritesIsWhatIsCheckedTest
         "remove_dataset", "remove_dataset_field", "remove_dataset_link", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "remove_parameter", "remove_query_condition", "remove_query_field", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "remove_settings_filter", "remove_settings_item", "remove_settings_order", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "remove_settings_selected_field", "remove_settings_variant", "remove_total_field", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "remove_nested_schema", "remove_settings_selected_field", "remove_settings_variant", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "remove_total_field", "remove_union_item", //$NON-NLS-1$ //$NON-NLS-2$
         "remove_user_field", "rename_settings_variant", "select_field", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "set_data_set_field_appearance", "set_data_source_property", //$NON-NLS-1$ //$NON-NLS-2$
         "set_field_appearance", "set_output_param", //$NON-NLS-1$ //$NON-NLS-2$

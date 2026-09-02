@@ -177,7 +177,8 @@ public class DcsWorkshopTool implements IMcpTool
                 + "set_data_set_field_appearance. Font='Arial,12,bold', colors='#RRGGBB'. " //$NON-NLS-1$
                 + "Keys: TextColor/BackColor/BorderColor/Font/Format (or Russian equivalents).") //$NON-NLS-1$
             .stringProperty("title", //$NON-NLS-1$
-                "Presentation/title for selected-field / calculated-field / parameter (optional).") //$NON-NLS-1$
+                "Presentation/title for selected-field / calculated-field / parameter, and what a " //$NON-NLS-1$
+                    + "nested schema is called on screen (optional).") //$NON-NLS-1$
             .stringProperty("sourceName", //$NON-NLS-1$
                 "Source settings-variant name to copy from (clone_settings_variant).") //$NON-NLS-1$
             .stringProperty("newName", //$NON-NLS-1$
@@ -209,6 +210,14 @@ public class DcsWorkshopTool implements IMcpTool
                 "add_order: Asc / Desc (default Asc; alias of direction).") //$NON-NLS-1$
             .stringProperty("presentation", //$NON-NLS-1$
                 "add_variant: settings-variant presentation / title.") //$NON-NLS-1$
+            .stringProperty("url", //$NON-NLS-1$
+                "add_nested_schema: where the nested schema reads its data from.") //$NON-NLS-1$
+            .stringProperty("dataObjectName", //$NON-NLS-1$
+                "add_union_item dataSetType=Object: the object that child dataset reads. Distinct " //$NON-NLS-1$
+                    + "from objectName, which names the owner whose schema is being edited.") //$NON-NLS-1$
+            .stringProperty("nestedSchemaName", //$NON-NLS-1$
+                "Name of a nested schema to work inside. Without it an operation applies to the " //$NON-NLS-1$
+                    + "schema itself; with it, to the schema of that name within it.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
                 "remove_conditional_appearance: where to remove from - schema (default) / settings.") //$NON-NLS-1$
             .stringProperty("userSettingPresentation", //$NON-NLS-1$
@@ -367,6 +376,153 @@ public class DcsWorkshopTool implements IMcpTool
         return null;
     }
 
+    /**
+     * The schema an operation is aimed at.
+     * <p>
+     * Two coordinates reach a schema in a template; a third reaches a schema nested inside it.
+     * Without that third one a nested schema could be created and never written into - and a call
+     * meant for it would have gone to the schema around it and reported success.
+     * </p>
+     *
+     * @param root the schema the FQN resolved to.
+     * @param nestedSchemaName the nested schema to work inside, or <code>null</code> for the root.
+     * @return the schema to write to
+     */
+    /**
+     * The steps of a name that may be a path down a hierarchy.
+     * <p>
+     * A name is taken whole first by the callers of this method, so this is only reached for a name
+     * that is not there as written. Every step must be a name: Java drops a trailing empty segment,
+     * so "Outer." would silently become "Outer" and act on the wrong node, and "." would become no
+     * steps at all and act on the root.
+     * </p>
+     *
+     * @param path the name as the caller wrote it.
+     * @param what the kind of thing being addressed, for the refusal.
+     * @return its steps, each non-empty
+     */
+    /**
+     * The text an export has to contain for a named element to be in it.
+     * <p>
+     * The file is XML, so a name is escaped there. Looking for the raw name would report a write as
+     * lost because of an ampersand in it, and the write would then be repeated to no purpose.
+     * </p>
+     *
+     * @param name the element name.
+     * @return what to look for in the exported file
+     */
+    private static String asWrittenInTheFile(String name)
+    {
+        return ">" + name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "<"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
+    }
+
+    /**
+     * Refuses an address that reads as a path while some name in the collection carries a dot.
+     * <p>
+     * Both readings are possible then - a dataset actually called {@code A.B}, or {@code B} inside
+     * {@code A} - and choosing one silently would write to a target the caller did not mean.
+     * </p>
+     *
+     * @param owner what holds the collection.
+     * @param getter the collection.
+     * @param path the address as the caller wrote it.
+     */
+    private void mustNotBeAmbiguous(EObject owner, String getter, String path)
+    {
+        if (path.indexOf('.') < 0)
+        {
+            return;
+        }
+        EList<EObject> all = BmDcsHelper.getEObjectList(owner, getter);
+        if (all == null)
+        {
+            return;
+        }
+        for (EObject one : all)
+        {
+            Object named = invokeGetter(one, "getName"); //$NON-NLS-1$
+            if (named != null && String.valueOf(named).indexOf('.') >= 0)
+            {
+                throw new RuntimeException("'" + path + "' could mean a name or a path, because " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "'" + named + "' has a dot in it. Rename it, or address the target without " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "a path."); //$NON-NLS-1$
+            }
+        }
+    }
+
+    private static String[] pathSteps(String path, String what)
+    {
+        String[] steps = path.split("\\.", -1); //$NON-NLS-1$
+        for (String step : steps)
+        {
+            if (step.isEmpty())
+            {
+                throw new RuntimeException("'" + path + "' is not a " + what + " name or a path " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + "of them - every step between the dots has to name something."); //$NON-NLS-1$
+            }
+        }
+        return steps;
+    }
+
+    /**
+     * Refuses a new name that carries the character used to separate the steps of a path.
+     * <p>
+     * Such a name can be written and then never addressed again, because the address would read as
+     * a hierarchy rather than as the name.
+     * </p>
+     *
+     * @param name the name asked for.
+     * @param what the kind of thing being named, for the refusal.
+     */
+    private static void mustNotLookLikeAPath(String name, String what)
+    {
+        if (name.indexOf('.') >= 0)
+        {
+            throw new RuntimeException("a " + what + " named '" + name + "' could not be " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + "addressed afterwards: a dot separates the steps of a path."); //$NON-NLS-1$
+        }
+    }
+
+    private EObject schemaToWorkIn(EObject root, String nestedSchemaName)
+    {
+        if (nestedSchemaName == null || nestedSchemaName.isEmpty())
+        {
+            return root;
+        }
+        // A nested schema may hold one of its own, so the name may be a path down through them:
+        // Outer.Inner. A name is taken whole first, so one that contains a dot - written before
+        // this refused such names - still addresses itself rather than reading as a hierarchy.
+        EObject current = root;
+        String[] steps;
+        if (BmDcsHelper.findByNameInList(root, "getNestedSchemas", nestedSchemaName) != null) //$NON-NLS-1$
+        {
+            steps = new String[] {nestedSchemaName};
+        }
+        else
+        {
+            mustNotBeAmbiguous(root, "getNestedSchemas", nestedSchemaName); //$NON-NLS-1$
+            steps = pathSteps(nestedSchemaName, "nested schema"); //$NON-NLS-1$
+        }
+        for (String step : steps)
+        {
+            EObject entry = BmDcsHelper.findByNameInList(current, "getNestedSchemas", step); //$NON-NLS-1$
+            if (entry == null)
+            {
+                throw notFoundTag(step, "nestedSchema"); //$NON-NLS-1$
+            }
+            Object inner = invokeGetter(entry, "getSchema"); //$NON-NLS-1$
+            if (!(inner instanceof EObject))
+            {
+                // Every nested schema this tool makes gets one; one made elsewhere may not, and
+                // writing into the schema around it instead would be worse than saying so.
+                throw notFoundTag(step + " (it carries no schema of its own)", //$NON-NLS-1$
+                    "nestedSchema"); //$NON-NLS-1$
+            }
+            current = (EObject)inner;
+        }
+        return current;
+    }
+
     private String opSchemaMutation(String op, Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -375,6 +531,13 @@ public class DcsWorkshopTool implements IMcpTool
         String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
         String attributeName = JsonUtils.extractStringArgument(params, "attributeName"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String nestedForCheck = JsonUtils.extractStringArgument(params, "nestedSchemaName"); //$NON-NLS-1$
+        if (addressesAList(formFqn, attributeName)
+            && nestedForCheck != null && !nestedForCheck.isEmpty())
+        {
+            return ToolResult.error("nestedSchemaName addresses a schema inside a schema, and a " //$NON-NLS-1$
+                + "form's dynamic list has no schema - drop one of the two").toJson(); //$NON-NLS-1$
+        }
         String badAddress = addressRefusal(projectName, objectName, formFqn, attributeName);
         if (badAddress != null)
         {
@@ -399,8 +562,10 @@ public class DcsWorkshopTool implements IMcpTool
         {
             return applyToDynamicList(op, params, project, formFqn, attributeName, dryRun);
         }
+        String nestedSchemaName = JsonUtils.extractStringArgument(params, "nestedSchemaName"); //$NON-NLS-1$
         BmDcsHelper.Result r = BmDcsHelper.executeWriteOnSchema(project, objectName, templateName,
-            dryRun, (tx, schema) -> applySchemaMutation(op, params, schema, project));
+            dryRun, (tx, schema) -> applySchemaMutation(op, params,
+                schemaToWorkIn(schema, nestedSchemaName), project));
         return formatResult(r, op);
     }
 
@@ -602,6 +767,8 @@ public class DcsWorkshopTool implements IMcpTool
         Map<String, Written> writes = new LinkedHashMap<>();
         writes.put("add_dataset", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
         writes.put("set_dataset_query", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
+        // A child of a union is a dataset like any other and carries a query of its own.
+        writes.put("add_union_item", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
         writes.put("set_dataset_property", Written.QUERY_AS_VALUE_OF_THE_QUERY_PROPERTY); //$NON-NLS-1$
         writes.put("add_calculated_field", Written.EXPRESSION); //$NON-NLS-1$
         writes.put("set_calculated_field", Written.EXPRESSION); //$NON-NLS-1$
@@ -976,6 +1143,287 @@ public class DcsWorkshopTool implements IMcpTool
         }
         dataSets.add((EObject) dataSet);
         return name;
+    }
+
+    /**
+     * Adds a nested schema to the schema root.
+     * <p>
+     * A nested schema is a composition schema of its own, named and addressed from the outer one.
+     * It is created empty: what goes inside it is written by the same operations that write the
+     * outer schema, aimed at it by name.
+     * </p>
+     *
+     * @param params name, and optionally title and url.
+     * @param schema the schema root.
+     * @return the name written
+     */
+    /**
+     * Writes a property and refuses when it did not take.
+     * <p>
+     * The setter is found by name, so a name the model spells differently reports back that the
+     * property is absent. Discarding that answer leaves a call that says it wrote something it did
+     * not.
+     * </p>
+     *
+     * @param target what to write to.
+     * @param property the property name as the model spells it.
+     * @param value the value.
+     */
+    private static void mustSet(Object target, String property, Object value)
+    {
+        String failed = BmDcsHelper.setProperty(target, property, value);
+        if (failed != null)
+        {
+            throw new RuntimeException(failed);
+        }
+    }
+
+    private Object doAddNestedSchema(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        String url = JsonUtils.extractStringArgument(params, "url"); //$NON-NLS-1$
+        String title = JsonUtils.extractStringArgument(params, "title"); //$NON-NLS-1$
+        EList<EObject> nested = BmDcsHelper.getEObjectList(schema, "getNestedSchemas"); //$NON-NLS-1$
+        if (nested == null)
+        {
+            throw new RuntimeException("Schema.getNestedSchemas() not available"); //$NON-NLS-1$
+        }
+        if (BmDcsHelper.findByNameInList(schema, "getNestedSchemas", name) != null) //$NON-NLS-1$
+        {
+            throw alreadyExistsTag(name, "nestedSchema"); //$NON-NLS-1$
+        }
+        mustNotLookLikeAPath(name, "nested schema"); //$NON-NLS-1$
+        Object entry = BmDcsHelper.createElement("createNestedDataCompositionSchema"); //$NON-NLS-1$
+        if (entry == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createNestedDataCompositionSchema not available"); //$NON-NLS-1$
+        }
+        mustSet(entry, "name", name); //$NON-NLS-1$
+        if (url != null && !url.isEmpty())
+        {
+            // The model spells this one URL, and the setter name is built by upper-casing the
+            // first letter alone - so "url" would ask for a setter that is not there.
+            mustSet(entry, "URL", url); //$NON-NLS-1$
+        }
+        if (title != null && !title.isEmpty())
+        {
+            setPresentationProperty(entry, "title", title); //$NON-NLS-1$
+            Object written = invokeGetter(entry, "getTitle"); //$NON-NLS-1$
+            // The carrier is built even when the text does not go into it, so its presence proves
+            // nothing - the text has to come back.
+            Object text = written == null ? null : invokeGetter(written, "getValue"); //$NON-NLS-1$
+            if (text == null || !title.equals(String.valueOf(text)))
+            {
+                throw new RuntimeException("the title could not be written"); //$NON-NLS-1$
+            }
+        }
+        // Without a schema of its own the entry names nothing: the outer schema would carry a
+        // nested schema that has no datasets and no fields to address, and nestedSchemaName would
+        // refuse it afterwards.
+        Object inner = BmDcsHelper.createElement("createDataCompositionSchema"); //$NON-NLS-1$
+        if (inner == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchema not available"); //$NON-NLS-1$
+        }
+        mustSet(entry, "schema", inner); //$NON-NLS-1$
+        nested.add((EObject)entry);
+        // What the export must contain for this to have held, and how many the collection came to
+        // hold - the write guards read both and refuse a change that did not reach the file.
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), nested.size(),
+            "nestedSchemas"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a nested schema by name.
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return the name removed
+     */
+    private Object doRemoveNestedSchema(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        EList<EObject> nested = BmDcsHelper.getEObjectList(schema, "getNestedSchemas"); //$NON-NLS-1$
+        if (nested == null)
+        {
+            throw new RuntimeException("Schema.getNestedSchemas() not available"); //$NON-NLS-1$
+        }
+        Object found = BmDcsHelper.findByNameInList(schema, "getNestedSchemas", name); //$NON-NLS-1$
+        if (found == null)
+        {
+            throw notFoundTag(name, "nestedSchema"); //$NON-NLS-1$
+        }
+        nested.remove(found);
+        // Nothing has to APPEAR for a removal, so the count is the only thing the guards can check
+        // - and without it a removal that did not reach the file reports success.
+        return new BmDcsHelper.Wrote(name, null, nested.size(), "nestedSchemas"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds a child dataset to a union.
+     * <p>
+     * A union holds datasets rather than a query of its own, which is why replacing the query of a
+     * union is refused and sends the caller here.
+     * </p>
+     *
+     * @param params dataSetName of the union, name of the child, and its type and query.
+     * @param schema the schema root.
+     * @return what was added, and to what
+     */
+    private Object doAddUnionItem(Map<String, String> params, EObject schema)
+    {
+        String unionName = required(params, "dataSetName"); //$NON-NLS-1$
+        String name = required(params, "name"); //$NON-NLS-1$
+        String queryText = JsonUtils.extractStringArgument(params, "queryText"); //$NON-NLS-1$
+        String dataSetType = orDefault(JsonUtils.extractStringArgument(params, "dataSetType"), //$NON-NLS-1$
+            "Query"); //$NON-NLS-1$
+        EList<EObject> items = unionItemsOf(schema, unionName);
+        for (EObject existing : items)
+        {
+            if (name.equalsIgnoreCase(String.valueOf(invokeGetter(existing, "getName")))) //$NON-NLS-1$
+            {
+                throw alreadyExistsTag(name, "unionItem"); //$NON-NLS-1$
+            }
+        }
+        mustNotLookLikeAPath(name, "union item"); //$NON-NLS-1$
+        String factoryMethod = "createDataCompositionSchemaDataSet" + dataSetType; //$NON-NLS-1$
+        Object child = BmDcsHelper.createElement(factoryMethod);
+        if (child == null)
+        {
+            throw new RuntimeException("DcsFactory." + factoryMethod + " not available"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        mustSet(child, "name", name); //$NON-NLS-1$
+        if (queryText != null && !queryText.isEmpty())
+        {
+            mustSet(child, "query", queryText); //$NON-NLS-1$
+        }
+        else if ("Query".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // set_dataset_query reaches only the datasets of the schema, so a child left without a
+            // query here has no way of ever getting one.
+            throw new RuntimeException("a Query dataset inside a union cannot be given its query " //$NON-NLS-1$
+                + "afterwards - pass queryText"); //$NON-NLS-1$
+        }
+        // Its own argument, because objectName already names the report or data processor whose
+        // schema is being edited - reusing it would write that FQN into the child.
+        String dataObjectName = JsonUtils.extractStringArgument(params, "dataObjectName"); //$NON-NLS-1$
+        if (dataObjectName != null && !dataObjectName.isEmpty())
+        {
+            mustSet(child, "objectName", dataObjectName); //$NON-NLS-1$
+        }
+        else if ("Object".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // An Object dataset reads a named object, and nothing else names it. Created without
+            // one it is a child that can never be finished, because a dataset inside a union is
+            // not among the datasets the other operations reach.
+            throw new RuntimeException(
+                "an Object dataset reads a named object - pass dataObjectName"); //$NON-NLS-1$
+        }
+        String dataSourceName = ensureDefaultDataSource(schema);
+        if (dataSourceName != null && !"Union".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // A union has no data source of its own; every other kind needs one, or the schema
+            // editor does not render it.
+            mustSet(child, "dataSource", dataSourceName); //$NON-NLS-1$
+        }
+        items.add((EObject)child);
+        return new BmDcsHelper.Wrote(name + " in " + unionName, asWrittenInTheFile(name), //$NON-NLS-1$
+            items.size(), "items of " + unionName); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a child dataset from a union.
+     *
+     * @param params dataSetName of the union and name of the child.
+     * @param schema the schema root.
+     * @return what was removed, and from what
+     */
+    private Object doRemoveUnionItem(Map<String, String> params, EObject schema)
+    {
+        String unionName = required(params, "dataSetName"); //$NON-NLS-1$
+        String name = required(params, "name"); //$NON-NLS-1$
+        EList<EObject> items = unionItemsOf(schema, unionName);
+        for (EObject existing : items)
+        {
+            if (name.equalsIgnoreCase(String.valueOf(invokeGetter(existing, "getName")))) //$NON-NLS-1$
+            {
+                items.remove(existing);
+                return new BmDcsHelper.Wrote(name + " from " + unionName, null, items.size(), //$NON-NLS-1$
+                    "items of " + unionName); //$NON-NLS-1$
+            }
+        }
+        throw notFoundTag(name, "unionItem"); //$NON-NLS-1$
+    }
+
+    /**
+     * The child datasets of the named union.
+     *
+     * @param schema the schema root.
+     * @param unionName the dataset that should be a union.
+     * @return its children, never <code>null</code>
+     */
+    private EList<EObject> unionItemsOf(EObject schema, String unionName)
+    {
+        // A union may hold a union, so the name may be a path down through them: Outer.Inner. A
+        // child of a union is not among the datasets of the schema, so without this a union
+        // created inside another one could never be filled. The name is taken whole first, so a
+        // dataset whose own name contains a dot still addresses itself.
+        String[] steps;
+        if (BmDcsHelper.findByNameInList(schema, "getDataSets", unionName) != null) //$NON-NLS-1$
+        {
+            steps = new String[] {unionName};
+        }
+        else
+        {
+            mustNotBeAmbiguous(schema, "getDataSets", unionName); //$NON-NLS-1$
+            steps = pathSteps(unionName, "dataset"); //$NON-NLS-1$
+        }
+        Object dataSet = BmDcsHelper.findByNameInList(schema, "getDataSets", steps[0]); //$NON-NLS-1$
+        if (dataSet == null)
+        {
+            throw notFoundTag(steps[0], "dataSet"); //$NON-NLS-1$
+        }
+        EList<EObject> items = itemsOfUnion(dataSet, steps[0]);
+        for (int i = 1; i < steps.length; i++)
+        {
+            Object child = null;
+            for (EObject candidate : items)
+            {
+                if (steps[i].equalsIgnoreCase(String.valueOf(invokeGetter(candidate, "getName")))) //$NON-NLS-1$
+                {
+                    child = candidate;
+                    break;
+                }
+            }
+            if (child == null)
+            {
+                throw notFoundTag(steps[i], "unionItem"); //$NON-NLS-1$
+            }
+            items = itemsOfUnion(child, steps[i]);
+        }
+        return items;
+    }
+
+    /**
+     * The datasets the given one holds, or a refusal naming it.
+     *
+     * @param dataSet the dataset that should be a union.
+     * @param name what it was called in the request.
+     * @return its children
+     */
+    private EList<EObject> itemsOfUnion(Object dataSet, String name)
+    {
+        EList<EObject> items = BmDcsHelper.getEObjectList(dataSet, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            // Only a union holds datasets. Saying which one was asked for beats a message about a
+            // method that is missing, which reads as a defect rather than as the wrong target.
+            throw new RuntimeException("'" + name + "' is not a Union dataset - only a Union " //$NON-NLS-1$ //$NON-NLS-2$
+                + "holds other datasets. Create it with add_dataset dataSetType=Union."); //$NON-NLS-1$
+        }
+        return items;
     }
 
     private Object doRemoveDataSet(Map<String, String> params, EObject schema)
@@ -4043,6 +4491,12 @@ public class DcsWorkshopTool implements IMcpTool
             sb.append("**Compatibility aliases** (same behavior, older names): add_data_source, " //$NON-NLS-1$
                 + "remove_data_source, set_data_source_property, add_chart, select_field, " //$NON-NLS-1$
                 + "deselect_field, add_variant, set_param_value.\n"); //$NON-NLS-1$
+            sb.append("**Schemas inside a schema.** add_nested_schema (name, url, title) and " //$NON-NLS-1$
+                + "remove_nested_schema work on the nested schemas of the root; a nested schema is " //$NON-NLS-1$
+                + "created with a composition schema of its own. add_union_item and " //$NON-NLS-1$
+                + "remove_union_item (dataSetName of the Union, name, dataSetType, queryText) work " //$NON-NLS-1$
+                + "on the datasets a Union holds - which is what set_dataset_query on a Union " //$NON-NLS-1$
+                + "sends you to.\n\n"); //$NON-NLS-1$
             sb.append("**A form's dynamic list.** Pass formFqn + attributeName instead of " //$NON-NLS-1$
                 + "objectName + templateName and the operation applies to that list's settings: " //$NON-NLS-1$
                 + "formFqn=Catalog.X.Form.ListForm, attributeName=List. ") //$NON-NLS-1$
@@ -4282,10 +4736,41 @@ public class DcsWorkshopTool implements IMcpTool
         return this.mutations.keySet();
     }
 
+    /**
+     * Runs one schema operation against a schema object, for a test that builds one itself.
+     * <p>
+     * The project is not passed: an operation that needs one - a parameter, whose type is resolved
+     * against the configuration - cannot be driven this way, and the operations that shape the
+     * schema itself do not need one.
+     * </p>
+     *
+     * @param op the operation name.
+     * @param params its arguments.
+     * @param schema the schema to write into.
+     * @return what the operation reports
+     * @throws Exception if the operation refuses
+     */
+    Object applyToSchemaForTest(String op, Map<String, String> params, EObject schema)
+        throws Exception
+    {
+        // nestedSchemaName is resolved here exactly as the public path resolves it. Taking the
+        // schema straight would let a test pass while the addressing it depends on is broken.
+        // What this cannot do is validate a query or an expression: that needs a project to
+        // resolve names against, and there is none here. A test that writes a malformed query
+        // through this therefore sees it written, where the public path would refuse it.
+        return applySchemaMutation(op, params,
+            schemaToWorkIn(schema, JsonUtils.extractStringArgument(params, "nestedSchemaName")), //$NON-NLS-1$
+            null);
+    }
+
     private Map<String, MutationHandler> buildMutationRegistry()
     {
         Map<String, MutationHandler> m = new LinkedHashMap<>();
         reg(m, "add_dataset", (p, s, pr) -> doAddDataSet(p, s));
+        reg(m, "add_nested_schema", (p, s, pr) -> doAddNestedSchema(p, s));
+        reg(m, "remove_nested_schema", (p, s, pr) -> doRemoveNestedSchema(p, s));
+        reg(m, "add_union_item", (p, s, pr) -> doAddUnionItem(p, s));
+        reg(m, "remove_union_item", (p, s, pr) -> doRemoveUnionItem(p, s));
         reg(m, "remove_dataset", (p, s, pr) -> doRemoveDataSet(p, s));
         reg(m, "add_data_source", (p, s, pr) -> doAddDataSource(p, s));
         reg(m, "remove_data_source", (p, s, pr) -> doRemoveDataSource(p, s));
