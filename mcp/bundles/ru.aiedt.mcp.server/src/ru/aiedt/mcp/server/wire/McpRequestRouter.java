@@ -1011,14 +1011,16 @@ public class McpRequestRouter
             return false;
         }
         String lc = key.toLowerCase();
-        // connectionstring and vanessaparams do not contain any of the words below, and both can
-        // carry a password: the platform names one Pwd, WSP or DBPwd inside a connection string,
-        // and a scenario parameter can be a user password under a name Vanessa chooses. Deciding
-        // by the name of the ARGUMENT is why they have to be named here.
+        // connectionstring, vanessaparams and scenariotext contain none of the words below and
+        // all three can carry a password: the platform names one Pwd, WSP or DBPwd inside a
+        // connection string, a scenario parameter can be a user password under a name Vanessa
+        // chooses, and a scenario types into fields - one of which can be a password. Deciding by
+        // the name of the ARGUMENT is why they have to be named here.
         return lc.contains("password") || lc.contains("passwd") || lc.contains("pwd") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             || lc.contains("token") || lc.contains("secret") || lc.contains("apikey") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             || lc.contains("credential") || lc.contains("authorization") //$NON-NLS-1$ //$NON-NLS-2$
-            || lc.contains("connectionstring") || lc.contains("vanessaparams"); //$NON-NLS-1$ //$NON-NLS-2$
+            || lc.contains("connectionstring") || lc.contains("vanessaparams") //$NON-NLS-1$ //$NON-NLS-2$
+            || lc.contains("scenariotext"); //$NON-NLS-1$
     }
 
     /**
