@@ -34,7 +34,7 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 }
 ```
 
-Cursor требует `"type": "sse"` в записи сервера. Без него клиент сообщает `MCP server failed during live tool discovery`, и список инструментов остаётся пустым.
+Если Cursor сообщает `MCP server failed during live tool discovery` и список инструментов остаётся пустым, добавьте в запись сервера `"type": "sse"`. На записи с одним `url` подключение проходит не во всех сборках Cursor.
 
 ## VS Code / GitHub Copilot
 

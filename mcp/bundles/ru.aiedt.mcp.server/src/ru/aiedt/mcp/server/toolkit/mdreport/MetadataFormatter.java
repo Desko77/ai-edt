@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.eclipse.emf.common.util.EMap;
+import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
@@ -31,7 +32,6 @@ import com._1c.g5.v8.dt.metadata.mdclass.BasicForm;
 import com._1c.g5.v8.dt.metadata.mdclass.BasicTabularSection;
 import com._1c.g5.v8.dt.metadata.mdclass.CharacteristicsDescription;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
-import com._1c.g5.v8.dt.metadata.mdclass.DbObjectAttribute;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.metadata.mdclass.StandardAttribute;
 import com._1c.g5.v8.dt.metadata.mdclass.Subsystem;
@@ -716,16 +716,10 @@ final class MetadataFormatter
                 continue;
             }
 
-            // Indexing and full text search belong to attributes that live in the database. The rest of
-            // them - a tabular section's, say - have neither, and say so with a dash.
-            String indexing = DASH;
-            String fullTextSearch = DASH;
-            if (attribute instanceof DbObjectAttribute)
-            {
-                DbObjectAttribute dbAttribute = (DbObjectAttribute)attribute;
-                indexing = formatEnum(dbAttribute.getIndexing());
-                fullTextSearch = formatEnum(dbAttribute.getFullTextSearch());
-            }
+            // Indexing and full text search belong to whatever lives in the database. The rest -
+            // a tabular section's attribute, say - have neither, and say so with a dash.
+            String indexing = enumFeature(attribute, "indexing"); //$NON-NLS-1$
+            String fullTextSearch = enumFeature(attribute, "fullTextSearch"); //$NON-NLS-1$
             // These two are asked for by name, and an attribute kind that does not answer is reported as
             // No rather than as unknown - which is what it behaves as.
             String passwordMode = formatBoolean(booleanByReflection(attribute, "isPasswordMode")); //$NON-NLS-1$
@@ -1261,6 +1255,37 @@ final class MetadataFormatter
     private static String formatEnum(Object value)
     {
         return value == null ? DASH : value.toString();
+    }
+
+    /**
+     * An enum-valued property read by name, for one that several unrelated types carry.
+     * <p>
+     * Indexing and full-text search are declared on {@code DbObjectAttribute} and, separately, on
+     * the register field types: a dimension and a register attribute carry both, a resource carries
+     * full-text search. None of the three is a {@code DbObjectAttribute}, so a check against that
+     * one type reported a dash for every field of every register, whatever the editor showed.
+     * Reading the property by name answers for each type that has it.
+     * </p>
+     *
+     * @param object the object to read from.
+     * @param name the property name in the model.
+     * @return the value as text, or a dash when this type has no such property or it is unset
+     */
+    private static String enumFeature(EObject object, String name)
+    {
+        EStructuralFeature feature = object.eClass().getEStructuralFeature(name);
+        if (feature == null)
+        {
+            return DASH;
+        }
+        Object value = object.eGet(feature);
+        if (value instanceof Enumerator)
+        {
+            // getName rather than toString: a generated literal prints its own name, one from a
+            // model built at run time prints the class.
+            return ((Enumerator)value).getName();
+        }
+        return value == null ? DASH : String.valueOf(value);
     }
 
     /**
