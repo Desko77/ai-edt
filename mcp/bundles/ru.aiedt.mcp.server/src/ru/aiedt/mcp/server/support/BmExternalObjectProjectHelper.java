@@ -169,6 +169,215 @@ public final class BmExternalObjectProjectHelper
          *  in the form every other operation accepts. */
         public String importedObjectFqn;
         public String failureKind;
+        /** Where the converted XML was left when the import failed, so the failure can
+         *  be examined. Null when the import succeeded and the scratch space went. */
+        public String leftoverXmlDir;
+    }
+
+    /**
+     * Refuses an object the container already holds.
+     * <p>
+     * The environment's own import asks the user whether to replace; this operation does not ask
+     * anybody, so it refuses instead. Running the factory over an existing object would write into
+     * its directory while leaving files of the old one behind, and the arrival check afterwards
+     * would report failure anyway, because no NEW name appeared.
+     * </p>
+     *
+     * @param before what the container held before the conversion.
+     * @param xmlDir the conversion's output, whose single XML is named after the object.
+     * @return <code>null</code> when the name is free, or the refusal
+     */
+    private static String refuseIfAlreadyThere(java.util.Set<String> before,
+        java.nio.file.Path xmlDir)
+    {
+        RootXml root = findRootXml(xmlDir);
+        if (root.file == null)
+        {
+            // Not this check's business: the caller reports the missing root properly.
+            return null;
+        }
+        String name = root.file.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        String objectName = dot > 0 ? name.substring(0, dot) : name;
+        for (String held : before)
+        {
+            String tail = held.contains(".") ? held.substring(held.lastIndexOf('.') + 1) : held; //$NON-NLS-1$
+            if (tail.equalsIgnoreCase(objectName))
+            {
+                return "'" + objectName + "' is already in this container. Replacing it is not " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "supported here: remove the existing object first, or import into another " //$NON-NLS-1$
+                    + "container."; //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /** Either the object's root XML, or why it could not be picked. */
+    static final class RootXml
+    {
+        final java.nio.file.Path file;
+
+        final String problem;
+
+        private RootXml(java.nio.file.Path file, String problem)
+        {
+            this.file = file;
+            this.problem = problem;
+        }
+    }
+
+    /**
+     * Picks the object's root XML out of what the conversion wrote.
+     * <p>
+     * FOUND, not computed. Deriving the name from the binary looked right and was wrong: the XML
+     * is named after the OBJECT inside it, so a file named one thing converts to an XML named
+     * another, and the derived name refused a conversion that had in fact succeeded.
+     * </p>
+     *
+     * @param xmlDir the conversion's output directory.
+     * @return the single top-level XML, or the reason there is no single one
+     */
+    static RootXml findRootXml(java.nio.file.Path xmlDir)
+    {
+        java.util.List<java.nio.file.Path> roots = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> top = java.nio.file.Files.list(xmlDir))
+        {
+            for (java.nio.file.Path candidate : top.collect(java.util.stream.Collectors.toList()))
+            {
+                if (java.nio.file.Files.isRegularFile(candidate)
+                    && candidate.getFileName().toString().toLowerCase(java.util.Locale.ROOT)
+                        .endsWith(".xml")) //$NON-NLS-1$
+                {
+                    roots.add(candidate);
+                }
+            }
+        }
+        catch (java.io.IOException cannotList)
+        {
+            return new RootXml(null,
+                "The conversion output could not be read: " + cannotList.getMessage()); //$NON-NLS-1$
+        }
+        if (roots.isEmpty())
+        {
+            return new RootXml(null,
+                "The conversion produced no XML in its output directory, so there is nothing to " //$NON-NLS-1$
+                    + "import. It runs as a platform batch and traces itself in the workspace log " //$NON-NLS-1$
+                    + "(.metadata/.log)."); //$NON-NLS-1$
+        }
+        if (roots.size() > 1)
+        {
+            return new RootXml(null,
+                "The conversion produced " + roots.size() + " XML files at the top of its output " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "directory, and which one is the object is not decidable here."); //$NON-NLS-1$
+        }
+        return new RootXml(roots.get(0), null);
+    }
+
+    /**
+     * Hands the converted XML to the environment's own import operation.
+     * <p>
+     * This is the step the plugin was missing. {@code IExternalObjectRestorer.restore} converts the
+     * binary to XML and stops there; the Import menu then calls
+     * {@code IImportOperationFactory.createImportExternalObjectOperation} on the produced file,
+     * which is what actually puts the object into the container. Without it the XML was written to
+     * a temporary directory and deleted unread, and the container gained nothing.
+     * </p>
+     * <p>
+     * The root XML is found, not computed. It is named after the OBJECT inside the binary, which
+     * need not match the file name: measured, a file named one thing converted to an XML named
+     * after the object it contained. Deriving the name from the binary looked right and refused a
+     * conversion that had in fact succeeded.
+     * </p>
+     *
+     * @param target the container project, already checked for its nature.
+     * @param xmlDir where the conversion wrote.
+     * @param baseProjectName the configuration the object belongs to, named by the caller; the
+     *            container does not carry it, which is why the environment's own wizard asks for
+     *            it. Falls back to the container's parent when omitted.
+     * @return <code>null</code> when the object was imported, or the reason it was not
+     */
+    private static String attachConvertedXml(IProject target, java.nio.file.Path xmlDir,
+        String baseProjectName)
+    {
+        Object factory = Activator.getDefault() != null
+            ? Activator.getDefault().getImportOperationFactory() : null;
+        if (factory == null)
+        {
+            return "The XML was produced but no import service is reachable on this EDT runtime " //$NON-NLS-1$
+                + "(com._1c.g5.v8.dt.import_.IImportOperationFactory), so nothing could put it " //$NON-NLS-1$
+                + "into the container."; //$NON-NLS-1$
+        }
+        RootXml root = findRootXml(xmlDir);
+        if (root.problem != null)
+        {
+            return root.problem;
+        }
+        java.nio.file.Path rootXml = root.file;
+        try
+        {
+            com._1c.g5.v8.dt.core.platform.IConfigurationProject baseProject = null;
+            com._1c.g5.v8.dt.core.platform.IExternalObjectProjectManager projects =
+                Activator.getDefault().getExternalObjectProjectManager();
+            if (baseProjectName != null && !baseProjectName.trim().isEmpty())
+            {
+                IProject named = ResourcesPlugin.getWorkspace().getRoot()
+                    .getProject(baseProjectName.trim());
+                com._1c.g5.v8.dt.core.platform.IV8ProjectManager v8 =
+                    Activator.getDefault().getV8ProjectManager();
+                Object candidate = named.exists() && v8 != null ? v8.getProject(named) : null;
+                if (!(candidate instanceof com._1c.g5.v8.dt.core.platform.IConfigurationProject))
+                {
+                    return "baseProjectName '" + baseProjectName + "' is not a configuration " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "project in this workspace."; //$NON-NLS-1$
+                }
+                baseProject = (com._1c.g5.v8.dt.core.platform.IConfigurationProject)candidate;
+            }
+            else if (projects != null)
+            {
+                // Hands back the V8 project directly, not the workspace one. A container created
+                // outside the environment's wizard carries no parent, and then the caller has to
+                // name it: the import operation cannot proceed without knowing the configuration.
+                Object parent = projects.getParentProject(target);
+                if (parent instanceof com._1c.g5.v8.dt.core.platform.IConfigurationProject)
+                {
+                    baseProject = (com._1c.g5.v8.dt.core.platform.IConfigurationProject)parent;
+                }
+            }
+            if (baseProject == null)
+            {
+                return "The container carries no base configuration, so the import operation " //$NON-NLS-1$
+                    + "cannot tell which configuration the object belongs to. Name it with " //$NON-NLS-1$
+                    + "baseProjectName."; //$NON-NLS-1$
+            }
+            com._1c.g5.v8.dt.platform.version.Version version = null;
+            if (Activator.getDefault().getRuntimeVersionSupport() != null)
+            {
+                version = Activator.getDefault().getRuntimeVersionSupport()
+                    .getRuntimeVersionOrDefault(baseProject.getProject(),
+                        com._1c.g5.v8.dt.platform.version.Version.LATEST);
+            }
+            if (version == null)
+            {
+                return "The platform version of the container could not be resolved, and the " //$NON-NLS-1$
+                    + "import operation needs it."; //$NON-NLS-1$
+            }
+            com._1c.g5.v8.dt.import_.IImportOperation operation =
+                ((com._1c.g5.v8.dt.import_.IImportOperationFactory)factory)
+                    .createImportExternalObjectOperation(target.getName(), version, rootXml,
+                        baseProject);
+            operation.setRefreshProject(true);
+            operation.run(new NullProgressMonitor());
+            org.eclipse.core.runtime.IStatus status = operation.getStatus();
+            if (status != null && status.getSeverity() >= org.eclipse.core.runtime.IStatus.ERROR)
+            {
+                return "The import operation refused: " + status.getMessage(); //$NON-NLS-1$
+            }
+            return null;
+        }
+        catch (Exception | LinkageError failed)
+        {
+            return "The import operation failed: " + TextSuggest.safeMessage(failed); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -226,7 +435,8 @@ public final class BmExternalObjectProjectHelper
      * @param inputPath absolute path of the {@code .epf} / {@code .erf} file
      * @return structured {@link ImportResult}
      */
-    public static ImportResult importExternalObject(String targetProjectName, String inputPath)
+    public static ImportResult importExternalObject(String targetProjectName, String inputPath,
+        String baseProjectName)
     {
         ImportResult r = new ImportResult();
         r.targetProject = targetProjectName;
@@ -289,11 +499,12 @@ public final class BmExternalObjectProjectHelper
         try
         {
             // 4-arg restore (target, binaryFile, xmlOutDir, monitor): EDT resolves the infobase +
-            // thick-client runtime from the target, converts the binary -> XML into xmlOutDir via a
-            // 1C DESIGNER batch, then attaches the object. Create a temp dir for the XML output
-            // (matches the EDT GUI flow). The 3-arg overload exists only in the newer runtime API,
-            // not the build-target API, so the 4-arg with a temp dir is the portable call.
+            // thick-client runtime from the target and converts the binary -> XML into xmlOutDir
+            // via a 1C DESIGNER batch. It does NOT attach anything: read as bytecode, restore calls
+            // convertBinaryExternalToXml and the infobase lock, and nothing else. The attaching is
+            // the step below, which is what the environment's own Import menu runs next.
             java.nio.file.Path tempXmlDir = java.nio.file.Files.createTempDirectory("xml-ext-obj-"); //$NON-NLS-1$
+            boolean keepXml = false;
             try
             {
                 // What the container holds before the import, so afterwards the
@@ -303,6 +514,18 @@ public final class BmExternalObjectProjectHelper
                 // returned the same list as before, and nothing was on disk.
                 java.util.Set<String> before = listExternalObjectDirs(target);
                 restorer.restore(target, binary.toPath(), tempXmlDir, new NullProgressMonitor());
+                String importFailure = refuseIfAlreadyThere(before, tempXmlDir);
+                if (importFailure == null)
+                {
+                    importFailure = attachConvertedXml(target, tempXmlDir, baseProjectName);
+                }
+                if (importFailure != null)
+                {
+                    r.error = importFailure;
+                    r.leftoverXmlDir = tempXmlDir.toString();
+                    keepXml = true;
+                    return r;
+                }
                 try
                 {
                     target.refreshLocal(org.eclipse.core.resources.IResource.DEPTH_INFINITE,
@@ -331,6 +554,10 @@ public final class BmExternalObjectProjectHelper
                         + "as it runs; importing the same file through the EDT UI surfaces what " //$NON-NLS-1$
                         + "the API withholds."; //$NON-NLS-1$
                     r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+                    // Exactly the case the XML is needed for: the operation reported nothing wrong
+                    // and nothing arrived. Deleting it here removed the only evidence there was.
+                    r.leftoverXmlDir = tempXmlDir.toString();
+                    keepXml = true;
                     return r;
                 }
                 r.importedObjectFqn = after.iterator().next();
@@ -338,10 +565,13 @@ public final class BmExternalObjectProjectHelper
             }
             finally
             {
-                // The XML is scratch space for the binary -> XML conversion; EDT has read what it
-                // needs by the time restore returns. Left behind, a whole configuration's worth of
-                // XML accumulates in the system temp on every import, and nothing ever collects it.
-                deleteRecursively(tempXmlDir);
+                // Scratch space, deleted once the object is in. Kept only when the import failed,
+                // and then its path is in the answer: without it the failure cannot be examined,
+                // and deleting it was how the converted XML disappeared unread.
+                if (!keepXml)
+                {
+                    deleteRecursively(tempXmlDir);
+                }
             }
         }
         catch (Throwable t)

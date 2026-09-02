@@ -73,6 +73,11 @@ public class ExternalObjectWorkshopTool implements IMcpTool
             .stringProperty("inputPath", //$NON-NLS-1$
                 "import_external_object: absolute path of the .epf / .erf binary to import. Required " //$NON-NLS-1$
                     + "for import.") //$NON-NLS-1$
+            .stringProperty("baseProjectName", //$NON-NLS-1$
+                "import_external_object: the configuration project the imported object belongs to. " //$NON-NLS-1$
+                    + "A container does not carry that link - the IDE's own import wizard asks for " //$NON-NLS-1$
+                    + "it - so name it here when the container has no parent project. Omitted, the " //$NON-NLS-1$
+                    + "container's parent is used, and the import refuses when there is none.") //$NON-NLS-1$
             .build();
     }
 
@@ -133,7 +138,8 @@ public class ExternalObjectWorkshopTool implements IMcpTool
                 + "targetProjectName=" + targetProjectName + " inputPath=<.erf|.epf>")).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         BmExternalObjectProjectHelper.ImportResult res =
-            BmExternalObjectProjectHelper.importExternalObject(targetProjectName, inputPath);
+            BmExternalObjectProjectHelper.importExternalObject(targetProjectName, inputPath,
+                JsonUtils.extractStringArgument(params, "baseProjectName")); //$NON-NLS-1$
         if (!res.ok)
         {
             String message = res.error != null ? res.error : "import external object failed"; //$NON-NLS-1$
@@ -145,6 +151,12 @@ public class ExternalObjectWorkshopTool implements IMcpTool
             if (res.failureKind != null)
             {
                 err.put(res.failureKind, Boolean.TRUE);
+            }
+            if (res.leftoverXmlDir != null)
+            {
+                // Kept on purpose; without the path the caller can neither look at it nor clean
+                // it up, and every such failure leaves a directory nobody can find.
+                err.put("leftoverXmlDir", res.leftoverXmlDir); //$NON-NLS-1$
             }
             return err.toJson();
         }

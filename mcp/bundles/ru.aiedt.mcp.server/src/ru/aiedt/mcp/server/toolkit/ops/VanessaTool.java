@@ -266,7 +266,7 @@ public class VanessaTool implements IMcpTool
     }
 
     /** Resolves a relative featurePath against the project dir; leaves absolute paths as-is. */
-    private static File resolveFeaturePath(String featurePathArg, File workingDir)
+    static File resolveFeaturePath(String featurePathArg, File workingDir)
     {
         File f = new File(featurePathArg);
         if (!f.isAbsolute() && workingDir != null)
@@ -402,7 +402,7 @@ public class VanessaTool implements IMcpTool
         return pr;
     }
 
-    private static List<String> collectScreenshots(File shotsDir)
+    static List<String> collectScreenshots(File shotsDir)
     {
         List<String> shots = new ArrayList<>();
         File[] files = shotsDir.listFiles((d, n) -> n.toLowerCase(Locale.ROOT).endsWith(".png")); //$NON-NLS-1$
@@ -459,7 +459,7 @@ public class VanessaTool implements IMcpTool
      * Masks the password out of anything that may carry a 1C connection string
      * ({@code Pwd="..."} or {@code Pwd=...}) before it is logged or returned.
      */
-    private static String redactSecrets(String s)
+    static String redactSecrets(String s)
     {
         if (s == null || s.isEmpty())
         {
