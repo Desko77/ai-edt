@@ -217,6 +217,48 @@ public class AScenarioNeedsNoFileOnDiskTest
     }
 
     @Test
+    public void anIncompleteDistributionIsNamedInsteadOfGuessedAt() throws Exception
+    {
+        File epf = new File(dir.toFile(), "vanessa-automation.epf"); //$NON-NLS-1$
+        Files.write(epf.toPath(), new byte[] { 1 });
+        Files.createDirectories(new File(dir.toFile(), "locales").toPath()); //$NON-NLS-1$
+
+        String missing = VanessaTool.whatTheDistributionIsMissing(epf);
+
+        assertNotNull("an empty locales and an absent lib is why the run produced nothing", //$NON-NLS-1$
+            missing);
+        assertTrue("both folders are named: " + missing, //$NON-NLS-1$
+            missing.contains("locales") && missing.contains("lib")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("and the way out is named too: " + missing, //$NON-NLS-1$
+            missing.contains("single-file")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aCompleteDistributionIsNotComplainedAbout() throws Exception
+    {
+        File epf = new File(dir.toFile(), "vanessa-automation.epf"); //$NON-NLS-1$
+        Files.write(epf.toPath(), new byte[] { 1 });
+        for (String folder : new String[] { "locales", "lib" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            Files.createDirectories(new File(dir.toFile(), folder).toPath());
+            Files.write(new File(dir.toFile(), folder + "/x.epf").toPath(), new byte[] { 1 }); //$NON-NLS-1$
+        }
+
+        assertNull("nothing is missing, so nothing is said", //$NON-NLS-1$
+            VanessaTool.whatTheDistributionIsMissing(epf));
+    }
+
+    @Test
+    public void theSingleFileBuildNeedsNothingBesideIt() throws Exception
+    {
+        File epf = new File(dir.toFile(), "vanessa-automation-single.epf"); //$NON-NLS-1$
+        Files.write(epf.toPath(), new byte[] { 1 });
+
+        assertNull("the single-file build carries its companions inside, so an empty directory " //$NON-NLS-1$
+            + "beside it says nothing", VanessaTool.whatTheDistributionIsMissing(epf)); //$NON-NLS-1$
+    }
+
+    @Test
     public void aFileThatWouldNotGoIsNamedRatherThanForgotten() throws Exception
     {
         File composed = new File(dir.toFile(), "composed.feature"); //$NON-NLS-1$

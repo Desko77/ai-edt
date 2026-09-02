@@ -547,10 +547,12 @@ public class VanessaTool implements IMcpTool
                         + " " + tail(pr.output))
                         .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
                 }
+                String incomplete = whatTheDistributionIsMissing(epfFile);
                 return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
                     + "). The run may not have started (bad connectionString, an unadopted Vanessa " //$NON-NLS-1$
                     + "extension in the infobase, a login window, or Vanessa-version-specific launch " //$NON-NLS-1$
                     + "parameters - the launched command and VAParams.json are in the EDT .log). " //$NON-NLS-1$
+                    + (incomplete == null ? "" : incomplete + " ") //$NON-NLS-1$
                     + tail(pr.output))
                     .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
             }
@@ -718,6 +720,57 @@ public class VanessaTool implements IMcpTool
             return "openStep is one step and therefore one line."; //$NON-NLS-1$
         }
         return null;
+    }
+
+    /** Folders the multi-file distribution loads from beside its own file. */
+    private static final String[] COMPANIONS = { "locales", "lib" }; //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * What a Vanessa distribution is missing beside its own file, or <code>null</code>.
+     * <p>
+     * Vanessa ships two ways. The single-file build carries everything; the ordinary one loads
+     * companion processors from {@code locales} and {@code lib} next to itself and, when they are
+     * not there, opens a modal naming a file nobody asked about and produces no report. The run
+     * then spends its whole time budget waiting on a window, and the answer is a list of guesses -
+     * none of which is the true one.
+     * </p>
+     * <p>
+     * Only said when it is certainly true: a folder that is absent or empty beside a file whose
+     * name does not mark it as the single-file build.
+     * </p>
+     *
+     * @param epf the configured data processor.
+     * @return the sentence to add to a failure, or <code>null</code> when nothing is missing
+     */
+    static String whatTheDistributionIsMissing(File epf)
+    {
+        if (epf == null || epf.getName().toLowerCase().contains("-single")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        File beside = epf.getParentFile();
+        if (beside == null)
+        {
+            return null;
+        }
+        List<String> missing = new ArrayList<>();
+        for (String companion : COMPANIONS)
+        {
+            File folder = new File(beside, companion);
+            String[] inside = folder.list();
+            if (!folder.isDirectory() || inside == null || inside.length == 0)
+            {
+                missing.add(companion);
+            }
+        }
+        if (missing.isEmpty())
+        {
+            return null;
+        }
+        return "This distribution is incomplete: " + String.join(" and ", missing) //$NON-NLS-1$ //$NON-NLS-2$
+            + " beside " + epf.getName() + (missing.size() == 1 ? " is" : " are") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + " missing or empty, and Vanessa loads companion processors from there before it " //$NON-NLS-1$
+            + "runs anything. Point the preference at the single-file build instead."; //$NON-NLS-1$
     }
 
     /** How the scenario opens a form when the caller does not say otherwise. */
