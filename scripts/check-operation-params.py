@@ -300,11 +300,15 @@ def registry_operations(path: pathlib.Path, source: str) -> dict[str, dict[str, 
         if body:
             names = set(EXTRACT_ANY.findall(body))
             how = f"handler {holder_name}.{method}"
-            if not names:
-                # A handler that only forwards - `delegateToEditForm("add_field", p)` hands the whole
-                # request to another facade under that name. The parameters are that facade's, and
-                # the same resolution the switch branches get applies here.
-                names, forwarded = parameters_of(body, holder_source)
+            # What the handler forwards is added to what it reads, never chosen instead of it. A
+            # handler that only forwards - `delegateToEditForm("add_field", p)` - has nothing of its
+            # own and gets the delegate's list; one that reads a parameter and hands the rest down
+            # gets both. Taking only its own left add_register_field recorded as reading kind alone,
+            # and the guard, which refuses what the read-set does not name, refused every call that
+            # carried the owner, the name and the type the operation needs.
+            forwarded_names, forwarded = parameters_of(body, holder_source)
+            if forwarded_names:
+                names |= forwarded_names
                 how = f"handler {holder_name}.{method}" + (f", {forwarded}" if forwarded else "")
         found[f"{path.stem}:{operation}"] = {
             "facade": path.stem,

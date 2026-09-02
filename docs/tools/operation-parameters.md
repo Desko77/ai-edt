@@ -44,106 +44,106 @@
 | `EditMetadataTool` | `add_accounting_flag` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `type` | handler SpecializedOps.opAddAccountingFlag, read in place |
 | `EditMetadataTool` | `add_addressing_attribute` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `type` | handler SpecializedOps.opAddAddressingAttribute, read in place |
 | `EditMetadataTool` | `add_button` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool |
-| `EditMetadataTool` | `add_command_handler` | `commandName`, `dryRun`, `formFqn`, `handler`, `projectName`, `title` | handler FormItemsOps.opAddFormCommand |
-| `EditMetadataTool` | `add_common_attribute_content` | `use` | handler ContentOps.opAddCommonAttributeContent |
+| `EditMetadataTool` | `add_command_handler` | `commandName`, `dryRun`, `formFqn`, `handler`, `projectName`, `title` | handler FormItemsOps.opAddFormCommand, read in place |
+| `EditMetadataTool` | `add_common_attribute_content` | `dryRun`, `ownerFqn`, `projectName`, `use`, `valueFqn` | handler ContentOps.opAddCommonAttributeContent, read in place |
 | `EditMetadataTool` | `add_decoration` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool |
-| `EditMetadataTool` | `add_dynamic_list_table` | `attributeName`, `dryRun`, `formFqn`, `mainTable`, `projectName`, `tableName`, `title` | handler FormItemsOps.opAddDynamicListTable |
-| `EditMetadataTool` | `add_enum_value` | `dryRun`, `name`, `ownerFqn`, `projectName`, `synonym` | handler SpecializedOps.opAddEnumValue |
-| `EditMetadataTool` | `add_event_subscription_handler` | `customSignature`, `eventName`, `handler`, `handlerName`, `projectName` | handler SpecializedOps.opAddEventHandler |
-| `EditMetadataTool` | `add_exchange_plan_content` | `autoRecord` | handler ContentOps.opAddExchangePlanContent |
+| `EditMetadataTool` | `add_dynamic_list_table` | `attributeName`, `dryRun`, `formFqn`, `mainTable`, `projectName`, `tableName`, `title` | handler FormItemsOps.opAddDynamicListTable, read in place |
+| `EditMetadataTool` | `add_enum_value` | `dryRun`, `name`, `ownerFqn`, `projectName`, `synonym` | handler SpecializedOps.opAddEnumValue, read in place |
+| `EditMetadataTool` | `add_event_subscription_handler` | `customSignature`, `eventName`, `handler`, `handlerName`, `projectName` | handler SpecializedOps.opAddEventHandler, read in place |
+| `EditMetadataTool` | `add_exchange_plan_content` | `autoRecord`, `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opAddExchangePlanContent, read in place |
 | `EditMetadataTool` | `add_ext_dimension_accounting_flag` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `type` | handler SpecializedOps.opAddExtDimensionAccountingFlag, read in place |
 | `EditMetadataTool` | `add_field` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool |
-| `EditMetadataTool` | `add_form_attribute` | `allowedLength`, `attributeName`, `dateFractions`, `dryRun`, `formFqn`, `fractionDigits`, `length`, `nonNegative`, `precision`, `projectName`, `title`, `type` | handler FormItemsOps.opAddFormAttribute |
-| `EditMetadataTool` | `add_form_attribute_column` | `allowedLength`, `attributeName`, `dataPath`, `dateFractions`, `dryRun`, `formFqn`, `fractionDigits`, `length`, `name`, `nonNegative`, `parentAttributeName`, `precision`, `projectName`, `title`, `type` | handler FormItemsOps.opAddFormAttributeColumn |
-| `EditMetadataTool` | `add_form_command` | `commandName`, `dryRun`, `formFqn`, `handler`, `projectName`, `title` | handler FormItemsOps.opAddFormCommand |
-| `EditMetadataTool` | `add_form_command_interface_item` | `commandFqn`, `dryRun`, `formFqn`, `group`, `index`, `panel`, `projectName`, `visible` | handler FormCommandInterfaceOps.opAddFormCommandInterfaceItem |
-| `EditMetadataTool` | `add_form_event_handler` | `dryRun`, `event`, `formFqn`, `handlerName`, `itemName`, `projectName` | handler FormEventOps.opAddFormEventHandler |
-| `EditMetadataTool` | `add_form_item_functional_option` | `attributeName`, `commandName`, `dryRun`, `formFqn`, `projectName`, `valueFqn` | handler MiscOps.opFormItemFunctionalOption |
-| `EditMetadataTool` | `add_form_parameter` | `allowedLength`, `comment`, `dateFractions`, `dryRun`, `formFqn`, `fractionDigits`, `keyParameter`, `length`, `name`, `nonNegative`, `precision`, `projectName`, `type` | handler FormItemsOps.opAddFormParameter |
-| `EditMetadataTool` | `add_functional_option_content` | `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opFunctionalOptionContent |
+| `EditMetadataTool` | `add_form_attribute` | `allowedLength`, `attributeName`, `dateFractions`, `dryRun`, `formFqn`, `fractionDigits`, `length`, `nonNegative`, `precision`, `projectName`, `title`, `type` | handler FormItemsOps.opAddFormAttribute, read in place |
+| `EditMetadataTool` | `add_form_attribute_column` | `allowedLength`, `attributeName`, `dataPath`, `dateFractions`, `dryRun`, `formFqn`, `fractionDigits`, `length`, `name`, `nonNegative`, `parentAttributeName`, `precision`, `projectName`, `title`, `type` | handler FormItemsOps.opAddFormAttributeColumn, read in place |
+| `EditMetadataTool` | `add_form_command` | `commandName`, `dryRun`, `formFqn`, `handler`, `projectName`, `title` | handler FormItemsOps.opAddFormCommand, read in place |
+| `EditMetadataTool` | `add_form_command_interface_item` | `commandFqn`, `dryRun`, `formFqn`, `group`, `index`, `panel`, `projectName`, `visible` | handler FormCommandInterfaceOps.opAddFormCommandInterfaceItem, read in place |
+| `EditMetadataTool` | `add_form_event_handler` | `dryRun`, `event`, `formFqn`, `handlerName`, `itemName`, `projectName` | handler FormEventOps.opAddFormEventHandler, read in place |
+| `EditMetadataTool` | `add_form_item_functional_option` | `attributeName`, `commandName`, `dryRun`, `formFqn`, `projectName`, `valueFqn` | handler MiscOps.opFormItemFunctionalOption, read in place |
+| `EditMetadataTool` | `add_form_parameter` | `allowedLength`, `comment`, `dateFractions`, `dryRun`, `formFqn`, `fractionDigits`, `keyParameter`, `length`, `name`, `nonNegative`, `precision`, `projectName`, `type` | handler FormItemsOps.opAddFormParameter, read in place |
+| `EditMetadataTool` | `add_functional_option_content` | `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opFunctionalOptionContent, read in place |
 | `EditMetadataTool` | `add_group` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool |
-| `EditMetadataTool` | `add_object_attribute` | `allowedLength`, `auto_borrow`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `multiLine`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `type` | handler ObjectOps.opAddObjectAttribute |
-| `EditMetadataTool` | `add_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opObjectReference |
-| `EditMetadataTool` | `add_operation_parameter` | `dryRun`, `name`, `nillable`, `operationName`, `ownerFqn`, `projectName`, `transferDirection`, `valueType`, `valueTypeNs` | handler ServiceOps.opAddOperationParameter |
-| `EditMetadataTool` | `add_predefined_account_subconto` | `accountName`, `characteristicType`, `dryRun`, `ownerFqn`, `projectName`, `turnover` | handler PredefinedOps.opAddPredefinedAccountSubconto |
-| `EditMetadataTool` | `add_predefined_item` | `accountType`, `code`, `description`, `dryRun`, `isFolder`, `name`, `offBalance`, `order`, `ownerFqn`, `projectName` | handler PredefinedOps.opAddPredefinedItem |
+| `EditMetadataTool` | `add_object_attribute` | `allowedLength`, `auto_borrow`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `multiLine`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `type` | handler ObjectOps.opAddObjectAttribute, read in place |
+| `EditMetadataTool` | `add_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opObjectReference, read in place |
+| `EditMetadataTool` | `add_operation_parameter` | `dryRun`, `name`, `nillable`, `operationName`, `ownerFqn`, `projectName`, `transferDirection`, `valueType`, `valueTypeNs` | handler ServiceOps.opAddOperationParameter, read in place |
+| `EditMetadataTool` | `add_predefined_account_subconto` | `accountName`, `characteristicType`, `dryRun`, `ownerFqn`, `projectName`, `turnover` | handler PredefinedOps.opAddPredefinedAccountSubconto, read in place |
+| `EditMetadataTool` | `add_predefined_item` | `accountType`, `code`, `description`, `dryRun`, `isFolder`, `name`, `offBalance`, `order`, `ownerFqn`, `projectName` | handler PredefinedOps.opAddPredefinedItem, read in place |
 | `EditMetadataTool` | `add_radio_button` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool |
-| `EditMetadataTool` | `add_recalculation` | `dryRun`, `name`, `ownerFqn`, `projectName`, `synonym` | handler SpecializedOps.opAddRecalculation |
-| `EditMetadataTool` | `add_recalculation_dimension` | `dryRun`, `name`, `ownerFqn`, `projectName`, `recalculationName`, `registerDimension`, `synonym` | handler SpecializedOps.opAddRecalculationDimension |
-| `EditMetadataTool` | `add_register_field` | `kind` | handler SpecializedOps.opAddRegisterField |
+| `EditMetadataTool` | `add_recalculation` | `dryRun`, `name`, `ownerFqn`, `projectName`, `synonym` | handler SpecializedOps.opAddRecalculation, read in place |
+| `EditMetadataTool` | `add_recalculation_dimension` | `dryRun`, `name`, `ownerFqn`, `projectName`, `recalculationName`, `registerDimension`, `synonym` | handler SpecializedOps.opAddRecalculationDimension, read in place |
+| `EditMetadataTool` | `add_register_field` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `kind`, `length`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `type` | handler SpecializedOps.opAddRegisterField, read in place |
 | `EditMetadataTool` | `add_subsystem_content` | `dryRun`, `name`, `ownerFqn`, `projectName`, `targetFqn`, `valueFqn` | handler ContentOps.opAddSubsystemContent, read in place |
 | `EditMetadataTool` | `add_table` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool |
-| `EditMetadataTool` | `add_tabular_section` | `dryRun`, `name`, `ownerFqn`, `projectName`, `synonym` | handler ObjectOps.opAddTabularSection |
-| `EditMetadataTool` | `add_tabular_section_attribute` | `allowedLength`, `auto_borrow`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `multiLine`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `tabularSection`, `tabularSectionName`, `type` | handler ObjectOps.opAddTabularSectionAttribute |
-| `EditMetadataTool` | `add_template` | `content`, `dryRun`, `name`, `ownerFqn`, `projectName`, `templateName`, `templateType` | handler TemplateOps.opAddTemplate |
-| `EditMetadataTool` | `add_url_template` | `dryRun`, `name`, `ownerFqn`, `projectName`, `template`, `urlTemplate` | handler ServiceOps.opAddUrlTemplate |
-| `EditMetadataTool` | `add_url_template_method` | `dryRun`, `handler`, `httpMethod`, `name`, `ownerFqn`, `projectName`, `templateName`, `withHandlerStub` | handler ServiceOps.opAddUrlTemplateMethod |
-| `EditMetadataTool` | `add_web_service_operation` | `dryRun`, `handler`, `name`, `ownerFqn`, `projectName`, `returningValueType`, `returningValueTypeNs`, `transactional`, `withHandlerStub` | handler ServiceOps.opAddWebServiceOperation |
-| `EditMetadataTool` | `clear_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opSetObjectReference |
-| `EditMetadataTool` | `create_form` | `dryRun`, `formName`, `formType`, `layout`, `name`, `ownerFqn`, `projectName`, `purpose`, `setAsDefault` | handler FormCreateOps.opCreateForm |
-| `EditMetadataTool` | `create_http_service` | `aliases`, `createModule`, `dryRun`, `handler`, `httpMethod`, `methodName`, `name`, `projectName`, `reuseSessions`, `rootURL`, `sessionMaxAge`, `urlTemplate`, `urlTemplateName`, `withHandlerStub` | handler ServiceOps.opCreateHttpService |
-| `EditMetadataTool` | `create_object` | `clientOrdinaryApplication`, `dryRun`, `externalConnection`, `global`, `name`, `objectType`, `privileged`, `projectName`, `properties`, `server`, `serverCall`, `synonym` | handler ObjectOps.opCreateObject |
-| `EditMetadataTool` | `create_object_command` | `commandParameterType`, `dryRun`, `name`, `ownerFqn`, `picture`, `projectName`, `title`, `tooltip` | handler SpecializedOps.opCreateObjectCommand |
-| `EditMetadataTool` | `create_route_map` | `bpFqn`, `dryRun`, `overwrite`, `ownerFqn`, `points`, `projectName`, `transitions` | handler RouteMapOps.opCreateRouteMap |
-| `EditMetadataTool` | `create_web_service` | `createModule`, `dryRun`, `handler`, `name`, `namespace`, `operationName`, `projectName`, `transactional`, `withHandlerStub` | handler ServiceOps.opCreateWebService |
+| `EditMetadataTool` | `add_tabular_section` | `dryRun`, `name`, `ownerFqn`, `projectName`, `synonym` | handler ObjectOps.opAddTabularSection, read in place |
+| `EditMetadataTool` | `add_tabular_section_attribute` | `allowedLength`, `auto_borrow`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `multiLine`, `name`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `synonym`, `tabularSection`, `tabularSectionName`, `type` | handler ObjectOps.opAddTabularSectionAttribute, read in place |
+| `EditMetadataTool` | `add_template` | `content`, `dryRun`, `name`, `ownerFqn`, `projectName`, `templateName`, `templateType` | handler TemplateOps.opAddTemplate, read in place |
+| `EditMetadataTool` | `add_url_template` | `dryRun`, `name`, `ownerFqn`, `projectName`, `template`, `urlTemplate` | handler ServiceOps.opAddUrlTemplate, read in place |
+| `EditMetadataTool` | `add_url_template_method` | `dryRun`, `handler`, `httpMethod`, `name`, `ownerFqn`, `projectName`, `templateName`, `withHandlerStub` | handler ServiceOps.opAddUrlTemplateMethod, read in place |
+| `EditMetadataTool` | `add_web_service_operation` | `dryRun`, `handler`, `name`, `ownerFqn`, `projectName`, `returningValueType`, `returningValueTypeNs`, `transactional`, `withHandlerStub` | handler ServiceOps.opAddWebServiceOperation, read in place |
+| `EditMetadataTool` | `clear_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opSetObjectReference, read in place |
+| `EditMetadataTool` | `create_form` | `dryRun`, `formName`, `formType`, `layout`, `name`, `ownerFqn`, `projectName`, `purpose`, `setAsDefault` | handler FormCreateOps.opCreateForm, read in place |
+| `EditMetadataTool` | `create_http_service` | `aliases`, `createModule`, `dryRun`, `handler`, `httpMethod`, `methodName`, `name`, `projectName`, `reuseSessions`, `rootURL`, `sessionMaxAge`, `urlTemplate`, `urlTemplateName`, `withHandlerStub` | handler ServiceOps.opCreateHttpService, read in place |
+| `EditMetadataTool` | `create_object` | `clientOrdinaryApplication`, `dryRun`, `externalConnection`, `global`, `name`, `objectType`, `privileged`, `projectName`, `properties`, `server`, `serverCall`, `synonym` | handler ObjectOps.opCreateObject, read in place |
+| `EditMetadataTool` | `create_object_command` | `commandParameterType`, `dryRun`, `name`, `ownerFqn`, `picture`, `projectName`, `title`, `tooltip` | handler SpecializedOps.opCreateObjectCommand, read in place |
+| `EditMetadataTool` | `create_route_map` | `bpFqn`, `dryRun`, `overwrite`, `ownerFqn`, `points`, `projectName`, `transitions` | handler RouteMapOps.opCreateRouteMap, read in place |
+| `EditMetadataTool` | `create_web_service` | `createModule`, `dryRun`, `handler`, `name`, `namespace`, `operationName`, `projectName`, `transactional`, `withHandlerStub` | handler ServiceOps.opCreateWebService, read in place |
 | `EditMetadataTool` | `draw_template` | - | handler TemplateOps.opTemplateCellOp |
-| `EditMetadataTool` | `extend_object_type` | `dryRun`, `ownerFqn`, `projectName`, `type` | handler ObjectOps.opExtendObjectType |
-| `EditMetadataTool` | `get_route_map` | `bpFqn`, `ownerFqn`, `projectName` | handler RouteMapOps.opGetRouteMap |
-| `EditMetadataTool` | `get_template_content` | `name`, `ownerFqn`, `projectName`, `templateName` | handler TemplateOps.opGetTemplateContent |
-| `EditMetadataTool` | `list_pictures` | `filter`, `projectName` | handler FormItemsOps.opListPictures |
+| `EditMetadataTool` | `extend_object_type` | `dryRun`, `ownerFqn`, `projectName`, `type` | handler ObjectOps.opExtendObjectType, read in place |
+| `EditMetadataTool` | `get_route_map` | `bpFqn`, `ownerFqn`, `projectName` | handler RouteMapOps.opGetRouteMap, read in place |
+| `EditMetadataTool` | `get_template_content` | `name`, `ownerFqn`, `projectName`, `templateName` | handler TemplateOps.opGetTemplateContent, read in place |
+| `EditMetadataTool` | `list_pictures` | `filter`, `projectName` | handler FormItemsOps.opListPictures, read in place |
 | `EditMetadataTool` | `merge_template_cells` | - | handler TemplateOps.opTemplateCellOp |
-| `EditMetadataTool` | `move_item` | `beforeName`, `containerFqn`, `dryRun`, `formFqn`, `name`, `parentName`, `projectName` | handler MiscOps.opMoveItem |
-| `EditMetadataTool` | `remove_command` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler SpecializedOps.opRemoveCommand |
+| `EditMetadataTool` | `move_item` | `beforeName`, `containerFqn`, `dryRun`, `formFqn`, `name`, `parentName`, `projectName` | handler MiscOps.opMoveItem, read in place |
+| `EditMetadataTool` | `remove_command` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler SpecializedOps.opRemoveCommand, read in place |
 | `EditMetadataTool` | `remove_common_attribute_content` | `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opRemoveCommonAttributeContent, read in place |
 | `EditMetadataTool` | `remove_exchange_plan_content` | `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opRemoveExchangePlanContent, read in place |
-| `EditMetadataTool` | `remove_form_attribute` | `attributeName`, `dryRun`, `formFqn`, `projectName` | handler FormItemsOps.opRemoveFormAttribute |
-| `EditMetadataTool` | `remove_form_command` | `commandName`, `dryRun`, `formFqn`, `projectName` | handler FormItemsOps.opRemoveFormCommand |
-| `EditMetadataTool` | `remove_form_command_interface_item` | `commandFqn`, `dryRun`, `formFqn`, `panel`, `projectName` | handler FormCommandInterfaceOps.opRemoveFormCommandInterfaceItem |
-| `EditMetadataTool` | `remove_form_event_handler` | `dryRun`, `event`, `formFqn`, `handlerName`, `itemName`, `projectName` | handler FormEventOps.opRemoveFormEventHandler |
+| `EditMetadataTool` | `remove_form_attribute` | `attributeName`, `dryRun`, `formFqn`, `projectName` | handler FormItemsOps.opRemoveFormAttribute, read in place |
+| `EditMetadataTool` | `remove_form_command` | `commandName`, `dryRun`, `formFqn`, `projectName` | handler FormItemsOps.opRemoveFormCommand, read in place |
+| `EditMetadataTool` | `remove_form_command_interface_item` | `commandFqn`, `dryRun`, `formFqn`, `panel`, `projectName` | handler FormCommandInterfaceOps.opRemoveFormCommandInterfaceItem, read in place |
+| `EditMetadataTool` | `remove_form_event_handler` | `dryRun`, `event`, `formFqn`, `handlerName`, `itemName`, `projectName` | handler FormEventOps.opRemoveFormEventHandler, read in place |
 | `EditMetadataTool` | `remove_form_item` | `autoGenerateColumns`, `beforeName`, `dataPath`, `elementType`, `formFqn`, `hyperlink`, `name`, `operation`, `parentName`, `picture`, `projectName`, `standardCommand`, `title` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool |
-| `EditMetadataTool` | `remove_form_item_functional_option` | `attributeName`, `commandName`, `dryRun`, `formFqn`, `projectName`, `valueFqn` | handler MiscOps.opFormItemFunctionalOption |
-| `EditMetadataTool` | `remove_form_parameter` | `dryRun`, `formFqn`, `name`, `projectName` | handler FormItemsOps.opRemoveFormParameter |
-| `EditMetadataTool` | `remove_functional_option_content` | `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opFunctionalOptionContent |
-| `EditMetadataTool` | `remove_help` | `content`, `dryRun`, `format`, `language`, `objectName`, `ownerFqn`, `projectName` | handler SpecializedOps.opSetHelp |
-| `EditMetadataTool` | `remove_item` | `containerFqn`, `name` | handler MiscOps.opRemoveItem |
-| `EditMetadataTool` | `remove_item_universal` | `containerFqn`, `name` | handler MiscOps.opRemoveItem |
+| `EditMetadataTool` | `remove_form_item_functional_option` | `attributeName`, `commandName`, `dryRun`, `formFqn`, `projectName`, `valueFqn` | handler MiscOps.opFormItemFunctionalOption, read in place |
+| `EditMetadataTool` | `remove_form_parameter` | `dryRun`, `formFqn`, `name`, `projectName` | handler FormItemsOps.opRemoveFormParameter, read in place |
+| `EditMetadataTool` | `remove_functional_option_content` | `dryRun`, `ownerFqn`, `projectName`, `valueFqn` | handler ContentOps.opFunctionalOptionContent, read in place |
+| `EditMetadataTool` | `remove_help` | `content`, `dryRun`, `format`, `language`, `objectName`, `ownerFqn`, `projectName` | handler SpecializedOps.opSetHelp, read in place |
+| `EditMetadataTool` | `remove_item` | `containerFqn`, `name` | handler MiscOps.opRemoveItem, read in place |
+| `EditMetadataTool` | `remove_item_universal` | `containerFqn`, `name` | handler MiscOps.opRemoveItem, read in place |
 | `EditMetadataTool` | `remove_object` | `confirm`, `objectFqn`, `projectName` | handler ObjectOps.opRemoveObject, delegate MetadataObjectDeleter |
-| `EditMetadataTool` | `remove_object_attribute` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ObjectOps.opRemoveObjectAttribute |
-| `EditMetadataTool` | `remove_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opObjectReference |
-| `EditMetadataTool` | `remove_predefined_account_subconto` | `accountName`, `characteristicType`, `dryRun`, `ownerFqn`, `projectName` | handler PredefinedOps.opRemovePredefinedAccountSubconto |
-| `EditMetadataTool` | `remove_register_field` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler SpecializedOps.opRemoveRegisterField |
-| `EditMetadataTool` | `remove_restriction_template` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `templateName` | handler RoleOps.opRestrictionTemplate |
-| `EditMetadataTool` | `remove_role_restriction` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `rightName`, `targetFqn` | handler RoleOps.opRoleRestriction |
-| `EditMetadataTool` | `remove_route_map` | `bpFqn`, `dryRun`, `ownerFqn`, `projectName` | handler RouteMapOps.opRemoveRouteMap |
+| `EditMetadataTool` | `remove_object_attribute` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ObjectOps.opRemoveObjectAttribute, read in place |
+| `EditMetadataTool` | `remove_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opObjectReference, read in place |
+| `EditMetadataTool` | `remove_predefined_account_subconto` | `accountName`, `characteristicType`, `dryRun`, `ownerFqn`, `projectName` | handler PredefinedOps.opRemovePredefinedAccountSubconto, read in place |
+| `EditMetadataTool` | `remove_register_field` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler SpecializedOps.opRemoveRegisterField, read in place |
+| `EditMetadataTool` | `remove_restriction_template` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `templateName` | handler RoleOps.opRestrictionTemplate, read in place |
+| `EditMetadataTool` | `remove_role_restriction` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `rightName`, `targetFqn` | handler RoleOps.opRoleRestriction, read in place |
+| `EditMetadataTool` | `remove_route_map` | `bpFqn`, `dryRun`, `ownerFqn`, `projectName` | handler RouteMapOps.opRemoveRouteMap, read in place |
 | `EditMetadataTool` | `remove_subsystem_content` | `dryRun`, `name`, `ownerFqn`, `projectName`, `targetFqn`, `valueFqn` | handler ContentOps.opRemoveSubsystemContent, read in place |
-| `EditMetadataTool` | `remove_tabular_section` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ObjectOps.opRemoveTabularSection |
-| `EditMetadataTool` | `remove_tabular_section_attribute` | `dryRun`, `name`, `ownerFqn`, `projectName`, `tabularSectionName` | handler ObjectOps.opRemoveTabularSectionAttribute |
-| `EditMetadataTool` | `remove_url_template` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ServiceOps.opRemoveUrlTemplate |
-| `EditMetadataTool` | `remove_url_template_method` | `dryRun`, `name`, `ownerFqn`, `projectName`, `templateName` | handler ServiceOps.opRemoveUrlTemplateMethod |
-| `EditMetadataTool` | `remove_web_service_operation` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ServiceOps.opRemoveWebServiceOperation |
-| `EditMetadataTool` | `set_command_order` | `commands`, `dryRun`, `group`, `ownerFqn`, `projectName` | handler CommandInterfaceOps.opSetCommandOrder |
-| `EditMetadataTool` | `set_command_placement` | `command`, `dryRun`, `group`, `order`, `ownerFqn`, `projectName` | handler CommandInterfaceOps.opSetCommandPlacement |
-| `EditMetadataTool` | `set_defined_type_types` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `types` | handler SpecializedOps.opSetDefinedTypeTypes |
-| `EditMetadataTool` | `set_event_subscription` | `dryRun`, `event`, `handler`, `objectFqn`, `ownerFqn`, `projectName`, `source` | handler SpecializedOps.opSetEventSubscription |
-| `EditMetadataTool` | `set_form_command_interface_item_property` | `commandFqn`, `dryRun`, `formFqn`, `panel`, `projectName`, `propertyName`, `propertyValue` | handler FormCommandInterfaceOps.opSetFormCommandInterfaceItemProperty |
-| `EditMetadataTool` | `set_form_command_property` | `commandName`, `dryRun`, `formFqn`, `projectName`, `propertyName`, `propertyValue` | handler FormItemsOps.opSetFormCommandProperty |
-| `EditMetadataTool` | `set_form_item_property` | `attributeName`, `dryRun`, `formFqn`, `itemName`, `projectName`, `propertyName`, `propertyValue` | handler FormItemsOps.opSetFormItemProperty |
-| `EditMetadataTool` | `set_help` | `content`, `dryRun`, `format`, `language`, `objectName`, `ownerFqn`, `projectName` | handler SpecializedOps.opSetHelp |
-| `EditMetadataTool` | `set_main_section_command_visibility` | `command`, `dryRun`, `projectName`, `role`, `visible` | handler CommandInterfaceOps.opSetMainSectionCommandVisibility |
-| `EditMetadataTool` | `set_object_property` | `dryRun`, `listMode`, `ownerFqn`, `projectName`, `propertyName`, `propertyValue` | handler ObjectOps.opSetObjectProperty |
-| `EditMetadataTool` | `set_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opSetObjectReference |
-| `EditMetadataTool` | `set_object_type` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `type` | handler ObjectOps.opSetObjectType |
-| `EditMetadataTool` | `set_property` | `attributeName`, `dryRun`, `formFqn`, `itemName`, `projectName`, `propertyName`, `propertyValue` | handler FormItemsOps.opSetFormItemProperty |
-| `EditMetadataTool` | `set_restriction_template` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `templateName` | handler RoleOps.opRestrictionTemplate |
-| `EditMetadataTool` | `set_role_restriction` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `rightName`, `targetFqn` | handler RoleOps.opRoleRestriction |
-| `EditMetadataTool` | `set_role_right` | `cascadeDependencies`, `dryRun`, `ownerFqn`, `projectName`, `rightName`, `targetFqn`, `value` | handler RoleOps.opSetRoleRight |
-| `EditMetadataTool` | `set_subsystem_command_visibility` | `command`, `dryRun`, `projectName`, `role`, `subsystem`, `visible` | handler CommandInterfaceOps.opSetSubsystemCommandVisibility |
-| `EditMetadataTool` | `set_subsystem_visibility` | `dryRun`, `projectName`, `role`, `subsystem`, `visible` | handler CommandInterfaceOps.opSetSubsystemVisibility |
-| `EditMetadataTool` | `set_subsystems_order` | `dryRun`, `projectName`, `subsystems` | handler CommandInterfaceOps.opSetSubsystemsOrder |
+| `EditMetadataTool` | `remove_tabular_section` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ObjectOps.opRemoveTabularSection, read in place |
+| `EditMetadataTool` | `remove_tabular_section_attribute` | `dryRun`, `name`, `ownerFqn`, `projectName`, `tabularSectionName` | handler ObjectOps.opRemoveTabularSectionAttribute, read in place |
+| `EditMetadataTool` | `remove_url_template` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ServiceOps.opRemoveUrlTemplate, read in place |
+| `EditMetadataTool` | `remove_url_template_method` | `dryRun`, `name`, `ownerFqn`, `projectName`, `templateName` | handler ServiceOps.opRemoveUrlTemplateMethod, read in place |
+| `EditMetadataTool` | `remove_web_service_operation` | `dryRun`, `name`, `ownerFqn`, `projectName` | handler ServiceOps.opRemoveWebServiceOperation, read in place |
+| `EditMetadataTool` | `set_command_order` | `commands`, `dryRun`, `group`, `ownerFqn`, `projectName` | handler CommandInterfaceOps.opSetCommandOrder, read in place |
+| `EditMetadataTool` | `set_command_placement` | `command`, `dryRun`, `group`, `order`, `ownerFqn`, `projectName` | handler CommandInterfaceOps.opSetCommandPlacement, read in place |
+| `EditMetadataTool` | `set_defined_type_types` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `types` | handler SpecializedOps.opSetDefinedTypeTypes, read in place |
+| `EditMetadataTool` | `set_event_subscription` | `dryRun`, `event`, `handler`, `objectFqn`, `ownerFqn`, `projectName`, `source` | handler SpecializedOps.opSetEventSubscription, read in place |
+| `EditMetadataTool` | `set_form_command_interface_item_property` | `commandFqn`, `dryRun`, `formFqn`, `panel`, `projectName`, `propertyName`, `propertyValue` | handler FormCommandInterfaceOps.opSetFormCommandInterfaceItemProperty, read in place |
+| `EditMetadataTool` | `set_form_command_property` | `commandName`, `dryRun`, `formFqn`, `projectName`, `propertyName`, `propertyValue` | handler FormItemsOps.opSetFormCommandProperty, read in place |
+| `EditMetadataTool` | `set_form_item_property` | `attributeName`, `dryRun`, `formFqn`, `itemName`, `projectName`, `propertyName`, `propertyValue` | handler FormItemsOps.opSetFormItemProperty, read in place |
+| `EditMetadataTool` | `set_help` | `content`, `dryRun`, `format`, `language`, `objectName`, `ownerFqn`, `projectName` | handler SpecializedOps.opSetHelp, read in place |
+| `EditMetadataTool` | `set_main_section_command_visibility` | `command`, `dryRun`, `projectName`, `role`, `visible` | handler CommandInterfaceOps.opSetMainSectionCommandVisibility, read in place |
+| `EditMetadataTool` | `set_object_property` | `dryRun`, `listMode`, `ownerFqn`, `projectName`, `propertyName`, `propertyValue` | handler ObjectOps.opSetObjectProperty, read in place |
+| `EditMetadataTool` | `set_object_reference` | `dryRun`, `ownerFqn`, `projectName`, `property`, `valueFqn` | handler ObjectOps.opSetObjectReference, read in place |
+| `EditMetadataTool` | `set_object_type` | `allowedLength`, `dateFractions`, `dryRun`, `fractionDigits`, `length`, `nonNegative`, `ownerFqn`, `precision`, `projectName`, `type` | handler ObjectOps.opSetObjectType, read in place |
+| `EditMetadataTool` | `set_property` | `attributeName`, `dryRun`, `formFqn`, `itemName`, `projectName`, `propertyName`, `propertyValue` | handler FormItemsOps.opSetFormItemProperty, read in place |
+| `EditMetadataTool` | `set_restriction_template` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `templateName` | handler RoleOps.opRestrictionTemplate, read in place |
+| `EditMetadataTool` | `set_role_restriction` | `condition`, `dryRun`, `ownerFqn`, `projectName`, `rightName`, `targetFqn` | handler RoleOps.opRoleRestriction, read in place |
+| `EditMetadataTool` | `set_role_right` | `cascadeDependencies`, `dryRun`, `ownerFqn`, `projectName`, `rightName`, `targetFqn`, `value` | handler RoleOps.opSetRoleRight, read in place |
+| `EditMetadataTool` | `set_subsystem_command_visibility` | `command`, `dryRun`, `projectName`, `role`, `subsystem`, `visible` | handler CommandInterfaceOps.opSetSubsystemCommandVisibility, read in place |
+| `EditMetadataTool` | `set_subsystem_visibility` | `dryRun`, `projectName`, `role`, `subsystem`, `visible` | handler CommandInterfaceOps.opSetSubsystemVisibility, read in place |
+| `EditMetadataTool` | `set_subsystems_order` | `dryRun`, `projectName`, `subsystems` | handler CommandInterfaceOps.opSetSubsystemsOrder, read in place |
 | `EditMetadataTool` | `set_template_cell` | - | handler TemplateOps.opTemplateCellOp |
-| `EditMetadataTool` | `set_template_content` | `content`, `dryRun`, `name`, `ownerFqn`, `projectName`, `templateName`, `templateType` | handler TemplateOps.opSetTemplateContent |
-| `EditMetadataTool` | `setup_settings_composer_on_form` | `composerName`, `dryRun`, `formFqn`, `projectName`, `settingsTableName`, `userSettingsTableName` | handler FormItemsOps.opSetupSettingsComposerOnForm |
-| `EditMetadataTool` | `sync_export` | `projectName` | handler SpecializedOps.opSyncExport |
+| `EditMetadataTool` | `set_template_content` | `content`, `dryRun`, `name`, `ownerFqn`, `projectName`, `templateName`, `templateType` | handler TemplateOps.opSetTemplateContent, read in place |
+| `EditMetadataTool` | `setup_settings_composer_on_form` | `composerName`, `dryRun`, `formFqn`, `projectName`, `settingsTableName`, `userSettingsTableName` | handler FormItemsOps.opSetupSettingsComposerOnForm, read in place |
+| `EditMetadataTool` | `sync_export` | `projectName` | handler SpecializedOps.opSyncExport, read in place |
 | `ExtensionWorkshopTool` | `borrow_child` | `baseProjectName`, `childKind`, `objectFqn`, `projectName` | read in place |
 | `ExtensionWorkshopTool` | `borrow_form_item` | `baseProjectName`, `objectFqn`, `projectName` | read in place |
 | `ExtensionWorkshopTool` | `borrow_module` | `baseProjectName`, `moduleType`, `objectFqn`, `projectName` | read in place |
