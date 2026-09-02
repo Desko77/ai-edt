@@ -60,8 +60,8 @@ import com.google.gson.JsonObject;
  * <p><b>Tier-1 (synchronous)</b>: the run blocks up to {@code timeoutSeconds};
  * a very long suite should raise the timeout. The Vanessa launch parameters
  * (the {@code /C} command and the {@code VAParams.json} keys) are Vanessa-version
- * sensitive - the full command line and the settings file are always logged so
- * they can be reconciled against the installed Vanessa build.
+ * sensitive - the command line and the key names of the settings file are logged so they can
+ * be reconciled against the installed Vanessa build. Values are not: one may carry a secret.
  */
 public class VanessaTool implements IMcpTool
 {
@@ -154,6 +154,9 @@ public class VanessaTool implements IMcpTool
                     + "working directory.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
                 "Max seconds to wait for the run (default 300, max 3600).") //$NON-NLS-1$
+            .integerProperty("testClientPort", //$NON-NLS-1$
+                "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
+                    + "run or another EDT already holds it.") //$NON-NLS-1$
             .booleanProperty("screenshots", //$NON-NLS-1$
                 "Capture a screenshot on step failure (default true).") //$NON-NLS-1$
             .booleanProperty("keepOpen", //$NON-NLS-1$
@@ -362,6 +365,19 @@ public class VanessaTool implements IMcpTool
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
         int stepDelay = Math.max(0, JsonUtils.extractIntArgument(params, "stepDelaySeconds", 0)); //$NON-NLS-1$
         int timeoutSec = JsonUtils.extractIntArgument(params, "timeoutSeconds", DEFAULT_TIMEOUT_SEC); //$NON-NLS-1$
+        Integer namedPort = JsonUtils.extractIntegerArgument(params, "testClientPort"); //$NON-NLS-1$
+        if (namedPort == null && params != null && params.containsKey("testClientPort")) //$NON-NLS-1$
+        {
+            return ToolResult.error("testClientPort is not a whole number a port can be: " //$NON-NLS-1$
+                + "a port is 1 to " + HIGHEST_PORT + ". Read as a number it cannot be, the " //$NON-NLS-1$ //$NON-NLS-2$
+                + "run would have started on the default port instead of the one named.").toJson(); //$NON-NLS-1$
+        }
+        final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
+        String portRefusal = whyThePortCannotBeUsed(settledClientPort);
+        if (portRefusal != null)
+        {
+            return ToolResult.error(portRefusal).toJson();
+        }
         if (timeoutSec <= 0)
         {
             timeoutSec = DEFAULT_TIMEOUT_SEC;
@@ -393,8 +409,8 @@ public class VanessaTool implements IMcpTool
             // run with these same arguments owns this key. Registering both under it would let a
             // cancel meant for that run destroy this client instead.
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
-                screenshots, keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob,
-                null, settledInfobase);
+                screenshots, keepOpen, stepDelay, settledTimeout, settledClientPort,
+                extraVaParams, runDirForJob, null, settledInfobase);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -412,7 +428,7 @@ public class VanessaTool implements IMcpTool
             entry = registry.getOrStart(jobKey,
                 () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
-                    extraVaParams, runDirForJob, jobKey, settledInfobase));
+                    settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -445,7 +461,8 @@ public class VanessaTool implements IMcpTool
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
      * @param stepDelay the pause between steps, in seconds.
-     * @param timeoutSec how long to wait for the client.
+     * @param timeoutSec how long to wait for the run.
+     * @param clientPort the port the test client listens on.
      * @param extraVaParams what the caller added to the Vanessa document.
      * @param workingDir where to run.
      * @param jobKey the key this run is cancelled by.
@@ -455,7 +472,7 @@ public class VanessaTool implements IMcpTool
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
-        int timeoutSec, JsonObject extraVaParams, File workingDir, String jobKey,
+        int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
         String infobaseName)
     {
         String refused = refusedBeforeLaunch(jobKey);
@@ -507,7 +524,7 @@ public class VanessaTool implements IMcpTool
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
-                keepOpen, stepDelay, extraVaParams);
+                keepOpen, stepDelay, connectionString, clientPort, timeoutSec, extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
@@ -551,7 +568,8 @@ public class VanessaTool implements IMcpTool
                 return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
                     + "). The run may not have started (bad connectionString, an unadopted Vanessa " //$NON-NLS-1$
                     + "extension in the infobase, a login window, or Vanessa-version-specific launch " //$NON-NLS-1$
-                    + "parameters - the launched command and VAParams.json are in the EDT .log). " //$NON-NLS-1$
+                    + "parameters - the launched command and the key names of VAParams.json " //$NON-NLS-1$
+                    + "are in the EDT .log). " //$NON-NLS-1$
                     + (incomplete == null ? "" : incomplete + " ") //$NON-NLS-1$
                     + tail(pr.output))
                     .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
@@ -865,14 +883,39 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The Vanessa {@code VAParams.json} (Russian keys - Vanessa-version sensitive, logged
-     * verbatim). Points Vanessa at the feature path, asks for a JUnit report and (optional)
-     * failure screenshots, and closes the client when done so the poller detects exit.
+     * The Vanessa {@code VAParams.json} (Russian keys - Vanessa-version sensitive). Points
+     * Vanessa at the feature path, names the test client the start step launches, asks for a
+     * JUnit report and (optional) failure screenshots, and closes the client when done so the
+     * poller detects exit. Only the key names of the result are logged: a value may carry a
+     * secret.
+     *
+     * @param featurePath the scenarios, a file or a directory of them.
+     * @param junitFile where Vanessa writes the report this run is read from.
+     * @param shotsDir where Vanessa writes failure screenshots.
+     * @param screenshots whether to capture one when a step fails.
+     * @param keepOpen whether to leave the client running afterwards.
+     * @param stepDelay the pause between steps, in seconds; zero leaves the key out.
+     * @param connectionString the infobase the test client opens.
+     * @param clientPort the port the test client listens on.
+     * @param clientTimeoutSec the whole budget of the run; the client share of it is taken by
+     *            {@link #clientWaitWithin(int)}.
+     * @param extra what the caller added to the Vanessa document, merged last.
+     * @return the document, ready to be written
      */
-    private static String buildVaParams(File featurePath, File junitFile, File shotsDir,
-        boolean screenshots, boolean keepOpen, int stepDelay, JsonObject extra)
+    static String buildVaParams(File featurePath, File junitFile, File shotsDir,
+        boolean screenshots, boolean keepOpen, int stepDelay, String connectionString,
+        int clientPort, int clientTimeoutSec, JsonObject extra)
     {
         JsonObject o = new JsonObject();
+        // The step that starts TestClient has no client to start without this block: the run
+        // answers "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0,
+        // because the UI-testing types exist only once a client runs under the test manager.
+        o.add("TestClient", //$NON-NLS-1$
+            testClient(connectionString, clientPort, clientWaitWithin(clientTimeoutSec)));
+        // Without this Vanessa opens its own window and waits there. Every run then spends its
+        // whole time budget on a form nobody is looking at, ends killed, and writes no report -
+        // which reads exactly like a scenario that never started.
+        o.addProperty("ВыполнитьСценарии", true); //$NON-NLS-1$
         // A directory of features, or the parent of a single .feature file.
         // getAbsoluteFile() first so getParentFile() is non-null even for a bare filename.
         File dir = featurePath.isDirectory() ? featurePath : featurePath.getAbsoluteFile().getParentFile();
@@ -901,6 +944,97 @@ public class VanessaTool implements IMcpTool
         return prettyJson(o);
     }
 
+    /** The port the test client listens on when the caller names none. */
+    static final int TEST_CLIENT_PORT = 48010;
+
+    /**
+     * The longest the run waits for the test client to answer. A client that has not come up
+     * within this is not coming, and without a ceiling a long suite would spend its whole
+     * budget waiting for one that never will.
+     */
+    static final int TEST_CLIENT_WAIT_CEILING_SEC = 600;
+
+    /**
+     * Why the test client cannot be told to listen on the given port.
+     * <p>
+     * Vanessa writes the number down as it is given, and a client told to listen on a number
+     * that is not a port simply does not listen - the start step then fails for a reason that
+     * names neither the port nor this tool.
+     * </p>
+     *
+     * @param port the port the caller named.
+     * @return the refusal, or <code>null</code> when the port can be used
+     */
+    static String whyThePortCannotBeUsed(int port)
+    {
+        if (port >= 1 && port <= HIGHEST_PORT)
+        {
+            return null;
+        }
+        return "testClientPort is " + port + ", which is not a port: a port is 1 to " //$NON-NLS-1$ //$NON-NLS-2$
+            + HIGHEST_PORT + ". Vanessa writes the number down as given, and a client told to " //$NON-NLS-1$
+            + "listen on it does not listen."; //$NON-NLS-1$
+    }
+
+    /** The highest port a client can be told to listen on. */
+    static final int HIGHEST_PORT = 65535;
+
+    /** The most that is held back for Vanessa to write its report and exit. */
+    private static final int REPORT_RESERVE_CEILING_SEC = 60;
+
+    /** The share of a small budget held back, when a whole minute would be most of it. */
+    private static final int RESERVE_SHARE = 3;
+
+    /**
+     * Seconds Vanessa waits for the test client, out of the run's own budget.
+     * <p>
+     * Kept under the budget so Vanessa reaches its own timeout, writes the report and exits
+     * before this tool kills the process, and under a ceiling so a long suite does not spend
+     * all of its time on a client that is not coming. What is held back is a third of the
+     * budget or a minute, whichever is smaller, so a short run keeps a reserve too.
+     * </p>
+     *
+     * @param budgetSec the whole budget of the run.
+     * @return the seconds to wait for the client
+     */
+    static int clientWaitWithin(int budgetSec)
+    {
+        // A whole minute is most of a small budget, so what is held back is a share of it
+        // until the budget is large enough for the minute to be the smaller of the two.
+        int reserve = Math.min(REPORT_RESERVE_CEILING_SEC,
+            Math.max(1, budgetSec / RESERVE_SHARE));
+        return Math.max(1, Math.min(budgetSec - reserve, TEST_CLIENT_WAIT_CEILING_SEC));
+    }
+
+    /**
+     * The {@code TestClient} block of VAParams: which infobase the client opens, on which port and
+     * as which client type.
+     *
+     * @param connectionString the infobase the test client opens.
+     * @param clientPort the port the client listens on.
+     * @param clientTimeoutSec seconds Vanessa waits for the client to answer. Taken from the
+     *            run's own budget up to {@link #TEST_CLIENT_WAIT_CEILING_SEC}.
+     * @return the block, holding one client
+     */
+    static JsonObject testClient(String connectionString, int clientPort, int clientTimeoutSec)
+    {
+        JsonObject client = new JsonObject();
+        client.addProperty("Name", "AiEdt"); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("PathToInfobase", connectionString); //$NON-NLS-1$
+        client.addProperty("PortTestClient", clientPort); //$NON-NLS-1$
+        // Vanessa spells this key with that capital I. Correcting it leaves the key unread.
+        client.addProperty("AddItionalParameters", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("ClientType", "Thin"); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("ComputerName", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
+        com.google.gson.JsonArray clients = new com.google.gson.JsonArray();
+        clients.add(client);
+        JsonObject block = new JsonObject();
+        block.addProperty("runtestclientwithmaximizedwindow", true); //$NON-NLS-1$
+        block.addProperty("testclienttimeout", clientTimeoutSec); //$NON-NLS-1$
+        block.add("datatestclients", clients); //$NON-NLS-1$
+        return block;
+    }
+
     /**
      * {@code 1cv8 ENTERPRISE /IBConnectionString "<conn>" /DisableStartupMessages
      * /Execute <epf> /C "StartFeaturePlayer;VAParams=<params>"} (thick client;
@@ -918,6 +1052,13 @@ public class VanessaTool implements IMcpTool
         "СохранятьРезультатыВФорматеJUnit", "ПутьКФайлуРезультатовJUnit", //$NON-NLS-1$ //$NON-NLS-2$
         "КаталогСохраненияСкриншотов", "ЗакрыватьTestClientПослеПрогона", //$NON-NLS-1$ //$NON-NLS-2$
         "ВыходИзПриложенияПослеЗапускаСценариев", //$NON-NLS-1$
+        // Turned off, Vanessa opens its window and waits there: the run spends its whole budget on
+        // a form nobody is looking at and writes no report.
+        "ВыполнитьСценарии", //$NON-NLS-1$
+        // The passthrough takes values and lists of them, so it cannot carry the object this block
+        // needs; what it can carry is a value that replaces the block with something the start step
+        // cannot use. Its port and its deadline are arguments of this tool instead.
+        "TestClient", //$NON-NLS-1$
         // These come from arguments of this tool. Letting the passthrough set them too would mean
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
@@ -1029,9 +1170,9 @@ public class VanessaTool implements IMcpTool
             // set to Turkish, and a protected name stops matching.
             if (OURS_TO_SET.contains(key.toLowerCase(java.util.Locale.ROOT)))
             {
-                refusal[0] = "'" + key + "' is set by this tool, because it reads the run's " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "result back from where it points. Moving it would leave the run reporting " //$NON-NLS-1$
-                    + "success while reading nothing."; //$NON-NLS-1$
+                refusal[0] = "'" + key + "' is set by this tool, from its own " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "arguments. Passing it here as well would leave the answer describing a " //$NON-NLS-1$
+                    + "run that did not happen the way it says."; //$NON-NLS-1$
                 return null;
             }
             if (!isAValueOrAListOfThem(given.get(key)))

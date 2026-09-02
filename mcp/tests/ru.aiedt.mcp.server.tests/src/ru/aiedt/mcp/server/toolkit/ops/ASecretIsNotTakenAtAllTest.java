@@ -282,7 +282,11 @@ public class ASecretIsNotTakenAtAllTest
         // The merge happens last, so a parameter the caller set through an argument of this tool
         // would be silently overruled - and the answer would still describe the argument.
         for (String key : new String[] {"КаталогФич", "ФайлСценария", //$NON-NLS-1$ //$NON-NLS-2$
-            "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами"}) //$NON-NLS-1$ //$NON-NLS-2$
+            "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами", //$NON-NLS-1$ //$NON-NLS-2$
+            // Turned off, the run waits in Vanessa's own window until it is killed.
+            "ВыполнитьСценарии", //$NON-NLS-1$
+            // The passthrough takes no object, so what it can pass here only breaks the block.
+            "TestClient"}) //$NON-NLS-1$
         {
             String[] refusal = new String[1];
             VanessaTool.extraParams("{\"" + key + "\":\"x\"}", refusal); //$NON-NLS-1$ //$NON-NLS-2$
