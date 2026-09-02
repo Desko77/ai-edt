@@ -77,6 +77,52 @@ public class AScenarioNeedsNoFileOnDiskTest
     }
 
     @Test
+    public void aFormIsPhotographedByATagRatherThanAStep()
+    {
+        String scenario = VanessaTool.scenarioForForm("ИИА_Агент", null, null); //$NON-NLS-1$
+
+        assertTrue("the snapshot is a tag on the step that follows, not a step of its own: " //$NON-NLS-1$
+            + scenario, scenario.contains("@screenshot")); //$NON-NLS-1$
+        assertTrue("the tag stands before the step it photographs", //$NON-NLS-1$
+            scenario.indexOf("@screenshot") < scenario.indexOf("Я открываю")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the form the caller named belongs in the step: " + scenario, //$NON-NLS-1$
+            scenario.contains("\"ИИА_Агент\"")); //$NON-NLS-1$
+        assertTrue("a scenario needs a client to work in", //$NON-NLS-1$
+            scenario.contains(VanessaTool.START_STEP));
+        assertTrue("Vanessa reads the language from the first line", //$NON-NLS-1$
+            scenario.startsWith("#language: ru")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theWordingOfEachStepCanBeGivenByTheCaller()
+    {
+        String scenario = VanessaTool.scenarioForForm("Справочник.Товары", //$NON-NLS-1$
+            "Я подключаюсь к запущенному клиенту", //$NON-NLS-1$
+            "Я открываю форму списка справочника {form}"); //$NON-NLS-1$
+
+        assertTrue("a list form is opened by other words than a common form: " + scenario, //$NON-NLS-1$
+            scenario.contains("Я открываю форму списка справочника Справочник.Товары")); //$NON-NLS-1$
+        assertTrue("and the client is reached by the caller's words too", //$NON-NLS-1$
+            scenario.contains("Я подключаюсь к запущенному клиенту")); //$NON-NLS-1$
+        assertTrue("the default wording is gone when the caller gave one", //$NON-NLS-1$
+            !scenario.contains(VanessaTool.OPEN_STEP.replace("{form}", "Справочник.Товары"))); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void namingAFormAndSomethingElseIsRefused()
+    {
+        assertNotNull("a form and a file both say what to play", //$NON-NLS-1$
+            VanessaTool.whyTheScenarioIsNotNamed(true, false, true));
+        assertNotNull("a form and a text both say what to play", //$NON-NLS-1$
+            VanessaTool.whyTheScenarioIsNotNamed(false, true, true));
+        assertNull("a form on its own is one way of saying it", //$NON-NLS-1$
+            VanessaTool.whyTheScenarioIsNotNamed(false, false, true));
+        assertTrue("the refusal offers the form as a third way: " //$NON-NLS-1$
+            + VanessaTool.whyTheScenarioIsNotNamed(false, false, false),
+            VanessaTool.whyTheScenarioIsNotNamed(false, false, false).contains("formToOpen")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aNamedFileIsPlayedAsItIs() throws Exception
     {
         File named = new File(dir.toFile(), "given.feature"); //$NON-NLS-1$

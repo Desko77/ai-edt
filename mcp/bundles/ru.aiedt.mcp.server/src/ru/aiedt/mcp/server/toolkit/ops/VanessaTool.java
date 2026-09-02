@@ -108,6 +108,19 @@ public class VanessaTool implements IMcpTool
                     + "step wording is Vanessa's own and differs between its versions, so it is " //$NON-NLS-1$
                     + "yours to give, the same way the vanessaParams names are. Given together " //$NON-NLS-1$
                     + "with featurePath, both are refused.") //$NON-NLS-1$
+            .stringProperty("formToOpen", //$NON-NLS-1$
+                "The form to open and photograph, in the words the opening step expects - a " //$NON-NLS-1$
+                    + "common form's name, a catalog's FQN, whatever the step takes. The scenario " //$NON-NLS-1$
+                    + "is composed from it, so neither featurePath nor scenarioText is passed " //$NON-NLS-1$
+                    + "with it. The snapshot arrives among the run's screenshots.") //$NON-NLS-1$
+            .stringProperty("openStep", //$NON-NLS-1$
+                "The step that opens the form, with {form} where the name goes. Defaults to " //$NON-NLS-1$
+                    + "opening a common form. A list form, an object form and an extension's " //$NON-NLS-1$
+                    + "form are opened by different words, and the words belong to Vanessa and " //$NON-NLS-1$
+                    + "differ between its versions, so pass the one your library uses.") //$NON-NLS-1$
+            .stringProperty("startStep", //$NON-NLS-1$
+                "The step that gets a client to work in. Defaults to launching TestClient or " //$NON-NLS-1$
+                    + "attaching to one already running.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "1C infobase connection string (required), e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
                     + "'Srvr=\"host\";Ref=\"base\";'. A Pwd is refused: it would reach the " //$NON-NLS-1$
@@ -271,12 +284,21 @@ public class VanessaTool implements IMcpTool
         }
         String featurePathArg = JsonUtils.extractStringArgument(params, "featurePath"); //$NON-NLS-1$
         String scenarioText = JsonUtils.extractStringArgument(params, "scenarioText"); //$NON-NLS-1$
+        String formToOpen = JsonUtils.extractStringArgument(params, "formToOpen"); //$NON-NLS-1$
         boolean hasPath = featurePathArg != null && !featurePathArg.trim().isEmpty();
         boolean hasText = scenarioText != null && !scenarioText.trim().isEmpty();
-        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText);
+        boolean hasForm = formToOpen != null && !formToOpen.trim().isEmpty();
+        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText, hasForm);
         if (badlyNamed != null)
         {
             return ToolResult.error(badlyNamed).toJson();
+        }
+        if (hasForm)
+        {
+            scenarioText = scenarioForForm(formToOpen.trim(),
+                JsonUtils.extractStringArgument(params, "startStep"), //$NON-NLS-1$
+                JsonUtils.extractStringArgument(params, "openStep")); //$NON-NLS-1$
+            hasText = true;
         }
 
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -579,18 +601,72 @@ public class VanessaTool implements IMcpTool
      */
     static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText)
     {
-        if (hasPath && hasText)
+        return whyTheScenarioIsNotNamed(hasPath, hasText, false);
+    }
+
+    /**
+     * Why this call does not say what to play, or <code>null</code> when it does.
+     *
+     * @param hasPath whether a file or directory was named.
+     * @param hasText whether the scenario itself was given.
+     * @param hasForm whether a form to open was named, from which a scenario is composed.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText, boolean hasForm)
+    {
+        int named = (hasPath ? 1 : 0) + (hasText ? 1 : 0) + (hasForm ? 1 : 0);
+        if (named > 1)
         {
-            return "featurePath and scenarioText both name what to play, and only one of them " //$NON-NLS-1$
-                + "can be it. Pass the path to a file that exists, or the scenario text to be " //$NON-NLS-1$
-                + "written for this run."; //$NON-NLS-1$
+            return "featurePath, scenarioText and formToOpen each name what to play, and only " //$NON-NLS-1$
+                + "one of them can be it. Pass the path to a file that exists, the scenario text " //$NON-NLS-1$
+                + "to be written for this run, or the form to open and snapshot."; //$NON-NLS-1$
         }
-        if (!hasPath && !hasText)
+        if (named == 0)
         {
             return "featurePath is required (a .feature file or a directory), or scenarioText " //$NON-NLS-1$
-                + "with the scenario itself."; //$NON-NLS-1$
+                + "with the scenario itself, or formToOpen with the form to open and snapshot."; //$NON-NLS-1$
         }
         return null;
+    }
+
+    /** How the scenario opens a form when the caller does not say otherwise. */
+    static final String OPEN_STEP = "Я открываю общую форму \"{form}\""; //$NON-NLS-1$
+
+    /** How the scenario gets a client to work in when the caller does not say otherwise. */
+    static final String START_STEP =
+        "Я запускаю сценарий открытия TestClient или подключаю уже существующий"; //$NON-NLS-1$
+
+    /**
+     * A scenario that opens one form and has it photographed.
+     * <p>
+     * The snapshot is not a step. Vanessa takes one before and after the step that follows the
+     * {@code @screenshot} tag, writing them where {@code КаталогСохраненияСкриншотов} points - which
+     * this tool already sets for every run, and which the report reader already groups by step.
+     * </p>
+     * <p>
+     * Both step wordings are arguments with a default rather than text built into this file. They
+     * belong to Vanessa and differ between its versions and between kinds of form: a list form and
+     * an object form are opened by different words, and one wording nailed down here would fit one
+     * of them. The same reasoning gave {@code vanessaParams} its open shape.
+     * </p>
+     *
+     * @param form what to put where the wording says {@code {form}}.
+     * @param startStep how to get a client, or <code>null</code> for {@link #START_STEP}.
+     * @param openStep how to open the form, or <code>null</code> for {@link #OPEN_STEP}.
+     * @return the scenario text
+     */
+    static String scenarioForForm(String form, String startStep, String openStep)
+    {
+        String opening = openStep == null || openStep.trim().isEmpty() ? OPEN_STEP : openStep;
+        String starting = startStep == null || startStep.trim().isEmpty() ? START_STEP : startStep;
+        return "#language: ru\n\n" //$NON-NLS-1$
+            + "Функционал: Снимок формы\n\n" //$NON-NLS-1$
+            + "Контекст:\n" //$NON-NLS-1$
+            + "    Дано " + starting + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "Сценарий: Снимок формы " + form + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "    @screenshot\n" //$NON-NLS-1$
+            + "    Когда " + opening.replace("{form}", form) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "    И Я закрываю все окна клиентского приложения\n"; //$NON-NLS-1$
     }
 
     /**
