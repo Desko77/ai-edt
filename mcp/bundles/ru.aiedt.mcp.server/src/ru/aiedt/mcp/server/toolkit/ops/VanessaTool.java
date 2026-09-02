@@ -279,10 +279,11 @@ public class VanessaTool implements IMcpTool
             String projectForInfobase = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
             IProject project = projectForInfobase == null || projectForInfobase.trim().isEmpty()
                 ? null : ProjectResolver.resolve(projectForInfobase);
-            connectionString = InfobaseAddress.ofProject(project);
-            if (connectionString != null)
+            InfobaseAddress.Address address = InfobaseAddress.ofProject(project);
+            if (address.found())
             {
-                infobaseFrom = InfobaseAddress.nameOfProjectInfobase(project);
+                connectionString = address.connectionString();
+                infobaseFrom = address.name();
             }
         }
         if (connectionString == null || connectionString.trim().isEmpty())
@@ -317,9 +318,14 @@ public class VanessaTool implements IMcpTool
         }
         if (hasForm)
         {
-            scenarioText = scenarioForForm(formToOpen.trim(),
-                JsonUtils.extractStringArgument(params, "startStep"), //$NON-NLS-1$
-                JsonUtils.extractStringArgument(params, "openStep")); //$NON-NLS-1$
+            String openStep = JsonUtils.extractStringArgument(params, "openStep"); //$NON-NLS-1$
+            String startStep = JsonUtils.extractStringArgument(params, "startStep"); //$NON-NLS-1$
+            String badlyFormed = whyTheFormCannotBeNamed(formToOpen, openStep, startStep);
+            if (badlyFormed != null)
+            {
+                return ToolResult.error(badlyFormed).toJson();
+            }
+            scenarioText = scenarioForForm(formToOpen.trim(), startStep, openStep);
             hasText = true;
         }
 
@@ -655,6 +661,61 @@ public class VanessaTool implements IMcpTool
         {
             return "featurePath is required (a .feature file or a directory), or scenarioText " //$NON-NLS-1$
                 + "with the scenario itself, or formToOpen with the form to open and snapshot."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Why a form cannot be put into a scenario, or <code>null</code> when it can.
+     * <p>
+     * The name goes into a Gherkin step, and a step is one line with the name usually in quotes. A
+     * name carrying a quote or a line break composes a scenario Vanessa reads as something else -
+     * and the run then fails somewhere far from the cause, or worse, succeeds having done the
+     * wrong thing.
+     * </p>
+     *
+     * @param form the form the caller named.
+     * @param openStep the wording, or <code>null</code> for the default.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheFormCannotBeNamed(String form, String openStep)
+    {
+        return whyTheFormCannotBeNamed(form, openStep, null);
+    }
+
+    /**
+     * Why a form cannot be put into a scenario, or <code>null</code> when it can.
+     *
+     * @param form the form the caller named.
+     * @param openStep the wording that opens it, or <code>null</code> for the default.
+     * @param startStep the wording that gets a client, or <code>null</code> for the default.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheFormCannotBeNamed(String form, String openStep, String startStep)
+    {
+        if (startStep != null && (startStep.indexOf('\n') >= 0 || startStep.indexOf('\r') >= 0))
+        {
+            return "startStep is one step and therefore one line."; //$NON-NLS-1$
+        }
+        if (form == null || form.trim().isEmpty())
+        {
+            return "formToOpen is empty. Name the form the opening step expects."; //$NON-NLS-1$
+        }
+        if (form.indexOf('"') >= 0 || form.indexOf('\n') >= 0 || form.indexOf('\r') >= 0)
+        {
+            return "formToOpen carries a quote or a line break, and the name goes into one line " //$NON-NLS-1$
+                + "of a scenario. Pass the name alone, or write the whole scenario in " //$NON-NLS-1$
+                + "scenarioText."; //$NON-NLS-1$
+        }
+        String wording = openStep == null || openStep.trim().isEmpty() ? OPEN_STEP : openStep;
+        if (!wording.contains("{form}")) //$NON-NLS-1$
+        {
+            return "openStep does not say where the form name goes. Put {form} in it, as in " //$NON-NLS-1$
+                + OPEN_STEP + "."; //$NON-NLS-1$
+        }
+        if (wording.indexOf('\n') >= 0 || wording.indexOf('\r') >= 0)
+        {
+            return "openStep is one step and therefore one line."; //$NON-NLS-1$
         }
         return null;
     }

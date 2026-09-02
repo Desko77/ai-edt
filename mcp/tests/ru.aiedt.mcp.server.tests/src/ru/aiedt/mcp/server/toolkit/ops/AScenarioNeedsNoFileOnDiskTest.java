@@ -109,6 +109,34 @@ public class AScenarioNeedsNoFileOnDiskTest
     }
 
     @Test
+    public void aFormNameThatWouldBreakTheStepIsRefused()
+    {
+        assertNotNull("a quote closes the step's own quotes and the scenario means something else", //$NON-NLS-1$
+            VanessaTool.whyTheFormCannotBeNamed("Спра\"вочник", null)); //$NON-NLS-1$
+        assertNotNull("a step is one line", //$NON-NLS-1$
+            VanessaTool.whyTheFormCannotBeNamed("Справочник\nТовары", null)); //$NON-NLS-1$
+        assertNotNull("an empty name opens nothing", //$NON-NLS-1$
+            VanessaTool.whyTheFormCannotBeNamed("   ", null)); //$NON-NLS-1$
+        assertNull("an ordinary name goes through", //$NON-NLS-1$
+            VanessaTool.whyTheFormCannotBeNamed("ИИА_Агент", null)); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aWordingWithNowhereToPutTheNameIsRefused()
+    {
+        String why = VanessaTool.whyTheFormCannotBeNamed("ИИА_Агент", //$NON-NLS-1$
+            "Я открываю общую форму"); //$NON-NLS-1$
+
+        assertNotNull("a wording without {form} opens whatever it names, not what was asked", why); //$NON-NLS-1$
+        assertTrue("the refusal says what to put in it: " + why, why.contains("{form}")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull("a wording spanning lines is not one step", //$NON-NLS-1$
+            VanessaTool.whyTheFormCannotBeNamed("ИИА_Агент", "Я открываю\nформу {form}")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull("the step that gets a client is one line too", //$NON-NLS-1$
+            VanessaTool.whyTheFormCannotBeNamed("ИИА_Агент", null, //$NON-NLS-1$
+                "Я подключаюсь\nи еще что-то")); //$NON-NLS-1$
+    }
+
+    @Test
     public void namingAFormAndSomethingElseIsRefused()
     {
         assertNotNull("a form and a file both say what to play", //$NON-NLS-1$
