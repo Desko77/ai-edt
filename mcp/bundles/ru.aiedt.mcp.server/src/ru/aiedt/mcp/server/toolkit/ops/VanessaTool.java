@@ -101,6 +101,12 @@ public class VanessaTool implements IMcpTool
                     + "client as a command-line argument, readable by every process on the machine. " //$NON-NLS-1$
                     + "Use an infobase that needs no password, or one that accepts the operating " //$NON-NLS-1$
                     + "system's authentication.", true) //$NON-NLS-1$
+            .objectProperty("vanessaParams", //$NON-NLS-1$
+                "Optional JSON object of Vanessa parameters to add to VAParams.json, for filtering " //$NON-NLS-1$
+                    + "by tag or by scenario name among other things. The names are Vanessa's own " //$NON-NLS-1$
+                    + "and differ between its versions, so they are yours to give; it ignores one " //$NON-NLS-1$
+                    + "it does not know. The few this tool reads its result back from are " //$NON-NLS-1$
+                    + "refused.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Optional EDT project name - used to resolve a relative featurePath and as the " //$NON-NLS-1$
                     + "working directory.") //$NON-NLS-1$
@@ -158,6 +164,13 @@ public class VanessaTool implements IMcpTool
         {
             return ToolResult.error(secretRefusal).toJson();
         }
+        String[] paramsRefusal = new String[1];
+        JsonObject extraVaParams =
+            extraParams(JsonUtils.extractStringArgument(params, "vanessaParams"), paramsRefusal); //$NON-NLS-1$
+        if (paramsRefusal[0] != null)
+        {
+            return ToolResult.error(paramsRefusal[0]).toJson();
+        }
         String featurePathArg = JsonUtils.extractStringArgument(params, "featurePath"); //$NON-NLS-1$
         if (featurePathArg == null || featurePathArg.trim().isEmpty())
         {
@@ -208,14 +221,14 @@ public class VanessaTool implements IMcpTool
             File paramsFile = new File(outDir.toFile(), "VAParams.json"); //$NON-NLS-1$
 
             String vaParamsJson = buildVaParams(featurePath, junitFile, shotsDir, screenshots,
-                keepOpen, stepDelay);
+                keepOpen, stepDelay, extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
             List<String> command = buildCommand(exeFile, connectionString, epfFile, paramsFile);
             // The connectionString may carry Pwd="..." - never log it in the clear.
             Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
-                + "\nVAParams.json:\n" + vaParamsJson); //$NON-NLS-1$
+                + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
 
             ProcessResult pr = runVanessa(command, runDir, timeoutSec);
             Activator.logInfo("vanessa: exit=" + pr.exitCode + " timedOut=" + pr.timedOut //$NON-NLS-1$ //$NON-NLS-2$
@@ -290,7 +303,7 @@ public class VanessaTool implements IMcpTool
      * failure screenshots, and closes the client when done so the poller detects exit.
      */
     private static String buildVaParams(File featurePath, File junitFile, File shotsDir,
-        boolean screenshots, boolean keepOpen, int stepDelay)
+        boolean screenshots, boolean keepOpen, int stepDelay, JsonObject extra)
     {
         JsonObject o = new JsonObject();
         // A directory of features, or the parent of a single .feature file.
@@ -311,6 +324,13 @@ public class VanessaTool implements IMcpTool
         {
             o.addProperty("ПаузаМеждуШагами", stepDelay); //$NON-NLS-1$
         }
+        if (extra != null)
+        {
+            for (java.util.Map.Entry<String, com.google.gson.JsonElement> e : extra.entrySet())
+            {
+                o.add(e.getKey(), e.getValue());
+            }
+        }
         return prettyJson(o);
     }
 
@@ -319,6 +339,202 @@ public class VanessaTool implements IMcpTool
      * /Execute <epf> /C "StartFeaturePlayer;VAParams=<params>"} (thick client;
      * {@code /DisableStartupMessages} avoids the "update configuration?" modal).
      */
+    /**
+     * The parameters this tool sets because it reads the result back from where they point.
+     * <p>
+     * Moving the report or the screenshot directory would leave the run reading an empty file and
+     * reporting that nothing failed; leaving the client open would leave the run waiting for an
+     * exit that never comes. A caller asking for one of these is told so rather than obeyed.
+     * </p>
+     */
+    private static final java.util.Set<String> OURS_TO_SET = lowerCased(
+        "СохранятьРезультатыВФорматеJUnit", "ПутьКФайлуРезультатовJUnit", //$NON-NLS-1$ //$NON-NLS-2$
+        "КаталогСохраненияСкриншотов", "ЗакрыватьTestClientПослеПрогона", //$NON-NLS-1$ //$NON-NLS-2$
+        "ВыходИзПриложенияПослеЗапускаСценариев", //$NON-NLS-1$
+        // These come from arguments of this tool. Letting the passthrough set them too would mean
+        // the later one silently wins, and the caller who passed screenshots=true would be told it
+        // ran with screenshots while it did not.
+        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+    /**
+     * Field names a connection string carries a password under that no rule would catch.
+     * <p>
+     * The platform names most of them after the word - Pwd, DBPwd, SPwd - and one after neither:
+     * WSP, the web-server password. Four were found one at a time, each after the previous list
+     * looked complete, which is why the rule below asks what a name READS like and this set only
+     * holds what the rule cannot see.
+     * </p>
+     */
+    private static final java.util.Set<String> SECRET_FIELDS =
+        lowerCased("WSP", "/P"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * The given names, lower-cased, as an unmodifiable set.
+     *
+     * @param names the names.
+     * @return them, ready to be compared against a lower-cased name
+     */
+    private static java.util.Set<String> lowerCased(String... names)
+    {
+        java.util.Set<String> set = new java.util.LinkedHashSet<>();
+        for (String name : names)
+        {
+            set.add(name.toLowerCase(java.util.Locale.ROOT));
+        }
+        return java.util.Collections.unmodifiableSet(set);
+    }
+
+    /**
+     * Splits a connection string into its fields, leaving a semicolon inside quotes alone.
+     * <p>
+     * A path may carry one - {@code File="C:\\Bases\\archive;old"} - and treating it as a
+     * separator turned an innocent call into a refusal.
+     * </p>
+     *
+     * @param connectionString the string.
+     * @return its fields
+     */
+    static java.util.List<String> fieldsOf(String connectionString)
+    {
+        java.util.List<String> fields = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < connectionString.length(); i++)
+        {
+            char c = connectionString.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (c == ';' && !quoted)
+            {
+                fields.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        fields.add(current.toString());
+        return fields;
+    }
+
+    /**
+     * Reads the parameters a caller wants added to the Vanessa document.
+     * <p>
+     * Vanessa's parameter names are Russian and differ between its versions, and it ignores a name
+     * it does not know. So the names are the caller's to give: naming them here would mean writing
+     * a key nobody could check, and a run that quietly ignored it would still report success.
+     * </p>
+     *
+     * @param raw the JSON object the caller passed, or <code>null</code>.
+     * @param refusal filled with why the call cannot proceed, when it cannot.
+     * @return the parameters to add, or <code>null</code> when there are none or one is refused
+     */
+    static JsonObject extraParams(String raw, String[] refusal)
+    {
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        com.google.gson.JsonElement parsed;
+        try
+        {
+            parsed = com.google.gson.JsonParser.parseString(raw.trim());
+        }
+        catch (RuntimeException notJson)
+        {
+            refusal[0] = "vanessaParams is not JSON: " //$NON-NLS-1$
+                + (notJson.getMessage() != null ? notJson.getMessage()
+                    : notJson.getClass().getSimpleName());
+            return null;
+        }
+        if (!parsed.isJsonObject())
+        {
+            refusal[0] = "vanessaParams takes an object of Vanessa parameter names to values, " //$NON-NLS-1$
+                + "for example {\"ТегиСценариев\":\"smoke\"}"; //$NON-NLS-1$
+            return null;
+        }
+        JsonObject given = parsed.getAsJsonObject();
+        for (String key : given.keySet())
+        {
+            // Without a locale, lower-casing turns I into a dotless letter where the machine is
+            // set to Turkish, and a protected name stops matching.
+            if (OURS_TO_SET.contains(key.toLowerCase(java.util.Locale.ROOT)))
+            {
+                refusal[0] = "'" + key + "' is set by this tool, because it reads the run's " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "result back from where it points. Moving it would leave the run reporting " //$NON-NLS-1$
+                    + "success while reading nothing."; //$NON-NLS-1$
+                return null;
+            }
+            if (!isAValueOrAListOfThem(given.get(key)))
+            {
+                // Vanessa reads its parameters as values, so anything else arrives as a shape it
+                // cannot use - and it ignores what it cannot use, leaving the run unfiltered and
+                // reported as a success. A list was checked for being a list without its items
+                // being looked at, which let a list of objects through.
+                refusal[0] = "'" + key + "' is given something other than a value or a list of " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "them; that is what a Vanessa parameter takes."; //$NON-NLS-1$
+                return null;
+            }
+        }
+        return given;
+    }
+
+    /**
+     * Whether this is something Vanessa can read as a parameter.
+     *
+     * @param value what the caller gave for one parameter.
+     * @return true when it is a value, or a list of values
+     */
+    private static boolean isAValueOrAListOfThem(com.google.gson.JsonElement value)
+    {
+        if (value == null || value.isJsonNull() || value.isJsonPrimitive())
+        {
+            return true;
+        }
+        if (!value.isJsonArray())
+        {
+            return false;
+        }
+        for (com.google.gson.JsonElement item : value.getAsJsonArray())
+        {
+            if (item != null && !item.isJsonNull() && !item.isJsonPrimitive())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The names in a JSON document, without their values.
+     * <p>
+     * The document is worth logging - which parameters a run went out with is the first thing
+     * anyone asks after a failure - and its values are not: a caller may put a password into a
+     * parameter of their own, and this file is written where the log can reach it.
+     * </p>
+     *
+     * @param json the document.
+     * @return its keys, comma separated
+     */
+    static String keysOf(String json)
+    {
+        try
+        {
+            com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(json);
+            if (!parsed.isJsonObject())
+            {
+                return "(not an object)"; //$NON-NLS-1$
+            }
+            return String.join(", ", parsed.getAsJsonObject().keySet()); //$NON-NLS-1$
+        }
+        catch (RuntimeException notJson)
+        {
+            return "(unreadable)"; //$NON-NLS-1$
+        }
+    }
+
     private static List<String> buildCommand(File exe, String connectionString, File epf,
         File paramsFile)
     {
@@ -515,8 +731,24 @@ public class VanessaTool implements IMcpTool
         {
             return false;
         }
-        return connectionString.matches("(?is).*(^|[;\\s])Pwd\\s*=.*") //$NON-NLS-1$
-            || connectionString.matches("(?is).*(^|[;\\s])/P\\s*[^\\s].*"); //$NON-NLS-1$
+        for (String field : fieldsOf(connectionString))
+        {
+            int equals = field.indexOf('=');
+            String name = (equals < 0 ? field : field.substring(0, equals)).trim();
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
+            // /P takes its value joined to it rather than after an equals sign, so the name alone
+            // is never seen: the field reads /Psecret.
+            if (lower.startsWith("/p")) //$NON-NLS-1$
+            {
+                return true;
+            }
+            if (SECRET_FIELDS.contains(lower) || lower.contains("pwd") //$NON-NLS-1$
+                || lower.contains("pass")) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String redactSecrets(String s)
