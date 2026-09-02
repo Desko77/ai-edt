@@ -26,7 +26,10 @@ import org.eclipse.jface.preference.IPreferenceStore;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InfobaseAddress;
+import ru.aiedt.mcp.server.support.InfobaseIdentity;
+import ru.aiedt.mcp.server.support.MonopolyLock;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -274,6 +277,7 @@ public class VanessaTool implements IMcpTool
 
         String connectionString = JsonUtils.extractStringArgument(params, "connectionString"); //$NON-NLS-1$
         String infobaseFrom = null;
+        InfobaseAddress.Address infobaseAddress = null;
         if (connectionString == null || connectionString.trim().isEmpty())
         {
             // The caller has EDT open, and EDT already knows which infobase the project belongs to
@@ -287,6 +291,7 @@ public class VanessaTool implements IMcpTool
             {
                 connectionString = address.connectionString();
                 infobaseFrom = address.name();
+                infobaseAddress = address;
             }
         }
         if (connectionString == null || connectionString.trim().isEmpty())
@@ -358,6 +363,7 @@ public class VanessaTool implements IMcpTool
             }
         }
         final String composedScenario = hasText ? scenarioText : null;
+        final InfobaseAddress.Address settledAddress = infobaseAddress;
         final String settledInfobase = infobaseFrom;
         final String settledConnection = connectionString;
 
@@ -410,7 +416,7 @@ public class VanessaTool implements IMcpTool
             // cancel meant for that run destroy this client instead.
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
                 screenshots, keepOpen, stepDelay, settledTimeout, settledClientPort,
-                extraVaParams, runDirForJob, null, settledInfobase);
+                extraVaParams, runDirForJob, null, settledInfobase, settledAddress);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -428,7 +434,8 @@ public class VanessaTool implements IMcpTool
             entry = registry.getOrStart(jobKey,
                 () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
-                    settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase));
+                    settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
+                    settledAddress));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -468,12 +475,14 @@ public class VanessaTool implements IMcpTool
      * @param jobKey the key this run is cancelled by.
      * @param infobaseName the infobase this resolved from the project, or <code>null</code>
      *            when the caller named the connection string itself.
+     * @param infobaseAddress the infobase EDT holds, as it was resolved once, or
+     *            <code>null</code> when the caller named the connection string itself.
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
         int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
-        String infobaseName)
+        String infobaseName, InfobaseAddress.Address infobaseAddress)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -533,7 +542,29 @@ public class VanessaTool implements IMcpTool
             Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
                 + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
 
-            ProcessResult pr = runVanessa(command, runDir, timeoutSec, jobKey, clientLaunched);
+            ProcessResult pr;
+            String heldBack = null;
+            // A file infobase admits one owner. While EDT holds it, the client starts and never
+            // connects: the process lives out its whole deadline without one event reaching the
+            // infobase log, and the answer reads as a run that timed out rather than one that
+            // never began. The claim keeps the other thick-client operations out of an infobase
+            // that is standing released.
+            String subject = infobaseAddress == null || infobaseAddress.infobase() == null
+                ? null : InfobaseIdentity.of(infobaseAddress.infobase());
+            try (MonopolyLock.Claim claim = subject == null ? null
+                : MonopolyLock.claim(subject, "vanessa")) //$NON-NLS-1$
+            {
+                if (claim != null && !claim.granted())
+                {
+                    return ToolResult.error(claim.refusal())
+                        .put("failureKind", ErrorTags.BUSY.wire()).toJson(); //$NON-NLS-1$
+                }
+                try (InfobaseAddress.Hold hold = InfobaseAddress.release(infobaseAddress))
+                {
+                    heldBack = hold.why();
+                    pr = runVanessa(command, runDir, timeoutSec, jobKey, clientLaunched);
+                }
+            }
             // Removed here rather than in the finally: every answer below is built before a
             // finally runs, and the paths that need this most are the ones that go wrong.
             leftBehind = removeComposed(composedFile);
@@ -561,8 +592,12 @@ public class VanessaTool implements IMcpTool
                     return ToolResult.error("Vanessa run timed out after " + timeoutSec + "s" //$NON-NLS-1$ //$NON-NLS-2$
                         + (keepOpen ? " (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)." //$NON-NLS-1$
                             : ". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog.") //$NON-NLS-1$
+                        // Named before the deadline is blamed: a client that never got the
+                        // infobase spends the whole deadline and looks exactly like a slow run.
+                        + (heldBack == null ? "" : " " + heldBack + ".") //$NON-NLS-1$ //$NON-NLS-2$
                         + " " + tail(pr.output))
-                        .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
+                        .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
+                        .put("infobaseNotReleased", heldBack).toJson(); //$NON-NLS-1$
                 }
                 String incomplete = whatTheDistributionIsMissing(epfFile);
                 return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
@@ -1653,6 +1688,10 @@ public class VanessaTool implements IMcpTool
         }
         finally
         {
+            // Whatever ended this - a finish, a deadline, a cancel, an interrupt - the client is
+            // gone before the caller takes the infobase back. EDT reconnecting while a client
+            // still has the file open is the state the release exists to avoid.
+            stopAndAwait(proc);
             // However this ended - finished, timed out, or cancelled from another call - the
             // handle goes. Leaving it would let a later cancel destroy a process that is no longer
             // this run, because the operating system gives the number back.
@@ -1660,6 +1699,37 @@ public class VanessaTool implements IMcpTool
             {
                 RUNNING.remove(runKey, proc);
             }
+        }
+    }
+
+    /** Seconds to wait for a stopped client to actually be gone. */
+    private static final int PROCESS_DEATH_WAIT_SEC = 20;
+
+    /**
+     * Stops the client and waits for it to be gone.
+     * <p>
+     * {@code destroyForcibly} only asks. The process is still there until the operating system
+     * says otherwise, and a caller that takes the infobase back on the strength of the ask alone
+     * hands EDT a file another process still has open.
+     * </p>
+     *
+     * @param proc the client.
+     */
+    private static void stopAndAwait(Process proc)
+    {
+        if (!proc.isAlive())
+        {
+            return;
+        }
+        proc.descendants().forEach(ProcessHandle::destroyForcibly);
+        proc.destroyForcibly();
+        try
+        {
+            proc.waitFor(PROCESS_DEATH_WAIT_SEC, TimeUnit.SECONDS);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
         }
     }
 
