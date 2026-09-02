@@ -157,6 +157,10 @@ public class VanessaTool implements IMcpTool
                     + "working directory.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
                 "Max seconds to wait for the run (default 300, max 3600).") //$NON-NLS-1$
+            .stringProperty("infobaseUser", //$NON-NLS-1$
+                "Name of the 1C user the run signs in as. A base with users defined meets a " //$NON-NLS-1$
+                    + "client that names none with a login window, and the run then waits out " //$NON-NLS-1$
+                    + "its whole deadline. A password cannot be passed here.") //$NON-NLS-1$
             .integerProperty("testClientPort", //$NON-NLS-1$
                 "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
                     + "run or another EDT already holds it.") //$NON-NLS-1$
@@ -301,6 +305,10 @@ public class VanessaTool implements IMcpTool
                 + "directly. A project with no infobase application, or one bound to a server " //$NON-NLS-1$
                 + "infobase, has to be named directly.").toJson(); //$NON-NLS-1$
         }
+        // Appended to the string, not passed as /N: the test client the start step launches is
+        // given its own PathToInfobase, and a string carries the user into both.
+        connectionString = namingTheUser(connectionString,
+            JsonUtils.extractStringArgument(params, "infobaseUser")); //$NON-NLS-1$
         String secretRefusal = whyASecretCannotBePassed(connectionString);
         if (secretRefusal != null)
         {
@@ -864,6 +872,32 @@ public class VanessaTool implements IMcpTool
             + "    @screenshot\n" //$NON-NLS-1$
             + "    Когда " + opening.replace("{form}", form) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
             + "    И Я закрываю все окна клиентского приложения\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * The connection string with the user named in it.
+     * <p>
+     * In the string rather than as {@code /N}: the test client the start step launches is given
+     * its own {@code PathToInfobase}, and a string carries the user into both clients where the
+     * argument would reach only one.
+     * </p>
+     *
+     * @param connectionString the infobase.
+     * @param user the 1C user, or <code>null</code> when the caller named none.
+     * @return the string, unchanged when there is no user to name
+     */
+    static String namingTheUser(String connectionString, String user)
+    {
+        if (connectionString == null || user == null || user.trim().isEmpty())
+        {
+            return connectionString;
+        }
+        String said = connectionString.trim();
+        if (!said.endsWith(";")) //$NON-NLS-1$
+        {
+            said = said + ";"; //$NON-NLS-1$
+        }
+        return said + "Usr=\"" + user.trim() + "\";"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

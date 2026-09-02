@@ -176,4 +176,32 @@ public class TheClientTheStartStepLooksForTest
             CONNECTION, PORT, BUDGET_SEC, null);
         return JsonParser.parseString(json).getAsJsonObject();
     }
+
+    /**
+     * A base with users defined meets a client that names none with a login window, and the run
+     * then waits out its whole deadline. The user goes into the connection string, so it reaches
+     * the test client the start step launches as well.
+     */
+    @Test
+    public void theUserGoesIntoTheConnectionString()
+    {
+        assertEquals(CONNECTION + "Usr=\"Админ\"" + ";", //$NON-NLS-1$ //$NON-NLS-2$
+            VanessaTool.namingTheUser(CONNECTION, "Админ")); //$NON-NLS-1$
+    }
+
+    /** A string that ends without one gets the separator the next field needs. */
+    @Test
+    public void aStringMissingItsSeparatorGetsOne()
+    {
+        assertEquals("File=\"C:/b\";Usr=\"A\";", //$NON-NLS-1$
+            VanessaTool.namingTheUser("File=\"C:/b\"", "A")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** Named nobody, the string is handed back as it came. */
+    @Test
+    public void withoutAUserTheStringIsUntouched()
+    {
+        assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, null));
+        assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, "   ")); //$NON-NLS-1$
+    }
 }
