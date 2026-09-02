@@ -60,5 +60,8 @@ CLAUDE.local.md
 # Release-note drafts written by hand before publishing (working material)
 /docs/releases/
 
+# Тексты анонсов в группу - готовятся к публикации, в поставку не входят
+/docs/telegram/
+
 # Python bytecode, wherever it lands
 __pycache__/
