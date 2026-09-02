@@ -216,7 +216,13 @@ public class DcsWorkshopTool implements IMcpTool
                 "add_union_item dataSetType=Object: the object that child dataset reads. Distinct " //$NON-NLS-1$
                     + "from objectName, which names the owner whose schema is being edited.") //$NON-NLS-1$
             .stringProperty("groupName", //$NON-NLS-1$
-                "add_group_template / remove_group_template: the grouping being drawn.") //$NON-NLS-1$
+                "add_group_template / remove_group_template: the grouping being drawn. For " //$NON-NLS-1$
+                    + "add_total_template, the first of the two that cross.") //$NON-NLS-1$
+            .stringProperty("groupName2", //$NON-NLS-1$
+                "add_total_template / remove_total_template: the second grouping of the " //$NON-NLS-1$
+                    + "crossing.") //$NON-NLS-1$
+            .stringProperty("templateType2", //$NON-NLS-1$
+                "add_total_template: the area type of the second grouping.") //$NON-NLS-1$
             .booleanProperty("header", //$NON-NLS-1$
                 "add_group_template / remove_group_template: the grouping's header rather than " //$NON-NLS-1$
                     + "its body. Default false.") //$NON-NLS-1$
@@ -426,7 +432,8 @@ public class DcsWorkshopTool implements IMcpTool
      */
     private static String asWrittenInTheFile(String name)
     {
-        return ">" + name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "<"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
+        return ">" + name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            .replace("\r", "&#xD;").replace("\n", "&#xA;").replace("\t", "&#x9;") + "<"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
     }
 
     /**
@@ -1644,6 +1651,188 @@ public class DcsWorkshopTool implements IMcpTool
      * @param schema the schema root.
      * @return what the write guards need to see
      */
+    /**
+     * Says which template draws the totals where two groupings cross.
+     * <p>
+     * The entry names both groupings and the area type of each, so all four together are what tell
+     * one entry from another - naming only the first would make the totals of a different crossing
+     * look like the same entry.
+     * </p>
+     *
+     * @param params groupName, groupName2, templateType, templateType2 and schemaTemplateName.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddTotalTemplate(Map<String, String> params, EObject schema)
+    {
+        String first = required(params, "groupName"); //$NON-NLS-1$
+        String second = required(params, "groupName2"); //$NON-NLS-1$
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        String firstType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        String secondType = JsonUtils.extractStringArgument(params, "templateType2"); //$NON-NLS-1$
+        mustNameATemplateThatExists(schema, templateName);
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getTotalFieldsTemplates() not available"); //$NON-NLS-1$
+        }
+        if (totalTemplateFor(bindings, first, firstType, second, secondType) != null)
+        {
+            throw alreadyExistsTag(first + " x " + second, "totalTemplate"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        Object binding =
+            BmDcsHelper.createElement("createDataCompositionSchemaTotalFieldsTemplate"); //$NON-NLS-1$
+        if (binding == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaTotalFieldsTemplate not available"); //$NON-NLS-1$
+        }
+        mustSet(binding, "groupName1", first); //$NON-NLS-1$
+        mustSet(binding, "groupName2", second); //$NON-NLS-1$
+        mustSet(binding, "template", templateName); //$NON-NLS-1$
+        if (firstType != null && !firstType.isEmpty())
+        {
+            mustSet(binding, "templateType1", firstType); //$NON-NLS-1$
+        }
+        if (secondType != null && !secondType.isEmpty())
+        {
+            mustSet(binding, "templateType2", secondType); //$NON-NLS-1$
+        }
+        bindings.add((EObject)binding);
+        // One substring cannot name a crossing: every entry starting from the same grouping
+        // writes this same text. It catches an export that carries nothing of this entry at all,
+        // and it does not catch an export that kept another crossing of the same first grouping.
+        return new BmDcsHelper.Wrote(first + " x " + second + " drawn with " + templateName, //$NON-NLS-1$ //$NON-NLS-2$
+            asWrittenInTheFile(first), bindings.size(), "totalFieldsTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Takes back what said a crossing of two groupings is drawn with a template.
+     *
+     * @param params groupName, groupName2 and the two area types.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveTotalTemplate(Map<String, String> params, EObject schema)
+    {
+        String first = required(params, "groupName"); //$NON-NLS-1$
+        String second = required(params, "groupName2"); //$NON-NLS-1$
+        String firstType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        String secondType = JsonUtils.extractStringArgument(params, "templateType2"); //$NON-NLS-1$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getTotalFieldsTemplates() not available"); //$NON-NLS-1$
+        }
+        EObject found = totalTemplateFor(bindings, first, firstType, second, secondType);
+        if (found == null)
+        {
+            throw notFoundTag(first + " x " + second, "totalTemplate"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        bindings.remove(found);
+        return new BmDcsHelper.Wrote(first + " x " + second, null, bindings.size(), //$NON-NLS-1$
+            "totalFieldsTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * The entry for a crossing of two groupings, if there is one.
+     *
+     * @param bindings the totals templates of the schema.
+     * @param first the first grouping.
+     * @param firstType its area type, or <code>null</code> for the model's default.
+     * @param second the second grouping.
+     * @param secondType its area type, or <code>null</code> for the model's default.
+     * @return the entry, or <code>null</code>
+     */
+    private EObject totalTemplateFor(EList<EObject> bindings, String first, String firstType,
+        String second, String secondType)
+    {
+        for (EObject existing : bindings)
+        {
+            if (!first.equalsIgnoreCase(String.valueOf(invokeGetter(existing, "getGroupName1"))) //$NON-NLS-1$
+                || !second.equalsIgnoreCase(
+                    String.valueOf(invokeGetter(existing, "getGroupName2")))) //$NON-NLS-1$
+            {
+                continue;
+            }
+            if (sameAreaType(existing, "templateType1", "getTemplateType1", firstType) //$NON-NLS-1$ //$NON-NLS-2$
+                && sameAreaType(existing, "templateType2", "getTemplateType2", secondType)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether an entry carries the area type a call asked for.
+     * <p>
+     * A call naming none means the model's default, because an entry made without one carries that
+     * rather than nothing.
+     * </p>
+     *
+     * @param entry the entry.
+     * @param feature the feature name, for reading its default.
+     * @param getter how to read what the entry carries.
+     * @param asked what the call named, or <code>null</code>.
+     * @return true when they are the same type
+     */
+    /**
+     * The spelling the model uses for one of a feature's constants.
+     *
+     * @param feature the feature the constant belongs to.
+     * @param spelling what the caller wrote.
+     * @return the model's own spelling, or <code>null</code> when it names no such constant
+     */
+    private static String canonicalLiteral(org.eclipse.emf.ecore.EStructuralFeature feature,
+        String spelling)
+    {
+        if (feature == null || !(feature.getEType() instanceof org.eclipse.emf.ecore.EEnum))
+        {
+            return null;
+        }
+        for (org.eclipse.emf.ecore.EEnumLiteral literal
+            : ((org.eclipse.emf.ecore.EEnum)feature.getEType()).getELiterals())
+        {
+            if (literal.getName().equalsIgnoreCase(spelling)
+                || literal.getLiteral().equalsIgnoreCase(spelling))
+            {
+                return literal.getLiteral();
+            }
+        }
+        return null;
+    }
+
+    private boolean sameAreaType(EObject entry, String feature, String getter, String asked)
+    {
+        Object heldType = invokeGetter(entry, getter);
+        String held = heldType == null ? null : String.valueOf(heldType);
+        org.eclipse.emf.ecore.EStructuralFeature f = entry.eClass().getEStructuralFeature(feature);
+        String wanted = asked;
+        if (wanted == null || wanted.isEmpty())
+        {
+            Object fallback = f == null ? null : f.getDefaultValue();
+            wanted = fallback == null ? null : String.valueOf(fallback);
+        }
+        else
+        {
+            // A caller may spell a constant the way the model declares it (OVERALL_FOOTER) while
+            // the model stores it the way it prints it (OverallFooter). Asking the enumeration for
+            // the canonical spelling makes both name the same entry; comparing the typed text to
+            // the stored text made the second call find nothing and the second add duplicate.
+            String canonical = canonicalLiteral(f, wanted);
+            if (canonical != null)
+            {
+                wanted = canonical;
+            }
+        }
+        if (wanted == null)
+        {
+            return held == null || held.isEmpty();
+        }
+        return held != null && wanted.equalsIgnoreCase(held);
+    }
+
     private Object doAddGroupTemplate(Map<String, String> params, EObject schema)
     {
         String groupName = required(params, "groupName"); //$NON-NLS-1$
@@ -5319,6 +5508,8 @@ public class DcsWorkshopTool implements IMcpTool
         reg(m, "add_field_template", (p, s, pr) -> doAddFieldTemplate(p, s));
         reg(m, "remove_field_template", (p, s, pr) -> doRemoveFieldTemplate(p, s));
         reg(m, "add_group_template", (p, s, pr) -> doAddGroupTemplate(p, s));
+        reg(m, "add_total_template", (p, s, pr) -> doAddTotalTemplate(p, s));
+        reg(m, "remove_total_template", (p, s, pr) -> doRemoveTotalTemplate(p, s));
         reg(m, "remove_group_template", (p, s, pr) -> doRemoveGroupTemplate(p, s));
         reg(m, "remove_nested_schema", (p, s, pr) -> doRemoveNestedSchema(p, s));
         reg(m, "add_union_item", (p, s, pr) -> doAddUnionItem(p, s));

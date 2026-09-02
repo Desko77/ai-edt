@@ -68,7 +68,7 @@ public class WhatTheCallWritesIsWhatIsCheckedTest
     private static final Set<String> WRITE_NEITHER = new LinkedHashSet<>(Arrays.asList(
         "add_appearance", "add_chart", "add_data_source", "add_field_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         "add_group_template", "add_nested_schema", "add_schema_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "add_template_cell", "add_template_row", //$NON-NLS-1$ //$NON-NLS-2$
+        "add_template_cell", "add_template_row", "add_total_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "add_field", "add_filter", "add_filter_group", "add_grouping", "add_order", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         "add_query_condition", "add_query_field", "add_settings_chart", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "add_settings_filter_group", "add_settings_order", //$NON-NLS-1$ //$NON-NLS-2$
@@ -81,7 +81,7 @@ public class WhatTheCallWritesIsWhatIsCheckedTest
         "remove_settings_filter", "remove_settings_item", "remove_settings_order", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "remove_field_template", "remove_group_template", "remove_nested_schema", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "remove_schema_template", "remove_settings_selected_field", "remove_settings_variant", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "remove_total_field", "remove_union_item", //$NON-NLS-1$ //$NON-NLS-2$
+        "remove_total_field", "remove_total_template", "remove_union_item", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "remove_user_field", "rename_settings_variant", "select_field", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "set_data_set_field_appearance", "set_data_source_property", //$NON-NLS-1$ //$NON-NLS-2$
         "set_field_appearance", "set_output_param", //$NON-NLS-1$ //$NON-NLS-2$

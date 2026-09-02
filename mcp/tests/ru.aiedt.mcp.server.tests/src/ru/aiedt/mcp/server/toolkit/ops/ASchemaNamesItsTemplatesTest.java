@@ -532,6 +532,127 @@ public class ASchemaNamesItsTemplatesTest
         assertEquals(1, BmDcsHelper.getEObjectList(rowsOf("Шапка").get(0), "getCells").size()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    // -- where two groupings cross ------------------------------------------
+
+    @Test
+    public void aCrossingOfTwoGroupingsIsDrawnWithATemplate() throws Exception
+    {
+        run("add_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        EList<EObject> bindings =
+            BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates"); //$NON-NLS-1$
+        assertEquals(1, bindings.size());
+        assertEquals("ПоТоварам", //$NON-NLS-1$
+            bindings.get(0).eGet(bindings.get(0).eClass().getEStructuralFeature("groupName1"))); //$NON-NLS-1$
+        assertEquals("ПоСкладам", //$NON-NLS-1$
+            bindings.get(0).eGet(bindings.get(0).eClass().getEStructuralFeature("groupName2"))); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theOtherCrossingOfTheSameTwoIsItsOwnEntry() throws Exception
+    {
+        run("add_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // Same two groupings, but the second is drawn in its footer rather than its header - a
+        // different crossing, and naming only the first would have made it look like the same one.
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "templateType2", "Footer", "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertEquals(2, BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates").size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theSameCrossingTwiceIsRefused() throws Exception
+    {
+        run("add_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "templateType", "Footer", "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        try
+        {
+            run("add_total_template", "groupName", "потоварам", "groupName2", "поскладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                "templateType", "Footer", "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            fail("the same crossing drawn the same way is one entry, whatever the case"); //$NON-NLS-1$
+        }
+        catch (RuntimeException expected)
+        {
+            assertEquals(1,
+                BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates").size()); //$NON-NLS-1$
+        }
+    }
+
+    @Test
+    public void oneCrossingIsTakenBackAndTheOtherIsLeft() throws Exception
+    {
+        run("add_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "templateType2", "Footer", "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        run("remove_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "templateType2", "Footer"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        EList<EObject> left = BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates"); //$NON-NLS-1$
+        assertEquals(1, left.size());
+    }
+
+    @Test
+    public void aCrossingNamingATemplateThatIsNotThereIsRefused()
+    {
+        try
+        {
+            run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                "schemaTemplateName", "Нет"); //$NON-NLS-1$ //$NON-NLS-2$
+            fail("the name is held as text, so nothing else would notice"); //$NON-NLS-1$
+        }
+        catch (Exception expected)
+        {
+            assertTrue(BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates").isEmpty()); //$NON-NLS-1$
+        }
+    }
+
+    @Test
+    public void aTemplateStillDrawingACrossingIsNotRemoved() throws Exception
+    {
+        run("add_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        try
+        {
+            run("remove_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            fail("the crossing would be left naming a template that is gone"); //$NON-NLS-1$
+        }
+        catch (RuntimeException expected)
+        {
+            assertTrue(expected.getMessage(),
+                expected.getMessage().contains("ПоТоварам")); //$NON-NLS-1$
+            assertEquals(1, templates().size());
+        }
+    }
+
+    @Test
+    public void aTypeSpeltTheWayTheModelDeclaresItNamesTheSameEntry() throws Exception
+    {
+        run("add_schema_template", "name", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        // The model declares its constants one way and prints them another. A caller using the
+        // declared spelling must reach the same entry as one using the printed spelling.
+        run("add_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "templateType2", "OVERALL_FOOTER", "schemaTemplateName", "Итоги"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        run("remove_total_template", "groupName", "ПоТоварам", "groupName2", "ПоСкладам", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "templateType2", "OverallFooter"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue("both spellings name one entry", //$NON-NLS-1$
+            BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates").isEmpty()); //$NON-NLS-1$
+    }
+
     // -- what the write guards are told -------------------------------------
 
     @Test
