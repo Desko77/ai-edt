@@ -2,7 +2,7 @@
 <feature
     id="ru.aiedt.mcp.server.feature"
     label="%featureName"
-    version="0.2.41.qualifier"
+    version="0.2.42.qualifier"
     provider-name="%providerName">
 
     <description>
