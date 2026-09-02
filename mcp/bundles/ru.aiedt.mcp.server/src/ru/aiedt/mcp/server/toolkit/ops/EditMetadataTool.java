@@ -554,6 +554,17 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("containerFqn", //$NON-NLS-1$
                 "remove_item: the form item holding the one named by `name`. move_item: the form itself, with " //$NON-NLS-1$
                 + "parentName naming the destination container.") //$NON-NLS-1$ //$NON-NLS-1$
+            // ---- Composition settings, for the operations run by dcs_workshop under an alias ----
+            .stringProperty("parentPath", //$NON-NLS-1$
+                "add_settings_group: the group to nest the new one inside, as dot-separated " //$NON-NLS-1$
+                    + "group names. Omitted means the root of the structure; an unnamed group is " //$NON-NLS-1$
+                    + "addressed by its position at its level, as [0].") //$NON-NLS-1$
+            .stringProperty("variantName", //$NON-NLS-1$
+                "set_settings_parameter: the settings variant to work on. Omitted means the " //$NON-NLS-1$
+                    + "default settings, which is the first variant.") //$NON-NLS-1$
+            .stringProperty("userSettingID", //$NON-NLS-1$
+                "set_settings_parameter: the identifier under which the parameter appears in user " //$NON-NLS-1$
+                    + "settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
             // ---- Parameters of the operations handed to a standalone tool
             //      (add_metadata_attribute / rename_metadata_object) ----
             .stringProperty("parentFqn", //$NON-NLS-1$
