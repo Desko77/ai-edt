@@ -88,6 +88,26 @@ public final class PendingWorkRegistry
         "import_configuration_from_binary", "import-binary-async"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * TTL for the scenario domain, whose longest accepted run is an hour.
+     * <p>
+     * The default would evict a run that is still executing: its entry and its eventual result
+     * would go while the client carried on, and a poll would report a missing run over a live one.
+     * </p>
+     */
+    private static final long VANESSA_ABANDONED_TTL_MS = 70 * 60 * 1000L;
+
+    /**
+     * Scenario runs.
+     * <p>
+     * Not {@link #GENERIC}: that one is reserved for reads that can be replayed, and a run drives a
+     * client against an infobase. One at a time, because two clients playing scenarios into the
+     * same base would be reading each other's work.
+     * </p>
+     */
+    public static final PendingWorkRegistry VANESSA = new PendingWorkRegistry(
+        "vanessa", "vanessa-async", 1, VANESSA_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * Shared async backend for the slow read-only analysis tools that are wrapped
      * generically (see {@code GenericPending}) rather than each hand-rolling their
      * own registry. The runKey embeds the tool name, so distinct tools never
@@ -119,10 +139,24 @@ public final class PendingWorkRegistry
      */
     private static final int MAX_CACHED_RESULT_CHARS = 4 * 1024 * 1024;
 
-    /** TTL for never-completed entries (runaway). 30 minutes. */
+    /** Default TTL for never-completed entries (runaway). 30 minutes. */
     private static final long ABANDONED_TTL_MS = 30 * 60 * 1000L;
 
     private final String domainLabel;
+
+    /**
+     * What actually stops this domain's work, when anything can.
+     * <p>
+     * {@link #cancel} completes the tracking future, which stops work that has not begun and
+     * reaches nothing that has. A domain that owns a process it can destroy installs it here, so a
+     * cancel arriving through the task interface stops the same thing a cancel through the tool
+     * would.
+     * </p>
+     */
+    private volatile Function<String, StopOutcome> stopper;
+
+    /** How long a never-completed entry is kept. */
+    private final long abandonedTtlMs;
 
     private final ConcurrentHashMap<String, PendingEntry> entries = new ConcurrentHashMap<>();
 
@@ -149,7 +183,21 @@ public final class PendingWorkRegistry
      */
     private PendingWorkRegistry(String domainLabel, String threadPrefix, int maxPool)
     {
+        this(domainLabel, threadPrefix, maxPool, ABANDONED_TTL_MS);
+    }
+
+    /**
+     * @param domainLabel human-readable domain used in error logs
+     * @param threadPrefix worker-thread name prefix
+     * @param maxPool executor ceiling
+     * @param abandonedTtlMs how long a never-completed entry is kept. A domain must keep an entry
+     *            longer than its longest run, or a run still executing loses its result.
+     */
+    private PendingWorkRegistry(String domainLabel, String threadPrefix, int maxPool,
+        long abandonedTtlMs)
+    {
         this.domainLabel = domainLabel;
+        this.abandonedTtlMs = abandonedTtlMs;
 
         ThreadFactory threadFactory = new ThreadFactory()
         {
@@ -224,6 +272,7 @@ public final class PendingWorkRegistry
                 }
                 try
                 {
+                    entry.beganAt = System.currentTimeMillis();
                     return work.apply(entry);
                 }
                 catch (Throwable t)
@@ -264,9 +313,14 @@ public final class PendingWorkRegistry
      * Every domain, in a fixed order.
      * <p>
      * A runKey is unique only within its domain, so anything holding a bare key - a task handle
-     * handed to a client, for one - has to be able to find which domain issued it. Five map lookups
-     * settle that, and the alternative (threading the domain through every layer that only ever
-     * passes a key) buys nothing.
+     * handed to a client, for one - has to be able to find which domain issued it. One map lookup
+     * per domain settles that, and the alternative (threading the domain through every layer that
+     * only ever passes a key) buys nothing.
+     * </p>
+     * <p>
+     * Every registry declared above belongs here. One that is left out still runs its work, and
+     * still answers a poll made straight to its tool - but a bare key from it resolves to no
+     * domain, so it never becomes a task.
      * </p>
      *
      * @return the registries, in declaration order
@@ -274,7 +328,7 @@ public final class PendingWorkRegistry
     public static List<PendingWorkRegistry> domains()
     {
         return Collections.unmodifiableList(
-            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, GENERIC));
+            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, VANESSA, GENERIC));
     }
 
     /**
@@ -350,6 +404,23 @@ public final class PendingWorkRegistry
     }
 
     /**
+     * Drops one entry, and only if it is still the one the caller was looking at.
+     * <p>
+     * Removing by key alone removed whatever was under it, which after a coalescing window is a
+     * different run: a caller collecting a finished result deleted the entry a second caller had
+     * just started, and that run then executed with nothing tracking it.
+     * </p>
+     *
+     * @param runKey the key.
+     * @param entry the entry the caller read; nothing happens when the key holds another.
+     * @return whether that entry was the one removed
+     */
+    public boolean remove(String runKey, PendingEntry entry)
+    {
+        return runKey != null && entry != null && entries.remove(runKey, entry);
+    }
+
+    /**
      * Detaches a runKey: cancels the tracking future and drops the entry.
      * <p>
      * <b>Best-effort only.</b> A structural/FULL {@code update_database} runs
@@ -361,21 +432,179 @@ public final class PendingWorkRegistry
      * and still commit, holding one executor slot until it returns naturally). Use
      * it to stop tracking a runaway or no-longer-wanted poll, not as a guaranteed
      * rollback.
+     * <p>
+     * A domain that has declared a stopper through {@link #stopsWith} is the exception: its work
+     * is stopped as well, because it owns something it can stop. That is what a cancel arriving
+     * as {@code tasks/cancel} goes through.
      *
+     * @param runKey the key.
      * @return true if a tracked entry existed and was removed
      */
     public boolean cancel(String runKey)
     {
-        PendingEntry entry = entries.remove(runKey);
-        if (entry == null)
+        return drop(runKey, true);
+    }
+
+    /**
+     * Detaches a runKey without touching the work.
+     * <p>
+     * For a caller that has already stopped the work itself. Asking the stopper again would find
+     * nothing, and anything the stopper does besides stopping would happen twice.
+     * </p>
+     *
+     * @param runKey the key.
+     * @return true if a tracked entry existed and was removed
+     */
+    public boolean detach(String runKey)
+    {
+        return drop(runKey, false);
+    }
+
+    /**
+     * Drops an entry and completes its tracking future.
+     *
+     * @param runKey the key.
+     * @param stopTheWork whether to ask the domain's stopper.
+     * @return true if a tracked entry existed and was removed
+     */
+    private boolean drop(String runKey, boolean stopTheWork)
+    {
+        boolean known = dropEntry(runKey);
+        // After the future, so work that has not begun is already stopped by then and the stopper
+        // only has to deal with work that has. Asked even for an unknown key: the tool's own cancel
+        // removes the entry first, and the process it owns still has to go.
+        Function<String, StopOutcome> stopsIt = stopTheWork ? stopper : null;
+        if (stopsIt != null)
         {
-            return false;
+            stopsIt.apply(runKey);
         }
-        if (entry.future != null && !entry.future.isDone())
+        return known;
+    }
+
+    /**
+     * Drops the entry and completes its tracking future.
+     *
+     * @param runKey the key.
+     * @return whether the key was known
+     */
+    private boolean dropEntry(String runKey)
+    {
+        PendingEntry entry = entries.remove(runKey);
+        boolean known = entry != null;
+        if (known && entry.future != null && !entry.future.isDone())
         {
             entry.future.cancel(true);
         }
-        return true;
+        return known;
+    }
+
+    /**
+     * What stopping a domain's work came to.
+     * <p>
+     * Three answers rather than two, because asking a process to stop and its having stopped are
+     * different facts, and a caller told the second when only the first happened will act as
+     * though the work is done with whatever it was holding.
+     * </p>
+     */
+    public enum StopOutcome
+    {
+        /** There was nothing running to stop. */
+        NOTHING_TO_STOP,
+        /** The work is stopped. */
+        STOPPED,
+        /** It was told to stop and had not stopped. */
+        STILL_RUNNING
+    }
+
+    /**
+     * Declares what stops this domain's work.
+     *
+     * @param stopper given a runKey, stops that run's work and reports what that came to.
+     */
+    public void stopsWith(Function<String, StopOutcome> stopper)
+    {
+        this.stopper = stopper;
+    }
+
+    /**
+     * Detaches a runKey, asks the domain to stop the work, and reports what stopping came to.
+     *
+     * @param runKey the key.
+     * @return what the domain's stopper reported, or {@link StopOutcome#NOTHING_TO_STOP} when the
+     *         domain has none
+     */
+    public StopOutcome cancelAndStop(String runKey)
+    {
+        Function<String, StopOutcome> stopsIt = stopper;
+        dropEntry(runKey);
+        if (stopsIt == null)
+        {
+            return StopOutcome.NOTHING_TO_STOP;
+        }
+        StopOutcome outcome = stopsIt.apply(runKey);
+        return outcome == null ? StopOutcome.NOTHING_TO_STOP : outcome;
+    }
+
+    /**
+     * Whether this domain has a run executing or waiting to.
+     * <p>
+     * Weakly consistent, like the other reads over the live map. A domain that takes one run at a
+     * time uses it to refuse a second submission rather than queue it: queued time counts against
+     * the entry's own lifetime, so a run accepted behind a long one can expire before it begins.
+     * </p>
+     *
+     * @return whether any entry has not completed
+     */
+    public boolean isBusy()
+    {
+        for (PendingEntry entry : entries.values())
+        {
+            if (entry.completedAt == 0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The keys of the runs that have not finished.
+     * <p>
+     * A key belongs to one run and is handed to its caller with the Pending answer. A caller that
+     * never received it - it went away while waiting - leaves a run nobody can name, and a domain
+     * that takes one run at a time is then held by something unaddressable. This is how a refusal
+     * says which key it is refusing on behalf of.
+     * </p>
+     *
+     * @return the unfinished keys, in no particular order; never null
+     */
+    public List<String> unfinishedKeys()
+    {
+        List<String> keys = new java.util.ArrayList<>();
+        for (Map.Entry<String, PendingEntry> entry : entries.entrySet())
+        {
+            if (entry.getValue().completedAt == 0)
+            {
+                keys.add(entry.getKey());
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * @return whether cancelling in this domain stops the work rather than only the waiting
+     */
+    public boolean stopsItsWork()
+    {
+        return stopper != null;
+    }
+
+    /**
+     * @return how long a never-completed entry is kept, in milliseconds
+     */
+    public long abandonedTtlMs()
+    {
+        return abandonedTtlMs;
     }
 
     /**
@@ -436,7 +665,8 @@ public final class PendingWorkRegistry
             {
                 it.remove();
             }
-            else if (entry.completedAt == 0 && now - entry.startedAt > ABANDONED_TTL_MS)
+            else if (entry.completedAt == 0
+                && now - (entry.beganAt > 0 ? entry.beganAt : entry.startedAt) > abandonedTtlMs)
             {
                 if (entry.future != null && !entry.future.isDone())
                 {
@@ -527,6 +757,17 @@ public final class PendingWorkRegistry
     {
         public final String runKey;
         public final long startedAt = System.currentTimeMillis();
+
+        /**
+         * When the work actually began, or 0 while it is still waiting for a worker.
+         * <p>
+         * Abandonment means running too long, not waiting too long. Counting from submission made
+         * a run that queued behind a long one look abandoned while it was still executing, and
+         * pruning it cancels a future that reaches nothing already running - so the work carried
+         * on with its entry gone and nobody able to reach it.
+         * </p>
+         */
+        public volatile long beganAt;
         public CompletableFuture<String> future;
         /** Cached result once the future completes. */
         public volatile String cachedResult;

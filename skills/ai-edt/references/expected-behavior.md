@@ -16,6 +16,9 @@ the message before deciding.
 | Names ending in `ApiNotFound`, or `dcsFactoryMethodNotFound` | The installed EDT runtime does not expose the API this operation needs. | Not an implementation defect and not fixable by retrying. Tell the user and offer the equivalent action in the EDT interface. |
 | `kindMismatch` on an export | The output path does not match the object kind. | Match `.epf` and `.erf` to the object. |
 | A tool is disabled or not found | The active preset hides it, or the build does not have it. | Do not work around it. Say which preset change or which build would provide it. |
+| An infobase operation refused, and the answer names who holds the base | The runtime clients this EDT launched, and the other AI-EDT servers on this machine with the project open. | Close what it names. An empty list means none that this server can see - a client started from a shortcut, or a Designer opened by hand, is invisible to it and is never "nobody". |
+| A removal answered that it removed nothing, naming another operation | The name is not a form item. It is a form, a metadata object or a template, and each has its own operation. | Call the operation the refusal names. Repeating `remove_item` cannot succeed. |
+| A data composition write refused, naming what it could not set | The property or the target was not written. A write that does not land is refused rather than reported as done. | Fix the name or the path the refusal names. Do not treat the schema as changed. |
 
 Tools correct callers on their own: a wrong enumeration value comes back with the valid ones, a
 missing required parameter comes back with an example. Read the message instead of guessing the
@@ -60,11 +63,34 @@ changed.
   name cannot be resolved.
 - Deleting an XDTO package by FQN is not supported; remove it through the file system.
 
+`edit_metadata create_object` takes a `properties` object of property name to value, applied to the
+new object before it joins the configuration - `{"methodName": "CommonModule.A.B", "use": false}` on
+a `ScheduledJob`, for one. A property the object's type does not have is refused and **nothing is
+created**. A property given both there and as its own argument must carry the same value. Setting
+properties this way is one call; creating and then setting them one at a time is several, and the
+object exists in between.
+
 ## Validation that looks wrong but is stale
 
 After creating a project and populating it, markers about unknown `String` or `Number` types are
 leftover derived state, not type errors. Revalidation does not clear them. `clean_project` does.
 Checking a freshly built project without a clean pass tells you very little.
+
+## Support snapshots and the limit
+
+A merge leaves a support snapshot in the project's `.settings`. Ordinary ones past the limit are
+removed when the server starts, so they do not accumulate. A snapshot from a merge whose outcome
+nobody has established is protected and stays: only a person can establish what a merge left
+behind. `sync_control operation=release_support_snapshot name=<file>` takes the protection off one
+snapshot, after which the limit applies to it. Deliberate, and one at a time.
+
+## Cancelling an update that never gave you a runKey
+
+`update_database` can be cancelled without one, addressed by `projectName` instead: that is what
+names the run when the call that failed never returned a key. Without `projectName` the cancel is
+refused rather than guessing which run was meant. The answer reports how many runs stopped being
+tracked, and names no infobase holding - runs are keyed by project and holdings by infobase, and
+nothing ties the two. `MonopolyLock.outstandingHere` is what reports holdings.
 
 ## The thick client competes for the infobase
 

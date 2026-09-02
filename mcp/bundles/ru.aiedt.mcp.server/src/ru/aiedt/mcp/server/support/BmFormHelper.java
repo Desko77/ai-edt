@@ -13,7 +13,13 @@ import java.util.Iterator;
 import java.util.List;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.InternalEObject;
 
+import com._1c.g5.v8.bm.core.BmUriUtil;
+import com._1c.g5.v8.bm.core.IBmObject;
+import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 
@@ -4530,5 +4536,157 @@ public class BmFormHelper
             }
         }
         return null;
+    }
+
+    /**
+     * The name the environment gives the external property that holds a dynamic list's settings.
+     * <p>
+     * Read off the shipped {@code FormTopObjectFqnGeneratorDelegate}, which appends exactly this
+     * word after {@code ExtInfo} when it builds the FQN of the settings object.
+     * </p>
+     */
+    private static final String LIST_SETTINGS = "ListSettings"; //$NON-NLS-1$
+
+    /**
+     * The composition settings of a dynamic-list form attribute, created if the attribute does
+     * not have them yet.
+     * <p>
+     * These settings are not a child of the form: they are a top object of their own, registered
+     * as {@code <form>.Attributes.<name>.ExtInfo.ListSettings}, and the attribute points at them
+     * through a proxy. That is why an ordinary walk down the form never reaches them.
+     * </p>
+     * <p>
+     * The creation path mirrors what the environment does for a list the user adds by hand: build
+     * the default settings, give the object the top-object URI of the FQN it will answer to, attach
+     * it to the transaction under that FQN, and only then point the attribute at it. The object
+     * handed back is the one the transaction answers with afterwards, not the one built here, so a
+     * caller cannot end up writing into a copy that was never attached.
+     * </p>
+     *
+     * @param transaction the open BM transaction.
+     * @param form the form the attribute belongs to.
+     * @param attributeName the attribute to look at.
+     * @return the settings object, or <code>null</code> when the attribute is absent or is not a
+     *         dynamic list
+     * @throws Exception if the model rejects the attach or the binding
+     */
+    public Object listSettingsFor(Object transaction, Object form, String attributeName)
+        throws Exception
+    {
+        Object attribute = findFormAttributeByName(form, attributeName);
+        if (attribute == null)
+        {
+            return null;
+        }
+        Object extInfoRaw = attribute.getClass().getMethod("getExtInfo").invoke(attribute); //$NON-NLS-1$
+        if (!(extInfoRaw instanceof EObject))
+        {
+            return null;
+        }
+        EObject extInfo = (EObject)extInfoRaw;
+        EStructuralFeature feature = extInfo.eClass().getEStructuralFeature("listSettings"); //$NON-NLS-1$
+        if (feature == null)
+        {
+            // Some other kind of attribute - a chart, a spreadsheet, a plain value. It has ext
+            // info, but not the kind that carries composition settings.
+            return null;
+        }
+        Object current = extInfo.eGet(feature);
+        if (current instanceof EObject && !((EObject)current).eIsProxy())
+        {
+            return current;
+        }
+        String settingsFqn = externalPropertyFqn(form, attribute, LIST_SETTINGS);
+        if (settingsFqn == null)
+        {
+            return null;
+        }
+        IBmTransaction tx = (IBmTransaction)transaction;
+        IBmObject attached = tx.getTopObjectByFqn(settingsFqn);
+        if (attached == null)
+        {
+            attached = buildDefaultListSettings(extInfo, settingsFqn);
+            if (attached == null)
+            {
+                return null;
+            }
+            tx.attachTopObject(attached, settingsFqn);
+        }
+        EObject inTransaction = tx.toTransactionObject(extInfo);
+        inTransaction.eSet(feature, attached);
+        // Answer with what the transaction now holds under that FQN rather than with the object
+        // just built: if the attach did not take, this returns null and the caller refuses.
+        return tx.getTopObjectByFqn(settingsFqn);
+    }
+
+    /**
+     * The FQN under which an external property of a form attribute is registered.
+     * <p>
+     * Composed the way the shipped delegate composes it: the form's own FQN, then
+     * {@code Attributes}, the attribute name as the model spells it, {@code ExtInfo}, and the
+     * property name.
+     * </p>
+     *
+     * @param form the form.
+     * @param attribute the attribute carrying the property.
+     * @param propertyName the property, {@link #LIST_SETTINGS} for a dynamic list.
+     * @return the FQN, or <code>null</code> when the form is not a registered top object
+     * @throws Exception if the attribute name cannot be read
+     */
+    private String externalPropertyFqn(Object form, Object attribute, String propertyName)
+        throws Exception
+    {
+        if (!(form instanceof IBmObject))
+        {
+            return null;
+        }
+        String formFqn = ((IBmObject)form).bmGetFqn();
+        if (formFqn == null || formFqn.isEmpty())
+        {
+            return null;
+        }
+        String name = (String)namedIface.getMethod("getName").invoke(attribute); //$NON-NLS-1$
+        if (name == null || name.isEmpty())
+        {
+            return null;
+        }
+        return formFqn + ".Attributes." + name + ".ExtInfo." + propertyName; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Default composition settings for a list that has none, carrying the top-object URI of the
+     * FQN they are about to be attached under.
+     *
+     * @param extInfo the attribute's ext info, which knows the engine the URI belongs to.
+     * @param settingsFqn the FQN the settings will answer to.
+     * @return the new settings, or <code>null</code> when this runtime does not offer the factory
+     */
+    private static IBmObject buildDefaultListSettings(EObject extInfo, String settingsFqn)
+    {
+        try
+        {
+            Class<?> dcsUtil = Class.forName("com._1c.g5.v8.dt.dcs.util.DcsUtil"); //$NON-NLS-1$
+            Object settings =
+                dcsUtil.getMethod("createDefaultDataCompositionSettings").invoke(null); //$NON-NLS-1$
+            if (!(settings instanceof IBmObject) || !(settings instanceof InternalEObject))
+            {
+                return null;
+            }
+            String engineId = ((IBmObject)extInfo).bmGetEngine().getId();
+            ((InternalEObject)settings)
+                .eSetProxyURI(BmUriUtil.createTopBmObjectUri(engineId, settingsFqn));
+            return (IBmObject)settings;
+        }
+        catch (ClassNotFoundException | NoSuchMethodException e)
+        {
+            Activator.logWarning("Composition settings factory is absent in this runtime: " //$NON-NLS-1$
+                + e.getMessage());
+            return null;
+        }
+        catch (Exception e)
+        {
+            Activator.logError("Could not build default composition settings", e); //$NON-NLS-1$
+            return null;
+        }
     }
 }

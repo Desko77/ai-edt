@@ -29,9 +29,11 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.FailureScreenshots;
 import ru.aiedt.mcp.server.support.JUnitReportFormatter;
 import ru.aiedt.mcp.server.support.JUnitRunOutcome;
 import ru.aiedt.mcp.server.support.JUnitXmlReader;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import com.google.gson.JsonObject;
@@ -63,7 +65,7 @@ public class VanessaTool implements IMcpTool
     public static final String NAME = "vanessa"; //$NON-NLS-1$
 
     private static final int DEFAULT_TIMEOUT_SEC = 300;
-    private static final int MAX_TIMEOUT_SEC = 3600;
+    static final int MAX_TIMEOUT_SEC = 3600;
     private static final int OUTPUT_TAIL = 3000;
 
     /** 1C on Windows writes its console output in the OEM/ANSI Russian codepage. */
@@ -84,8 +86,9 @@ public class VanessaTool implements IMcpTool
             + "from the outside. Pass featurePath (a .feature file or a directory of them) and " //$NON-NLS-1$
             + "connectionString (the 1C infobase connection string, e.g. File=...; or Srvr=...;Ref=...). " //$NON-NLS-1$
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
-            + "preferences (download from github.com/Pr-Mex/vanessa-automation). Synchronous: raise " //$NON-NLS-1$
-            + "timeoutSeconds for long suites."; //$NON-NLS-1$
+            + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
+            + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
+            + "back for the result and also cancels the run. Raise timeoutSeconds for long suites."; //$NON-NLS-1$
     }
 
     @Override
@@ -93,11 +96,32 @@ public class VanessaTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("featurePath", //$NON-NLS-1$
-                "Path to a .feature file or a directory of feature files (required). A relative " //$NON-NLS-1$
-                    + "path is resolved against the project when projectName is given.", true) //$NON-NLS-1$
+                "Path to a .feature file or a directory of feature files. Required to start a run; " //$NON-NLS-1$
+                    + "a call that carries a runKey does not take it. A relative path is resolved " //$NON-NLS-1$
+                    + "against the project when projectName is given.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "1C infobase connection string (required), e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
-                    + "'Srvr=\"host\";Ref=\"base\";'.", true) //$NON-NLS-1$
+                    + "'Srvr=\"host\";Ref=\"base\";'. A Pwd is refused: it would reach the " //$NON-NLS-1$
+                    + "client as a command-line argument, readable by every process on the machine. " //$NON-NLS-1$
+                    + "Use an infobase that needs no password, or one that accepts the operating " //$NON-NLS-1$
+                    + "system's authentication. Required to start a run; a call that carries a " //$NON-NLS-1$
+                    + "runKey does not take it.") //$NON-NLS-1$
+            .booleanProperty("async", //$NON-NLS-1$
+                "Hand back a runKey instead of waiting out the run. Come back with that runKey " //$NON-NLS-1$
+                    + "for the result, or with runKey and cancel=true to stop the client.") //$NON-NLS-1$
+            .stringProperty("runKey", //$NON-NLS-1$
+                "The key from a Pending reply: comes back for that run rather than starting one.") //$NON-NLS-1$
+            .booleanProperty("cancel", //$NON-NLS-1$
+                "With runKey: stops the client and its worker processes. What the scenarios " //$NON-NLS-1$
+                    + "already wrote to the infobase stays written.") //$NON-NLS-1$
+            .integerProperty("waitSeconds", //$NON-NLS-1$
+                "With runKey: how long to wait this time before answering Pending again.") //$NON-NLS-1$
+            .objectProperty("vanessaParams", //$NON-NLS-1$
+                "Optional JSON object of Vanessa parameters to add to VAParams.json, for filtering " //$NON-NLS-1$
+                    + "by tag or by scenario name among other things. The names are Vanessa's own " //$NON-NLS-1$
+                    + "and differ between its versions, so they are yours to give; it ignores one " //$NON-NLS-1$
+                    + "it does not know. The few this tool reads its result back from are " //$NON-NLS-1$
+                    + "refused.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Optional EDT project name - used to resolve a relative featurePath and as the " //$NON-NLS-1$
                     + "working directory.") //$NON-NLS-1$
@@ -121,6 +145,80 @@ public class VanessaTool implements IMcpTool
 
     @Override
     public String execute(Map<String, String> params)
+    {
+        String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if (runKey != null && !runKey.isEmpty())
+        {
+            // A key means the caller is coming back for a run, not starting one.
+            if (JsonUtils.extractBooleanArgument(params, "cancel", false)) //$NON-NLS-1$
+            {
+                return cancelRun(runKey);
+            }
+            return collect(runKey, params);
+        }
+        return start(params);
+    }
+
+    /**
+     * How long a run is waited for before the caller is given a key instead.
+     * <p>
+     * Long enough that a run over a handful of scenarios simply answers, short enough that nobody
+     * sits on a connection through a suite.
+     * </p>
+     */
+    private static final long ASYNC_FIRST_WAIT_MS = 20_000L;
+
+    /**
+     * The longest one poll may wait. A caller asking for more is answered Pending sooner and can
+     * poll again; holding an HTTP handler for longer serves nobody.
+     */
+    private static final int MAX_POLL_WAIT_SEC = 120;
+
+    /**
+     * Comes back for a run that was still playing.
+     *
+     * @param runKey the key from the Pending reply.
+     * @param params the call, read for how long to wait this time.
+     * @return the result, or another Pending reply
+     */
+    private String collect(String runKey, Map<String, String> params)
+    {
+        PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
+        registry.pruneExpired();
+        PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
+        if (entry == null)
+        {
+            return ToolResult.error("runKey not found - the run finished and its result was " //$NON-NLS-1$
+                + "already collected, it was cancelled, or it was abandoned long enough to be " //$NON-NLS-1$
+                + "dropped. Whatever the scenarios reached before that stays written: read the " //$NON-NLS-1$
+                + "infobase, not this answer, to find out what they did.").toJson(); //$NON-NLS-1$
+        }
+        long wait = Math.max(1000L, Math.min(MAX_POLL_WAIT_SEC,
+            JsonUtils.extractIntArgument(params, "waitSeconds", 20)) * 1000L); //$NON-NLS-1$
+        String done = entry.await(wait);
+        if (done != null)
+        {
+            registry.remove(runKey, entry);
+            return done;
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("hint", "Still playing. Come back with the same runKey, or stop it with " //$NON-NLS-1$ //$NON-NLS-2$
+                + "cancel=true.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Runs the scenarios, waiting for them or handing back a key to come back with.
+     *
+     * @param params the call's arguments.
+     * @return the result, or a Pending reply
+     */
+    private String start(Map<String, String> params)
     {
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
         String epf = trimmed(store.getString(PrefKeys.PREF_VANESSA_EPF));
@@ -149,6 +247,18 @@ public class VanessaTool implements IMcpTool
         {
             return ToolResult.error("connectionString is required (the 1C infobase connection " //$NON-NLS-1$
                 + "string, e.g. File=\"C:\\ib\"; ).").toJson(); //$NON-NLS-1$
+        }
+        String secretRefusal = whyASecretCannotBePassed(connectionString);
+        if (secretRefusal != null)
+        {
+            return ToolResult.error(secretRefusal).toJson();
+        }
+        String[] paramsRefusal = new String[1];
+        JsonObject extraVaParams =
+            extraParams(JsonUtils.extractStringArgument(params, "vanessaParams"), paramsRefusal); //$NON-NLS-1$
+        if (paramsRefusal[0] != null)
+        {
+            return ToolResult.error(paramsRefusal[0]).toJson();
         }
         String featurePathArg = JsonUtils.extractStringArgument(params, "featurePath"); //$NON-NLS-1$
         if (featurePathArg == null || featurePathArg.trim().isEmpty())
@@ -190,6 +300,106 @@ public class VanessaTool implements IMcpTool
             timeoutSec = MAX_TIMEOUT_SEC;
         }
 
+        // Everything the run needs is settled by now, so it can be handed to a job as it is.
+        // Settled copies, because a job closes over what it is given and the timeout above is
+        // clamped after it is read.
+        final int settledTimeout = timeoutSec;
+        final File settledExe = exeFile;
+        final File settledEpf = epfFile;
+        // One key per run, not one per set of arguments. Coalescing belongs to reads whose
+        // result can be handed to a second caller; a run drives a client against an infobase, so
+        // two identical calls are two runs - and the second is refused below while the first goes.
+        // Sharing a key let a second call take over the first caller's, and made the key stale
+        // whenever a setting the run reads - the configured processor, for one - changed under it.
+        String jobKey = PendingWorkRegistry.computeRunKey(NAME,
+            java.util.UUID.randomUUID().toString());
+        boolean async = JsonUtils.extractBooleanArgument(params, "async", false); //$NON-NLS-1$
+        File runDirForJob = workingDir;
+        if (!async)
+        {
+            // No key: the caller is holding the connection and is never handed one, and an async
+            // run with these same arguments owns this key. Registering both under it would let a
+            // cancel meant for that run destroy this client instead.
+            return play(settledExe, settledEpf, connectionString, featurePath, screenshots,
+                keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob, null);
+        }
+        PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
+        registry.pruneExpired();
+        PendingWorkRegistry.PendingEntry entry;
+        synchronized (ADMISSION)
+        {
+            // Read and submit as one decision. Apart, two callers arriving together both find the
+            // domain idle, and the second is queued behind a run that may take an hour instead of
+            // being refused.
+            java.util.List<String> going = registry.unfinishedKeys();
+            if (!going.isEmpty())
+            {
+                return ToolResult.error(alreadyGoing(going)).toJson();
+            }
+            entry = registry.getOrStart(jobKey,
+                () -> play(settledExe, settledEpf, connectionString, featurePath, screenshots,
+                    keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob, jobKey));
+        }
+        String done = entry.await(ASYNC_FIRST_WAIT_MS);
+        if (done != null)
+        {
+            registry.remove(jobKey, entry);
+            return done;
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
+            .put("runKey", jobKey) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("hint", "The scenarios are still playing. Come back with runKey=\"" //$NON-NLS-1$ //$NON-NLS-2$
+                + jobKey + "\", or stop it with that key and cancel=true. Poll by the key: " //$NON-NLS-1$
+                + "repeating the arguments does not find this run, and is refused while it " //$NON-NLS-1$
+                + "goes.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Plays the scenarios and reads what they left behind.
+     *
+     * @param exeFile the client.
+     * @param epfFile the Vanessa data processor it runs.
+     * @param connectionString the infobase.
+     * @param featurePath the scenarios.
+     * @param screenshots whether to capture one when a step fails.
+     * @param keepOpen whether to leave the client running afterwards.
+     * @param stepDelay the pause between steps, in seconds.
+     * @param timeoutSec how long to wait for the client.
+     * @param extraVaParams what the caller added to the Vanessa document.
+     * @param workingDir where to run.
+     * @param jobKey the key this run is cancelled by.
+     * @return the answer
+     */
+    private String play(File exeFile, File epfFile, String connectionString, File featurePath,
+        boolean screenshots, boolean keepOpen, int stepDelay, int timeoutSec,
+        JsonObject extraVaParams, File workingDir, String jobKey)
+    {
+        String refused = refusedBeforeLaunch(jobKey);
+        if (refused != null)
+        {
+            return refused;
+        }
+        boolean mine;
+        try
+        {
+            mine = THE_CLIENT.tryAcquire(WAIT_FOR_THE_CLIENT_SEC, TimeUnit.SECONDS);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            return ToolResult.error("Interrupted while waiting for the running scenario run to " //$NON-NLS-1$
+                + "finish.").toJson(); //$NON-NLS-1$
+        }
+        if (!mine)
+        {
+            return ToolResult.error(
+                alreadyGoing(PendingWorkRegistry.VANESSA.unfinishedKeys())).toJson();
+        }
         Path outDir = null;
         try
         {
@@ -200,16 +410,27 @@ public class VanessaTool implements IMcpTool
             File paramsFile = new File(outDir.toFile(), "VAParams.json"); //$NON-NLS-1$
 
             String vaParamsJson = buildVaParams(featurePath, junitFile, shotsDir, screenshots,
-                keepOpen, stepDelay);
+                keepOpen, stepDelay, extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
             List<String> command = buildCommand(exeFile, connectionString, epfFile, paramsFile);
             // The connectionString may carry Pwd="..." - never log it in the clear.
             Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
-                + "\nVAParams.json:\n" + vaParamsJson); //$NON-NLS-1$
+                + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
 
-            ProcessResult pr = runVanessa(command, runDir, timeoutSec);
+            ProcessResult pr = runVanessa(command, runDir, timeoutSec, jobKey);
+            if (pr.cancelledBeforeLaunch)
+            {
+                return ToolResult.success()
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .put("status", "Cancelled") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("runKey", jobKey) //$NON-NLS-1$
+                    .put("clientStopped", false) //$NON-NLS-1$
+                    .put("message", "The run was cancelled while it was preparing. No client " //$NON-NLS-1$
+                        + "was started and the infobase was not touched by it.") //$NON-NLS-1$
+                    .toJson();
+            }
             Activator.logInfo("vanessa: exit=" + pr.exitCode + " timedOut=" + pr.timedOut //$NON-NLS-1$ //$NON-NLS-2$
                 + " output:\n" + redactSecrets(pr.output)); //$NON-NLS-1$
 
@@ -233,6 +454,15 @@ public class VanessaTool implements IMcpTool
 
             JUnitRunOutcome results = JUnitXmlReader.parse(junitFile);
             List<String> shots = collectScreenshots(shotsDir);
+            java.util.Map<String, String> pathByName = new java.util.LinkedHashMap<>();
+            for (String path : shots)
+            {
+                pathByName.put(new File(path).getName(), path);
+            }
+            List<JUnitRunOutcome.TestCase> broken = new ArrayList<>(results.getFailureDetails());
+            broken.addAll(results.getErrorDetails());
+            FailureScreenshots attributed =
+                FailureScreenshots.attribute(broken, new ArrayList<>(pathByName.keySet()));
 
             String summary = results.getTotal() + " scenario steps, " + results.getPassed() //$NON-NLS-1$
                 + " passed, " + results.getFailures() + " failed, " + results.getErrors() //$NON-NLS-1$ //$NON-NLS-2$
@@ -253,13 +483,26 @@ public class VanessaTool implements IMcpTool
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
                 .put("junitXmlPath", junitFile.getAbsolutePath()) //$NON-NLS-1$
                 .put("screenshots", shots) //$NON-NLS-1$
-                .put("markdown", JUnitReportFormatter.format(results)); //$NON-NLS-1$
+                .put("screenshotsByStep", attributed.byStep()) //$NON-NLS-1$
+                .put("screenshotsNotAttributed", attributed.unattributed()) //$NON-NLS-1$
+                .put("markdown", JUnitReportFormatter.format(results) //$NON-NLS-1$
+                    + attributed.toMarkdown(pathByName));
             return ok.toJson();
         }
         catch (Exception e)
         {
             Activator.logError("Error in vanessa", e); //$NON-NLS-1$
             return ToolResult.error("Error running Vanessa: " + TextSuggest.safeMessage(e)).toJson(); //$NON-NLS-1$
+        }
+        finally
+        {
+            THE_CLIENT.release();
+            if (jobKey != null)
+            {
+                // The run is over however it ended. A cancel arriving now has nothing to stop and
+                // must say so, rather than read a mark left behind by this one.
+                CANCELLED.remove(jobKey);
+            }
         }
         // The output dir (junit.xml + screenshots) is intentionally NOT deleted: the
         // agent reads the returned screenshot paths. It is a temp dir the OS reclaims.
@@ -282,7 +525,7 @@ public class VanessaTool implements IMcpTool
      * failure screenshots, and closes the client when done so the poller detects exit.
      */
     private static String buildVaParams(File featurePath, File junitFile, File shotsDir,
-        boolean screenshots, boolean keepOpen, int stepDelay)
+        boolean screenshots, boolean keepOpen, int stepDelay, JsonObject extra)
     {
         JsonObject o = new JsonObject();
         // A directory of features, or the parent of a single .feature file.
@@ -303,6 +546,13 @@ public class VanessaTool implements IMcpTool
         {
             o.addProperty("ПаузаМеждуШагами", stepDelay); //$NON-NLS-1$
         }
+        if (extra != null)
+        {
+            for (java.util.Map.Entry<String, com.google.gson.JsonElement> e : extra.entrySet())
+            {
+                o.add(e.getKey(), e.getValue());
+            }
+        }
         return prettyJson(o);
     }
 
@@ -311,6 +561,202 @@ public class VanessaTool implements IMcpTool
      * /Execute <epf> /C "StartFeaturePlayer;VAParams=<params>"} (thick client;
      * {@code /DisableStartupMessages} avoids the "update configuration?" modal).
      */
+    /**
+     * The parameters this tool sets because it reads the result back from where they point.
+     * <p>
+     * Moving the report or the screenshot directory would leave the run reading an empty file and
+     * reporting that nothing failed; leaving the client open would leave the run waiting for an
+     * exit that never comes. A caller asking for one of these is told so rather than obeyed.
+     * </p>
+     */
+    private static final java.util.Set<String> OURS_TO_SET = lowerCased(
+        "СохранятьРезультатыВФорматеJUnit", "ПутьКФайлуРезультатовJUnit", //$NON-NLS-1$ //$NON-NLS-2$
+        "КаталогСохраненияСкриншотов", "ЗакрыватьTestClientПослеПрогона", //$NON-NLS-1$ //$NON-NLS-2$
+        "ВыходИзПриложенияПослеЗапускаСценариев", //$NON-NLS-1$
+        // These come from arguments of this tool. Letting the passthrough set them too would mean
+        // the later one silently wins, and the caller who passed screenshots=true would be told it
+        // ran with screenshots while it did not.
+        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+    /**
+     * Field names a connection string carries a password under that no rule would catch.
+     * <p>
+     * The platform names most of them after the word - Pwd, DBPwd, SPwd - and one after neither:
+     * WSP, the web-server password. Four were found one at a time, each after the previous list
+     * looked complete, which is why the rule below asks what a name READS like and this set only
+     * holds what the rule cannot see.
+     * </p>
+     */
+    private static final java.util.Set<String> SECRET_FIELDS =
+        lowerCased("WSP", "/P"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * The given names, lower-cased, as an unmodifiable set.
+     *
+     * @param names the names.
+     * @return them, ready to be compared against a lower-cased name
+     */
+    private static java.util.Set<String> lowerCased(String... names)
+    {
+        java.util.Set<String> set = new java.util.LinkedHashSet<>();
+        for (String name : names)
+        {
+            set.add(name.toLowerCase(java.util.Locale.ROOT));
+        }
+        return java.util.Collections.unmodifiableSet(set);
+    }
+
+    /**
+     * Splits a connection string into its fields, leaving a semicolon inside quotes alone.
+     * <p>
+     * A path may carry one - {@code File="C:\\Bases\\archive;old"} - and treating it as a
+     * separator turned an innocent call into a refusal.
+     * </p>
+     *
+     * @param connectionString the string.
+     * @return its fields
+     */
+    static java.util.List<String> fieldsOf(String connectionString)
+    {
+        java.util.List<String> fields = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < connectionString.length(); i++)
+        {
+            char c = connectionString.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (c == ';' && !quoted)
+            {
+                fields.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        fields.add(current.toString());
+        return fields;
+    }
+
+    /**
+     * Reads the parameters a caller wants added to the Vanessa document.
+     * <p>
+     * Vanessa's parameter names are Russian and differ between its versions, and it ignores a name
+     * it does not know. So the names are the caller's to give: naming them here would mean writing
+     * a key nobody could check, and a run that quietly ignored it would still report success.
+     * </p>
+     *
+     * @param raw the JSON object the caller passed, or <code>null</code>.
+     * @param refusal filled with why the call cannot proceed, when it cannot.
+     * @return the parameters to add, or <code>null</code> when there are none or one is refused
+     */
+    static JsonObject extraParams(String raw, String[] refusal)
+    {
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        com.google.gson.JsonElement parsed;
+        try
+        {
+            parsed = com.google.gson.JsonParser.parseString(raw.trim());
+        }
+        catch (RuntimeException notJson)
+        {
+            refusal[0] = "vanessaParams is not JSON: " //$NON-NLS-1$
+                + (notJson.getMessage() != null ? notJson.getMessage()
+                    : notJson.getClass().getSimpleName());
+            return null;
+        }
+        if (!parsed.isJsonObject())
+        {
+            refusal[0] = "vanessaParams takes an object of Vanessa parameter names to values, " //$NON-NLS-1$
+                + "for example {\"ТегиСценариев\":\"smoke\"}"; //$NON-NLS-1$
+            return null;
+        }
+        JsonObject given = parsed.getAsJsonObject();
+        for (String key : given.keySet())
+        {
+            // Without a locale, lower-casing turns I into a dotless letter where the machine is
+            // set to Turkish, and a protected name stops matching.
+            if (OURS_TO_SET.contains(key.toLowerCase(java.util.Locale.ROOT)))
+            {
+                refusal[0] = "'" + key + "' is set by this tool, because it reads the run's " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "result back from where it points. Moving it would leave the run reporting " //$NON-NLS-1$
+                    + "success while reading nothing."; //$NON-NLS-1$
+                return null;
+            }
+            if (!isAValueOrAListOfThem(given.get(key)))
+            {
+                // Vanessa reads its parameters as values, so anything else arrives as a shape it
+                // cannot use - and it ignores what it cannot use, leaving the run unfiltered and
+                // reported as a success. A list was checked for being a list without its items
+                // being looked at, which let a list of objects through.
+                refusal[0] = "'" + key + "' is given something other than a value or a list of " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "them; that is what a Vanessa parameter takes."; //$NON-NLS-1$
+                return null;
+            }
+        }
+        return given;
+    }
+
+    /**
+     * Whether this is something Vanessa can read as a parameter.
+     *
+     * @param value what the caller gave for one parameter.
+     * @return true when it is a value, or a list of values
+     */
+    private static boolean isAValueOrAListOfThem(com.google.gson.JsonElement value)
+    {
+        if (value == null || value.isJsonNull() || value.isJsonPrimitive())
+        {
+            return true;
+        }
+        if (!value.isJsonArray())
+        {
+            return false;
+        }
+        for (com.google.gson.JsonElement item : value.getAsJsonArray())
+        {
+            if (item != null && !item.isJsonNull() && !item.isJsonPrimitive())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The names in a JSON document, without their values.
+     * <p>
+     * The document is worth logging - which parameters a run went out with is the first thing
+     * anyone asks after a failure - and its values are not: a caller may put a password into a
+     * parameter of their own, and this file is written where the log can reach it.
+     * </p>
+     *
+     * @param json the document.
+     * @return its keys, comma separated
+     */
+    static String keysOf(String json)
+    {
+        try
+        {
+            com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(json);
+            if (!parsed.isJsonObject())
+            {
+                return "(not an object)"; //$NON-NLS-1$
+            }
+            return String.join(", ", parsed.getAsJsonObject().keySet()); //$NON-NLS-1$
+        }
+        catch (RuntimeException notJson)
+        {
+            return "(unreadable)"; //$NON-NLS-1$
+        }
+    }
+
     private static List<String> buildCommand(File exe, String connectionString, File epf,
         File paramsFile)
     {
@@ -331,15 +777,309 @@ public class VanessaTool implements IMcpTool
     {
         int exitCode = -1;
         boolean timedOut;
+        boolean cancelledBeforeLaunch;
         String output = ""; //$NON-NLS-1$
     }
 
     /**
-     * Launches the thick client, draining its merged stdout/stderr as cp1251 on a
-     * daemon thread. On timeout, destroys the process tree (child 1C workers first).
+     * The client of each running scenario run, by the key its caller polls with.
+     * <p>
+     * Held only while the process lives. Cancelling a run means stopping the client, and nothing
+     * else in this plugin can reach it once the call that started it has returned.
+     * </p>
      */
-    private static ProcessResult runVanessa(List<String> command, File workingDir, int timeoutSec)
-        throws Exception
+    private static final java.util.Map<String, Process> RUNNING =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Keys whose run has been asked to stop.
+     * <p>
+     * A run that has begun but has not yet started its client is reachable by nothing else: the
+     * process map is still empty for it, and completing its future reaches only work that has not
+     * started - measured, and the reason a queued run needs no mark. Without this one, a cancel in
+     * that window would answer that nothing was running and the client would launch afterwards.
+     * </p>
+     */
+    private static final java.util.Map<String, Long> CANCELLED =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * How long a mark is kept when nothing reads it.
+     * <p>
+     * A run reads its mark and takes it. One cancelled before it began never reads anything, and
+     * its key - unique to that run - is never used again, so the mark would be kept for the life
+     * of the server. Nothing can still be waiting to read a mark older than the longest run: the
+     * only run that could is one queued behind another, and it starts within one run's length.
+     * </p>
+     */
+    private static final long MARK_LIFETIME_MS = (MAX_TIMEOUT_SEC + 60) * 1000L;
+
+    /**
+     * Drops marks no run can still be waiting to read.
+     */
+    private static void forgetOldMarks()
+    {
+        long now = System.currentTimeMillis();
+        CANCELLED.entrySet().removeIf(mark -> now - mark.getValue() > MARK_LIFETIME_MS);
+    }
+
+    /**
+     * The right to be the scenario client.
+     * <p>
+     * The domain's executor takes one run at a time, but hands overflow back to the submitting
+     * thread rather than refusing it, so a full queue would put a second client on the same
+     * infobase. Two clients playing scenarios there would be reading each other's work, so the
+     * second one waits briefly and is refused rather than launched.
+     * </p>
+     * <p>
+     * One permit for every run, not one per infobase: runs against different bases do not conflict
+     * with each other, and taking them together would need a wider executor as well.
+     * </p>
+     */
+    private static final java.util.concurrent.Semaphore THE_CLIENT =
+        new java.util.concurrent.Semaphore(1);
+
+    /** How long a second run waits for the first before it is refused. */
+    private static final long WAIT_FOR_THE_CLIENT_SEC = 5;
+
+    /**
+     * Why this run was not started, naming what is holding the place.
+     * <p>
+     * The key is named because a run owns its own and its caller may never have received it - it
+     * went away while waiting - leaving a run that holds the domain and that nobody could name.
+     * Whoever reads this refusal can.
+     * </p>
+     *
+     * @param going the keys of the runs already under way.
+     * @return the refusal text
+     */
+    private static String alreadyGoing(java.util.List<String> going)
+    {
+        StringBuilder why = new StringBuilder("Another scenario run is in progress. Runs are "); //$NON-NLS-1$
+        why.append("taken one at a time, whichever infobase they name, so this one was not "); //$NON-NLS-1$
+        why.append("started. Wait for it to finish"); //$NON-NLS-1$
+        if (going.isEmpty())
+        {
+            why.append(", or stop it with its runKey and cancel=true."); //$NON-NLS-1$
+            return why.toString();
+        }
+        why.append(", or stop it with cancel=true and runKey="); //$NON-NLS-1$
+        for (int i = 0; i < going.size(); i++)
+        {
+            why.append(i == 0 ? "" : ", ").append('"').append(going.get(i)).append('"'); //$NON-NLS-1$
+        }
+        why.append('.');
+        return why.toString();
+    }
+
+    /** Guards reading that the domain is idle and submitting the run that makes it busy. */
+    private static final Object ADMISSION = new Object();
+
+    /**
+     * Guards spawning the client and registering it, against a cancel looking for it.
+     * <p>
+     * Without it a cancel can write its mark, find nothing registered, and report that no client
+     * was running while {@code ProcessBuilder.start} is in the middle of spawning one.
+     * </p>
+     */
+    private static final Object LAUNCHING = new Object();
+
+    static
+    {
+        PendingWorkRegistry.VANESSA.stopsWith(VanessaTool::stopTheClient);
+    }
+
+    /**
+     * The answer a run gives when it was told to stop before it launched anything.
+     * <p>
+     * Reading the mark consumes it: a later run under the same key is a run of its own, and a mark
+     * left behind by this one would refuse it for no reason.
+     * </p>
+     *
+     * @param jobKey the run's key; a run nobody can cancel has none.
+     * @return the refusal, or {@code null} when this run may go ahead
+     */
+    // A mark set for a run that never began is never read here, and outlives it. That costs the
+    // next call under the same key one refusal, which says so and clears the mark. Clearing it
+    // early instead would trade that for a client launched after a cancel reported success, and
+    // between a visible retry and an untracked client the retry is the one to keep.
+    static String refusedBeforeLaunch(String jobKey)
+    {
+        if (jobKey == null || CANCELLED.remove(jobKey) == null)
+        {
+            return null;
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Cancelled") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", jobKey) //$NON-NLS-1$
+            .put("clientStopped", false) //$NON-NLS-1$
+            .put("message", "The run was cancelled before the client started. Nothing was " //$NON-NLS-1$
+                + "launched and the infobase was not touched by it. The cancellation is spent: " //$NON-NLS-1$
+                + "call again to run these scenarios.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Stops a running scenario run.
+     * <p>
+     * The client is destroyed with its children first, the same order the timeout uses: the worker
+     * processes 1C starts outlive their parent otherwise. Then the entry is dropped, so a later
+     * poll on that key says the run is gone rather than waiting for a result nobody will produce.
+     * </p>
+     *
+     * @param runKey the key from the Pending reply.
+     * @return what happened, for the caller
+     */
+    static String cancelRun(String runKey)
+    {
+        PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
+        PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
+        if (entry != null && entry.isDone())
+        {
+            // It already finished. Cancelling it would throw away the one thing worth having, so
+            // the answer is what the run produced. Done and readable are a moment apart, and when
+            // the result is not there yet this falls through and cancels as usual.
+            String produced = entry.await(1000L);
+            if (produced != null)
+            {
+                registry.remove(runKey, entry);
+                return produced;
+            }
+        }
+        PendingWorkRegistry.StopOutcome stopping = stopTheClient(runKey);
+        boolean stopped = stopping != PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
+        boolean tracked = registry.detach(runKey);
+        if (!stopped && !tracked)
+        {
+            CANCELLED.remove(runKey);
+            return ToolResult.error("No run under runKey \"" + runKey + "\" - it finished and its " //$NON-NLS-1$ //$NON-NLS-2$
+                + "result was collected, it was cancelled already, or it was abandoned long " //$NON-NLS-1$
+                + "enough to be dropped.").toJson(); //$NON-NLS-1$
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Cancelled") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("clientStopped", stopping == PendingWorkRegistry.StopOutcome.STOPPED) //$NON-NLS-1$
+            .put("message", messageFor(stopping)) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /** How long a cancel waits for the client to go before it says it has not. */
+    private static final long STOP_WAIT_SEC = 5;
+
+    /**
+     * Stops one run's client and waits to see whether it went.
+     * <p>
+     * {@code destroyForcibly} asks; it does not wait, and a worker may refuse. Reporting the ask
+     * as the outcome told a caller this run was done with the infobase while a client of it was
+     * still writing there.
+     * </p>
+     *
+     * @param runKey the run's key.
+     * @return which of the three things happened
+     */
+    static PendingWorkRegistry.StopOutcome stopTheClient(String runKey)
+    {
+        if (runKey == null)
+        {
+            return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
+        }
+        Process running;
+        synchronized (LAUNCHING)
+        {
+            // The mark and the lookup happen where a launch cannot fall between them: either the
+            // run has not spawned anything and reads this mark, or it has registered its client
+            // and the lookup finds it. Written here rather than in one caller, because both ways
+            // of cancelling go through this.
+            forgetOldMarks();
+            CANCELLED.put(runKey, Long.valueOf(System.currentTimeMillis()));
+            running = RUNNING.remove(runKey);
+        }
+        if (running == null)
+        {
+            return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
+        }
+        // Taken before anything is destroyed: afterwards the parent lists no children.
+        java.util.List<ProcessHandle> workers =
+            running.descendants().collect(java.util.stream.Collectors.toList());
+        workers.forEach(ProcessHandle::destroyForcibly);
+        running.destroyForcibly();
+        boolean gone;
+        try
+        {
+            gone = running.waitFor(STOP_WAIT_SEC, TimeUnit.SECONDS);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            gone = !running.isAlive();
+        }
+        for (ProcessHandle worker : workers)
+        {
+            gone = gone && !worker.isAlive();
+        }
+        return gone ? PendingWorkRegistry.StopOutcome.STOPPED
+            : PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+    }
+
+    /**
+     * What a cancel is told, according to what stopping actually came to.
+     *
+     * @param stopping what happened.
+     * @return the sentence for the caller
+     */
+    private static String messageFor(PendingWorkRegistry.StopOutcome stopping)
+    {
+        if (stopping == PendingWorkRegistry.StopOutcome.STOPPED)
+        {
+            return "The client and its worker processes are gone. Whatever the scenarios had " //$NON-NLS-1$
+                + "already written to the infobase stays written - stopping a run is not " //$NON-NLS-1$
+                + "undoing it."; //$NON-NLS-1$
+        }
+        if (stopping == PendingWorkRegistry.StopOutcome.STILL_RUNNING)
+        {
+            return "The client was told to stop and had not gone " + STOP_WAIT_SEC + " seconds " //$NON-NLS-1$ //$NON-NLS-2$
+                + "later. It or one of its worker processes may still be running against the " //$NON-NLS-1$
+                + "infobase; check the machine's process list."; //$NON-NLS-1$
+        }
+        return "No client was found under this key, and the run will not start one. That is not " //$NON-NLS-1$
+            + "a promise that none ran: a client that had already exited looks the same from " //$NON-NLS-1$
+            + "here. Read the infobase to find out what the scenarios did."; //$NON-NLS-1$
+    }
+
+    /**
+     * Stops one run's client, if it still has one.
+     * <p>
+     * Children first, the order the timeout uses: the worker processes 1C starts outlive their
+     * parent otherwise. Installed as the domain's stopper, so a cancel arriving through the task
+     * interface stops the same client a cancel through this tool would - and marks the run the
+     * same way, so a client that has not registered yet is stopped too.
+     * </p>
+     *
+     * @param runKey the run's key.
+     * @return whether there was a client to stop; {@link #stopTheClient} says whether it went
+     */
+    static boolean stopClient(String runKey)
+    {
+        return stopTheClient(runKey) != PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
+    }
+
+    /**
+     * Launches the thick client, draining its merged stdout/stderr as cp1251 on a daemon thread.
+     * On timeout, destroys the process tree (child 1C workers first). Registers the client under
+     * the run's key while it lives, so a cancel from another call can reach it.
+     *
+     * @param command the client and its arguments.
+     * @param workingDir where to run.
+     * @param timeoutSec how long to wait for the client.
+     * @param runKey the key this run is cancelled by; null when nobody can cancel it.
+     * @return how the client ended and what it printed
+     * @throws Exception when the client cannot be launched or the wait is interrupted
+     */
+    private static ProcessResult runVanessa(List<String> command, File workingDir, int timeoutSec,
+        String runKey) throws Exception
     {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
@@ -347,7 +1087,26 @@ public class VanessaTool implements IMcpTool
         {
             pb.directory(workingDir);
         }
-        Process proc = pb.start();
+        Process proc;
+        synchronized (LAUNCHING)
+        {
+            if (runKey != null && CANCELLED.containsKey(runKey))
+            {
+                // Cancelled before anything was spawned, and nothing will be.
+                ProcessResult stopped = new ProcessResult();
+                stopped.cancelledBeforeLaunch = true;
+                return stopped;
+            }
+            proc = pb.start();
+            if (runKey != null)
+            {
+                // Remembered only while it runs: this process is what stopClient goes looking for,
+                // whether the cancel came through this tool or through the registry. Registered
+                // under the same monitor the mark is written under, so a cancel arriving now
+                // waits and then finds it.
+                RUNNING.put(runKey, proc);
+            }
+        }
         // The thick client reads no stdin; close it so nothing can block on it.
         try (OutputStream in = proc.getOutputStream())
         {
@@ -384,22 +1143,35 @@ public class VanessaTool implements IMcpTool
         drain.start();
 
         ProcessResult pr = new ProcessResult();
-        if (!proc.waitFor(timeoutSec, TimeUnit.SECONDS))
+        try
         {
-            proc.descendants().forEach(ProcessHandle::destroyForcibly);
-            proc.destroyForcibly();
-            pr.timedOut = true;
+            if (!proc.waitFor(timeoutSec, TimeUnit.SECONDS))
+            {
+                proc.descendants().forEach(ProcessHandle::destroyForcibly);
+                proc.destroyForcibly();
+                pr.timedOut = true;
+            }
+            else
+            {
+                pr.exitCode = proc.exitValue();
+            }
+            drain.join(2000);
+            synchronized (out)
+            {
+                pr.output = out.toString();
+            }
+            return pr;
         }
-        else
+        finally
         {
-            pr.exitCode = proc.exitValue();
+            // However this ended - finished, timed out, or cancelled from another call - the
+            // handle goes. Leaving it would let a later cancel destroy a process that is no longer
+            // this run, because the operating system gives the number back.
+            if (runKey != null)
+            {
+                RUNNING.remove(runKey, proc);
+            }
         }
-        drain.join(2000);
-        synchronized (out)
-        {
-            pr.output = out.toString();
-        }
-        return pr;
     }
 
     static List<String> collectScreenshots(File shotsDir)
@@ -453,6 +1225,74 @@ public class VanessaTool implements IMcpTool
         String r = redactSecrets(s);
         String t = r.length() > OUTPUT_TAIL ? r.substring(r.length() - OUTPUT_TAIL) : r;
         return "Output tail: " + t.trim(); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a connection string carries a secret, and why that cannot be accepted.
+     * <p>
+     * The connection string reaches the client as a command-line argument, and a command line is
+     * readable by every process on the machine - through the task list, through
+     * {@code Win32_Process}. The masking applied elsewhere covers this plugin's log and its answer;
+     * it does not reach the process the operating system has already started.
+     * </p>
+     * <p>
+     * The environment's own launch configuration does carry credentials, but it cannot run an
+     * external data processor - its 26 attributes include a startup option and no equivalent of
+     * {@code /Execute} - so a scenario run cannot go through it. What remains is not to take the
+     * secret: a base reached without a password, or one that accepts the operating system's own
+     * authentication.
+     * </p>
+     *
+     * @param connectionString what the caller passed.
+     * @return the refusal, or <code>null</code> when nothing secret was passed
+     */
+    static String whyASecretCannotBePassed(String connectionString)
+    {
+        if (!carriesASecret(connectionString))
+        {
+            return null;
+        }
+        return "The connection string carries a password, and it is not accepted: it would reach " //$NON-NLS-1$
+            + "the client as a command-line argument, where every process on this machine can read " //$NON-NLS-1$
+            + "it. Run against an infobase that needs no password, or one that accepts the " //$NON-NLS-1$
+            + "operating system's authentication, and leave Pwd out of the connection string."; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a connection string names a password.
+     * <p>
+     * Both spellings the platform accepts are looked for - the quoted one and the bare one - in any
+     * case, and the value is not read: what is being decided is whether a secret is present, and
+     * reading it would put it somewhere.
+     * </p>
+     *
+     * @param connectionString what the caller passed; <code>null</code> carries nothing.
+     * @return true when a password is named
+     */
+    static boolean carriesASecret(String connectionString)
+    {
+        if (connectionString == null || connectionString.isEmpty())
+        {
+            return false;
+        }
+        for (String field : fieldsOf(connectionString))
+        {
+            int equals = field.indexOf('=');
+            String name = (equals < 0 ? field : field.substring(0, equals)).trim();
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
+            // /P takes its value joined to it rather than after an equals sign, so the name alone
+            // is never seen: the field reads /Psecret.
+            if (lower.startsWith("/p")) //$NON-NLS-1$
+            {
+                return true;
+            }
+            if (SECRET_FIELDS.contains(lower) || lower.contains("pwd") //$NON-NLS-1$
+                || lower.contains("pass")) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -27,7 +27,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.regex.Pattern;
 
 import org.eclipse.jface.preference.IPreferenceStore;
 
@@ -352,18 +351,6 @@ public class McpHttpEndpoint
     private static final String PARAM_PARAMS = "params"; //$NON-NLS-1$
 
     private static final String PARAM_ID = "id"; //$NON-NLS-1$
-
-    /**
-     * Masks the values a request must never leave in the log. {@code set_infobase_credentials} carries
-     * a real infobase password in its arguments, and the platform log is a plain file on disk. The
-     * value pattern steps over escaped characters so that a password containing a quote does not let
-     * the rest of the document through unmasked.
-     */
-    private static final Pattern SECRETS =
-        Pattern.compile("(\"(?:password|additionalParameters)\"\\s*:\\s*)\"(?:\\\\.|[^\"\\\\])*\"", //$NON-NLS-1$
-            Pattern.CASE_INSENSITIVE);
-
-    private static final String SECRETS_MASK = "$1\"***\""; //$NON-NLS-1$
 
     /**
      * One server per bound address. Loopback binds both families (127.0.0.1 and ::1) so a client that
@@ -2077,14 +2064,79 @@ public class McpHttpEndpoint
      * @param body the raw request
      * @return the request, with anything secret in it replaced
      */
-    private static String redactSecrets(String body)
+    static String redactSecrets(String body)
     {
         if (body == null || body.isEmpty())
         {
             return body;
         }
-        return SECRETS.matcher(body).replaceAll(SECRETS_MASK);
+        // Read the document before deciding what is secret in it. Matching the text as it arrived
+        // misses a name spelt with an escape - "connection\u0053tring" is the same name once read -
+        // and misses a value that is an object rather than a string. Both were found that way.
+        try
+        {
+            com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(body);
+            // Re-serialised only when something was replaced, so a request that carries no
+            // secret is logged exactly as it arrived - which is what a malformed one is read for.
+            return maskSecretsIn(parsed) ? parsed.toString() : body;
+        }
+        catch (RuntimeException notJson)
+        {
+            // A body that cannot be read cannot be known, and what cannot be known cannot be
+            // masked. Three attempts to mask it by pattern each lost to a shape the pattern had
+            // not been taught: a name written as an escape, a value that was an object, and both
+            // in a body too broken to parse. Its length and the reason say a request arrived and
+            // was refused, which is what this line is read for.
+            return "<unparseable request, " + body.length() + " characters, not logged: " //$NON-NLS-1$ //$NON-NLS-2$
+                + "what cannot be parsed cannot be masked>"; //$NON-NLS-1$
+        }
     }
+
+    /**
+     * Replaces the value of every member that must not be logged, wherever it sits.
+     *
+     * @param element the document or a part of it.
+     * @return whether anything was replaced
+     */
+    private static boolean maskSecretsIn(com.google.gson.JsonElement element)
+    {
+        boolean masked = false;
+        if (element != null && element.isJsonObject())
+        {
+            com.google.gson.JsonObject object = element.getAsJsonObject();
+            for (String name : new java.util.ArrayList<>(object.keySet()))
+            {
+                if (SECRET_MEMBERS.contains(name.toLowerCase(java.util.Locale.ROOT)))
+                {
+                    object.addProperty(name, "***"); //$NON-NLS-1$
+                    masked = true;
+                    continue;
+                }
+                masked |= maskSecretsIn(object.get(name));
+            }
+        }
+        else if (element != null && element.isJsonArray())
+        {
+            for (com.google.gson.JsonElement item : element.getAsJsonArray())
+            {
+                masked |= maskSecretsIn(item);
+            }
+        }
+        return masked;
+    }
+
+    /**
+     * The member names whose values never reach the log, whatever shape they arrive in.
+     * <p>
+     * A connection string and a set of scenario-runner parameters are replaced whole rather than in
+     * part. Both can carry a password under a name the platform chooses - Pwd, WSP, DBPwd, SPwd, or
+     * one of Vanessa's own - and a mask that has to recognise which word is a secret fails the
+     * first time another name appears; four appeared while this was being written. What is lost is
+     * which infobase a call named; what is gained is that the log cannot carry a password at all.
+     * </p>
+     */
+    private static final java.util.Set<String> SECRET_MEMBERS =
+        java.util.Set.of("password", "additionalparameters", "connectionstring", "vanessaparams"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
     /**
      * Reads the JSON-RPC id out of a request, without insisting that the request make sense.

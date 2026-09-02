@@ -28,6 +28,7 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.ConfigurationListProperties;
 import ru.aiedt.mcp.server.support.UiSync;
 
 /**
@@ -215,6 +216,19 @@ public class ConfigurationInfoReader
         putEnum(result, "interfaceCompatibilityMode", configuration.getInterfaceCompatibilityMode()); //$NON-NLS-1$
         putEnum(result, "objectAutonumerationMode", configuration.getObjectAutonumerationMode()); //$NON-NLS-1$
         result.put("usePurposes", usePurposes); //$NON-NLS-1$
+        // The remaining list-shaped properties of the root, in the shape set_object_property writes
+        // them: what a caller reads back is what a caller passes in.
+        for (String listProperty : new String[] {"requiredMobileApplicationPermissions", //$NON-NLS-1$
+            "requiredMobileApplicationPermissions8315", //$NON-NLS-1$
+            "usedMobileApplicationFunctionalities"}) //$NON-NLS-1$
+        {
+            com.google.gson.JsonElement held =
+                ConfigurationListProperties.read(configuration, listProperty);
+            if (held != null)
+            {
+                result.put(listProperty, held);
+            }
+        }
         result.put("briefInformation", toLocalizedMap(configuration.getBriefInformation())); //$NON-NLS-1$
         result.put("detailedInformation", toLocalizedMap(configuration.getDetailedInformation())); //$NON-NLS-1$
         result.put("vendor", configuration.getVendor()); //$NON-NLS-1$

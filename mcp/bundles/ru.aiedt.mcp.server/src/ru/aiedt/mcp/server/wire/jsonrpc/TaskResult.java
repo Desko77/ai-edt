@@ -70,7 +70,7 @@ public class TaskResult
     public static TaskResult handle(TaskDirectory.Task task)
     {
         return new TaskResult(McpServerMeta.RESULT_TASK, task.taskId, task.status,
-            task.statusMessage, iso(task.createdAt), iso(task.lastUpdatedAt), TaskDirectory.TTL_MS,
+            task.statusMessage, iso(task.createdAt), iso(task.lastUpdatedAt), task.lifetimeMs,
             TaskDirectory.POLL_INTERVAL_MS, null, null);
     }
 
@@ -85,7 +85,7 @@ public class TaskResult
     public static TaskResult state(TaskDirectory.Task task, Object finishedResult, Object failure)
     {
         return new TaskResult(McpServerMeta.RESULT_COMPLETE, task.taskId, task.status,
-            task.statusMessage, iso(task.createdAt), iso(task.lastUpdatedAt), TaskDirectory.TTL_MS,
+            task.statusMessage, iso(task.createdAt), iso(task.lastUpdatedAt), task.lifetimeMs,
             TaskDirectory.POLL_INTERVAL_MS, finishedResult, failure);
     }
 

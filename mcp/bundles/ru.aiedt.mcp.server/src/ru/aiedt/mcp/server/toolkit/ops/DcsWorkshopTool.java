@@ -7,11 +7,14 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
@@ -30,6 +33,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
+import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -70,6 +74,28 @@ public class DcsWorkshopTool implements IMcpTool
      */
     private final Map<String, MutationHandler> mutations = buildMutationRegistry();
 
+    /**
+     * The operations that act on composition settings rather than on a schema, and so apply to a
+     * form's dynamic list as well as to a schema in a template.
+     * <p>
+     * Every one of these reaches its target through {@code ensureDefaultSettings}, which is what
+     * makes the second address work without a handler being copied. An operation absent from this
+     * set is refused on a list by name; an operation added to the tool that belongs here must be
+     * added here too, and {@code DynamicListTakesOnlySettingsOperationsTest} holds the set to the
+     * shape of the catalog.
+     * </p>
+     */
+    static final Set<String> SETTINGS_OPS = Collections.unmodifiableSet(
+        new LinkedHashSet<>(Arrays.asList(
+            "add_appearance", "add_chart", "add_filter", "add_filter_group", "add_grouping", "add_order",
+            "add_settings_chart", "add_settings_filter_group", "add_settings_order",
+            "add_settings_selected_field", "add_settings_table", "add_user_field",
+            "clear_settings_selected_fields", "deselect_field", "remove_appearance",
+            "remove_conditional_appearance", "remove_settings_filter", "remove_settings_item",
+            "remove_settings_order", "remove_settings_selected_field", "remove_user_field",
+            "select_field", "set_output_param", "set_output_parameter", "set_param_value",
+            "set_settings_item_user_mode", "set_settings_parameter", "set_user_field")));
+
     /** Advertised operation catalog (allowlist + help + suggest), derived from the registry. */
     private final Map<String, String> OPS = buildOpsCatalog();
 
@@ -103,6 +129,11 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("objectName", //$NON-NLS-1$
                 "Owner FQN (Report.X / DataProcessor.X) or full schema FQN") //$NON-NLS-1$
+            .stringProperty("formFqn", //$NON-NLS-1$
+                "Form holding a dynamic list, e.g. Catalog.X.Form.ListForm. Pass with " //$NON-NLS-1$
+                    + "attributeName instead of objectName to work on the list's settings") //$NON-NLS-1$
+            .stringProperty("attributeName", //$NON-NLS-1$
+                "Dynamic-list attribute on formFqn whose settings the operation applies to") //$NON-NLS-1$
             .stringProperty("templateName", //$NON-NLS-1$
                 "DCS template name. Default follows the configuration script variant: " //$NON-NLS-1$
                     + "ОсновнаяСхемаКомпоновкиДанных (Russian) / MainDataCompositionSchema (English)") //$NON-NLS-1$
@@ -146,7 +177,8 @@ public class DcsWorkshopTool implements IMcpTool
                 + "set_data_set_field_appearance. Font='Arial,12,bold', colors='#RRGGBB'. " //$NON-NLS-1$
                 + "Keys: TextColor/BackColor/BorderColor/Font/Format (or Russian equivalents).") //$NON-NLS-1$
             .stringProperty("title", //$NON-NLS-1$
-                "Presentation/title for selected-field / calculated-field / parameter (optional).") //$NON-NLS-1$
+                "Presentation/title for selected-field / calculated-field / parameter, and what a " //$NON-NLS-1$
+                    + "nested schema is called on screen (optional).") //$NON-NLS-1$
             .stringProperty("sourceName", //$NON-NLS-1$
                 "Source settings-variant name to copy from (clone_settings_variant).") //$NON-NLS-1$
             .stringProperty("newName", //$NON-NLS-1$
@@ -178,6 +210,33 @@ public class DcsWorkshopTool implements IMcpTool
                 "add_order: Asc / Desc (default Asc; alias of direction).") //$NON-NLS-1$
             .stringProperty("presentation", //$NON-NLS-1$
                 "add_variant: settings-variant presentation / title.") //$NON-NLS-1$
+            .stringProperty("url", //$NON-NLS-1$
+                "add_nested_schema: where the nested schema reads its data from.") //$NON-NLS-1$
+            .stringProperty("dataObjectName", //$NON-NLS-1$
+                "add_union_item dataSetType=Object: the object that child dataset reads. Distinct " //$NON-NLS-1$
+                    + "from objectName, which names the owner whose schema is being edited.") //$NON-NLS-1$
+            .stringProperty("groupName", //$NON-NLS-1$
+                "add_group_template / remove_group_template: the grouping being drawn. For " //$NON-NLS-1$
+                    + "add_total_template, the first of the two that cross.") //$NON-NLS-1$
+            .stringProperty("groupName2", //$NON-NLS-1$
+                "add_total_template / remove_total_template: the second grouping of the " //$NON-NLS-1$
+                    + "crossing.") //$NON-NLS-1$
+            .stringProperty("templateType2", //$NON-NLS-1$
+                "add_total_template: the area type of the second grouping.") //$NON-NLS-1$
+            .booleanProperty("header", //$NON-NLS-1$
+                "add_group_template / remove_group_template: the grouping's header rather than " //$NON-NLS-1$
+                    + "its body. Default false.") //$NON-NLS-1$
+            .stringProperty("templateType", //$NON-NLS-1$
+                "add_group_template: Header / Footer / HierarchicalHeader / HierarchicalFooter / " //$NON-NLS-1$
+                    + "OverallHeader / OverallFooter.") //$NON-NLS-1$
+            .integerProperty("rowIndex", //$NON-NLS-1$
+                "add_template_cell: which row of the template body, 0-based. Default the last.") //$NON-NLS-1$
+            .stringProperty("schemaTemplateName", //$NON-NLS-1$
+                "The template INSIDE the schema that an operation works on. Distinct from " //$NON-NLS-1$
+                    + "templateName, which names the configuration template the schema lives in.") //$NON-NLS-1$
+            .stringProperty("nestedSchemaName", //$NON-NLS-1$
+                "Name of a nested schema to work inside. Without it an operation applies to the " //$NON-NLS-1$
+                    + "schema itself; with it, to the schema of that name within it.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
                 "remove_conditional_appearance: where to remove from - schema (default) / settings.") //$NON-NLS-1$
             .stringProperty("userSettingPresentation", //$NON-NLS-1$
@@ -280,33 +339,316 @@ public class DcsWorkshopTool implements IMcpTool
      * and records a short message in {@link BmDcsHelper.Result#message}. Errors
      * surface as {@link MetadataGuards.BlockedGuardException} with structured tags.
      */
+    /**
+     * Whether the call is aimed at a form's dynamic list rather than at a schema in a template.
+     *
+     * @param formFqn the form, when one was given.
+     * @param attributeName the dynamic-list attribute, when one was given.
+     * @return true when both halves of the list address are present
+     */
+    static boolean addressesAList(String formFqn, String attributeName)
+    {
+        return formFqn != null && !formFqn.isEmpty()
+            && attributeName != null && !attributeName.isEmpty();
+    }
+
+    /**
+     * What is wrong with the target the caller named, if anything.
+     * <p>
+     * There are two ways to name a target and they do not mix: a schema is an object plus a
+     * template, a dynamic list is a form plus an attribute. Half an address, or both addresses at
+     * once, is answered by saying so - picking one silently would report on a target the caller did
+     * not mean.
+     * </p>
+     *
+     * @param projectName the project, needed either way.
+     * @param objectName the schema owner, for the schema address.
+     * @param formFqn the form, for the list address.
+     * @param attributeName the attribute, for the list address.
+     * @return the refusal to answer with, or <code>null</code> when the address is usable
+     */
+    static String addressRefusal(String projectName, String objectName, String formFqn,
+        String attributeName)
+    {
+        boolean hasForm = formFqn != null && !formFqn.isEmpty();
+        boolean hasAttribute = attributeName != null && !attributeName.isEmpty();
+        if (hasForm != hasAttribute)
+        {
+            return "A form's dynamic list is addressed by formFqn AND attributeName together; only " //$NON-NLS-1$
+                + (hasForm ? "formFqn" : "attributeName") + " was given"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        boolean hasObject = objectName != null && !objectName.isEmpty();
+        if (hasForm && hasObject)
+        {
+            return "objectName addresses a schema and formFqn + attributeName address a form's " //$NON-NLS-1$
+                + "dynamic list; pass one or the other, not both"; //$NON-NLS-1$
+        }
+        if (projectName == null || projectName.isEmpty())
+        {
+            return "projectName is required"; //$NON-NLS-1$
+        }
+        if (!hasForm && !hasObject)
+        {
+            return "projectName and objectName are required, or formFqn and attributeName to work " //$NON-NLS-1$
+                + "on a form's dynamic list instead"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * The schema an operation is aimed at.
+     * <p>
+     * Two coordinates reach a schema in a template; a third reaches a schema nested inside it.
+     * Without that third one a nested schema could be created and never written into - and a call
+     * meant for it would have gone to the schema around it and reported success.
+     * </p>
+     *
+     * @param root the schema the FQN resolved to.
+     * @param nestedSchemaName the nested schema to work inside, or <code>null</code> for the root.
+     * @return the schema to write to
+     */
+    /**
+     * The steps of a name that may be a path down a hierarchy.
+     * <p>
+     * A name is taken whole first by the callers of this method, so this is only reached for a name
+     * that is not there as written. Every step must be a name: Java drops a trailing empty segment,
+     * so "Outer." would silently become "Outer" and act on the wrong node, and "." would become no
+     * steps at all and act on the root.
+     * </p>
+     *
+     * @param path the name as the caller wrote it.
+     * @param what the kind of thing being addressed, for the refusal.
+     * @return its steps, each non-empty
+     */
+    /**
+     * The text an export has to contain for a named element to be in it.
+     * <p>
+     * The file is XML, so a name is escaped there. Looking for the raw name would report a write as
+     * lost because of an ampersand in it, and the write would then be repeated to no purpose.
+     * </p>
+     *
+     * @param name the element name.
+     * @return what to look for in the exported file
+     */
+    private static String asWrittenInTheFile(String name)
+    {
+        return ">" + name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            .replace("\r", "&#xD;").replace("\n", "&#xA;").replace("\t", "&#x9;") + "<"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
+    }
+
+    /**
+     * Refuses an address that reads as a path while some name in the collection carries a dot.
+     * <p>
+     * Both readings are possible then - a dataset actually called {@code A.B}, or {@code B} inside
+     * {@code A} - and choosing one silently would write to a target the caller did not mean.
+     * </p>
+     *
+     * @param owner what holds the collection.
+     * @param getter the collection.
+     * @param path the address as the caller wrote it.
+     */
+    private void mustNotBeAmbiguous(EObject owner, String getter, String path)
+    {
+        if (path.indexOf('.') < 0)
+        {
+            return;
+        }
+        EList<EObject> all = BmDcsHelper.getEObjectList(owner, getter);
+        if (all == null)
+        {
+            return;
+        }
+        for (EObject one : all)
+        {
+            Object named = invokeGetter(one, "getName"); //$NON-NLS-1$
+            if (named != null && String.valueOf(named).indexOf('.') >= 0)
+            {
+                throw new RuntimeException("'" + path + "' could mean a name or a path, because " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "'" + named + "' has a dot in it. Rename it, or address the target without " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "a path."); //$NON-NLS-1$
+            }
+        }
+    }
+
+    private static String[] pathSteps(String path, String what)
+    {
+        String[] steps = path.split("\\.", -1); //$NON-NLS-1$
+        for (String step : steps)
+        {
+            if (step.isEmpty())
+            {
+                throw new RuntimeException("'" + path + "' is not a " + what + " name or a path " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + "of them - every step between the dots has to name something."); //$NON-NLS-1$
+            }
+        }
+        return steps;
+    }
+
+    /**
+     * Refuses a new name that carries the character used to separate the steps of a path.
+     * <p>
+     * Such a name can be written and then never addressed again, because the address would read as
+     * a hierarchy rather than as the name.
+     * </p>
+     *
+     * @param name the name asked for.
+     * @param what the kind of thing being named, for the refusal.
+     */
+    private static void mustNotLookLikeAPath(String name, String what)
+    {
+        if (name.indexOf('.') >= 0)
+        {
+            throw new RuntimeException("a " + what + " named '" + name + "' could not be " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + "addressed afterwards: a dot separates the steps of a path."); //$NON-NLS-1$
+        }
+    }
+
+    private EObject schemaToWorkIn(EObject root, String nestedSchemaName)
+    {
+        if (nestedSchemaName == null || nestedSchemaName.isEmpty())
+        {
+            return root;
+        }
+        // A nested schema may hold one of its own, so the name may be a path down through them:
+        // Outer.Inner. A name is taken whole first, so one that contains a dot - written before
+        // this refused such names - still addresses itself rather than reading as a hierarchy.
+        EObject current = root;
+        String[] steps;
+        if (BmDcsHelper.findByNameInList(root, "getNestedSchemas", nestedSchemaName) != null) //$NON-NLS-1$
+        {
+            steps = new String[] {nestedSchemaName};
+        }
+        else
+        {
+            mustNotBeAmbiguous(root, "getNestedSchemas", nestedSchemaName); //$NON-NLS-1$
+            steps = pathSteps(nestedSchemaName, "nested schema"); //$NON-NLS-1$
+        }
+        for (String step : steps)
+        {
+            EObject entry = BmDcsHelper.findByNameInList(current, "getNestedSchemas", step); //$NON-NLS-1$
+            if (entry == null)
+            {
+                throw notFoundTag(step, "nestedSchema"); //$NON-NLS-1$
+            }
+            Object inner = invokeGetter(entry, "getSchema"); //$NON-NLS-1$
+            if (!(inner instanceof EObject))
+            {
+                // Every nested schema this tool makes gets one; one made elsewhere may not, and
+                // writing into the schema around it instead would be worse than saying so.
+                throw notFoundTag(step + " (it carries no schema of its own)", //$NON-NLS-1$
+                    "nestedSchema"); //$NON-NLS-1$
+            }
+            current = (EObject)inner;
+        }
+        return current;
+    }
+
     private String opSchemaMutation(String op, Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String objectName = JsonUtils.extractStringArgument(params, "objectName"); //$NON-NLS-1$
         String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
+        String attributeName = JsonUtils.extractStringArgument(params, "attributeName"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
-        if (projectName == null || objectName == null)
+        String nestedForCheck = JsonUtils.extractStringArgument(params, "nestedSchemaName"); //$NON-NLS-1$
+        if (addressesAList(formFqn, attributeName)
+            && nestedForCheck != null && !nestedForCheck.isEmpty())
         {
-            return ToolResult.error("projectName and objectName are required").toJson(); //$NON-NLS-1$
+            return ToolResult.error("nestedSchemaName addresses a schema inside a schema, and a " //$NON-NLS-1$
+                + "form's dynamic list has no schema - drop one of the two").toJson(); //$NON-NLS-1$
         }
+        String badAddress = addressRefusal(projectName, objectName, formFqn, attributeName);
+        if (badAddress != null)
+        {
+            return ToolResult.error(badAddress).toJson();
+        }
+        boolean onAList = addressesAList(formFqn, attributeName);
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
-
-        // Phase 5.4 pre-flight: validate queryText / expression BEFORE the BM
-        // transaction opens. Cheaper than rolling back the model on a parse
-        // error and avoids running Xtext validation inside the BM tx.
+        // Pre-flight: validate queryText / expression BEFORE the BM transaction opens. Cheaper
+        // than rolling back the model on a parse error, and it avoids running Xtext validation
+        // inside the BM tx. It runs for both addresses: a user field written into a list's settings
+        // carries an expression exactly as one written into a schema does.
         String preFlightError = preflightValidate(op, params, project);
         if (preFlightError != null)
         {
             return preFlightError;
         }
+        if (onAList)
+        {
+            return applyToDynamicList(op, params, project, formFqn, attributeName, dryRun);
+        }
+        String nestedSchemaName = JsonUtils.extractStringArgument(params, "nestedSchemaName"); //$NON-NLS-1$
         BmDcsHelper.Result r = BmDcsHelper.executeWriteOnSchema(project, objectName, templateName,
-            dryRun, (tx, schema) -> applySchemaMutation(op, params, schema, project));
+            dryRun, (tx, schema) -> applySchemaMutation(op, params,
+                schemaToWorkIn(schema, nestedSchemaName), project));
         return formatResult(r, op);
+    }
+
+    /**
+     * Runs a settings operation against a form's dynamic list.
+     * <p>
+     * A dynamic list carries composition settings of the same shape a schema carries, so every
+     * settings handler applies to it unchanged once the settings object is in hand. What differs is
+     * only how the target is reached: a schema is one top object resolved by FQN, a list's settings
+     * hang off a form attribute. Operations that shape a schema itself - datasets, parameters,
+     * variants - have nothing to act on here and are refused by name rather than left to fail on a
+     * missing collection.
+     * </p>
+     *
+     * @param op the settings operation, spelled as on the schema route.
+     * @param params its arguments.
+     * @param project the project holding the form.
+     * @param formFqn the form.
+     * @param attributeName the dynamic-list attribute on it.
+     * @param dryRun whether to discard the change.
+     * @return the JSON answer
+     */
+    private String applyToDynamicList(String op, Map<String, String> params, IProject project,
+        String formFqn, String attributeName, boolean dryRun)
+    {
+        if (!SETTINGS_OPS.contains(op))
+        {
+            return ToolResult.error("'" + op + "' shapes a composition schema, and a dynamic list " //$NON-NLS-1$ //$NON-NLS-2$
+                + "has no schema to shape - it has settings only. Operations that work on a list: " //$NON-NLS-1$
+                + String.join(", ", SETTINGS_OPS)) //$NON-NLS-1$
+                .put("operation", op) //$NON-NLS-1$
+                .put(ErrorTags.NOT_APPLICABLE_HERE.wire(), op)
+                .toJson();
+        }
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+        String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
+            Object settings = helper.listSettingsFor(tx, form, attributeName);
+            if (settings == null)
+            {
+                return "Error: '" + attributeName + "' is not a dynamic-list attribute of " //$NON-NLS-1$ //$NON-NLS-2$
+                    + formFqn + ", or its settings could not be created."; //$NON-NLS-1$
+            }
+            Object applied = applySchemaMutation(op, params, (EObject)settings, project);
+            return applied == null ? "" : applied.toString(); //$NON-NLS-1$
+        });
+        if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return ToolResult.error(outcome)
+                .put("operation", op) //$NON-NLS-1$
+                .put("formFqn", formFqn) //$NON-NLS-1$
+                .put("attributeName", attributeName) //$NON-NLS-1$
+                .toJson();
+        }
+        return ToolResult.success()
+            .put("operation", op) //$NON-NLS-1$
+            .put("formFqn", formFqn) //$NON-NLS-1$
+            .put("attributeName", attributeName) //$NON-NLS-1$
+            .put("message", outcome == null ? "" : outcome) //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
     }
 
     /**
@@ -445,6 +787,8 @@ public class DcsWorkshopTool implements IMcpTool
         Map<String, Written> writes = new LinkedHashMap<>();
         writes.put("add_dataset", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
         writes.put("set_dataset_query", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
+        // A child of a union is a dataset like any other and carries a query of its own.
+        writes.put("add_union_item", Written.QUERY_AS_QUERY_TEXT); //$NON-NLS-1$
         writes.put("set_dataset_property", Written.QUERY_AS_VALUE_OF_THE_QUERY_PROPERTY); //$NON-NLS-1$
         writes.put("add_calculated_field", Written.EXPRESSION); //$NON-NLS-1$
         writes.put("set_calculated_field", Written.EXPRESSION); //$NON-NLS-1$
@@ -819,6 +1163,992 @@ public class DcsWorkshopTool implements IMcpTool
         }
         dataSets.add((EObject) dataSet);
         return name;
+    }
+
+    /**
+     * Adds a nested schema to the schema root.
+     * <p>
+     * A nested schema is a composition schema of its own, named and addressed from the outer one.
+     * It is created empty: what goes inside it is written by the same operations that write the
+     * outer schema, aimed at it by name.
+     * </p>
+     *
+     * @param params name, and optionally title and url.
+     * @param schema the schema root.
+     * @return the name written
+     */
+    /**
+     * Writes a property and refuses when it did not take.
+     * <p>
+     * The setter is found by name, so a name the model spells differently reports back that the
+     * property is absent. Discarding that answer leaves a call that says it wrote something it did
+     * not.
+     * </p>
+     *
+     * @param target what to write to.
+     * @param property the property name as the model spells it.
+     * @param value the value.
+     */
+    private static void mustSet(Object target, String property, Object value)
+    {
+        String failed = BmDcsHelper.setProperty(target, property, value);
+        if (failed != null)
+        {
+            throw new RuntimeException(failed);
+        }
+    }
+
+    private Object doAddNestedSchema(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        String url = JsonUtils.extractStringArgument(params, "url"); //$NON-NLS-1$
+        String title = JsonUtils.extractStringArgument(params, "title"); //$NON-NLS-1$
+        EList<EObject> nested = BmDcsHelper.getEObjectList(schema, "getNestedSchemas"); //$NON-NLS-1$
+        if (nested == null)
+        {
+            throw new RuntimeException("Schema.getNestedSchemas() not available"); //$NON-NLS-1$
+        }
+        if (BmDcsHelper.findByNameInList(schema, "getNestedSchemas", name) != null) //$NON-NLS-1$
+        {
+            throw alreadyExistsTag(name, "nestedSchema"); //$NON-NLS-1$
+        }
+        mustNotLookLikeAPath(name, "nested schema"); //$NON-NLS-1$
+        Object entry = BmDcsHelper.createElement("createNestedDataCompositionSchema"); //$NON-NLS-1$
+        if (entry == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createNestedDataCompositionSchema not available"); //$NON-NLS-1$
+        }
+        mustSet(entry, "name", name); //$NON-NLS-1$
+        if (url != null && !url.isEmpty())
+        {
+            // The model spells this one URL, and the setter name is built by upper-casing the
+            // first letter alone - so "url" would ask for a setter that is not there.
+            mustSet(entry, "URL", url); //$NON-NLS-1$
+        }
+        if (title != null && !title.isEmpty())
+        {
+            setPresentationProperty(entry, "title", title); //$NON-NLS-1$
+            Object written = invokeGetter(entry, "getTitle"); //$NON-NLS-1$
+            // The carrier is built even when the text does not go into it, so its presence proves
+            // nothing - the text has to come back.
+            Object text = written == null ? null : invokeGetter(written, "getValue"); //$NON-NLS-1$
+            if (text == null || !title.equals(String.valueOf(text)))
+            {
+                throw new RuntimeException("the title could not be written"); //$NON-NLS-1$
+            }
+        }
+        // Without a schema of its own the entry names nothing: the outer schema would carry a
+        // nested schema that has no datasets and no fields to address, and nestedSchemaName would
+        // refuse it afterwards.
+        Object inner = BmDcsHelper.createElement("createDataCompositionSchema"); //$NON-NLS-1$
+        if (inner == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchema not available"); //$NON-NLS-1$
+        }
+        mustSet(entry, "schema", inner); //$NON-NLS-1$
+        nested.add((EObject)entry);
+        // What the export must contain for this to have held, and how many the collection came to
+        // hold - the write guards read both and refuse a change that did not reach the file.
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), nested.size(),
+            "nestedSchemas"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a nested schema by name.
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return the name removed
+     */
+    /**
+     * Adds a named template to the schema, with an empty body.
+     * <p>
+     * A schema names its templates and then says which field or grouping is drawn with each. The
+     * body is filled by add_template_row and add_template_cell.
+     * </p>
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    /**
+     * An integer argument, refusing a value that is not one.
+     * <p>
+     * A malformed value is not an absent value: reading {@code rowIndex=0.5} as "the default" puts
+     * the cell in a row the caller did not name and reports success.
+     * </p>
+     *
+     * @param params the arguments.
+     * @param key the argument name.
+     * @param fallback what an ABSENT argument means.
+     * @return the number asked for
+     */
+    private static int strictInt(Map<String, String> params, String key, int fallback)
+    {
+        String raw = JsonUtils.extractStringArgument(params, key);
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return fallback;
+        }
+        try
+        {
+            return Integer.parseInt(raw.trim());
+        }
+        catch (NumberFormatException notANumber)
+        {
+            throw new RuntimeException("'" + key + "' takes a whole number; '" + raw //$NON-NLS-1$ //$NON-NLS-2$
+                + "' is not one."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A true-or-false argument, refusing anything else.
+     *
+     * @param params the arguments.
+     * @param key the argument name.
+     * @param fallback what an ABSENT argument means.
+     * @return what was asked for
+     */
+    private static boolean strictFlag(Map<String, String> params, String key, boolean fallback)
+    {
+        String raw = JsonUtils.extractStringArgument(params, key);
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return fallback;
+        }
+        String value = raw.trim();
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return Boolean.parseBoolean(value);
+        }
+        throw new RuntimeException("'" + key + "' takes true or false; '" + raw //$NON-NLS-1$ //$NON-NLS-2$
+            + "' is neither."); //$NON-NLS-1$
+    }
+
+    /**
+     * What the schema still says is drawn with the named template, or <code>null</code>.
+     *
+     * @param schema the schema root.
+     * @param templateName the template.
+     * @return a readable list of what still names it
+     */
+    private String whatIsStillDrawnWith(EObject schema, String templateName)
+    {
+        StringBuilder using = new StringBuilder();
+        String[][] where = {
+            {"getFieldTemplates", "getField"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"getGroupTemplates", "getGroupName"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"getGroupHeaderTemplates", "getGroupName"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"getTotalFieldsTemplates", "getGroupName1"}}; //$NON-NLS-1$ //$NON-NLS-2$
+        for (String[] pair : where)
+        {
+            EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, pair[0]);
+            if (bindings == null)
+            {
+                continue;
+            }
+            for (EObject binding : bindings)
+            {
+                // The template was found without regard to case, so a binding naming it in
+                // another case still names it. Comparing exactly here let the removal through and
+                // left the binding pointing at nothing.
+                if (!templateName.equalsIgnoreCase(
+                    String.valueOf(invokeGetter(binding, "getTemplate")))) //$NON-NLS-1$
+                {
+                    continue;
+                }
+                Object what = invokeGetter(binding, pair[1]);
+                if (using.length() > 0)
+                {
+                    using.append(", "); //$NON-NLS-1$
+                }
+                using.append(what instanceof EObject ? fieldPathOf(what) : String.valueOf(what));
+            }
+        }
+        return using.length() > 0 ? using.toString() : null;
+    }
+
+    /**
+     * The area type the model gives a group template that was not told one.
+     *
+     * @param binding an entry of the collection.
+     * @return the default as text, or <code>null</code> when the model names none
+     */
+    private static String defaultAreaType(EObject binding)
+    {
+        org.eclipse.emf.ecore.EStructuralFeature feature =
+            binding.eClass().getEStructuralFeature("templateType"); //$NON-NLS-1$
+        Object fallback = feature == null ? null : feature.getDefaultValue();
+        return fallback == null ? null : String.valueOf(fallback);
+    }
+
+    /**
+     * The binding that says how a grouping is drawn, if there is one of that type.
+     *
+     * @param bindings the group templates of one collection.
+     * @param groupName the grouping.
+     * @param templateType the kind of area, or <code>null</code> for the model's default.
+     * @return the binding, or <code>null</code>
+     */
+    private EObject groupTemplateFor(EList<EObject> bindings, String groupName, String templateType)
+    {
+        for (EObject existing : bindings)
+        {
+            if (!groupName.equalsIgnoreCase(
+                String.valueOf(invokeGetter(existing, "getGroupName")))) //$NON-NLS-1$
+            {
+                continue;
+            }
+            Object heldType = invokeGetter(existing, "getTemplateType"); //$NON-NLS-1$
+            String held = heldType == null ? null : String.valueOf(heldType);
+            // An entry made without an area type does not carry none - it carries whatever the
+            // model gives it. So a call that names no type means that same default, and the
+            // default is read off the feature rather than assumed to be any particular one.
+            String asked = templateType == null || templateType.isEmpty()
+                ? defaultAreaType(existing) : templateType;
+            if (asked == null)
+            {
+                // The model offers no default either, so the only entry that can be meant is one
+                // carrying nothing.
+                if (held == null || held.isEmpty())
+                {
+                    return existing;
+                }
+                continue;
+            }
+            if (held != null && asked.equalsIgnoreCase(held))
+            {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    private Object doAddSchemaTemplate(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        mustNotLookLikeAPath(name, "template"); //$NON-NLS-1$
+        EList<EObject> templates = BmDcsHelper.getEObjectList(schema, "getTemplates"); //$NON-NLS-1$
+        if (templates == null)
+        {
+            throw new RuntimeException("Schema.getTemplates() not available"); //$NON-NLS-1$
+        }
+        if (BmDcsHelper.findByNameInList(schema, "getTemplates", name) != null) //$NON-NLS-1$
+        {
+            throw alreadyExistsTag(name, "template"); //$NON-NLS-1$
+        }
+        Object description =
+            BmDcsHelper.createElement("createDataCompositionSchemaTemplateDescription"); //$NON-NLS-1$
+        if (description == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaTemplateDescription not available"); //$NON-NLS-1$
+        }
+        mustSet(description, "name", name); //$NON-NLS-1$
+        // A description with no body names a template that draws nothing, and nothing else creates
+        // the body afterwards.
+        Object body = BmDcsHelper.createElement("createDataCompositionAreaTemplate"); //$NON-NLS-1$
+        if (body == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionAreaTemplate not available"); //$NON-NLS-1$
+        }
+        mustSet(description, "template", body); //$NON-NLS-1$
+        templates.add((EObject)description);
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), templates.size(),
+            "templates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a named template.
+     * <p>
+     * What referred to it by name is left alone: a field template naming a template that is gone
+     * reads as a defect of the schema, which is what it is, rather than being silently rewritten.
+     * </p>
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveSchemaTemplate(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        EList<EObject> templates = BmDcsHelper.getEObjectList(schema, "getTemplates"); //$NON-NLS-1$
+        if (templates == null)
+        {
+            throw new RuntimeException("Schema.getTemplates() not available"); //$NON-NLS-1$
+        }
+        Object found = BmDcsHelper.findByNameInList(schema, "getTemplates", name); //$NON-NLS-1$
+        if (found == null)
+        {
+            throw notFoundTag(name, "template"); //$NON-NLS-1$
+        }
+        // A binding holds the name as text, so removing the template would leave the schema drawing
+        // a field with something that is not there and nothing would say so. Naming what still uses
+        // it beats both breaking the schema and silently rewriting the bindings.
+        String stillUsedBy = whatIsStillDrawnWith(schema, name);
+        if (stillUsedBy != null)
+        {
+            throw new RuntimeException("'" + name + "' is still what draws " + stillUsedBy //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Take those back first, or they would name a template that is gone."); //$NON-NLS-1$
+        }
+        templates.remove(found);
+        return new BmDcsHelper.Wrote(name, null, templates.size(), "templates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds a row to the body of a named template.
+     *
+     * @param params schemaTemplateName.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddTemplateRow(Map<String, String> params, EObject schema)
+    {
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        EList<EObject> rows = templateRowsOf(schema, templateName);
+        Object row = BmDcsHelper.createElement("createDataCompositionAreaTemplateTableRow"); //$NON-NLS-1$
+        if (row == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionAreaTemplateTableRow not available"); //$NON-NLS-1$
+        }
+        rows.add((EObject)row);
+        return new BmDcsHelper.Wrote("row " + rows.size() + " of " + templateName, null, //$NON-NLS-1$ //$NON-NLS-2$
+            rows.size(), "rows of " + templateName); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds a cell to a row of a named template, and what stands in it.
+     * <p>
+     * A cell with nothing in it draws a blank, so a field may be given: it becomes what the cell
+     * shows.
+     * </p>
+     *
+     * @param params schemaTemplateName, rowIndex and optionally field.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddTemplateCell(Map<String, String> params, EObject schema)
+    {
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        // A cell shows a field, and expression already means the expression of a calculated field.
+        String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
+        EList<EObject> rows = templateRowsOf(schema, templateName);
+        int rowIndex = strictInt(params, "rowIndex", rows.size() - 1); //$NON-NLS-1$
+        if (rowIndex < 0 || rowIndex >= rows.size())
+        {
+            throw new RuntimeException("'" + templateName + "' has " + rows.size() //$NON-NLS-1$ //$NON-NLS-2$
+                + " row(s); add one with add_template_row before putting a cell in it."); //$NON-NLS-1$
+        }
+        EList<EObject> cells = BmDcsHelper.getEObjectList(rows.get(rowIndex), "getCells"); //$NON-NLS-1$
+        if (cells == null)
+        {
+            throw new RuntimeException("the row does not hold cells in this model"); //$NON-NLS-1$
+        }
+        Object cell = BmDcsHelper.createElement("createDataCompositionAreaTemplateTableCell"); //$NON-NLS-1$
+        if (cell == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionAreaTemplateTableCell not available"); //$NON-NLS-1$
+        }
+        if (field != null && !field.isEmpty())
+        {
+            Object item = BmDcsHelper.createElement("createDataCompositionAreaTemplateField"); //$NON-NLS-1$
+            if (item == null)
+            {
+                throw new RuntimeException(
+                    "DcsFactory.createDataCompositionAreaTemplateField not available"); //$NON-NLS-1$
+            }
+            setFieldProperty(item, "value", field); //$NON-NLS-1$
+            if (invokeGetter(item, "getValue") == null) //$NON-NLS-1$
+            {
+                throw new RuntimeException("the field the cell shows could not be written"); //$NON-NLS-1$
+            }
+            EList<EObject> items = BmDcsHelper.getEObjectList(cell, "getItem"); //$NON-NLS-1$
+            if (items == null)
+            {
+                throw new RuntimeException("the cell does not hold items in this model"); //$NON-NLS-1$
+            }
+            items.add((EObject)item);
+        }
+        cells.add((EObject)cell);
+        // A cell showing a field puts that field in the file, which is something the guards can
+        // look for. An empty cell writes nothing that tells it apart from any other empty cell.
+        return new BmDcsHelper.Wrote("cell " + cells.size() + " in row " + rowIndex + " of " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + templateName, field != null && !field.isEmpty() ? asWrittenInTheFile(field) : null,
+            cells.size(), "cells of row " + rowIndex + " of " + templateName); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Says which named template draws a field.
+     *
+     * @param params field and schemaTemplateName.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddFieldTemplate(Map<String, String> params, EObject schema)
+    {
+        String field = required(params, "field"); //$NON-NLS-1$
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        mustNameATemplateThatExists(schema, templateName);
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getFieldTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getFieldTemplates() not available"); //$NON-NLS-1$
+        }
+        if (fieldTemplateFor(bindings, field) != null)
+        {
+            throw alreadyExistsTag(field, "fieldTemplate"); //$NON-NLS-1$
+        }
+        Object binding = BmDcsHelper.createElement("createDataCompositionSchemaFieldTemplate"); //$NON-NLS-1$
+        if (binding == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaFieldTemplate not available"); //$NON-NLS-1$
+        }
+        setFieldProperty(binding, "field", field); //$NON-NLS-1$
+        if (invokeGetter(binding, "getField") == null) //$NON-NLS-1$
+        {
+            throw new RuntimeException("the field could not be written"); //$NON-NLS-1$
+        }
+        mustSet(binding, "template", templateName); //$NON-NLS-1$
+        bindings.add((EObject)binding);
+        return new BmDcsHelper.Wrote(field + " drawn with " + templateName, //$NON-NLS-1$
+            asWrittenInTheFile(field), bindings.size(), "fieldTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Takes back what said a field is drawn with a template.
+     *
+     * @param params field.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveFieldTemplate(Map<String, String> params, EObject schema)
+    {
+        String field = required(params, "field"); //$NON-NLS-1$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getFieldTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getFieldTemplates() not available"); //$NON-NLS-1$
+        }
+        EObject found = fieldTemplateFor(bindings, field);
+        if (found == null)
+        {
+            throw notFoundTag(field, "fieldTemplate"); //$NON-NLS-1$
+        }
+        bindings.remove(found);
+        return new BmDcsHelper.Wrote(field, null, bindings.size(), "fieldTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Says which named template draws a grouping, as its header or as its body.
+     *
+     * @param params groupName, schemaTemplateName, templateType and header.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    /**
+     * Says which template draws the totals where two groupings cross.
+     * <p>
+     * The entry names both groupings and the area type of each, so all four together are what tell
+     * one entry from another - naming only the first would make the totals of a different crossing
+     * look like the same entry.
+     * </p>
+     *
+     * @param params groupName, groupName2, templateType, templateType2 and schemaTemplateName.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doAddTotalTemplate(Map<String, String> params, EObject schema)
+    {
+        String first = required(params, "groupName"); //$NON-NLS-1$
+        String second = required(params, "groupName2"); //$NON-NLS-1$
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        String firstType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        String secondType = JsonUtils.extractStringArgument(params, "templateType2"); //$NON-NLS-1$
+        mustNameATemplateThatExists(schema, templateName);
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getTotalFieldsTemplates() not available"); //$NON-NLS-1$
+        }
+        if (totalTemplateFor(bindings, first, firstType, second, secondType) != null)
+        {
+            throw alreadyExistsTag(first + " x " + second, "totalTemplate"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        Object binding =
+            BmDcsHelper.createElement("createDataCompositionSchemaTotalFieldsTemplate"); //$NON-NLS-1$
+        if (binding == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaTotalFieldsTemplate not available"); //$NON-NLS-1$
+        }
+        mustSet(binding, "groupName1", first); //$NON-NLS-1$
+        mustSet(binding, "groupName2", second); //$NON-NLS-1$
+        mustSet(binding, "template", templateName); //$NON-NLS-1$
+        if (firstType != null && !firstType.isEmpty())
+        {
+            mustSet(binding, "templateType1", firstType); //$NON-NLS-1$
+        }
+        if (secondType != null && !secondType.isEmpty())
+        {
+            mustSet(binding, "templateType2", secondType); //$NON-NLS-1$
+        }
+        bindings.add((EObject)binding);
+        // One substring cannot name a crossing: every entry starting from the same grouping
+        // writes this same text. It catches an export that carries nothing of this entry at all,
+        // and it does not catch an export that kept another crossing of the same first grouping.
+        return new BmDcsHelper.Wrote(first + " x " + second + " drawn with " + templateName, //$NON-NLS-1$ //$NON-NLS-2$
+            asWrittenInTheFile(first), bindings.size(), "totalFieldsTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * Takes back what said a crossing of two groupings is drawn with a template.
+     *
+     * @param params groupName, groupName2 and the two area types.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveTotalTemplate(Map<String, String> params, EObject schema)
+    {
+        String first = required(params, "groupName"); //$NON-NLS-1$
+        String second = required(params, "groupName2"); //$NON-NLS-1$
+        String firstType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        String secondType = JsonUtils.extractStringArgument(params, "templateType2"); //$NON-NLS-1$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, "getTotalFieldsTemplates"); //$NON-NLS-1$
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema.getTotalFieldsTemplates() not available"); //$NON-NLS-1$
+        }
+        EObject found = totalTemplateFor(bindings, first, firstType, second, secondType);
+        if (found == null)
+        {
+            throw notFoundTag(first + " x " + second, "totalTemplate"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        bindings.remove(found);
+        return new BmDcsHelper.Wrote(first + " x " + second, null, bindings.size(), //$NON-NLS-1$
+            "totalFieldsTemplates"); //$NON-NLS-1$
+    }
+
+    /**
+     * The entry for a crossing of two groupings, if there is one.
+     *
+     * @param bindings the totals templates of the schema.
+     * @param first the first grouping.
+     * @param firstType its area type, or <code>null</code> for the model's default.
+     * @param second the second grouping.
+     * @param secondType its area type, or <code>null</code> for the model's default.
+     * @return the entry, or <code>null</code>
+     */
+    private EObject totalTemplateFor(EList<EObject> bindings, String first, String firstType,
+        String second, String secondType)
+    {
+        for (EObject existing : bindings)
+        {
+            if (!first.equalsIgnoreCase(String.valueOf(invokeGetter(existing, "getGroupName1"))) //$NON-NLS-1$
+                || !second.equalsIgnoreCase(
+                    String.valueOf(invokeGetter(existing, "getGroupName2")))) //$NON-NLS-1$
+            {
+                continue;
+            }
+            if (sameAreaType(existing, "templateType1", "getTemplateType1", firstType) //$NON-NLS-1$ //$NON-NLS-2$
+                && sameAreaType(existing, "templateType2", "getTemplateType2", secondType)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether an entry carries the area type a call asked for.
+     * <p>
+     * A call naming none means the model's default, because an entry made without one carries that
+     * rather than nothing.
+     * </p>
+     *
+     * @param entry the entry.
+     * @param feature the feature name, for reading its default.
+     * @param getter how to read what the entry carries.
+     * @param asked what the call named, or <code>null</code>.
+     * @return true when they are the same type
+     */
+    /**
+     * The spelling the model uses for one of a feature's constants.
+     *
+     * @param feature the feature the constant belongs to.
+     * @param spelling what the caller wrote.
+     * @return the model's own spelling, or <code>null</code> when it names no such constant
+     */
+    private static String canonicalLiteral(org.eclipse.emf.ecore.EStructuralFeature feature,
+        String spelling)
+    {
+        if (feature == null || !(feature.getEType() instanceof org.eclipse.emf.ecore.EEnum))
+        {
+            return null;
+        }
+        for (org.eclipse.emf.ecore.EEnumLiteral literal
+            : ((org.eclipse.emf.ecore.EEnum)feature.getEType()).getELiterals())
+        {
+            if (literal.getName().equalsIgnoreCase(spelling)
+                || literal.getLiteral().equalsIgnoreCase(spelling))
+            {
+                return literal.getLiteral();
+            }
+        }
+        return null;
+    }
+
+    private boolean sameAreaType(EObject entry, String feature, String getter, String asked)
+    {
+        Object heldType = invokeGetter(entry, getter);
+        String held = heldType == null ? null : String.valueOf(heldType);
+        org.eclipse.emf.ecore.EStructuralFeature f = entry.eClass().getEStructuralFeature(feature);
+        String wanted = asked;
+        if (wanted == null || wanted.isEmpty())
+        {
+            Object fallback = f == null ? null : f.getDefaultValue();
+            wanted = fallback == null ? null : String.valueOf(fallback);
+        }
+        else
+        {
+            // A caller may spell a constant the way the model declares it (OVERALL_FOOTER) while
+            // the model stores it the way it prints it (OverallFooter). Asking the enumeration for
+            // the canonical spelling makes both name the same entry; comparing the typed text to
+            // the stored text made the second call find nothing and the second add duplicate.
+            String canonical = canonicalLiteral(f, wanted);
+            if (canonical != null)
+            {
+                wanted = canonical;
+            }
+        }
+        if (wanted == null)
+        {
+            return held == null || held.isEmpty();
+        }
+        return held != null && wanted.equalsIgnoreCase(held);
+    }
+
+    private Object doAddGroupTemplate(Map<String, String> params, EObject schema)
+    {
+        String groupName = required(params, "groupName"); //$NON-NLS-1$
+        String templateName = required(params, "schemaTemplateName"); //$NON-NLS-1$
+        String templateType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        boolean header = strictFlag(params, "header", false); //$NON-NLS-1$
+        mustNameATemplateThatExists(schema, templateName);
+        String collection = header ? "getGroupHeaderTemplates" : "getGroupTemplates"; //$NON-NLS-1$ //$NON-NLS-2$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, collection);
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema." + collection + "() not available"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // A grouping is drawn differently in its header, its footer and its overall lines, so
+        // the entry is the grouping AND the type - not the grouping alone.
+        if (groupTemplateFor(bindings, groupName, templateType) != null)
+        {
+            throw alreadyExistsTag(groupName
+                + (templateType != null && !templateType.isEmpty() ? " " + templateType : ""), //$NON-NLS-1$ //$NON-NLS-2$
+                "groupTemplate"); //$NON-NLS-1$
+        }
+        Object binding = BmDcsHelper.createElement("createDataCompositionSchemaGroupTemplate"); //$NON-NLS-1$
+        if (binding == null)
+        {
+            throw new RuntimeException(
+                "DcsFactory.createDataCompositionSchemaGroupTemplate not available"); //$NON-NLS-1$
+        }
+        mustSet(binding, "groupName", groupName); //$NON-NLS-1$
+        mustSet(binding, "template", templateName); //$NON-NLS-1$
+        if (templateType != null && !templateType.isEmpty())
+        {
+            mustSet(binding, "templateType", templateType); //$NON-NLS-1$
+        }
+        bindings.add((EObject)binding);
+        return new BmDcsHelper.Wrote(groupName + " drawn with " + templateName, //$NON-NLS-1$
+            asWrittenInTheFile(groupName), bindings.size(), collection);
+    }
+
+    /**
+     * Takes back what said a grouping is drawn with a template.
+     *
+     * @param params groupName and header.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
+    private Object doRemoveGroupTemplate(Map<String, String> params, EObject schema)
+    {
+        String groupName = required(params, "groupName"); //$NON-NLS-1$
+        String templateType = JsonUtils.extractStringArgument(params, "templateType"); //$NON-NLS-1$
+        boolean header = strictFlag(params, "header", false); //$NON-NLS-1$
+        String collection = header ? "getGroupHeaderTemplates" : "getGroupTemplates"; //$NON-NLS-1$ //$NON-NLS-2$
+        EList<EObject> bindings = BmDcsHelper.getEObjectList(schema, collection);
+        if (bindings == null)
+        {
+            throw new RuntimeException("Schema." + collection + "() not available"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        EObject found = groupTemplateFor(bindings, groupName, templateType);
+        if (found == null)
+        {
+            throw notFoundTag(groupName, "groupTemplate"); //$NON-NLS-1$
+        }
+        bindings.remove(found);
+        return new BmDcsHelper.Wrote(groupName, null, bindings.size(), collection);
+    }
+
+    /**
+     * The rows of the body of a named template.
+     *
+     * @param schema the schema root.
+     * @param templateName the template.
+     * @return its rows, never <code>null</code>
+     */
+    private EList<EObject> templateRowsOf(EObject schema, String templateName)
+    {
+        Object description = BmDcsHelper.findByNameInList(schema, "getTemplates", templateName); //$NON-NLS-1$
+        if (description == null)
+        {
+            throw notFoundTag(templateName, "template"); //$NON-NLS-1$
+        }
+        Object body = invokeGetter(description, "getTemplate"); //$NON-NLS-1$
+        if (body == null)
+        {
+            throw new RuntimeException("'" + templateName + "' has no body to put rows in."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        EList<EObject> rows = BmDcsHelper.getEObjectList(body, "getItems"); //$NON-NLS-1$
+        if (rows == null)
+        {
+            throw new RuntimeException("the body of '" + templateName //$NON-NLS-1$
+                + "' does not hold rows in this model."); //$NON-NLS-1$
+        }
+        return rows;
+    }
+
+    /**
+     * Refuses a binding that names a template the schema does not have.
+     * <p>
+     * The binding holds the name as text, so nothing else would notice - the schema would carry a
+     * field drawn with a template that is not there.
+     * </p>
+     *
+     * @param schema the schema root.
+     * @param templateName the template named.
+     */
+    private void mustNameATemplateThatExists(EObject schema, String templateName)
+    {
+        if (BmDcsHelper.findByNameInList(schema, "getTemplates", templateName) == null) //$NON-NLS-1$
+        {
+            throw notFoundTag(templateName, "template"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The binding that says how a field is drawn, if there is one.
+     *
+     * @param bindings the field templates of the schema.
+     * @param field the field path.
+     * @return the binding, or <code>null</code>
+     */
+    private EObject fieldTemplateFor(EList<EObject> bindings, String field)
+    {
+        for (EObject existing : bindings)
+        {
+            // The field is an object, not a string: its own toString names neither the path nor
+            // anything stable. fieldPathOf reads the path out of it, which is what every other
+            // comparison in this tool uses.
+            String held = fieldPathOf(invokeGetter(existing, "getField")); //$NON-NLS-1$
+            if (held != null && field.equalsIgnoreCase(held))
+            {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    private Object doRemoveNestedSchema(Map<String, String> params, EObject schema)
+    {
+        String name = required(params, "name"); //$NON-NLS-1$
+        EList<EObject> nested = BmDcsHelper.getEObjectList(schema, "getNestedSchemas"); //$NON-NLS-1$
+        if (nested == null)
+        {
+            throw new RuntimeException("Schema.getNestedSchemas() not available"); //$NON-NLS-1$
+        }
+        Object found = BmDcsHelper.findByNameInList(schema, "getNestedSchemas", name); //$NON-NLS-1$
+        if (found == null)
+        {
+            throw notFoundTag(name, "nestedSchema"); //$NON-NLS-1$
+        }
+        nested.remove(found);
+        // Nothing has to APPEAR for a removal, so the count is the only thing the guards can check
+        // - and without it a removal that did not reach the file reports success.
+        return new BmDcsHelper.Wrote(name, null, nested.size(), "nestedSchemas"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds a child dataset to a union.
+     * <p>
+     * A union holds datasets rather than a query of its own, which is why replacing the query of a
+     * union is refused and sends the caller here.
+     * </p>
+     *
+     * @param params dataSetName of the union, name of the child, and its type and query.
+     * @param schema the schema root.
+     * @return what was added, and to what
+     */
+    private Object doAddUnionItem(Map<String, String> params, EObject schema)
+    {
+        String unionName = required(params, "dataSetName"); //$NON-NLS-1$
+        String name = required(params, "name"); //$NON-NLS-1$
+        String queryText = JsonUtils.extractStringArgument(params, "queryText"); //$NON-NLS-1$
+        String dataSetType = orDefault(JsonUtils.extractStringArgument(params, "dataSetType"), //$NON-NLS-1$
+            "Query"); //$NON-NLS-1$
+        EList<EObject> items = unionItemsOf(schema, unionName);
+        for (EObject existing : items)
+        {
+            if (name.equalsIgnoreCase(String.valueOf(invokeGetter(existing, "getName")))) //$NON-NLS-1$
+            {
+                throw alreadyExistsTag(name, "unionItem"); //$NON-NLS-1$
+            }
+        }
+        mustNotLookLikeAPath(name, "union item"); //$NON-NLS-1$
+        String factoryMethod = "createDataCompositionSchemaDataSet" + dataSetType; //$NON-NLS-1$
+        Object child = BmDcsHelper.createElement(factoryMethod);
+        if (child == null)
+        {
+            throw new RuntimeException("DcsFactory." + factoryMethod + " not available"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        mustSet(child, "name", name); //$NON-NLS-1$
+        if (queryText != null && !queryText.isEmpty())
+        {
+            mustSet(child, "query", queryText); //$NON-NLS-1$
+        }
+        else if ("Query".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // set_dataset_query reaches only the datasets of the schema, so a child left without a
+            // query here has no way of ever getting one.
+            throw new RuntimeException("a Query dataset inside a union cannot be given its query " //$NON-NLS-1$
+                + "afterwards - pass queryText"); //$NON-NLS-1$
+        }
+        // Its own argument, because objectName already names the report or data processor whose
+        // schema is being edited - reusing it would write that FQN into the child.
+        String dataObjectName = JsonUtils.extractStringArgument(params, "dataObjectName"); //$NON-NLS-1$
+        if (dataObjectName != null && !dataObjectName.isEmpty())
+        {
+            mustSet(child, "objectName", dataObjectName); //$NON-NLS-1$
+        }
+        else if ("Object".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // An Object dataset reads a named object, and nothing else names it. Created without
+            // one it is a child that can never be finished, because a dataset inside a union is
+            // not among the datasets the other operations reach.
+            throw new RuntimeException(
+                "an Object dataset reads a named object - pass dataObjectName"); //$NON-NLS-1$
+        }
+        String dataSourceName = ensureDefaultDataSource(schema);
+        if (dataSourceName != null && !"Union".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // A union has no data source of its own; every other kind needs one, or the schema
+            // editor does not render it.
+            mustSet(child, "dataSource", dataSourceName); //$NON-NLS-1$
+        }
+        items.add((EObject)child);
+        return new BmDcsHelper.Wrote(name + " in " + unionName, asWrittenInTheFile(name), //$NON-NLS-1$
+            items.size(), "items of " + unionName); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes a child dataset from a union.
+     *
+     * @param params dataSetName of the union and name of the child.
+     * @param schema the schema root.
+     * @return what was removed, and from what
+     */
+    private Object doRemoveUnionItem(Map<String, String> params, EObject schema)
+    {
+        String unionName = required(params, "dataSetName"); //$NON-NLS-1$
+        String name = required(params, "name"); //$NON-NLS-1$
+        EList<EObject> items = unionItemsOf(schema, unionName);
+        for (EObject existing : items)
+        {
+            if (name.equalsIgnoreCase(String.valueOf(invokeGetter(existing, "getName")))) //$NON-NLS-1$
+            {
+                items.remove(existing);
+                return new BmDcsHelper.Wrote(name + " from " + unionName, null, items.size(), //$NON-NLS-1$
+                    "items of " + unionName); //$NON-NLS-1$
+            }
+        }
+        throw notFoundTag(name, "unionItem"); //$NON-NLS-1$
+    }
+
+    /**
+     * The child datasets of the named union.
+     *
+     * @param schema the schema root.
+     * @param unionName the dataset that should be a union.
+     * @return its children, never <code>null</code>
+     */
+    private EList<EObject> unionItemsOf(EObject schema, String unionName)
+    {
+        // A union may hold a union, so the name may be a path down through them: Outer.Inner. A
+        // child of a union is not among the datasets of the schema, so without this a union
+        // created inside another one could never be filled. The name is taken whole first, so a
+        // dataset whose own name contains a dot still addresses itself.
+        String[] steps;
+        if (BmDcsHelper.findByNameInList(schema, "getDataSets", unionName) != null) //$NON-NLS-1$
+        {
+            steps = new String[] {unionName};
+        }
+        else
+        {
+            mustNotBeAmbiguous(schema, "getDataSets", unionName); //$NON-NLS-1$
+            steps = pathSteps(unionName, "dataset"); //$NON-NLS-1$
+        }
+        Object dataSet = BmDcsHelper.findByNameInList(schema, "getDataSets", steps[0]); //$NON-NLS-1$
+        if (dataSet == null)
+        {
+            throw notFoundTag(steps[0], "dataSet"); //$NON-NLS-1$
+        }
+        EList<EObject> items = itemsOfUnion(dataSet, steps[0]);
+        for (int i = 1; i < steps.length; i++)
+        {
+            Object child = null;
+            for (EObject candidate : items)
+            {
+                if (steps[i].equalsIgnoreCase(String.valueOf(invokeGetter(candidate, "getName")))) //$NON-NLS-1$
+                {
+                    child = candidate;
+                    break;
+                }
+            }
+            if (child == null)
+            {
+                throw notFoundTag(steps[i], "unionItem"); //$NON-NLS-1$
+            }
+            items = itemsOfUnion(child, steps[i]);
+        }
+        return items;
+    }
+
+    /**
+     * The datasets the given one holds, or a refusal naming it.
+     *
+     * @param dataSet the dataset that should be a union.
+     * @param name what it was called in the request.
+     * @return its children
+     */
+    private EList<EObject> itemsOfUnion(Object dataSet, String name)
+    {
+        EList<EObject> items = BmDcsHelper.getEObjectList(dataSet, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            // Only a union holds datasets. Saying which one was asked for beats a message about a
+            // method that is missing, which reads as a defect rather than as the wrong target.
+            throw new RuntimeException("'" + name + "' is not a Union dataset - only a Union " //$NON-NLS-1$ //$NON-NLS-2$
+                + "holds other datasets. Create it with add_dataset dataSetType=Union."); //$NON-NLS-1$
+        }
+        return items;
     }
 
     private Object doRemoveDataSet(Map<String, String> params, EObject schema)
@@ -2738,9 +4068,7 @@ public class DcsWorkshopTool implements IMcpTool
     private Object doRemoveUserField(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
-        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
-        Object variant = (variants != null && !variants.isEmpty()) ? variants.get(0) : null;
-        Object settings = variant != null ? invokeGetter(variant, "getSettings") : null; //$NON-NLS-1$
+        Object settings = ensureDefaultSettings(schema);
         Object userFieldsContainer =
             settings != null ? invokeGetter(settings, "getUserFields") : null; //$NON-NLS-1$
         EList<EObject> items = userFieldsContainer != null
@@ -2781,9 +4109,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("set_user_field: pass expression and/or title to update"); //$NON-NLS-1$
         }
-        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
-        Object variant = (variants != null && !variants.isEmpty()) ? variants.get(0) : null;
-        Object settings = variant != null ? invokeGetter(variant, "getSettings") : null; //$NON-NLS-1$
+        Object settings = ensureDefaultSettings(schema);
         Object userFieldsContainer =
             settings != null ? invokeGetter(settings, "getUserFields") : null; //$NON-NLS-1$
         EList<EObject> items = userFieldsContainer != null
@@ -3683,8 +5009,55 @@ public class DcsWorkshopTool implements IMcpTool
      * by always creating an "Основной" variant. Reuses the first existing variant or
      * creates "Основной".
      */
+    /**
+     * Whether this object IS the settings, rather than something holding them.
+     * <p>
+     * Told apart by shape, not by class name: a settings container carries the filter, order and
+     * conditional-appearance children the handlers write into, and has no settings variants above
+     * it. Asking for the type by name would tie this to one model version.
+     * </p>
+     *
+     * @param candidate what the caller handed in.
+     * @return true when the handlers can write into it directly
+     */
+    private static boolean alreadyASettingsContainer(EObject candidate)
+    {
+        if (candidate == null)
+        {
+            return false;
+        }
+        boolean hasVariants = false;
+        boolean hasSettingsChildren = false;
+        for (java.lang.reflect.Method m : candidate.getClass().getMethods())
+        {
+            if (m.getParameterCount() != 0)
+            {
+                continue;
+            }
+            String name = m.getName();
+            if ("getSettingsVariants".equals(name)) //$NON-NLS-1$
+            {
+                hasVariants = true;
+            }
+            else if ("getConditionalAppearance".equals(name) || "getFilter".equals(name)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                hasSettingsChildren = true;
+            }
+        }
+        return hasSettingsChildren && !hasVariants;
+    }
+
     private Object ensureDefaultSettings(EObject schema)
     {
+        if (alreadyASettingsContainer(schema))
+        {
+            // Handed the settings themselves rather than a schema to dig them out of. That is how
+            // a dynamic list arrives: its settings are their own top object, reached from the form
+            // attribute, and there is no schema above them to ask for variants. Every handler
+            // funnels through here, so recognising this makes all of them work on a list without
+            // one of them being copied.
+            return schema;
+        }
         EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
         if (variants == null)
         {
@@ -3843,6 +5216,27 @@ public class DcsWorkshopTool implements IMcpTool
             sb.append("**Compatibility aliases** (same behavior, older names): add_data_source, " //$NON-NLS-1$
                 + "remove_data_source, set_data_source_property, add_chart, select_field, " //$NON-NLS-1$
                 + "deselect_field, add_variant, set_param_value.\n"); //$NON-NLS-1$
+            sb.append("**Templates of the schema.** add_schema_template (name) creates one with " //$NON-NLS-1$
+                + "an empty body and remove_schema_template takes it away, refusing while anything " //$NON-NLS-1$
+                + "is still drawn with it. add_template_row and add_template_cell " //$NON-NLS-1$
+                + "(schemaTemplateName, rowIndex, field) fill the body. add_field_template and " //$NON-NLS-1$
+                + "remove_field_template say which template draws a field; add_group_template and " //$NON-NLS-1$
+                + "remove_group_template (groupName, templateType, header) say which draws a " //$NON-NLS-1$
+                + "grouping - header=true is a collection of its own. schemaTemplateName names the " //$NON-NLS-1$
+                + "template INSIDE the schema, not the configuration template holding it.\n\n"); //$NON-NLS-1$
+            sb.append("**Schemas inside a schema.** add_nested_schema (name, url, title) and " //$NON-NLS-1$
+                + "remove_nested_schema work on the nested schemas of the root; a nested schema is " //$NON-NLS-1$
+                + "created with a composition schema of its own. add_union_item and " //$NON-NLS-1$
+                + "remove_union_item (dataSetName of the Union, name, dataSetType, queryText) work " //$NON-NLS-1$
+                + "on the datasets a Union holds - which is what set_dataset_query on a Union " //$NON-NLS-1$
+                + "sends you to.\n\n"); //$NON-NLS-1$
+            sb.append("**A form's dynamic list.** Pass formFqn + attributeName instead of " //$NON-NLS-1$
+                + "objectName + templateName and the operation applies to that list's settings: " //$NON-NLS-1$
+                + "formFqn=Catalog.X.Form.ListForm, attributeName=List. ") //$NON-NLS-1$
+                .append(SETTINGS_OPS.size())
+                .append(" operations work this way - the settings half of the catalog. ") //$NON-NLS-1$
+                .append("An operation that shapes a schema (datasets, parameters, variants) is " //$NON-NLS-1$
+                    + "refused with notApplicableHere.\n"); //$NON-NLS-1$
             sb.append("**Topics:** workflow, dcsWorkflow, propertyValues, examples, errorTags\n"); //$NON-NLS-1$
             return ToolResult.success().put("help", sb.toString()).toJson(); //$NON-NLS-1$
         }
@@ -4075,10 +5469,51 @@ public class DcsWorkshopTool implements IMcpTool
         return this.mutations.keySet();
     }
 
+    /**
+     * Runs one schema operation against a schema object, for a test that builds one itself.
+     * <p>
+     * The project is not passed: an operation that needs one - a parameter, whose type is resolved
+     * against the configuration - cannot be driven this way, and the operations that shape the
+     * schema itself do not need one.
+     * </p>
+     *
+     * @param op the operation name.
+     * @param params its arguments.
+     * @param schema the schema to write into.
+     * @return what the operation reports
+     * @throws Exception if the operation refuses
+     */
+    Object applyToSchemaForTest(String op, Map<String, String> params, EObject schema)
+        throws Exception
+    {
+        // nestedSchemaName is resolved here exactly as the public path resolves it. Taking the
+        // schema straight would let a test pass while the addressing it depends on is broken.
+        // What this cannot do is validate a query or an expression: that needs a project to
+        // resolve names against, and there is none here. A test that writes a malformed query
+        // through this therefore sees it written, where the public path would refuse it.
+        return applySchemaMutation(op, params,
+            schemaToWorkIn(schema, JsonUtils.extractStringArgument(params, "nestedSchemaName")), //$NON-NLS-1$
+            null);
+    }
+
     private Map<String, MutationHandler> buildMutationRegistry()
     {
         Map<String, MutationHandler> m = new LinkedHashMap<>();
         reg(m, "add_dataset", (p, s, pr) -> doAddDataSet(p, s));
+        reg(m, "add_nested_schema", (p, s, pr) -> doAddNestedSchema(p, s));
+        reg(m, "add_schema_template", (p, s, pr) -> doAddSchemaTemplate(p, s));
+        reg(m, "remove_schema_template", (p, s, pr) -> doRemoveSchemaTemplate(p, s));
+        reg(m, "add_template_row", (p, s, pr) -> doAddTemplateRow(p, s));
+        reg(m, "add_template_cell", (p, s, pr) -> doAddTemplateCell(p, s));
+        reg(m, "add_field_template", (p, s, pr) -> doAddFieldTemplate(p, s));
+        reg(m, "remove_field_template", (p, s, pr) -> doRemoveFieldTemplate(p, s));
+        reg(m, "add_group_template", (p, s, pr) -> doAddGroupTemplate(p, s));
+        reg(m, "add_total_template", (p, s, pr) -> doAddTotalTemplate(p, s));
+        reg(m, "remove_total_template", (p, s, pr) -> doRemoveTotalTemplate(p, s));
+        reg(m, "remove_group_template", (p, s, pr) -> doRemoveGroupTemplate(p, s));
+        reg(m, "remove_nested_schema", (p, s, pr) -> doRemoveNestedSchema(p, s));
+        reg(m, "add_union_item", (p, s, pr) -> doAddUnionItem(p, s));
+        reg(m, "remove_union_item", (p, s, pr) -> doRemoveUnionItem(p, s));
         reg(m, "remove_dataset", (p, s, pr) -> doRemoveDataSet(p, s));
         reg(m, "add_data_source", (p, s, pr) -> doAddDataSource(p, s));
         reg(m, "remove_data_source", (p, s, pr) -> doRemoveDataSource(p, s));

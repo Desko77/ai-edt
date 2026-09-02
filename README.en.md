@@ -74,7 +74,7 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **And what that query returns, too.** With `describeResult=true` the same tool reports the columns of each result and their types, taken from EDT's query-wizard model rather than read off the text. A package is worked through whole: temporary tables are not passed off as results, but they keep their position in `ВыполнитьПакет()`, so the indexes match the real ones. A type that cannot be determined is left out entirely - a confident wrong answer would cost more than an honest gap. The assistant stops guessing column names, and a whole class of errors that otherwise survives until run time goes with them.
 
-**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` and looked at through `get_form_screenshot`, while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration; `update_database` runs that same scan itself and refuses on a finding rather than letting the platform meet it.
+**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` - which also reports the composition settings of every dynamic list on the form: order, filter, groupings and conditional appearance - and looked at through `get_form_screenshot`, while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration; `update_database` runs that same scan itself and refuses on a finding rather than letting the platform meet it.
 
 ## 🔄 A typical agent loop
 
@@ -507,7 +507,7 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 | Integration | What it enables | Required setup |
 |---|---|---|
 | **YAxUnit** | Run and debug unit tests, filter suites and parse JUnit reports. | Install the YAxUnit extension in the target infobase. |
-| **Vanessa Automation** | Execute scenario-based UI tests. | Configure Vanessa separately and create the required launch setup. |
+| **Vanessa Automation** | Execute scenario-based UI tests, waiting for the run or coming back for it by key, with cancellation and screenshots grouped by the step that failed. | Configure Vanessa separately and create the required launch setup. |
 | **1C debug server** | Debug server-side BSL through Attach. | Start `ragent` with `-debug -http` and create an EDT Attach configuration. |
 | **BSL Language Server** | Additional source review through `code_review`. | Configure the external JAR in AI-EDT preferences. |
 
