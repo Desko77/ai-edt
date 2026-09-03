@@ -314,6 +314,40 @@ public class TheClientTheStartStepLooksForTest
     }
 
     /**
+     * The two lists are one. A key this tool sets and does not bar from the passthrough can be
+     * replaced by the caller, and the merge happens last, so the replacement wins while the answer
+     * still describes what the argument asked for. Comparing the set the guard holds with the keys
+     * a fully populated document carries is what keeps a new key from arriving unguarded.
+     *
+     * @throws IOException if the temporary feature file cannot be written
+     */
+    @Test
+    public void everyKeyThisToolSetsIsBarredFromThePassthrough() throws IOException
+    {
+        File dir = Files.createTempDirectory("aiedt-va-guard").toFile(); //$NON-NLS-1$
+        File one = new File(dir, "one.feature"); //$NON-NLS-1$
+        Files.write(one.toPath(), new byte[0]);
+        try
+        {
+            java.util.Set<String> written = new java.util.TreeSet<>();
+            for (String key : JsonParser.parseString(
+                VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                    true, null)).getAsJsonObject().keySet())
+            {
+                written.add(key.toLowerCase(java.util.Locale.ROOT));
+            }
+            assertEquals("a key this tool sets is not barred from the passthrough", //$NON-NLS-1$
+                new java.util.TreeSet<>(VanessaTool.OURS_TO_SET), written);
+        }
+        finally
+        {
+            one.delete();
+            dir.delete();
+        }
+    }
+
+    /**
      * What the caller added is the only difference the merge makes: it adds its own key and
      * changes no other. A key the passthrough is allowed to carry is one Vanessa reads too.
      *
@@ -331,15 +365,16 @@ public class TheClientTheStartStepLooksForTest
             VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
                 new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
                 withTestClient, added)).getAsJsonObject();
-        java.util.Set<String> withIt = new java.util.TreeSet<>(document.keySet());
-        java.util.Set<String> withoutIt = new java.util.TreeSet<>(JsonParser.parseString(
+        assertEquals("Дым", document.get("СписокТеговОтбор").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject withoutIt = JsonParser.parseString(
             VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
                 new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
-                withTestClient, null)).getAsJsonObject().keySet());
-        withIt.removeAll(withoutIt);
-        assertEquals("the merge brought in something other than what was added", //$NON-NLS-1$
-            java.util.Collections.singleton("СписокТеговОтбор"), withIt); //$NON-NLS-1$
-        assertEquals("Дым", document.get("СписокТеговОтбор").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+                withTestClient, null)).getAsJsonObject();
+        // Taken back out, what is left has to be the document the merge started from - every
+        // member of it, not merely the same set of names.
+        document.remove("СписокТеговОтбор"); //$NON-NLS-1$
+        assertEquals("the merge changed something other than what was added", withoutIt, //$NON-NLS-1$
+            document);
     }
 
     /**

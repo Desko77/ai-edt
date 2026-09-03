@@ -1156,7 +1156,7 @@ public class VanessaTool implements IMcpTool
      * exit that never comes. A caller asking for one of these is told so rather than obeyed.
      * </p>
      */
-    private static final java.util.Set<String> OURS_TO_SET = lowerCased(
+    static final java.util.Set<String> OURS_TO_SET = lowerCased(
         "ДелатьОтчетВФорматеАллюр", "КаталогOutputAllureБазовый", //$NON-NLS-1$ //$NON-NLS-2$
         "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы", //$NON-NLS-1$ //$NON-NLS-2$
         // Turned off, Vanessa opens its window and waits there: the run spends its whole budget on
