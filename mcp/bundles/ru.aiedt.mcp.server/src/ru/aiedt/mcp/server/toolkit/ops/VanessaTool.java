@@ -1017,10 +1017,12 @@ public class VanessaTool implements IMcpTool
         // getAbsoluteFile() first so getParentFile() is non-null even for a bare filename.
         File dir = featurePath.isDirectory() ? featurePath : featurePath.getAbsoluteFile().getParentFile();
         o.addProperty("КаталогФич", dir != null ? dir.getAbsolutePath() : featurePath.getAbsolutePath()); //$NON-NLS-1$
-        if (featurePath.isFile())
+        if (!featurePath.isDirectory())
         {
             // The directory is what Vanessa loads from, so the file has to be named separately -
-            // otherwise every other .feature sitting beside it plays too.
+            // otherwise every other .feature sitting beside it plays too. Asked as isDirectory
+            // and not as isFile, this decision and the one above cannot disagree about a path
+            // that changed underneath them.
             com.google.gson.JsonArray only = new com.google.gson.JsonArray();
             only.add(featurePath.getAbsolutePath());
             o.add("СписокФичДляВыполнения", only); //$NON-NLS-1$
@@ -1168,7 +1170,7 @@ public class VanessaTool implements IMcpTool
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
         "КаталогФич", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
-        "КаталогOutputСкриншоты"); //$NON-NLS-1$
+        "КаталогOutputСкриншоты", "СписокФичДляВыполнения"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.

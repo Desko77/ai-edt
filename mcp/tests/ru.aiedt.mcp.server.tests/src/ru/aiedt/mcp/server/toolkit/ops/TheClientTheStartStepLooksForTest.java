@@ -301,6 +301,7 @@ public class TheClientTheStartStepLooksForTest
                     {
                         census(one, withTestClient, shots, keepOpen, true);
                         census(dir, withTestClient, shots, keepOpen, false);
+                        censusWithExtra(one, withTestClient, shots, keepOpen);
                     }
                 }
             }
@@ -310,6 +311,35 @@ public class TheClientTheStartStepLooksForTest
             one.delete();
             dir.delete();
         }
+    }
+
+    /**
+     * What the caller added is the only difference the merge makes: it adds its own key and
+     * changes no other. A key the passthrough is allowed to carry is one Vanessa reads too.
+     *
+     * @param featurePath the scenarios.
+     * @param withTestClient whether a test client is named.
+     * @param shots whether a screenshot is taken on failure.
+     * @param keepOpen whether the client is left running.
+     */
+    private static void censusWithExtra(File featurePath, boolean withTestClient, boolean shots,
+        boolean keepOpen)
+    {
+        JsonObject added = new JsonObject();
+        added.addProperty("СписокТеговОтбор", "Дым"); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject document = JsonParser.parseString(
+            VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                withTestClient, added)).getAsJsonObject();
+        java.util.Set<String> withIt = new java.util.TreeSet<>(document.keySet());
+        java.util.Set<String> withoutIt = new java.util.TreeSet<>(JsonParser.parseString(
+            VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                withTestClient, null)).getAsJsonObject().keySet());
+        withIt.removeAll(withoutIt);
+        assertEquals("the merge brought in something other than what was added", //$NON-NLS-1$
+            java.util.Collections.singleton("СписокТеговОтбор"), withIt); //$NON-NLS-1$
+        assertEquals("Дым", document.get("СписокТеговОтбор").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

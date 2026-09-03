@@ -281,7 +281,7 @@ public class ASecretIsNotTakenAtAllTest
     {
         // The merge happens last, so a parameter the caller set through an argument of this tool
         // would be silently overruled - and the answer would still describe the argument.
-        for (String key : new String[] {"КаталогФич", //$NON-NLS-1$
+        for (String key : new String[] {"КаталогФич", "СписокФичДляВыполнения", //$NON-NLS-1$ //$NON-NLS-2$
             "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$
             // Turned off, the run waits in Vanessa's own window until it is killed.
             "ВыполнитьСценарии", //$NON-NLS-1$
