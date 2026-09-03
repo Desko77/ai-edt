@@ -122,7 +122,7 @@ public class TheClientTheStartStepLooksForTest
     public void aLongBudgetDoesNotBecomeALongWaitForTheClient()
     {
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
-            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, 0, //$NON-NLS-1$ //$NON-NLS-2$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, VanessaTool.TEST_CLIENT_WAIT_CEILING_SEC * 6, true, null);
         JsonObject block = JsonParser.parseString(json).getAsJsonObject()
             .getAsJsonObject("TestClient"); //$NON-NLS-1$
@@ -172,7 +172,7 @@ public class TheClientTheStartStepLooksForTest
     private static JsonObject params()
     {
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
-            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, 0, //$NON-NLS-1$ //$NON-NLS-2$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, BUDGET_SEC, true, null);
         return JsonParser.parseString(json).getAsJsonObject();
     }
@@ -205,17 +205,34 @@ public class TheClientTheStartStepLooksForTest
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, "   ")); //$NON-NLS-1$
     }
 
-    /**
-     * Off unless asked for. Measured on one stand: with the block present Vanessa writes no report
-     * at all, for any scenario, including one whose only step is a three second wait; without it
-     * the same scenarios play and a failing step is reported by name.
-     */
+    /** Off unless asked for: a run that drives no form needs no client of its own. */
     @Test
     public void theBlockIsAbsentUnlessTheCallerAsksForIt()
     {
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
-            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, 0, //$NON-NLS-1$ //$NON-NLS-2$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, BUDGET_SEC, false, null);
         assertNull(JsonParser.parseString(json).getAsJsonObject().get("TestClient")); //$NON-NLS-1$
+    }
+
+    /**
+     * Every key of the document is one Vanessa reads. A name it does not know is dropped in
+     * silence, so a run asked for under one plays as though it had not been asked at all: the
+     * report is not written, the screenshots are not taken, the client is not closed - and the
+     * answer describes all three as done. Counting the keys is what tells the difference, since
+     * nothing else does.
+     */
+    @Test
+    public void everyKeyOfTheDocumentIsOneVanessaReads()
+    {
+        java.util.Set<String> written =
+            new java.util.TreeSet<>(params().keySet());
+        java.util.Set<String> read = new java.util.TreeSet<>(java.util.Arrays.asList(
+            "ВыполнитьСценарии", "TestClient", "КаталогФич", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "ДелатьОтчетВФорматеАллюр", "КаталогOutputAllureБазовый", //$NON-NLS-1$ //$NON-NLS-2$
+            "ДелатьСкриншотПриВозникновенииОшибки", "КаталогOutputСкриншоты", //$NON-NLS-1$ //$NON-NLS-2$
+            "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the document carries a key that is not among the ones Vanessa reads", //$NON-NLS-1$
+            read, written);
     }
 }
