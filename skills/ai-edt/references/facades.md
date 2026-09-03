@@ -119,7 +119,7 @@ Names differ from the former standalone tools: `set_breakpoint` is `action=add_b
 `suites`, `tags`, `contexts`. `updateBeforeLaunch` defaults to true, so a test run implies an
 infobase update - which is why `validate_for_export` matters here too.
 
-`vanessa` drives scenario UI tests from the outside and complements the unit tests.
+`vanessa` drives scenario UI tests from the outside and photographs a form of a running 1C. The scenario comes as a file (`featurePath`), as text (`scenarioText`), or is composed from `formToOpen` - and then `openStep` carries the wording, which differs for a list form, an object form and an extension's form. That step needs the UI-testing types, which exist only in a client started as a test manager (`testManager`); without it the step answers Тип не определен. `testClient` names the client the start step launches, `testClientPort` its port, `infobaseUser` the user to sign in as - a password is refused. The verdict is read from the `<uuid>-result.json` files Vanessa names itself.
 
 ## Tools that stand on their own
 

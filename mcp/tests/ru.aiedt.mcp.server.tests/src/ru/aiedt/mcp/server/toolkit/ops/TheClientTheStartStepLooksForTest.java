@@ -12,6 +12,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 
 import org.junit.Test;
 
@@ -122,7 +124,7 @@ public class TheClientTheStartStepLooksForTest
     public void aLongBudgetDoesNotBecomeALongWaitForTheClient()
     {
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
-            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, 0, //$NON-NLS-1$ //$NON-NLS-2$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, VanessaTool.TEST_CLIENT_WAIT_CEILING_SEC * 6, true, null);
         JsonObject block = JsonParser.parseString(json).getAsJsonObject()
             .getAsJsonObject("TestClient"); //$NON-NLS-1$
@@ -172,7 +174,7 @@ public class TheClientTheStartStepLooksForTest
     private static JsonObject params()
     {
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
-            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, 0, //$NON-NLS-1$ //$NON-NLS-2$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, BUDGET_SEC, true, null);
         return JsonParser.parseString(json).getAsJsonObject();
     }
@@ -205,17 +207,207 @@ public class TheClientTheStartStepLooksForTest
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, "   ")); //$NON-NLS-1$
     }
 
-    /**
-     * Off unless asked for. Measured on one stand: with the block present Vanessa writes no report
-     * at all, for any scenario, including one whose only step is a three second wait; without it
-     * the same scenarios play and a failing step is reported by name.
-     */
+    /** Off unless asked for: a run that drives no form needs no client of its own. */
     @Test
     public void theBlockIsAbsentUnlessTheCallerAsksForIt()
     {
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
-            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, 0, //$NON-NLS-1$ //$NON-NLS-2$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, BUDGET_SEC, false, null);
         assertNull(JsonParser.parseString(json).getAsJsonObject().get("TestClient")); //$NON-NLS-1$
+    }
+
+    /**
+     * A named file is the only one played. Vanessa loads from a directory, and the directory is
+     * all КаталогФич can carry, so without naming the file every other .feature sitting beside it
+     * runs too - and the answer reports the run of the one that was asked for.
+     *
+     * @throws IOException if the temporary feature file cannot be written
+     */
+    @Test
+    public void aNamedFileIsTheOnlyOnePlayed() throws IOException
+    {
+        File dir = Files.createTempDirectory("aiedt-va-one").toFile(); //$NON-NLS-1$
+        File one = new File(dir, "one.feature"); //$NON-NLS-1$
+        File other = new File(dir, "other.feature"); //$NON-NLS-1$
+        Files.write(one.toPath(), new byte[0]);
+        Files.write(other.toPath(), new byte[0]);
+        try
+        {
+            JsonObject document = JsonParser.parseString(
+                VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                    true, null)).getAsJsonObject();
+            assertEquals(dir.getAbsolutePath(),
+                document.get("КаталогФич").getAsString()); //$NON-NLS-1$
+            JsonArray only = document.getAsJsonArray("СписокФичДляВыполнения"); //$NON-NLS-1$
+            assertNotNull("the directory alone would have played both", only); //$NON-NLS-1$
+            assertEquals(1, only.size());
+            assertEquals(one.getAbsolutePath(), only.get(0).getAsString());
+
+            JsonObject whole = JsonParser.parseString(
+                VanessaTool.buildVaParams(dir, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                    true, null)).getAsJsonObject();
+            assertNull("a directory was asked for, so nothing narrows it", //$NON-NLS-1$
+                whole.get("СписокФичДляВыполнения")); //$NON-NLS-1$
+        }
+        finally
+        {
+            one.delete();
+            other.delete();
+            dir.delete();
+        }
+    }
+
+    /**
+     * The refusal reaches a caller coming back for a run as well. Read after the runKey routing
+     * it never would: that call is answered about the key, and the argument it also named is
+     * dropped without a word.
+     */
+    @Test
+    public void theRemovedArgumentIsRefusedOnEveryCall()
+    {
+        java.util.Map<String, String> comingBack = new java.util.HashMap<>();
+        comingBack.put("runKey", "one-that-does-not-exist"); //$NON-NLS-1$ //$NON-NLS-2$
+        comingBack.put("stepDelaySeconds", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the answer names the key instead of the argument", //$NON-NLS-1$
+            new VanessaTool().execute(comingBack).contains("stepDelaySeconds")); //$NON-NLS-1$
+    }
+
+    /**
+     * Every key of the document is one Vanessa reads, on every branch that builds it. A name it
+     * does not know is dropped in silence, so a run asked for under one plays as though it had
+     * not been asked at all: the report is not written, the screenshots are not taken, the client
+     * is not closed - and the answer describes all three as done. Counting the keys is what tells
+     * the difference, since nothing else does, and counting them on one branch leaves the others
+     * free to carry anything.
+     *
+     * @throws IOException if the temporary feature file cannot be written
+     */
+    @Test
+    public void everyKeyOfTheDocumentIsOneVanessaReads() throws IOException
+    {
+        File dir = Files.createTempDirectory("aiedt-va-keys").toFile(); //$NON-NLS-1$
+        File one = new File(dir, "one.feature"); //$NON-NLS-1$
+        Files.write(one.toPath(), new byte[0]);
+        try
+        {
+            for (boolean withTestClient : new boolean[] {true, false})
+            {
+                for (boolean shots : new boolean[] {true, false})
+                {
+                    for (boolean keepOpen : new boolean[] {true, false})
+                    {
+                        census(one, withTestClient, shots, keepOpen, true);
+                        census(dir, withTestClient, shots, keepOpen, false);
+                        censusWithExtra(one, withTestClient, shots, keepOpen);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            one.delete();
+            dir.delete();
+        }
+    }
+
+    /**
+     * The two lists are one. A key this tool sets and does not bar from the passthrough can be
+     * replaced by the caller, and the merge happens last, so the replacement wins while the answer
+     * still describes what the argument asked for. Comparing the set the guard holds with the keys
+     * a fully populated document carries is what keeps a new key from arriving unguarded.
+     *
+     * @throws IOException if the temporary feature file cannot be written
+     */
+    @Test
+    public void everyKeyThisToolSetsIsBarredFromThePassthrough() throws IOException
+    {
+        File dir = Files.createTempDirectory("aiedt-va-guard").toFile(); //$NON-NLS-1$
+        File one = new File(dir, "one.feature"); //$NON-NLS-1$
+        Files.write(one.toPath(), new byte[0]);
+        try
+        {
+            java.util.Set<String> written = new java.util.TreeSet<>();
+            for (String key : JsonParser.parseString(
+                VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                    true, null)).getAsJsonObject().keySet())
+            {
+                written.add(key.toLowerCase(java.util.Locale.ROOT));
+            }
+            assertEquals("a key this tool sets is not barred from the passthrough", //$NON-NLS-1$
+                new java.util.TreeSet<>(VanessaTool.OURS_TO_SET), written);
+        }
+        finally
+        {
+            one.delete();
+            dir.delete();
+        }
+    }
+
+    /**
+     * What the caller added is the only difference the merge makes: it adds its own key and
+     * changes no other. A key the passthrough is allowed to carry is one Vanessa reads too.
+     *
+     * @param featurePath the scenarios.
+     * @param withTestClient whether a test client is named.
+     * @param shots whether a screenshot is taken on failure.
+     * @param keepOpen whether the client is left running.
+     */
+    private static void censusWithExtra(File featurePath, boolean withTestClient, boolean shots,
+        boolean keepOpen)
+    {
+        JsonObject added = new JsonObject();
+        added.addProperty("СписокТеговОтбор", "Дым"); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject document = JsonParser.parseString(
+            VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                withTestClient, added)).getAsJsonObject();
+        assertEquals("Дым", document.get("СписокТеговОтбор").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject withoutIt = JsonParser.parseString(
+            VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                withTestClient, null)).getAsJsonObject();
+        // Taken back out, what is left has to be the document the merge started from - every
+        // member of it, not merely the same set of names.
+        document.remove("СписокТеговОтбор"); //$NON-NLS-1$
+        assertEquals("the merge changed something other than what was added", withoutIt, //$NON-NLS-1$
+            document);
+    }
+
+    /**
+     * Builds the document one way and compares its keys with the ones Vanessa reads.
+     *
+     * @param featurePath the scenarios, a file or the directory holding them.
+     * @param withTestClient whether a test client is named.
+     * @param shots whether a screenshot is taken on failure.
+     * @param keepOpen whether the client is left running.
+     * @param named whether the feature path is a file, which is named to Vanessa on its own.
+     */
+    private static void census(File featurePath, boolean withTestClient, boolean shots,
+        boolean keepOpen, boolean named)
+    {
+        String json = VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
+            new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+            withTestClient, null);
+        java.util.Set<String> read = new java.util.TreeSet<>(java.util.Arrays.asList(
+            "ВыполнитьСценарии", "КаталогФич", "ДелатьОтчетВФорматеАллюр", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "КаталогOutputAllureБазовый", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
+            "КаталогOutputСкриншоты", "ЗакрытьTestClientПослеЗапускаСценариев", //$NON-NLS-1$ //$NON-NLS-2$
+            "ЗавершитьРаботуСистемы")); //$NON-NLS-1$
+        if (withTestClient)
+        {
+            read.add("TestClient"); //$NON-NLS-1$
+        }
+        if (named)
+        {
+            read.add("СписокФичДляВыполнения"); //$NON-NLS-1$
+        }
+        java.util.Set<String> written = new java.util.TreeSet<>(
+            JsonParser.parseString(json).getAsJsonObject().keySet());
+        assertEquals("the document carries a key that is not among the ones Vanessa reads", //$NON-NLS-1$
+            read, written);
     }
 }

@@ -168,8 +168,8 @@ public class VanessaTool implements IMcpTool
                     + "without it such a step answers Тип не определен.") //$NON-NLS-1$
             .booleanProperty("testClient", //$NON-NLS-1$
                 "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
-                    + "Measured on one stand: with the block present Vanessa writes no report " //$NON-NLS-1$
-                    + "at all, for any scenario; without it the same scenarios play.") //$NON-NLS-1$
+                    + "The step that starts TestClient has no client to start without it and " //$NON-NLS-1$
+                    + "answers with an empty client type and PID 0.") //$NON-NLS-1$
             .integerProperty("testClientPort", //$NON-NLS-1$
                 "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
                     + "run or another EDT already holds it.") //$NON-NLS-1$
@@ -178,8 +178,7 @@ public class VanessaTool implements IMcpTool
             .booleanProperty("keepOpen", //$NON-NLS-1$
                 "Leave the 1C client open after the run to watch it (default false). Note: a kept-open " //$NON-NLS-1$
                     + "client will time out here since it never exits.") //$NON-NLS-1$
-            .integerProperty("stepDelaySeconds", //$NON-NLS-1$
-                "Slow each step down by N seconds to watch the run live (default 0).") //$NON-NLS-1$
+ //$NON-NLS-1$
             .build();
     }
 
@@ -192,6 +191,12 @@ public class VanessaTool implements IMcpTool
     @Override
     public String execute(Map<String, String> params)
     {
+        if (params != null && params.containsKey("stepDelaySeconds")) //$NON-NLS-1$
+        {
+            return ToolResult.error("stepDelaySeconds names no Vanessa parameter: the run would " //$NON-NLS-1$
+                + "have played at full speed while the answer described a slowed one. Watch a " //$NON-NLS-1$
+                + "run through keepOpen instead.").toJson(); //$NON-NLS-1$
+        }
         String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
         if (runKey != null && !runKey.isEmpty())
         {
@@ -386,7 +391,6 @@ public class VanessaTool implements IMcpTool
 
         boolean screenshots = JsonUtils.extractBooleanArgument(params, "screenshots", true); //$NON-NLS-1$
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
-        int stepDelay = Math.max(0, JsonUtils.extractIntArgument(params, "stepDelaySeconds", 0)); //$NON-NLS-1$
         int timeoutSec = JsonUtils.extractIntArgument(params, "timeoutSeconds", DEFAULT_TIMEOUT_SEC); //$NON-NLS-1$
         Integer namedPort = JsonUtils.extractIntegerArgument(params, "testClientPort"); //$NON-NLS-1$
         if (namedPort == null && params != null && params.containsKey("testClientPort")) //$NON-NLS-1$
@@ -436,7 +440,7 @@ public class VanessaTool implements IMcpTool
             // run with these same arguments owns this key. Registering both under it would let a
             // cancel meant for that run destroy this client instead.
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
-                screenshots, keepOpen, stepDelay, settledTimeout, settledClientPort,
+                screenshots, keepOpen, settledTimeout, settledClientPort,
                 extraVaParams, runDirForJob, null, settledInfobase, settledAddress,
                 settledWantsTestClient, settledWantsManager);
         }
@@ -455,7 +459,7 @@ public class VanessaTool implements IMcpTool
             }
             entry = registry.getOrStart(jobKey,
                 () -> play(settledExe, settledEpf, settledConnection, settledFeature,
-                    composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
+                    composedScenario, screenshots, keepOpen, settledTimeout,
                     settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
                     settledAddress, settledWantsTestClient, settledWantsManager));
         }
@@ -489,7 +493,6 @@ public class VanessaTool implements IMcpTool
      *            exactly one of the two is given.
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
-     * @param stepDelay the pause between steps, in seconds.
      * @param timeoutSec how long to wait for the run.
      * @param clientPort the port the test client listens on.
      * @param extraVaParams what the caller added to the Vanessa document.
@@ -504,7 +507,7 @@ public class VanessaTool implements IMcpTool
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
-        String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
+        String composedScenario, boolean screenshots, boolean keepOpen,
         int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
         String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
         boolean asTestManager)
@@ -558,7 +561,7 @@ public class VanessaTool implements IMcpTool
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
-                keepOpen, stepDelay, connectionString, clientPort, timeoutSec, withTestClient,
+                keepOpen, connectionString, clientPort, timeoutSec, withTestClient,
                 extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
@@ -985,7 +988,6 @@ public class VanessaTool implements IMcpTool
      * @param shotsDir where Vanessa writes failure screenshots.
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
-     * @param stepDelay the pause between steps, in seconds; zero leaves the key out.
      * @param connectionString the infobase the test client opens.
      * @param clientPort the port the test client listens on.
      * @param clientTimeoutSec the whole budget of the run; the client share of it is taken by
@@ -995,14 +997,10 @@ public class VanessaTool implements IMcpTool
      * @return the document, ready to be written
      */
     static String buildVaParams(File featurePath, File junitFile, File shotsDir,
-        boolean screenshots, boolean keepOpen, int stepDelay, String connectionString,
+        boolean screenshots, boolean keepOpen, String connectionString,
         int clientPort, int clientTimeoutSec, boolean withTestClient, JsonObject extra)
     {
         JsonObject o = new JsonObject();
-        // Measured on this stand: with the block present Vanessa writes no report at all, for
-        // any scenario, including one whose only step is a three second wait. Without it the
-        // same scenarios play and a failing step is reported by name. It is therefore off
-        // unless the caller asks for it.
         // The step that starts TestClient has no client to start without this block: the run
         // answers "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0,
         // because the UI-testing types exist only once a client runs under the test manager.
@@ -1019,9 +1017,15 @@ public class VanessaTool implements IMcpTool
         // getAbsoluteFile() first so getParentFile() is non-null even for a bare filename.
         File dir = featurePath.isDirectory() ? featurePath : featurePath.getAbsoluteFile().getParentFile();
         o.addProperty("КаталогФич", dir != null ? dir.getAbsolutePath() : featurePath.getAbsolutePath()); //$NON-NLS-1$
-        if (featurePath.isFile())
+        if (!featurePath.isDirectory())
         {
-            o.addProperty("ФайлСценария", featurePath.getAbsolutePath()); //$NON-NLS-1$
+            // The directory is what Vanessa loads from, so the file has to be named separately -
+            // otherwise every other .feature sitting beside it plays too. Asked as isDirectory
+            // and not as isFile, this decision and the one above cannot disagree about a path
+            // that changed underneath them.
+            com.google.gson.JsonArray only = new com.google.gson.JsonArray();
+            only.add(featurePath.getAbsolutePath());
+            o.add("СписокФичДляВыполнения", only); //$NON-NLS-1$
         }
         // Vanessa has no JUnit parameters of its own: its documented keys for a machine
         // readable result are the Allure pair, and the xml it writes there is what a JUnit
@@ -1038,10 +1042,6 @@ public class VanessaTool implements IMcpTool
         // decides to, and the test client it started is left behind.
         o.addProperty("ЗакрытьTestClientПослеЗапускаСценариев", !keepOpen); //$NON-NLS-1$
         o.addProperty("ЗавершитьРаботуСистемы", !keepOpen); //$NON-NLS-1$
-        if (stepDelay > 0)
-        {
-            o.addProperty("ПаузаМеждуШагами", stepDelay); //$NON-NLS-1$
-        }
         if (extra != null)
         {
             for (java.util.Map.Entry<String, com.google.gson.JsonElement> e : extra.entrySet())
@@ -1156,7 +1156,7 @@ public class VanessaTool implements IMcpTool
      * exit that never comes. A caller asking for one of these is told so rather than obeyed.
      * </p>
      */
-    private static final java.util.Set<String> OURS_TO_SET = lowerCased(
+    static final java.util.Set<String> OURS_TO_SET = lowerCased(
         "ДелатьОтчетВФорматеАллюр", "КаталогOutputAllureБазовый", //$NON-NLS-1$ //$NON-NLS-2$
         "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы", //$NON-NLS-1$ //$NON-NLS-2$
         // Turned off, Vanessa opens its window and waits there: the run spends its whole budget on
@@ -1169,8 +1169,8 @@ public class VanessaTool implements IMcpTool
         // These come from arguments of this tool. Letting the passthrough set them too would mean
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
-        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "КаталогOutputСкриншоты", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$
+        "КаталогФич", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
+        "КаталогOutputСкриншоты", "СписокФичДляВыполнения"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.

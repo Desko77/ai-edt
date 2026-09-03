@@ -27,6 +27,15 @@ assistants can work against the live EDT model instead of scraping project files
 - **ALL CODE AND INTERFACE MUST BE IN ENGLISH.**
 - Before committing, verify `git diff --cached` carries no private data: real project or customer
   names, absolute local paths, IP addresses, credentials, non-default dev ports.
+- **A CHANGE IS NOT DELIVERED UNTIL IT IS DESCRIBED AND RELEASED.** When work lands on `main`,
+  five things follow before the task is done: the tree version is bumped one micro above the
+  newest tag; `README.md` and `README.en.md` say what the user can now do, both or neither;
+  `CHANGELOG.md` gains a row for the release, and `docs/tools/README.ru.md` gains the arguments
+  a caller has to know; the skill under `skills/ai-edt/` learns the new tool names, operations
+  and arguments, and so do the copies of it that live outside this repository, which
+  `CLAUDE.local.md` lists; and the announcement is written. Code that only a reader of the diff
+  knows about has not been shipped, and a skill that still describes the old behaviour teaches
+  the agent the new one does not exist.
 - **PARITY BY FUNCTION, NOT BY NAME.** When adding a capability another plugin also has, implement
   it under our own name at every visible layer - the MCP tool name, the operation name inside a
   facade, and the Java class name. Another product's name is admissible only as a hidden
