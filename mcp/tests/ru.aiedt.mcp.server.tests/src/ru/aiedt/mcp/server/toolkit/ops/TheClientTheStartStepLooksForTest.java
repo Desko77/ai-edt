@@ -12,6 +12,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 
 import org.junit.Test;
 
@@ -216,22 +218,130 @@ public class TheClientTheStartStepLooksForTest
     }
 
     /**
-     * Every key of the document is one Vanessa reads. A name it does not know is dropped in
-     * silence, so a run asked for under one plays as though it had not been asked at all: the
-     * report is not written, the screenshots are not taken, the client is not closed - and the
-     * answer describes all three as done. Counting the keys is what tells the difference, since
-     * nothing else does.
+     * A named file is the only one played. Vanessa loads from a directory, and the directory is
+     * all КаталогФич can carry, so without naming the file every other .feature sitting beside it
+     * runs too - and the answer reports the run of the one that was asked for.
+     *
+     * @throws IOException if the temporary feature file cannot be written
      */
     @Test
-    public void everyKeyOfTheDocumentIsOneVanessaReads()
+    public void aNamedFileIsTheOnlyOnePlayed() throws IOException
     {
-        java.util.Set<String> written =
-            new java.util.TreeSet<>(params().keySet());
+        File dir = Files.createTempDirectory("aiedt-va-one").toFile(); //$NON-NLS-1$
+        File one = new File(dir, "one.feature"); //$NON-NLS-1$
+        File other = new File(dir, "other.feature"); //$NON-NLS-1$
+        Files.write(one.toPath(), new byte[0]);
+        Files.write(other.toPath(), new byte[0]);
+        try
+        {
+            JsonObject document = JsonParser.parseString(
+                VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                    true, null)).getAsJsonObject();
+            assertEquals(dir.getAbsolutePath(),
+                document.get("КаталогФич").getAsString()); //$NON-NLS-1$
+            JsonArray only = document.getAsJsonArray("СписокФичДляВыполнения"); //$NON-NLS-1$
+            assertNotNull("the directory alone would have played both", only); //$NON-NLS-1$
+            assertEquals(1, only.size());
+            assertEquals(one.getAbsolutePath(), only.get(0).getAsString());
+
+            JsonObject whole = JsonParser.parseString(
+                VanessaTool.buildVaParams(dir, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                    true, null)).getAsJsonObject();
+            assertNull("a directory was asked for, so nothing narrows it", //$NON-NLS-1$
+                whole.get("СписокФичДляВыполнения")); //$NON-NLS-1$
+        }
+        finally
+        {
+            one.delete();
+            other.delete();
+            dir.delete();
+        }
+    }
+
+    /**
+     * The refusal reaches a caller coming back for a run as well. Read after the runKey routing
+     * it never would: that call is answered about the key, and the argument it also named is
+     * dropped without a word.
+     */
+    @Test
+    public void theRemovedArgumentIsRefusedOnEveryCall()
+    {
+        java.util.Map<String, String> comingBack = new java.util.HashMap<>();
+        comingBack.put("runKey", "one-that-does-not-exist"); //$NON-NLS-1$ //$NON-NLS-2$
+        comingBack.put("stepDelaySeconds", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the answer names the key instead of the argument", //$NON-NLS-1$
+            new VanessaTool().execute(comingBack).contains("stepDelaySeconds")); //$NON-NLS-1$
+    }
+
+    /**
+     * Every key of the document is one Vanessa reads, on every branch that builds it. A name it
+     * does not know is dropped in silence, so a run asked for under one plays as though it had
+     * not been asked at all: the report is not written, the screenshots are not taken, the client
+     * is not closed - and the answer describes all three as done. Counting the keys is what tells
+     * the difference, since nothing else does, and counting them on one branch leaves the others
+     * free to carry anything.
+     *
+     * @throws IOException if the temporary feature file cannot be written
+     */
+    @Test
+    public void everyKeyOfTheDocumentIsOneVanessaReads() throws IOException
+    {
+        File dir = Files.createTempDirectory("aiedt-va-keys").toFile(); //$NON-NLS-1$
+        File one = new File(dir, "one.feature"); //$NON-NLS-1$
+        Files.write(one.toPath(), new byte[0]);
+        try
+        {
+            for (boolean withTestClient : new boolean[] {true, false})
+            {
+                for (boolean shots : new boolean[] {true, false})
+                {
+                    for (boolean keepOpen : new boolean[] {true, false})
+                    {
+                        census(one, withTestClient, shots, keepOpen, true);
+                        census(dir, withTestClient, shots, keepOpen, false);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            one.delete();
+            dir.delete();
+        }
+    }
+
+    /**
+     * Builds the document one way and compares its keys with the ones Vanessa reads.
+     *
+     * @param featurePath the scenarios, a file or the directory holding them.
+     * @param withTestClient whether a test client is named.
+     * @param shots whether a screenshot is taken on failure.
+     * @param keepOpen whether the client is left running.
+     * @param named whether the feature path is a file, which is named to Vanessa on its own.
+     */
+    private static void census(File featurePath, boolean withTestClient, boolean shots,
+        boolean keepOpen, boolean named)
+    {
+        String json = VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
+            new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+            withTestClient, null);
         java.util.Set<String> read = new java.util.TreeSet<>(java.util.Arrays.asList(
-            "ВыполнитьСценарии", "TestClient", "КаталогФич", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "ДелатьОтчетВФорматеАллюр", "КаталогOutputAllureБазовый", //$NON-NLS-1$ //$NON-NLS-2$
-            "ДелатьСкриншотПриВозникновенииОшибки", "КаталогOutputСкриншоты", //$NON-NLS-1$ //$NON-NLS-2$
-            "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы")); //$NON-NLS-1$ //$NON-NLS-2$
+            "ВыполнитьСценарии", "КаталогФич", "ДелатьОтчетВФорматеАллюр", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "КаталогOutputAllureБазовый", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
+            "КаталогOutputСкриншоты", "ЗакрытьTestClientПослеЗапускаСценариев", //$NON-NLS-1$ //$NON-NLS-2$
+            "ЗавершитьРаботуСистемы")); //$NON-NLS-1$
+        if (withTestClient)
+        {
+            read.add("TestClient"); //$NON-NLS-1$
+        }
+        if (named)
+        {
+            read.add("СписокФичДляВыполнения"); //$NON-NLS-1$
+        }
+        java.util.Set<String> written = new java.util.TreeSet<>(
+            JsonParser.parseString(json).getAsJsonObject().keySet());
         assertEquals("the document carries a key that is not among the ones Vanessa reads", //$NON-NLS-1$
             read, written);
     }

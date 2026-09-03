@@ -191,6 +191,12 @@ public class VanessaTool implements IMcpTool
     @Override
     public String execute(Map<String, String> params)
     {
+        if (params != null && params.containsKey("stepDelaySeconds")) //$NON-NLS-1$
+        {
+            return ToolResult.error("stepDelaySeconds names no Vanessa parameter: the run would " //$NON-NLS-1$
+                + "have played at full speed while the answer described a slowed one. Watch a " //$NON-NLS-1$
+                + "run through keepOpen instead.").toJson(); //$NON-NLS-1$
+        }
         String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
         if (runKey != null && !runKey.isEmpty())
         {
@@ -385,12 +391,6 @@ public class VanessaTool implements IMcpTool
 
         boolean screenshots = JsonUtils.extractBooleanArgument(params, "screenshots", true); //$NON-NLS-1$
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
-        if (params != null && params.containsKey("stepDelaySeconds")) //$NON-NLS-1$
-        {
-            return ToolResult.error("stepDelaySeconds names no Vanessa parameter: the run would " //$NON-NLS-1$
-                + "have played at full speed while the answer described a slowed one. Watch a " //$NON-NLS-1$
-                + "run through keepOpen instead.").toJson(); //$NON-NLS-1$
-        }
         int timeoutSec = JsonUtils.extractIntArgument(params, "timeoutSeconds", DEFAULT_TIMEOUT_SEC); //$NON-NLS-1$
         Integer namedPort = JsonUtils.extractIntegerArgument(params, "testClientPort"); //$NON-NLS-1$
         if (namedPort == null && params != null && params.containsKey("testClientPort")) //$NON-NLS-1$
@@ -1017,6 +1017,14 @@ public class VanessaTool implements IMcpTool
         // getAbsoluteFile() first so getParentFile() is non-null even for a bare filename.
         File dir = featurePath.isDirectory() ? featurePath : featurePath.getAbsoluteFile().getParentFile();
         o.addProperty("КаталогФич", dir != null ? dir.getAbsolutePath() : featurePath.getAbsolutePath()); //$NON-NLS-1$
+        if (featurePath.isFile())
+        {
+            // The directory is what Vanessa loads from, so the file has to be named separately -
+            // otherwise every other .feature sitting beside it plays too.
+            com.google.gson.JsonArray only = new com.google.gson.JsonArray();
+            only.add(featurePath.getAbsolutePath());
+            o.add("СписокФичДляВыполнения", only); //$NON-NLS-1$
+        }
         // Vanessa has no JUnit parameters of its own: its documented keys for a machine
         // readable result are the Allure pair, and the xml it writes there is what a JUnit
         // reader consumes. Asked under the names below, it writes nothing and reports nothing,
