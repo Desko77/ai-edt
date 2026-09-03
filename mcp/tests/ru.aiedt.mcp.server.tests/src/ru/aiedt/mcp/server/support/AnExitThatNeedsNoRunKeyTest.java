@@ -26,6 +26,10 @@ import org.junit.Test;
  */
 public class AnExitThatNeedsNoRunKeyTest
 {
+    /**
+     * The registry is a singleton the whole class shares, so a subject shared between tests
+     * would let one of them count a run another left behind. Each test names its own.
+     */
     private static final String SUBJECT = "AnExitThatNeedsNoRunKeyTest-project"; //$NON-NLS-1$
 
     /**
@@ -67,12 +71,13 @@ public class AnExitThatNeedsNoRunKeyTest
         {
             PendingWorkRegistry.PendingEntry entry =
                 aRunThatBlocks(registry, "exit-test-k1", started, release); //$NON-NLS-1$
-            entry.subject = SUBJECT;
+            entry.subject = SUBJECT + "-k1"; //$NON-NLS-1$
             assertTrue("the work has to be running before it can be detached", //$NON-NLS-1$
                 started.await(20, TimeUnit.SECONDS));
 
-            assertEquals("one run stops being tracked", 1, registry.stopTrackingFor(SUBJECT)); //$NON-NLS-1$
-            assertEquals("and only once", 0, registry.stopTrackingFor(SUBJECT)); //$NON-NLS-1$
+            assertEquals("one run stops being tracked", 1, //$NON-NLS-1$
+                registry.stopTrackingFor(SUBJECT + "-k1")); //$NON-NLS-1$
+            assertEquals("and only once", 0, registry.stopTrackingFor(SUBJECT + "-k1")); //$NON-NLS-1$ //$NON-NLS-2$
         }
         finally
         {
@@ -87,11 +92,11 @@ public class AnExitThatNeedsNoRunKeyTest
 
         PendingWorkRegistry.PendingEntry entry =
             registry.getOrStart("exit-test-k2", () -> "the platform said no"); //$NON-NLS-1$ //$NON-NLS-2$
-        entry.subject = SUBJECT;
+        entry.subject = SUBJECT + "-k2"; //$NON-NLS-1$
         assertNotNull("let it finish", entry.await(20000)); //$NON-NLS-1$
 
         assertEquals("a finished result must not be swept away", 0, //$NON-NLS-1$
-            registry.stopTrackingFor(SUBJECT));
+            registry.stopTrackingFor(SUBJECT + "-k2")); //$NON-NLS-1$
 
         PendingWorkRegistry.PendingEntry again =
             registry.getOrStart("exit-test-k2", () -> "recomputed"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -109,7 +114,7 @@ public class AnExitThatNeedsNoRunKeyTest
         {
             PendingWorkRegistry.PendingEntry entry =
                 aRunThatBlocks(registry, "exit-test-k3", started, release); //$NON-NLS-1$
-            entry.subject = SUBJECT;
+            entry.subject = SUBJECT + "-k3"; //$NON-NLS-1$
             assertTrue(started.await(20, TimeUnit.SECONDS));
 
             assertEquals("a different project stops nothing", 0, //$NON-NLS-1$
@@ -135,7 +140,7 @@ public class AnExitThatNeedsNoRunKeyTest
             assertTrue(started.await(20, TimeUnit.SECONDS));
 
             assertEquals("nothing tagged it, so nothing addresses it this way", 0, //$NON-NLS-1$
-                registry.stopTrackingFor(SUBJECT));
+                registry.stopTrackingFor(SUBJECT + "-k4")); //$NON-NLS-1$
         }
         finally
         {
