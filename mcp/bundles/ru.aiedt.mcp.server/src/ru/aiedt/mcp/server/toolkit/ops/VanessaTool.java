@@ -162,6 +162,10 @@ public class VanessaTool implements IMcpTool
                 "Name of the 1C user the run signs in as. A base with users defined meets a " //$NON-NLS-1$
                     + "client that names none with a login window, and the run then waits out " //$NON-NLS-1$
                     + "its whole deadline. A password cannot be passed here.") //$NON-NLS-1$
+            .booleanProperty("testManager", //$NON-NLS-1$
+                "Start the client as a test manager (default false). The UI-testing types a " //$NON-NLS-1$
+                    + "form-driving scenario needs exist only in a client started this way; " //$NON-NLS-1$
+                    + "without it such a step answers Тип не определен.") //$NON-NLS-1$
             .booleanProperty("testClient", //$NON-NLS-1$
                 "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
                     + "Measured on one stand: with the block present Vanessa writes no report " //$NON-NLS-1$
@@ -391,6 +395,8 @@ public class VanessaTool implements IMcpTool
                 + "a port is 1 to " + HIGHEST_PORT + ". Read as a number it cannot be, the " //$NON-NLS-1$ //$NON-NLS-2$
                 + "run would have started on the default port instead of the one named.").toJson(); //$NON-NLS-1$
         }
+        final boolean settledWantsManager =
+            JsonUtils.extractBooleanArgument(params, "testManager", false); //$NON-NLS-1$
         final boolean settledWantsTestClient =
             JsonUtils.extractBooleanArgument(params, "testClient", false); //$NON-NLS-1$
         final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
@@ -432,7 +438,7 @@ public class VanessaTool implements IMcpTool
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
                 screenshots, keepOpen, stepDelay, settledTimeout, settledClientPort,
                 extraVaParams, runDirForJob, null, settledInfobase, settledAddress,
-                settledWantsTestClient);
+                settledWantsTestClient, settledWantsManager);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -451,7 +457,7 @@ public class VanessaTool implements IMcpTool
                 () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
                     settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
-                    settledAddress, settledWantsTestClient));
+                    settledAddress, settledWantsTestClient, settledWantsManager));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -494,12 +500,14 @@ public class VanessaTool implements IMcpTool
      * @param infobaseAddress the infobase EDT holds, as it was resolved once, or
      *            <code>null</code> when the caller named the connection string itself.
      * @param withTestClient whether to name a test client for the start step to launch.
+     * @param asTestManager whether the client is started as a test manager.
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
         int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
-        String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient)
+        String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
+        boolean asTestManager)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -555,7 +563,8 @@ public class VanessaTool implements IMcpTool
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
-            List<String> command = buildCommand(exeFile, connectionString, epfFile, paramsFile);
+            List<String> command =
+                buildCommand(exeFile, connectionString, epfFile, paramsFile, asTestManager);
             // The connectionString may carry Pwd="..." - never log it in the clear.
             Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
                 + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
@@ -858,7 +867,7 @@ public class VanessaTool implements IMcpTool
      * A scenario that opens one form and has it photographed.
      * <p>
      * The snapshot is not a step. Vanessa takes one before and after the step that follows the
-     * {@code @screenshot} tag, writing them where {@code КаталогСохраненияСкриншотов} points - which
+     * {@code @screenshot} tag, writing them where {@code КаталогOutputСкриншоты} points - which
      * this tool already sets for every run, and which the report reader already groups by step.
      * </p>
      * <p>
@@ -1021,10 +1030,14 @@ public class VanessaTool implements IMcpTool
         o.addProperty("ДелатьОтчетВФорматеАллюр", true); //$NON-NLS-1$
         o.addProperty("КаталогOutputAllureБазовый", //$NON-NLS-1$
             junitFile.getAbsoluteFile().getParentFile().getAbsolutePath());
-        o.addProperty("ДелатьСкриншотПриОшибке", screenshots); //$NON-NLS-1$
-        o.addProperty("КаталогСохраненияСкриншотов", shotsDir.getAbsolutePath()); //$NON-NLS-1$
-        o.addProperty("ЗакрыватьTestClientПослеПрогона", !keepOpen); //$NON-NLS-1$
-        o.addProperty("ВыходИзПриложенияПослеЗапускаСценариев", !keepOpen); //$NON-NLS-1$
+        // The names Vanessa documents. Under any others it writes no screenshots and says
+        // nothing, exactly as it wrote no report while the JUnit names were used.
+        o.addProperty("ДелатьСкриншотПриВозникновенииОшибки", screenshots); //$NON-NLS-1$
+        o.addProperty("КаталогOutputСкриншоты", shotsDir.getAbsolutePath()); //$NON-NLS-1$
+        // The names Vanessa documents. Under any others the run ends when Vanessa itself
+        // decides to, and the test client it started is left behind.
+        o.addProperty("ЗакрытьTestClientПослеЗапускаСценариев", !keepOpen); //$NON-NLS-1$
+        o.addProperty("ЗавершитьРаботуСистемы", !keepOpen); //$NON-NLS-1$
         if (stepDelay > 0)
         {
             o.addProperty("ПаузаМеждуШагами", stepDelay); //$NON-NLS-1$
@@ -1144,9 +1157,8 @@ public class VanessaTool implements IMcpTool
      * </p>
      */
     private static final java.util.Set<String> OURS_TO_SET = lowerCased(
-        "СохранятьРезультатыВФорматеJUnit", "ПутьКФайлуРезультатовJUnit", //$NON-NLS-1$ //$NON-NLS-2$
-        "КаталогСохраненияСкриншотов", "ЗакрыватьTestClientПослеПрогона", //$NON-NLS-1$ //$NON-NLS-2$
-        "ВыходИзПриложенияПослеЗапускаСценариев", //$NON-NLS-1$
+        "ДелатьОтчетВФорматеАллюр", "КаталогOutputAllureБазовый", //$NON-NLS-1$ //$NON-NLS-2$
+        "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы", //$NON-NLS-1$ //$NON-NLS-2$
         // Turned off, Vanessa opens its window and waits there: the run spends its whole budget on
         // a form nobody is looking at and writes no report.
         "ВыполнитьСценарии", //$NON-NLS-1$
@@ -1157,7 +1169,8 @@ public class VanessaTool implements IMcpTool
         // These come from arguments of this tool. Letting the passthrough set them too would mean
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
-        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "КаталогOutputСкриншоты", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.
@@ -1339,7 +1352,7 @@ public class VanessaTool implements IMcpTool
     }
 
     private static List<String> buildCommand(File exe, String connectionString, File epf,
-        File paramsFile)
+        File paramsFile, boolean asTestManager)
     {
         List<String> c = new ArrayList<>();
         c.add(exe.getAbsolutePath());
@@ -1347,6 +1360,12 @@ public class VanessaTool implements IMcpTool
         c.add("/IBConnectionString"); //$NON-NLS-1$
         c.add(connectionString);
         c.add("/DisableStartupMessages"); //$NON-NLS-1$
+        if (asTestManager)
+        {
+            // The UI-testing types exist only in a client started this way. Without it a step
+            // that drives a form answers "Тип не определен" and the scenario stops there.
+            c.add("/TESTMANAGER"); //$NON-NLS-1$
+        }
         c.add("/Execute"); //$NON-NLS-1$
         c.add(epf.getAbsolutePath());
         c.add("/C"); //$NON-NLS-1$

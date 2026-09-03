@@ -176,19 +176,19 @@ public class ASecretIsNotTakenAtAllTest
     {
         String[] refusal = new String[1];
 
-        VanessaTool.extraParams("{\"ПутьКФайлуРезультатовJUnit\":\"C:\\elsewhere.xml\"}", //$NON-NLS-1$
+        VanessaTool.extraParams("{\"КаталогOutputAllureБазовый\":\"C:\\elsewhere.xml\"}", //$NON-NLS-1$
             refusal);
 
         assertNotNull("moving the report would leave the run reading nothing", refusal[0]); //$NON-NLS-1$
-        assertTrue(refusal[0], refusal[0].contains("ПутьКФайлуРезультатовJUnit")); //$NON-NLS-1$
+        assertTrue(refusal[0], refusal[0].contains("КаталогOutputAllureБазовый")); //$NON-NLS-1$
     }
 
     @Test
     public void everyParameterTheToolDependsOnIsProtected()
     {
-        for (String key : new String[] {"СохранятьРезультатыВФорматеJUnit", //$NON-NLS-1$
-            "ПутьКФайлуРезультатовJUnit", "КаталогСохраненияСкриншотов", //$NON-NLS-1$ //$NON-NLS-2$
-            "ЗакрыватьTestClientПослеПрогона", "ВыходИзПриложенияПослеЗапускаСценариев"}) //$NON-NLS-1$ //$NON-NLS-2$
+        for (String key : new String[] {"ДелатьОтчетВФорматеАллюр", //$NON-NLS-1$
+            "КаталогOutputAllureБазовый", "КаталогOutputСкриншоты", //$NON-NLS-1$ //$NON-NLS-2$
+            "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы"}) //$NON-NLS-1$ //$NON-NLS-2$
         {
             String[] refusal = new String[1];
             VanessaTool.extraParams("{\"" + key + "\":\"x\"}", refusal); //$NON-NLS-1$ //$NON-NLS-2$
@@ -247,7 +247,7 @@ public class ASecretIsNotTakenAtAllTest
         String[] refusal = new String[1];
 
         VanessaTool.extraParams(
-            "{\"x\":[{\"ПутьКФайлуРезультатовJUnit\":\"C:\\elsewhere.xml\"}]}", refusal); //$NON-NLS-1$
+            "{\"x\":[{\"КаталогOutputAllureБазовый\":\"C:\\elsewhere.xml\"}]}", refusal); //$NON-NLS-1$
 
         assertNotNull("the shape is refused, and with it what was hidden in it", refusal[0]); //$NON-NLS-1$
     }
@@ -269,7 +269,7 @@ public class ASecretIsNotTakenAtAllTest
     {
         String[] refusal = new String[1];
 
-        VanessaTool.extraParams("{\"путькфайлурезультатовjunit\":\"C:\\\\elsewhere.xml\"}", //$NON-NLS-1$
+        VanessaTool.extraParams("{\"каталогoutputallureбазовый\":\"C:\\\\elsewhere.xml\"}", //$NON-NLS-1$
             refusal);
 
         assertNotNull("comparing exactly let the same parameter through in another case", //$NON-NLS-1$
@@ -282,7 +282,7 @@ public class ASecretIsNotTakenAtAllTest
         // The merge happens last, so a parameter the caller set through an argument of this tool
         // would be silently overruled - and the answer would still describe the argument.
         for (String key : new String[] {"КаталогФич", "ФайлСценария", //$NON-NLS-1$ //$NON-NLS-2$
-            "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами", //$NON-NLS-1$ //$NON-NLS-2$
+            "ДелатьСкриншотПриВозникновенииОшибки", "ПаузаМеждуШагами", //$NON-NLS-1$ //$NON-NLS-2$
             // Turned off, the run waits in Vanessa's own window until it is killed.
             "ВыполнитьСценарии", //$NON-NLS-1$
             // The passthrough takes no object, so what it can pass here only breaks the block.
