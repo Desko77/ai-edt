@@ -413,7 +413,7 @@ public class EditMetadataTool implements IMcpTool
                 "Plain-text body of a TextDocument or HTMLDocument template - filled on create, replaced by " //$NON-NLS-1$
                 + "set_template_content, returned by get_template_content. Spreadsheets go through mxl_workshop " //$NON-NLS-1$
                 + "and DCS through dcs_workshop.") //$NON-NLS-1$ //$NON-NLS-1$
-            // Wave F: create_route_map parameters (BusinessProcess Flowchart.scheme).
+            // create_route_map parameters (BusinessProcess Flowchart.scheme).
             .stringProperty("points", //$NON-NLS-1$
                 "create_route_map: JSON array of route points, laid out top to bottom. Needs exactly one " //$NON-NLS-1$
                 + "Start and at least one Completion. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$

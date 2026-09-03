@@ -26,6 +26,12 @@ import org.eclipse.jface.preference.IPreferenceStore;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.AllureResultReader;
+import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.InfobaseAddress;
+import ru.aiedt.mcp.server.support.InfobaseIdentity;
+import ru.aiedt.mcp.server.support.MonopolyLock;
+import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -58,8 +64,8 @@ import com.google.gson.JsonObject;
  * <p><b>Tier-1 (synchronous)</b>: the run blocks up to {@code timeoutSeconds};
  * a very long suite should raise the timeout. The Vanessa launch parameters
  * (the {@code /C} command and the {@code VAParams.json} keys) are Vanessa-version
- * sensitive - the full command line and the settings file are always logged so
- * they can be reconciled against the installed Vanessa build.
+ * sensitive - the command line and the key names of the settings file are logged so they can
+ * be reconciled against the installed Vanessa build. Values are not: one may carry a secret.
  */
 public class VanessaTool implements IMcpTool
 {
@@ -85,7 +91,8 @@ public class VanessaTool implements IMcpTool
             + "running infobase and reports which scenario step failed and why (+ failure " //$NON-NLS-1$
             + "screenshots). Complements yaxunit_tests (code from the inside) by driving the UI " //$NON-NLS-1$
             + "from the outside. Pass featurePath (a .feature file or a directory of them) and " //$NON-NLS-1$
-            + "connectionString (the 1C infobase connection string, e.g. File=...; or Srvr=...;Ref=...). " //$NON-NLS-1$
+            + "projectName - the infobase the project is bound to is the one played against, " //$NON-NLS-1$
+            + "or connectionString to name another. " //$NON-NLS-1$
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
             + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
             + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
@@ -108,13 +115,28 @@ public class VanessaTool implements IMcpTool
                     + "step wording is Vanessa's own and differs between its versions, so it is " //$NON-NLS-1$
                     + "yours to give, the same way the vanessaParams names are. Given together " //$NON-NLS-1$
                     + "with featurePath, both are refused.") //$NON-NLS-1$
+            .stringProperty("formToOpen", //$NON-NLS-1$
+                "The form to open and photograph, in the words the opening step expects - a " //$NON-NLS-1$
+                    + "common form's name, a catalog's FQN, whatever the step takes. The scenario " //$NON-NLS-1$
+                    + "is composed from it, so neither featurePath nor scenarioText is passed " //$NON-NLS-1$
+                    + "with it. The snapshot arrives among the run's screenshots.") //$NON-NLS-1$
+            .stringProperty("openStep", //$NON-NLS-1$
+                "The step that opens the form, with {form} where the name goes. Defaults to " //$NON-NLS-1$
+                    + "opening a common form. A list form, an object form and an extension's " //$NON-NLS-1$
+                    + "form are opened by different words, and the words belong to Vanessa and " //$NON-NLS-1$
+                    + "differ between its versions, so pass the one your library uses.") //$NON-NLS-1$
+            .stringProperty("startStep", //$NON-NLS-1$
+                "The step that gets a client to work in. Defaults to launching TestClient or " //$NON-NLS-1$
+                    + "attaching to one already running.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
-                "1C infobase connection string (required), e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
-                    + "'Srvr=\"host\";Ref=\"base\";'. A Pwd is refused: it would reach the " //$NON-NLS-1$
+                "1C infobase connection string, e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
+                    + "'Srvr=\"host\";Ref=\"base\";'. Omitted, the infobase the named project is " //$NON-NLS-1$
+                    + "bound to is used - EDT knows it already. A server infobase has to be named " //$NON-NLS-1$
+                    + "here. A Pwd is refused: it would reach the " //$NON-NLS-1$
                     + "client as a command-line argument, readable by every process on the machine. " //$NON-NLS-1$
                     + "Use an infobase that needs no password, or one that accepts the operating " //$NON-NLS-1$
-                    + "system's authentication. Required to start a run; a call that carries a " //$NON-NLS-1$
-                    + "runKey does not take it.") //$NON-NLS-1$
+                    + "system's authentication. A call that carries a runKey does not take " //$NON-NLS-1$
+                    + "it.") //$NON-NLS-1$
             .booleanProperty("async", //$NON-NLS-1$
                 "Hand back a runKey instead of waiting out the run. Come back with that runKey " //$NON-NLS-1$
                     + "for the result, or with runKey and cancel=true to stop the client.") //$NON-NLS-1$
@@ -136,6 +158,21 @@ public class VanessaTool implements IMcpTool
                     + "working directory.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
                 "Max seconds to wait for the run (default 300, max 3600).") //$NON-NLS-1$
+            .stringProperty("infobaseUser", //$NON-NLS-1$
+                "Name of the 1C user the run signs in as. A base with users defined meets a " //$NON-NLS-1$
+                    + "client that names none with a login window, and the run then waits out " //$NON-NLS-1$
+                    + "its whole deadline. A password cannot be passed here.") //$NON-NLS-1$
+            .booleanProperty("testManager", //$NON-NLS-1$
+                "Start the client as a test manager (default false). The UI-testing types a " //$NON-NLS-1$
+                    + "form-driving scenario needs exist only in a client started this way; " //$NON-NLS-1$
+                    + "without it such a step answers Тип не определен.") //$NON-NLS-1$
+            .booleanProperty("testClient", //$NON-NLS-1$
+                "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
+                    + "Measured on one stand: with the block present Vanessa writes no report " //$NON-NLS-1$
+                    + "at all, for any scenario; without it the same scenarios play.") //$NON-NLS-1$
+            .integerProperty("testClientPort", //$NON-NLS-1$
+                "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
+                    + "run or another EDT already holds it.") //$NON-NLS-1$
             .booleanProperty("screenshots", //$NON-NLS-1$
                 "Capture a screenshot on step failure (default true).") //$NON-NLS-1$
             .booleanProperty("keepOpen", //$NON-NLS-1$
@@ -252,11 +289,35 @@ public class VanessaTool implements IMcpTool
         }
 
         String connectionString = JsonUtils.extractStringArgument(params, "connectionString"); //$NON-NLS-1$
+        String infobaseFrom = null;
+        InfobaseAddress.Address infobaseAddress = null;
         if (connectionString == null || connectionString.trim().isEmpty())
         {
-            return ToolResult.error("connectionString is required (the 1C infobase connection " //$NON-NLS-1$
-                + "string, e.g. File=\"C:\\ib\"; ).").toJson(); //$NON-NLS-1$
+            // The caller has EDT open, and EDT already knows which infobase the project belongs to
+            // - it is the one update_database writes into. Making them type it again is asking for
+            // what the environment holds, and a typed string can name a different infobase.
+            String projectForInfobase = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+            IProject project = projectForInfobase == null || projectForInfobase.trim().isEmpty()
+                ? null : ProjectResolver.resolve(projectForInfobase);
+            InfobaseAddress.Address address = InfobaseAddress.ofProject(project);
+            if (address.found())
+            {
+                connectionString = address.connectionString();
+                infobaseFrom = address.name();
+                infobaseAddress = address;
+            }
         }
+        if (connectionString == null || connectionString.trim().isEmpty())
+        {
+            return ToolResult.error("The infobase is not named. Pass projectName and the " //$NON-NLS-1$
+                + "infobase the project is bound to is used, or connectionString to name one " //$NON-NLS-1$
+                + "directly. A project with no infobase application, or one bound to a server " //$NON-NLS-1$
+                + "infobase, has to be named directly.").toJson(); //$NON-NLS-1$
+        }
+        // Appended to the string, not passed as /N: the test client the start step launches is
+        // given its own PathToInfobase, and a string carries the user into both.
+        connectionString = namingTheUser(connectionString,
+            JsonUtils.extractStringArgument(params, "infobaseUser")); //$NON-NLS-1$
         String secretRefusal = whyASecretCannotBePassed(connectionString);
         if (secretRefusal != null)
         {
@@ -271,12 +332,26 @@ public class VanessaTool implements IMcpTool
         }
         String featurePathArg = JsonUtils.extractStringArgument(params, "featurePath"); //$NON-NLS-1$
         String scenarioText = JsonUtils.extractStringArgument(params, "scenarioText"); //$NON-NLS-1$
+        String formToOpen = JsonUtils.extractStringArgument(params, "formToOpen"); //$NON-NLS-1$
         boolean hasPath = featurePathArg != null && !featurePathArg.trim().isEmpty();
         boolean hasText = scenarioText != null && !scenarioText.trim().isEmpty();
-        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText);
+        boolean hasForm = formToOpen != null && !formToOpen.trim().isEmpty();
+        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText, hasForm);
         if (badlyNamed != null)
         {
             return ToolResult.error(badlyNamed).toJson();
+        }
+        if (hasForm)
+        {
+            String openStep = JsonUtils.extractStringArgument(params, "openStep"); //$NON-NLS-1$
+            String startStep = JsonUtils.extractStringArgument(params, "startStep"); //$NON-NLS-1$
+            String badlyFormed = whyTheFormCannotBeNamed(formToOpen, openStep, startStep);
+            if (badlyFormed != null)
+            {
+                return ToolResult.error(badlyFormed).toJson();
+            }
+            scenarioText = scenarioForForm(formToOpen.trim(), startStep, openStep);
+            hasText = true;
         }
 
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -305,11 +380,31 @@ public class VanessaTool implements IMcpTool
             }
         }
         final String composedScenario = hasText ? scenarioText : null;
+        final InfobaseAddress.Address settledAddress = infobaseAddress;
+        final String settledInfobase = infobaseFrom;
+        final String settledConnection = connectionString;
 
         boolean screenshots = JsonUtils.extractBooleanArgument(params, "screenshots", true); //$NON-NLS-1$
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
         int stepDelay = Math.max(0, JsonUtils.extractIntArgument(params, "stepDelaySeconds", 0)); //$NON-NLS-1$
         int timeoutSec = JsonUtils.extractIntArgument(params, "timeoutSeconds", DEFAULT_TIMEOUT_SEC); //$NON-NLS-1$
+        Integer namedPort = JsonUtils.extractIntegerArgument(params, "testClientPort"); //$NON-NLS-1$
+        if (namedPort == null && params != null && params.containsKey("testClientPort")) //$NON-NLS-1$
+        {
+            return ToolResult.error("testClientPort is not a whole number a port can be: " //$NON-NLS-1$
+                + "a port is 1 to " + HIGHEST_PORT + ". Read as a number it cannot be, the " //$NON-NLS-1$ //$NON-NLS-2$
+                + "run would have started on the default port instead of the one named.").toJson(); //$NON-NLS-1$
+        }
+        final boolean settledWantsManager =
+            JsonUtils.extractBooleanArgument(params, "testManager", false); //$NON-NLS-1$
+        final boolean settledWantsTestClient =
+            JsonUtils.extractBooleanArgument(params, "testClient", false); //$NON-NLS-1$
+        final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
+        String portRefusal = whyThePortCannotBeUsed(settledClientPort);
+        if (portRefusal != null)
+        {
+            return ToolResult.error(portRefusal).toJson();
+        }
         if (timeoutSec <= 0)
         {
             timeoutSec = DEFAULT_TIMEOUT_SEC;
@@ -340,9 +435,10 @@ public class VanessaTool implements IMcpTool
             // No key: the caller is holding the connection and is never handed one, and an async
             // run with these same arguments owns this key. Registering both under it would let a
             // cancel meant for that run destroy this client instead.
-            return play(settledExe, settledEpf, connectionString, settledFeature, composedScenario,
-                screenshots, keepOpen, stepDelay, settledTimeout, extraVaParams, runDirForJob,
-                null);
+            return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
+                screenshots, keepOpen, stepDelay, settledTimeout, settledClientPort,
+                extraVaParams, runDirForJob, null, settledInfobase, settledAddress,
+                settledWantsTestClient, settledWantsManager);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -358,9 +454,10 @@ public class VanessaTool implements IMcpTool
                 return ToolResult.error(alreadyGoing(going)).toJson();
             }
             entry = registry.getOrStart(jobKey,
-                () -> play(settledExe, settledEpf, connectionString, settledFeature,
+                () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, stepDelay, settledTimeout,
-                    extraVaParams, runDirForJob, jobKey));
+                    settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
+                    settledAddress, settledWantsTestClient, settledWantsManager));
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -393,15 +490,24 @@ public class VanessaTool implements IMcpTool
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
      * @param stepDelay the pause between steps, in seconds.
-     * @param timeoutSec how long to wait for the client.
+     * @param timeoutSec how long to wait for the run.
+     * @param clientPort the port the test client listens on.
      * @param extraVaParams what the caller added to the Vanessa document.
      * @param workingDir where to run.
      * @param jobKey the key this run is cancelled by.
+     * @param infobaseName the infobase this resolved from the project, or <code>null</code>
+     *            when the caller named the connection string itself.
+     * @param infobaseAddress the infobase EDT holds, as it was resolved once, or
+     *            <code>null</code> when the caller named the connection string itself.
+     * @param withTestClient whether to name a test client for the start step to launch.
+     * @param asTestManager whether the client is started as a test manager.
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen, int stepDelay,
-        int timeoutSec, JsonObject extraVaParams, File workingDir, String jobKey)
+        int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
+        String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
+        boolean asTestManager)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -452,16 +558,40 @@ public class VanessaTool implements IMcpTool
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
-                keepOpen, stepDelay, extraVaParams);
+                keepOpen, stepDelay, connectionString, clientPort, timeoutSec, withTestClient,
+                extraVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
-            List<String> command = buildCommand(exeFile, connectionString, epfFile, paramsFile);
+            List<String> command =
+                buildCommand(exeFile, connectionString, epfFile, paramsFile, asTestManager);
             // The connectionString may carry Pwd="..." - never log it in the clear.
             Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
                 + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
 
-            ProcessResult pr = runVanessa(command, runDir, timeoutSec, jobKey, clientLaunched);
+            ProcessResult pr;
+            String heldBack = null;
+            // A file infobase admits one owner. While EDT holds it, the client starts and never
+            // connects: the process lives out its whole deadline without one event reaching the
+            // infobase log, and the answer reads as a run that timed out rather than one that
+            // never began. The claim keeps the other thick-client operations out of an infobase
+            // that is standing released.
+            String subject = infobaseAddress == null || infobaseAddress.infobase() == null
+                ? null : InfobaseIdentity.of(infobaseAddress.infobase());
+            try (MonopolyLock.Claim claim = subject == null ? null
+                : MonopolyLock.claim(subject, "vanessa")) //$NON-NLS-1$
+            {
+                if (claim != null && !claim.granted())
+                {
+                    return ToolResult.error(claim.refusal())
+                        .put("failureKind", ErrorTags.BUSY.wire()).toJson(); //$NON-NLS-1$
+                }
+                try (InfobaseAddress.Hold hold = InfobaseAddress.release(infobaseAddress))
+                {
+                    heldBack = hold.why();
+                    pr = runVanessa(command, runDir, timeoutSec, jobKey, clientLaunched);
+                }
+            }
             // Removed here rather than in the finally: every answer below is built before a
             // finally runs, and the paths that need this most are the ones that go wrong.
             leftBehind = removeComposed(composedFile);
@@ -480,27 +610,37 @@ public class VanessaTool implements IMcpTool
             Activator.logInfo("vanessa: exit=" + pr.exitCode + " timedOut=" + pr.timedOut //$NON-NLS-1$ //$NON-NLS-2$
                 + " output:\n" + redactSecrets(pr.output)); //$NON-NLS-1$
 
-            // A kept-open (or slow) run may have written the JUnit report before the process
-            // was killed on timeout - prefer a real report over a bare timeout error.
-            if (!junitFile.isFile())
+            // A kept-open (or slow) run may have written the report before the process was
+            // killed on timeout - prefer a real report over a bare timeout error.
+            File resultDir = junitFile.getAbsoluteFile().getParentFile();
+            boolean vanessaReported = AllureResultReader.resultsIn(resultDir).length > 0;
+            if (!vanessaReported && !junitFile.isFile())
             {
                 if (pr.timedOut)
                 {
                     return ToolResult.error("Vanessa run timed out after " + timeoutSec + "s" //$NON-NLS-1$ //$NON-NLS-2$
                         + (keepOpen ? " (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)." //$NON-NLS-1$
                             : ". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog.") //$NON-NLS-1$
+                        // Named before the deadline is blamed: a client that never got the
+                        // infobase spends the whole deadline and looks exactly like a slow run.
+                        + (heldBack == null ? "" : " " + heldBack + ".") //$NON-NLS-1$ //$NON-NLS-2$
                         + " " + tail(pr.output))
-                        .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
+                        .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
+                        .put("infobaseNotReleased", heldBack).toJson(); //$NON-NLS-1$
                 }
+                String incomplete = whatTheDistributionIsMissing(epfFile);
                 return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
                     + "). The run may not have started (bad connectionString, an unadopted Vanessa " //$NON-NLS-1$
                     + "extension in the infobase, a login window, or Vanessa-version-specific launch " //$NON-NLS-1$
-                    + "parameters - the launched command and VAParams.json are in the EDT .log). " //$NON-NLS-1$
+                    + "parameters - the launched command and the key names of VAParams.json " //$NON-NLS-1$
+                    + "are in the EDT .log). " //$NON-NLS-1$
+                    + (incomplete == null ? "" : incomplete + " ") //$NON-NLS-1$
                     + tail(pr.output))
                     .put("composedScenarioLeftBehind", leftBehind).toJson(); //$NON-NLS-1$
             }
 
-            JUnitRunOutcome results = JUnitXmlReader.parse(junitFile);
+            JUnitRunOutcome results = vanessaReported
+                ? AllureResultReader.parse(resultDir) : JUnitXmlReader.parse(junitFile);
             List<String> shots = collectScreenshots(shotsDir);
             java.util.Map<String, String> pathByName = new java.util.LinkedHashMap<>();
             for (String path : shots)
@@ -523,6 +663,9 @@ public class VanessaTool implements IMcpTool
 
             ToolResult ok = ToolResult.success()
                 .put("operation", NAME) //$NON-NLS-1$
+                // Named when this worked it out from the project rather than being told: a run
+                // against the wrong infobase looks exactly like a run against the right one.
+                .put("infobase", infobaseName) //$NON-NLS-1$
                 .put("passed", results.isPassed()) //$NON-NLS-1$
                 .put("summary", summary) //$NON-NLS-1$
                 .put("total", results.getTotal()) //$NON-NLS-1$
@@ -579,18 +722,204 @@ public class VanessaTool implements IMcpTool
      */
     static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText)
     {
-        if (hasPath && hasText)
+        return whyTheScenarioIsNotNamed(hasPath, hasText, false);
+    }
+
+    /**
+     * Why this call does not say what to play, or <code>null</code> when it does.
+     *
+     * @param hasPath whether a file or directory was named.
+     * @param hasText whether the scenario itself was given.
+     * @param hasForm whether a form to open was named, from which a scenario is composed.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText, boolean hasForm)
+    {
+        int named = (hasPath ? 1 : 0) + (hasText ? 1 : 0) + (hasForm ? 1 : 0);
+        if (named > 1)
         {
-            return "featurePath and scenarioText both name what to play, and only one of them " //$NON-NLS-1$
-                + "can be it. Pass the path to a file that exists, or the scenario text to be " //$NON-NLS-1$
-                + "written for this run."; //$NON-NLS-1$
+            return "featurePath, scenarioText and formToOpen each name what to play, and only " //$NON-NLS-1$
+                + "one of them can be it. Pass the path to a file that exists, the scenario text " //$NON-NLS-1$
+                + "to be written for this run, or the form to open and snapshot."; //$NON-NLS-1$
         }
-        if (!hasPath && !hasText)
+        if (named == 0)
         {
             return "featurePath is required (a .feature file or a directory), or scenarioText " //$NON-NLS-1$
-                + "with the scenario itself."; //$NON-NLS-1$
+                + "with the scenario itself, or formToOpen with the form to open and snapshot."; //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * Why a form cannot be put into a scenario, or <code>null</code> when it can.
+     * <p>
+     * The name goes into a Gherkin step, and a step is one line with the name usually in quotes. A
+     * name carrying a quote or a line break composes a scenario Vanessa reads as something else -
+     * and the run then fails somewhere far from the cause, or worse, succeeds having done the
+     * wrong thing.
+     * </p>
+     *
+     * @param form the form the caller named.
+     * @param openStep the wording, or <code>null</code> for the default.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheFormCannotBeNamed(String form, String openStep)
+    {
+        return whyTheFormCannotBeNamed(form, openStep, null);
+    }
+
+    /**
+     * Why a form cannot be put into a scenario, or <code>null</code> when it can.
+     *
+     * @param form the form the caller named.
+     * @param openStep the wording that opens it, or <code>null</code> for the default.
+     * @param startStep the wording that gets a client, or <code>null</code> for the default.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheFormCannotBeNamed(String form, String openStep, String startStep)
+    {
+        if (startStep != null && (startStep.indexOf('\n') >= 0 || startStep.indexOf('\r') >= 0))
+        {
+            return "startStep is one step and therefore one line."; //$NON-NLS-1$
+        }
+        if (form == null || form.trim().isEmpty())
+        {
+            return "formToOpen is empty. Name the form the opening step expects."; //$NON-NLS-1$
+        }
+        if (form.indexOf('"') >= 0 || form.indexOf('\n') >= 0 || form.indexOf('\r') >= 0)
+        {
+            return "formToOpen carries a quote or a line break, and the name goes into one line " //$NON-NLS-1$
+                + "of a scenario. Pass the name alone, or write the whole scenario in " //$NON-NLS-1$
+                + "scenarioText."; //$NON-NLS-1$
+        }
+        String wording = openStep == null || openStep.trim().isEmpty() ? OPEN_STEP : openStep;
+        if (!wording.contains("{form}")) //$NON-NLS-1$
+        {
+            return "openStep does not say where the form name goes. Put {form} in it, as in " //$NON-NLS-1$
+                + OPEN_STEP + "."; //$NON-NLS-1$
+        }
+        if (wording.indexOf('\n') >= 0 || wording.indexOf('\r') >= 0)
+        {
+            return "openStep is one step and therefore one line."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /** Folders the multi-file distribution loads from beside its own file. */
+    private static final String[] COMPANIONS = { "locales", "lib" }; //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * What a Vanessa distribution is missing beside its own file, or <code>null</code>.
+     * <p>
+     * Vanessa ships two ways. The single-file build carries everything; the ordinary one loads
+     * companion processors from {@code locales} and {@code lib} next to itself and, when they are
+     * not there, opens a modal naming a file nobody asked about and produces no report. The run
+     * then spends its whole time budget waiting on a window, and the answer is a list of guesses -
+     * none of which is the true one.
+     * </p>
+     * <p>
+     * Only said when it is certainly true: a folder that is absent or empty beside a file whose
+     * name does not mark it as the single-file build.
+     * </p>
+     *
+     * @param epf the configured data processor.
+     * @return the sentence to add to a failure, or <code>null</code> when nothing is missing
+     */
+    static String whatTheDistributionIsMissing(File epf)
+    {
+        if (epf == null || epf.getName().toLowerCase().contains("-single")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        File beside = epf.getParentFile();
+        if (beside == null)
+        {
+            return null;
+        }
+        List<String> missing = new ArrayList<>();
+        for (String companion : COMPANIONS)
+        {
+            File folder = new File(beside, companion);
+            String[] inside = folder.list();
+            if (!folder.isDirectory() || inside == null || inside.length == 0)
+            {
+                missing.add(companion);
+            }
+        }
+        if (missing.isEmpty())
+        {
+            return null;
+        }
+        return "This distribution is incomplete: " + String.join(" and ", missing) //$NON-NLS-1$ //$NON-NLS-2$
+            + " beside " + epf.getName() + (missing.size() == 1 ? " is" : " are") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + " missing or empty, and Vanessa loads companion processors from there before it " //$NON-NLS-1$
+            + "runs anything. Point the preference at the single-file build instead."; //$NON-NLS-1$
+    }
+
+    /** How the scenario opens a form when the caller does not say otherwise. */
+    static final String OPEN_STEP = "Я открываю общую форму \"{form}\""; //$NON-NLS-1$
+
+    /** How the scenario gets a client to work in when the caller does not say otherwise. */
+    static final String START_STEP =
+        "Я запускаю сценарий открытия TestClient или подключаю уже существующий"; //$NON-NLS-1$
+
+    /**
+     * A scenario that opens one form and has it photographed.
+     * <p>
+     * The snapshot is not a step. Vanessa takes one before and after the step that follows the
+     * {@code @screenshot} tag, writing them where {@code КаталогOutputСкриншоты} points - which
+     * this tool already sets for every run, and which the report reader already groups by step.
+     * </p>
+     * <p>
+     * Both step wordings are arguments with a default rather than text built into this file. They
+     * belong to Vanessa and differ between its versions and between kinds of form: a list form and
+     * an object form are opened by different words, and one wording nailed down here would fit one
+     * of them. The same reasoning gave {@code vanessaParams} its open shape.
+     * </p>
+     *
+     * @param form what to put where the wording says {@code {form}}.
+     * @param startStep how to get a client, or <code>null</code> for {@link #START_STEP}.
+     * @param openStep how to open the form, or <code>null</code> for {@link #OPEN_STEP}.
+     * @return the scenario text
+     */
+    static String scenarioForForm(String form, String startStep, String openStep)
+    {
+        String opening = openStep == null || openStep.trim().isEmpty() ? OPEN_STEP : openStep;
+        String starting = startStep == null || startStep.trim().isEmpty() ? START_STEP : startStep;
+        return "#language: ru\n\n" //$NON-NLS-1$
+            + "Функционал: Снимок формы\n\n" //$NON-NLS-1$
+            + "Контекст:\n" //$NON-NLS-1$
+            + "    Дано " + starting + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "Сценарий: Снимок формы " + form + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "    @screenshot\n" //$NON-NLS-1$
+            + "    Когда " + opening.replace("{form}", form) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "    И Я закрываю все окна клиентского приложения\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * The connection string with the user named in it.
+     * <p>
+     * In the string rather than as {@code /N}: the test client the start step launches is given
+     * its own {@code PathToInfobase}, and a string carries the user into both clients where the
+     * argument would reach only one.
+     * </p>
+     *
+     * @param connectionString the infobase.
+     * @param user the 1C user, or <code>null</code> when the caller named none.
+     * @return the string, unchanged when there is no user to name
+     */
+    static String namingTheUser(String connectionString, String user)
+    {
+        if (connectionString == null || user == null || user.trim().isEmpty())
+        {
+            return connectionString;
+        }
+        String said = connectionString.trim();
+        if (!said.endsWith(";")) //$NON-NLS-1$
+        {
+            said = said + ";"; //$NON-NLS-1$
+        }
+        return said + "Usr=\"" + user.trim() + "\";"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -645,14 +974,47 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The Vanessa {@code VAParams.json} (Russian keys - Vanessa-version sensitive, logged
-     * verbatim). Points Vanessa at the feature path, asks for a JUnit report and (optional)
-     * failure screenshots, and closes the client when done so the poller detects exit.
+     * The Vanessa {@code VAParams.json} (Russian keys - Vanessa-version sensitive). Points
+     * Vanessa at the feature path, names the test client the start step launches, asks for a
+     * JUnit report and (optional) failure screenshots, and closes the client when done so the
+     * poller detects exit. Only the key names of the result are logged: a value may carry a
+     * secret.
+     *
+     * @param featurePath the scenarios, a file or a directory of them.
+     * @param junitFile where Vanessa writes the report this run is read from.
+     * @param shotsDir where Vanessa writes failure screenshots.
+     * @param screenshots whether to capture one when a step fails.
+     * @param keepOpen whether to leave the client running afterwards.
+     * @param stepDelay the pause between steps, in seconds; zero leaves the key out.
+     * @param connectionString the infobase the test client opens.
+     * @param clientPort the port the test client listens on.
+     * @param clientTimeoutSec the whole budget of the run; the client share of it is taken by
+     *            {@link #clientWaitWithin(int)}.
+     * @param withTestClient whether to name a test client for the start step to launch.
+     * @param extra what the caller added to the Vanessa document, merged last.
+     * @return the document, ready to be written
      */
-    private static String buildVaParams(File featurePath, File junitFile, File shotsDir,
-        boolean screenshots, boolean keepOpen, int stepDelay, JsonObject extra)
+    static String buildVaParams(File featurePath, File junitFile, File shotsDir,
+        boolean screenshots, boolean keepOpen, int stepDelay, String connectionString,
+        int clientPort, int clientTimeoutSec, boolean withTestClient, JsonObject extra)
     {
         JsonObject o = new JsonObject();
+        // Measured on this stand: with the block present Vanessa writes no report at all, for
+        // any scenario, including one whose only step is a three second wait. Without it the
+        // same scenarios play and a failing step is reported by name. It is therefore off
+        // unless the caller asks for it.
+        // The step that starts TestClient has no client to start without this block: the run
+        // answers "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0,
+        // because the UI-testing types exist only once a client runs under the test manager.
+        if (withTestClient)
+        {
+            o.add("TestClient", //$NON-NLS-1$
+                testClient(connectionString, clientPort, clientWaitWithin(clientTimeoutSec)));
+        }
+        // Without this Vanessa opens its own window and waits there. Every run then spends its
+        // whole time budget on a form nobody is looking at, ends killed, and writes no report -
+        // which reads exactly like a scenario that never started.
+        o.addProperty("ВыполнитьСценарии", true); //$NON-NLS-1$
         // A directory of features, or the parent of a single .feature file.
         // getAbsoluteFile() first so getParentFile() is non-null even for a bare filename.
         File dir = featurePath.isDirectory() ? featurePath : featurePath.getAbsoluteFile().getParentFile();
@@ -661,12 +1023,21 @@ public class VanessaTool implements IMcpTool
         {
             o.addProperty("ФайлСценария", featurePath.getAbsolutePath()); //$NON-NLS-1$
         }
-        o.addProperty("СохранятьРезультатыВФорматеJUnit", true); //$NON-NLS-1$
-        o.addProperty("ПутьКФайлуРезультатовJUnit", junitFile.getAbsolutePath()); //$NON-NLS-1$
-        o.addProperty("ДелатьСкриншотПриОшибке", screenshots); //$NON-NLS-1$
-        o.addProperty("КаталогСохраненияСкриншотов", shotsDir.getAbsolutePath()); //$NON-NLS-1$
-        o.addProperty("ЗакрыватьTestClientПослеПрогона", !keepOpen); //$NON-NLS-1$
-        o.addProperty("ВыходИзПриложенияПослеЗапускаСценариев", !keepOpen); //$NON-NLS-1$
+        // Vanessa has no JUnit parameters of its own: its documented keys for a machine
+        // readable result are the Allure pair, and the xml it writes there is what a JUnit
+        // reader consumes. Asked under the names below, it writes nothing and reports nothing,
+        // which reads as a run that produced no result.
+        o.addProperty("ДелатьОтчетВФорматеАллюр", true); //$NON-NLS-1$
+        o.addProperty("КаталогOutputAllureБазовый", //$NON-NLS-1$
+            junitFile.getAbsoluteFile().getParentFile().getAbsolutePath());
+        // The names Vanessa documents. Under any others it writes no screenshots and says
+        // nothing, exactly as it wrote no report while the JUnit names were used.
+        o.addProperty("ДелатьСкриншотПриВозникновенииОшибки", screenshots); //$NON-NLS-1$
+        o.addProperty("КаталогOutputСкриншоты", shotsDir.getAbsolutePath()); //$NON-NLS-1$
+        // The names Vanessa documents. Under any others the run ends when Vanessa itself
+        // decides to, and the test client it started is left behind.
+        o.addProperty("ЗакрытьTestClientПослеЗапускаСценариев", !keepOpen); //$NON-NLS-1$
+        o.addProperty("ЗавершитьРаботуСистемы", !keepOpen); //$NON-NLS-1$
         if (stepDelay > 0)
         {
             o.addProperty("ПаузаМеждуШагами", stepDelay); //$NON-NLS-1$
@@ -679,6 +1050,97 @@ public class VanessaTool implements IMcpTool
             }
         }
         return prettyJson(o);
+    }
+
+    /** The port the test client listens on when the caller names none. */
+    static final int TEST_CLIENT_PORT = 48010;
+
+    /**
+     * The longest the run waits for the test client to answer. A client that has not come up
+     * within this is not coming, and without a ceiling a long suite would spend its whole
+     * budget waiting for one that never will.
+     */
+    static final int TEST_CLIENT_WAIT_CEILING_SEC = 600;
+
+    /**
+     * Why the test client cannot be told to listen on the given port.
+     * <p>
+     * Vanessa writes the number down as it is given, and a client told to listen on a number
+     * that is not a port simply does not listen - the start step then fails for a reason that
+     * names neither the port nor this tool.
+     * </p>
+     *
+     * @param port the port the caller named.
+     * @return the refusal, or <code>null</code> when the port can be used
+     */
+    static String whyThePortCannotBeUsed(int port)
+    {
+        if (port >= 1 && port <= HIGHEST_PORT)
+        {
+            return null;
+        }
+        return "testClientPort is " + port + ", which is not a port: a port is 1 to " //$NON-NLS-1$ //$NON-NLS-2$
+            + HIGHEST_PORT + ". Vanessa writes the number down as given, and a client told to " //$NON-NLS-1$
+            + "listen on it does not listen."; //$NON-NLS-1$
+    }
+
+    /** The highest port a client can be told to listen on. */
+    static final int HIGHEST_PORT = 65535;
+
+    /** The most that is held back for Vanessa to write its report and exit. */
+    private static final int REPORT_RESERVE_CEILING_SEC = 60;
+
+    /** The share of a small budget held back, when a whole minute would be most of it. */
+    private static final int RESERVE_SHARE = 3;
+
+    /**
+     * Seconds Vanessa waits for the test client, out of the run's own budget.
+     * <p>
+     * Kept under the budget so Vanessa reaches its own timeout, writes the report and exits
+     * before this tool kills the process, and under a ceiling so a long suite does not spend
+     * all of its time on a client that is not coming. What is held back is a third of the
+     * budget or a minute, whichever is smaller, so a short run keeps a reserve too.
+     * </p>
+     *
+     * @param budgetSec the whole budget of the run.
+     * @return the seconds to wait for the client
+     */
+    static int clientWaitWithin(int budgetSec)
+    {
+        // A whole minute is most of a small budget, so what is held back is a share of it
+        // until the budget is large enough for the minute to be the smaller of the two.
+        int reserve = Math.min(REPORT_RESERVE_CEILING_SEC,
+            Math.max(1, budgetSec / RESERVE_SHARE));
+        return Math.max(1, Math.min(budgetSec - reserve, TEST_CLIENT_WAIT_CEILING_SEC));
+    }
+
+    /**
+     * The {@code TestClient} block of VAParams: which infobase the client opens, on which port and
+     * as which client type.
+     *
+     * @param connectionString the infobase the test client opens.
+     * @param clientPort the port the client listens on.
+     * @param clientTimeoutSec seconds Vanessa waits for the client to answer. Taken from the
+     *            run's own budget up to {@link #TEST_CLIENT_WAIT_CEILING_SEC}.
+     * @return the block, holding one client
+     */
+    static JsonObject testClient(String connectionString, int clientPort, int clientTimeoutSec)
+    {
+        JsonObject client = new JsonObject();
+        client.addProperty("Name", "AiEdt"); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("PathToInfobase", connectionString); //$NON-NLS-1$
+        client.addProperty("PortTestClient", clientPort); //$NON-NLS-1$
+        // Vanessa spells this key with that capital I. Correcting it leaves the key unread.
+        client.addProperty("AddItionalParameters", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("ClientType", "Thin"); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("ComputerName", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
+        com.google.gson.JsonArray clients = new com.google.gson.JsonArray();
+        clients.add(client);
+        JsonObject block = new JsonObject();
+        block.addProperty("runtestclientwithmaximizedwindow", true); //$NON-NLS-1$
+        block.addProperty("testclienttimeout", clientTimeoutSec); //$NON-NLS-1$
+        block.add("datatestclients", clients); //$NON-NLS-1$
+        return block;
     }
 
     /**
@@ -695,13 +1157,20 @@ public class VanessaTool implements IMcpTool
      * </p>
      */
     private static final java.util.Set<String> OURS_TO_SET = lowerCased(
-        "СохранятьРезультатыВФорматеJUnit", "ПутьКФайлуРезультатовJUnit", //$NON-NLS-1$ //$NON-NLS-2$
-        "КаталогСохраненияСкриншотов", "ЗакрыватьTestClientПослеПрогона", //$NON-NLS-1$ //$NON-NLS-2$
-        "ВыходИзПриложенияПослеЗапускаСценариев", //$NON-NLS-1$
+        "ДелатьОтчетВФорматеАллюр", "КаталогOutputAllureБазовый", //$NON-NLS-1$ //$NON-NLS-2$
+        "ЗакрытьTestClientПослеЗапускаСценариев", "ЗавершитьРаботуСистемы", //$NON-NLS-1$ //$NON-NLS-2$
+        // Turned off, Vanessa opens its window and waits there: the run spends its whole budget on
+        // a form nobody is looking at and writes no report.
+        "ВыполнитьСценарии", //$NON-NLS-1$
+        // The passthrough takes values and lists of them, so it cannot carry the object this block
+        // needs; what it can carry is a value that replaces the block with something the start step
+        // cannot use. Its port and its deadline are arguments of this tool instead.
+        "TestClient", //$NON-NLS-1$
         // These come from arguments of this tool. Letting the passthrough set them too would mean
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
-        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриОшибке", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "КаталогФич", "ФайлСценария", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "КаталогOutputСкриншоты", "ПаузаМеждуШагами"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.
@@ -809,9 +1278,9 @@ public class VanessaTool implements IMcpTool
             // set to Turkish, and a protected name stops matching.
             if (OURS_TO_SET.contains(key.toLowerCase(java.util.Locale.ROOT)))
             {
-                refusal[0] = "'" + key + "' is set by this tool, because it reads the run's " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "result back from where it points. Moving it would leave the run reporting " //$NON-NLS-1$
-                    + "success while reading nothing."; //$NON-NLS-1$
+                refusal[0] = "'" + key + "' is set by this tool, from its own " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "arguments. Passing it here as well would leave the answer describing a " //$NON-NLS-1$
+                    + "run that did not happen the way it says."; //$NON-NLS-1$
                 return null;
             }
             if (!isAValueOrAListOfThem(given.get(key)))
@@ -883,7 +1352,7 @@ public class VanessaTool implements IMcpTool
     }
 
     private static List<String> buildCommand(File exe, String connectionString, File epf,
-        File paramsFile)
+        File paramsFile, boolean asTestManager)
     {
         List<String> c = new ArrayList<>();
         c.add(exe.getAbsolutePath());
@@ -891,6 +1360,12 @@ public class VanessaTool implements IMcpTool
         c.add("/IBConnectionString"); //$NON-NLS-1$
         c.add(connectionString);
         c.add("/DisableStartupMessages"); //$NON-NLS-1$
+        if (asTestManager)
+        {
+            // The UI-testing types exist only in a client started this way. Without it a step
+            // that drives a form answers "Тип не определен" and the scenario stops there.
+            c.add("/TESTMANAGER"); //$NON-NLS-1$
+        }
         c.add("/Execute"); //$NON-NLS-1$
         c.add(epf.getAbsolutePath());
         c.add("/C"); //$NON-NLS-1$
@@ -1292,6 +1767,10 @@ public class VanessaTool implements IMcpTool
         }
         finally
         {
+            // Whatever ended this - a finish, a deadline, a cancel, an interrupt - the client is
+            // gone before the caller takes the infobase back. EDT reconnecting while a client
+            // still has the file open is the state the release exists to avoid.
+            stopAndAwait(proc);
             // However this ended - finished, timed out, or cancelled from another call - the
             // handle goes. Leaving it would let a later cancel destroy a process that is no longer
             // this run, because the operating system gives the number back.
@@ -1299,6 +1778,73 @@ public class VanessaTool implements IMcpTool
             {
                 RUNNING.remove(runKey, proc);
             }
+        }
+    }
+
+    /**
+     * The result file of a run: the one this asked for, or the xml Vanessa wrote beside it.
+     * <p>
+     * Vanessa names the files it writes itself, so the run directory is searched when the
+     * expected name is not there. The newest is taken: a directory of this run holds only
+     * what this run put in it.
+     * </p>
+     *
+     * @param asked the file this run asked Vanessa for.
+     * @return that file when it exists, otherwise the newest xml beside it, otherwise the
+     *         file that was asked for
+     */
+    static File theResultOf(File asked)
+    {
+        if (asked == null || asked.isFile())
+        {
+            return asked;
+        }
+        File dir = asked.getAbsoluteFile().getParentFile();
+        File[] xml = dir == null ? null
+            : dir.listFiles((d, name) -> name.toLowerCase(Locale.ROOT).endsWith(".xml")); //$NON-NLS-1$
+        if (xml == null || xml.length == 0)
+        {
+            return asked;
+        }
+        File newest = xml[0];
+        for (File one : xml)
+        {
+            if (one.lastModified() > newest.lastModified())
+            {
+                newest = one;
+            }
+        }
+        return newest;
+    }
+
+    /** Seconds to wait for a stopped client to actually be gone. */
+    private static final int PROCESS_DEATH_WAIT_SEC = 20;
+
+    /**
+     * Stops the client and waits for it to be gone.
+     * <p>
+     * {@code destroyForcibly} only asks. The process is still there until the operating system
+     * says otherwise, and a caller that takes the infobase back on the strength of the ask alone
+     * hands EDT a file another process still has open.
+     * </p>
+     *
+     * @param proc the client.
+     */
+    private static void stopAndAwait(Process proc)
+    {
+        if (!proc.isAlive())
+        {
+            return;
+        }
+        proc.descendants().forEach(ProcessHandle::destroyForcibly);
+        proc.destroyForcibly();
+        try
+        {
+            proc.waitFor(PROCESS_DEATH_WAIT_SEC, TimeUnit.SECONDS);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
         }
     }
 
