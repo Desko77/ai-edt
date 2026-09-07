@@ -105,13 +105,13 @@ def target_release():
     return found.group(1) if found else None
 
 
-def fetch(url, cache_path, attempts=3):
+def fetch(url, cache_path, attempts=3, refresh=False):
     """Downloads once and reuses. Bundles are large and a census is run repeatedly.
 
     Retried, because the answer this asks for is whether a type exists, and a refused download
     answers a different question. The last failure is raised so the caller can say which.
     """
-    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+    if not refresh and os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
         return cache_path
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     last = None
@@ -135,8 +135,12 @@ def package_index(release, cache_dir):
     Read from the p2 content metadata rather than by guessing bundle names from package names: the
     two diverge often enough that guessing would report a package missing when it has merely moved.
     """
+    # Read fresh every run, never from the cache. A republished release keeps its version and
+    # changes the qualifier, so a cached index asks for jar names the site no longer carries and
+    # every type in them reads as removed. Measured 07.09: an index from July against jars from
+    # September, five bundles answering 404. The index is a fraction of one bundle.
     content = fetch(SITE % release + "content.jar",
-                    os.path.join(cache_dir, release, "content.jar"))
+                    os.path.join(cache_dir, release, "content.jar"), refresh=True)
     with zipfile.ZipFile(content) as archive:
         xml = archive.read("content.xml").decode("utf-8", "replace")
 
