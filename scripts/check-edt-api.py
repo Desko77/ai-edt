@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -104,16 +105,28 @@ def target_release():
     return found.group(1) if found else None
 
 
-def fetch(url, cache_path):
-    """Downloads once and reuses. Bundles are large and a census is run repeatedly."""
+def fetch(url, cache_path, attempts=3):
+    """Downloads once and reuses. Bundles are large and a census is run repeatedly.
+
+    Retried, because the answer this asks for is whether a type exists, and a refused download
+    answers a different question. The last failure is raised so the caller can say which.
+    """
     if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
         return cache_path
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    with urllib.request.urlopen(url, timeout=120) as response:
-        data = response.read()
-    with open(cache_path, "wb") as handle:
-        handle.write(data)
-    return cache_path
+    last = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                data = response.read()
+            with open(cache_path, "wb") as handle:
+                handle.write(data)
+            return cache_path
+        except Exception as refused:
+            last = refused
+            if attempt + 1 < attempts:
+                time.sleep(2 * (attempt + 1))
+    raise last
 
 
 def package_index(release, cache_dir):
@@ -177,13 +190,15 @@ def candidate_bundles(fqn, index, bundles):
     return seen
 
 
-def bundle_jar(release, bundle, cache_dir):
+def bundle_jar(release, bundle, cache_dir, refusals=None):
     name, version = bundle
     filename = "%s_%s.jar" % (name, version)
     try:
         return fetch(SITE % release + "plugins/" + filename,
                      os.path.join(cache_dir, release, "plugins", filename))
-    except Exception:
+    except Exception as refused:
+        if refusals is not None:
+            refusals[bundle] = "%s: %s" % (type(refused).__name__, refused)
         return None
 
 
@@ -198,10 +213,12 @@ class Release:
         self.located = {}
         self.declared = {}
         self.missing_bundles = set()
+        self.unreachable = set()
+        self.refusals = {}
 
     def download(self, bundle):
         if bundle not in self.jars:
-            self.jars[bundle] = bundle_jar(self.name, bundle, self.cache_dir)
+            self.jars[bundle] = bundle_jar(self.name, bundle, self.cache_dir, self.refusals)
             if self.jars[bundle] is None:
                 self.missing_bundles.add(bundle)
         return self.jars[bundle]
@@ -217,14 +234,18 @@ class Release:
             return self.located[fqn]
         self.located[fqn] = None
         entry = fqn.replace(".", "/") + ".class"
+        blocked = False
         for bundle in candidate_bundles(fqn, self.index, self.bundles):
             jar = self.download(bundle)
             if jar is None:
+                blocked = True
                 continue
             with zipfile.ZipFile(jar) as archive:
                 if entry in archive.namelist():
                     self.located[fqn] = jar
                     break
+        if self.located[fqn] is None and blocked:
+            self.unreachable.add(fqn)
         return self.located[fqn]
 
     def has_type(self, fqn):
@@ -520,9 +541,11 @@ def check_release(release, types, members, entries, cache_dir):
 
     for fqn in sorted(types):
         if not target.has_type(fqn):
+            if fqn in target.unreachable:
+                continue
             findings.append(("calls", fqn, "", "type not found"))
     unjudged = 0
-    absent_types = {f[1] for f in findings}
+    absent_types = {f[1] for f in findings} | target.unreachable
     for fqn, member in sorted(members):
         if fqn in absent_types:
             continue
@@ -538,6 +561,8 @@ def check_release(release, types, members, entries, cache_dir):
             # Not a class; nothing in a jar answers for it. Counted, never judged.
             continue
         if not target.has_type(fqn):
+            if fqn in target.unreachable:
+                continue
             if kind == "probe":
                 absent_probes.append(fqn)
             else:
@@ -625,7 +650,15 @@ def main():
         target, findings, unjudged, absent_probes = check_release(
             release, types, members, entries, args.cache)
         if target.missing_bundles:
-            log("  %s: %d bundles could not be downloaded" % (release, len(target.missing_bundles)))
+            failed = True
+            log("  %s: %d bundle(s) could not be downloaded - %d type(s) could NOT be checked "
+                "against this release" % (release, len(target.missing_bundles),
+                                          len(target.unreachable)))
+            for bundle in sorted(target.missing_bundles):
+                log("    unreachable: %s_%s.jar - %s"
+                    % (bundle[0], bundle[1], target.refusals.get(bundle, "no reason recorded")))
+            for fqn in sorted(target.unreachable):
+                log("    unchecked: %s" % fqn)
         if findings:
             failed = True
             log("  %s: %d references do not resolve" % (release, len(findings)))
