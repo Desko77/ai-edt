@@ -1,0 +1,55 @@
+name: Issue to Telegram
+
+# Sends a message when an issue is opened or reopened. Without both secrets the job does nothing
+# and stays green, so a fork or a clone that has neither is not failed by every issue.
+#
+# workflow_dispatch sends a test line instead, so the token and the chat id can be checked from
+# the Actions tab without waiting for someone to file an issue.
+
+on:
+  issues:
+    types: [opened, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Desko77/ai-edt' }}
+
+    steps:
+      - name: Send
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TITLE: ${{ github.event.issue.title }}
+          NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          URL: ${{ github.event.issue.html_url }}
+          ACTION: ${{ github.event.action }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$CHAT" ]; then
+            echo "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set - nothing sent."
+            exit 0
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            HEAD_LINE="AI-EDT: delivery test"
+            TITLE="Run started by ${GITHUB_ACTOR}"
+            URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          else
+            HEAD_LINE="AI-EDT: issue #${NUMBER} ${ACTION} by ${AUTHOR}"
+          fi
+          # The title reaches Telegram through the environment and --data-urlencode, so one
+          # carrying quotes, newlines or markup is sent as text rather than read as request.
+          TEXT=$(printf '%s\n%s\n%s' "$HEAD_LINE" "$TITLE" "$URL")
+          curl --silent --show-error --fail \
+            "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=${TEXT}" \
+            --output /dev/null
+          echo "Sent."
