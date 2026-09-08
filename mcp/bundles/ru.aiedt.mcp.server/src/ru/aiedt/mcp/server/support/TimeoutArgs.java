@@ -71,6 +71,14 @@ public final class TimeoutArgs
         {
             return Integer.valueOf((int) Math.round(millis.intValue() / 1000.0));
         }
+        Integer waiting = JsonUtils.extractIntegerArgument(params, "waitSeconds"); //$NON-NLS-1$
+        if (waiting != null)
+        {
+            // The name a caller coming back for a pending run reaches for, and the name vanessa
+            // already answers to. Read here as well, because a caller asked for 600 seconds on a
+            // tool that did not know the word and was answered after 30 without being told why.
+            return waiting;
+        }
         return JsonUtils.extractIntegerArgument(params, "timeout"); //$NON-NLS-1$
     }
 }

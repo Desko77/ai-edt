@@ -114,20 +114,32 @@ public class ModuleSourceReader
                 + "'Documents/DocName/ObjectModule.bsl'"; //$NON-NLS-1$
         }
 
-        List<String> lines;
-        try
+        // What an open editor holds, when it holds something the file does not. A read that
+        // answered from the file would describe a state the user is no longer looking at, and the
+        // next write would be made against it.
+        List<String> lines = ru.aiedt.mcp.server.support.EditorBuffer.unsavedLines(file);
+        boolean fromEditor = lines != null;
+        if (!fromEditor)
         {
-            lines = BslModuleAccess.readFileLines(file);
-        }
-        catch (Exception e)
-        {
-            return "Error: could not read file: " + e.getMessage(); //$NON-NLS-1$
+            try
+            {
+                lines = BslModuleAccess.readFileLines(file);
+            }
+            catch (Exception e)
+            {
+                return "Error: could not read file: " + e.getMessage(); //$NON-NLS-1$
+            }
         }
 
+        String unsavedNote = fromEditor
+            ? "\n\n**Unsaved:** this is what the open editor holds; the file on disk still has the "
+                + "previous text." //$NON-NLS-1$
+            : ""; //$NON-NLS-1$
         int total = lines.size();
         if (total == 0)
         {
-            return "## " + modulePath + "\n\n**Lines:** 0 (file is empty)\n\n```bsl\n```\n"; //$NON-NLS-1$ //$NON-NLS-2$
+            return "## " + modulePath + "\n\n**Lines:** 0 (file is empty)" + unsavedNote //$NON-NLS-1$ //$NON-NLS-2$
+                + "\n\n```bsl\n```\n"; //$NON-NLS-1$
         }
 
         int from = 1;
@@ -155,6 +167,7 @@ public class ModuleSourceReader
         {
             builder.append(" (truncated to the 5000-line cap)"); //$NON-NLS-1$
         }
+        builder.append(unsavedNote);
         builder.append("\n\n```bsl\n"); //$NON-NLS-1$
         for (int i = from - 1; i < to; i++)
         {
