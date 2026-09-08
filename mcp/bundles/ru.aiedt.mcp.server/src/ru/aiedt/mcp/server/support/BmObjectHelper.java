@@ -1063,7 +1063,7 @@ public final class BmObjectHelper
             try
             {
                 Class<?> paramType = m.getParameterTypes()[0];
-                Object converted = coerceValue(value, paramType);
+                Object converted = coerceValue(obj, value, paramType);
                 if (converted == null && paramType.isPrimitive())
                 {
                     // A primitive has no null. Passing one reaches the JDK as
@@ -1152,10 +1152,10 @@ public final class BmObjectHelper
                 @SuppressWarnings("unchecked")
                 org.eclipse.emf.common.util.EMap<String, String> emap =
                     (org.eclipse.emf.common.util.EMap<String, String>) emapObj;
-                // Default to "ru": the configuration default language is not
-                // reachable here, and RU covers the common case (consistent with
-                // applyAttributeSynonym / createLocalString).
-                emap.put("ru", value == null ? "" : value.toString()); //$NON-NLS-1$ //$NON-NLS-2$
+                // The configuration's own default language. Written under a language the
+                // configuration does not declare, a synonym is stored where nothing reads it and
+                // the object shows an empty synonym while the write reported success.
+                emap.put(DefaultLanguage.codeFor(obj), value == null ? "" : value.toString()); //$NON-NLS-1$
                 return null;
             }
         }
@@ -1176,8 +1176,14 @@ public final class BmObjectHelper
     /**
      * Best-effort coercion from a String parameter value to the EMF setter's
      * expected primitive / boxed type. Other types are passed through.
+     *
+     * @param owner the object being written, which names the configuration whose default language
+     *            a localized string is stored under; may be <code>null</code>.
+     * @param value what the caller gave.
+     * @param targetType what the setter takes.
+     * @return the coerced value, or the value unchanged
      */
-    private static Object coerceValue(Object value, Class<?> targetType)
+    private static Object coerceValue(EObject owner, Object value, Class<?> targetType)
     {
         if (value == null || targetType.isInstance(value))
         {
@@ -1270,7 +1276,7 @@ public final class BmObjectHelper
         // the reflective setter only accepts LocalString, never a plain String.
         if (isLocalStringType(targetType))
         {
-            Object localString = createLocalString(s, "ru"); //$NON-NLS-1$
+            Object localString = createLocalString(s, DefaultLanguage.codeFor(owner));
             if (localString != null)
             {
                 return localString;
@@ -1403,7 +1409,8 @@ public final class BmObjectHelper
             }
             @SuppressWarnings("unchecked")
             Map<Object, Object> contentMap = (Map<Object, Object>) content;
-            contentMap.put(lang != null && !lang.isEmpty() ? lang : "ru", text); //$NON-NLS-1$
+            contentMap.put(lang != null && !lang.isEmpty() ? lang : DefaultLanguage.FALLBACK,
+                text);
             return localString;
         }
         catch (Exception ignored)

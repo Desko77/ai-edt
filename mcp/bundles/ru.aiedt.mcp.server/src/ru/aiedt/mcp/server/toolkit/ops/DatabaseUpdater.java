@@ -137,7 +137,9 @@ public class DatabaseUpdater implements IMcpTool
                     + "same runKey to continue waiting. Fast / incremental updates come back synchronously.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "Resumes a Pending update that was already issued, using its runKey instead of kicking off a new run " //$NON-NLS-1$
-                    + "(identical params also reproduce the same runKey). All other params are ignored once " //$NON-NLS-1$
+                    + "(identical params also reproduce the same runKey). How long this call waits before " //$NON-NLS-1$
+                    + "answering Pending again is timeoutSeconds, accepted as waitSeconds too. " //$NON-NLS-1$
+                    + "All other params are ignored once " //$NON-NLS-1$
                     + "runKey is supplied. A fresh call without runKey always executes again - it never returns a stale " //$NON-NLS-1$
                     + "cached result.") //$NON-NLS-1$
             .booleanProperty("cancel", //$NON-NLS-1$

@@ -93,10 +93,6 @@ public class ValidateForExportTool implements IMcpTool
     private static final Pattern FORM_GROUP_AUTO =
         Pattern.compile("<(group|representation)>Auto</\\1>"); //$NON-NLS-1$
 
-    /** A table's {@code <rowSelectionMode>} set to Auto. The tag exists only on a table. */
-    private static final Pattern FORM_ROW_SELECTION_AUTO =
-        Pattern.compile("<rowSelectionMode>Auto</rowSelectionMode>"); //$NON-NLS-1$
-
     /** A leaf FormField item block - scopes the check-box detection to one field. */
     private static final Pattern FORM_FIELD_BLOCK =
         Pattern.compile("<items xsi:type=\"form:FormField\">(.*?)</items>", Pattern.DOTALL); //$NON-NLS-1$
@@ -564,14 +560,11 @@ public class ValidateForExportTool implements IMcpTool
             }
         }
 
-        Matcher rs = FORM_ROW_SELECTION_AUTO.matcher(content);
-        while (rs.find())
-        {
-            add(findings, checkFilterLower, relPath, fqn,
-                "form-auto-value-rejected-by-infobase", "ERROR", lineOf(content, rs.start()), //$NON-NLS-1$ //$NON-NLS-2$
-                "table <rowSelectionMode> is Auto, which the infobase XDTO schema does not " //$NON-NLS-1$
-                + "accept - the import fails on this property. Use Row or Cell."); //$NON-NLS-1$
-        }
+        // rowSelectionMode is NOT checked. Measured on a working stand 07.09: the configuration
+        // loaded in that infobase carries <rowSelectionMode>Auto</rowSelectionMode> in 93 form
+        // files, and an update of the same infobase from EDT went through. The value the schema
+        // refuses is therefore not this one, and blocking on it stopped an update over forms the
+        // caller does not own - 308 findings, all in adopted vendor forms.
 
         // CheckBoxField bound to a String/Date form attribute. A check box needs a Boolean
         // (a Number 0/1 is also valid, so Number is NOT flagged). Resolved within this .form:

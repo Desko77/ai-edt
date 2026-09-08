@@ -1729,22 +1729,7 @@ public class EditMetadataTool implements IMcpTool
      */
     static String defaultLanguageCode(IProject project)
     {
-        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
-        Configuration config = cp != null ? cp.getConfiguration(project) : null;
-        if (config != null && config.getDefaultLanguage() != null)
-        {
-            String code = config.getDefaultLanguage().getLanguageCode();
-            if (code != null && !code.isEmpty())
-            {
-                return code;
-            }
-            String name = config.getDefaultLanguage().getName();
-            if (name != null && !name.isEmpty())
-            {
-                return name;
-            }
-        }
-        return "ru"; //$NON-NLS-1$
+        return ru.aiedt.mcp.server.support.DefaultLanguage.codeFor(project);
     }
 
     static SynonymResult applyMdObjectSynonym(MdObject mdObject, String explicitSynonym,

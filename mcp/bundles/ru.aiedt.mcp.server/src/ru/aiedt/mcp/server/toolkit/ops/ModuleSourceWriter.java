@@ -311,6 +311,17 @@ public class ModuleSourceWriter implements IMcpTool
         // --- step 6: resolve file + existence rules ---
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
         boolean fileExists = file.exists();
+        // Refused before anything is written: setContents replaces the file while an editor still
+        // holds a different text, and whichever side saves last destroys the other in silence. The
+        // caller is told which file and what to do, rather than being given a success that costs
+        // the user their unsaved work.
+        if (fileExists && ru.aiedt.mcp.server.support.EditorBuffer.hasUnsavedChanges(file))
+        {
+            return "Error: src/" + modulePath + " is open in an editor with unsaved changes. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Writing it now would overwrite them, and saving the editor afterwards would " //$NON-NLS-1$
+                + "overwrite this write. Save or revert the editor first. What the editor holds " //$NON-NLS-1$
+                + "is what read_module_source returns."; //$NON-NLS-1$
+        }
         if (!fileExists && !MODE_REPLACE.equals(mode) && !MODE_APPEND.equals(mode))
         {
             return "Error: no module file exists at src/" + modulePath + ". Only the 'replace' and 'append' " //$NON-NLS-1$ //$NON-NLS-2$

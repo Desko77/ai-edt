@@ -1283,6 +1283,17 @@ public class VanessaTool implements IMcpTool
                     + "run that did not happen the way it says."; //$NON-NLS-1$
                 return null;
             }
+            if (readsLikeASecret(key))
+            {
+                // The refusal on a password covered the connection string and stopped there, while
+                // everything here is written into VAParams.json on disk and lives as long as the
+                // run directory does. A value cannot be told from a secret by looking at it, so
+                // the name is what is asked - the same rule the connection string is held to.
+                refusal[0] = "'" + key + "' reads like a password, and vanessaParams is written " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "to VAParams.json on disk. Use an infobase that needs no password, or one " //$NON-NLS-1$
+                    + "that accepts the operating system's authentication."; //$NON-NLS-1$
+                return null;
+            }
             if (!isAValueOrAListOfThem(given.get(key)))
             {
                 // Vanessa reads its parameters as values, so anything else arrives as a shape it
@@ -1295,6 +1306,28 @@ public class VanessaTool implements IMcpTool
             }
         }
         return given;
+    }
+
+    /**
+     * Whether a parameter name reads like a password.
+     * <p>
+     * Asked of the name and not of the value: a secret looks like any other text, and a rule that
+     * guessed from values would refuse ordinary parameters while letting a plainly named one
+     * through.
+     * </p>
+     *
+     * @param name the parameter name.
+     * @return true when the name reads like one that carries a secret
+     */
+    private static boolean readsLikeASecret(String name)
+    {
+        if (name == null)
+        {
+            return false;
+        }
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return SECRET_FIELDS.contains(lower) || lower.contains("pwd") //$NON-NLS-1$
+            || lower.contains("pass") || lower.contains("пароль"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -1460,7 +1493,14 @@ public class VanessaTool implements IMcpTool
         why.append("started. Wait for it to finish"); //$NON-NLS-1$
         if (going.isEmpty())
         {
-            why.append(", or stop it with its runKey and cancel=true."); //$NON-NLS-1$
+            // No key to name: the run holding the slot either finished between the check and this
+            // message, or is a synchronous call that was never handed one. cancel takes a runKey
+            // and nothing else, so advising it here would send the caller after a key that does
+            // not exist.
+            why.append(". The run holding the slot carries no runKey - it was started " //$NON-NLS-1$
+                + "synchronously, or it finished while this answer was being written - so " //$NON-NLS-1$
+                + "cancel cannot address it. Try again; a synchronous run ends with its " //$NON-NLS-1$
+                + "client."); //$NON-NLS-1$
             return why.toString();
         }
         why.append(", or stop it with cancel=true and runKey="); //$NON-NLS-1$
