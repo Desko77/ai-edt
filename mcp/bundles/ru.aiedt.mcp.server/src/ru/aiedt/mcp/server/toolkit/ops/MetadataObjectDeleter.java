@@ -17,6 +17,9 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.Path;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
@@ -200,7 +203,7 @@ public class MetadataObjectDeleter implements IMcpTool
             return ToolResult.error("Could not build the delete refactoring for: " + objectFqn).toJson(); //$NON-NLS-1$
         }
 
-        return confirm ? apply(objectFqn, refactoring) : preview(objectFqn, refactoring);
+        return confirm ? apply(project, objectFqn, refactoring) : preview(objectFqn, refactoring);
     }
 
     /**
@@ -296,6 +299,48 @@ public class MetadataObjectDeleter implements IMcpTool
     }
 
     /**
+     * The object's directory when the delete left it behind, or <code>null</code> when it is gone.
+     * <p>
+     * Only a top-level object is asked about: a nested one - a form, a template - lives inside its
+     * owner's directory, which is not going anywhere and must not be reported as a leftover.
+     * </p>
+     *
+     * @param project the project.
+     * @param objectFqn the object that was deleted.
+     * @return the workspace-relative path still on disk, or <code>null</code>
+     */
+    private static String whatIsLeftOnDisk(IProject project, String objectFqn)
+    {
+        if (project == null || objectFqn == null)
+        {
+            return null;
+        }
+        String[] parts = objectFqn.split("\\."); //$NON-NLS-1$
+        if (parts.length != 2)
+        {
+            return null;
+        }
+        String directory = MetadataTypeCatalog.getDirectoryName(parts[0]);
+        if (directory == null)
+        {
+            return null;
+        }
+        try
+        {
+            project.refreshLocal(IResource.DEPTH_INFINITE, null);
+        }
+        catch (CoreException stale)
+        {
+            // The workspace could not be refreshed, so what it believes about the disk is what
+            // there is to go on. Said out loud rather than treated as "gone".
+            Activator.logDebug("refresh before the leftover check failed: " + stale); //$NON-NLS-1$
+        }
+        org.eclipse.core.resources.IFolder folder =
+            project.getFolder(new Path("src").append(directory).append(parts[1])); //$NON-NLS-1$
+        return folder.exists() ? folder.getFullPath().toString() : null;
+    }
+
+    /**
      * Applies the deletion. The one failure worth translating is EDT's dangling-inverse-reference bug:
      * a referencer that was already deleted leaves a stale entry in the BM reference index, and EDT's
      * delete throws a {@code NullPointerException} on a null EMF proxy when it walks into it. That entry
@@ -306,15 +351,29 @@ public class MetadataObjectDeleter implements IMcpTool
      * @param refactoring the prepared delete refactoring
      * @return a JSON success body, or a JSON error
      */
-    private String apply(String objectFqn, IRefactoring refactoring)
+    private String apply(IProject project, String objectFqn, IRefactoring refactoring)
     {
         try
         {
             refactoring.perform();
-            return ToolResult.success()
+            // Asked of the disk, not of the call that returned. The refactoring reported success
+            // while the object's directory stayed where it was, so the answer said the object was
+            // gone and its files were still there for the next export to pick up.
+            String leftOver = whatIsLeftOnDisk(project, objectFqn);
+            ToolResult done = ToolResult.success()
                 .put("action", "executed") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("objectFqn", objectFqn) //$NON-NLS-1$
-                .put("message", "The delete refactoring finished successfully.") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("objectFqn", objectFqn); //$NON-NLS-1$
+            if (leftOver == null)
+            {
+                return done
+                    .put("message", "The delete refactoring finished and the object's files are gone.") //$NON-NLS-1$ //$NON-NLS-2$
+                    .toJson();
+            }
+            return done
+                .put("filesLeftOnDisk", leftOver) //$NON-NLS-1$
+                .put("message", "The delete refactoring finished, but the object's directory is " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "still on disk. Whatever holds it has to be closed before it can go; until " //$NON-NLS-1$
+                    + "then an export writes it back into the configuration.") //$NON-NLS-1$
                 .toJson();
         }
         catch (Exception e)

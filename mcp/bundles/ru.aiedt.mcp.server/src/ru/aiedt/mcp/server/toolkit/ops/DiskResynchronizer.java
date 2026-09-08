@@ -175,6 +175,19 @@ public class DiskResynchronizer implements IMcpTool
                     + "in them by hand is gone: this operation exports the model to disk and " //$NON-NLS-1$
                     + "never reads disk into the model."); //$NON-NLS-1$
             }
+            else
+            {
+                // Said out loud, because this is the answer that reads as a success and is not
+                // one. EDT exports what the model holds as changed; over a model it considers
+                // clean it writes nothing at all - including when the file this was called to
+                // restore is missing from the directory.
+                tool.put("wroteNothing", true) //$NON-NLS-1$
+                    .put("wroteNothingHint", "No file was written. EDT exports what the model " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "holds as CHANGED, and over a model it considers clean it writes " //$NON-NLS-1$
+                        + "nothing - a file missing from the directory does not make the model " //$NON-NLS-1$
+                        + "dirty and is therefore not restored by this. Change the object and " //$NON-NLS-1$
+                        + "call again, or take the file from version control."); //$NON-NLS-1$
+            }
         }
         if (r.syncFlushPending)
         {
