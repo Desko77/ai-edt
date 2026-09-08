@@ -175,18 +175,21 @@ public class DiskResynchronizer implements IMcpTool
                     + "in them by hand is gone: this operation exports the model to disk and " //$NON-NLS-1$
                     + "never reads disk into the model."); //$NON-NLS-1$
             }
-            else
+            else if (unplaced.isEmpty())
             {
-                // Said out loud, because this is the answer that reads as a success and is not
-                // one. EDT exports what the model holds as changed; over a model it considers
-                // clean it writes nothing at all - including when the file this was called to
-                // restore is missing from the directory.
-                tool.put("wroteNothing", true) //$NON-NLS-1$
-                    .put("wroteNothingHint", "No file was written. EDT exports what the model " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "holds as CHANGED, and over a model it considers clean it writes " //$NON-NLS-1$
-                        + "nothing - a file missing from the directory does not make the model " //$NON-NLS-1$
-                        + "dirty and is therefore not restored by this. Change the object and " //$NON-NLS-1$
-                        + "call again, or take the file from version control."); //$NON-NLS-1$
+                // What was observed, not what it implies: the comparison sees CONTENT, so a
+                // rewrite of identical bytes leaves no trace here and is not a write that did not
+                // happen. Withheld entirely when some path could not be placed, since nothing was
+                // compared for those. Said at all because this reads as a success and need not be
+                // one: over a model it holds as clean EDT writes nothing, and a file missing from
+                // the directory does not make the model dirty.
+                tool.put("noContentChangeObserved", true) //$NON-NLS-1$
+                    .put("noContentChangeHint", "No file changed content. That is either an " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "export that rewrote the same bytes, or no export at all: EDT writes " //$NON-NLS-1$
+                        + "what the model holds as CHANGED, and a file missing from the " //$NON-NLS-1$
+                        + "directory does not make the model dirty. If a file was to be " //$NON-NLS-1$
+                        + "restored, change the object and call again, or take it from version " //$NON-NLS-1$
+                        + "control."); //$NON-NLS-1$
             }
         }
         if (r.syncFlushPending)

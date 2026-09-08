@@ -320,11 +320,17 @@ public class MetadataObjectDeleter implements IMcpTool
         {
             return null;
         }
-        String directory = MetadataTypeCatalog.getDirectoryName(parts[0]);
-        if (directory == null)
+        // The English plural, not getDirectoryName: that one answers whether a type is addressed
+        // by module or form path and is null for Role, Subsystem, CommonAttribute - which do have
+        // a directory each. Reconciled across the catalogue: of 51 types, 28 declare a directory
+        // and all 28 declare it equal to their plural, so the plural covers those and the other 23
+        // besides. A type whose folder does not exist answers the same either way.
+        MetadataTypeCatalog.MetadataTypeInfo type = MetadataTypeCatalog.resolve(parts[0]);
+        if (type == null)
         {
             return null;
         }
+        String directory = type.getEnglishPlural();
         try
         {
             project.refreshLocal(IResource.DEPTH_INFINITE, null);
@@ -366,7 +372,8 @@ public class MetadataObjectDeleter implements IMcpTool
             if (leftOver == null)
             {
                 return done
-                    .put("message", "The delete refactoring finished and the object's files are gone.") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("message", "The delete refactoring finished and no directory of this " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "object was found on disk.") //$NON-NLS-1$
                     .toJson();
             }
             return done
