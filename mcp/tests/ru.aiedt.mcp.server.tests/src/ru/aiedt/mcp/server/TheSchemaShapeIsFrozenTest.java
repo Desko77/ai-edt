@@ -61,6 +61,14 @@ public class TheSchemaShapeIsFrozenTest
 
     private static final String DESCRIPTION = "description"; //$NON-NLS-1$
 
+    /**
+     * Keywords whose value is what a call may send, rather than a schema describing it. Their
+     * contents are recorded as they stand: inside them {@code description} is part of the value.
+     */
+    private static final java.util.Set<String> LITERAL_VALUES =
+        Collections.unmodifiableSet(new java.util.HashSet<>(
+            java.util.Arrays.asList("const", "enum", "default", "examples"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
     private McpToolCatalog registry;
 
     @Before
@@ -110,26 +118,38 @@ public class TheSchemaShapeIsFrozenTest
         {
             return element;
         }
+        // Sorted on the way in, so that members written in another order still render the same
+        // string. Where two schemas accept the same calls, this check has nothing to say.
+        JsonObject source = element.getAsJsonObject();
         JsonObject copied = new JsonObject();
-        for (Map.Entry<String, JsonElement> member : element.getAsJsonObject().entrySet())
+        for (String key : new TreeSet<>(source.keySet()))
         {
-            if (DESCRIPTION.equals(member.getKey()))
+            if (DESCRIPTION.equals(key))
             {
                 continue;
             }
-            if ("properties".equals(member.getKey()) && member.getValue().isJsonObject()) //$NON-NLS-1$
+            JsonElement value = source.get(key);
+            if ("properties".equals(key) && value.isJsonObject()) //$NON-NLS-1$
             {
                 JsonObject named = new JsonObject();
-                for (Map.Entry<String, JsonElement> property : member.getValue().getAsJsonObject()
-                    .entrySet())
+                JsonObject declared = value.getAsJsonObject();
+                for (String name : new TreeSet<>(declared.keySet()))
                 {
-                    named.add(property.getKey(), withoutProse(property.getValue()));
+                    named.add(name, withoutProse(declared.get(name)));
                 }
-                copied.add(member.getKey(), named);
+                copied.add(key, named);
+            }
+            else if (LITERAL_VALUES.contains(key))
+            {
+                // What a call may send, not a schema describing it. An object here is data, so a
+                // member of it that happens to be spelled description is part of the value: const
+                // {"description":"A"} and const {"description":"B"} accept different things, and
+                // reducing both to {} would record them as the same contract.
+                copied.add(key, value);
             }
             else
             {
-                copied.add(member.getKey(), withoutProse(member.getValue()));
+                copied.add(key, withoutProse(value));
             }
         }
         return copied;
@@ -181,7 +201,7 @@ public class TheSchemaShapeIsFrozenTest
         {
             return null;
         }
-        JsonObject schema = parsed.getAsJsonObject();
+        JsonObject schema = withoutProse(parsed).getAsJsonObject();
         StringBuilder line = new StringBuilder();
         JsonArray required = schema.getAsJsonArray("required"); //$NON-NLS-1$
         TreeSet<String> insisted = new TreeSet<>();
@@ -196,6 +216,16 @@ public class TheSchemaShapeIsFrozenTest
         // spaces, and "required=[a, b]" would arrive as two tokens and name a change that is not
         // there.
         line.append("required=[").append(String.join(",", insisted)).append(']'); //$NON-NLS-1$ //$NON-NLS-2$
+        // Whatever else the root says. A constraint written there - additionalProperties,
+        // minProperties - decides which calls are legal just as a property does, and a shape made
+        // of required and properties alone would let one arrive or leave without a word.
+        for (String key : new TreeSet<>(schema.keySet()))
+        {
+            if (!"required".equals(key) && !"properties".equals(key)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                line.append(' ').append(key).append('=').append(schema.get(key).toString());
+            }
+        }
         JsonObject properties = schema.getAsJsonObject("properties"); //$NON-NLS-1$
         if (properties != null)
         {
