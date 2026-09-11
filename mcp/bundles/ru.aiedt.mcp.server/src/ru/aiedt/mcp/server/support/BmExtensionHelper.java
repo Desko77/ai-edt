@@ -934,6 +934,44 @@ public final class BmExtensionHelper
     }
 
     /**
+     * Whether the model holds the object a CHILD address names.
+     * <p>
+     * Not the same question as {@link #addressResolves}. The walk down the model steps through
+     * pairs of kind and name, so an address whose tail has no name - {@code Catalog.Users.Attribute}
+     * - never enters the walk and the OWNER comes back as the answer. Whether the address names a
+     * child at all is therefore decided before this is called, by its shape: comparing the two
+     * answers does not work, because the owner resolves through the index and the unpaired address
+     * through the model walk, and the same object arrives as two instances.
+     * </p>
+     * <p>
+     * The third answer exists because the other two are claims. A lookup that throws establishes
+     * neither that the model holds the address nor that it does not, and a caller deciding whether
+     * something was checked must be able to say so rather than pick a side.
+     * </p>
+     *
+     * @param project the project whose model is asked.
+     * @param fqn the child address, already known to name a child.
+     * @return <code>TRUE</code> when the model holds it, <code>FALSE</code> when it does not, and
+     *         <code>null</code> when the lookup could not establish either
+     */
+    public static Boolean childResolves(IProject project, String fqn)
+    {
+        if (project == null || fqn == null || fqn.trim().isEmpty())
+        {
+            return Boolean.FALSE;
+        }
+        try
+        {
+            return Boolean.valueOf(resolveSourceEObject(project, fqn.trim()) != null);
+        }
+        catch (Exception | LinkageError failed)
+        {
+            Activator.logWarning("could not resolve the child address " + fqn + ": " + failed); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+    }
+
+    /**
      * Whether the model of a project holds the object a FQN names.
      * <p>
      * The one answer in this codebase to "does this address exist", and it is not

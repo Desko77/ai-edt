@@ -211,6 +211,45 @@ public class ObjectsRevalidator
     }
 
     /**
+     * Whether an address names something under a top object, rather than stopping short of it.
+     * <p>
+     * Steps come in pairs beyond the owner - a kind and a name - and an address ending on a kind
+     * with no name after it, {@code Catalog.Users.Attribute}, names nothing. It cannot be caught by
+     * resolving it either: the walk down the model only enters on whole pairs, so such an address
+     * comes back as its own owner and reads as an object that exists. Measured: three of them were
+     * reported as validated objects.
+     * </p>
+     * <p>
+     * One trailing step is not a kind: {@code Catalog.Users.Form.UserForm.Form} is how the index
+     * spells the form's own root, and the walk treats that last step as a marker rather than as an
+     * address of anything. It is allowed here for the same reason.
+     * </p>
+     *
+     * @param fqn the address, already normalised.
+     * @return <code>true</code> when a whole pair stands beyond the owner
+     */
+    static boolean namesAChild(String fqn)
+    {
+        if (fqn == null)
+        {
+            return false;
+        }
+        String[] steps = fqn.split("\\."); //$NON-NLS-1$
+        for (String step : steps)
+        {
+            if (step.isEmpty())
+            {
+                return false;
+            }
+        }
+        if (steps.length < 4)
+        {
+            return false;
+        }
+        return steps.length % 2 == 0 || "Form".equalsIgnoreCase(steps[steps.length - 1]); //$NON-NLS-1$
+    }
+
+    /**
      * Validates the addresses the index missed by validating the objects that hold them.
      * <p>
      * {@code getTopObjectByFqn} answers for top objects and <code>null</code> for everything under
@@ -230,23 +269,36 @@ public class ObjectsRevalidator
      * @param project the project being revalidated.
      * @param bmModel its model.
      * @param notFound the addresses the index missed; those resolved here are removed from it.
+     * @param undecided where addresses whose lookup established nothing are recorded.
      * @param objectsToValidate where the owners' ids are added.
      * @return the child addresses that were validated through their owner
      */
     private static List<String> validateChildrenThroughTheirOwners(IProject project,
-        IBmModel bmModel, List<String> notFound, Collection<Object> objectsToValidate)
+        IBmModel bmModel, List<String> notFound, List<String> undecided,
+        Collection<Object> objectsToValidate)
     {
         final List<String> children = new ArrayList<>();
         final List<String> owners = new ArrayList<>();
         for (String candidate : notFound)
         {
-            String owner = ownerOf(MetadataTypeCatalog.normalizeFqn(candidate));
-            if (owner != null && BmExtensionHelper.addressResolves(project, candidate))
+            String normalized = MetadataTypeCatalog.normalizeFqn(candidate);
+            String owner = ownerOf(normalized);
+            if (owner == null || !namesAChild(normalized))
+            {
+                continue;
+            }
+            Boolean holds = BmExtensionHelper.childResolves(project, candidate);
+            if (Boolean.TRUE.equals(holds))
             {
                 children.add(candidate);
                 owners.add(owner);
             }
+            else if (holds == null)
+            {
+                undecided.add(candidate);
+            }
         }
+        notFound.removeAll(undecided);
         if (children.isEmpty())
         {
             return children;
@@ -360,8 +412,9 @@ public class ObjectsRevalidator
             }
         });
 
-        List<String> throughOwner =
-            validateChildrenThroughTheirOwners(project, bmModel, notFound, objectsToValidate);
+        List<String> undecided = new ArrayList<>();
+        List<String> throughOwner = validateChildrenThroughTheirOwners(project, bmModel, notFound,
+            undecided, objectsToValidate);
         found.addAll(throughOwner);
 
         if (!objectsToValidate.isEmpty())
@@ -392,6 +445,10 @@ public class ObjectsRevalidator
         if (!throughOwner.isEmpty())
         {
             result.put("objectsValidatedThroughOwner", throughOwner); //$NON-NLS-1$
+        }
+        if (!undecided.isEmpty())
+        {
+            result.put("objectsNotResolved", undecided); //$NON-NLS-1$
         }
         if (!notFound.isEmpty())
         {

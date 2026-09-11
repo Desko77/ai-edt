@@ -7,7 +7,9 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -89,5 +91,47 @@ public class AChildAddressNamesItsOwnerTest
     public void anEmptyStepNamesNobody()
     {
         assertNull(ObjectsRevalidator.ownerOf("Catalog..Attribute.Email"));
+    }
+
+    @Test
+    public void anAddressStoppingOnAKindNamesNoChild()
+    {
+        // Measured: these three were reported as validated objects. They end on the kind of a child
+        // and never say which one, and the walk down the model steps through whole pairs - so it
+        // never enters, and the owner comes back looking like an answer.
+        assertFalse(ObjectsRevalidator.namesAChild("Catalog.Users.Attribute"));
+        assertFalse(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Form"));
+        assertFalse(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Template"));
+    }
+
+    @Test
+    public void awholePairBeyondTheOwnerNamesAChild()
+    {
+        assertTrue(ObjectsRevalidator.namesAChild("Catalog.Users.Attribute.Email"));
+        assertTrue(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Form.MainForm"));
+        assertTrue(ObjectsRevalidator.namesAChild("InformationRegister.Rates.Resource.Rate"));
+    }
+
+    @Test
+    public void theFormsOwnRootNamesAChildDespiteItsOddLength()
+    {
+        // How the index spells a form's own root. The last step is a marker, not the kind of
+        // anything, which is why an odd number of steps is right here and nowhere else.
+        assertTrue(ObjectsRevalidator.namesAChild("Catalog.Users.Form.UserForm.Form"));
+    }
+
+    @Test
+    public void aTopObjectNamesNoChild()
+    {
+        assertFalse(ObjectsRevalidator.namesAChild("Catalog.Users"));
+        assertFalse(ObjectsRevalidator.namesAChild("Configuration"));
+        assertFalse(ObjectsRevalidator.namesAChild(null));
+    }
+
+    @Test
+    public void anEmptyStepNamesNoChild()
+    {
+        assertFalse(ObjectsRevalidator.namesAChild("Catalog..Attribute.Email"));
+        assertFalse(ObjectsRevalidator.namesAChild("Catalog.Users.Attribute."));
     }
 }
