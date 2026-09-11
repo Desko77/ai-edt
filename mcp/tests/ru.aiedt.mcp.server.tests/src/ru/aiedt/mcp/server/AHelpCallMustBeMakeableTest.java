@@ -143,14 +143,24 @@ public class AHelpCallMustBeMakeableTest
         // Decided rather than defaulted: a client that fills every declared string with an empty
         // value would otherwise turn every call into a help answer and never compare anything. The
         // schema says non-empty, and this is what holds it to that.
-        Map<String, String> blank = new LinkedHashMap<>();
-        blank.put(HELP, "   "); //$NON-NLS-1$
-        String answer = new ThreeWayComparisonTool().execute(blank);
-
-        if (answer != null && answer.contains("compare_three_way - parameters")) //$NON-NLS-1$
+        // Every spelling of blank, because the first cut of this used trim(), which stops at
+        // U+0020: an em space then asked for help while an ordinary space did not, and the schema
+        // sentence was true of neither reading.
+        // U+00A0 is deliberately absent: Character.isWhitespace excludes the non-breaking spaces,
+        // so isBlank does not call it blank and neither does this. Blank here means what Java
+        // means by it, which is what the schema sentence points at.
+        for (String blankValue : new String[] {"", " ", "   ", "\t", "\n", " "}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
         {
-            throw new AssertionError("a blank help value was read as a request for help, which " //$NON-NLS-1$
-                + "makes a client that sends empty strings unable to compare anything"); //$NON-NLS-1$
+            Map<String, String> blank = new LinkedHashMap<>();
+            blank.put(HELP, blankValue);
+            String answer = new ThreeWayComparisonTool().execute(blank);
+
+            if (answer != null && answer.contains("compare_three_way - parameters")) //$NON-NLS-1$
+            {
+                throw new AssertionError("a blank help value (" + escaped(blankValue) //$NON-NLS-1$
+                    + ") was read as a request for help, which makes a client that fills every " //$NON-NLS-1$
+                    + "declared string unable to compare anything"); //$NON-NLS-1$
+            }
         }
     }
 
@@ -212,6 +222,22 @@ public class AHelpCallMustBeMakeableTest
         {
             return null;
         }
+    }
+
+    /**
+     * One value written so a failure names which spelling of blank it was.
+     *
+     * @param value the value.
+     * @return the value with its characters spelled out
+     */
+    private static String escaped(String value)
+    {
+        StringBuilder written = new StringBuilder();
+        for (int i = 0; i < value.length(); i++)
+        {
+            written.append(String.format("U+%04X ", (int)value.charAt(i))); //$NON-NLS-1$
+        }
+        return written.length() == 0 ? "empty" : written.toString().trim(); //$NON-NLS-1$
     }
 
     private static String firstLineOf(String answer)

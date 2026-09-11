@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
@@ -99,6 +100,13 @@ public class AFacadeDescribesTheOperationItRoutesToTest
         List<String> undispatched = new ArrayList<>();
         for (String operation : catalogued())
         {
+            // A gated operation is answered before the switch is reached, so a missing case would
+            // be invisible. Said out loud rather than skipped: the check would otherwise weaken
+            // silently the day a preset switches one of these off by default.
+            assertTrue("the preset disables " + operation + ", so this test cannot see whether "
+                + "the dispatcher still has a case for it", ToolGate.gateIfPresetDisabled(
+                    operation) == null);
+
             Map<String, String> call = new HashMap<>();
             call.put("operation", operation);
             String answer;
@@ -108,7 +116,9 @@ public class AFacadeDescribesTheOperationItRoutesToTest
             }
             catch (RuntimeException | LinkageError thrown)
             {
-                // Reaching the delegate and failing inside it still proves the case exists.
+                // Recorded rather than forgiven: a throw can come from before the switch as easily
+                // as from inside the delegate, and only one of those proves the case is there.
+                undispatched.add(operation + " threw " + thrown);
                 continue;
             }
             if (answer != null
@@ -118,8 +128,8 @@ public class AFacadeDescribesTheOperationItRoutesToTest
             }
         }
 
-        assertTrue("the catalogue and the help map offer these operations and the dispatcher has "
-            + "no case for them: " + undispatched, undispatched.isEmpty());
+        assertTrue("the catalogue and the help map offer these operations and the dispatcher does "
+            + "not answer them: " + undispatched, undispatched.isEmpty());
     }
 
     @Test

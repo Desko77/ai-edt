@@ -225,9 +225,10 @@ public class ThreeWayComparisonTool
                     + "exist - a renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
                     + "then reported in originMismatches rather than swallowed.") //$NON-NLS-1$
             .stringProperty("help", //$NON-NLS-1$
-                "Any non-empty value asks what the parameters mean and answers with that " //$NON-NLS-1$
-                    + "alone; everything else is then ignored. Empty is not a request: a client " //$NON-NLS-1$
-                    + "that fills every declared string would otherwise never compare anything.") //$NON-NLS-1$
+                "Any value that is not blank asks what the parameters mean and answers with " //$NON-NLS-1$
+                    + "that alone; everything else is then ignored. Blank is not a request: a " //$NON-NLS-1$
+                    + "client that fills every declared string would otherwise never compare " //$NON-NLS-1$
+                    + "anything.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
@@ -395,7 +396,10 @@ public class ThreeWayComparisonTool
     public String execute(Map<String, String> params)
     {
         String topic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
-        if (topic != null && !topic.trim().isEmpty())
+        // isBlank and not trim().isEmpty(): trim cuts only characters up to U+0020, so an em space
+        // would have counted as a request while an ordinary space did not - two spellings of the
+        // same blank value, answered two different ways.
+        if (topic != null && !topic.isBlank())
         {
             // Answered before anything is read: a caller asking what the parameters mean has not
             // supplied them yet, and refusing for a missing projectName would answer a question
