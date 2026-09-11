@@ -1,8 +1,19 @@
 {
+  "inputs": [
+    {
+      "id": "ai-edt-token",
+      "type": "promptString",
+      "description": "AI-EDT bearer token (Window > Preferences > AI-EDT)",
+      "password": true
+    }
+  ],
   "servers": {
     "AI-EDT": {
-      "type": "sse",
-      "url": "http://127.0.0.1:12250/mcp"
+      "type": "http",
+      "url": "http://127.0.0.1:12250/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:ai-edt-token}"
+      }
     }
   }
 }

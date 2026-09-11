@@ -2,7 +2,10 @@
   "mcpServers": {
     "ai-edt": {
       "type": "http",
-      "url": "http://127.0.0.1:12250/mcp"
+      "url": "http://127.0.0.1:12250/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AI_EDT_TOKEN}"
+      }
     }
   }
 }

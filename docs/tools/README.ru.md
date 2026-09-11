@@ -65,7 +65,7 @@
 | `get_project_errors` | Чтение | Возвращает детальные проблемы EDT с фильтрами. |
 | `marker_corrections` | Изменение | Применяет к находке штатное исправление той проверки, которая ее подняла. |
 | `code_review` | Чтение | Запускает анализ BSL через настроенный BSL Language Server. |
-| `get_mcp_history` | Чтение | Показывает историю последних MCP-вызовов. |
+| `get_mcp_history` | Чтение | Показывает историю последних MCP-вызовов. Запись несет `arbitratedBy` (`tool` / `signal`), `deliveryStatus` (`delivered` / `failed`), у сигнала - `signalType` и `signalNote`; в `stats` - `interrupted` и `undelivered` поверх `success` и `failure`. |
 | `self_status` | Чтение | Диагностирует состояние сервера, служб EDT, очереди вызовов и остаток кучи. |
 | [`diagnostics`](#diagnostics) | Фасад · Чтение | Объединяет ошибки, сводки, валидацию и справку по проверкам. |
 
@@ -421,6 +421,8 @@
 <summary><code>dcs_workshop</code> - схема компоновки данных</summary>
 
 Создает и изменяет наборы данных, поля, параметры, связи, вычисляемые поля, ресурсы, настройки и варианты отчета. Проверяет запросы и выражения перед записью.
+
+`repair_schema` (через фасад - `edit_metadata operation=repair_report_schema`) восстанавливает схему из `.dcs` в модель. Доводы: `projectName`, `objectName` (владелец или полный FQN схемы), `templateName`, `overwriteModel`. Файл не изменяется. Исходы в поле `outcome`: `restored` - в модели схемы не было, схема из файла подключена; `matched` - модель уже сериализуется в байты файла, ничего не изменено; `refused_model_differs` - в модели другая схема (`modelBytes`, `fileBytes`, `firstDifferenceAt`), с `overwriteModel=true` она записывается в `backupPath` рядом с `.dcs` и заменяется (`replaced`); `no_template` - объект макета не объявлен; `no_file` - `.dcs` нет. `confirmed` - модель, прочитанная после фиксации, сериализуется в байты файла; `fileChangedDuringRepair` - файл изменился за время вызова.
 </details>
 
 <a id="mxl_workshop"></a>
@@ -449,6 +451,8 @@
 <summary><code>external_object_workshop</code> - внешние отчеты и обработки</summary>
 
 Создает исходную структуру внешнего отчета или обработки и возвращает созданные артефакты проекта.
+
+`import_external_object` добавляет `.epf` / `.erf` в существующий контейнер (`targetProjectName`, `inputPath`). Бинарник преобразуется через Конфигуратор базы проекта `baseProjectName` (по умолчанию - родительской конфигурации контейнера); `applicationId` называет приложение, когда их несколько (см. `get_applications`). Перед запуском EDT отпускает базу и берет ее обратно после: отказ отпустить - отказ импорта (`infobaseNotReleased`), отказ вернуть - поле `reconnectError` в ответе, при двойной ошибке видны обе. Ответ несет `hostProject` и `infobaseName`.
 </details>
 
 <a id="external_data_source_workshop"></a>

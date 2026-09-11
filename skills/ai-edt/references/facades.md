@@ -135,7 +135,7 @@ Not every tool belongs to a facade. These are called by name.
 | `find_dead_code` | Exported methods nobody calls. |
 | `dcs_search` | Finds data composition schemas by what is inside them. |
 | `code_template` | Ready code patterns instead of writing a familiar shape from memory. |
-| `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. |
+| `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. A record carries `arbitratedBy` (`tool` / `signal` - whether the operator answered the agent from the status bar instead of the tool), `deliveryStatus` (`delivered` / `failed`) and, for a signal, `signalType` and `signalNote`; `stats` carries `interrupted` and `undelivered` on top of `success` and `failure`. |
 | `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
 | `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |
 
@@ -172,11 +172,11 @@ separate question the platform only answers when asked.
 
 | Tool | Builds |
 |---|---|
-| `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. |
+| `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. `repair_schema` (through the facade: `edit_metadata operation=repair_report_schema`) puts the schema a `.dcs` holds back into a model that lost it - the template opens in EDT with the schema unavailable while the file is intact. Arguments `projectName`, `objectName`, `templateName`, `overwriteModel`. The file is never written. `outcome`: `restored` (the model held none), `matched` (the model already serializes to the file, nothing changed), `refused_model_differs` (the model holds another schema - replaced only with `overwriteModel=true`, and then its serialization is written to `backupPath` beside the `.dcs`), `replaced`, `no_template`, `no_file`. `confirmed=true` means the model read back after the commit serializes to the file; `fileChangedDuringRepair` means the file changed meanwhile - repeat. |
 | `mxl_workshop` | Spreadsheet templates. Coordinates are 1-based. |
 | `xdto_workshop` | XDTO package schemas. Create the package with `edit_metadata` first. |
 | `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison, and what a new delivery does to an extension. Borrowing writes the link that makes the extension actually extend, and a borrow that cannot write it fails rather than reporting success; calling borrow again repairs an object left unlinked by an older build. `borrow_module` needs `moduleType` wherever an object has more than one module. `borrow_child` composes the child's FQN from `objectFqn` plus `childKind` and `name` - before that it borrowed the OWNER and answered "borrowed". |
-| `external_object_workshop` | External data processor and report projects, which are standalone DT projects rather than configuration objects. |
+| `external_object_workshop` | External data processor and report projects, which are standalone DT projects rather than configuration objects. `import_external_object` adds an `.epf` / `.erf` to an existing container: `targetProjectName`, `inputPath`, `baseProjectName` (the configuration; the container's parent by default), `applicationId` (when the configuration has several applications - see `get_applications`). The binary is converted through the Designer of that application's infobase, the way `unpack_external_binary` does it: EDT releases the infobase and takes it back; a release that fails refuses the import (`infobaseNotReleased`), a reconnection that fails is named in `reconnectError` whatever the import's own outcome. The answer carries `hostProject` and `infobaseName`. |
 | `external_data_source_workshop` | Tables, fields and functions of an external data source. |
 
 **An open editor outranks the file.** `read_module_source` returns the editor's unsaved text and marks it in the answer; `write_module_source` refuses while such an editor holds the file. What is read and what is written then describe one state rather than two.
