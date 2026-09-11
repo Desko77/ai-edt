@@ -10,9 +10,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.ParameterHelp;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -55,6 +57,8 @@ public class InsightsFacadeTool implements IMcpTool
     public static final String NAME = "insights"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
+
+    private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
 
     @Override
     public String getName()
@@ -317,6 +321,44 @@ public class InsightsFacadeTool implements IMcpTool
         }
     }
 
+    /**
+     * The tool one operation routes to, for describing it rather than running it.
+     * <p>
+     * A map and not a second switch on the same word: {@code scripts/check-operation-params.py}
+     * takes the widest {@code switch (operation)} in a file as the facade's vocabulary, and two
+     * switches of equal width leave which one it reads to the order they happen to sit in.
+     * </p>
+     * <p>
+     * That leaves this list and the dispatch as two places naming the same routing, so
+     * {@code AFacadeDescribesTheOperationItRoutesToTest} holds them together: every operation this
+     * facade accepts resolves here, to a tool whose own name is that operation.
+     * </p>
+     *
+     * @param operation a normalized operation token.
+     * @return the tool, or <code>null</code> when no operation of that name is dispatched
+     */
+    static IMcpTool delegateFor(String operation)
+    {
+        Supplier<IMcpTool> known = DESCRIBED.get(operation);
+        return known == null ? null : known.get();
+    }
+
+    private static Map<String, Supplier<IMcpTool>> buildDescribed()
+    {
+        Map<String, Supplier<IMcpTool>> m = new LinkedHashMap<>();
+        m.put("project_metrics", ProjectMetricsTool::new); //$NON-NLS-1$
+        m.put("dependency_graph", DependencyGraphTool::new); //$NON-NLS-1$
+        m.put("compare_configurations", CompareConfigurationsTool::new); //$NON-NLS-1$
+        m.put("compare_three_way", ThreeWayComparisonTool::new); //$NON-NLS-1$
+        m.put("detect_query_anti_patterns", DetectQueryAntiPatternsTool::new); //$NON-NLS-1$
+        m.put("generate_health_snapshot", GenerateHealthSnapshotTool::new); //$NON-NLS-1$
+        m.put("impact_analysis", ImpactAnalysisTool::new); //$NON-NLS-1$
+        m.put("object_summary", ObjectSummaryTool::new); //$NON-NLS-1$
+        m.put("describe_db_tables", DbTablesReader::new); //$NON-NLS-1$
+        m.put("semantic_metadata_search", SemanticMetadataSearchTool::new); //$NON-NLS-1$
+        return Collections.unmodifiableMap(m);
+    }
+
     private static String buildHelp(String topic)
     {
         topic = JsonUtils.normalizeOperationToken(topic);
@@ -346,7 +388,8 @@ public class InsightsFacadeTool implements IMcpTool
             sb.append("- **semantic_metadata_search** - free-text search over object " //$NON-NLS-1$
                 + "names, synonyms and comments.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the " //$NON-NLS-1$
-                + "operation-picker guide.\n"); //$NON-NLS-1$
+                + "operation-picker guide, or topic=<operation> for that operation's " //$NON-NLS-1$
+                + "parameters.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         if ("workflow".equals(topic)) //$NON-NLS-1$
@@ -372,7 +415,17 @@ public class InsightsFacadeTool implements IMcpTool
                 + "semantic_metadata_search |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        IMcpTool named = delegateFor(topic);
+        if (named != null)
+        {
+            // The parameters of an operation reached through this facade are the parameters of the
+            // tool it routes to, and this facade's own schema does not repeat them. Without this,
+            // the detail is reachable only by calling the standalone tool - which a caller who
+            // found the operation here has no reason to know exists.
+            return ParameterHelp.render(named.getName(), named.getInputSchema());
+        }
+        return "# Unknown topic '" + topic //$NON-NLS-1$
+            + "'.\n\nAvailable: workflow, or any operation name for its parameters.\n"; //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

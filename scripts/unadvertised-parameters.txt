@@ -38,6 +38,10 @@ InfobaseAdminFacadeTool:severity
 InfobaseAdminFacadeTool:to
 InfobaseAdminFacadeTool:user
 InsightsFacadeTool:batchSize
+# compare_three_way answers `help=<anything>` with its parameters. Through this facade the same
+# answer has a route of its own - `operation=help topic=compare_three_way` - which the facade
+# schema does name, so the capability is discoverable here and only this spelling of it is not.
+InsightsFacadeTool:help
 InsightsFacadeTool:includeStandard
 InsightsFacadeTool:methodName
 InsightsFacadeTool:otherPath

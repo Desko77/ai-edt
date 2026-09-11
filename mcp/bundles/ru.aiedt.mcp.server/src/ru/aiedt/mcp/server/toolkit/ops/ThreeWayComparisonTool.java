@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.support.BmComparisonHelper;
+import ru.aiedt.mcp.server.support.ParameterHelp;
 import ru.aiedt.mcp.server.support.UpdateReport;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -222,6 +223,9 @@ public class ThreeWayComparisonTool
                     + "inverts every changedBy in the answer without failing. Legitimate cases " //$NON-NLS-1$
                     + "exist - a renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
                     + "then reported in originMismatches rather than swallowed.") //$NON-NLS-1$
+            .stringProperty("help", //$NON-NLS-1$
+                "Any value asks what the parameters mean and answers with that alone; " //$NON-NLS-1$
+                    + "everything else is then ignored.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
@@ -388,6 +392,14 @@ public class ThreeWayComparisonTool
     @Override
     public String execute(Map<String, String> params)
     {
+        String topic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
+        if (topic != null && !topic.trim().isEmpty())
+        {
+            // Answered before anything is read: a caller asking what the parameters mean has not
+            // supplied them yet, and refusing for a missing projectName would answer a question
+            // nobody asked.
+            return ParameterHelp.render(getName(), getInputSchema());
+        }
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String otherPath = JsonUtils.extractStringArgument(params, "otherPath"); //$NON-NLS-1$
         String ancestorPath = JsonUtils.extractStringArgument(params, "ancestorPath"); //$NON-NLS-1$
