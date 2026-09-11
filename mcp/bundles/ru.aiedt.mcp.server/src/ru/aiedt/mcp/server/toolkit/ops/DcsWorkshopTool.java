@@ -481,16 +481,6 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Generic schema-mutation dispatch that runs inside BmDcsHelper.executeWriteOnSchema.
-     * Per-op semantics are implemented inline so the BM transaction holds for one op.
-     * <p>
-     * Each op resolves the schema {@link EObject} via reflection, mutates the
-     * corresponding child collection (DataSets / Parameters / CalculatedFields /
-     * ConditionalAppearance / DefaultSettings.Structure / DefaultSettings.Filter),
-     * and records a short message in {@link BmDcsHelper.Result#message}. Errors
-     * surface as {@link MetadataGuards.BlockedGuardException} with structured tags.
-     */
-    /**
      * Whether the call is aimed at a form's dynamic list rather than at a schema in a template.
      *
      * @param formFqn the form, when one was given.
@@ -547,31 +537,6 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * The schema an operation is aimed at.
-     * <p>
-     * Two coordinates reach a schema in a template; a third reaches a schema nested inside it.
-     * Without that third one a nested schema could be created and never written into - and a call
-     * meant for it would have gone to the schema around it and reported success.
-     * </p>
-     *
-     * @param root the schema the FQN resolved to.
-     * @param nestedSchemaName the nested schema to work inside, or <code>null</code> for the root.
-     * @return the schema to write to
-     */
-    /**
-     * The steps of a name that may be a path down a hierarchy.
-     * <p>
-     * A name is taken whole first by the callers of this method, so this is only reached for a name
-     * that is not there as written. Every step must be a name: Java drops a trailing empty segment,
-     * so "Outer." would silently become "Outer" and act on the wrong node, and "." would become no
-     * steps at all and act on the root.
-     * </p>
-     *
-     * @param path the name as the caller wrote it.
-     * @param what the kind of thing being addressed, for the refusal.
-     * @return its steps, each non-empty
-     */
-    /**
      * The text an export has to contain for a named element to be in it.
      * <p>
      * The file is XML, so a name is escaped there. Looking for the raw name would report a write as
@@ -621,6 +586,19 @@ public class DcsWorkshopTool implements IMcpTool
         }
     }
 
+    /**
+     * The steps of a name that may be a path down a hierarchy.
+     * <p>
+     * A name is taken whole first by the callers of this method, so this is only reached for a name
+     * that is not there as written. Every step must be a name: Java drops a trailing empty segment,
+     * so "Outer." would silently become "Outer" and act on the wrong node, and "." would become no
+     * steps at all and act on the root.
+     * </p>
+     *
+     * @param path the name as the caller wrote it.
+     * @param what the kind of thing being addressed, for the refusal.
+     * @return its steps, each non-empty
+     */
     private static String[] pathSteps(String path, String what)
     {
         String[] steps = path.split("\\.", -1); //$NON-NLS-1$
@@ -654,6 +632,18 @@ public class DcsWorkshopTool implements IMcpTool
         }
     }
 
+    /**
+     * The schema an operation is aimed at.
+     * <p>
+     * Two coordinates reach a schema in a template; a third reaches a schema nested inside it.
+     * Without that third one a nested schema could be created and never written into - and a call
+     * meant for it would have gone to the schema around it and reported success.
+     * </p>
+     *
+     * @param root the schema the FQN resolved to.
+     * @param nestedSchemaName the nested schema to work inside, or <code>null</code> for the root.
+     * @return the schema to write to
+     */
     private EObject schemaToWorkIn(EObject root, String nestedSchemaName)
     {
         if (nestedSchemaName == null || nestedSchemaName.isEmpty())
@@ -694,6 +684,16 @@ public class DcsWorkshopTool implements IMcpTool
         return current;
     }
 
+    /**
+     * Generic schema-mutation dispatch that runs inside BmDcsHelper.executeWriteOnSchema.
+     * Per-op semantics are implemented inline so the BM transaction holds for one op.
+     * <p>
+     * Each op resolves the schema {@link EObject} via reflection, mutates the
+     * corresponding child collection (DataSets / Parameters / CalculatedFields /
+     * ConditionalAppearance / DefaultSettings.Structure / DefaultSettings.Filter),
+     * and records a short message in {@link BmDcsHelper.Result#message}. Errors
+     * surface as {@link MetadataGuards.BlockedGuardException} with structured tags.
+     */
     private String opSchemaMutation(String op, Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -1317,18 +1317,6 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Adds a nested schema to the schema root.
-     * <p>
-     * A nested schema is a composition schema of its own, named and addressed from the outer one.
-     * It is created empty: what goes inside it is written by the same operations that write the
-     * outer schema, aimed at it by name.
-     * </p>
-     *
-     * @param params name, and optionally title and url.
-     * @param schema the schema root.
-     * @return the name written
-     */
-    /**
      * Writes a property and refuses when it did not take.
      * <p>
      * The setter is found by name, so a name the model spells differently reports back that the
@@ -1349,6 +1337,18 @@ public class DcsWorkshopTool implements IMcpTool
         }
     }
 
+    /**
+     * Adds a nested schema to the schema root.
+     * <p>
+     * A nested schema is a composition schema of its own, named and addressed from the outer one.
+     * It is created empty: what goes inside it is written by the same operations that write the
+     * outer schema, aimed at it by name.
+     * </p>
+     *
+     * @param params name, and optionally title and url.
+     * @param schema the schema root.
+     * @return the name written
+     */
     private Object doAddNestedSchema(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -1406,24 +1406,6 @@ public class DcsWorkshopTool implements IMcpTool
             "nestedSchemas"); //$NON-NLS-1$
     }
 
-    /**
-     * Removes a nested schema by name.
-     *
-     * @param params the name.
-     * @param schema the schema root.
-     * @return the name removed
-     */
-    /**
-     * Adds a named template to the schema, with an empty body.
-     * <p>
-     * A schema names its templates and then says which field or grouping is drawn with each. The
-     * body is filled by add_template_row and add_template_cell.
-     * </p>
-     *
-     * @param params the name.
-     * @param schema the schema root.
-     * @return what the write guards need to see
-     */
     /**
      * An integer argument, refusing a value that is not one.
      * <p>
@@ -1577,6 +1559,17 @@ public class DcsWorkshopTool implements IMcpTool
         return null;
     }
 
+    /**
+     * Adds a named template to the schema, with an empty body.
+     * <p>
+     * A schema names its templates and then says which field or grouping is drawn with each. The
+     * body is filled by add_template_row and add_template_cell.
+     * </p>
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
     private Object doAddSchemaTemplate(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -1796,13 +1789,6 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Says which named template draws a grouping, as its header or as its body.
-     *
-     * @param params groupName, schemaTemplateName, templateType and header.
-     * @param schema the schema root.
-     * @return what the write guards need to see
-     */
-    /**
      * Says which template draws the totals where two groupings cross.
      * <p>
      * The entry names both groupings and the area type of each, so all four together are what tell
@@ -1916,19 +1902,6 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Whether an entry carries the area type a call asked for.
-     * <p>
-     * A call naming none means the model's default, because an entry made without one carries that
-     * rather than nothing.
-     * </p>
-     *
-     * @param entry the entry.
-     * @param feature the feature name, for reading its default.
-     * @param getter how to read what the entry carries.
-     * @param asked what the call named, or <code>null</code>.
-     * @return true when they are the same type
-     */
-    /**
      * The spelling the model uses for one of a feature's constants.
      *
      * @param feature the feature the constant belongs to.
@@ -1954,6 +1927,19 @@ public class DcsWorkshopTool implements IMcpTool
         return null;
     }
 
+    /**
+     * Whether an entry carries the area type a call asked for.
+     * <p>
+     * A call naming none means the model's default, because an entry made without one carries that
+     * rather than nothing.
+     * </p>
+     *
+     * @param entry the entry.
+     * @param feature the feature name, for reading its default.
+     * @param getter how to read what the entry carries.
+     * @param asked what the call named, or <code>null</code>.
+     * @return true when they are the same type
+     */
     private boolean sameAreaType(EObject entry, String feature, String getter, String asked)
     {
         Object heldType = invokeGetter(entry, getter);
@@ -1984,6 +1970,13 @@ public class DcsWorkshopTool implements IMcpTool
         return held != null && wanted.equalsIgnoreCase(held);
     }
 
+    /**
+     * Says which named template draws a grouping, as its header or as its body.
+     *
+     * @param params groupName, schemaTemplateName, templateType and header.
+     * @param schema the schema root.
+     * @return what the write guards need to see
+     */
     private Object doAddGroupTemplate(Map<String, String> params, EObject schema)
     {
         String groupName = required(params, "groupName"); //$NON-NLS-1$
@@ -2118,6 +2111,13 @@ public class DcsWorkshopTool implements IMcpTool
         return null;
     }
 
+    /**
+     * Removes a nested schema by name.
+     *
+     * @param params the name.
+     * @param schema the schema root.
+     * @return the name removed
+     */
     private Object doRemoveNestedSchema(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -3430,6 +3430,11 @@ public class DcsWorkshopTool implements IMcpTool
      * Without {@code variantName} this is what every other settings operation uses - the first
      * variant, created when the schema has none. A dynamic list's settings are their own top object
      * with no variants above them, so naming one there is refused rather than ignored.
+     * </p>
+     * <p>
+     * A variant's settings rather than {@code Schema.getDefaultSettings()}: the schema editor draws
+     * settings from variants, so a schema whose settings live only in {@code defaultSettings} opens
+     * empty. That is why a variant is created when the schema carries none.
      * </p>
      *
      * @param schema the schema, or a settings container in the case of a dynamic list.
@@ -5429,17 +5434,6 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Returns the DataCompositionSettings that all settings operations
-     * (grouping/filter/order/selection/appearance/...) must write into.
-     * <p>
-     * Critically, this is the settings tree of the "Основной" {@code SettingsVariant},
-     * NOT {@code Schema.getDefaultSettings()}. The report's schema editor renders
-     * settings from VARIANTS; a schema whose settings live only in defaultSettings
-     * (with no variant) opens read-only / empty - exactly what the EDT wizard avoids
-     * by always creating an "Основной" variant. Reuses the first existing variant or
-     * creates "Основной".
-     */
-    /**
      * Whether this object IS the settings, rather than something holding them.
      * <p>
      * Told apart by shape, not by class name: a settings container carries the filter, order and
@@ -5887,13 +5881,6 @@ public class DcsWorkshopTool implements IMcpTool
         return Collections.unmodifiableMap(m);
     }
 
-    /**
-     * Builds the schema-mutation registry: op name -> handler applied on the DCS
-     * schema inside the BM write transaction. Each handler is the exact call the
-     * former applySchemaMutation switch made. Alias pairs (add_chart /
-     * add_settings_chart, add_order / add_settings_order, select_field /
-     * add_settings_selected_field, ...) are separate entries sharing one handler.
-     */
     @SuppressWarnings("nls")
     /**
      * The operations this tool can run.
@@ -5933,6 +5920,13 @@ public class DcsWorkshopTool implements IMcpTool
             null);
     }
 
+    /**
+     * Builds the schema-mutation registry: op name -> handler applied on the DCS
+     * schema inside the BM write transaction. Each handler is the exact call the
+     * former applySchemaMutation switch made. Alias pairs (add_chart /
+     * add_settings_chart, add_order / add_settings_order, select_field /
+     * add_settings_selected_field, ...) are separate entries sharing one handler.
+     */
     private Map<String, MutationHandler> buildMutationRegistry()
     {
         Map<String, MutationHandler> m = new LinkedHashMap<>();

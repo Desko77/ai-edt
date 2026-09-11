@@ -166,19 +166,6 @@ public class EditMetadataTool implements IMcpTool
     private static final int FAILURES_NAMED = 5;
 
     /**
-     * Why each failed operation failed, for the message the batch demotes itself with.
-     * <p>
-     * The message used to point at batchResults[] instead of carrying this. The array is there, in
-     * the structured payload - but the text channel gets a summary, and for a failure that summary
-     * is the failure text alone. A caller reading text was therefore sent to an array it had not
-     * been given, and the only way left was to reissue the operations one at a time, which is what
-     * a batch exists to avoid.
-     * </p>
-     *
-     * @param results one entry per operation, as put into batchResults
-     * @return the lines naming the failures; never <code>null</code>
-     */
-    /**
      * The reason one failed batch entry carries.
      * <p>
      * An operation rejected before dispatch puts it in {@code error}; one that ran and refused puts
@@ -222,6 +209,19 @@ public class EditMetadataTool implements IMcpTool
         return "failed without saying why"; //$NON-NLS-1$
     }
 
+    /**
+     * Why each failed operation failed, for the message the batch demotes itself with.
+     * <p>
+     * The message used to point at batchResults[] instead of carrying this. The array is there, in
+     * the structured payload - but the text channel gets a summary, and for a failure that summary
+     * is the failure text alone. A caller reading text was therefore sent to an array it had not
+     * been given, and the only way left was to reissue the operations one at a time, which is what
+     * a batch exists to avoid.
+     * </p>
+     *
+     * @param results one entry per operation, as put into batchResults
+     * @return the lines naming the failures; never <code>null</code>
+     */
     private static String whyEachFailed(List<Map<String, Object>> results)
     {
         StringBuilder sb = new StringBuilder();
@@ -713,6 +713,12 @@ public class EditMetadataTool implements IMcpTool
         return executeSinglePending(op, params);
     }
 
+    /** Separator between the key and the value in a call identity. */
+    private static final char EQUALS = '=';
+
+    /** Separator between one key-value pair and the next in a call identity. */
+    private static final char SEPARATOR = ';';
+
     /**
      * Runs one operation, handing back a runKey if it outlives the caller's patience.
      * <p>
@@ -727,12 +733,6 @@ public class EditMetadataTool implements IMcpTool
      * @param params the call parameters, never {@code null}
      * @return the operation result when it finishes in time, a Pending answer otherwise
      */
-    /** Separator between the key and the value in a call identity. */
-    private static final char EQUALS = '=';
-
-    /** Separator between one key-value pair and the next in a call identity. */
-    private static final char SEPARATOR = ';';
-
     private String executeSinglePending(String op, Map<String, String> params)
     {
         long softTimeoutMs = Math.max(5, Math.min(120,
@@ -1682,15 +1682,6 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
-     * Fills the {@code synonym} (EMap&lt;lang,text&gt;) of a freshly created
-     * metadata object (attribute, EventSubscription, Catalog, ...): explicit
-     * value when supplied, otherwise auto-generated from the name like the EDT
-     * wizard. Language is the configuration default, falling back to {@code ru}.
-     * Best-effort - a setter failure (e.g. a type that has no synonym) is logged,
-     * never fatal. Returns a {@link SynonymResult} so callers can surface the
-     * outcome to the agent instead of letting it be silently lost.
-     */
-    /**
      * True when {@code mdObject} has no usable synonym (null/empty map, or every
      * localization value blank). Used on idempotent retry paths to decide whether
      * an OMITTED synonym may be auto-generated: a blank existing synonym can be
@@ -1736,6 +1727,15 @@ public class EditMetadataTool implements IMcpTool
         return ru.aiedt.mcp.server.support.DefaultLanguage.codeFor(project);
     }
 
+    /**
+     * Fills the {@code synonym} (EMap&lt;lang,text&gt;) of a freshly created
+     * metadata object (attribute, EventSubscription, Catalog, ...): explicit
+     * value when supplied, otherwise auto-generated from the name like the EDT
+     * wizard. Language is the configuration default, falling back to {@code ru}.
+     * Best-effort - a setter failure (e.g. a type that has no synonym) is logged,
+     * never fatal. Returns a {@link SynonymResult} so callers can surface the
+     * outcome to the agent instead of letting it be silently lost.
+     */
     static SynonymResult applyMdObjectSynonym(MdObject mdObject, String explicitSynonym,
         String name, IProject project)
     {

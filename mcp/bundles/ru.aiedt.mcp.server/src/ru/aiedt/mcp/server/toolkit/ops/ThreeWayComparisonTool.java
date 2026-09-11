@@ -268,18 +268,6 @@ public class ThreeWayComparisonTool
     }
 
     /**
-     * Reads the decisions a caller passed.
-     * <p>
-     * Malformed input is refused with a reason rather than silently treated as no decisions: a
-     * caller who wrote decisions and got a comparison back without them would believe they had been
-     * recorded.
-     * </p>
-     *
-     * @param json the argument as written; may be <code>null</code>.
-     * @return the decisions, empty when none were given
-     * @throws IllegalArgumentException when the argument is there but unreadable
-     */
-    /**
      * Reads the objects a caller wants compared, when they want less than everything.
      *
      * @param params the call.
@@ -303,6 +291,18 @@ public class ThreeWayComparisonTool
         return names;
     }
 
+    /**
+     * Reads the decisions a caller passed.
+     * <p>
+     * Malformed input is refused with a reason rather than silently treated as no decisions: a
+     * caller who wrote decisions and got a comparison back without them would believe they had been
+     * recorded.
+     * </p>
+     *
+     * @param json the argument as written; may be <code>null</code>.
+     * @return the decisions, empty when none were given
+     * @throws IllegalArgumentException when the argument is there but unreadable
+     */
     private static List<BmComparisonHelper.Decision> readDecisions(String json)
     {
         List<BmComparisonHelper.Decision> decisions = new ArrayList<>();

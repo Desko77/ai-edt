@@ -43,11 +43,6 @@ public class JsonRpcError
     }
 
     /**
-     * Returns the error code.
-     *
-     * @return the code
-     */
-    /**
      * Attaches what the caller needs to act on this error.
      *
      * @param data the payload; null leaves the member off the wire.
@@ -69,6 +64,11 @@ public class JsonRpcError
         return data;
     }
 
+    /**
+     * Returns the error code.
+     *
+     * @return the code
+     */
     public int getCode()
     {
         return code;

@@ -545,10 +545,6 @@ public class MetadataObjectsReader
     }
 
     /**
-     * @param typeLower the lowercased type token
-     * @return the matching collector, or <code>null</code>
-     */
-    /**
      * The collector for a kind, whether or not the category array names it.
      * <p>
      * A kind with no entry still gets walked - it just reports no object or manager module, which
@@ -581,6 +577,10 @@ public class MetadataObjectsReader
         return findCollector(typeLower);
     }
 
+    /**
+     * @param typeLower the lowercased type token
+     * @return the matching collector, or <code>null</code>
+     */
     private static Collector findCollector(String typeLower)
     {
         for (Collector collector : COLLECTORS)

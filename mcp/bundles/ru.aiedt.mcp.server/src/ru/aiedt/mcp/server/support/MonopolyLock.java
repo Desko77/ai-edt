@@ -454,13 +454,6 @@ public final class MonopolyLock implements AutoCloseable
     }
 
     /**
-     * Tries to claim something, and says who has it when the answer is no.
-     *
-     * @param subject what is being claimed.
-     * @param operation what is being done to it.
-     * @return the outcome, never {@code null}
-     */
-    /**
      * What a caller is told when this instance holds the lock and is not giving it back.
      * <p>
      * Kept as a constant because it is the one refusal a caller must not answer by repeating the
@@ -514,6 +507,13 @@ public final class MonopolyLock implements AutoCloseable
         return said.toString();
     }
 
+    /**
+     * Tries to claim something, and says who has it when the answer is no.
+     *
+     * @param subject what is being claimed.
+     * @param operation what is being done to it.
+     * @return the outcome, never {@code null}
+     */
     public static Claim claim(String subject, String operation)
     {
         if (subject == null || subject.isEmpty())

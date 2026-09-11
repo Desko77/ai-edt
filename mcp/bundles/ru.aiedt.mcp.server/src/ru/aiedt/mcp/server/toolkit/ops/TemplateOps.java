@@ -30,14 +30,6 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
 final class TemplateOps
 {
     /**
-     * add_template - creates a Template (mdclass Template) under an owner metadata object. Fills
-     * SpreadsheetDocument .mxlx and TextDocument/HTMLDocument content files post-commit so the
-     * template is usable right away. Honors dryRun.
-     *
-     * @param params the tool parameters
-     * @return the JSON result document
-     */
-    /**
      * Why a data composition schema is not made here.
      * <p>
      * This operation creates the template object and nothing inside it. For every other type that
@@ -62,6 +54,14 @@ final class TemplateOps
             + "template and the schema together."; //$NON-NLS-1$
     }
 
+    /**
+     * add_template - creates a Template (mdclass Template) under an owner metadata object. Fills
+     * SpreadsheetDocument .mxlx and TextDocument/HTMLDocument content files post-commit so the
+     * template is usable right away. Honors dryRun.
+     *
+     * @param params the tool parameters
+     * @return the JSON result document
+     */
     String opAddTemplate(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$

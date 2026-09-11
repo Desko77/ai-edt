@@ -1484,11 +1484,6 @@ public final class BmDcsHelper
     }
 
     /**
-     * Returns a singular factory method name for a DCS schema element class,
-     * e.g. {@code "createDataSetQuery"}. Resolves it on the cached
-     * {@link #getFactory()} instance through reflection.
-     */
-    /**
      * The area-template factory instance, or <code>null</code> when this runtime has no such model.
      *
      * @return the factory
@@ -1514,6 +1509,11 @@ public final class BmDcsHelper
         }
     }
 
+    /**
+     * Returns a singular factory method name for a DCS schema element class,
+     * e.g. {@code "createDataSetQuery"}. Resolves it on the cached
+     * {@link #getFactory()} instance through reflection.
+     */
     public static Object createElement(String factoryMethodName)
     {
         // Schema-level elements live on the schema factory, settings-level on the

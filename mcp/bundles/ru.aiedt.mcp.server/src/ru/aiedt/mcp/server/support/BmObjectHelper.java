@@ -62,28 +62,6 @@ public final class BmObjectHelper
     }
 
     /**
-     * Result of a metadata-mutation operation.
-     * <p>
-     * {@link #tags} carries machine-readable structured fields (e.g.
-     * {@code supportLock}, {@code standardAttributeConflict},
-     * {@code alreadyExists}, {@code notFound}) surfaced into the JSON
-     * response so AI agents can branch on them without parsing the
-     * {@link #error} text.
-     */
-    /**
-     * Why a property could not be set from text.
-     * <p>
-     * Colour, font and border are composite values in the model, not scalars: the setter takes a
-     * built object, and text cannot become one here. Until they are supported, the answer names
-     * the property and the shape it wants rather than passing out the reflection failure, which
-     * said only "argument type mismatch" and sent the caller looking for a defect.
-     * </p>
-     *
-     * @param propertyName the property that was being set, never <code>null</code>
-     * @param paramType the type its setter takes, never <code>null</code>
-     * @return the refusal text, never <code>null</code>
-     */
-    /**
      * Whether a written value is the one the model already had as its default.
      * <p>
      * A value equal to the default is not serialized, so the property reaches the object and the
@@ -120,6 +98,19 @@ public final class BmObjectHelper
         }
     }
 
+    /**
+     * Why a property could not be set from text.
+     * <p>
+     * Colour, font and border are composite values in the model, not scalars: the setter takes a
+     * built object, and text cannot become one here. Until they are supported, the answer names
+     * the property and the shape it wants rather than passing out the reflection failure, which
+     * said only "argument type mismatch" and sent the caller looking for a defect.
+     * </p>
+     *
+     * @param propertyName the property that was being set, never <code>null</code>
+     * @param paramType the type its setter takes, never <code>null</code>
+     * @return the refusal text, never <code>null</code>
+     */
     static String compositeRefusal(String propertyName, Class<?> paramType)
     {
         String wanted = paramType.getSimpleName();
@@ -129,6 +120,15 @@ public final class BmObjectHelper
             + "this operation. Nothing was changed."; //$NON-NLS-1$
     }
 
+    /**
+     * Result of a metadata-mutation operation.
+     * <p>
+     * {@link #tags} carries machine-readable structured fields (e.g.
+     * {@code supportLock}, {@code standardAttributeConflict},
+     * {@code alreadyExists}, {@code notFound}) surfaced into the JSON
+     * response so AI agents can branch on them without parsing the
+     * {@link #error} text.
+     */
     public static final class Result
     {
         public boolean ok;

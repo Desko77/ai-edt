@@ -6,9 +6,8 @@ another javadoc block, a closing brace, or the end of the file. It reads as docu
 whatever follows and documents something else, or nothing at all - and nothing in the build says a
 word, because a comment always compiles.
 
-They arrive the same way every time: a block is inserted above a method that later moves or is
-replaced, and the old block stays behind. One was found by eye in this codebase - a doubled block
-left by an earlier insertion - which is what a census is for.
+They arrive the same way every time: a member moves or is replaced and its block stays behind,
+which leaves the block above some other member's block and the moved member with no header at all.
 
 Reports by default; `--check` fails the build when any orphan stands.
 """
@@ -17,9 +16,9 @@ import pathlib
 import re
 import sys
 
-# The orphans standing when the check was written. It only ever goes down: a fix lowers it,
-# and nothing may raise it.
-BASELINE = 63
+# The orphans allowed to stand. It only ever goes down: a fix lowers it, and nothing may raise it.
+# The 63 the census started with were traced to their members and put back; the floor is now zero.
+BASELINE = 0
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCES = [

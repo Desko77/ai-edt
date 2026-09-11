@@ -1144,11 +1144,6 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * {@code 1cv8 ENTERPRISE /IBConnectionString "<conn>" /DisableStartupMessages
-     * /Execute <epf> /C "StartFeaturePlayer;VAParams=<params>"} (thick client;
-     * {@code /DisableStartupMessages} avoids the "update configuration?" modal).
-     */
-    /**
      * The parameters this tool sets because it reads the result back from where they point.
      * <p>
      * Moving the report or the screenshot directory would leave the run reading an empty file and
@@ -1384,6 +1379,11 @@ public class VanessaTool implements IMcpTool
         }
     }
 
+    /**
+     * {@code 1cv8 ENTERPRISE /IBConnectionString "<conn>" /DisableStartupMessages
+     * /Execute <epf> /C "StartFeaturePlayer;VAParams=<params>"} (thick client;
+     * {@code /DisableStartupMessages} avoids the "update configuration?" modal).
+     */
     private static List<String> buildCommand(File exe, String connectionString, File epf,
         File paramsFile, boolean asTestManager)
     {

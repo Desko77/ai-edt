@@ -326,9 +326,6 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.42.2: native cell merge via the moxel SpreadsheetDocument model.
-     */
-    /**
      * Names an area of a template.
      * <p>
      * The mechanism that loads data from a file reads a template by its named areas: an area name
@@ -512,6 +509,9 @@ public class MxlWorkshopTool implements IMcpTool
             .toJson();
     }
 
+    /**
+     * 1.42.2: native cell merge via the moxel SpreadsheetDocument model.
+     */
     private String opMergeCells(Map<String, String> params)
     {
         if (!BmTemplateHelper.cellOpsAvailable())
@@ -1042,10 +1042,6 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     /**
-     * Locates the named Template MdObject inside the owner. Throws when the
-     * owner has no Templates collection or the named template is missing.
-     */
-    /**
      * Turns a write that never reached the file into a failure.
      * <p>
      * The mutation lands in the in-memory moxel model first and is then written to
@@ -1074,6 +1070,10 @@ public class MxlWorkshopTool implements IMcpTool
         }
     }
 
+    /**
+     * Locates the named Template MdObject inside the owner. Throws when the
+     * owner has no Templates collection or the named template is missing.
+     */
     private static MdObject resolveTemplate(MdObject owner, String templateName)
     {
         @SuppressWarnings("unchecked")

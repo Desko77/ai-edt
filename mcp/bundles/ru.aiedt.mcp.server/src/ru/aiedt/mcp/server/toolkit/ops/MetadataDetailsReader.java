@@ -288,23 +288,6 @@ public class MetadataDetailsReader
     }
 
     /**
-     * Answers for the configuration root, which no collection holds.
-     * <p>
-     * Accepts {@code Configuration} on its own and {@code Configuration.<name>}, in
-     * English or Russian. A name that does not match is refused by NAME rather than
-     * silently formatting the only configuration there is - the caller who spelled it
-     * wrong is otherwise told about an object they did not ask for.
-     * </p>
-     *
-     * @param configuration the project's configuration (non-null)
-     * @param fqn the requested FQN
-     * @param full whether the caller asked for the full view
-     * @param language the requested language, or <code>null</code>
-     * @param view the requested sections
-     * @return the formatted root, an error naming the mismatch, or <code>null</code> when
-     *         {@code fqn} does not address the root at all
-     */
-    /**
      * Reads an FQN as a request for the configuration root.
      *
      * @param fqn the requested FQN (nullable)
@@ -327,6 +310,23 @@ public class MetadataDetailsReader
         return dot < 0 ? "" : trimmed.substring(dot + 1).trim(); //$NON-NLS-1$
     }
 
+    /**
+     * Answers for the configuration root, which no collection holds.
+     * <p>
+     * Accepts {@code Configuration} on its own and {@code Configuration.<name>}, in
+     * English or Russian. A name that does not match is refused by NAME rather than
+     * silently formatting the only configuration there is - the caller who spelled it
+     * wrong is otherwise told about an object they did not ask for.
+     * </p>
+     *
+     * @param configuration the project's configuration (non-null)
+     * @param fqn the requested FQN
+     * @param full whether the caller asked for the full view
+     * @param language the requested language, or <code>null</code>
+     * @param view the requested sections
+     * @return the formatted root, an error naming the mismatch, or <code>null</code> when
+     *         {@code fqn} does not address the root at all
+     */
     private static String configurationRootDetails(Configuration configuration, String fqn,
         boolean full, String language, View view)
     {
