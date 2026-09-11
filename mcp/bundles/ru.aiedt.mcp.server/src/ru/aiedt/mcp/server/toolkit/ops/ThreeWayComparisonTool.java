@@ -126,9 +126,10 @@ public class ThreeWayComparisonTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", //$NON-NLS-1$
-                "Open project that plays our side (MAIN)", true) //$NON-NLS-1$
+                "Open project that plays our side (MAIN). Required for every call except help.") //$NON-NLS-1$
             .stringProperty("otherPath", //$NON-NLS-1$
-                "Directory holding the configuration to compare against (OTHER)", true) //$NON-NLS-1$
+                "Directory holding the configuration to compare against (OTHER). Required for " //$NON-NLS-1$
+                    + "every call except help.") //$NON-NLS-1$
             .stringProperty("parentId", //$NON-NLS-1$
                 "Which vendor configuration of the project the deliveries are measured " //$NON-NLS-1$
                     + "against, by id or by name. Required when the project descends from " //$NON-NLS-1$
@@ -398,10 +399,24 @@ public class ThreeWayComparisonTool
             // Answered before anything is read: a caller asking what the parameters mean has not
             // supplied them yet, and refusing for a missing projectName would answer a question
             // nobody asked.
-            return ParameterHelp.render(getName(), getInputSchema());
+            //
+            // Carried inside a JSON document because this tool declares ResponseType.JSON, and the
+            // router parses whatever a JSON tool returns. Markdown handed back raw becomes an
+            // internal error rather than an answer.
+            return ToolResult.success()
+                .put("help", ParameterHelp.render(getName(), getInputSchema())) //$NON-NLS-1$
+                .toJson();
         }
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String otherPath = JsonUtils.extractStringArgument(params, "otherPath"); //$NON-NLS-1$
+        if (projectName == null || projectName.isBlank() || otherPath == null
+            || otherPath.isBlank())
+        {
+            // The schema cannot insist on these: a help call carries neither, and a client that
+            // validates would refuse it before the branch above could run. The obligation is real
+            // all the same, so it is checked here, in the same words the comparison uses.
+            return ToolResult.error("projectName and otherPath are required").toJson(); //$NON-NLS-1$
+        }
         String ancestorPath = JsonUtils.extractStringArgument(params, "ancestorPath"); //$NON-NLS-1$
 
         String decisionsJson = JsonUtils.extractStringArgument(params, "decisions"); //$NON-NLS-1$
