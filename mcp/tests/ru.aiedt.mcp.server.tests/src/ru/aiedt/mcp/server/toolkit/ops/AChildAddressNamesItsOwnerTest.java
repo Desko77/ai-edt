@@ -160,4 +160,26 @@ public class AChildAddressNamesItsOwnerTest
         assertTrue(ObjectsRevalidator.namesAChild("Catalog.Users.Form.UserForm.Form"));
         assertTrue(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Form.MainForm.Form"));
     }
+
+    @Test
+    public void aFormRootIsAFormRootInEitherLanguage()
+    {
+        // Measured: the same form root resolved spelled one way and was reported absent spelled the
+        // other. Only the first step of an address is translated on the way in, so the marker
+        // arrives as the platform wrote it.
+        assertTrue(ObjectsRevalidator.namesAChild(
+            "Обработка.X."
+                + "Форма.Y.Форма"));
+        assertTrue(ObjectsRevalidator.namesAChild(
+            "DataProcessor.X.Форма.Y.Форма"));
+    }
+
+    @Test
+    public void theOtherLanguageDoesNotWidenTheException()
+    {
+        // The marker is still only a marker on a form root: a template with it appended names
+        // nothing, in either spelling.
+        assertFalse(ObjectsRevalidator.namesAChild(
+            "DataProcessor.X.Template.Y.Форма"));
+    }
 }

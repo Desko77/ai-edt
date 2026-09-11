@@ -217,6 +217,13 @@ public class ObjectsRevalidator
     private static final String FORM = "Form"; //$NON-NLS-1$
 
     /**
+     * The same step as written in the platform's own language. Measured:
+     * {@code DataProcessor.X.Form.Y.Form} resolved and the Russian spelling of the same address did
+     * not, because only the first step of an address is translated on the way in.
+     */
+    private static final String FORM_RU = "Форма"; //$NON-NLS-1$
+
+    /**
      * Whether an address names something under a top object, rather than stopping short of it.
      * <p>
      * Steps come in pairs beyond the owner - a kind and a name - and an address ending on a kind
@@ -261,8 +268,19 @@ public class ObjectsRevalidator
         {
             return true;
         }
-        return steps.length == FORM_ROOT_STEPS && FORM.equalsIgnoreCase(steps[2])
-            && FORM.equalsIgnoreCase(steps[4]);
+        return steps.length == FORM_ROOT_STEPS && namesTheFormStep(steps[2])
+            && namesTheFormStep(steps[4]);
+    }
+
+    /**
+     * Whether a step names a form, in either language the model spells it in.
+     *
+     * @param step one step of an address.
+     * @return <code>true</code> when it names a form
+     */
+    private static boolean namesTheFormStep(String step)
+    {
+        return FORM.equalsIgnoreCase(step) || FORM_RU.equalsIgnoreCase(step);
     }
 
     /**
