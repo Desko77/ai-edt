@@ -142,13 +142,13 @@ public class AHelpCallMustBeMakeableTest
     {
         // Decided rather than defaulted: a client that fills every declared string with an empty
         // value would otherwise turn every call into a help answer and never compare anything. The
-        // schema says non-empty, and this is what holds it to that.
-        // Every spelling of blank, because the first cut of this used trim(), which stops at
-        // U+0020: an em space then asked for help while an ordinary space did not, and the schema
-        // sentence was true of neither reading.
-        // U+00A0 is deliberately absent: Character.isWhitespace excludes the non-breaking spaces,
-        // so isBlank does not call it blank and neither does this. Blank here means what Java
-        // means by it, which is what the schema sentence points at.
+        // schema says an empty or whitespace-only value is not a request, and this holds it to it.
+        //
+        // Every spelling, because the first cut used trim(), which stops at U+0020: an em space
+        // then asked for help while an ordinary space did not, and the sentence was true of
+        // neither reading. U+00A0 and its relatives are deliberately absent - Character.isWhitespace
+        // excludes the non-breaking spaces, so isBlank does not call them blank and neither does
+        // this. They reach the tool as a request, which is the boundary rather than a decision.
         for (String blankValue : new String[] {"", " ", "   ", "\t", "\n", " "}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
         {
             Map<String, String> blank = new LinkedHashMap<>();

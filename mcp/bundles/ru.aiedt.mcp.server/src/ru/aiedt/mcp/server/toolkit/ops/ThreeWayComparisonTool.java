@@ -225,10 +225,10 @@ public class ThreeWayComparisonTool
                     + "exist - a renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
                     + "then reported in originMismatches rather than swallowed.") //$NON-NLS-1$
             .stringProperty("help", //$NON-NLS-1$
-                "Any value that is not blank asks what the parameters mean and answers with " //$NON-NLS-1$
-                    + "that alone; everything else is then ignored. Blank is not a request: a " //$NON-NLS-1$
-                    + "client that fills every declared string would otherwise never compare " //$NON-NLS-1$
-                    + "anything.") //$NON-NLS-1$
+                "Pass a word - help=parameters - to be told what the parameters mean and " //$NON-NLS-1$
+                    + "nothing else; the rest of the call is then ignored. An empty or " //$NON-NLS-1$
+                    + "whitespace-only value is not a request, so a client that fills every " //$NON-NLS-1$
+                    + "declared string still compares.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$

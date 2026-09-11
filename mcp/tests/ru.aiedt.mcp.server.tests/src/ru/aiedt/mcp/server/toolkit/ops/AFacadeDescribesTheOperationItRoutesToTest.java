@@ -11,6 +11,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,11 +69,21 @@ public class AFacadeDescribesTheOperationItRoutesToTest
     }
 
     @Test
-    public void theCatalogueIsNotEmpty()
+    public void theCatalogueHoldsExactlyTheseOperations()
     {
-        // Everything below reads the catalogue. Were it to stop matching, each of those tests would
-        // pass over an empty list and prove nothing at all.
-        assertTrue("the facade's own catalogue named no operations", catalogued().size() >= 9);
+        // Named rather than counted, and counted rather than bounded below. Everything else here
+        // compares the catalogue with something else, and any such comparison is satisfied by both
+        // sides losing an operation together: drop one from the help text and from the dispatch and
+        // the sweep simply runs over nine. An operation this facade offers is a public name, so it
+        // goes away when someone writes it down here, not quietly.
+        List<String> expected = Arrays.asList("compare_configurations", "compare_three_way",
+            "dependency_graph", "describe_db_tables", "detect_query_anti_patterns",
+            "generate_health_snapshot", "impact_analysis", "object_summary", "project_metrics",
+            "semantic_metadata_search");
+        List<String> offered = new ArrayList<>(catalogued());
+        Collections.sort(offered);
+
+        assertEquals("the operations this facade advertises have changed", expected, offered);
     }
 
     @Test
