@@ -73,6 +73,10 @@ public class ExternalObjectWorkshopTool implements IMcpTool
             .stringProperty("inputPath", //$NON-NLS-1$
                 "import_external_object: absolute path of the .epf / .erf binary to import. Required " //$NON-NLS-1$
                     + "for import.") //$NON-NLS-1$
+            .stringProperty("applicationId", //$NON-NLS-1$
+                "import_external_object: the application whose infobase hosts the Designer that converts " //$NON-NLS-1$
+                    + "the binary (see get_applications). Optional when the base configuration has one " //$NON-NLS-1$
+                    + "application; refused when it has several and none is named.") //$NON-NLS-1$
             .stringProperty("baseProjectName", //$NON-NLS-1$
                 "import_external_object: the configuration project the imported object belongs to. " //$NON-NLS-1$
                     + "A container does not carry that link - the IDE's own import wizard asks for " //$NON-NLS-1$
@@ -139,7 +143,8 @@ public class ExternalObjectWorkshopTool implements IMcpTool
         }
         BmExternalObjectProjectHelper.ImportResult res =
             BmExternalObjectProjectHelper.importExternalObject(targetProjectName, inputPath,
-                JsonUtils.extractStringArgument(params, "baseProjectName")); //$NON-NLS-1$
+                JsonUtils.extractStringArgument(params, "baseProjectName"), //$NON-NLS-1$
+                JsonUtils.extractStringArgument(params, "applicationId")); //$NON-NLS-1$
         if (!res.ok)
         {
             String message = res.error != null ? res.error : "import external object failed"; //$NON-NLS-1$
@@ -158,19 +163,31 @@ public class ExternalObjectWorkshopTool implements IMcpTool
                 // it up, and every such failure leaves a directory nobody can find.
                 err.put("leftoverXmlDir", res.leftoverXmlDir); //$NON-NLS-1$
             }
+            if (res.reconnectError != null)
+            {
+                // Two failures are two failures: the import's own, and the infobase left
+                // disconnected behind it.
+                err.put("reconnectError", res.reconnectError); //$NON-NLS-1$
+            }
             return err.toJson();
         }
         // Name what arrived rather than asserting that something did: the caller
         // gets the object it can now address, not a promise to go and look.
-        return ToolResult.success()
+        ToolResult done = ToolResult.success()
             .put("operation", "import_external_object") //$NON-NLS-1$ //$NON-NLS-2$
             .put("targetProject", targetProjectName) //$NON-NLS-1$
             .put("inputPath", inputPath) //$NON-NLS-1$
             .put("importedObject", res.importedObjectFqn) //$NON-NLS-1$
+            .put("hostProject", res.hostProject) //$NON-NLS-1$
+            .put("infobaseName", res.infobaseName) //$NON-NLS-1$
             .put("message", "Imported " + res.importedObjectFqn + " into '" + targetProjectName //$NON-NLS-1$ //$NON-NLS-2$
                 + "'. Run clean_project if the editor still shows the old contents, and rebuild " //$NON-NLS-1$
-                + "binaries with export_object.") //$NON-NLS-1$
-            .toJson();
+                + "binaries with export_object."); //$NON-NLS-1$
+        if (res.reconnectError != null)
+        {
+            done.put("reconnectError", res.reconnectError); //$NON-NLS-1$
+        }
+        return done.toJson();
     }
 
     private String doCreate(Map<String, String> params)

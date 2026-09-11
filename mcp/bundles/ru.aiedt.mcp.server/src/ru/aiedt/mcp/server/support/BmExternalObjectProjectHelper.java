@@ -14,7 +14,6 @@ import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProjectManager;
-import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectRestorer;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport;
@@ -165,6 +164,12 @@ public final class BmExternalObjectProjectHelper
         public String hint;
         public String targetProject;
         public String inputPath;
+        /** The configuration project whose infobase hosted the Designer. */
+        public String hostProject;
+        /** The infobase the Designer ran against. */
+        public String infobaseName;
+        /** Why the infobase is still disconnected after the run, when it is; <code>null</code> otherwise. */
+        public String reconnectError;
         /** FQN of the object that appeared in the container - the evidence the import happened,
          *  in the form every other operation accepts. */
         public String importedObjectFqn;
@@ -276,8 +281,7 @@ public final class BmExternalObjectProjectHelper
     /**
      * Hands the converted XML to the environment's own import operation.
      * <p>
-     * This is the step the plugin was missing. {@code IExternalObjectRestorer.restore} converts the
-     * binary to XML and stops there; the Import menu then calls
+     * The conversion turns the binary into XML and stops there; the Import menu then calls
      * {@code IImportOperationFactory.createImportExternalObjectOperation} on the produced file,
      * which is what actually puts the object into the container. Without it the XML was written to
      * a temporary directory and deleted unread, and the container gained nothing.
@@ -382,8 +386,8 @@ public final class BmExternalObjectProjectHelper
 
     /**
      * Names of the external objects a container holds, read from disk. The import
-     * is verified by comparing this before and after: the restorer says nothing
-     * about what it did, and the object's name is not knowable from the binary's
+     * is verified by comparing this before and after: the conversion says nothing
+     * about what it wrote, and the object's name is not knowable from the binary's
      * file name.
      *
      * @param container the external-object container project
@@ -425,10 +429,10 @@ public final class BmExternalObjectProjectHelper
      * project), adding it as another object - the same path EDT GUI "Import" takes. The container is
      * typically parent-bound to a configuration, so the imported object's types resolve (no markers).
      * <p>
-     * Backs {@code external_object_workshop operation=import_external_object}. Delegates to EDT's
-     * {@link IExternalObjectRestorer#restore(IProject, java.nio.file.Path, java.nio.file.Path,
-     * IProgressMonitor)}, which converts the binary to XML via the 1C thick client and attaches the
-     * object to the target project. This is NOT for creating a new standalone project - use
+     * Backs {@code external_object_workshop operation=import_external_object}. Converts the binary
+     * to XML through the Designer of the base configuration's infobase, under the same handshake as
+     * {@code unpack_external_binary}, and attaches the object to the target project through the
+     * environment's import operation. This is NOT for creating a new standalone project - use
      * {@link #createExternalObjectProject(String, String, IProject)} for that.
      *
      * @param targetProjectName an existing external-object container project
@@ -437,6 +441,31 @@ public final class BmExternalObjectProjectHelper
      */
     public static ImportResult importExternalObject(String targetProjectName, String inputPath,
         String baseProjectName)
+    {
+        return importExternalObject(targetProjectName, inputPath, baseProjectName, null);
+    }
+
+    /**
+     * Imports a binary external object into a container project, converting it through the
+     * Designer of a named infobase.
+     * <p>
+     * The conversion runs the way {@code unpack_external_binary} runs it: the infobase is resolved
+     * from the base configuration project and the application, EDT releases it for the Designer
+     * and takes it back afterwards, and each of those steps is reported on its own. The converted
+     * XML is then attached to the container through the environment's import operation, which
+     * needs no infobase.
+     * </p>
+     *
+     * @param targetProjectName an existing external-object container project
+     * @param inputPath absolute path of the {@code .epf} / {@code .erf} file
+     * @param baseProjectName the configuration the object belongs to; <code>null</code> for the
+     *            container's parent
+     * @param applicationId the application whose infobase hosts the Designer; <code>null</code>
+     *            for the project's only one - refused when there are several
+     * @return structured {@link ImportResult}
+     */
+    public static ImportResult importExternalObject(String targetProjectName, String inputPath,
+        String baseProjectName, String applicationId)
     {
         ImportResult r = new ImportResult();
         r.targetProject = targetProjectName;
@@ -459,8 +488,8 @@ public final class BmExternalObjectProjectHelper
             r.error = "Target project '" + targetProjectName + "' not found or not open."; //$NON-NLS-1$ //$NON-NLS-2$
             return r;
         }
-        // Fail fast on a non-container target - IExternalObjectRestorer.restore rejects it too, but
-        // with a bare IllegalArgumentException; give the agent the actionable reason.
+        // Fail fast on a non-container target: the attach step rejects it too, but with a bare
+        // IllegalArgumentException; give the agent the actionable reason.
         boolean isContainer;
         try
         {
@@ -486,23 +515,19 @@ public final class BmExternalObjectProjectHelper
             return r;
         }
 
-        IExternalObjectRestorer restorer =
-            Activator.getDefault() != null ? Activator.getDefault().getExternalObjectRestorer() : null;
-        if (restorer == null)
+        String hostProjectName = hostConfigurationName(target, baseProjectName);
+        if (hostProjectName == null)
         {
-            r.error = "IExternalObjectRestorer service not reachable on this EDT runtime."; //$NON-NLS-1$
-            r.hint = "Import via EDT GUI: File - Import - External Data Processor / Report, target the " //$NON-NLS-1$
-                + "container project."; //$NON-NLS-1$
+            r.error = "The container carries no base configuration, so there is no infobase to run " //$NON-NLS-1$
+                + "the Designer against. Name the configuration with baseProjectName."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.NO_INFOBASE.wire();
             return r;
         }
 
         try
         {
-            // 4-arg restore (target, binaryFile, xmlOutDir, monitor): EDT resolves the infobase +
-            // thick-client runtime from the target and converts the binary -> XML into xmlOutDir
-            // via a 1C DESIGNER batch. It does NOT attach anything: read as bytecode, restore calls
-            // convertBinaryExternalToXml and the infobase lock, and nothing else. The attaching is
-            // the step below, which is what the environment's own Import menu runs next.
+            // The conversion writes XML into a scratch directory and attaches nothing; attaching is
+            // the step after it, which is what the environment's own Import menu runs next.
             java.nio.file.Path tempXmlDir = java.nio.file.Files.createTempDirectory("xml-ext-obj-"); //$NON-NLS-1$
             boolean keepXml = false;
             try
@@ -513,7 +538,20 @@ public final class BmExternalObjectProjectHelper
                 // happened: the reply said the object was added, get_metadata_objects
                 // returned the same list as before, and nothing was on disk.
                 java.util.Set<String> before = listExternalObjectDirs(target);
-                restorer.restore(target, binary.toPath(), tempXmlDir, new NullProgressMonitor());
+                // The conversion, through the same Designer run and the same infobase handshake
+                // as unpack_external_binary, against the infobase the caller named.
+                BmInfobaseExtensionHelper.ExportResult conversion =
+                    BmInfobaseExtensionHelper.convertExternalToXmlStrictly(hostProjectName, applicationId,
+                        binary.getAbsolutePath(), tempXmlDir.toString());
+                r.hostProject = hostProjectName;
+                r.infobaseName = conversion.infobaseName;
+                r.reconnectError = conversion.reconnectError;
+                if (conversion.error != null)
+                {
+                    r.error = conversion.error;
+                    r.failureKind = conversion.failureKind;
+                    return r;
+                }
                 String importFailure = refuseIfAlreadyThere(before, tempXmlDir);
                 if (importFailure == null)
                 {
@@ -580,6 +618,35 @@ public final class BmExternalObjectProjectHelper
             Activator.logError("importExternalObject(" + targetProjectName + ", " + inputPath + ") failed", t); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
         return r;
+    }
+
+    /**
+     * The configuration project the Designer runs under: the one the caller named, else the
+     * container's parent.
+     *
+     * @param target the container project
+     * @param baseProjectName the configuration the caller named, or <code>null</code>
+     * @return the project name, or <code>null</code> when neither is known
+     */
+    private static String hostConfigurationName(IProject target, String baseProjectName)
+    {
+        if (baseProjectName != null && !baseProjectName.trim().isEmpty())
+        {
+            return baseProjectName.trim();
+        }
+        com._1c.g5.v8.dt.core.platform.IExternalObjectProjectManager projects =
+            Activator.getDefault() == null ? null : Activator.getDefault().getExternalObjectProjectManager();
+        if (projects == null)
+        {
+            return null;
+        }
+        Object parent = projects.getParentProject(target);
+        if (parent instanceof com._1c.g5.v8.dt.core.platform.IConfigurationProject)
+        {
+            IProject project = ((com._1c.g5.v8.dt.core.platform.IConfigurationProject)parent).getProject();
+            return project == null ? null : project.getName();
+        }
+        return null;
     }
 
     /**

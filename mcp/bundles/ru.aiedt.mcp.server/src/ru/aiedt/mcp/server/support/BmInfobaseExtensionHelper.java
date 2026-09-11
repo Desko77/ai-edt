@@ -4,6 +4,7 @@
  */
 package ru.aiedt.mcp.server.support;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -90,6 +91,8 @@ public final class BmInfobaseExtensionHelper
         public String extensionName;
         public String outputPath;
         public long sizeBytes;
+        /** Why the infobase is still disconnected after the run, when it is; <code>null</code> otherwise. */
+        public String reconnectError;
     }
 
     /** Result of installExtension. */
@@ -248,6 +251,136 @@ public final class BmInfobaseExtensionHelper
     public static ExportResult convertExternalToXml(String projectName, String applicationId,
         String sourcePath, String targetPath)
     {
+        return convertExternalToXml(projectName, applicationId, sourcePath, targetPath, false);
+    }
+
+    /**
+     * As {@link #convertExternalToXml(String, String, String, String)}, with every step of the
+     * infobase handshake reported on its own.
+     * <p>
+     * A release that fails is a refusal, and the conversion does not start; a reconnection that
+     * fails is named in {@link ExportResult#reconnectError} beside whatever the conversion itself
+     * reported, so a caller sees both when both went wrong.
+     * </p>
+     *
+     * @param projectName the project whose runtime and infobase host the Designer
+     * @param applicationId the application, or <code>null</code> to take the project's
+     * @param sourcePath the {@code .epf} / {@code .erf} to read
+     * @param targetPath the directory to write the XML into
+     * @return the outcome, with {@code error} set when it did not happen
+     */
+    public static ExportResult convertExternalToXmlStrictly(String projectName, String applicationId,
+        String sourcePath, String targetPath)
+    {
+        return convertExternalToXml(projectName, applicationId, sourcePath, targetPath, true);
+    }
+
+    /** The first step of a Designer run: EDT lets go of the infobase. */
+    @FunctionalInterface
+    public interface Release
+    {
+        /**
+         * @return <code>true</code> when the infobase was connected and is now released; <code>false</code>
+         *         when it was not connected to begin with, so there is nothing to reconnect
+         * @throws Exception when the release failed
+         */
+        boolean release() throws Exception;
+    }
+
+    /** The Designer run itself. */
+    @FunctionalInterface
+    public interface Work
+    {
+        /**
+         * @throws Exception when the run failed
+         */
+        void run() throws Exception;
+    }
+
+    /** The last step: EDT takes the infobase back. */
+    @FunctionalInterface
+    public interface Reconnect
+    {
+        /**
+         * @throws Exception when the reconnection failed
+         */
+        void reconnect() throws Exception;
+    }
+
+    /**
+     * What the three steps reported, each on its own.
+     */
+    public static final class HandshakeOutcome
+    {
+        /** Whether the release step disconnected the infobase, so a reconnection was owed. */
+        public boolean released;
+
+        public Throwable releaseError;
+
+        public Throwable workError;
+
+        public Throwable reconnectError;
+
+        /** The steps that ran, in order: {@code release}, {@code work}, {@code reconnect}. */
+        public final List<String> sequence = new ArrayList<>();
+    }
+
+    /**
+     * Runs a Designer step under the handshake, without letting any step hide another.
+     * <p>
+     * The release goes first; when it throws, nothing else runs. When it released, the reconnection
+     * runs whatever the work did, and its failure is reported beside the work's rather than in
+     * place of it. When the infobase was not connected, nothing is reconnected.
+     * </p>
+     *
+     * @param release the release step
+     * @param work the Designer run
+     * @param reconnect the reconnection step
+     * @return what each step reported
+     */
+    public static HandshakeOutcome runUnderHandshake(Release release, Work work, Reconnect reconnect)
+    {
+        HandshakeOutcome outcome = new HandshakeOutcome();
+        outcome.sequence.add("release"); //$NON-NLS-1$
+        try
+        {
+            outcome.released = release.release();
+        }
+        catch (Exception | LinkageError failed)
+        {
+            outcome.releaseError = failed;
+            return outcome;
+        }
+        try
+        {
+            outcome.sequence.add("work"); //$NON-NLS-1$
+            work.run();
+        }
+        catch (Exception | LinkageError failed)
+        {
+            outcome.workError = failed;
+        }
+        finally
+        {
+            if (outcome.released)
+            {
+                outcome.sequence.add("reconnect"); //$NON-NLS-1$
+                try
+                {
+                    reconnect.reconnect();
+                }
+                catch (Exception | LinkageError failed)
+                {
+                    outcome.reconnectError = failed;
+                }
+            }
+        }
+        return outcome;
+    }
+
+    private static ExportResult convertExternalToXml(String projectName, String applicationId,
+        String sourcePath, String targetPath, boolean strictly)
+    {
         ExportResult r = new ExportResult();
         r.outputPath = targetPath;
 
@@ -341,17 +474,48 @@ public final class BmInfobaseExtensionHelper
             if (ctx.lock != null) ctx.lock.lock();
             try
             {
-                boolean disconnected = disconnectForThickClient(ctx);
-                try
+                if (strictly)
                 {
-                    ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args,
-                        source, target);
-                }
-                finally
-                {
-                    if (disconnected)
+                    HandshakeOutcome handshake = runUnderHandshake(
+                        () -> releaseForThickClient(ctx),
+                        () -> ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args,
+                            source, target),
+                        () -> takeInfobaseBack(ctx));
+                    if (handshake.reconnectError != null)
                     {
-                        reconnectInfobase(ctx);
+                        r.reconnectError = "EDT could not reconnect the infobase " + ctx.infobaseName //$NON-NLS-1$
+                            + " after the Designer run; it shows as disconnected in EDT - reconnect it " //$NON-NLS-1$
+                            + "by hand: " + oneLine(causeChainText(handshake.reconnectError)); //$NON-NLS-1$
+                    }
+                    if (handshake.releaseError != null)
+                    {
+                        r.error = "EDT could not release the infobase " + ctx.infobaseName //$NON-NLS-1$
+                            + " for the Designer, so the conversion did not start: " //$NON-NLS-1$
+                            + oneLine(causeChainText(handshake.releaseError));
+                        r.failureKind = ErrorTags.INFOBASE_NOT_RELEASED.wire();
+                        return r;
+                    }
+                    if (handshake.workError != null)
+                    {
+                        classifyThickClientFailure(handshake.workError,
+                            s -> { r.error = s.error; r.failureKind = s.failureKind; });
+                        return r;
+                    }
+                }
+                else
+                {
+                    boolean disconnected = disconnectForThickClient(ctx);
+                    try
+                    {
+                        ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args,
+                            source, target);
+                    }
+                    finally
+                    {
+                        if (disconnected)
+                        {
+                            reconnectInfobase(ctx);
+                        }
                     }
                 }
             }
@@ -1047,6 +1211,42 @@ public final class BmInfobaseExtensionHelper
                 + oneLine(causeChainText(e)));
             return false;
         }
+    }
+
+    /**
+     * The release step that says when it failed. Same first half as {@link #disconnectForThickClient},
+     * without the second half that goes on regardless.
+     *
+     * @param ctx the resolved launcher context
+     * @return <code>true</code> when the infobase was connected and is now released
+     * @throws Exception when the release failed
+     */
+    private static boolean releaseForThickClient(LauncherContext ctx) throws Exception
+    {
+        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
+        if (mgr == null || ctx.project == null)
+        {
+            return false;
+        }
+        boolean wasConnected = mgr.isConnected(ctx.project, ctx.infobase);
+        mgr.disconnectInfobase(ctx.project, ctx.infobase, false, true, new NullProgressMonitor());
+        return wasConnected;
+    }
+
+    /**
+     * The reconnection step that says when it failed.
+     *
+     * @param ctx the resolved launcher context
+     * @throws Exception when the reconnection failed
+     */
+    private static void takeInfobaseBack(LauncherContext ctx) throws Exception
+    {
+        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
+        if (mgr == null || ctx.project == null)
+        {
+            return;
+        }
+        mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
     }
 
     private static void reconnectInfobase(LauncherContext ctx)

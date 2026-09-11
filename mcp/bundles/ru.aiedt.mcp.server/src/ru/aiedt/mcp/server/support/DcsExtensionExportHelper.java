@@ -265,6 +265,201 @@ public final class DcsExtensionExportHelper
         return r;
     }
 
+    /**
+     * The serializer behind the {@code .dcs} on disk, held open for a caller that already sits
+     * inside a transaction and has the schema object in hand.
+     * <p>
+     * {@link #exportSchemaToDisk} opens its own read-only task to reach the object; a caller in a
+     * write task cannot use that without opening a second transaction. This gives that caller the
+     * same serializer, and the same line separator, so what it produces is what the file holds.
+     * </p>
+     */
+    public static final class SchemaSerializer
+        implements AutoCloseable
+    {
+        private final BundleContext bc;
+
+        private final ServiceReference<?> rvsRef;
+
+        private final ServiceReference<?> lookupRef;
+
+        private final Object serializer;
+
+        private final Object dtProject;
+
+        private final String lineSeparator;
+
+        private final Method serializeXml;
+
+        private final Method deserializeXml;
+
+        private SchemaSerializer(BundleContext bc, ServiceReference<?> rvsRef, ServiceReference<?> lookupRef,
+            Object serializer, Object dtProject, String lineSeparator, Method serializeXml, Method deserializeXml)
+        {
+            this.bc = bc;
+            this.rvsRef = rvsRef;
+            this.lookupRef = lookupRef;
+            this.serializer = serializer;
+            this.dtProject = dtProject;
+            this.lineSeparator = lineSeparator;
+            this.serializeXml = serializeXml;
+            this.deserializeXml = deserializeXml;
+        }
+
+        /**
+         * Resolves the services and builds the serializer for a project.
+         *
+         * @param manager the model manager
+         * @param project the project
+         * @return the open handle; close it when done
+         * @throws Exception when a service or the serializer class cannot be reached
+         */
+        public static SchemaSerializer open(IBmModelManager manager, IProject project) throws Exception
+        {
+            BundleContext bc = org.osgi.framework.FrameworkUtil.getBundle(DcsExtensionExportHelper.class)
+                .getBundleContext();
+            if (bc == null)
+            {
+                throw new IllegalStateException("BundleContext is null - plugin stopping"); //$NON-NLS-1$
+            }
+            ServiceReference<?> rvsRef = bc.getServiceReference(SVC_RUNTIME_VERSION_SUPPORT);
+            ServiceReference<?> lookupRef = bc.getServiceReference(SVC_RESOURCE_LOOKUP);
+            if (rvsRef == null || lookupRef == null)
+            {
+                throw new IllegalStateException("OSGi service not found: " //$NON-NLS-1$
+                    + (rvsRef == null ? SVC_RUNTIME_VERSION_SUPPORT : SVC_RESOURCE_LOOKUP));
+            }
+            Object rvs = bc.getService(rvsRef);
+            Object lookup = bc.getService(lookupRef);
+            try
+            {
+                if (rvs == null || lookup == null)
+                {
+                    throw new IllegalStateException("a required service answered null"); //$NON-NLS-1$
+                }
+                Object dtProject = resolveDtProject(manager, project);
+                if (dtProject == null)
+                {
+                    throw new IllegalStateException("Cannot resolve IDtProject for " + project.getName()); //$NON-NLS-1$
+                }
+                Object version = resolveVersion(rvs, project);
+                if (version == null)
+                {
+                    throw new IllegalStateException("Cannot resolve runtime Version for project " //$NON-NLS-1$
+                        + project.getName());
+                }
+                ClassLoader cl = DcsExtensionExportHelper.class.getClassLoader();
+                Class<?> serializerClass = cl.loadClass(CLS_DCS_V8_SERIALIZER);
+                Class<?> dtProjectIface = cl.loadClass(CLS_DT_PROJECT);
+                Class<?> versionClass = cl.loadClass(CLS_VERSION);
+                Class<?> lookupClass = cl.loadClass(SVC_RESOURCE_LOOKUP);
+                Class<?> rvsClass = cl.loadClass(SVC_RUNTIME_VERSION_SUPPORT);
+                Class<?> eobjectClass = cl.loadClass("org.eclipse.emf.ecore.EObject"); //$NON-NLS-1$
+                Object serializer = serializerClass.getConstructor(dtProjectIface, versionClass, lookupClass)
+                    .newInstance(dtProject, version, lookup);
+                try
+                {
+                    java.lang.reflect.Field rvsField = serializerClass.getDeclaredField("runtimeVersionSupport"); //$NON-NLS-1$
+                    rvsField.setAccessible(true);
+                    if (rvsField.get(serializer) == null)
+                    {
+                        rvsField.set(serializer, rvsClass.cast(rvs));
+                    }
+                }
+                catch (NoSuchFieldException ignored)
+                {
+                    // A newer serializer resolves the runtime version itself.
+                }
+                Method serializeXml = serializerClass.getMethod("serializeXML", //$NON-NLS-1$
+                    eobjectClass, OutputStream.class, String.class, dtProjectIface);
+                Method deserializeXml = null;
+                for (Method candidate : serializerClass.getMethods())
+                {
+                    if ("deserializeXML".equals(candidate.getName()) && candidate.getParameterCount() >= 1 //$NON-NLS-1$
+                        && InputStream.class.isAssignableFrom(candidate.getParameterTypes()[0]))
+                    {
+                        deserializeXml = candidate;
+                        break;
+                    }
+                }
+                if (deserializeXml == null)
+                {
+                    throw new IllegalStateException("DcsV8Serializer.deserializeXML not found"); //$NON-NLS-1$
+                }
+                return new SchemaSerializer(bc, rvsRef, lookupRef, serializer, dtProject,
+                    resolveLineSeparator(project), serializeXml, deserializeXml);
+            }
+            catch (Exception | LinkageError failed)
+            {
+                unget(bc, rvsRef);
+                unget(bc, lookupRef);
+                throw failed;
+            }
+        }
+
+        /**
+         * Serializes a schema object the way the file on disk is written.
+         *
+         * @param schema the schema object; must not be <code>null</code>
+         * @return the bytes
+         * @throws Exception when the serializer refuses
+         */
+        public byte[] serialize(Object schema) throws Exception
+        {
+            ByteArrayOutputStream out = new ByteArrayOutputStream(8192);
+            try
+            {
+                serializeXml.invoke(serializer, schema, out, lineSeparator, dtProject);
+            }
+            catch (java.lang.reflect.InvocationTargetException wrapped)
+            {
+                throw wrapped.getCause() instanceof Exception ? (Exception)wrapped.getCause() : wrapped;
+            }
+            return out.toByteArray();
+        }
+
+        /**
+         * Reads a schema object out of the bytes of a {@code .dcs}.
+         *
+         * @param bytes the file content
+         * @return the schema object, or <code>null</code> when the serializer produced none
+         * @throws Exception when the bytes are not a schema
+         */
+        public Object deserialize(byte[] bytes) throws Exception
+        {
+            try (InputStream in = new ByteArrayInputStream(bytes))
+            {
+                // One argument on 2025.2 and 2026.x; an older shape took the project as well.
+                Object[] args = deserializeXml.getParameterCount() == 1 ? new Object[] {in}
+                    : new Object[] {in, dtProject};
+                return deserializeXml.invoke(serializer, args);
+            }
+            catch (java.lang.reflect.InvocationTargetException wrapped)
+            {
+                throw wrapped.getCause() instanceof Exception ? (Exception)wrapped.getCause() : wrapped;
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            unget(bc, rvsRef);
+            unget(bc, lookupRef);
+        }
+
+        private static void unget(BundleContext bc, ServiceReference<?> ref)
+        {
+            try
+            {
+                bc.ungetService(ref);
+            }
+            catch (RuntimeException ignored)
+            {
+                // The bundle is going down; there is nothing left to give back to.
+            }
+        }
+    }
+
     private static Object resolveDtProject(IBmModelManager manager, IProject project) throws Exception
     {
         // Resolve via the public interface, not manager.getClass(): the impl can be a
@@ -449,6 +644,22 @@ public final class DcsExtensionExportHelper
             // already treats the null as "cannot resolve".
             return System.lineSeparator();
         }
+    }
+
+    /**
+     * Where the {@code .dcs} of a schema lives, from its FQN alone.
+     * <p>
+     * For a caller whose schema is missing from the model, so there is no object to ask. Follows
+     * the layout {@code src/<Type directory>/<Object>/Templates/<Name>/Template.dcs}.
+     * </p>
+     *
+     * @param project the project
+     * @param schemaFqn the schema FQN, {@code <Type>.<Object>.Template.<Name>.Template}
+     * @return the file, which need not exist, or <code>null</code> when the FQN has another shape
+     */
+    public static IFile locateDcsFile(IProject project, String schemaFqn)
+    {
+        return resolveDcsFileLegacy(project, schemaFqn);
     }
 
     private static IFile resolveDcsFile(IProject project, String fqn, BundleContext bc, Object eClass)

@@ -32,6 +32,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
+import ru.aiedt.mcp.server.support.DcsSchemaRestorer;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
@@ -198,6 +199,10 @@ public class DcsWorkshopTool implements IMcpTool
                 "New settings-variant name for rename_settings_variant.") //$NON-NLS-1$
             .stringProperty("topic", "Help topic name (use with operation=help)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("dryRun", "Preview changes inside BM transaction (default false)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("overwriteModel", //$NON-NLS-1$
+                "repair_schema: replace a schema the model holds when it differs from the .dcs. " //$NON-NLS-1$
+                    + "The model's schema is written to a backup beside the file first. Default false: " //$NON-NLS-1$
+                    + "a differing schema is reported and left alone.") //$NON-NLS-1$
             .booleanProperty("validate_query", "Validate queryText before write (default true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("validate_expression", //$NON-NLS-1$
                 "Validate expression before write (default true)") //$NON-NLS-1$
@@ -309,9 +314,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         if ("repair_schema".equals(op))
         {
-            return ToolResult.error("repair_schema requires DcsExtensionImportHelper wired " //$NON-NLS-1$
-                + "in the dispatcher; activated when full integration test passes against EDT 2026.1") //$NON-NLS-1$
-                .toJson();
+            return opRepairSchema(params);
         }
         // Every other advertised op is a schema mutation; the mutation registry is
         // the single source of which ops exist. opSchemaMutation wraps the BM tx and
@@ -321,6 +324,108 @@ public class DcsWorkshopTool implements IMcpTool
             return opSchemaMutation(op, params);
         }
         return ToolResult.error(BmDcsHelper.deferredMessage(op)).toJson();
+    }
+
+    /**
+     * Puts the schema the {@code .dcs} holds back into a model that lost it.
+     * <p>
+     * The file is never written. The model decides the outcome: empty, and the file's schema is
+     * attached; the same bytes, and nothing is done; different, and the call is refused unless
+     * {@code overwriteModel} is true - then the model's schema is written to a backup beside the
+     * file and replaced. The answer names the outcome and whether the model, read back after the
+     * commit, serializes to the file.
+     * </p>
+     *
+     * @param params projectName, objectName (owner or full schema FQN), templateName, overwriteModel
+     * @return the answer
+     */
+    private String opRepairSchema(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String objectName = JsonUtils.extractStringArgument(params, "objectName"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        boolean overwriteModel = JsonUtils.extractBooleanArgument(params, "overwriteModel", false); //$NON-NLS-1$
+        if (projectName == null || objectName == null)
+        {
+            return ToolResult.error("projectName and objectName are required").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+        String schemaFqn = BmDcsHelper.buildSchemaFqn(objectName, templateName);
+        DcsSchemaRestorer.Result r = DcsSchemaRestorer.restore(
+            Activator.getDefault().getBmModelManager(), project, schemaFqn, overwriteModel);
+        boolean changed = r.outcome == DcsSchemaRestorer.Outcome.RESTORED
+            || r.outcome == DcsSchemaRestorer.Outcome.REPLACED;
+        boolean ok = changed || r.outcome == DcsSchemaRestorer.Outcome.MATCHED;
+        ToolResult result = (ok ? ToolResult.success() : ToolResult.error(repairMessage(r)))
+            .put("operation", "repair_schema") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("outcome", r.outcome.name().toLowerCase(java.util.Locale.ROOT)) //$NON-NLS-1$
+            .put("schemaFqn", r.schemaFqn) //$NON-NLS-1$
+            .put("modelChanged", changed) //$NON-NLS-1$
+            .put("fileChanged", false) //$NON-NLS-1$
+            .put("totalMs", r.totalMs); //$NON-NLS-1$
+        if (r.filePath != null)
+        {
+            result.put("filePath", r.filePath).put("fileBytes", r.fileBytes); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (r.modelBytes >= 0)
+        {
+            result.put("modelBytes", r.modelBytes); //$NON-NLS-1$
+        }
+        if (r.firstDifferenceAt >= 0)
+        {
+            result.put("firstDifferenceAt", r.firstDifferenceAt); //$NON-NLS-1$
+        }
+        if (r.backupPath != null)
+        {
+            result.put("backupPath", r.backupPath); //$NON-NLS-1$
+        }
+        if (ok)
+        {
+            result.put("confirmed", r.confirmed).put("message", repairMessage(r)); //$NON-NLS-1$ //$NON-NLS-2$
+            if (!r.confirmed)
+            {
+                result.put("warning", "the model, read back after the commit, does not serialize to the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "bytes of the file"); //$NON-NLS-1$
+            }
+        }
+        if (r.fileChangedDuringRepair)
+        {
+            result.put("fileChangedDuringRepair", true) //$NON-NLS-1$
+                .put("fileWarning", "the .dcs changed while the call ran: what was restored is the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "content it had at the start. Repeat the call to restore the current content."); //$NON-NLS-1$
+        }
+        return result.toJson();
+    }
+
+    private static String repairMessage(DcsSchemaRestorer.Result r)
+    {
+        switch (r.outcome)
+        {
+        case RESTORED:
+            return "the model held no schema; the schema from the .dcs is attached"; //$NON-NLS-1$
+        case MATCHED:
+            return "the model already holds the schema the .dcs holds; nothing was changed"; //$NON-NLS-1$
+        case REPLACED:
+            return "the model held a different schema; it was written to " + r.backupPath //$NON-NLS-1$
+                + " and replaced by the schema from the .dcs"; //$NON-NLS-1$
+        case REFUSED_MODEL_DIFFERS:
+            return "the model holds a different schema (" + r.modelBytes + " bytes against " //$NON-NLS-1$ //$NON-NLS-2$
+                + r.fileBytes + " in the file, first difference at byte " + r.firstDifferenceAt //$NON-NLS-1$
+                + "). Nothing was changed. Pass overwriteModel=true to replace it; the model's schema " //$NON-NLS-1$
+                + "is then written to a backup beside the .dcs first"; //$NON-NLS-1$
+        case NO_TEMPLATE:
+            return "the template " + r.templateFqn + " is not in the model; declare it before restoring " //$NON-NLS-1$ //$NON-NLS-2$
+                + "its schema"; //$NON-NLS-1$
+        case NO_FILE:
+            return r.error;
+        case FAILED:
+        default:
+            return "repair_schema failed: " + r.error; //$NON-NLS-1$
+        }
     }
 
     private String opCreateSchema(Map<String, String> params)
