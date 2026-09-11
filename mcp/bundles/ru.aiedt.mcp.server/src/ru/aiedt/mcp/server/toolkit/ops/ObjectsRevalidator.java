@@ -38,6 +38,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BuildTaskHelper;
+import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
@@ -179,6 +180,99 @@ public class ObjectsRevalidator
         }
     }
 
+    /**
+     * The top object a child address lives under.
+     * <p>
+     * A top object is named by two steps, so anything longer is a child of the first two: a form, a
+     * template, an attribute, a tabular section, a command. Whether the model actually holds that
+     * child is a separate question, and one this cannot answer.
+     * </p>
+     *
+     * @param fqn the address, already normalised.
+     * @return the owner's address, or <code>null</code> when the address names a top object itself
+     */
+    static String ownerOf(String fqn)
+    {
+        if (fqn == null)
+        {
+            return null;
+        }
+        int firstDot = fqn.indexOf('.');
+        if (firstDot < 0)
+        {
+            return null;
+        }
+        int secondDot = fqn.indexOf('.', firstDot + 1);
+        if (secondDot < 0 || secondDot == fqn.length() - 1 || secondDot == firstDot + 1)
+        {
+            return null;
+        }
+        return fqn.substring(0, secondDot);
+    }
+
+    /**
+     * Validates the addresses the index missed by validating the objects that hold them.
+     * <p>
+     * {@code getTopObjectByFqn} answers for top objects and <code>null</code> for everything under
+     * one, so a form, a template, an attribute, a tabular section and a command all read as absent.
+     * Measured: a data processor's existing form and existing template came back in
+     * {@code objectsNotFound} beside an address the model really did not hold, and nothing in the
+     * answer told the two apart. An address reported absent is worse than one reported without
+     * detail, because a caller acts on it by creating the object again.
+     * </p>
+     * <p>
+     * Whether the model holds the child is asked of {@link BmExtensionHelper#addressResolves},
+     * which reaches the model itself - so it is asked OUTSIDE the read task rather than inside it.
+     * Only the addresses the first pass missed are asked about, so an answer where everything
+     * resolved costs nothing.
+     * </p>
+     *
+     * @param project the project being revalidated.
+     * @param bmModel its model.
+     * @param notFound the addresses the index missed; those resolved here are removed from it.
+     * @param objectsToValidate where the owners' ids are added.
+     * @return the child addresses that were validated through their owner
+     */
+    private static List<String> validateChildrenThroughTheirOwners(IProject project,
+        IBmModel bmModel, List<String> notFound, Collection<Object> objectsToValidate)
+    {
+        final List<String> children = new ArrayList<>();
+        final List<String> owners = new ArrayList<>();
+        for (String candidate : notFound)
+        {
+            String owner = ownerOf(MetadataTypeCatalog.normalizeFqn(candidate));
+            if (owner != null && BmExtensionHelper.addressResolves(project, candidate))
+            {
+                children.add(candidate);
+                owners.add(owner);
+            }
+        }
+        if (children.isEmpty())
+        {
+            return children;
+        }
+        final List<String> resolved = new ArrayList<>();
+        bmModel.executeReadonlyTask(new AbstractBmTask<Void>("RevalidateChildOwnerLookup") //$NON-NLS-1$
+        {
+            @Override
+            public Void execute(IBmTransaction tx, IProgressMonitor pm)
+            {
+                for (int i = 0; i < children.size(); i++)
+                {
+                    IBmObject owner = tx.getTopObjectByFqn(owners.get(i));
+                    if (owner != null && owner.bmGetId() > 0)
+                    {
+                        objectsToValidate.add(Long.valueOf(owner.bmGetId()));
+                        resolved.add(children.get(i));
+                    }
+                }
+                return null;
+            }
+        });
+        notFound.removeAll(resolved);
+        return resolved;
+    }
+
     private static String revalidateSpecificObjects(IProject project, List<String> objectFqns,
         IProgressMonitor monitor) throws CoreException
     {
@@ -266,6 +360,10 @@ public class ObjectsRevalidator
             }
         });
 
+        List<String> throughOwner =
+            validateChildrenThroughTheirOwners(project, bmModel, notFound, objectsToValidate);
+        found.addAll(throughOwner);
+
         if (!objectsToValidate.isEmpty())
         {
             Collection<Object> validObjects = new ArrayList<>();
@@ -291,6 +389,10 @@ public class ObjectsRevalidator
             .put("objectsFound", found.size()) //$NON-NLS-1$
             .put("objectsValidated", found) //$NON-NLS-1$
             .put("message", "Revalidation finished"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!throughOwner.isEmpty())
+        {
+            result.put("objectsValidatedThroughOwner", throughOwner); //$NON-NLS-1$
+        }
         if (!notFound.isEmpty())
         {
             result.put("objectsNotFound", notFound); //$NON-NLS-1$
