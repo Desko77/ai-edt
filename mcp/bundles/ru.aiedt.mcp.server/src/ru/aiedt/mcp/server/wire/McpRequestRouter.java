@@ -24,6 +24,7 @@ import com.google.gson.JsonParser;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.McpHistory;
 import ru.aiedt.mcp.server.McpHttpEndpoint;
+import ru.aiedt.mcp.server.RunningToolCall;
 import ru.aiedt.mcp.server.OperatorSignal;
 import ru.aiedt.mcp.server.settings.HistorySettings;
 import ru.aiedt.mcp.server.settings.PrefKeys;
@@ -893,8 +894,21 @@ public class McpRequestRouter
                 // though it did not throw (tools report failure via the result, not an exception).
                 boolean logicalSuccess = success && !FailureShape.looksFailed(result);
                 ArgSummary args = summarizeArgs(arguments, history.argChars());
-                McpHistory.record(tool.getName(), args.text, args.cut, resultSummary,
-                    System.currentTimeMillis() - start, logicalSuccess);
+                McpHistory.Completion completion = new McpHistory.Completion(tool.getName(), args.text,
+                    args.cut, resultSummary, System.currentTimeMillis() - start, logicalSuccess);
+                // The record is left by the call, once it is also known who answered the agent -
+                // the tool or an operator signal - and whether the answer got through. A tool run
+                // with no connection behind it (a test) is recorded here, as unobserved.
+                ToolCallScope scope = ToolCallScope.current();
+                RunningToolCall call = scope == null ? null : scope.runningCall();
+                if (call != null)
+                {
+                    call.toolFinished(completion);
+                }
+                else
+                {
+                    McpHistory.record(completion, McpHistory.Answer.unobserved());
+                }
             }
         }
     }

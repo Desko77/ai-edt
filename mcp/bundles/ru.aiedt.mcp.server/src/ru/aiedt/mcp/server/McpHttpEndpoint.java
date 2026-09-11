@@ -253,16 +253,6 @@ public class McpHttpEndpoint
 
     private static final String RETRY_AFTER_SECONDS = "2"; //$NON-NLS-1$
 
-    /** A page served from a local file sends this as its origin, spelled out. */
-    private static final String ORIGIN_FILE_PAGE = "null"; //$NON-NLS-1$
-
-    private static final String[] ALLOWED_ORIGIN_PREFIXES = {"http://localhost", //$NON-NLS-1$
-        "http://127.0.0.1", //$NON-NLS-1$
-        "https://localhost", //$NON-NLS-1$
-        "https://127.0.0.1", //$NON-NLS-1$
-        "file://", //$NON-NLS-1$
-        "vscode-webview://"}; //$NON-NLS-1$
-
     /** The highest TCP port there is; the search may not walk past it. */
     private static final int MAX_PORT = 65535;
 
@@ -340,7 +330,8 @@ public class McpHttpEndpoint
 
     private static final String MSG_INVALID_ORIGIN = "Invalid Origin"; //$NON-NLS-1$
 
-    private static final String MSG_UNAUTHORIZED = "Unauthorized"; //$NON-NLS-1$
+    private static final String MSG_UNAUTHORIZED = "Unauthorized: send 'Authorization: Bearer <token>'. " //$NON-NLS-1$
+        + "The token is on the AI-EDT preference page of this EDT (Window > Preferences > AI-EDT)."; //$NON-NLS-1$
 
     private static final String MSG_METHOD_NOT_ALLOWED = "Method not allowed"; //$NON-NLS-1$
 
@@ -411,6 +402,13 @@ public class McpHttpEndpoint
         }
 
         registerTools();
+        // No token, no socket. The token comes from the store, or is created and saved first; a
+        // token that answered requests before it was saved would be gone after the next restart.
+        String noToken = McpAuth.adoptStoredToken();
+        if (noToken != null)
+        {
+            throw new IOException("MCP server not started: " + noToken); //$NON-NLS-1$
+        }
         protocolHandler = new McpRequestRouter();
 
         configureJdkHttpTimeouts();
@@ -592,12 +590,16 @@ public class McpHttpEndpoint
      *
      * @return the health JSON
      */
-    private String healthJson()
+    private String healthJson(boolean trusted)
     {
         JsonObject payload = new JsonObject();
         payload.addProperty("status", "ok"); //$NON-NLS-1$ //$NON-NLS-2$
         payload.addProperty("edt_version", EdtVersionReader.getEdtVersion()); //$NON-NLS-1$
         payload.addProperty("phase", WorkspacePhase.current()); //$NON-NLS-1$
+        if (!trusted)
+        {
+            return GsonHolder.toJson(payload);
+        }
         long started = serverStartMillis;
         payload.addProperty("uptimeSeconds", //$NON-NLS-1$
             started == 0L ? 0L : (System.currentTimeMillis() - started) / MILLIS_PER_SECOND);
@@ -671,13 +673,6 @@ public class McpHttpEndpoint
     {
         if (bindsEveryInterface())
         {
-            if (McpAuth.activeToken() == null)
-            {
-                Activator.logWarning(
-                    "MCP server is listening on every network interface with no bearer token: any host " //$NON-NLS-1$
-                        + "that can reach this machine can read and modify the infobase and the sources. " //$NON-NLS-1$
-                        + "Set a token, or turn the setting off."); //$NON-NLS-1$
-            }
             return Collections.singletonList(new InetSocketAddress(serverPort));
         }
         // Loopback only, but both families: "localhost" resolves to ::1 and 127.0.0.1, and a client
@@ -908,15 +903,18 @@ public class McpHttpEndpoint
      * </p>
      *
      * @param signal what the user wants the agent to do
-     * @return <code>true</code> when the agent was answered; <code>false</code> when no call was
-     *         waiting, it had already been answered, or the connection had gone
+     * @return {@link RunningToolCall.Delivery#NOT_ARBITRATED} when no call was waiting or it had
+     *         already been answered; {@link RunningToolCall.Delivery#DELIVERED} when the agent got
+     *         the signal; {@link RunningToolCall.Delivery#DELIVERY_FAILED} when the signal was the
+     *         answer and the connection had gone - the agent then hears from nobody, and the signal
+     *         must not be kept for a later call
      */
-    public synchronized boolean interruptToolCall(OperatorSignal signal)
+    public synchronized RunningToolCall.Delivery interruptToolCall(OperatorSignal signal)
     {
         RunningToolCall call = activeToolCall;
         if (call == null || call.hasResponded())
         {
-            return false;
+            return RunningToolCall.Delivery.NOT_ARBITRATED;
         }
         // A cancel signal raises the call's cancellation flag so a cooperative loop can bail out at
         // its next checkpoint. Only CANCEL does this - a background/retry/expert signal must leave a
@@ -926,13 +924,14 @@ public class McpHttpEndpoint
         {
             call.cancellation().cancel("cancelled by operator"); //$NON-NLS-1$
         }
-        if (!call.sendSignalResponse(signal))
+        RunningToolCall.Delivery delivery = call.sendSignalResponse(signal);
+        if (!delivery.arbitrated())
         {
-            return false;
+            return delivery;
         }
         setCurrentToolName(null);
         clearActiveToolCall(call);
-        return true;
+        return delivery;
     }
 
     /**
@@ -1424,18 +1423,12 @@ public class McpHttpEndpoint
             {
                 if (toolCall)
                 {
-                    ToolCallOutcome outcome = runToolCall(exchange, body);
-                    if (outcome.answered)
-                    {
-                        // The user got there first. The answer is already on the wire.
-                        return;
-                    }
-                    document = outcome.document;
+                    // Answered in there, by the tool's result or by the operator, whichever got
+                    // to the connection first.
+                    runToolCall(exchange, body);
+                    return;
                 }
-                else
-                {
-                    document = protocolHandler.processRequest(body);
-                }
+                document = protocolHandler.processRequest(body);
             }
             catch (Exception e)
             {
@@ -1473,10 +1466,9 @@ public class McpHttpEndpoint
          *
          * @param exchange the connection the agent is waiting on
          * @param body the raw request
-         * @return what to send back, or the news that it has already been sent
-         * @throws Exception whatever the tool threw
+         * @throws IOException when the refusal of a heavy call cannot be written
          */
-        private ToolCallOutcome runToolCall(HttpExchange exchange, String body) throws Exception
+        private void runToolCall(HttpExchange exchange, String body) throws IOException
         {
             JsonObject header = asJsonObject(body);
             String toolName = readToolName(header);
@@ -1495,7 +1487,7 @@ public class McpHttpEndpoint
                     exchange.getResponseHeaders().add(HEADER_RETRY_AFTER, RETRY_AFTER_SECONDS);
                     sendBody(exchange, HTTP_UNAVAILABLE,
                         JsonUtils.buildSimpleError(MSG_HEAP_EXHAUSTED + heap.describe()));
-                    return ToolCallOutcome.answered();
+                    return;
                 }
             }
             if (heavy && !permits.tryAcquire())
@@ -1506,7 +1498,7 @@ public class McpHttpEndpoint
                     + "' refused: concurrency limit reached"); //$NON-NLS-1$
                 exchange.getResponseHeaders().add(HEADER_RETRY_AFTER, RETRY_AFTER_SECONDS);
                 sendBody(exchange, HTTP_UNAVAILABLE, JsonUtils.buildSimpleError(MSG_HEAVY_BUSY));
-                return ToolCallOutcome.answered();
+                return;
             }
             // The permit, if taken, is released by the worker when the tool truly finishes.
             Runnable releasePermit = heavy ? permits::release : null;
@@ -1523,18 +1515,45 @@ public class McpHttpEndpoint
 
                 if (!awaitToolOrUser(execution, call))
                 {
-                    // The server is going down under us. Say nothing and let the connection close.
-                    return ToolCallOutcome.answered();
+                    // The server is going down under us. Say nothing and let the connection close;
+                    // the record says the agent heard from nobody.
+                    call.abandon();
+                    return;
                 }
                 if (call.hasResponded())
                 {
-                    return ToolCallOutcome.answered();
+                    // The user got there first. The answer is already on the wire.
+                    return;
                 }
+                String document;
                 if (execution.failure != null)
                 {
-                    throw execution.failure;
+                    // A tool threw. The agent gets a JSON-RPC error in a perfectly good HTTP response
+                    // - it asked a question and this is the answer. safeMessage, not getMessage: an
+                    // exception with no message of its own would otherwise become the literal words
+                    // "Unknown error".
+                    Activator.logError("MCP request handling failed", execution.failure); //$NON-NLS-1$
+                    document = JsonUtils.buildJsonRpcError(McpServerMeta.ERROR_INTERNAL,
+                        TextSuggest.safeMessage(execution.failure), null);
                 }
-                return ToolCallOutcome.of(execution.document);
+                else
+                {
+                    document = execution.document;
+                }
+                // Arbitration and the write are one step inside the call: a signal that wins the
+                // connection between the check above and this line is honoured, not written over.
+                String answer = document;
+                call.answerWithResult(() -> {
+                    if (answer == null)
+                    {
+                        // A notification: it wanted nothing back.
+                        sendNoBody(exchange, HTTP_ACCEPTED);
+                    }
+                    else
+                    {
+                        deliver(exchange, answer, false);
+                    }
+                });
             }
             finally
             {
@@ -1756,10 +1775,14 @@ public class McpHttpEndpoint
     /**
      * Serves {@code /health}.
      * <p>
-     * Behind neither the token nor the origin check. Monitoring probes and this project's own install
-     * scripts poll it, they send no credentials and no origin, and a health endpoint that answers only
-     * the authorized is not much of a health endpoint. The origin is still read, but only to decide
-     * whether to echo the CORS headers back - a stranger gets a 200 without them, not a 403.
+     * Behind neither the token nor the origin check as far as liveness goes: monitoring probes and
+     * this project's own install scripts poll it, they send no credentials and no origin, and a
+     * health endpoint that answers only the authorized is not much of a health endpoint. Without the
+     * token the answer is liveness and nothing more - status, phase and the EDT version. The name of
+     * the workspace, the tool in flight, the text of a modal dialog and the heap figures are for the
+     * holder of the token, and a wrong token is answered exactly like a missing one. The origin is
+     * still read, but only to decide whether to echo the CORS headers back - a stranger gets a 200
+     * without them, not a 403.
      * </p>
      */
     private final class HealthHandler
@@ -1777,7 +1800,7 @@ public class McpHttpEndpoint
                     sendNoBody(exchange, HTTP_NO_CONTENT);
                     return;
                 }
-                sendJson(exchange, HTTP_OK, healthJson());
+                sendJson(exchange, HTTP_OK, healthJson(presentsTheToken(exchange)));
             }
             catch (IOException e)
             {
@@ -1906,43 +1929,10 @@ public class McpHttpEndpoint
     }
 
     /**
-     * What came of a tool call: a document to send, or the news that the user has already been sent
-     * one.
-     */
-    private static final class ToolCallOutcome
-    {
-        private final String document;
-
-        private final boolean answered;
-
-        private ToolCallOutcome(String document, boolean answered)
-        {
-            this.document = document;
-            this.answered = answered;
-        }
-
-        /**
-         * @param document the response document; may be <code>null</code> for a notification
-         * @return an outcome still to be sent
-         */
-        static ToolCallOutcome of(String document)
-        {
-            return new ToolCallOutcome(document, false);
-        }
-
-        /**
-         * @return an outcome that has already gone out over the connection
-         */
-        static ToolCallOutcome answered()
-        {
-            return new ToolCallOutcome(null, true);
-        }
-    }
-
-    /**
-     * Checks the bearer token, when there is one to check.
+     * Checks the bearer token.
      * <p>
-     * With authentication switched off - which is how it ships - not even the header is looked at.
+     * Every request carries one. A server that has no active token - which cannot be, as the socket
+     * does not open without one - answers as if the wrong one was sent.
      * </p>
      *
      * @param exchange the connection
@@ -1952,13 +1942,7 @@ public class McpHttpEndpoint
      */
     private static boolean authorize(HttpExchange exchange) throws IOException
     {
-        String expected = McpAuth.activeToken();
-        if (expected == null)
-        {
-            return true;
-        }
-        String presented = McpAuth.extractBearer(exchange.getRequestHeaders().getFirst(HEADER_AUTHORIZATION));
-        if (McpAuth.constantTimeEquals(expected, presented))
+        if (presentsTheToken(exchange))
         {
             return true;
         }
@@ -1966,6 +1950,23 @@ public class McpHttpEndpoint
         sendBody(exchange, HTTP_UNAUTHORIZED,
             JsonUtils.buildJsonRpcError(McpServerMeta.ERROR_INVALID_REQUEST, MSG_UNAUTHORIZED, null));
         return false;
+    }
+
+    /**
+     * Tells whether the request carries the active token.
+     *
+     * @param exchange the connection
+     * @return <code>true</code> when the bearer token equals the active one
+     */
+    private static boolean presentsTheToken(HttpExchange exchange)
+    {
+        String expected = McpAuth.activeToken();
+        if (expected == null)
+        {
+            return false;
+        }
+        String presented = McpAuth.extractBearer(exchange.getRequestHeaders().getFirst(HEADER_AUTHORIZATION));
+        return McpAuth.constantTimeEquals(expected, presented);
     }
 
     /**
@@ -2004,19 +2005,22 @@ public class McpHttpEndpoint
      */
     private static boolean isOriginAllowed(String origin)
     {
-        // A page opened from a file has no origin to speak of and says so, in as many letters.
-        if (ORIGIN_FILE_PAGE.equals(origin))
+        return BrowserOrigin.accepted(origin, allowsNullOrigin());
+    }
+
+    /**
+     * Whether a page without an origin - one opened from a file - may talk to this server.
+     *
+     * @return what the preference says; <code>false</code> without a preference store
+     */
+    private static boolean allowsNullOrigin()
+    {
+        Activator activator = Activator.getDefault();
+        if (activator == null)
         {
-            return true;
+            return PrefKeys.DEFAULT_ALLOW_NULL_ORIGIN;
         }
-        for (String prefix : ALLOWED_ORIGIN_PREFIXES)
-        {
-            if (origin.startsWith(prefix))
-            {
-                return true;
-            }
-        }
-        return false;
+        return activator.getPreferenceStore().getBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN);
     }
 
     /**

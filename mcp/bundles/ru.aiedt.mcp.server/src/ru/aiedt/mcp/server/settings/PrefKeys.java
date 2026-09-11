@@ -59,14 +59,23 @@ public final class PrefKeys
     /** Path to the 1C thick client that plays Vanessa scenarios. Empty: <code>vanessa</code> is off. */
     public static final String PREF_VANESSA_1C_EXE = "mcpVanessa1cExe"; //$NON-NLS-1$
 
-    /** Whether <code>/mcp</code> demands a bearer token. */
+    /**
+     * A switch that no longer switches anything: <code>/mcp</code> demands the bearer token
+     * whatever this holds. The key stays because a workspace may still carry it.
+     *
+     * @deprecated the token is required; nothing reads this key
+     */
+    @Deprecated
     public static final String PREF_AUTH_ENABLED = "mcpAuthEnabled"; //$NON-NLS-1$
 
-    /** The bearer token itself. */
+    /** The bearer token every request to <code>/mcp</code> carries. Created at start when empty. */
     public static final String PREF_AUTH_TOKEN = "mcpAuthToken"; //$NON-NLS-1$
 
     /** Whether the socket binds to every interface rather than to loopback alone. */
     public static final String PREF_BIND_ALL_INTERFACES = "mcpBindAllInterfaces"; //$NON-NLS-1$
+
+    /** Whether a browser page that sends the literal origin {@code null} may talk to the server. */
+    public static final String PREF_ALLOW_NULL_ORIGIN = "mcpAllowNullOrigin"; //$NON-NLS-1$
 
     /**
      * Whether 152-FZ PII (INN / SNILS / passport / card / phone / email) is masked in tool
@@ -324,14 +333,25 @@ public final class PrefKeys
     /** Shipped Vanessa thick client: none. */
     public static final String DEFAULT_VANESSA_1C_EXE = ""; //$NON-NLS-1$
 
-    /** Shipped authentication: off - which is only safe while the socket stays on loopback. */
+    /**
+     * The shipped value of the switch that no longer switches anything.
+     *
+     * @deprecated the token is required; nothing reads this
+     */
+    @Deprecated
     public static final boolean DEFAULT_AUTH_ENABLED = false;
 
-    /** Shipped token: none. */
+    /** Shipped token: none, so the first start creates and saves one. */
     public static final String DEFAULT_AUTH_TOKEN = ""; //$NON-NLS-1$
 
     /** Shipped binding: loopback only, so nothing off this machine can reach the tools. */
     public static final boolean DEFAULT_BIND_ALL_INTERFACES = false;
+
+    /**
+     * Shipped origin policy: a page without an origin is turned away. A sandboxed frame any site
+     * can create sends the same {@code null} as a page opened from a file does.
+     */
+    public static final boolean DEFAULT_ALLOW_NULL_ORIGIN = false;
 
     /** Default for {@link #PREF_PII_REDACT_ENABLED}. */
     public static final boolean DEFAULT_PII_REDACT_ENABLED = false;

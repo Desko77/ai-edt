@@ -71,6 +71,12 @@ public class StorageKeyConstantsTest
     }
 
     @Test
+    public void nullOriginPreferenceKeyIsTheShippedLiteral()
+    {
+        assertEquals("mcpAllowNullOrigin", PrefKeys.PREF_ALLOW_NULL_ORIGIN); //$NON-NLS-1$
+    }
+
+    @Test
     public void everyPreferenceKeyIsNonBlank()
     {
         for (String key : new String[] {
@@ -79,7 +85,8 @@ public class StorageKeyConstantsTest
             PrefKeys.PREF_BSL_LS_JAR, PrefKeys.PREF_BSL_LS_JAVA,
             PrefKeys.PREF_VANESSA_EPF, PrefKeys.PREF_VANESSA_1C_EXE,
             PrefKeys.PREF_AUTH_ENABLED, PrefKeys.PREF_AUTH_TOKEN,
-            PrefKeys.PREF_BIND_ALL_INTERFACES, PrefKeys.PREF_DISABLED_TOOLS,
+            PrefKeys.PREF_BIND_ALL_INTERFACES, PrefKeys.PREF_ALLOW_NULL_ORIGIN,
+            PrefKeys.PREF_DISABLED_TOOLS,
             PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
             PrefKeys.PREF_MARKERS_DECORATION_STYLE,
             PrefKeys.PREF_UPKEEP_ENABLED, PrefKeys.PREF_UPKEEP_SITE_URL,
