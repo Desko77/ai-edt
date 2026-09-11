@@ -330,8 +330,9 @@ public class InsightsFacadeTool implements IMcpTool
      * </p>
      * <p>
      * That leaves this list and the dispatch as two places naming the same routing, so
-     * {@code AFacadeDescribesTheOperationItRoutesToTest} holds them together: every operation this
-     * facade accepts resolves here, to a tool whose own name is that operation.
+     * {@code AFacadeDescribesTheOperationItRoutesToTest} holds all three together: every operation
+     * the catalogue offers resolves here, to a tool whose own name is that operation, and the
+     * dispatcher has a case for it rather than falling to its default branch.
      * </p>
      *
      * @param operation a normalized operation token.

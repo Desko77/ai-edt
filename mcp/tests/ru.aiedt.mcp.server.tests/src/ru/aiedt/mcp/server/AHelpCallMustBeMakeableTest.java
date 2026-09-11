@@ -7,7 +7,9 @@
 package ru.aiedt.mcp.server;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.After;
 import org.junit.Before;
@@ -20,6 +22,7 @@ import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
 
 /**
  * A tool that offers help by argument must let a caller ask for it.
@@ -84,6 +87,74 @@ public class AHelpCallMustBeMakeableTest
     }
 
     @Test
+    public void theCallThatTheSchemaAdmitsActuallyAnswersWithTheParameters()
+    {
+        // The test above only says the call is admissible. Admissible and answered are different
+        // claims: move the help branch below the missing-argument guard and the schema check stays
+        // green while every help call is refused for arguments the caller was never asking about.
+        //
+        // What counts as an answer is read in two tiers, because `help` does not mean one thing
+        // across the catalogue. Where it renders the tool's parameters the heading says so, and
+        // that is proof. Where the tool has a help vocabulary of its own - yaxunit_tests takes
+        // help=<topic> and answers an unknown one by listing the topics it has - there is no
+        // heading to look for, and what remains provable is that passing help CHANGED the answer.
+        // Identical answers are the defect itself: the help branch never ran and the bare refusal
+        // came back both times.
+        List<String> refused = new ArrayList<>();
+        for (IMcpTool tool : registry.getAllTools())
+        {
+            JsonObject schema = schemaOf(tool);
+            if (schema == null || !declaresHelpArgument(schema))
+            {
+                continue;
+            }
+            Map<String, String> asking = new LinkedHashMap<>();
+            asking.put(HELP, "yes"); //$NON-NLS-1$
+            String answer = answerOf(tool, asking);
+            if (answer == null)
+            {
+                refused.add(tool.getName() + " threw or answered nothing"); //$NON-NLS-1$
+                continue;
+            }
+            // The heading ParameterHelp writes. Checked as a substring because a tool answering
+            // JSON carries the same text inside a member of its document.
+            if (answer.contains(tool.getName() + " - parameters")) //$NON-NLS-1$
+            {
+                continue;
+            }
+            String bare = answerOf(tool, new LinkedHashMap<>());
+            if (answer.equals(bare))
+            {
+                refused.add(tool.getName() + " answered the same with help as without: " //$NON-NLS-1$
+                    + firstLineOf(answer));
+            }
+        }
+
+        if (!refused.isEmpty())
+        {
+            throw new AssertionError("These tools declare a help argument and passing it reaches " //$NON-NLS-1$
+                + "no help of any kind:\n  " + String.join("\n  ", refused)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    @Test
+    public void anEmptyHelpValueIsNotARequest()
+    {
+        // Decided rather than defaulted: a client that fills every declared string with an empty
+        // value would otherwise turn every call into a help answer and never compare anything. The
+        // schema says non-empty, and this is what holds it to that.
+        Map<String, String> blank = new LinkedHashMap<>();
+        blank.put(HELP, "   "); //$NON-NLS-1$
+        String answer = new ThreeWayComparisonTool().execute(blank);
+
+        if (answer != null && answer.contains("compare_three_way - parameters")) //$NON-NLS-1$
+        {
+            throw new AssertionError("a blank help value was read as a request for help, which " //$NON-NLS-1$
+                + "makes a client that sends empty strings unable to compare anything"); //$NON-NLS-1$
+        }
+    }
+
+    @Test
     public void theSweepLooksAtSomething()
     {
         // Without this, a change that stopped the schema parsing - or renamed the argument - would
@@ -121,6 +192,37 @@ public class AHelpCallMustBeMakeableTest
     {
         JsonObject properties = schema.getAsJsonObject("properties"); //$NON-NLS-1$
         return properties != null && properties.has(HELP);
+    }
+
+    /**
+     * What one tool answers to one call, or <code>null</code> when it will not answer at all.
+     *
+     * @param tool the tool to call.
+     * @param arguments the call.
+     * @return the answer, or <code>null</code>
+     */
+    private static String answerOf(IMcpTool tool, Map<String, String> arguments)
+    {
+        try
+        {
+            String answer = tool.execute(arguments);
+            return answer == null || answer.isEmpty() ? null : answer;
+        }
+        catch (RuntimeException | LinkageError thrown)
+        {
+            return null;
+        }
+    }
+
+    private static String firstLineOf(String answer)
+    {
+        if (answer == null)
+        {
+            return "nothing at all"; //$NON-NLS-1$
+        }
+        int newline = answer.indexOf('\n');
+        String line = newline < 0 ? answer : answer.substring(0, newline);
+        return line.length() > 200 ? line.substring(0, 200) + "..." : line; //$NON-NLS-1$
     }
 
     private static List<String> insistedOn(JsonObject schema)

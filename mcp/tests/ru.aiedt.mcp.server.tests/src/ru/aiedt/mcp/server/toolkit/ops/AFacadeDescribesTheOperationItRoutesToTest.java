@@ -87,6 +87,42 @@ public class AFacadeDescribesTheOperationItRoutesToTest
     }
 
     @Test
+    public void everyCataloguedOperationIsAlsoDispatched()
+    {
+        // The test above reads the map that describes operations. This one reads the switch that
+        // runs them, and the two are different lists: remove a case and help would go on describing
+        // a route the call no longer takes, which is the drift the map was accused of inviting.
+        //
+        // What the operation answers here does not matter - none of them has a workspace to work
+        // on, so all of them refuse. The refusal is the proof: a switch with no case for the name
+        // falls to the default branch, and the default branch says so in those words.
+        List<String> undispatched = new ArrayList<>();
+        for (String operation : catalogued())
+        {
+            Map<String, String> call = new HashMap<>();
+            call.put("operation", operation);
+            String answer;
+            try
+            {
+                answer = new InsightsFacadeTool().execute(call);
+            }
+            catch (RuntimeException | LinkageError thrown)
+            {
+                // Reaching the delegate and failing inside it still proves the case exists.
+                continue;
+            }
+            if (answer != null
+                && (answer.contains("Unhandled operation") || answer.contains("Unknown operation")))
+            {
+                undispatched.add(operation);
+            }
+        }
+
+        assertTrue("the catalogue and the help map offer these operations and the dispatcher has "
+            + "no case for them: " + undispatched, undispatched.isEmpty());
+    }
+
+    @Test
     public void anOperationNameAsTopicAnswersWithThatOperationsParameters()
     {
         String answer = help("compare_three_way");
