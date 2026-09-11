@@ -758,7 +758,12 @@ def narrowed(found: dict[str, dict[str, object]]) -> list[str]:
     for line in previous.stdout.split("\n"):
         cells = line.split("\t")
         if len(cells) >= 3 and not line.startswith("#"):
-            was[(cells[0], cells[1])] = {name for name in cells[2].split(",") if name}
+            # The committed file may carry either shape - name, or name:kind since the kinds were
+            # recorded. Compared as names either way: this check asks whether a PARAMETER left a
+            # row, and reading the older shape as if it were the newer made every parameter of
+            # every row look removed.
+            was[(cells[0], cells[1])] = {entry.rsplit(":", 1)[0] if ":" in entry else entry
+                                         for entry in cells[2].split(",") if entry}
     lost = []
     for row in found.values():
         key = (str(row["facade"]), str(row["operation"]))
