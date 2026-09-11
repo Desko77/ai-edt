@@ -12,6 +12,7 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmFormHelper;
+import ru.aiedt.mcp.server.support.FormEventContainers;
 import ru.aiedt.mcp.server.support.FormEventRegistry;
 import ru.aiedt.mcp.server.support.BmFormGeneratorHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
@@ -106,8 +107,23 @@ final class FormEventOps
         String execResult = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) -> {
             try
             {
-                Object target = (finalItemName == null || finalItemName.isEmpty())
-                    ? form
+                boolean onTheRoot = finalItemName == null || finalItemName.isEmpty();
+                if (onTheRoot)
+                {
+                    // The platform calls ONE handler for an event, so a second one for the same
+                    // event is not a second behaviour - it is an undefined one. Both containers are
+                    // searched: the duplicate that sits in the other one is exactly the duplicate a
+                    // single-container search misses.
+                    String bound = FormEventContainers.boundHandlerFor(form, finalEvent);
+                    if (bound != null)
+                    {
+                        return "Error: event '" + finalEvent + "' already calls " + bound //$NON-NLS-1$ //$NON-NLS-2$
+                            + ". Remove that handler first, or write the new code into it - " //$NON-NLS-1$
+                            + "the platform calls one handler per event."; //$NON-NLS-1$
+                    }
+                }
+                Object target = onTheRoot
+                    ? FormEventContainers.containerFor(form, finalEvent)
                     : helper.findItemByName(form, finalItemName);
                 if (target == null)
                 {
@@ -447,9 +463,30 @@ final class FormEventOps
         String execResult = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) -> {
             try
             {
-                Object target = (finalItemName == null || finalItemName.isEmpty())
-                    ? form
-                    : helper.findItemByName(form, finalItemName);
+                if (finalItemName == null || finalItemName.isEmpty())
+                {
+                    // Both containers, and both reported. A handler the caller asked to remove that
+                    // sits in the other one would otherwise be answered "removed 0" while it stays
+                    // on the form - and the next write would find the event still taken.
+                    int removed = 0;
+                    String failure = null;
+                    for (Object container : FormEventContainers.containersOf(form))
+                    {
+                        String outcome = detachFormEventHandler(container, finalEvent, finalHandlerName);
+                        if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
+                        {
+                            failure = outcome;
+                            continue;
+                        }
+                        removed += countRemoved(outcome);
+                    }
+                    if (removed == 0 && failure != null)
+                    {
+                        return failure;
+                    }
+                    return "removed " + removed + " handler(s) for " + finalEvent; //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                Object target = helper.findItemByName(form, finalItemName);
                 if (target == null)
                 {
                     return "Error: Form item not found: " + finalItemName; //$NON-NLS-1$
@@ -475,6 +512,23 @@ final class FormEventOps
             .put("itemName", itemName != null ? itemName : "") //$NON-NLS-1$ //$NON-NLS-2$
             .put("result", execResult) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The count out of what {@link #detachFormEventHandler} reports, so two containers can be added
+     * up.
+     *
+     * @param outcome what the removal answered
+     * @return how many handlers it took away; zero when the text carries no number
+     */
+    private static int countRemoved(String outcome)
+    {
+        if (outcome == null)
+        {
+            return 0;
+        }
+        java.util.regex.Matcher digits = java.util.regex.Pattern.compile("(\\d+)").matcher(outcome); //$NON-NLS-1$
+        return digits.find() ? Integer.parseInt(digits.group(1)) : 0;
     }
 
     /**

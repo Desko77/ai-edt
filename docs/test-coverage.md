@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 116 | a test class named after it |
-| exercised | 81 | reached by some other test |
+| exercised | 82 | reached by some other test |
 | tool-sweep | 88 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
 | workspace-bound | 56 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **389** | across 259 test classes |
+| **total** | **390** | across 260 test classes |
 
 ## untested (0)
 
@@ -257,7 +257,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (81)
+## exercised (82)
 
 **(root)**
 - Activator
@@ -307,6 +307,7 @@ _none_
 - EditorBuffer
 - ErrorTags
 - ExportedFiles
+- FormEventContainers
 - InfobaseAddress
 - JUnitRunOutcome
 - MetadataGuards
@@ -522,9 +523,9 @@ closes.
 | 9-16 | 48 |
 | 17+ | 15 |
 
-2440 test methods across 259 test classes; 116 classes have a test of their own, median 9 methods each.
+2454 test methods across 260 test classes; 116 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 389 classes have one: 88 are covered by the registry-wide contract sweep and 56 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 390 classes have one: 88 are covered by the registry-wide contract sweep and 56 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 
