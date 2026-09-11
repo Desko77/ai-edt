@@ -667,7 +667,14 @@ public class GeneralPrefTab
             return;
         }
         // Save first: the socket cannot open on a port that has not been committed.
-        performOk();
+        String notSaved = performOk();
+        if (notSaved != null)
+        {
+            // The token in the field is not the one in force; starting now would let the user
+            // believe it is.
+            MessageDialog.openError(control.getShell(), "Start Failed", notSaved); //$NON-NLS-1$
+            return;
+        }
         try
         {
             server.start(portSpinner.getSelection());
@@ -699,7 +706,12 @@ public class GeneralPrefTab
         {
             return;
         }
-        performOk();
+        String notSaved = performOk();
+        if (notSaved != null)
+        {
+            MessageDialog.openError(control.getShell(), "Restart Failed", notSaved); //$NON-NLS-1$
+            return;
+        }
         try
         {
             server.restart(portSpinner.getSelection());

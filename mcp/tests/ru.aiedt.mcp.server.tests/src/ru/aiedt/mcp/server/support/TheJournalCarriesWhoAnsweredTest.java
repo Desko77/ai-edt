@@ -30,6 +30,33 @@ import ru.aiedt.mcp.server.OperatorSignal;
 public class TheJournalCarriesWhoAnsweredTest
 {
     @Test
+    public void theOperatorsNoteIsMaskedLikeTheArguments() throws IOException
+    {
+        McpHistory.clear();
+        String note = "call the customer at +7 (912) 345-67-89 first"; //$NON-NLS-1$
+        McpHistory.record(new McpHistory.Completion("journal_probe", "", false, "done", 3L, true), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            McpHistory.Answer.bySignal(new OperatorSignal(OperatorSignal.SignalType.CUSTOM, note), true));
+        Map<String, Object> record = McpHistory.recent(1).get(0);
+        assertEquals("the buffer keeps the note whole", note, record.get("signalNote")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Path file = Files.createTempFile("aiedt-journal", ".jsonl"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            HistoryJournal.appendTo(file, record, true);
+            JsonObject line = JsonParser.parseString(Files.readAllLines(file, StandardCharsets.UTF_8).get(0))
+                .getAsJsonObject();
+            String written = line.get("signalNote").getAsString(); //$NON-NLS-1$
+            assertTrue(written, !written.contains("345-67-89")); //$NON-NLS-1$
+            assertTrue(written, written.contains("call the customer")); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.deleteIfExists(file);
+            McpHistory.clear();
+        }
+    }
+
+    @Test
     public void theLineCarriesBothFields() throws IOException
     {
         McpHistory.clear();

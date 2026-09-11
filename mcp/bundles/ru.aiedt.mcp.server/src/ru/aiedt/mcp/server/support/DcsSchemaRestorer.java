@@ -25,6 +25,7 @@ import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.bm.integration.IBmTask;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 
 import ru.aiedt.mcp.server.Activator;
@@ -297,7 +298,10 @@ public final class DcsSchemaRestorer
                 }
                 Path backupTarget = backupPathBeside(dcs);
                 Step[] step = new Step[1];
-                model.execute(new AbstractBmTask<Void>("repair_schema") //$NON-NLS-1$
+                // Through the global editing context, as every attach of a top object in this
+                // plugin: a schema attached in a plain task leaves its reference deferred and the
+                // commit fails with "Failed to persist reference value".
+                model.getGlobalContext().execute((IBmTask<Void>)new AbstractBmTask<Void>("repair_schema") //$NON-NLS-1$
                 {
                     @Override
                     public Void execute(IBmTransaction tx, IProgressMonitor monitor)

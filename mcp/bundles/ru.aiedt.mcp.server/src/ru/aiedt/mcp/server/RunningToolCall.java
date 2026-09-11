@@ -220,7 +220,7 @@ public class RunningToolCall
             Activator.logInfo("User signal answered the pending call to tool: " + toolName); //$NON-NLS-1$
             delivery = Delivery.DELIVERED;
         }
-        catch (IOException e)
+        catch (IOException | RuntimeException e)
         {
             // The latch stays set: there is no second connection to try, and the tool thread must
             // still be told to keep its hands off this one.
@@ -258,8 +258,10 @@ public class RunningToolCall
             answering.send();
             delivery = Delivery.DELIVERED;
         }
-        catch (IOException e)
+        catch (IOException | RuntimeException e)
         {
+            // A connection that broke, or a response that could not be framed: either way the
+            // agent did not get the result, and the record has to say so rather than stay unwritten.
             Activator.logError("Could not deliver the result of tool: " + toolName, e); //$NON-NLS-1$
             delivery = Delivery.DELIVERY_FAILED;
         }

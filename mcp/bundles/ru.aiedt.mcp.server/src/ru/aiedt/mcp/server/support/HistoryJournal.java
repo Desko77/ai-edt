@@ -170,6 +170,8 @@ public final class HistoryJournal
         Map<String, Object> copy = new LinkedHashMap<>(entry);
         maskField(copy, "args"); //$NON-NLS-1$
         maskField(copy, "result"); //$NON-NLS-1$
+        // The operator's own words, typed into the signal dialog, can carry the same data.
+        maskField(copy, "signalNote"); //$NON-NLS-1$
         return copy;
     }
 
