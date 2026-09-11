@@ -133,4 +133,26 @@ public class FormEventRegistryTest
         assertTrue(spec.signature,
             spec.signature.contains("СтандартнаяОбработка")); //$NON-NLS-1$
     }
+
+    @Test
+    public void theWriteEventsOfTheFormAreDeclared()
+    {
+        // Measured across 1094 form modules of a working configuration: ПослеЗаписи 78 times and
+        // ПередЗаписью 34. Neither was declared here, so naming either was refused before the
+        // handler could be placed at all - while the forms of that same configuration carry them.
+        EventSpec before = FormEventRegistry.lookup("BeforeWrite"); //$NON-NLS-1$
+        EventSpec after = FormEventRegistry.lookup("AfterWrite"); //$NON-NLS-1$
+
+        assertNotNull("BeforeWrite has to resolve", before); //$NON-NLS-1$
+        assertNotNull("AfterWrite has to resolve", after); //$NON-NLS-1$
+        assertSame(before, FormEventRegistry.lookup("ПередЗаписью")); //$NON-NLS-1$
+        assertSame(after, FormEventRegistry.lookup("ПослеЗаписи")); //$NON-NLS-1$
+
+        // Client-side, and they are not the AtServer events of the same name.
+        assertTrue(before.directive, before.directive.contains("НаКлиенте")); //$NON-NLS-1$
+        assertTrue(after.directive, after.directive.contains("НаКлиенте")); //$NON-NLS-1$
+        assertTrue(before.signature, before.signature.contains("Отказ")); //$NON-NLS-1$
+        assertTrue(before.signature, before.signature.contains("ПараметрыЗаписи")); //$NON-NLS-1$
+        assertEquals("ПараметрыЗаписи", after.signature); //$NON-NLS-1$
+    }
 }
