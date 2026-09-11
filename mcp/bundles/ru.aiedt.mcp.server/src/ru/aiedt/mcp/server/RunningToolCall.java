@@ -234,8 +234,18 @@ public class RunningToolCall
         }
         finally
         {
-            closeExchange();
-            answerWritten.countDown();
+            try
+            {
+                closeExchange();
+            }
+            catch (RuntimeException closing)
+            {
+                Activator.logWarning("Closing the connection after the signal failed: " + closing); //$NON-NLS-1$
+            }
+            finally
+            {
+                answerWritten.countDown();
+            }
         }
         answered(McpHistory.Answer.bySignal(signal, delivery == Delivery.DELIVERED));
         return delivery;

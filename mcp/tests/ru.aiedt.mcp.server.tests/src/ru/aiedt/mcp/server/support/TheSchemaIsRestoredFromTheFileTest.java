@@ -169,6 +169,18 @@ public class TheSchemaIsRestoredFromTheFileTest
     }
 
     @Test
+    public void aFileThatCannotBeReadAgainIsAFailureWithoutAnAttach()
+    {
+        FakeModel model = new FakeModel(new Object(), null, null);
+        model.fileNowFails = true;
+        Step step = DcsSchemaRestorer.restoreWithin(FILE, FROM_FILE, false, model);
+        assertEquals(Outcome.FAILED, step.outcome);
+        assertTrue(step.error, step.error.contains("unreadable")); //$NON-NLS-1$
+        assertNull(model.attached);
+        assertEquals(0, model.backups.size());
+    }
+
+    @Test
     public void theTemplateFqnIsTheSchemaFqnWithoutItsTail()
     {
         assertEquals("Report.Sales.Template.Main", //$NON-NLS-1$
@@ -223,6 +235,8 @@ public class TheSchemaIsRestoredFromTheFileTest
         boolean serializeFails;
 
         byte[] fileNow = FILE;
+
+        boolean fileNowFails;
 
         int existingReads;
 
@@ -305,8 +319,12 @@ public class TheSchemaIsRestoredFromTheFileTest
         }
 
         @Override
-        public byte[] fileNow()
+        public byte[] fileNow() throws IOException
         {
+            if (fileNowFails)
+            {
+                throw new IOException("the .dcs is unreadable"); //$NON-NLS-1$
+            }
             return fileNow;
         }
     }

@@ -467,7 +467,7 @@ public final class DcsSchemaRestorer
                                 + " bytes that differ from the file at byte " + Arrays.mismatch(seen, expected); //$NON-NLS-1$
                         }
                     }
-                    catch (Exception failed)
+                    catch (Exception | LinkageError failed)
                     {
                         reason[0] = "the model could not be serialized after the commit: " + describe(failed); //$NON-NLS-1$
                     }
@@ -476,8 +476,10 @@ public final class DcsSchemaRestorer
             });
             return reason[0];
         }
-        catch (RuntimeException failed)
+        catch (RuntimeException | LinkageError failed)
         {
+            // Whatever stops the read-back is a reason the change is unconfirmed, never a reason to
+            // call the committed change failed.
             return "the confirmation read failed: " + describe(failed); //$NON-NLS-1$
         }
     }

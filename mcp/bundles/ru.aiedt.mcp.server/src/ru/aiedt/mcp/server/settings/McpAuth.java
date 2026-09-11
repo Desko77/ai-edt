@@ -135,9 +135,9 @@ public final class McpAuth
         }
         catch (BackingStoreException | RuntimeException notSaved)
         {
-            putBack(keeper, stored);
             return "the bearer token could not be saved to the preference store: " //$NON-NLS-1$
-                + describe(notSaved) + ". The server does not open a socket without a saved token."; //$NON-NLS-1$
+                + describe(notSaved) + ". The server does not open a socket without a saved token." //$NON-NLS-1$
+                + putBack(keeper, stored);
         }
         published = created;
         return null;
@@ -165,9 +165,8 @@ public final class McpAuth
         }
         catch (BackingStoreException | RuntimeException notSaved)
         {
-            putBack(keeper, previous);
             return "the bearer token could not be saved to the preference store: " //$NON-NLS-1$
-                + describe(notSaved) + ". The previous token stays in force."; //$NON-NLS-1$
+                + describe(notSaved) + ". The previous token stays in force." + putBack(keeper, previous); //$NON-NLS-1$
         }
         published = candidate;
         return null;
@@ -244,18 +243,24 @@ public final class McpAuth
      * Puts the previous value back after a flush that failed, and tries to carry that to the disk
      * as well: a flush that failed halfway may have left the new value there, and the store in
      * memory alone would then disagree with what the next start reads.
+     *
+     * @return an empty string when the previous value reached the disk, otherwise what the caller
+     *         has to be told about the next start
      */
-    private static void putBack(TokenStore keeper, String previous)
+    private static String putBack(TokenStore keeper, String previous)
     {
-        keeper.write(previous);
         try
         {
+            keeper.write(previous);
             keeper.flush();
+            return ""; //$NON-NLS-1$
         }
         catch (BackingStoreException | RuntimeException stillNotSaved)
         {
             Activator.logWarning("the previous bearer token could not be flushed back to the preference store: " //$NON-NLS-1$
                 + describe(stillNotSaved));
+            return " The previous value could not be flushed back either (" + describe(stillNotSaved) //$NON-NLS-1$
+                + "): after a restart the store may hold the rejected token - check the preference page."; //$NON-NLS-1$
         }
     }
 

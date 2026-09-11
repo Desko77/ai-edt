@@ -91,6 +91,27 @@ public class AnInterruptedCallLeavesATraceTest
     }
 
     @Test
+    public void anAbandonedCallReleasesTheWaitingThreadToo() throws Exception
+    {
+        RunningToolCall call = new RunningToolCall(FakeExchange.open(), TOOL, 7);
+        call.abandon();
+        assertTrue(call.awaitAnswerWritten(10));
+    }
+
+    @Test
+    public void aResultThatLostTheArbitrationDoesNotPretendToHaveWritten() throws Exception
+    {
+        RunningToolCall call = new RunningToolCall(FakeExchange.hungUp(), TOOL, 7);
+        // The signal claims the connection and its write fails; the latch is its to release.
+        assertEquals(RunningToolCall.Delivery.DELIVERY_FAILED,
+            call.sendSignalResponse(new OperatorSignal(OperatorSignal.SignalType.CANCEL, null)));
+        assertTrue(call.awaitAnswerWritten(10));
+        assertEquals(RunningToolCall.Delivery.NOT_ARBITRATED, call.answerWithResult(() -> {
+            throw new AssertionError("must not write"); //$NON-NLS-1$
+        }));
+    }
+
+    @Test
     public void aSignalWithoutANoteCarriesItsTypeOnly()
     {
         RunningToolCall call = new RunningToolCall(FakeExchange.open(), TOOL, 7);

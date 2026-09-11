@@ -400,17 +400,25 @@ public class DcsWorkshopTool implements IMcpTool
         }
         if (r.backupPath != null)
         {
-            result.put("backupPath", r.backupPath); //$NON-NLS-1$
+            // In a preview the file was named, not written.
+            result.put(dryRun ? "plannedBackupPath" : "backupPath", r.backupPath); //$NON-NLS-1$ //$NON-NLS-2$
         }
         if (ok)
         {
-            result.put("confirmed", r.confirmed).put("message", repairMessage(r)); //$NON-NLS-1$ //$NON-NLS-2$
+            result.put("message", repairMessage(r)); //$NON-NLS-1$
+            if (!dryRun)
+            {
+                result.put("confirmed", r.confirmed); //$NON-NLS-1$
+            }
         }
         if (r.fileChangedDuringRepair)
         {
             result.put("fileChangedDuringRepair", true) //$NON-NLS-1$
-                .put("fileWarning", "the .dcs changed while the call ran: what was restored is the " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "content it had at the start. Repeat the call to restore the current content."); //$NON-NLS-1$
+                .put("fileWarning", changed //$NON-NLS-1$
+                    ? "the .dcs changed while the call ran: what was restored is the content it had at " //$NON-NLS-1$
+                        + "the start. Repeat the call to restore the current content." //$NON-NLS-1$
+                    : "the .dcs changed while the call ran; nothing was changed. Repeat the call to " //$NON-NLS-1$
+                        + "decide on the current content."); //$NON-NLS-1$
         }
         return result.toJson();
     }
@@ -421,16 +429,20 @@ public class DcsWorkshopTool implements IMcpTool
         {
             return "the change was committed, and the read-back did not confirm it: " + r.confirmation; //$NON-NLS-1$
         }
-        String would = r.dryRun ? " (preview: nothing was changed)" : ""; //$NON-NLS-1$ //$NON-NLS-2$
         switch (r.outcome)
         {
         case RESTORED:
-            return "the model held no schema; the schema from the .dcs is attached" + would; //$NON-NLS-1$
+            return r.dryRun
+                ? "preview: the model holds no schema; the schema from the .dcs would be attached" //$NON-NLS-1$
+                : "the model held no schema; the schema from the .dcs is attached"; //$NON-NLS-1$
         case MATCHED:
             return "the model already holds the schema the .dcs holds; nothing was changed"; //$NON-NLS-1$
         case REPLACED:
-            return "the model held a different schema; it was written to " + r.backupPath //$NON-NLS-1$
-                + " and replaced by the schema from the .dcs" + would; //$NON-NLS-1$
+            return r.dryRun
+                ? "preview: the model holds a different schema; it would be written to " + r.backupPath //$NON-NLS-1$
+                    + " and replaced by the schema from the .dcs" //$NON-NLS-1$
+                : "the model held a different schema; it was written to " + r.backupPath //$NON-NLS-1$
+                    + " and replaced by the schema from the .dcs"; //$NON-NLS-1$
         case FILE_CHANGED:
             return "the .dcs changed while the call ran; nothing was changed. Repeat the call"; //$NON-NLS-1$
         case REFUSED_MODEL_DIFFERS:

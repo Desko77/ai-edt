@@ -348,11 +348,13 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable failed)
         {
+            rethrowIfFatal(failed);
             outcome.releaseError = failed;
             return outcome;
         }
         // Throwable, not Exception: an AssertionError out of the Designer run would otherwise
-        // skip the reconnection and hide behind whatever it threw.
+        // skip the reconnection and hide behind whatever it threw. A fatal error - the VM giving
+        // out, the thread being killed - is still rethrown, after the reconnection was attempted.
         try
         {
             outcome.sequence.add("work"); //$NON-NLS-1$
@@ -377,7 +379,26 @@ public final class BmInfobaseExtensionHelper
                 }
             }
         }
+        rethrowIfFatal(outcome.workError);
+        rethrowIfFatal(outcome.reconnectError);
         return outcome;
+    }
+
+    /**
+     * Lets a fatal error through: one the process cannot go on after, which no answer may absorb.
+     *
+     * @param failure what was caught; <code>null</code> is nothing
+     */
+    private static void rethrowIfFatal(Throwable failure)
+    {
+        if (failure instanceof VirtualMachineError)
+        {
+            throw (VirtualMachineError)failure;
+        }
+        if (failure instanceof ThreadDeath)
+        {
+            throw (ThreadDeath)failure;
+        }
     }
 
     private static ExportResult convertExternalToXml(String projectName, String applicationId,
@@ -1241,22 +1262,35 @@ public final class BmInfobaseExtensionHelper
         {
             mgr.disconnectInfobase(ctx.project, ctx.infobase, false, true, new NullProgressMonitor());
         }
-        catch (Exception | LinkageError failed)
+        catch (Throwable failed)
         {
+            rethrowIfFatal(failed);
             if (wasConnected)
             {
                 // The release may have gone through before it threw; put the infobase back rather
-                // than leave it in a state nobody reported. A failure of that goes with the cause.
+                // than leave it in a state nobody reported. When that fails too, both are in the
+                // message: a suppressed exception is not shown by the text the caller gets.
                 try
                 {
                     mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
                 }
-                catch (Exception | LinkageError alsoFailed)
+                catch (Throwable alsoFailed)
                 {
-                    failed.addSuppressed(alsoFailed);
+                    rethrowIfFatal(alsoFailed);
+                    throw new IllegalStateException(oneLine(causeChainText(failed))
+                        + "; the infobase could not be reconnected either and stays disconnected - " //$NON-NLS-1$
+                        + "reconnect it by hand: " + oneLine(causeChainText(alsoFailed)), failed); //$NON-NLS-1$
                 }
             }
-            throw failed;
+            if (failed instanceof Exception)
+            {
+                throw (Exception)failed;
+            }
+            if (failed instanceof Error)
+            {
+                throw (Error)failed;
+            }
+            throw new IllegalStateException(failed);
         }
         return wasConnected;
     }
@@ -1270,9 +1304,12 @@ public final class BmInfobaseExtensionHelper
     private static void takeInfobaseBack(LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (mgr == null)
         {
-            return;
+            // The infobase was released through this manager; without it now, it stays released,
+            // and that is a failure to report, not a step to skip.
+            throw new IllegalStateException("IInfobaseSynchronizationManager is no longer available; " //$NON-NLS-1$
+                + "the infobase stays disconnected"); //$NON-NLS-1$
         }
         mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
     }

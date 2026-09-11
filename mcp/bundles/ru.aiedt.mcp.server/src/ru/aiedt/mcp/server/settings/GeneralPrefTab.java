@@ -235,6 +235,13 @@ public class GeneralPrefTab
      */
     public String performOk()
     {
+        // The token first: it is the one field that has to reach the disk before it counts, and
+        // a save that fails must leave the other fields as they were, not half applied.
+        String notSaved = publishToken();
+        if (notSaved != null)
+        {
+            return notSaved;
+        }
         store.setValue(PrefKeys.PREF_PORT, portSpinner.getSelection());
         store.setValue(PrefKeys.PREF_PORT_SPAN, portSpanSpinner.getSelection());
         store.setValue(PrefKeys.PREF_AUTO_START, autoStartCheck.getSelection());
@@ -264,7 +271,7 @@ public class GeneralPrefTab
             MarkerSettingsMigration.mirrorToLegacyKey(PrefKeys.PREF_MARKERS_DECORATION_STYLE,
                 MARKER_STYLE_VALUES[styleIndex]);
         }
-        return publishToken();
+        return null;
     }
 
     /**
