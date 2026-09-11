@@ -332,6 +332,9 @@ public final class ExtensionFitness
             return found;
         }
 
+        /** What an extension records when it has no type of its own: the element, empty. */
+        static final String NO_OPINION = ""; //$NON-NLS-1$
+
         /**
          * Reads the type a borrowed field was borrowed against.
          * <p>
@@ -345,8 +348,6 @@ public final class ExtensionFitness
          * @param field the borrowed field.
          * @return the type names it was borrowed against, or the ordinary type when it has one
          */
-        /** What an extension records when it has no type of its own: the element, empty. */
-        static final String NO_OPINION = ""; //$NON-NLS-1$
 
         static String borrowedTypeOf(EObject field)
         {
