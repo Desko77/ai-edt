@@ -39,6 +39,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.session.SessionChangeTracker;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
+import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
@@ -329,6 +330,10 @@ public class ProjectProblemsReader
             {
                 objectFqns.addAll(MetadataTypeCatalog.getAllFqnVariants(fqn));
             }
+            // Named before the markers are counted. An address the model does not hold matches no
+            // marker, so the answer below is a clean page - and a clean page over a mistyped FQN
+            // reads as "this object has no errors", which is the opposite of what happened.
+            String unresolved = unresolvedNotice(projectName, objects);
 
             Filter filter =
                 new Filter(projectName, severityFilter, checkId, objectFqns, sessionFqns, sessionScope, fileFilter);
@@ -364,8 +369,8 @@ public class ProjectProblemsReader
 
             if (compact)
             {
-                return formatCompact(collected, resolvedScope, projectName, severity, checkId, objects,
-                    collectLimit);
+                return unresolved + formatCompact(collected, resolvedScope, projectName, severity, checkId,
+                    objects, collectLimit);
             }
             if ("project".equals(resolvedScope) && collected.size() >= limit) //$NON-NLS-1$
             {
@@ -387,12 +392,13 @@ public class ProjectProblemsReader
                     // sat collected and were thrown away. Finding out which checks fire on a
                     // large configuration then took one call per object. The warning belongs
                     // in front of the rows, not instead of them.
-                    return capNotice(total, collected.size(), filter.isNarrowed())
+                    return unresolved + capNotice(total, collected.size(), filter.isNarrowed())
                         + formatMarkers(collected, resolvedScope, projectName, severity, checkId,
                             objects, limit, extraInfo);
                 }
             }
-            return formatMarkers(collected, resolvedScope, projectName, severity, checkId, objects, limit, extraInfo);
+            return unresolved
+                + formatMarkers(collected, resolvedScope, projectName, severity, checkId, objects, limit, extraInfo);
         }
         catch (Exception e)
         {
@@ -495,6 +501,80 @@ public class ProjectProblemsReader
      * @param objects the object filter; never <code>null</code>.
      * @return the markdown.
      */
+    /**
+     * The heading that names the requested addresses the model does not hold.
+     * <p>
+     * Asked through {@link BmExtensionHelper#addressResolves}, which is the same question
+     * {@code revalidate_objects} answers, and which knows that a form, a template or an attribute
+     * is not a BM top object. Without a named project there is nothing to ask, and the notice is
+     * empty.
+     * </p>
+     *
+     * @param projectName the project the addresses belong to; may be <code>null</code>
+     * @param objects the requested addresses; may be empty
+     * @return the notice, ending in a blank line, or an empty string when every address resolves
+     */
+    static String unresolvedNotice(String projectName, List<String> objects)
+    {
+        if (projectName == null || projectName.isEmpty() || objects == null || objects.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        if (!project.exists())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return describeMissing(missingAmong(objects, fqn -> BmExtensionHelper.addressResolves(project, fqn)));
+    }
+
+    /**
+     * The addresses a resolver does not recognise, in the order they were asked for.
+     * <p>
+     * Split out from the lookup so the decision can be driven by a test: a mixed request, where one
+     * address stands and another does not, is the case that matters and the one a workspace-bound
+     * method cannot be asked about.
+     * </p>
+     *
+     * @param objects the requested addresses
+     * @param resolves answers whether the model holds an address
+     * @return the addresses it does not hold; empty when every one of them stands
+     */
+    static List<String> missingAmong(List<String> objects, java.util.function.Predicate<String> resolves)
+    {
+        List<String> missing = new ArrayList<>();
+        if (objects == null)
+        {
+            return missing;
+        }
+        for (String fqn : objects)
+        {
+            if (!resolves.test(fqn))
+            {
+                missing.add(fqn);
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * The wording of the notice, kept apart from the lookup so it can be read without a workspace.
+     *
+     * @param missing the addresses the model does not hold; empty gives an empty notice
+     * @return the notice, ending in a blank line
+     */
+    static String describeMissing(List<String> missing)
+    {
+        if (missing == null || missing.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return "# Addresses Not In The Model\n\n" //$NON-NLS-1$
+            + "The project holds no object under: " + String.join(", ", missing) //$NON-NLS-1$ //$NON-NLS-2$
+            + ".\nNothing below is filtered to " + (missing.size() == 1 ? "that address" : "them") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + " - check the spelling of the FQN.\n\n"; //$NON-NLS-1$
+    }
+
     // Package-visible for ProjectProblemsSeverityNoticeTest: the compact path once
     // reached this with the filters stripped, and told a caller who had asked for ALL
     // that the default was in force. A test is what keeps the two paths saying the same

@@ -6,9 +6,9 @@
 
 package ru.aiedt.mcp.server;
 
-import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -271,7 +271,18 @@ public class McpHttpEndpoint
 
     private static final int HTTP_METHOD_NOT_ALLOWED = 405;
 
+    private static final int HTTP_PAYLOAD_TOO_LARGE = 413;
+
     private static final int HTTP_INTERNAL_ERROR = 500;
+
+    /**
+     * The most a request body may carry. Generous on purpose: a module written through
+     * {@code write_module_source} is the largest thing a caller legitimately sends, and a
+     * configuration's largest modules are measured in megabytes, not tens of them.
+     */
+    private static final long MAX_BODY_BYTES = 32L * 1024L * 1024L;
+
+    private static final int BODY_CHUNK_BYTES = 8192;
 
     private static final int HTTP_UNAVAILABLE = 503;
 
@@ -1412,6 +1423,15 @@ public class McpHttpEndpoint
             {
                 body = readBody(exchange);
             }
+            catch (BodyTooLarge tooLarge)
+            {
+                // A body past the limit is the client's to fix, so it is told - unlike a broken
+                // connection, where there is nobody left to tell.
+                Activator.logWarning("MCP request refused: " + tooLarge.getMessage()); //$NON-NLS-1$
+                sendBody(exchange, HTTP_PAYLOAD_TOO_LARGE, "Payload too large: the request body goes past " //$NON-NLS-1$
+                    + tooLarge.limit() + " bytes."); //$NON-NLS-1$
+                return;
+            }
             catch (IOException e)
             {
                 // The request never arrived in full; the client is presumed gone, so nothing is sent
@@ -2137,18 +2157,61 @@ public class McpHttpEndpoint
      */
     private static String readBody(HttpExchange exchange) throws IOException
     {
-        StringBuilder body = new StringBuilder();
-        try (BufferedReader reader =
-            new BufferedReader(new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8)))
+        return readBody(exchange.getRequestBody(), MAX_BODY_BYTES);
+    }
+
+    /**
+     * Reads a request body, refusing one that goes past a limit.
+     * <p>
+     * The limit is on the bytes actually read, not on {@code Content-Length}. A request may arrive
+     * without that header, may arrive chunked, and may declare a smaller number than it sends - so
+     * the header decides nothing, and a reader that trusts it can still be handed a body of any
+     * size. Counting while reading is what a limit has to mean.
+     * </p>
+     *
+     * @param stream the request body
+     * @param limit the most bytes that may be read
+     * @return the body as text
+     * @throws BodyTooLarge when the body goes past the limit
+     * @throws IOException when the connection breaks
+     */
+    static String readBody(InputStream stream, long limit) throws IOException
+    {
+        ByteArrayOutputStream collected = new ByteArrayOutputStream();
+        byte[] buffer = new byte[BODY_CHUNK_BYTES];
+        long total = 0;
+        int read = stream.read(buffer);
+        while (read >= 0)
         {
-            String line = reader.readLine();
-            while (line != null)
+            total += read;
+            if (total > limit)
             {
-                body.append(line);
-                line = reader.readLine();
+                throw new BodyTooLarge(limit);
             }
+            collected.write(buffer, 0, read);
+            read = stream.read(buffer);
         }
-        return body.toString();
+        return new String(collected.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    /** A request body past the limit. Carries the limit so the refusal can name it. */
+    static final class BodyTooLarge
+        extends IOException
+    {
+        private static final long serialVersionUID = 1L;
+
+        private final long limit;
+
+        BodyTooLarge(long limit)
+        {
+            super("the request body goes past " + limit + " bytes"); //$NON-NLS-1$ //$NON-NLS-2$
+            this.limit = limit;
+        }
+
+        long limit()
+        {
+            return limit;
+        }
     }
 
     /**
