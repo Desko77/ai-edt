@@ -78,6 +78,64 @@ public class TheSchemaShapeIsFrozenTest
     }
 
     /**
+     * The same element with every prose description taken out, however deep it sits.
+     * <p>
+     * A property can carry a schema of its own - {@code items}, a branch of {@code oneOf} - and
+     * that nested schema can describe itself. Left in, the description of a nested schema would
+     * read as part of the contract, and rewriting it would fail a check whose whole point is that
+     * prose may be rewritten.
+     * </p>
+     * <p>
+     * Inside {@code properties} the keys are parameter NAMES, not schema keywords, so a parameter
+     * called {@code description} - two tools declare one - is kept while the keyword of the same
+     * spelling is dropped. Stripping by spelling alone would erase a real parameter from the
+     * contract and let it disappear unnoticed, which is the very thing this guards.
+     * </p>
+     *
+     * @param element any part of a schema.
+     * @return a copy without prose
+     */
+    private static JsonElement withoutProse(JsonElement element)
+    {
+        if (element.isJsonArray())
+        {
+            JsonArray copied = new JsonArray();
+            for (JsonElement item : element.getAsJsonArray())
+            {
+                copied.add(withoutProse(item));
+            }
+            return copied;
+        }
+        if (!element.isJsonObject())
+        {
+            return element;
+        }
+        JsonObject copied = new JsonObject();
+        for (Map.Entry<String, JsonElement> member : element.getAsJsonObject().entrySet())
+        {
+            if (DESCRIPTION.equals(member.getKey()))
+            {
+                continue;
+            }
+            if ("properties".equals(member.getKey()) && member.getValue().isJsonObject()) //$NON-NLS-1$
+            {
+                JsonObject named = new JsonObject();
+                for (Map.Entry<String, JsonElement> property : member.getValue().getAsJsonObject()
+                    .entrySet())
+                {
+                    named.add(property.getKey(), withoutProse(property.getValue()));
+                }
+                copied.add(member.getKey(), named);
+            }
+            else
+            {
+                copied.add(member.getKey(), withoutProse(member.getValue()));
+            }
+        }
+        return copied;
+    }
+
+    /**
      * Everything about a property that decides whether a call is legal, rendered in one line.
      *
      * @param property the property object from the schema.
@@ -90,7 +148,7 @@ public class TheSchemaShapeIsFrozenTest
         {
             if (!DESCRIPTION.equals(member.getKey()))
             {
-                keys.put(member.getKey(), member.getValue().toString());
+                keys.put(member.getKey(), withoutProse(member.getValue()).toString());
             }
         }
         StringBuilder line = new StringBuilder();
@@ -210,6 +268,42 @@ public class TheSchemaShapeIsFrozenTest
         Files.createDirectories(out.getParent());
         Files.write(out, text.toString().getBytes(StandardCharsets.UTF_8));
         return out.toAbsolutePath();
+    }
+
+    @Test
+    public void proseInsideANestedSchemaIsNotPartOfTheContract()
+    {
+        // A parameter that is a list of things describes the things too. Rewriting that sentence
+        // has to be as free as rewriting the parameter's own.
+        JsonObject plain = JsonParser.parseString(
+            "{\"type\":\"array\",\"items\":{\"type\":\"string\"}}").getAsJsonObject(); //$NON-NLS-1$
+        JsonObject described = JsonParser.parseString(
+            "{\"type\":\"array\",\"description\":\"what it is\"," //$NON-NLS-1$
+                + "\"items\":{\"type\":\"string\",\"description\":\"one of them\"}}") //$NON-NLS-1$
+            .getAsJsonObject();
+
+        assertTrue("the same declaration described differently is the same declaration: " //$NON-NLS-1$
+            + shapeOf(plain) + " vs " + shapeOf(described), //$NON-NLS-1$
+            shapeOf(plain).equals(shapeOf(described)));
+    }
+
+    @Test
+    public void aParameterNamedDescriptionStaysInTheContract()
+    {
+        // code_template and edit_metadata both declare one. Stripping prose by spelling alone
+        // would erase it from the snapshot, and it could then leave a schema unnoticed - which is
+        // the failure this whole test exists to prevent.
+        JsonObject nested = JsonParser.parseString(
+            "{\"type\":\"object\",\"description\":\"the prose\"," //$NON-NLS-1$
+                + "\"properties\":{\"description\":{\"type\":\"string\"," //$NON-NLS-1$
+                + "\"description\":\"its own prose\"}}}").getAsJsonObject(); //$NON-NLS-1$
+
+        String shape = withoutProse(nested).toString();
+
+        assertTrue("the parameter name has to survive: " + shape, //$NON-NLS-1$
+            shape.contains("\"description\":{\"type\":\"string\"}")); //$NON-NLS-1$
+        assertTrue("the keyword beside it has to go: " + shape, //$NON-NLS-1$
+            !shape.contains("the prose") && !shape.contains("its own prose")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Test
