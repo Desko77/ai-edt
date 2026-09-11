@@ -240,6 +240,14 @@ public final class ExtensionFitness
             }
             String was = MdChildren.borrowedTypeOf(field.getValue());
             String now = MdChildren.typeOf(other);
+            if (MdChildren.NO_OPINION.equals(was))
+            {
+                // The extension holds no type for this attribute, so it takes the delivery's and
+                // the two cannot disagree. Measured: eight of eleven findings on a real extension
+                // were this, reported as "could not be read" - noise that made a healthy extension
+                // look like a broken one.
+                continue;
+            }
             if (was == null || now == null)
             {
                 // Said, not skipped. A type nobody could read is not a type that matches, and a
@@ -324,6 +332,9 @@ public final class ExtensionFitness
             return found;
         }
 
+        /** What an extension records when it has no type of its own: the element, empty. */
+        static final String NO_OPINION = ""; //$NON-NLS-1$
+
         /**
          * Reads the type a borrowed field was borrowed against.
          * <p>
@@ -337,6 +348,7 @@ public final class ExtensionFitness
          * @param field the borrowed field.
          * @return the type names it was borrowed against, or the ordinary type when it has one
          */
+
         static String borrowedTypeOf(EObject field)
         {
             try
@@ -384,6 +396,13 @@ public final class ExtensionFitness
             {
                 return null;
             }
+            if (((List<?>)entries).isEmpty())
+            {
+                // No entries at all - the extension wrote down that it has no type of its own.
+                // Told apart below from entries whose names would not read: there the extension
+                // HAS an opinion and this could not make it out, which is a different answer.
+                return NO_OPINION;
+            }
             List<String> names = new ArrayList<>();
             for (Object entry : (List<?>)entries)
             {
@@ -396,6 +415,11 @@ public final class ExtensionFitness
             }
             if (names.isEmpty())
             {
+
+
+
+
+
                 return null;
             }
             java.util.Collections.sort(names);

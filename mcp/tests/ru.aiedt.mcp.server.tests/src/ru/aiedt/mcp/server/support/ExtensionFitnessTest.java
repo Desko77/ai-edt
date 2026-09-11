@@ -90,13 +90,34 @@ public class ExtensionFitnessTest
     }
 
     @Test
-    public void anEmptyCompositionIsNothingRatherThanAnEmptyName()
+    public void whatCannotBeReadIsNothing()
     {
         // An empty name would compare equal to another empty name, which is how two sides that
-        // were never read come to look like two sides that agree.
-        assertNull(ExtensionFitness.MdChildren.renderBorrowed(new Composition()));
+        // were never read come to look like two sides that agree. Nothing readable here, so
+        // nothing is the answer.
         assertNull(ExtensionFitness.MdChildren.renderBorrowed(null));
         assertNull(ExtensionFitness.MdChildren.renderBorrowed("not a composition at all"));
+    }
+
+    @Test
+    public void aCompositionWithNoEntriesIsAnAnswerOfItsOwn()
+    {
+        // Measured on a real extension: an adopted attribute the extension never retyped carries
+        // <typeExtension/> with nothing in it. That is a record - "I take whatever the delivery
+        // has" - and not a failure to read one. Told apart from unreadable because the caller does
+        // different things with them: this one is skipped, the other is reported.
+        assertEquals(ExtensionFitness.MdChildren.NO_OPINION,
+            ExtensionFitness.MdChildren.renderBorrowed(new Composition()));
+    }
+
+    @Test
+    public void noOpinionIsNotAName()
+    {
+        // The hazard the older wording guarded: a value that renders as a name and compares equal
+        // to another empty one. It has to stay distinguishable from any real type name.
+        assertTrue(ExtensionFitness.MdChildren.NO_OPINION.isEmpty());
+        assertNull(ExtensionFitness.MdChildren.renderBorrowed(
+            new Composition(new Entry(new Named("")))));
     }
 
     /** Stands in for the extension composition block: it answers getTypes with its entries. */
