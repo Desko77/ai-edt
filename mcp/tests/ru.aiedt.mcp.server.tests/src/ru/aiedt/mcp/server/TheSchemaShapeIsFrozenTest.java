@@ -69,6 +69,14 @@ public class TheSchemaShapeIsFrozenTest
         Collections.unmodifiableSet(new java.util.HashSet<>(
             java.util.Arrays.asList("const", "enum", "default", "examples"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
+    /**
+     * Keywords whose members are NAMES rather than keywords, so what is spelled description there
+     * is something declared and not prose about it.
+     */
+    private static final java.util.Set<String> NAME_MAPS =
+        Collections.unmodifiableSet(new java.util.HashSet<>(java.util.Arrays.asList(
+            "properties", "$defs", "definitions", "patternProperties", "dependentSchemas"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
     private McpToolCatalog registry;
 
     @Before
@@ -129,7 +137,7 @@ public class TheSchemaShapeIsFrozenTest
                 continue;
             }
             JsonElement value = source.get(key);
-            if ("properties".equals(key) && value.isJsonObject()) //$NON-NLS-1$
+            if (NAME_MAPS.contains(key) && value.isJsonObject())
             {
                 JsonObject named = new JsonObject();
                 JsonObject declared = value.getAsJsonObject();
@@ -144,13 +152,65 @@ public class TheSchemaShapeIsFrozenTest
                 // What a call may send, not a schema describing it. An object here is data, so a
                 // member of it that happens to be spelled description is part of the value: const
                 // {"description":"A"} and const {"description":"B"} accept different things, and
-                // reducing both to {} would record them as the same contract.
-                copied.add(key, value);
+                // reducing both to {} would record them as the same contract. Sorted all the same,
+                // because the order members were written in changes nothing about what is accepted.
+                copied.add(key, canonical(value));
+            }
+            else if ("required".equals(key) && value.isJsonArray()) //$NON-NLS-1$
+            {
+                // The root list is sorted where it is rendered; a list nested inside an object
+                // parameter has to be sorted too, or writing the same two names the other way
+                // round would read as a different contract.
+                TreeSet<String> insisted = new TreeSet<>();
+                for (JsonElement name : value.getAsJsonArray())
+                {
+                    insisted.add(name.getAsString());
+                }
+                JsonArray sorted = new JsonArray();
+                for (String name : insisted)
+                {
+                    sorted.add(name);
+                }
+                copied.add(key, sorted);
             }
             else
             {
                 copied.add(key, withoutProse(value));
             }
+        }
+        return copied;
+    }
+
+    /**
+     * The same value with its object members sorted, and nothing taken out.
+     * <p>
+     * For what a call may send rather than for a schema: every member is part of the value, so none
+     * may go, but the order they were written in is not part of it either.
+     * </p>
+     *
+     * @param element a literal value from the schema.
+     * @return the same value, member order made not to matter
+     */
+    private static JsonElement canonical(JsonElement element)
+    {
+        if (element.isJsonArray())
+        {
+            JsonArray copied = new JsonArray();
+            for (JsonElement item : element.getAsJsonArray())
+            {
+                copied.add(canonical(item));
+            }
+            return copied;
+        }
+        if (!element.isJsonObject())
+        {
+            return element;
+        }
+        JsonObject source = element.getAsJsonObject();
+        JsonObject copied = new JsonObject();
+        for (String key : new TreeSet<>(source.keySet()))
+        {
+            copied.add(key, canonical(source.get(key)));
         }
         return copied;
     }
