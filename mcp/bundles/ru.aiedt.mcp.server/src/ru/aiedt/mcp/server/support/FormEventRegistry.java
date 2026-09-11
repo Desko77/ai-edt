@@ -84,6 +84,13 @@ public final class FormEventRegistry
         // Form root - lifecycle on the client.
         register(m, "OnOpen", "ПриОткрытии", //$NON-NLS-1$ //$NON-NLS-2$
             "Отказ", "&НаКлиенте", Scope.FORM); //$NON-NLS-1$ //$NON-NLS-2$
+        // Measured across 1094 form modules of a working configuration: ПослеЗаписи(ПараметрыЗаписи)
+        // 78 times and ПередЗаписью(Отказ, ПараметрыЗаписи) 34. Both were missing here, so a caller
+        // naming either was refused before the handler could be placed at all.
+        register(m, "BeforeWrite", "ПередЗаписью", //$NON-NLS-1$ //$NON-NLS-2$
+            "Отказ, ПараметрыЗаписи", "&НаКлиенте", Scope.FORM); //$NON-NLS-1$ //$NON-NLS-2$
+        register(m, "AfterWrite", "ПослеЗаписи", //$NON-NLS-1$ //$NON-NLS-2$
+            "ПараметрыЗаписи", "&НаКлиенте", Scope.FORM); //$NON-NLS-1$ //$NON-NLS-2$
         register(m, "BeforeClose", "ПередЗакрытием", //$NON-NLS-1$ //$NON-NLS-2$
             "Отказ, ЗавершениеРаботы, ТекстПредупреждения, СтандартнаяОбработка", //$NON-NLS-1$
             "&НаКлиенте", Scope.FORM); //$NON-NLS-1$
