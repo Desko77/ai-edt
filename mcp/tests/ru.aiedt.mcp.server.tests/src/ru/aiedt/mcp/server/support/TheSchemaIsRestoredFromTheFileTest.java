@@ -143,6 +143,41 @@ public class TheSchemaIsRestoredFromTheFileTest
             model.lastSerialization, model.backups.get(0));
     }
 
+    // ---- 7: a file that changed under the call is not attached -----------------------------
+
+    @Test
+    public void aFileThatChangedBeforeTheAttachIsNotAttached()
+    {
+        FakeModel model = new FakeModel(new Object(), null, null);
+        model.fileNow = bytes("<schema>edited meanwhile</schema>"); //$NON-NLS-1$
+        Step step = DcsSchemaRestorer.restoreWithin(FILE, FROM_FILE, false, model);
+        assertEquals(Outcome.FILE_CHANGED, step.outcome);
+        assertNull(model.attached);
+        assertNull(model.templateSetTo);
+    }
+
+    @Test
+    public void aFileThatChangedBeforeTheReplacementIsNotAttachedAndNoBackupIsWritten()
+    {
+        FakeModel model = new FakeModel(new Object(), new Object(), bytes("<schema>edited</schema>")); //$NON-NLS-1$
+        model.fileNow = bytes("<schema>edited meanwhile</schema>"); //$NON-NLS-1$
+        Step step = DcsSchemaRestorer.restoreWithin(FILE, FROM_FILE, true, model);
+        assertEquals(Outcome.FILE_CHANGED, step.outcome);
+        assertEquals(0, model.backups.size());
+        assertNull(model.detached);
+        assertNull(model.attached);
+    }
+
+    @Test
+    public void theTemplateFqnIsTheSchemaFqnWithoutItsTail()
+    {
+        assertEquals("Report.Sales.Template.Main", //$NON-NLS-1$
+            DcsSchemaRestorer.templateFqnOf("Report.Sales.Template.Main.Template")); //$NON-NLS-1$
+        assertNull(DcsSchemaRestorer.templateFqnOf("Report.Sales.Template.Main")); //$NON-NLS-1$
+        assertNull(DcsSchemaRestorer.templateFqnOf(".Template")); //$NON-NLS-1$
+        assertNull(DcsSchemaRestorer.templateFqnOf(null));
+    }
+
     // ---- 6: no template, no restoration -----------------------------------------------------
 
     @Test
@@ -186,6 +221,8 @@ public class TheSchemaIsRestoredFromTheFileTest
         boolean backupFails;
 
         boolean serializeFails;
+
+        byte[] fileNow = FILE;
 
         int existingReads;
 
@@ -264,7 +301,13 @@ public class TheSchemaIsRestoredFromTheFileTest
             }
             backups.add(bytes);
             backupBeforeDetach = detached == null;
-            return Paths.get("Template.dcs.model-20260911-000000.bak"); //$NON-NLS-1$
+            return Paths.get("Template.dcs.model-20260911-000000-000.bak"); //$NON-NLS-1$
+        }
+
+        @Override
+        public byte[] fileNow()
+        {
+            return fileNow;
         }
     }
 }

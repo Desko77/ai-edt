@@ -39,6 +39,7 @@ public class BrowserOriginTest
         "http://localhost:99999999999999", //$NON-NLS-1$
         "file:///c:/page.html", //$NON-NLS-1$
         "vscode-webview://", //$NON-NLS-1$
+        "vscode-webview://:", //$NON-NLS-1$
         "ftp://localhost", //$NON-NLS-1$
         "http://[bad", //$NON-NLS-1$
         "not an origin at all", //$NON-NLS-1$
@@ -70,11 +71,12 @@ public class BrowserOriginTest
     }
 
     @Test
-    public void theNullSettingOpensNothingElse()
+    public void aWebviewOriginIsAnIdAndNothingElse()
     {
-        for (String origin : REJECTED)
-        {
-            assertFalse(origin, BrowserOrigin.accepted(origin, true));
-        }
+        assertTrue(BrowserOrigin.accepted("vscode-webview://0ke8h8qc7ll8f4n6rj8e7ba3s4r1jnn8", false)); //$NON-NLS-1$
+        assertFalse(BrowserOrigin.accepted("vscode-webview://:", false)); //$NON-NLS-1$
+        assertFalse(BrowserOrigin.accepted("vscode-webview://abc123:8080", false)); //$NON-NLS-1$
+        assertFalse(BrowserOrigin.accepted("vscode-webview://user@abc123", false)); //$NON-NLS-1$
+        assertFalse(BrowserOrigin.accepted("vscode-webview://abc123/path", false)); //$NON-NLS-1$
     }
 }

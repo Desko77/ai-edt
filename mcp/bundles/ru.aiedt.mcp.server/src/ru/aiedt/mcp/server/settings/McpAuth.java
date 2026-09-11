@@ -135,7 +135,7 @@ public final class McpAuth
         }
         catch (BackingStoreException | RuntimeException notSaved)
         {
-            keeper.write(stored);
+            putBack(keeper, stored);
             return "the bearer token could not be saved to the preference store: " //$NON-NLS-1$
                 + describe(notSaved) + ". The server does not open a socket without a saved token."; //$NON-NLS-1$
         }
@@ -165,7 +165,7 @@ public final class McpAuth
         }
         catch (BackingStoreException | RuntimeException notSaved)
         {
-            keeper.write(previous);
+            putBack(keeper, previous);
             return "the bearer token could not be saved to the preference store: " //$NON-NLS-1$
                 + describe(notSaved) + ". The previous token stays in force."; //$NON-NLS-1$
         }
@@ -238,6 +238,25 @@ public final class McpAuth
             sb.append(HEX[(b >> 4) & 0xF]).append(HEX[b & 0xF]);
         }
         return sb.toString();
+    }
+
+    /**
+     * Puts the previous value back after a flush that failed, and tries to carry that to the disk
+     * as well: a flush that failed halfway may have left the new value there, and the store in
+     * memory alone would then disagree with what the next start reads.
+     */
+    private static void putBack(TokenStore keeper, String previous)
+    {
+        keeper.write(previous);
+        try
+        {
+            keeper.flush();
+        }
+        catch (BackingStoreException | RuntimeException stillNotSaved)
+        {
+            Activator.logWarning("the previous bearer token could not be flushed back to the preference store: " //$NON-NLS-1$
+                + describe(stillNotSaved));
+        }
     }
 
     private static TokenStore currentStore()

@@ -61,6 +61,8 @@ public final class DcsSchemaRestorer
         REPLACED,
         /** The template object the schema belongs to is not in the model. */
         NO_TEMPLATE,
+        /** The {@code .dcs} changed between the read and the replacement; nothing was changed. */
+        FILE_CHANGED,
         /** There is no {@code .dcs} to restore from. */
         NO_FILE,
         /** Something else stopped the call; {@link Result#error} says what. */
@@ -91,8 +93,17 @@ public final class DcsSchemaRestorer
         /** Whether the model, read back after the commit, serializes to the bytes of the file. */
         public boolean confirmed;
 
+        /** Why the read-back did not confirm the restoration, or <code>null</code> when it did. */
+        public String confirmation;
+
         /** Whether the {@code .dcs} changed while the call ran; what was restored is then stale. */
         public boolean fileChangedDuringRepair;
+
+        /** Whether the call only decided and reported, changing nothing. */
+        public boolean dryRun;
+
+        /** A post-commit check that could not run; the outcome above stands. */
+        public String warning;
 
         public String error;
 
@@ -156,6 +167,15 @@ public final class DcsSchemaRestorer
          * @throws IOException when it could not be written, which cancels the replacement
          */
         Path writeBackup(byte[] bytes) throws IOException;
+
+        /**
+         * Reads the {@code .dcs} as it is right now, so a file that changed after the first read
+         * is noticed before anything is attached from the stale bytes.
+         *
+         * @return the current bytes of the file
+         * @throws IOException when the file cannot be read
+         */
+        byte[] fileNow() throws IOException;
     }
 
     /** What {@link #restoreWithin} decided and did, before the commit. */
@@ -172,7 +192,7 @@ public final class DcsSchemaRestorer
         public String error;
     }
 
-    private static final DateTimeFormatter BACKUP_STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"); //$NON-NLS-1$
+    private static final DateTimeFormatter BACKUP_STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS"); //$NON-NLS-1$
 
     private static final String SCHEMA_SUFFIX = ".Template"; //$NON-NLS-1$
 
@@ -208,6 +228,11 @@ public final class DcsSchemaRestorer
         {
             if (existing == null)
             {
+                if (!Arrays.equals(fileBytes, model.fileNow()))
+                {
+                    step.outcome = Outcome.FILE_CHANGED;
+                    return step;
+                }
                 model.attach(fromFile);
                 model.setTemplate(template, fromFile);
                 step.outcome = Outcome.RESTORED;
@@ -224,6 +249,11 @@ public final class DcsSchemaRestorer
             if (!overwriteModel)
             {
                 step.outcome = Outcome.REFUSED_MODEL_DIFFERS;
+                return step;
+            }
+            if (!Arrays.equals(fileBytes, model.fileNow()))
+            {
+                step.outcome = Outcome.FILE_CHANGED;
                 return step;
             }
             // The backup is these same bytes: what was compared is what is kept aside. A backup
@@ -254,9 +284,43 @@ public final class DcsSchemaRestorer
      */
     public static Result restore(IBmModelManager manager, IProject project, String schemaFqn, boolean overwriteModel)
     {
+        return restore(manager, project, schemaFqn, overwriteModel, false);
+    }
+
+    /**
+     * The FQN of the template object a schema belongs to.
+     *
+     * @param schemaFqn the schema FQN, {@code <Type>.<Object>.Template.<Name>.Template}
+     * @return the template FQN, or <code>null</code> when the schema FQN has another shape
+     */
+    public static String templateFqnOf(String schemaFqn)
+    {
+        if (schemaFqn == null || !schemaFqn.endsWith(SCHEMA_SUFFIX)
+            || schemaFqn.length() == SCHEMA_SUFFIX.length())
+        {
+            return null;
+        }
+        return schemaFqn.substring(0, schemaFqn.length() - SCHEMA_SUFFIX.length());
+    }
+
+    /**
+     * Restores a schema from its {@code .dcs} into the live model, or only says what it would do.
+     *
+     * @param manager the model manager
+     * @param project the project
+     * @param schemaFqn the schema FQN, {@code <Type>.<Object>.Template.<Name>.Template}
+     * @param overwriteModel whether a differing schema in the model may be replaced
+     * @param dryRun whether to decide and report without changing the model or writing a backup
+     * @return what was found and done
+     */
+    public static Result restore(IBmModelManager manager, IProject project, String schemaFqn, boolean overwriteModel,
+        boolean dryRun)
+    {
         Result r = new Result();
         long started = System.currentTimeMillis();
         r.schemaFqn = schemaFqn;
+        r.dryRun = dryRun;
+        Step[] step = new Step[1];
         try
         {
             if (manager == null || project == null || schemaFqn == null || schemaFqn.isEmpty())
@@ -264,12 +328,12 @@ public final class DcsSchemaRestorer
                 r.error = "manager, project and schemaFqn are required"; //$NON-NLS-1$
                 return r;
             }
-            if (!schemaFqn.endsWith(SCHEMA_SUFFIX))
+            r.templateFqn = templateFqnOf(schemaFqn);
+            if (r.templateFqn == null)
             {
                 r.error = "schemaFqn has to end with .Template: " + schemaFqn; //$NON-NLS-1$
                 return r;
             }
-            r.templateFqn = schemaFqn.substring(0, schemaFqn.length() - SCHEMA_SUFFIX.length());
             IFile dcs = DcsExtensionExportHelper.locateDcsFile(project, schemaFqn);
             if (dcs == null || !dcs.exists())
             {
@@ -297,17 +361,14 @@ public final class DcsSchemaRestorer
                     return r;
                 }
                 Path backupTarget = backupPathBeside(dcs);
-                Step[] step = new Step[1];
-                // Through the global editing context, as every attach of a top object in this
-                // plugin: a schema attached in a plain task leaves its reference deferred and the
-                // commit fails with "Failed to persist reference value".
-                model.getGlobalContext().execute((IBmTask<Void>)new AbstractBmTask<Void>("repair_schema") //$NON-NLS-1$
+                AbstractBmTask<Void> task = new AbstractBmTask<Void>("repair_schema") //$NON-NLS-1$
                 {
                     @Override
                     public Void execute(IBmTransaction tx, IProgressMonitor monitor)
                     {
+                        ModelAccess live = new LiveModel(tx, r.templateFqn, schemaFqn, serializer, backupTarget, dcs);
                         step[0] = restoreWithin(fileBefore, fromFile, overwriteModel,
-                            new LiveModel(tx, r.templateFqn, schemaFqn, serializer, backupTarget));
+                            dryRun ? new PreviewModel(live) : live);
                         if (step[0].outcome == Outcome.FAILED)
                         {
                             // Rolls the transaction back: nothing half-done stays in the model.
@@ -315,24 +376,52 @@ public final class DcsSchemaRestorer
                         }
                         return null;
                     }
-                });
+                };
+                if (dryRun)
+                {
+                    // Reads and decides; the preview model turns every mutation into a note.
+                    model.executeReadonlyTask((IBmTask<Void>)task);
+                }
+                else
+                {
+                    // Through the global editing context, as every attach of a top object in this
+                    // plugin: a schema attached in a plain task leaves its reference deferred and
+                    // the commit fails with "Failed to persist reference value".
+                    model.getGlobalContext().execute((IBmTask<Void>)task);
+                }
                 r.outcome = step[0].outcome;
                 r.modelBytes = step[0].modelBytes;
                 r.firstDifferenceAt = step[0].firstDifferenceAt;
                 r.backupPath = step[0].backup == null ? null : step[0].backup.toString();
-                if (r.outcome == Outcome.RESTORED || r.outcome == Outcome.REPLACED
-                    || r.outcome == Outcome.MATCHED)
+                // What happened is settled here; the checks below can only add to the answer. A
+                // read that fails after the commit must not turn a committed change into FAILED.
+                if (!dryRun && (r.outcome == Outcome.RESTORED || r.outcome == Outcome.REPLACED
+                    || r.outcome == Outcome.MATCHED))
                 {
-                    r.confirmed = readsBackAs(model, schemaFqn, serializer, fileBefore);
+                    r.confirmation = readsBackAs(model, schemaFqn, serializer, fileBefore);
+                    r.confirmed = r.confirmation == null;
                 }
-                byte[] fileAfter = read(dcs);
-                r.fileChangedDuringRepair = !Arrays.equals(fileBefore, fileAfter);
+                try
+                {
+                    byte[] fileAfter = read(dcs);
+                    r.fileChangedDuringRepair = !Arrays.equals(fileBefore, fileAfter);
+                }
+                catch (Exception | LinkageError cannotReread)
+                {
+                    r.warning = "the .dcs could not be read back after the call: " + describe(cannotReread); //$NON-NLS-1$
+                }
             }
         }
         catch (Exception | LinkageError failed)
         {
             r.outcome = Outcome.FAILED;
             r.error = describe(failed);
+            if (step[0] != null && step[0].backup != null)
+            {
+                // Written before the replacement that then failed: it stays, and the answer says
+                // where, rather than leaving a file nobody can find.
+                r.backupPath = step[0].backup.toString();
+            }
             Activator.logWarning("repair_schema failed for " + schemaFqn + ": " + r.error); //$NON-NLS-1$ //$NON-NLS-2$
         }
         finally
@@ -346,15 +435,18 @@ public final class DcsSchemaRestorer
      * Whether the model, read in a task of its own after the commit, serializes to the file.
      * <p>
      * A commit that returned is not a schema that is there: the confirmation reads what a later
-     * caller will read.
+     * caller will read. A serializer that refuses and a schema that differs are two different
+     * answers, and the reason says which.
      * </p>
+     *
+     * @return <code>null</code> when the model serializes to the file, otherwise why not
      */
-    private static boolean readsBackAs(IBmModel model, String schemaFqn,
+    private static String readsBackAs(IBmModel model, String schemaFqn,
         DcsExtensionExportHelper.SchemaSerializer serializer, byte[] expected)
     {
         try
         {
-            byte[][] seen = new byte[1][];
+            String[] reason = new String[1];
             model.executeReadonlyTask(new AbstractBmTask<Void>("repair_schema.confirm") //$NON-NLS-1$
             {
                 @Override
@@ -363,21 +455,30 @@ public final class DcsSchemaRestorer
                     try
                     {
                         IBmObject top = tx.getTopObjectByFqn(schemaFqn);
-                        seen[0] = top == null ? null : serializer.serialize(top);
+                        if (top == null)
+                        {
+                            reason[0] = "the model holds no schema under " + schemaFqn + " after the commit"; //$NON-NLS-1$ //$NON-NLS-2$
+                            return null;
+                        }
+                        byte[] seen = serializer.serialize(top);
+                        if (!Arrays.equals(seen, expected))
+                        {
+                            reason[0] = "the model read back after the commit serializes to " + seen.length //$NON-NLS-1$
+                                + " bytes that differ from the file at byte " + Arrays.mismatch(seen, expected); //$NON-NLS-1$
+                        }
                     }
                     catch (Exception failed)
                     {
-                        seen[0] = null;
+                        reason[0] = "the model could not be serialized after the commit: " + describe(failed); //$NON-NLS-1$
                     }
                     return null;
                 }
             });
-            return seen[0] != null && Arrays.equals(seen[0], expected);
+            return reason[0];
         }
         catch (RuntimeException failed)
         {
-            Activator.logWarning("repair_schema: confirmation read failed: " + describe(failed)); //$NON-NLS-1$
-            return false;
+            return "the confirmation read failed: " + describe(failed); //$NON-NLS-1$
         }
     }
 
@@ -434,14 +535,17 @@ public final class DcsSchemaRestorer
 
         private final Path backupTarget;
 
+        private final IFile dcs;
+
         LiveModel(IBmTransaction tx, String templateFqn, String schemaFqn,
-            DcsExtensionExportHelper.SchemaSerializer serializer, Path backupTarget)
+            DcsExtensionExportHelper.SchemaSerializer serializer, Path backupTarget, IFile dcs)
         {
             this.tx = tx;
             this.templateFqn = templateFqn;
             this.schemaFqn = schemaFqn;
             this.serializer = serializer;
             this.backupTarget = backupTarget;
+            this.dcs = dcs;
         }
 
         @Override
@@ -497,8 +601,100 @@ public final class DcsSchemaRestorer
             {
                 throw new IOException("the .dcs has no location on disk to put a backup beside"); //$NON-NLS-1$
             }
-            Files.write(backupTarget, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-            return backupTarget;
+            Path target = backupTarget;
+            for (int attempt = 1; attempt < 100; attempt++)
+            {
+                try
+                {
+                    Files.write(target, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                    return target;
+                }
+                catch (java.nio.file.FileAlreadyExistsException taken)
+                {
+                    target = backupTarget.resolveSibling(backupTarget.getFileName() + "-" + attempt); //$NON-NLS-1$
+                }
+            }
+            throw new IOException("no free name for the backup beside " + backupTarget); //$NON-NLS-1$
+        }
+
+        @Override
+        public byte[] fileNow() throws IOException
+        {
+            try
+            {
+                return read(dcs);
+            }
+            catch (IOException cannotRead)
+            {
+                throw cannotRead;
+            }
+            catch (Exception cannotRead)
+            {
+                throw new IOException(describe(cannotRead), cannotRead);
+            }
+        }
+    }
+
+    /**
+     * A model that reads and decides but changes nothing: every mutation becomes a note of what
+     * would have been done, and the backup is named but not written.
+     */
+    private static final class PreviewModel
+        implements ModelAccess
+    {
+        private final ModelAccess live;
+
+        PreviewModel(ModelAccess live)
+        {
+            this.live = live;
+        }
+
+        @Override
+        public Object template()
+        {
+            return live.template();
+        }
+
+        @Override
+        public Object existingSchema()
+        {
+            return live.existingSchema();
+        }
+
+        @Override
+        public byte[] serialize(Object schema) throws Exception
+        {
+            return live.serialize(schema);
+        }
+
+        @Override
+        public void detach(Object schema)
+        {
+            // Preview: not done.
+        }
+
+        @Override
+        public void attach(Object schema)
+        {
+            // Preview: not done.
+        }
+
+        @Override
+        public void setTemplate(Object template, Object schema)
+        {
+            // Preview: not done.
+        }
+
+        @Override
+        public Path writeBackup(byte[] bytes)
+        {
+            return ((LiveModel)live).backupTarget;
+        }
+
+        @Override
+        public byte[] fileNow() throws IOException
+        {
+            return live.fileNow();
         }
     }
 }

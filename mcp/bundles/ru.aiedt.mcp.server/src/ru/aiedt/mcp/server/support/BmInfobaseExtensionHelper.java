@@ -346,17 +346,19 @@ public final class BmInfobaseExtensionHelper
         {
             outcome.released = release.release();
         }
-        catch (Exception | LinkageError failed)
+        catch (Throwable failed)
         {
             outcome.releaseError = failed;
             return outcome;
         }
+        // Throwable, not Exception: an AssertionError out of the Designer run would otherwise
+        // skip the reconnection and hide behind whatever it threw.
         try
         {
             outcome.sequence.add("work"); //$NON-NLS-1$
             work.run();
         }
-        catch (Exception | LinkageError failed)
+        catch (Throwable failed)
         {
             outcome.workError = failed;
         }
@@ -369,7 +371,7 @@ public final class BmInfobaseExtensionHelper
                 {
                     reconnect.reconnect();
                 }
-                catch (Exception | LinkageError failed)
+                catch (Throwable failed)
                 {
                     outcome.reconnectError = failed;
                 }
@@ -1224,12 +1226,38 @@ public final class BmInfobaseExtensionHelper
     private static boolean releaseForThickClient(LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (mgr == null)
         {
-            return false;
+            // Without the manager nothing can be released, and a Designer run on an infobase EDT
+            // still holds is exactly what the release exists to prevent.
+            throw new IllegalStateException("IInfobaseSynchronizationManager is not available on this EDT runtime"); //$NON-NLS-1$
+        }
+        if (ctx.project == null)
+        {
+            throw new IllegalStateException("the launcher context carries no project"); //$NON-NLS-1$
         }
         boolean wasConnected = mgr.isConnected(ctx.project, ctx.infobase);
-        mgr.disconnectInfobase(ctx.project, ctx.infobase, false, true, new NullProgressMonitor());
+        try
+        {
+            mgr.disconnectInfobase(ctx.project, ctx.infobase, false, true, new NullProgressMonitor());
+        }
+        catch (Exception | LinkageError failed)
+        {
+            if (wasConnected)
+            {
+                // The release may have gone through before it threw; put the infobase back rather
+                // than leave it in a state nobody reported. A failure of that goes with the cause.
+                try
+                {
+                    mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
+                }
+                catch (Exception | LinkageError alsoFailed)
+                {
+                    failed.addSuppressed(alsoFailed);
+                }
+            }
+            throw failed;
+        }
         return wasConnected;
     }
 

@@ -9,6 +9,8 @@ package ru.aiedt.mcp.server;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -83,6 +85,9 @@ public class RunningToolCall
 
     /** Guards the one history record this call leaves. */
     private final AtomicBoolean recorded = new AtomicBoolean();
+
+    /** Released once whoever answered has finished writing, so the connection is not closed under them. */
+    private final CountDownLatch answerWritten = new CountDownLatch(1);
 
     /**
      * How an attempt to answer the agent ended.
@@ -230,9 +235,27 @@ public class RunningToolCall
         finally
         {
             closeExchange();
+            answerWritten.countDown();
         }
         answered(McpHistory.Answer.bySignal(signal, delivery == Delivery.DELIVERED));
         return delivery;
+    }
+
+    /**
+     * Waits until the answer that won the arbitration has been written.
+     * <p>
+     * {@link #hasResponded()} turns true the moment somebody claims the connection, before their
+     * write is through; a request thread that closed the connection on that alone would close it
+     * under the writer.
+     * </p>
+     *
+     * @param millis how long to wait
+     * @return <code>true</code> when the answer has been written
+     * @throws InterruptedException when the waiting thread is interrupted
+     */
+    public boolean awaitAnswerWritten(long millis) throws InterruptedException
+    {
+        return answerWritten.await(millis, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -265,6 +288,10 @@ public class RunningToolCall
             Activator.logError("Could not deliver the result of tool: " + toolName, e); //$NON-NLS-1$
             delivery = Delivery.DELIVERY_FAILED;
         }
+        finally
+        {
+            answerWritten.countDown();
+        }
         answered(McpHistory.Answer.byTool(delivery == Delivery.DELIVERED));
         return delivery;
     }
@@ -279,6 +306,9 @@ public class RunningToolCall
     {
         if (responded.compareAndSet(false, true))
         {
+            // Nobody wrote anything, and nobody will: the agent hears from nobody, which is what
+            // deliveryStatus=failed means. "unobserved" is for a call with no connection at all.
+            answerWritten.countDown();
             answered(McpHistory.Answer.byTool(false));
         }
     }

@@ -116,12 +116,13 @@ public class McpSettingsPage
         boolean toolsChanged = toolsTab.hasChanges();
 
         String notSaved = generalTab.performOk();
-        toolsTab.performOk();
         if (notSaved != null)
         {
+            // The general tab is not saved as a whole; the tools tab waits for it.
             setErrorMessage(notSaved);
             return false;
         }
+        toolsTab.performOk();
 
         if (toolsChanged)
         {

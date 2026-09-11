@@ -1275,7 +1275,7 @@ public final class BmDcsHelper
      * @param ownerFqn the metadata object FQN (e.g. {@code Report.Sales})
      * @return the resolved template name (never null/empty)
      */
-    private static String resolveOwnerDcsTemplateName(IProject project, String ownerFqn)
+    public static String resolveOwnerDcsTemplateName(IProject project, String ownerFqn)
     {
         Configuration config = null;
         try

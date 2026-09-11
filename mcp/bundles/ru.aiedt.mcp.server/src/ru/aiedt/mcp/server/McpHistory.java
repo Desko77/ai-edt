@@ -94,8 +94,14 @@ public final class McpHistory
         public static Answer bySignal(OperatorSignal signal, boolean delivered)
         {
             String type = signal == null || signal.getType() == null ? "" : signal.getType().name(); //$NON-NLS-1$
-            String note = signal != null && signal.getType() == OperatorSignal.SignalType.CUSTOM
-                ? signal.getMessage() : null;
+            // The operator can edit the text of any signal, and that text is what the agent got;
+            // it is kept whenever it is not the stock wording of the type.
+            String note = null;
+            if (signal != null && signal.getMessage() != null && !signal.getMessage().trim().isEmpty()
+                && !signal.getMessage().equals(OperatorSignal.getDefaultMessage(signal.getType())))
+            {
+                note = signal.getMessage();
+            }
             return new Answer(ARBITRATED_BY_SIGNAL, delivered ? DELIVERY_DELIVERED : DELIVERY_FAILED, type, note);
         }
 
@@ -109,21 +115,35 @@ public final class McpHistory
             return new Answer(ARBITRATED_BY_TOOL, DELIVERY_UNOBSERVED, null, null);
         }
 
+        /**
+         * @return {@link McpHistory#ARBITRATED_BY_TOOL} or {@link McpHistory#ARBITRATED_BY_SIGNAL}
+         */
         public String arbitratedBy()
         {
             return arbitratedBy;
         }
 
+        /**
+         * @return {@link McpHistory#DELIVERY_DELIVERED}, {@link McpHistory#DELIVERY_FAILED} or
+         *         {@link McpHistory#DELIVERY_UNOBSERVED}
+         */
         public String deliveryStatus()
         {
             return deliveryStatus;
         }
 
+        /**
+         * @return the type of the signal that answered, or <code>null</code> when the tool did
+         */
         public String signalType()
         {
             return signalType;
         }
 
+        /**
+         * @return the operator's own words, when they differ from the stock wording of the signal;
+         *         otherwise <code>null</code>
+         */
         public String signalNote()
         {
             return signalNote;

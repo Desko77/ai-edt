@@ -372,19 +372,16 @@ public final class DcsExtensionExportHelper
                 }
                 Method serializeXml = serializerClass.getMethod("serializeXML", //$NON-NLS-1$
                     eobjectClass, OutputStream.class, String.class, dtProjectIface);
-                Method deserializeXml = null;
-                for (Method candidate : serializerClass.getMethods())
+                // Two shapes exist across EDT versions; taken in a fixed order rather than in
+                // whatever order the runtime lists methods.
+                Method deserializeXml;
+                try
                 {
-                    if ("deserializeXML".equals(candidate.getName()) && candidate.getParameterCount() >= 1 //$NON-NLS-1$
-                        && InputStream.class.isAssignableFrom(candidate.getParameterTypes()[0]))
-                    {
-                        deserializeXml = candidate;
-                        break;
-                    }
+                    deserializeXml = serializerClass.getMethod("deserializeXML", InputStream.class); //$NON-NLS-1$
                 }
-                if (deserializeXml == null)
+                catch (NoSuchMethodException oneArgumentAbsent)
                 {
-                    throw new IllegalStateException("DcsV8Serializer.deserializeXML not found"); //$NON-NLS-1$
+                    deserializeXml = serializerClass.getMethod("deserializeXML", InputStream.class, dtProjectIface); //$NON-NLS-1$
                 }
                 return new SchemaSerializer(bc, rvsRef, lookupRef, serializer, dtProject,
                     resolveLineSeparator(project), serializeXml, deserializeXml);

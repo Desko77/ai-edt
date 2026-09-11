@@ -61,6 +61,36 @@ public class AnInterruptedCallLeavesATraceTest
     }
 
     @Test
+    public void theOperatorsOwnWordsAreKeptForAnySignal()
+    {
+        RunningToolCall call = new RunningToolCall(FakeExchange.open(), TOOL, 7);
+        call.sendSignalResponse(new OperatorSignal(OperatorSignal.SignalType.CANCEL, "stop, wrong project")); //$NON-NLS-1$
+        call.toolFinished(completion(true));
+        Map<String, Object> record = newest();
+        assertEquals("CANCEL", record.get("signalType")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("stop, wrong project", record.get("signalNote")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void theStockWordingOfASignalIsNotANote()
+    {
+        RunningToolCall call = new RunningToolCall(FakeExchange.open(), TOOL, 7);
+        call.sendSignalResponse(new OperatorSignal(OperatorSignal.SignalType.RETRY,
+            OperatorSignal.getDefaultMessage(OperatorSignal.SignalType.RETRY)));
+        call.toolFinished(completion(true));
+        assertFalse(newest().containsKey("signalNote")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theRequestThreadCanWaitForTheAnswerToBeWritten() throws Exception
+    {
+        RunningToolCall call = new RunningToolCall(FakeExchange.open(), TOOL, 7);
+        assertFalse("nobody has answered yet", call.awaitAnswerWritten(10)); //$NON-NLS-1$
+        call.sendSignalResponse(new OperatorSignal(OperatorSignal.SignalType.BACKGROUND, null));
+        assertTrue(call.awaitAnswerWritten(10));
+    }
+
+    @Test
     public void aSignalWithoutANoteCarriesItsTypeOnly()
     {
         RunningToolCall call = new RunningToolCall(FakeExchange.open(), TOOL, 7);

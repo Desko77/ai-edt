@@ -345,6 +345,7 @@ public class DcsWorkshopTool implements IMcpTool
         String objectName = JsonUtils.extractStringArgument(params, "objectName"); //$NON-NLS-1$
         String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
         boolean overwriteModel = JsonUtils.extractBooleanArgument(params, "overwriteModel", false); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         if (projectName == null || objectName == null)
         {
             return ToolResult.error("projectName and objectName are required").toJson(); //$NON-NLS-1$
@@ -354,19 +355,37 @@ public class DcsWorkshopTool implements IMcpTool
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
+        // The default template name follows the script variant of the configuration; the
+        // English constant would miss a Russian one and answer "no file".
+        if ((templateName == null || templateName.isEmpty()) && !objectName.contains(".Template")) //$NON-NLS-1$
+        {
+            templateName = BmDcsHelper.resolveOwnerDcsTemplateName(project, objectName);
+        }
         String schemaFqn = BmDcsHelper.buildSchemaFqn(objectName, templateName);
         DcsSchemaRestorer.Result r = DcsSchemaRestorer.restore(
-            Activator.getDefault().getBmModelManager(), project, schemaFqn, overwriteModel);
-        boolean changed = r.outcome == DcsSchemaRestorer.Outcome.RESTORED
+            Activator.getDefault().getBmModelManager(), project, schemaFqn, overwriteModel, dryRun);
+        boolean wouldChange = r.outcome == DcsSchemaRestorer.Outcome.RESTORED
             || r.outcome == DcsSchemaRestorer.Outcome.REPLACED;
-        boolean ok = changed || r.outcome == DcsSchemaRestorer.Outcome.MATCHED;
+        boolean changed = wouldChange && !dryRun;
+        // A change counts as done when the model, read back, holds it; a preview counts as done
+        // when it decided.
+        boolean ok = (wouldChange || r.outcome == DcsSchemaRestorer.Outcome.MATCHED) && (dryRun || r.confirmed);
         ToolResult result = (ok ? ToolResult.success() : ToolResult.error(repairMessage(r)))
             .put("operation", "repair_schema") //$NON-NLS-1$ //$NON-NLS-2$
             .put("outcome", r.outcome.name().toLowerCase(java.util.Locale.ROOT)) //$NON-NLS-1$
             .put("schemaFqn", r.schemaFqn) //$NON-NLS-1$
+            .put("dryRun", dryRun) //$NON-NLS-1$
             .put("modelChanged", changed) //$NON-NLS-1$
             .put("fileChanged", false) //$NON-NLS-1$
             .put("totalMs", r.totalMs); //$NON-NLS-1$
+        if (r.confirmation != null)
+        {
+            result.put("confirmation", r.confirmation); //$NON-NLS-1$
+        }
+        if (r.warning != null)
+        {
+            result.put("warning", r.warning); //$NON-NLS-1$
+        }
         if (r.filePath != null)
         {
             result.put("filePath", r.filePath).put("fileBytes", r.fileBytes); //$NON-NLS-1$ //$NON-NLS-2$
@@ -386,11 +405,6 @@ public class DcsWorkshopTool implements IMcpTool
         if (ok)
         {
             result.put("confirmed", r.confirmed).put("message", repairMessage(r)); //$NON-NLS-1$ //$NON-NLS-2$
-            if (!r.confirmed)
-            {
-                result.put("warning", "the model, read back after the commit, does not serialize to the " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "bytes of the file"); //$NON-NLS-1$
-            }
         }
         if (r.fileChangedDuringRepair)
         {
@@ -403,15 +417,22 @@ public class DcsWorkshopTool implements IMcpTool
 
     private static String repairMessage(DcsSchemaRestorer.Result r)
     {
+        if (r.confirmation != null)
+        {
+            return "the change was committed, and the read-back did not confirm it: " + r.confirmation; //$NON-NLS-1$
+        }
+        String would = r.dryRun ? " (preview: nothing was changed)" : ""; //$NON-NLS-1$ //$NON-NLS-2$
         switch (r.outcome)
         {
         case RESTORED:
-            return "the model held no schema; the schema from the .dcs is attached"; //$NON-NLS-1$
+            return "the model held no schema; the schema from the .dcs is attached" + would; //$NON-NLS-1$
         case MATCHED:
             return "the model already holds the schema the .dcs holds; nothing was changed"; //$NON-NLS-1$
         case REPLACED:
             return "the model held a different schema; it was written to " + r.backupPath //$NON-NLS-1$
-                + " and replaced by the schema from the .dcs"; //$NON-NLS-1$
+                + " and replaced by the schema from the .dcs" + would; //$NON-NLS-1$
+        case FILE_CHANGED:
+            return "the .dcs changed while the call ran; nothing was changed. Repeat the call"; //$NON-NLS-1$
         case REFUSED_MODEL_DIFFERS:
             return "the model holds a different schema (" + r.modelBytes + " bytes against " //$NON-NLS-1$ //$NON-NLS-2$
                 + r.fileBytes + " in the file, first difference at byte " + r.firstDifferenceAt //$NON-NLS-1$

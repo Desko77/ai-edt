@@ -99,8 +99,9 @@ final class BrowserOrigin
         }
         if (SCHEME_VSCODE_WEBVIEW.equals(lowerScheme))
         {
-            String authority = uri.getRawAuthority();
-            return authority != null && !authority.isEmpty();
+            // The id the editor makes up is the host, and the whole of the authority.
+            String host = uri.getHost();
+            return host != null && !host.isEmpty() && uri.getPort() == -1;
         }
         return false;
     }

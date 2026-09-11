@@ -954,7 +954,8 @@ public class McpStatusBarItem
         }
 
         OperatorSignal signal = new OperatorSignal(type, dialog.getMessage());
-        switch (server.interruptToolCall(signal))
+        RunningToolCall.Delivery delivery = server.interruptToolCall(signal);
+        switch (delivery)
         {
         case DELIVERED:
             Activator.logInfo("Call stopped by operator signal: " + type); //$NON-NLS-1$
@@ -970,7 +971,7 @@ public class McpStatusBarItem
             break;
         case NOT_ARBITRATED:
         default:
-            if (parksSignal(RunningToolCall.Delivery.NOT_ARBITRATED))
+            if (parksSignal(delivery))
             {
                 // Nothing was interruptible after all: park it so it rides along with the next result.
                 server.setUserSignal(signal);

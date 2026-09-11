@@ -256,6 +256,9 @@ public class McpHttpEndpoint
     /** The highest TCP port there is; the search may not walk past it. */
     private static final int MAX_PORT = 65535;
 
+    /** How long a request thread waits for an operator's answer to finish writing before it lets go. */
+    private static final long ANSWER_WRITE_GRACE_MS = 5000L;
+
     private static final int HTTP_OK = 200;
 
     private static final int HTTP_ACCEPTED = 202;
@@ -656,14 +659,14 @@ public class McpHttpEndpoint
      * Where to listen.
      * <p>
      * Loopback unless told otherwise. The tools behind this endpoint read and write the infobase and
-     * the source code, and the bearer token is off by default - so a socket open to the network would
-     * hand the workspace to anyone who can route to this machine. Every local client (the MCP config of
-     * every workspace) connects to 127.0.0.1, so loopback costs them nothing.
+     * the source code, and the bearer token is one long-lived secret - so a socket open to the
+     * network hands the workspace to anyone who can route to this machine and has seen the token.
+     * Every local client (the MCP config of every workspace) connects to 127.0.0.1, so loopback costs
+     * them nothing.
      * </p>
      * <p>
-     * Turning {@link PrefKeys#PREF_BIND_ALL_INTERFACES} on opens the socket to the network.
-     * Doing that without a token is logged as a warning rather than refused: an operator may have a
-     * reason, and silently ignoring a setting is worse than obeying it loudly.
+     * Turning {@link PrefKeys#PREF_BIND_ALL_INTERFACES} on opens the socket to the network; the token
+     * is required there as everywhere.
      * </p>
      *
      * @param serverPort the TCP port to listen on
@@ -1329,8 +1332,7 @@ public class McpHttpEndpoint
             if (METHOD_OPTIONS.equals(method))
             {
                 // Never behind the token: a browser does not put an Authorization header on a
-                // preflight, so demanding one here would lock out every browser client the moment
-                // authentication was switched on.
+                // preflight, so demanding one here would lock out every browser client.
                 sendNoBody(exchange, HTTP_NO_CONTENT);
                 return;
             }
@@ -1522,7 +1524,9 @@ public class McpHttpEndpoint
                 }
                 if (call.hasResponded())
                 {
-                    // The user got there first. The answer is already on the wire.
+                    // The user got there first. Let their write finish before this thread returns
+                    // and the handler closes the connection under it.
+                    awaitAnswerWritten(call);
                     return;
                 }
                 String document;
@@ -1564,6 +1568,27 @@ public class McpHttpEndpoint
                     releasePermit.run();
                 }
                 clearActiveToolCall(call);
+            }
+        }
+
+        /**
+         * Waits for the answer that won the arbitration to be written.
+         *
+         * @param call the call somebody answered
+         */
+        private void awaitAnswerWritten(RunningToolCall call)
+        {
+            try
+            {
+                if (!call.awaitAnswerWritten(ANSWER_WRITE_GRACE_MS))
+                {
+                    Activator.logWarning("The operator's answer to " + call.getToolName() //$NON-NLS-1$
+                        + " was still being written after " + ANSWER_WRITE_GRACE_MS + " ms"); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
             }
         }
 
