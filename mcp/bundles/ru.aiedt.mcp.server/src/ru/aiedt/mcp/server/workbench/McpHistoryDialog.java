@@ -299,7 +299,7 @@ public class McpHistoryDialog
             TableItem item = new TableItem(table, SWT.NONE);
             item.setText(0, TIME.format(Instant.ofEpochMilli(number(call, "timestamp")))); //$NON-NLS-1$
             item.setText(1, text(call, "tool")); //$NON-NLS-1$
-            item.setText(2, Boolean.TRUE.equals(call.get("success")) ? "ok" : "failed"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            item.setText(2, outcomeLabel(call));
             item.setText(3, number(call, "durationMs") + " ms"); //$NON-NLS-1$ //$NON-NLS-2$
             item.setText(4, oneLine(text(call, "args"))); //$NON-NLS-1$
         }
@@ -364,6 +364,32 @@ public class McpHistoryDialog
         requestText.setText(args);
         responseText.setText(result);
         requestLabel.getParent().layout();
+    }
+
+    /**
+     * What the outcome column says: the tool's result, and who answered the agent when it was not
+     * the tool, and whether the answer arrived when it did not.
+     *
+     * @param call one recorded call
+     * @return the label
+     */
+    public static String outcomeLabel(Map<String, Object> call)
+    {
+        StringBuilder label = new StringBuilder(Boolean.TRUE.equals(call.get("success")) ? "ok" : "failed"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (McpHistory.ARBITRATED_BY_SIGNAL.equals(call.get("arbitratedBy"))) //$NON-NLS-1$
+        {
+            label.append(", interrupted"); //$NON-NLS-1$
+            String signal = text(call, "signalType"); //$NON-NLS-1$
+            if (!signal.isEmpty())
+            {
+                label.append(" (").append(signal).append(')'); //$NON-NLS-1$
+            }
+        }
+        if (McpHistory.DELIVERY_FAILED.equals(call.get("deliveryStatus"))) //$NON-NLS-1$
+        {
+            label.append(", not delivered"); //$NON-NLS-1$
+        }
+        return label.toString();
     }
 
     private static String text(Map<String, Object> call, String key)

@@ -9,7 +9,10 @@ package ru.aiedt.mcp.server;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -73,6 +76,53 @@ public class RunningToolCall
 
     /** Set exactly once, by whoever answers first. */
     private final AtomicBoolean responded = new AtomicBoolean();
+
+    /** Who answered the agent, once somebody has; set exactly once. */
+    private final AtomicReference<McpHistory.Answer> answer = new AtomicReference<>();
+
+    /** What the tool came back with, once it has. */
+    private final AtomicReference<McpHistory.Completion> completion = new AtomicReference<>();
+
+    /** Guards the one history record this call leaves. */
+    private final AtomicBoolean recorded = new AtomicBoolean();
+
+    /** Released once whoever answered has finished writing, so the connection is not closed under them. */
+    private final CountDownLatch answerWritten = new CountDownLatch(1);
+
+    /**
+     * How an attempt to answer the agent ended.
+     */
+    public enum Delivery
+    {
+        /** Somebody else had already answered; nothing was sent. */
+        NOT_ARBITRATED,
+        /** The answer reached the connection. */
+        DELIVERED,
+        /** This was the answer, and it could not be written: the connection was gone. */
+        DELIVERY_FAILED;
+
+        /**
+         * @return <code>true</code> when this attempt won the right to answer, delivered or not
+         */
+        public boolean arbitrated()
+        {
+            return this != NOT_ARBITRATED;
+        }
+    }
+
+    /**
+     * Writes the tool's answer onto the connection. Supplied by the endpoint, which knows how the
+     * client wants the document framed.
+     */
+    public interface Answering
+    {
+        /**
+         * Writes the answer.
+         *
+         * @throws IOException when the connection is gone
+         */
+        void send() throws IOException;
+    }
 
     /**
      * The cancellation flag for this call, owned from construction so it exists before the call is
@@ -157,58 +207,165 @@ public class RunningToolCall
      * </p>
      *
      * @param signal what the user wants the agent to do
-     * @return <code>true</code> when the signal reached the agent; <code>false</code> when this call
-     *         had already been answered, or when the connection broke while answering it
+     * @return {@link Delivery#NOT_ARBITRATED} when this call had already been answered,
+     *         {@link Delivery#DELIVERED} when the signal reached the agent, and
+     *         {@link Delivery#DELIVERY_FAILED} when the signal was the answer and the connection
+     *         broke while writing it - in which case nobody answers the agent
      */
-    public synchronized boolean sendSignalResponse(OperatorSignal signal)
+    public synchronized Delivery sendSignalResponse(OperatorSignal signal)
     {
         if (!responded.compareAndSet(false, true))
         {
-            return false;
+            return Delivery.NOT_ARBITRATED;
         }
+        Delivery delivery;
         try
         {
             write(buildSignalDocument(signal));
             Activator.logInfo("User signal answered the pending call to tool: " + toolName); //$NON-NLS-1$
-            return true;
+            delivery = Delivery.DELIVERED;
         }
-        catch (IOException e)
+        catch (IOException | RuntimeException e)
         {
             // The latch stays set: there is no second connection to try, and the tool thread must
             // still be told to keep its hands off this one.
             Activator.logError("Could not deliver the user signal for tool: " + toolName, e); //$NON-NLS-1$
-            return false;
+            delivery = Delivery.DELIVERY_FAILED;
         }
         finally
         {
-            exchange.close();
+            try
+            {
+                closeExchange();
+            }
+            catch (RuntimeException closing)
+            {
+                Activator.logWarning("Closing the connection after the signal failed: " + closing); //$NON-NLS-1$
+            }
+            finally
+            {
+                answerWritten.countDown();
+            }
+        }
+        answered(McpHistory.Answer.bySignal(signal, delivery == Delivery.DELIVERED));
+        return delivery;
+    }
+
+    /**
+     * Waits until the answer that won the arbitration has been written.
+     * <p>
+     * {@link #hasResponded()} turns true the moment somebody claims the connection, before their
+     * write is through; a request thread that closed the connection on that alone would close it
+     * under the writer.
+     * </p>
+     *
+     * @param millis how long to wait
+     * @return <code>true</code> when the answer has been written
+     * @throws InterruptedException when the waiting thread is interrupted
+     */
+    public boolean awaitAnswerWritten(long millis) throws InterruptedException
+    {
+        return answerWritten.await(millis, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Answers the waiting agent with the tool's result, unless a signal got there first.
+     * <p>
+     * The arbitration and the write are one step: a result that looked at
+     * {@link #hasResponded()} and then wrote on its own could race a signal onto the same
+     * connection.
+     * </p>
+     *
+     * @param answering how to write the result
+     * @return how it ended
+     */
+    public synchronized Delivery answerWithResult(Answering answering)
+    {
+        if (!responded.compareAndSet(false, true))
+        {
+            return Delivery.NOT_ARBITRATED;
+        }
+        Delivery delivery;
+        try
+        {
+            answering.send();
+            delivery = Delivery.DELIVERED;
+        }
+        catch (IOException | RuntimeException e)
+        {
+            // A connection that broke, or a response that could not be framed: either way the
+            // agent did not get the result, and the record has to say so rather than stay unwritten.
+            Activator.logError("Could not deliver the result of tool: " + toolName, e); //$NON-NLS-1$
+            delivery = Delivery.DELIVERY_FAILED;
+        }
+        finally
+        {
+            answerWritten.countDown();
+        }
+        answered(McpHistory.Answer.byTool(delivery == Delivery.DELIVERED));
+        return delivery;
+    }
+
+    /**
+     * Notes that nobody will answer the agent: the server is going down under the call.
+     * <p>
+     * Only when nobody has answered yet; a signal that got through stays the answer.
+     * </p>
+     */
+    public void abandon()
+    {
+        if (responded.compareAndSet(false, true))
+        {
+            // Nobody wrote anything, and nobody will: the agent hears from nobody, which is what
+            // deliveryStatus=failed means. "unobserved" is for a call with no connection at all.
+            answerWritten.countDown();
+            answered(McpHistory.Answer.byTool(false));
         }
     }
 
     /**
-     * Answers the waiting agent with an ordinary result document, under the same one-shot latch.
+     * Takes what the tool came back with. Called by the dispatch path on the tool's own thread, at
+     * whatever moment the tool finishes - before or after the agent was answered.
      *
-     * @param response the JSON-RPC document to send
-     * @return <code>true</code> when it was sent; <code>false</code> when this call had already been
-     *         answered, or when the connection broke while answering it
+     * @param what the tool's outcome
      */
-    public synchronized boolean sendNormalResponse(String response)
+    public void toolFinished(McpHistory.Completion what)
     {
-        if (!responded.compareAndSet(false, true))
+        completion.compareAndSet(null, what);
+        recordIfComplete();
+    }
+
+    /**
+     * @return who answered the agent, or <code>null</code> while nobody has
+     */
+    public McpHistory.Answer answer()
+    {
+        return answer.get();
+    }
+
+    private void answered(McpHistory.Answer who)
+    {
+        answer.compareAndSet(null, who);
+        recordIfComplete();
+    }
+
+    /**
+     * Leaves the one record, once both halves are known: what the tool did and who answered the
+     * agent. Whichever half arrives second writes it, which is why it is guarded and not ordered.
+     */
+    private void recordIfComplete()
+    {
+        McpHistory.Completion what = completion.get();
+        McpHistory.Answer who = answer.get();
+        if (what != null && who != null && recorded.compareAndSet(false, true))
         {
-            return false;
+            McpHistory.record(what, who);
         }
-        try
-        {
-            write(response);
-            return true;
-        }
-        catch (IOException e)
-        {
-            Activator.logError("Could not deliver the result of tool: " + toolName, e); //$NON-NLS-1$
-            return false;
-        }
-        finally
+    }
+
+    private void closeExchange()
+    {
+        if (exchange != null)
         {
             exchange.close();
         }
@@ -222,6 +379,10 @@ public class RunningToolCall
      */
     private void write(String document) throws IOException
     {
+        if (exchange == null)
+        {
+            throw new IOException("no connection to write to"); //$NON-NLS-1$
+        }
         byte[] body = document.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add(HEADER_CONTENT_TYPE, MIME_JSON);
         exchange.sendResponseHeaders(HTTP_OK, body.length);

@@ -2,6 +2,8 @@
 
 AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ниже - готовые конфиги для популярных клиентов. Порт по умолчанию 12250; если поменяли его в **Window → Preferences → AI-EDT**, подставьте свой.
 
+Каждый запрос несет bearer-токен: он создается при первом запуске сервера и показан в **Window → Preferences → AI-EDT**, поле **Bearer token**. Без него сервер отвечает `401`. В примерах ниже вместо `<токен>` подставьте значение с этой страницы; в файл, который попадает в репозиторий, токен не записывайте - у VS Code для этого есть `inputs`, у Cursor `${env:AI_EDT_TOKEN}`.
+
 > В Cursor и других клиентах без поддержки MCP-resources включите **Plain text mode** в **Window → Preferences → AI-EDT → General** - результаты возвращаются простым текстом вместо embedded-resources.
 
 ## Claude Code
@@ -13,7 +15,8 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
   "mcpServers": {
     "AI-EDT": {
       "type": "http",
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer <токен>"}
     }
   }
 }
@@ -27,11 +30,14 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 {
   "mcpServers": {
     "AI-EDT": {
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer ${env:AI_EDT_TOKEN}"}
     }
   }
 }
 ```
+
+`AI_EDT_TOKEN` - переменная окружения с токеном; Cursor подставляет ее в `${env:...}`. Можно вписать значение и напрямую, если файл не уходит в репозиторий.
 
 Новый сервер Cursor не загружает, пока он не одобрен: `cursor-agent mcp list` показывает его как `not loaded (needs approval)`, а в редакторе он остаётся пустым. Одобрить - в интерфейсе Cursor либо командой `cursor-agent mcp enable AI-EDT`. После одобрения `cursor-agent mcp list-tools AI-EDT` перечисляет инструменты.
 
@@ -43,14 +49,20 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 
 ```json
 {
+  "inputs": [
+    {"id": "ai-edt-token", "type": "promptString", "description": "AI-EDT bearer token", "password": true}
+  ],
   "servers": {
     "AI-EDT": {
       "type": "http",
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer ${input:ai-edt-token}"}
     }
   }
 }
 ```
+
+VS Code запрашивает токен при первом подключении и хранит его сам; в файл он не попадает.
 
 ## Claude Desktop
 
@@ -60,7 +72,8 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 {
   "mcpServers": {
     "AI-EDT": {
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer <токен>"}
     }
   }
 }
@@ -73,7 +86,8 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
   "mcpServers": {
     "AI-EDT": {
       "type": "streamableHttp",
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer <токен>"}
     }
   }
 }
@@ -85,7 +99,8 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 {
   "mcpServers": {
     "AI-EDT": {
-      "serverUrl": "http://localhost:12250/mcp"
+      "serverUrl": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer <токен>"}
     }
   }
 }
@@ -97,7 +112,9 @@ AI-EDT слушает `http://localhost:12250/mcp` (Streamable HTTP + SSE). Ни
 
 ```bash
 curl http://localhost:12250/health
-# {"status":"ok","phase":"ready",...}
+# {"status":"ok","edt_version":"2026.2.0.289","phase":"ready"}
+curl -H "Authorization: Bearer <токен>" http://localhost:12250/health
+# ... плюс имя рабочей области, текущий инструмент, куча, очередь
 ```
 
-`phase: ready` означает, что EDT загрузила проект и инструменты работают. `indexing`/`unknown` - подождите окончания индексации.
+`phase: ready` означает, что EDT загрузила проект и инструменты работают. `indexing`/`unknown` - подождите окончания индексации. Ответ `401` от `/mcp` при живом `/health` - клиент не передает токен или передает не тот.

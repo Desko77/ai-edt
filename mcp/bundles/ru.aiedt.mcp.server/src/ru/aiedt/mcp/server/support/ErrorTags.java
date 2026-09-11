@@ -260,6 +260,10 @@ public enum ErrorTags
      * client, unreachable, extension not found, ...). */
     THICK_CLIENT_FAILED("thickClientFailed"), //$NON-NLS-1$
 
+    /** import_external_object: EDT could not release the infobase for the
+     * Designer, so the conversion did not start. */
+    INFOBASE_NOT_RELEASED("infobaseNotReleased"), //$NON-NLS-1$
+
     /** set_infobase_credentials: writing the settings to secure storage
      * failed. */
     WRITE_FAILED("writeFailed"), //$NON-NLS-1$

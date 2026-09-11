@@ -32,6 +32,171 @@ import ru.aiedt.mcp.server.support.HistoryJournal;
  */
 public final class McpHistory
 {
+    /** Who got to answer the agent: the tool's own result. */
+    public static final String ARBITRATED_BY_TOOL = "tool"; //$NON-NLS-1$
+
+    /** Who got to answer the agent: an operator signal from the status bar. */
+    public static final String ARBITRATED_BY_SIGNAL = "signal"; //$NON-NLS-1$
+
+    /** The answer reached the connection. */
+    public static final String DELIVERY_DELIVERED = "delivered"; //$NON-NLS-1$
+
+    /** The answer could not be written: the connection was gone. */
+    public static final String DELIVERY_FAILED = "failed"; //$NON-NLS-1$
+
+    /** Nothing was sent by this server: the tool ran outside a connection, as a test does. */
+    public static final String DELIVERY_UNOBSERVED = "unobserved"; //$NON-NLS-1$
+
+    /**
+     * Who answered the agent, and whether the answer arrived.
+     * <p>
+     * The two are independent: a signal can win the right to answer and still fail to be sent,
+     * because the agent hung up first. A record therefore carries both, and a call the signal
+     * answered is counted as interrupted whether or not the signal got through.
+     * </p>
+     */
+    public static final class Answer
+    {
+        private final String arbitratedBy;
+
+        private final String deliveryStatus;
+
+        private final String signalType;
+
+        private final String signalNote;
+
+        private Answer(String arbitratedBy, String deliveryStatus, String signalType, String signalNote)
+        {
+            this.arbitratedBy = arbitratedBy;
+            this.deliveryStatus = deliveryStatus;
+            this.signalType = signalType;
+            this.signalNote = signalNote;
+        }
+
+        /**
+         * The tool's result was the answer.
+         *
+         * @param delivered whether it reached the connection
+         * @return the answer
+         */
+        public static Answer byTool(boolean delivered)
+        {
+            return new Answer(ARBITRATED_BY_TOOL, delivered ? DELIVERY_DELIVERED : DELIVERY_FAILED, null, null);
+        }
+
+        /**
+         * An operator signal was the answer.
+         *
+         * @param signal what the operator sent
+         * @param delivered whether it reached the connection
+         * @return the answer
+         */
+        public static Answer bySignal(OperatorSignal signal, boolean delivered)
+        {
+            String type = signal == null || signal.getType() == null ? "" : signal.getType().name(); //$NON-NLS-1$
+            // The operator can edit the text of any signal, and that text is what the agent got;
+            // it is kept whenever it is not the stock wording of the type.
+            String note = null;
+            if (signal != null && signal.getMessage() != null && !signal.getMessage().trim().isEmpty()
+                && !signal.getMessage().equals(OperatorSignal.getDefaultMessage(signal.getType())))
+            {
+                note = signal.getMessage();
+            }
+            return new Answer(ARBITRATED_BY_SIGNAL, delivered ? DELIVERY_DELIVERED : DELIVERY_FAILED, type, note);
+        }
+
+        /**
+         * Nobody sent anything: the tool ran with no connection to answer on.
+         *
+         * @return the answer
+         */
+        public static Answer unobserved()
+        {
+            return new Answer(ARBITRATED_BY_TOOL, DELIVERY_UNOBSERVED, null, null);
+        }
+
+        /**
+         * @return {@link McpHistory#ARBITRATED_BY_TOOL} or {@link McpHistory#ARBITRATED_BY_SIGNAL}
+         */
+        public String arbitratedBy()
+        {
+            return arbitratedBy;
+        }
+
+        /**
+         * @return {@link McpHistory#DELIVERY_DELIVERED}, {@link McpHistory#DELIVERY_FAILED} or
+         *         {@link McpHistory#DELIVERY_UNOBSERVED}
+         */
+        public String deliveryStatus()
+        {
+            return deliveryStatus;
+        }
+
+        /**
+         * @return the type of the signal that answered, or <code>null</code> when the tool did
+         */
+        public String signalType()
+        {
+            return signalType;
+        }
+
+        /**
+         * @return the operator's own words, when they differ from the stock wording of the signal;
+         *         otherwise <code>null</code>
+         */
+        public String signalNote()
+        {
+            return signalNote;
+        }
+
+        boolean interrupted()
+        {
+            return ARBITRATED_BY_SIGNAL.equals(arbitratedBy);
+        }
+
+        boolean undelivered()
+        {
+            return DELIVERY_FAILED.equals(deliveryStatus);
+        }
+    }
+
+    /**
+     * What a tool came back with, held until it is known who answered the agent.
+     */
+    public static final class Completion
+    {
+        final String toolName;
+
+        final String argSummary;
+
+        final boolean argsCut;
+
+        final String resultSummary;
+
+        final long durationMs;
+
+        final boolean success;
+
+        /**
+         * @param toolName the tool that ran
+         * @param argSummary its arguments, flattened and with credentials masked
+         * @param argsCut whether flattening shortened any argument
+         * @param resultSummary what it answered, in full
+         * @param durationMs how long it took
+         * @param success whether it worked
+         */
+        public Completion(String toolName, String argSummary, boolean argsCut, String resultSummary,
+            long durationMs, boolean success)
+        {
+            this.toolName = toolName;
+            this.argSummary = argSummary;
+            this.argsCut = argsCut;
+            this.resultSummary = resultSummary;
+            this.durationMs = durationMs;
+            this.success = success;
+        }
+    }
+
     private static final Deque<Record> RING = new ArrayDeque<>();
 
     private McpHistory()
@@ -93,15 +258,30 @@ public final class McpHistory
     public static void record(String toolName, String argSummary, boolean argsAlreadyCut, String resultSummary,
         long durationMs, boolean success)
     {
+        record(new Completion(toolName, argSummary, argsAlreadyCut, resultSummary, durationMs, success),
+            Answer.unobserved());
+    }
+
+    /**
+     * Records one tool call together with who answered the agent and whether the answer arrived.
+     *
+     * @param completion what the tool came back with
+     * @param answer who answered, and whether it got through
+     */
+    public static void record(Completion completion, Answer answer)
+    {
         HistorySettings settings = HistorySettings.current();
         if (!settings.isEnabled())
         {
             return;
         }
-        Record entry = new Record(toolName, truncate(argSummary, settings.argChars()),
-            truncate(resultSummary, settings.resultChars()), System.currentTimeMillis(), durationMs, success,
-            argsAlreadyCut || (argSummary != null && argSummary.length() > settings.argChars()),
-            resultSummary == null ? 0 : resultSummary.length());
+        String argSummary = completion.argSummary;
+        String resultSummary = completion.resultSummary;
+        Record entry = new Record(completion.toolName, truncate(argSummary, settings.argChars()),
+            truncate(resultSummary, settings.resultChars()), System.currentTimeMillis(), completion.durationMs,
+            completion.success,
+            completion.argsCut || (argSummary != null && argSummary.length() > settings.argChars()),
+            resultSummary == null ? 0 : resultSummary.length(), answer);
         add(entry, settings.depth());
         if (settings.isFileEnabled())
         {
@@ -192,6 +372,8 @@ public final class McpHistory
         Map<String, Integer> byTool = new LinkedHashMap<>();
         int ok = 0;
         int fail = 0;
+        int interrupted = 0;
+        int undelivered = 0;
         long totalMs = 0;
         for (Record r : RING)
         {
@@ -204,6 +386,16 @@ public final class McpHistory
             {
                 fail++;
             }
+            // Counted on top of the outcome, never instead of it: an interrupted call still has the
+            // outcome its tool produced, and success + failure stays the number of calls.
+            if (r.answer.interrupted())
+            {
+                interrupted++;
+            }
+            if (r.answer.undelivered())
+            {
+                undelivered++;
+            }
             totalMs += r.durationMs;
         }
         Map<String, Object> s = new LinkedHashMap<>();
@@ -211,6 +403,8 @@ public final class McpHistory
         s.put("capacity", capacity()); //$NON-NLS-1$
         s.put("success", ok); //$NON-NLS-1$
         s.put("failure", fail); //$NON-NLS-1$
+        s.put("interrupted", interrupted); //$NON-NLS-1$
+        s.put("undelivered", undelivered); //$NON-NLS-1$
         s.put("totalDurationMs", totalMs); //$NON-NLS-1$
         s.put("byTool", byTool); //$NON-NLS-1$
         return s;
@@ -240,11 +434,12 @@ public final class McpHistory
     public static synchronized Map<String, Map<String, Object>> perToolStats()
     {
         Map<String, List<Long>> durations = new LinkedHashMap<>();
-        Map<String, int[]> outcomes = new LinkedHashMap<>(); // [successCount, failCount]
+        // [successCount, failCount, interruptedCount, undeliveredCount]
+        Map<String, int[]> outcomes = new LinkedHashMap<>();
         for (Record r : RING)
         {
             durations.computeIfAbsent(r.toolName, k -> new ArrayList<>()).add(r.durationMs);
-            int[] c = outcomes.computeIfAbsent(r.toolName, k -> new int[2]);
+            int[] c = outcomes.computeIfAbsent(r.toolName, k -> new int[4]);
             if (r.success)
             {
                 c[0]++;
@@ -252,6 +447,14 @@ public final class McpHistory
             else
             {
                 c[1]++;
+            }
+            if (r.answer.interrupted())
+            {
+                c[2]++;
+            }
+            if (r.answer.undelivered())
+            {
+                c[3]++;
             }
         }
         Map<String, Map<String, Object>> out = new LinkedHashMap<>();
@@ -267,6 +470,8 @@ public final class McpHistory
             s.put("maxMs", sorted[sorted.length - 1]); //$NON-NLS-1$
             s.put("successCount", c[0]); //$NON-NLS-1$
             s.put("failCount", c[1]); //$NON-NLS-1$
+            s.put("interruptedCount", c[2]); //$NON-NLS-1$
+            s.put("undeliveredCount", c[3]); //$NON-NLS-1$
             out.put(e.getKey(), s);
         }
         return out;
@@ -308,9 +513,10 @@ public final class McpHistory
         final boolean success;
         final boolean argsCut;
         final int resultFullChars;
+        final Answer answer;
 
         Record(String toolName, String argSummary, String resultSummary, long timestamp, long durationMs,
-            boolean success, boolean argsCut, int resultFullChars)
+            boolean success, boolean argsCut, int resultFullChars, Answer answer)
         {
             this.toolName = toolName;
             this.argSummary = argSummary;
@@ -320,6 +526,7 @@ public final class McpHistory
             this.success = success;
             this.argsCut = argsCut;
             this.resultFullChars = resultFullChars;
+            this.answer = answer;
         }
 
         Map<String, Object> toMap()
@@ -336,6 +543,19 @@ public final class McpHistory
             // having no effect while they were quietly deciding what they see.
             m.put("argsCut", argsCut); //$NON-NLS-1$
             m.put("resultChars", resultFullChars); //$NON-NLS-1$
+            // Who answered the agent and whether the answer arrived - independent of success, which
+            // is the tool's own outcome. A call the operator answered from the status bar has the
+            // result its tool produced and an agent that never saw it.
+            m.put("arbitratedBy", answer.arbitratedBy()); //$NON-NLS-1$
+            m.put("deliveryStatus", answer.deliveryStatus()); //$NON-NLS-1$
+            if (answer.signalType() != null)
+            {
+                m.put("signalType", answer.signalType()); //$NON-NLS-1$
+            }
+            if (answer.signalNote() != null)
+            {
+                m.put("signalNote", answer.signalNote()); //$NON-NLS-1$
+            }
             return m;
         }
     }

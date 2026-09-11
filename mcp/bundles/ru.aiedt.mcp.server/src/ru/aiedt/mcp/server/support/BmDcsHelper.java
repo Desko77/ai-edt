@@ -37,8 +37,8 @@ import ru.aiedt.mcp.server.Activator;
  * <p>
  * <b>1.35 status:</b> in-memory schema mutation through a write transaction.
  * Direct save to disk in extension projects is delegated to
- * {@link DcsExtensionExportHelper}; recovery from disk to BM is in
- * {@link DcsExtensionImportHelper}.
+ * {@link DcsExtensionExportHelper}; restoring a schema from disk into the model is
+ * {@link DcsSchemaRestorer}.
  */
 public final class BmDcsHelper
 {
@@ -1275,7 +1275,7 @@ public final class BmDcsHelper
      * @param ownerFqn the metadata object FQN (e.g. {@code Report.Sales})
      * @return the resolved template name (never null/empty)
      */
-    private static String resolveOwnerDcsTemplateName(IProject project, String ownerFqn)
+    public static String resolveOwnerDcsTemplateName(IProject project, String ownerFqn)
     {
         Configuration config = null;
         try

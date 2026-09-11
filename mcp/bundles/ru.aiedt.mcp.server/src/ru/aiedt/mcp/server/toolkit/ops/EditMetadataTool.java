@@ -632,6 +632,10 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("autoGenerateColumns", //$NON-NLS-1$
                 "add_table with dataPath: auto-create columns for every attribute of the " //$NON-NLS-1$
                     + "underlying tabular section / value table. Default false.") //$NON-NLS-1$
+            .booleanProperty("overwriteModel", //$NON-NLS-1$
+                "repair_report_schema: replace a schema the model holds when it differs from the " //$NON-NLS-1$
+                    + ".dcs; the model's schema is written to a backup beside the file first. Default " //$NON-NLS-1$
+                    + "false: a differing schema is reported and left alone.") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "Preview the operation inside a BM transaction and roll back. Default false.") //$NON-NLS-1$
             .booleanProperty("confirm", //$NON-NLS-1$

@@ -100,7 +100,7 @@ public class GeneralPrefTab
 
     private Button bindAllCheck;
 
-    private Button authEnabledCheck;
+    private Button allowNullOriginCheck;
 
     private Text authTokenText;
 
@@ -224,14 +224,24 @@ public class GeneralPrefTab
     }
 
     /**
-     * Writes every field to the store.
+     * Writes every field to the store and publishes the token.
      * <p>
      * The checks folder is written as typed, spaces and all - unlike the five other paths, which are
-     * trimmed. The marker style is written only when the combo has a selection.
+     * trimmed. The marker style is written only when the combo has a selection. The token is the
+     * one field that has to reach the disk before it counts, which is why this can fail.
      * </p>
+     *
+     * @return <code>null</code> when everything was saved, otherwise what was not and why
      */
-    public void performOk()
+    public String performOk()
     {
+        // The token first: it is the one field that has to reach the disk before it counts, and
+        // a save that fails must leave the other fields as they were, not half applied.
+        String notSaved = publishToken();
+        if (notSaved != null)
+        {
+            return notSaved;
+        }
         store.setValue(PrefKeys.PREF_PORT, portSpinner.getSelection());
         store.setValue(PrefKeys.PREF_PORT_SPAN, portSpanSpinner.getSelection());
         store.setValue(PrefKeys.PREF_AUTO_START, autoStartCheck.getSelection());
@@ -242,8 +252,7 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_VANESSA_1C_EXE, vanessa1cExeText.getText().trim());
         store.setValue(PrefKeys.PREF_PLAIN_TEXT_MODE, plainTextCheck.getSelection());
         store.setValue(PrefKeys.PREF_BIND_ALL_INTERFACES, bindAllCheck.getSelection());
-        store.setValue(PrefKeys.PREF_AUTH_ENABLED, authEnabledCheck.getSelection());
-        store.setValue(PrefKeys.PREF_AUTH_TOKEN, authTokenText.getText().trim());
+        store.setValue(PrefKeys.PREF_ALLOW_NULL_ORIGIN, allowNullOriginCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_ENABLED, historyEnabledCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_DEPTH, historyDepthSpinner.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_ARG_CHARS, historyArgSpinner.getSelection());
@@ -262,6 +271,7 @@ public class GeneralPrefTab
             MarkerSettingsMigration.mirrorToLegacyKey(PrefKeys.PREF_MARKERS_DECORATION_STYLE,
                 MARKER_STYLE_VALUES[styleIndex]);
         }
+        return null;
     }
 
     /**
@@ -309,7 +319,7 @@ public class GeneralPrefTab
         bslLsJavaText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAVA));
         plainTextCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_PLAIN_TEXT_MODE));
         bindAllCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES));
-        authEnabledCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_AUTH_ENABLED));
+        allowNullOriginCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
         authTokenText.setText(store.getDefaultString(PrefKeys.PREF_AUTH_TOKEN));
         upkeepEnabledCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_UPKEEP_ENABLED));
         upkeepSiteText.setText(store.getDefaultString(PrefKeys.PREF_UPKEEP_SITE_URL));
@@ -560,13 +570,20 @@ public class GeneralPrefTab
             + "token below. Restart the server after changing."); //$NON-NLS-1$
         bindAllCheck.setSelection(store.getBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES));
 
-        authEnabledCheck = new Button(section, SWT.CHECK);
-        authEnabledCheck.setText("Require a bearer token"); //$NON-NLS-1$
-        authEnabledCheck.setLayoutData(span(section, 3));
-        authEnabledCheck.setToolTipText("When enabled, MCP clients must send 'Authorization: Bearer " //$NON-NLS-1$
-            + "<token>'. Default OFF, which is safe only while the server listens on loopback. Restart " //$NON-NLS-1$
-            + "the server after changing, and add the token to your MCP client config."); //$NON-NLS-1$
-        authEnabledCheck.setSelection(store.getBoolean(PrefKeys.PREF_AUTH_ENABLED));
+        allowNullOriginCheck = new Button(section, SWT.CHECK);
+        allowNullOriginCheck.setText("Accept browser pages without an origin (Origin: null)"); //$NON-NLS-1$
+        allowNullOriginCheck.setLayoutData(span(section, 3));
+        allowNullOriginCheck.setToolTipText("OFF by default. A page opened from a local file sends " //$NON-NLS-1$
+            + "'Origin: null' - and so does a sandboxed frame that any web site can create. Turn this " //$NON-NLS-1$
+            + "on only while using a page from a file. Pages served from localhost, 127.0.0.1, [::1] " //$NON-NLS-1$
+            + "and VS Code webviews are accepted without it."); //$NON-NLS-1$
+        allowNullOriginCheck.setSelection(store.getBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
+
+        Label tokenNote = new Label(section, SWT.WRAP);
+        tokenNote.setText("Every MCP client sends 'Authorization: Bearer <token>'. The token below is the " //$NON-NLS-1$
+            + "only place it is shown: copy it into each client's configuration. Apply with the field " //$NON-NLS-1$
+            + "empty and a new token is generated. A changed token takes effect on the next request."); //$NON-NLS-1$
+        tokenNote.setLayoutData(span(section, 3));
 
         Label tokenLabel = new Label(section, SWT.NONE);
         tokenLabel.setText("Bearer token:"); //$NON-NLS-1$
@@ -577,9 +594,26 @@ public class GeneralPrefTab
 
         Button generateButton = new Button(section, SWT.PUSH);
         generateButton.setText("Generate"); //$NON-NLS-1$
-        generateButton.setToolTipText("Generate a fresh random 256-bit token."); //$NON-NLS-1$
+        generateButton.setToolTipText("Put a fresh random 256-bit token into the field. It takes effect on Apply."); //$NON-NLS-1$
         generateButton.addSelectionListener(SelectionListener.widgetSelectedAdapter(
             e -> authTokenText.setText(McpAuth.generateToken())));
+    }
+
+    /**
+     * Saves the token and makes it the active one.
+     * <p>
+     * An empty field means a new token. The field shows what is in force afterwards: the new
+     * token when it was saved, the previous one when it was not.
+     * </p>
+     *
+     * @return <code>null</code> when the token in the field is active, otherwise why the previous
+     *         one still is
+     */
+    private String publishToken()
+    {
+        String refusal = McpAuth.publish(authTokenText.getText());
+        authTokenText.setText(store.getString(PrefKeys.PREF_AUTH_TOKEN));
+        return refusal;
     }
 
     private void createNavigatorMarkersSection()
@@ -640,7 +674,14 @@ public class GeneralPrefTab
             return;
         }
         // Save first: the socket cannot open on a port that has not been committed.
-        performOk();
+        String notSaved = performOk();
+        if (notSaved != null)
+        {
+            // The token in the field is not the one in force; starting now would let the user
+            // believe it is.
+            MessageDialog.openError(control.getShell(), "Start Failed", notSaved); //$NON-NLS-1$
+            return;
+        }
         try
         {
             server.start(portSpinner.getSelection());
@@ -672,7 +713,12 @@ public class GeneralPrefTab
         {
             return;
         }
-        performOk();
+        String notSaved = performOk();
+        if (notSaved != null)
+        {
+            MessageDialog.openError(control.getShell(), "Restart Failed", notSaved); //$NON-NLS-1$
+            return;
+        }
         try
         {
             server.restart(portSpinner.getSelection());

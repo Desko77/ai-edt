@@ -115,7 +115,13 @@ public class McpSettingsPage
         // written it always reads false and the restart below never fires. Order matters here.
         boolean toolsChanged = toolsTab.hasChanges();
 
-        generalTab.performOk();
+        String notSaved = generalTab.performOk();
+        if (notSaved != null)
+        {
+            // The general tab is not saved as a whole; the tools tab waits for it.
+            setErrorMessage(notSaved);
+            return false;
+        }
         toolsTab.performOk();
 
         if (toolsChanged)

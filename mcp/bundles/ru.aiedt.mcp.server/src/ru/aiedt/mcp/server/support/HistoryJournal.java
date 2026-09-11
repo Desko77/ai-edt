@@ -156,10 +156,12 @@ public final class HistoryJournal
     }
 
     /**
-     * Copies the entry with personal data masked out of the two free-text fields.
+     * Copies the entry with personal data masked out of the free-text fields: the arguments, the
+     * result and the operator's note.
      * <p>
-     * Only those two: the rest are a tool name, a timestamp, a duration and two flags, which carry
-     * nothing to mask and would only be at risk of being mangled by a pattern that matched a number.
+     * Only those: the rest are a tool name, a timestamp, a duration, two flags and two words about
+     * who answered, which carry nothing to mask and would only be at risk of being mangled by a
+     * pattern that matched a number.
      * </p>
      *
      * @param entry the call
@@ -170,6 +172,8 @@ public final class HistoryJournal
         Map<String, Object> copy = new LinkedHashMap<>(entry);
         maskField(copy, "args"); //$NON-NLS-1$
         maskField(copy, "result"); //$NON-NLS-1$
+        // The operator's own words, typed into the signal dialog, can carry the same data.
+        maskField(copy, "signalNote"); //$NON-NLS-1$
         return copy;
     }
 

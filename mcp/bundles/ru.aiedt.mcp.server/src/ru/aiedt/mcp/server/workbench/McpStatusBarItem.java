@@ -14,6 +14,7 @@ import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.window.Window;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.dnd.Clipboard;
@@ -45,6 +46,7 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.McpHistory;
 import ru.aiedt.mcp.server.McpHttpEndpoint;
 import ru.aiedt.mcp.server.OperatorSignal;
+import ru.aiedt.mcp.server.RunningToolCall;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.upkeep.ReleaseOffer;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
@@ -921,6 +923,22 @@ public class McpStatusBarItem
         historyDialog.open();
     }
 
+    /**
+     * Whether a signal that did not stop a call is kept for the next one.
+     * <p>
+     * Only when nobody arbitrated it - no call was waiting. A signal that was the answer to a call
+     * and could not be written is spent: it belongs to that call, and parking it would hand it to
+     * whatever call comes next.
+     * </p>
+     *
+     * @param delivery how the attempt to answer ended
+     * @return <code>true</code> when the signal rides along with the next result
+     */
+    public static boolean parksSignal(RunningToolCall.Delivery delivery)
+    {
+        return delivery == RunningToolCall.Delivery.NOT_ARBITRATED;
+    }
+
     private void sendSignal(OperatorSignal.SignalType type, String title)
     {
         McpHttpEndpoint server = Activator.getDefault() != null ? Activator.getDefault().getMcpServer() : null;
@@ -936,15 +954,30 @@ public class McpStatusBarItem
         }
 
         OperatorSignal signal = new OperatorSignal(type, dialog.getMessage());
-        if (server.interruptToolCall(signal))
+        RunningToolCall.Delivery delivery = server.interruptToolCall(signal);
+        switch (delivery)
         {
+        case DELIVERED:
             Activator.logInfo("Call stopped by operator signal: " + type); //$NON-NLS-1$
-        }
-        else
-        {
-            // Nothing was interruptible after all: park it so it rides along with the next result.
-            server.setUserSignal(signal);
-            Activator.logInfo("Operator signal waiting: " + type); //$NON-NLS-1$
+            break;
+        case DELIVERY_FAILED:
+            // The signal was the answer and the agent had already hung up. It is not parked: a
+            // signal meant for this call must not turn up in the next one.
+            Activator.logWarning("Operator signal " + type //$NON-NLS-1$
+                + " was not delivered: the agent had already disconnected. It is not kept for the next call."); //$NON-NLS-1$
+            MessageDialog.openWarning(container.getShell(), "AI-EDT", //$NON-NLS-1$
+                "The signal was not delivered: the agent had already disconnected from this call. " //$NON-NLS-1$
+                    + "It is not kept for the next call."); //$NON-NLS-1$
+            break;
+        case NOT_ARBITRATED:
+        default:
+            if (parksSignal(delivery))
+            {
+                // Nothing was interruptible after all: park it so it rides along with the next result.
+                server.setUserSignal(signal);
+                Activator.logInfo("Operator signal waiting: " + type); //$NON-NLS-1$
+            }
+            break;
         }
     }
 

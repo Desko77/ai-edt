@@ -320,6 +320,10 @@ A ready instance returns a response with `status: ok` and `phase: ready`. If the
 
 ### 🔗 5. Connect an AI client
 
+Every request to the server carries a bearer token. The token is created at the first start of the
+server and shown in **Window → Preferences → AI-EDT**, field **Bearer token** - copy it into the
+client configuration. A client without it gets `401`.
+
 #### Claude Code
 
 Add the server to `%USERPROFILE%\.claude.json`:
@@ -329,7 +333,8 @@ Add the server to `%USERPROFILE%\.claude.json`:
   "mcpServers": {
     "AI-EDT": {
       "type": "http",
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer <token from Preferences > AI-EDT>"}
     }
   }
 }
@@ -343,7 +348,8 @@ Create `.cursor/mcp.json` in the project root and enable **Plain text mode** in 
 {
   "mcpServers": {
     "AI-EDT": {
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer <token from Preferences > AI-EDT>"}
     }
   }
 }
@@ -353,12 +359,18 @@ Create `.cursor/mcp.json` in the project root and enable **Plain text mode** in 
 
 Create `.vscode/mcp.json`:
 
+The token is asked for at the first connection and kept by VS Code; it does not land in the file:
+
 ```json
 {
+  "inputs": [
+    {"id": "ai-edt-token", "type": "promptString", "description": "AI-EDT bearer token", "password": true}
+  ],
   "servers": {
     "AI-EDT": {
       "type": "http",
-      "url": "http://localhost:12250/mcp"
+      "url": "http://localhost:12250/mcp",
+      "headers": {"Authorization": "Bearer ${input:ai-edt-token}"}
     }
   }
 }
@@ -408,7 +420,7 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `docs_lookup` | Platform documentation and built-in 1C object help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks and tasks. |
 | `dcs_workshop` / `mxl_workshop` / `xdto_workshop` / `external_data_source_workshop` | Programmatic builders for complex 1C artifacts. |
-| `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations. |
+| `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations; `import_external_object` converts an `.epf` / `.erf` through the Designer of the named infobase (`applicationId`) and hands the infobase back to EDT. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |
 | `support_registry` | Vendor support state: parent configurations and their releases, object modes, recording and restoring them. |
 
@@ -444,21 +456,28 @@ Each tool can be **listed**, **callable-hidden** or **disabled**. Hidden tools s
 ![Expanding a group shows every tool with its description and its listed, callable-hidden or disabled state.](docs/assets/screenshots/preferences-tools-detail.png)
 
 > [!CAUTION]
-> The plugin runs with the permissions of the EDT process. It can modify source, metadata and infobases. Keep the project in version control, review previews before confirming destructive operations, and do not expose the unauthenticated local port beyond loopback.
+> The plugin runs with the permissions of the EDT process. It can modify source, metadata and infobases. Keep the project in version control, review previews before confirming destructive operations, and do not expose the local port beyond loopback.
 
-### Access token and interface binding
+### Access token, page origin and interface binding
 
-By default the server listens on `127.0.0.1` only and asks for no authentication: nothing leaves the
-machine. To open the endpoint up, **Preferences → AI-EDT** carries two settings, and they belong
-together:
+The server listens on `127.0.0.1` only, and every request to `/mcp` carries a bearer token.
 
-- **Bearer token.** A button generates a random token; the client sends it as
-  `Authorization: Bearer <token>`. The comparison runs in constant time, so the token cannot be
-  guessed from response timings. A request without the right token is rejected before it reaches a
-  tool.
-- **Bind to every interface.** Lifts the loopback restriction. Turned on without a token, the plugin
-  writes a warning to the log: any host that can reach this machine can then read and change the
-  sources and the infobase.
+- **The bearer token is required.** It is created at the first start of the server when the field
+  on **Preferences → AI-EDT** is empty, and shown only there. The client sends it as
+  `Authorization: Bearer <token>`; the comparison runs in constant time. A request without the
+  right token gets `401`; the refusal names the preference page and never carries the token. The
+  token is not written to the workspace log. **Generate** puts a new token into the field and
+  **Apply** with an empty field creates one; a new token takes effect once it is saved to the
+  preferences - until the save completes, the previous one holds.
+- **`/health` without the token** answers three fields: `status`, `phase`, `edt_version`. The
+  workspace name, the running tool, heap and queue figures come only with the token.
+- **Page origin.** A browser request is accepted when its `Origin` header is exactly
+  `http://localhost`, `http://127.0.0.1` or `http://[::1]` (with or without a port, over `http` or
+  `https`) or `vscode-webview://<id>`. `http://localhost.evil.example` is turned away. A page opened
+  from a file sends `Origin: null`; such a request is accepted only with **Accept browser pages
+  without an origin** switched on, which it is not by default.
+- **Bind to every interface.** Lifts the loopback restriction: any host that can reach this
+  machine and knows the token can then read and change the sources and the infobase.
 
 ### Personal-data masking
 
@@ -478,7 +497,7 @@ What it honestly is and is not:
 
 ### Call history
 
-Every tool call is recorded: what ran, with which arguments, what came back, how long it took. Open it from the AI-EDT status bar indicator, **Call history**. The window is modeless, so the agent keeps working while you read.
+Every tool call is recorded: what ran, with which arguments, what came back, how long it took, and who answered the agent - the tool or your signal from the status bar. A record carries `arbitratedBy` (`tool` / `signal`), `deliveryStatus` (`delivered` / `failed`) and, for a signal, `signalType` and the `signalNote` text. The **Outcome** column reads `ok, interrupted (CANCEL)` or `failed, not delivered`; in the statistics of `get_mcp_history` and `self_status` the counters `interrupted` and `undelivered` sit on top of `success` and `failure`. Open it from the AI-EDT status bar indicator, **Call history**. The window is modeless, so the agent keeps working while you read.
 
 ![The call history window: the list with its tool and failure filters, and the request and response of the selected call below it.](docs/assets/screenshots/call-history.png)
 
@@ -518,7 +537,7 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 - AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
 - The server is available only while EDT is running.
 - Some semantic tools require project indexing to be complete; while it runs, such a tool refuses with the reason named.
-- By default the endpoint listens on loopback and asks for no authentication. A bearer token and a bind-to-every-interface setting exist, but turning them on is a deliberate act - see the safety section.
+- The endpoint listens on loopback, and every request carries the bearer token from the preference page. Binding to every interface is a separate setting - see the safety section.
 - The update site is published automatically on release. Builds made between releases install from source or from a local P2 repository.
 
 ## 🤝 Contributing
