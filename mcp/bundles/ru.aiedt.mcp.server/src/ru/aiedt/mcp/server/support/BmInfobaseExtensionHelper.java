@@ -135,29 +135,21 @@ public final class BmInfobaseExtensionHelper
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
-            if (ctx.lock != null) ctx.lock.lock();
             try
             {
                 // Same disconnect/reconnect as install/uninstall: the list
                 // thick-client also needs EDT's designer agent off the file
                 // infobase, or it blocks on the monopoly (row 55).
-                boolean disconnected = disconnectForThickClient(ctx);
-                try
-                {
+                underThickClientHandshake(ctx, () -> {
                     List<String> exts = ctx.launcher.listConfigurationExtensions(ctx.component,
                         ctx.infobase, ctx.args);
                     r.ok = true;
                     r.extensions = exts != null ? exts : Collections.emptyList();
-                }
-                finally
-                {
-                    if (disconnected) reconnectInfobase(ctx);
-                }
+                });
             }
             finally
             {
                 claim.close();
-                if (ctx.lock != null) ctx.lock.unlock();
             }
         }
         catch (Throwable e)
@@ -200,24 +192,16 @@ public final class BmInfobaseExtensionHelper
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
-            if (ctx.lock != null) ctx.lock.lock();
             try
             {
-                boolean disconnected = disconnectForThickClient(ctx);
-                try
-                {
+                underThickClientHandshake(ctx, () -> {
                     ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase, ctx.args, name);
                     r.ok = true;
-                }
-                finally
-                {
-                    if (disconnected) reconnectInfobase(ctx);
-                }
+                });
             }
             finally
             {
                 claim.close();
-                if (ctx.lock != null) ctx.lock.unlock();
             }
         }
         catch (Throwable e)
@@ -372,6 +356,67 @@ public final class BmInfobaseExtensionHelper
             if (ctx.lock != null)
             {
                 ctx.lock.unlock();
+            }
+        }
+    }
+
+    /**
+     * Runs a thick-client call the way EDT's own interface does: the infobase is released, the
+     * call runs under the per-infobase lock, and the infobase is taken back.
+     * <p>
+     * The ORDER is the whole point, and it is why this is one method rather than an idiom repeated
+     * at each call site. EDT takes that same lock inside {@code connectInfobase}, AFTER the
+     * connection's monitor. A caller that holds the lock across the reconnection therefore asks for
+     * the two in the opposite order to EDT's own background synchronization worker, and the two
+     * deadlock - measured with a thread dump, with the worker holding the monitor and waiting for
+     * the lock while the call held the lock and waited for the monitor.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param work the launcher call
+     * @throws Exception whatever the call throws
+     */
+    static void underThickClientHandshake(LauncherContext ctx, Work work) throws Exception
+    {
+        handshakeOrder(ctx.lock, () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
+    }
+
+    /**
+     * The order itself, with every step handed in, so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and nothing else
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @throws Exception whatever the work throws, after the infobase has been taken back
+     */
+    static void handshakeOrder(java.util.concurrent.locks.Lock lock,
+        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+    {
+        boolean disconnected = release.getAsBoolean();
+        try
+        {
+            if (lock != null)
+            {
+                lock.lock();
+            }
+            try
+            {
+                work.run();
+            }
+            finally
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+            }
+        }
+        finally
+        {
+            if (disconnected)
+            {
+                reconnect.run();
             }
         }
     }
@@ -746,7 +791,6 @@ public final class BmInfobaseExtensionHelper
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
-            if (ctx.lock != null) ctx.lock.lock();
             try
             {
                 // Mirror installExtension: temporarily disconnect EDT's persistent
@@ -755,21 +799,14 @@ public final class BmInfobaseExtensionHelper
                 // EDT's agent the export thick-client blocks on the monopoly and the
                 // call hangs until the MCP timeout (row 55). ctx.lock alone does not
                 // release that platform lock (live-verified).
-                boolean disconnected = disconnectForThickClient(ctx);
-                try
-                {
+                underThickClientHandshake(ctx, () -> {
                     ctx.launcher.exportCfFromInfobase(ctx.component, ctx.infobase, ctx.args,
                         extensionName, dest);
-                }
-                finally
-                {
-                    if (disconnected) reconnectInfobase(ctx);
-                }
+                });
             }
             finally
             {
                 claim.close();
-                if (ctx.lock != null) ctx.lock.unlock();
             }
         }
         catch (Throwable e)
@@ -867,26 +904,18 @@ public final class BmInfobaseExtensionHelper
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
-            if (ctx.lock != null) ctx.lock.lock();
             try
             {
                 // Same disconnect/reconnect as exportExtension: the dump thick-client needs
                 // EDT's designer agent off the file infobase or it blocks on the monopoly.
-                boolean disconnected = disconnectForThickClient(ctx);
-                try
-                {
+                underThickClientHandshake(ctx, () -> {
                     // null extension name = the MAIN configuration (not an extension).
                     ctx.launcher.exportCfFromInfobase(ctx.component, ctx.infobase, ctx.args, null, dest);
-                }
-                finally
-                {
-                    if (disconnected) reconnectInfobase(ctx);
-                }
+                });
             }
             finally
             {
                 claim.close();
-                if (ctx.lock != null) ctx.lock.unlock();
             }
         }
         catch (Throwable e)
@@ -1085,12 +1114,9 @@ public final class BmInfobaseExtensionHelper
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
-            if (ctx.lock != null) ctx.lock.lock();
             try
             {
-                boolean disconnected = disconnectForThickClient(ctx);
-                try
-                {
+                underThickClientHandshake(ctx, () -> {
                     Object out = execM.invoke(ctx.launcher, command,
                         ctx.component.getInstallation(), ctx.infobase, ctx.args);
                     // Defense in depth: strip the infobase password out of the designer log
@@ -1098,16 +1124,11 @@ public final class BmInfobaseExtensionHelper
                     // channel that carries the /P argv token.
                     r.designerLog = trimLog(redactSecret(out == null ? null : (String)out,
                         ctx.args.getPassword()));
-                }
-                finally
-                {
-                    if (disconnected) reconnectInfobase(ctx);
-                }
+                });
             }
             finally
             {
                 claim.close();
-                if (ctx.lock != null) ctx.lock.unlock();
             }
         }
         catch (java.lang.reflect.InvocationTargetException e)

@@ -957,6 +957,41 @@ public final class BmExtensionHelper
      * {@link MetadataTypeCatalog}, and walking child collections by reflection
      * ({@code getForms()}, {@code getAttributes()}, ...).
      */
+    /**
+     * Whether the model of a project holds the object a FQN names.
+     * <p>
+     * The one answer in this codebase to "does this address exist", and it is not
+     * {@code getTopObjectByFqn} alone: a form, a template, an attribute or a command is NOT a BM
+     * top object, and the index answers <code>null</code> for every one of them. Measured on a
+     * stand: a data processor's existing form and existing template both came back unresolved from
+     * the index while their files sat on disk. A caller that reports "not found" from the index
+     * alone therefore denies objects that are there.
+     * </p>
+     *
+     * @param project the project whose model is asked
+     * @param fqn the address, top-level or child
+     * @return <code>true</code> when the model holds it
+     */
+    public static boolean addressResolves(IProject project, String fqn)
+    {
+        if (project == null || fqn == null || fqn.trim().isEmpty())
+        {
+            return false;
+        }
+        try
+        {
+            return resolveSourceEObject(project, fqn.trim()) != null;
+        }
+        catch (Exception | LinkageError failed)
+        {
+            // An address that cannot be looked up is not an address that is absent: saying "not
+            // found" on a lookup failure is the false claim this method exists to prevent.
+            Activator.logWarning("could not resolve the address " + fqn + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + failed);
+            return true;
+        }
+    }
+
     private static EObject resolveSourceEObject(IProject baseProject, String fqn)
     {
         if (fqn == null || fqn.isEmpty())

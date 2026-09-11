@@ -92,6 +92,14 @@ jobs:
       - name: Swallowed reflection census
         run: python3 scripts/check-swallowed-reflection.py
 
+      # A javadoc block with no declaration under it documents whatever follows, or nothing. They
+      # arrive when a method moves or is replaced and its old block stays behind, and nothing in the
+      # build says a word, because a comment always compiles. The count may fall and never rise.
+      - name: Orphan javadoc census
+        run: |
+          python3 scripts/tests/test_check_orphan_javadoc.py
+          python3 scripts/check-orphan-javadoc.py --check
+
       # The README tells users to install the skill, so a skill that has fallen behind the code
       # teaches an agent that a capability is absent. That has happened twice: a removed facade left
       # described, and an import stated as refused months after it was built.
