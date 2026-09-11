@@ -38,6 +38,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BuildTaskHelper;
+import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
@@ -179,6 +180,177 @@ public class ObjectsRevalidator
         }
     }
 
+    /**
+     * The top object a child address lives under.
+     * <p>
+     * A top object is named by two steps, so anything longer is a child of the first two: a form, a
+     * template, an attribute, a tabular section, a command. Whether the model actually holds that
+     * child is a separate question, and one this cannot answer.
+     * </p>
+     *
+     * @param fqn the address, already normalised.
+     * @return the owner's address, or <code>null</code> when the address names a top object itself
+     */
+    static String ownerOf(String fqn)
+    {
+        if (fqn == null)
+        {
+            return null;
+        }
+        int firstDot = fqn.indexOf('.');
+        if (firstDot < 0)
+        {
+            return null;
+        }
+        int secondDot = fqn.indexOf('.', firstDot + 1);
+        if (secondDot < 0 || secondDot == fqn.length() - 1 || secondDot == firstDot + 1)
+        {
+            return null;
+        }
+        return fqn.substring(0, secondDot);
+    }
+
+    /** How the index spells a form's own root: the type, the object, Form, the name, Form. */
+    private static final int FORM_ROOT_STEPS = 5;
+
+    /** The step that names a form, and the marker the index puts after its name. */
+    private static final String FORM = "Form"; //$NON-NLS-1$
+
+    /**
+     * The same step as written in the platform's own language. Measured:
+     * {@code DataProcessor.X.Form.Y.Form} resolved and the Russian spelling of the same address did
+     * not, because only the first step of an address is translated on the way in.
+     */
+    private static final String FORM_RU = "Форма"; //$NON-NLS-1$
+
+    /**
+     * Whether an address names something under a top object, rather than stopping short of it.
+     * <p>
+     * Steps come in pairs beyond the owner - a kind and a name - and an address ending on a kind
+     * with no name after it, {@code Catalog.Users.Attribute}, names nothing. It cannot be caught by
+     * resolving it either: the walk down the model only enters on whole pairs, so such an address
+     * comes back as its own owner and reads as an object that exists. Measured: three of them were
+     * reported as validated objects.
+     * </p>
+     * <p>
+     * One shape is allowed to be odd: {@code Catalog.Users.Form.UserForm.Form} is how the index
+     * spells a form's own root, and the walk treats that last step as a marker rather than as an
+     * address of anything. Only that shape - five steps, with {@code Form} in the third and the
+     * fifth. Written as "odd and ending in Form" it also admitted
+     * {@code Catalog.Users.Attribute.Email.Form}, which the walk resolves as far as the attribute
+     * and then reports as an object.
+     * </p>
+     *
+     * @param fqn the address, already normalised.
+     * @return <code>true</code> when a whole pair stands beyond the owner
+     */
+    static boolean namesAChild(String fqn)
+    {
+        if (fqn == null)
+        {
+            return false;
+        }
+        // A negative limit keeps the empty step a trailing dot leaves behind; the one-argument
+        // split drops it, and Catalog.Users.Attribute.Email. then arrives as four whole steps.
+        String[] steps = fqn.split("\\.", -1); //$NON-NLS-1$
+        for (String step : steps)
+        {
+            if (step.isEmpty())
+            {
+                return false;
+            }
+        }
+        if (steps.length < 4)
+        {
+            return false;
+        }
+        if (steps.length % 2 == 0)
+        {
+            return true;
+        }
+        return steps.length == FORM_ROOT_STEPS && namesTheFormStep(steps[2])
+            && namesTheFormStep(steps[4]);
+    }
+
+    /**
+     * Whether a step names a form, in either language the model spells it in.
+     *
+     * @param step one step of an address.
+     * @return <code>true</code> when it names a form
+     */
+    private static boolean namesTheFormStep(String step)
+    {
+        return FORM.equalsIgnoreCase(step) || FORM_RU.equalsIgnoreCase(step);
+    }
+
+    /**
+     * Validates the addresses the index missed by validating the objects that hold them.
+     * <p>
+     * {@code getTopObjectByFqn} answers for top objects and <code>null</code> for everything under
+     * one, so a form, a template, an attribute, a tabular section and a command all read as absent.
+     * Measured: a data processor's existing form and existing template came back in
+     * {@code objectsNotFound} beside an address the model really did not hold, and nothing in the
+     * answer told the two apart. An address reported absent is worse than one reported without
+     * detail, because a caller acts on it by creating the object again.
+     * </p>
+     * <p>
+     * Whether the model holds the child is asked of {@link BmExtensionHelper#addressResolves},
+     * which reaches the model itself - so it is asked OUTSIDE the read task rather than inside it.
+     * Only the addresses the first pass missed are asked about, so an answer where everything
+     * resolved costs nothing.
+     * </p>
+     *
+     * @param project the project being revalidated.
+     * @param bmModel its model.
+     * @param notFound the addresses the index missed; those resolved here are removed from it.
+     * @param objectsToValidate where the owners' ids are added.
+     * @return the child addresses that were validated through their owner
+     */
+    private static List<String> validateChildrenThroughTheirOwners(IProject project,
+        IBmModel bmModel, List<String> notFound, Collection<Object> objectsToValidate)
+    {
+        final List<String> children = new ArrayList<>();
+        final List<String> owners = new ArrayList<>();
+        for (String candidate : notFound)
+        {
+            String normalized = MetadataTypeCatalog.normalizeFqn(candidate);
+            String owner = ownerOf(normalized);
+            if (owner == null || !namesAChild(normalized))
+            {
+                continue;
+            }
+            if (BmExtensionHelper.childResolves(project, candidate))
+            {
+                children.add(candidate);
+                owners.add(owner);
+            }
+        }
+        if (children.isEmpty())
+        {
+            return children;
+        }
+        final List<String> resolved = new ArrayList<>();
+        bmModel.executeReadonlyTask(new AbstractBmTask<Void>("RevalidateChildOwnerLookup") //$NON-NLS-1$
+        {
+            @Override
+            public Void execute(IBmTransaction tx, IProgressMonitor pm)
+            {
+                for (int i = 0; i < children.size(); i++)
+                {
+                    IBmObject owner = tx.getTopObjectByFqn(owners.get(i));
+                    if (owner != null && owner.bmGetId() > 0)
+                    {
+                        objectsToValidate.add(Long.valueOf(owner.bmGetId()));
+                        resolved.add(children.get(i));
+                    }
+                }
+                return null;
+            }
+        });
+        notFound.removeAll(resolved);
+        return resolved;
+    }
+
     private static String revalidateSpecificObjects(IProject project, List<String> objectFqns,
         IProgressMonitor monitor) throws CoreException
     {
@@ -266,6 +438,10 @@ public class ObjectsRevalidator
             }
         });
 
+        List<String> throughOwner =
+            validateChildrenThroughTheirOwners(project, bmModel, notFound, objectsToValidate);
+        found.addAll(throughOwner);
+
         if (!objectsToValidate.isEmpty())
         {
             Collection<Object> validObjects = new ArrayList<>();
@@ -291,6 +467,10 @@ public class ObjectsRevalidator
             .put("objectsFound", found.size()) //$NON-NLS-1$
             .put("objectsValidated", found) //$NON-NLS-1$
             .put("message", "Revalidation finished"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!throughOwner.isEmpty())
+        {
+            result.put("objectsValidatedThroughOwner", throughOwner); //$NON-NLS-1$
+        }
         if (!notFound.isEmpty())
         {
             result.put("objectsNotFound", notFound); //$NON-NLS-1$
