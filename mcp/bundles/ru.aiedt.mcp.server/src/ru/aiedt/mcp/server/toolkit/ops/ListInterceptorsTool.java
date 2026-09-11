@@ -54,6 +54,13 @@ public class ListInterceptorsTool implements IMcpTool
 {
     public static final String NAME = "list_interceptors"; //$NON-NLS-1$
 
+    /**
+     * The one kind that carries a copy of the base method, and so the only one with a fragment to
+     * compare. Named because two places have to agree about it: the one that compares the fragment
+     * and the one that counts the fragments nobody reached.
+     */
+    static final String CHANGE_AND_VALIDATE = "changeAndValidate"; //$NON-NLS-1$
+
     private static final Pattern ANNOTATION_PATTERN = Pattern.compile(
         // &Перед / &После / &Вместо / &ИзменениеИКонтроль / English equivalents
         "&\\s*(Перед|После|Вместо" //$NON-NLS-1$
@@ -210,6 +217,12 @@ public class ListInterceptorsTool implements IMcpTool
      * The counts are in the summary and not only in the entries that carry them. A finding that
      * lives inside the hundredth entry of a list has reached nobody.
      * </p>
+     * <p>
+     * A fragment counts as unchecked when no answer came back for it, not when a reason came back
+     * for it. The base check gives up before the comparison whenever the delivery's module is
+     * missing or will not be read, and leaves no reason behind - so a count keyed on the reason
+     * reports that nothing went unchecked at the very moment nothing was checked.
+     * </p>
      *
      * @param body the answer being built.
      * @param baseProjectName the delivery to check against, or <code>null</code> when none was
@@ -240,7 +253,8 @@ public class ListInterceptorsTool implements IMcpTool
             {
                 drifted++;
             }
-            else if (e.get("controlledNote") != null) //$NON-NLS-1$
+            else if (CHANGE_AND_VALIDATE.equals(e.get("kind")) //$NON-NLS-1$
+                && e.get("controlledMatches") == null) //$NON-NLS-1$
             {
                 unchecked++;
             }
@@ -354,7 +368,7 @@ public class ListInterceptorsTool implements IMcpTool
     private static void checkControlledFragment(Map<String, Object> entry, IFile extFile,
         String target, String baseSrc)
     {
-        if (!"changeAndValidate".equals(entry.get("kind"))) //$NON-NLS-1$ //$NON-NLS-2$
+        if (!CHANGE_AND_VALIDATE.equals(entry.get("kind"))) //$NON-NLS-1$
         {
             return;
         }

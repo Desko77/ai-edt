@@ -125,6 +125,32 @@ public class TheInterceptorSummarySaysWhatWasCheckedTest
     }
 
     @Test
+    public void aControlledFragmentNobodyReachedIsCountedUncheckedToo()
+    {
+        // What the base check leaves behind when the delivery's module is missing or will not be
+        // read: a target that does not exist, and not one word about the fragment. Counting that
+        // as neither drifted nor unchecked is how a zero comes to mean "nothing was compared".
+        Map<String, Object> body = summaryOf("Base", Collections.singletonList(
+            interceptor("changeAndValidate", Boolean.FALSE, null, null)));
+
+        assertEquals("no answer about a controlled fragment is not the fragment matching",
+            Integer.valueOf(1), body.get("controlledUnchecked"));
+    }
+
+    @Test
+    public void anInterceptorThatCarriesNoFragmentIsNotCountedUnchecked()
+    {
+        // Only changeAndValidate carries a copy of the base method. The others have no fragment to
+        // compare, so they are not something that went unchecked.
+        Map<String, Object> body = summaryOf("Base", Arrays.asList(
+            interceptor("before", Boolean.FALSE, null, null),
+            interceptor("after", Boolean.TRUE, null, null),
+            interceptor("around", Boolean.TRUE, null, null)));
+
+        assertEquals(Integer.valueOf(0), body.get("controlledUnchecked"));
+    }
+
+    @Test
     public void nothingDriftedIsStillAnAnswer()
     {
         Map<String, Object> body = summaryOf("Base", Collections.singletonList(
