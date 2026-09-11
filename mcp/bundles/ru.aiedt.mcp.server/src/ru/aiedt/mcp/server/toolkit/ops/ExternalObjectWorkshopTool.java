@@ -115,9 +115,14 @@ public class ExternalObjectWorkshopTool implements IMcpTool
                     + "add_tabular_section / add_template / create_form), write its ObjectModule via " //$NON-NLS-1$
                     + "write_module_source, then build the .epf / .erf with export_object.\n" //$NON-NLS-1$
                     + "operation=import_external_object - import a .erf/.epf binary INTO an existing " //$NON-NLS-1$
-                    + "V8ExternalObjectsNature container (targetProjectName, inputPath). Adds the object " //$NON-NLS-1$
-                    + "to the container; types resolve via the container's parent config (no markers). " //$NON-NLS-1$
-                    + "Mirrors EDT GUI Import.") //$NON-NLS-1$
+                    + "V8ExternalObjectsNature container (targetProjectName, inputPath, optional " //$NON-NLS-1$
+                    + "baseProjectName and applicationId). The binary is converted to XML by the " //$NON-NLS-1$
+                    + "Designer of the infobase of applicationId (or of the single application of the " //$NON-NLS-1$
+                    + "configuration project baseProjectName, or of the container's parent project), " //$NON-NLS-1$
+                    + "released by EDT for the conversion and taken back after it; the answer names " //$NON-NLS-1$
+                    + "hostProject and infobaseName, and reconnectError when the infobase could not " //$NON-NLS-1$
+                    + "be taken back. Then the object is added to the container; an object of that " //$NON-NLS-1$
+                    + "name already there is refused.") //$NON-NLS-1$
                     .toJson();
             default:
                 return ToolResult.error("Unknown operation '" + operation + "'. Valid: create, " //$NON-NLS-1$ //$NON-NLS-2$

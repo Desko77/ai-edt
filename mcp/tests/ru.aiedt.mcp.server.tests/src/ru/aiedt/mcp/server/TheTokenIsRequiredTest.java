@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.core.runtime.ILogListener;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.osgi.service.prefs.BackingStoreException;
 
@@ -37,14 +38,18 @@ import ru.aiedt.mcp.server.settings.McpAuth;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 
 /**
- * Every request to {@code /mcp} carries the bearer token, and the token reaches the disk before it
- * answers a single request.
+ * Every request to {@code /mcp} carries the bearer token while the token is demanded, and the token
+ * reaches the disk before the server answers a single request. The demand is a preference for a
+ * socket on loopback, off as shipped, and a fact for a socket open to every interface. Every test
+ * here turns the demand on first; the ones about the switch say what they set.
  */
 public class TheTokenIsRequiredTest
 {
     private static final int OK = 200;
 
     private static final int UNAUTHORIZED = 401;
+
+    private static final int NOT_FOUND = 404;
 
     private static final String PING = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}"; //$NON-NLS-1$
 
@@ -56,7 +61,15 @@ public class TheTokenIsRequiredTest
 
     private boolean switchBefore;
 
+    private boolean bindBefore;
+
     private boolean workspaceStoreTouched;
+
+    @Before
+    public void demandTheToken()
+    {
+        rememberTheWorkspaceStore().setValue(PrefKeys.PREF_AUTH_ENABLED, true);
+    }
 
     @After
     public void putEverythingBack()
@@ -72,31 +85,35 @@ public class TheTokenIsRequiredTest
             IPreferenceStore store = Activator.getDefault().getPreferenceStore();
             store.setValue(PrefKeys.PREF_AUTH_TOKEN, tokenBefore);
             store.setValue(PrefKeys.PREF_AUTH_ENABLED, switchBefore);
+            store.setValue(PrefKeys.PREF_BIND_ALL_INTERFACES, bindBefore);
         }
     }
 
-    // ---- 1 and 2: the old switch decides nothing --------------------------------------------
+    // ---- 1 and 2: the switch decides on loopback, and a token is made all the same ----------
 
     @Test
-    public void aWorkspaceWithTheSwitchOffAndNoTokenRequiresOne() throws IOException
+    public void aWorkspaceWithTheSwitchOffAnswersWithoutATokenAndStillMakesOne() throws IOException
     {
-        IPreferenceStore store = rememberTheWorkspaceStore();
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
         store.setValue(PrefKeys.PREF_AUTH_ENABLED, false);
         store.setValue(PrefKeys.PREF_AUTH_TOKEN, ""); //$NON-NLS-1$
 
         server = LiveServer.start(null);
 
-        assertEquals(UNAUTHORIZED, ping(null).code);
+        assertEquals(OK, ping(null).code);
+        assertEquals(OK, ping("Bearer not-the-token").code); //$NON-NLS-1$
         String created = store.getString(PrefKeys.PREF_AUTH_TOKEN);
-        assertFalse("a token was created and stored", created.isEmpty()); //$NON-NLS-1$
+        assertFalse("a token was created and stored for the day the switch goes on", created.isEmpty()); //$NON-NLS-1$
         assertEquals(OK, ping("Bearer " + created).code); //$NON-NLS-1$
+        assertTrue("health tells a stranger everything while nothing is demanded", //$NON-NLS-1$
+            keysOf(health(null)).contains("instance")); //$NON-NLS-1$
     }
 
     @Test
-    public void aWorkspaceWithTheSwitchOffAndAStoredTokenRequiresThatToken() throws IOException
+    public void aWorkspaceWithTheSwitchOnRequiresTheStoredToken() throws IOException
     {
-        IPreferenceStore store = rememberTheWorkspaceStore();
-        store.setValue(PrefKeys.PREF_AUTH_ENABLED, false);
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        store.setValue(PrefKeys.PREF_AUTH_ENABLED, true);
         store.setValue(PrefKeys.PREF_AUTH_TOKEN, "stored-before-the-update"); //$NON-NLS-1$
 
         server = LiveServer.start(null);
@@ -105,6 +122,38 @@ public class TheTokenIsRequiredTest
         assertEquals(UNAUTHORIZED, ping("Bearer some-other-token").code); //$NON-NLS-1$
         assertEquals(OK, ping("Bearer stored-before-the-update").code); //$NON-NLS-1$
         assertEquals("stored-before-the-update", store.getString(PrefKeys.PREF_AUTH_TOKEN)); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theSwitchIsOverruledWhenTheSocketIsOpenToEveryInterface() throws IOException
+    {
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        store.setValue(PrefKeys.PREF_AUTH_ENABLED, false);
+        store.setValue(PrefKeys.PREF_BIND_ALL_INTERFACES, true);
+        store.setValue(PrefKeys.PREF_AUTH_TOKEN, "the-only-thing-between-the-network-and-the-workspace"); //$NON-NLS-1$
+
+        server = LiveServer.start(null);
+
+        assertEquals(UNAUTHORIZED, ping(null).code);
+        assertEquals(OK, ping("Bearer the-only-thing-between-the-network-and-the-workspace").code); //$NON-NLS-1$
+        assertFalse("health tells a stranger three things", //$NON-NLS-1$
+            keysOf(health(null)).contains("instance")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aPathTheServerDoesNotServeNamesTheEndpointAndTheToken() throws IOException
+    {
+        server = LiveServer.start();
+        LiveServer.Response registration = server.request("POST", "/register", //$NON-NLS-1$ //$NON-NLS-2$
+            requestHeaders(null), "{}"); //$NON-NLS-1$
+        assertEquals(NOT_FOUND, registration.code);
+        assertTrue(registration.body, registration.body.contains("/mcp")); //$NON-NLS-1$
+        assertTrue(registration.body, registration.body.contains("Bearer")); //$NON-NLS-1$
+        assertFalse(registration.body, registration.body.contains(server.token()));
+
+        LiveServer.Response wellKnown = server.request("GET", "/.well-known/oauth-protected-resource", //$NON-NLS-1$ //$NON-NLS-2$
+            requestHeaders(null), null);
+        assertEquals(NOT_FOUND, wellKnown.code);
     }
 
     // ---- 3: created once, kept afterwards ---------------------------------------------------
@@ -320,9 +369,13 @@ public class TheTokenIsRequiredTest
     private IPreferenceStore rememberTheWorkspaceStore()
     {
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
-        tokenBefore = store.getString(PrefKeys.PREF_AUTH_TOKEN);
-        switchBefore = store.getBoolean(PrefKeys.PREF_AUTH_ENABLED);
-        workspaceStoreTouched = true;
+        if (!workspaceStoreTouched)
+        {
+            tokenBefore = store.getString(PrefKeys.PREF_AUTH_TOKEN);
+            switchBefore = store.getBoolean(PrefKeys.PREF_AUTH_ENABLED);
+            bindBefore = store.getBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES);
+            workspaceStoreTouched = true;
+        }
         return store;
     }
 

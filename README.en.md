@@ -320,9 +320,11 @@ A ready instance returns a response with `status: ok` and `phase: ready`. If the
 
 ### 🔗 5. Connect an AI client
 
-Every request to the server carries a bearer token. The token is created at the first start of the
-server and shown in **Window → Preferences → AI-EDT**, field **Bearer token** - copy it into the
-client configuration. A client without it gets `401`.
+The server listens on `127.0.0.1` only and answers requests without a token. **Require bearer
+token** on **Window → Preferences → AI-EDT** turns the check on: every request then carries
+`Authorization: Bearer <token>` with the token from the **Bearer token** field of the same page (it
+is created at the first start of the server), and a client without it gets `401`. The examples below
+carry the header; with the check off the server does not read it, and the line can be left out.
 
 #### Claude Code
 
@@ -460,17 +462,22 @@ Each tool can be **listed**, **callable-hidden** or **disabled**. Hidden tools s
 
 ### Access token, page origin and interface binding
 
-The server listens on `127.0.0.1` only, and every request to `/mcp` carries a bearer token.
+The server listens on `127.0.0.1` only; the bearer token check is turned on from the preference page.
 
-- **The bearer token is required.** It is created at the first start of the server when the field
-  on **Preferences → AI-EDT** is empty, and shown only there. The client sends it as
+- **The bearer token.** It is created at the first start of the server when the field on
+  **Preferences → AI-EDT** is empty, and shown only there. The client sends it as
   `Authorization: Bearer <token>`; the comparison runs in constant time. A request without the
   right token gets `401`; the refusal names the preference page and never carries the token. The
   token is not written to the workspace log. **Generate** puts a new token into the field and
   **Apply** with an empty field creates one; a new token takes effect once it is saved to the
   preferences - until the save completes, the previous one holds.
-- **`/health` without the token** answers three fields: `status`, `phase`, `edt_version`. The
-  workspace name, the running tool, heap and queue figures come only with the token.
+- **Require bearer token** (`mcpAuthEnabled`, off by default) turns the check on for a server on
+  `127.0.0.1`; a server bound to every interface demands the token whatever the setting holds.
+- **`/health` without the token**, while the check is on, answers three fields: `status`, `phase`,
+  `edt_version`. The workspace name, the running tool, heap and queue figures come only with the
+  token.
+- **A path the server does not serve** answers `404` with a text that names `/mcp`, the
+  `Authorization: Bearer <token>` header and the preference page.
 - **Page origin.** A browser request is accepted when its `Origin` header is exactly
   `http://localhost`, `http://127.0.0.1` or `http://[::1]` (with or without a port, over `http` or
   `https`) or `vscode-webview://<id>`. `http://localhost.evil.example` is turned away. A page opened
@@ -537,7 +544,7 @@ The agent discovers an EDT launch configuration, attaches to the 1C debug server
 - AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
 - The server is available only while EDT is running.
 - Some semantic tools require project indexing to be complete; while it runs, such a tool refuses with the reason named.
-- The endpoint listens on loopback, and every request carries the bearer token from the preference page. Binding to every interface is a separate setting - see the safety section.
+- The endpoint listens on loopback; the bearer token check and binding to every interface are turned on from the preference page - see the safety section.
 - The update site is published automatically on release. Builds made between releases install from source or from a local P2 repository.
 
 ## 🤝 Contributing

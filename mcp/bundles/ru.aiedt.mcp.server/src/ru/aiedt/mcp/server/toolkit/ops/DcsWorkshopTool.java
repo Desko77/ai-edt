@@ -5667,6 +5667,13 @@ public class DcsWorkshopTool implements IMcpTool
                 .append(" operations work this way - the settings half of the catalog. ") //$NON-NLS-1$
                 .append("An operation that shapes a schema (datasets, parameters, variants) is " //$NON-NLS-1$
                     + "refused with notApplicableHere.\n"); //$NON-NLS-1$
+            sb.append("**The schema and its file.** repair_schema (objectName, templateName, " //$NON-NLS-1$
+                + "optional dryRun and overwriteModel) reads the .dcs and puts the schema into the " //$NON-NLS-1$
+                + "model when the model holds none: outcome=restored. A schema the model holds is " //$NON-NLS-1$
+                + "compared byte for byte with the file: matched, or refused_model_differs with " //$NON-NLS-1$
+                + "firstDifferenceAt; overwriteModel=true replaces it after writing the model's " //$NON-NLS-1$
+                + "schema to a backup beside the file (backupPath). dryRun=true reports the outcome " //$NON-NLS-1$
+                + "and plannedBackupPath without changing anything. The file is never written.\n\n"); //$NON-NLS-1$
             sb.append("**Topics:** workflow, dcsWorkflow, propertyValues, examples, errorTags\n"); //$NON-NLS-1$
             return ToolResult.success().put("help", sb.toString()).toJson(); //$NON-NLS-1$
         }
