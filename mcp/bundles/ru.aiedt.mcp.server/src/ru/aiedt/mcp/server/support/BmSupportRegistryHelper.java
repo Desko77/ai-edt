@@ -1275,21 +1275,6 @@ public final class BmSupportRegistryHelper
     }
 
     /**
-     * Builds a lookup from object identity to fully qualified name.
-     * <p>
-     * The support file records identities and no names, so this is what turns a listing into
-     * something a person can act on. Subordinate entities - attributes, forms, templates - carry
-     * their own support records and outnumber the objects several times over; they are not indexed
-     * here, and the entries that answer to them come back named as identities and counted under
-     * {@code unnamed}. That is deliberate: walking every object's contents to name them would load
-     * the whole model for a listing, and an identity reported as an identity is honest, whereas an
-     * entry silently dropped would make the listing disagree with the support file's own count.
-     * </p>
-     *
-     * @param configuration the configuration to index.
-     * @return identity to name, including the configuration root
-     */
-    /**
      * Puts one entry that has no name into the category it belongs to.
      * <p>
      * <b>Which of the two it is turns entirely on whether the walk was whole.</b> Absent from a
@@ -1442,14 +1427,6 @@ public final class BmSupportRegistryHelper
         }
     }
 
-    /**
-     * Builds the name of a subordinate as the path from its owner.
-     *
-     * @param subordinate the entity to name.
-     * @param owner the top-level object it lives under.
-     * @param ownerFqn how that object is named.
-     * @return the full path, owner first
-     */
     /**
      * Walks down from one object, naming what it finds as it goes.
      * <p>
@@ -1748,12 +1725,6 @@ public final class BmSupportRegistryHelper
     }
 
     /**
-     * Names a metadata object for the answer.
-     *
-     * @param object the object.
-     * @return its name, or <code>null</code> when it will not name itself
-     */
-    /**
      * A stable stand-in for a dependent that has no name.
      * <p>
      * Built from the object's own identity rather than from its position in the walk: a positional
@@ -1786,6 +1757,12 @@ public final class BmSupportRegistryHelper
         return type + " without a name, " + identity; //$NON-NLS-1$
     }
 
+    /**
+     * Names a metadata object for the answer.
+     *
+     * @param object the object.
+     * @return its name, or <code>null</code> when it will not name itself
+     */
     private static String nameOf(MdObject object)
     {
         try

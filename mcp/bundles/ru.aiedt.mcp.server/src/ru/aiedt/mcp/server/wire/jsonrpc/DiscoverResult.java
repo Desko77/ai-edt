@@ -134,10 +134,6 @@ public class DiscoverResult
         return cacheScope;
     }
 
-    /**
-     * What this server can do. Tools, and nothing else - the same answer the handshake gives, so
-     * the two eras cannot describe the server differently.
-     */
     /** Who answered. */
     public static class ServerInfo
     {
@@ -172,6 +168,10 @@ public class DiscoverResult
         }
     }
 
+    /**
+     * What this server can do. Tools, and nothing else - the same answer the handshake gives, so
+     * the two eras cannot describe the server differently.
+     */
     public static class Capabilities
     {
         private final Tools tools = new Tools();

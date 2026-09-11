@@ -913,14 +913,17 @@ public class BmFormHelper
     }
 
     /**
-     * Creates a decoration element with the specified properties.
+     * {@link #enumConstantNamed} for the test that pins the two spellings apart.
      *
-     * @param name decoration name
-     * @param title decoration title
-     * @param decorationType decoration type ("Label" or "Picture")
-     * @return the created decoration object
-     * @throws Exception if creation fails
+     * @param enumClass the EMF enum class
+     * @param wanted the constant, in either spelling
+     * @return the constant, or <code>null</code>
      */
+    static Object enumConstantNamedForTest(Class<?> enumClass, String wanted)
+    {
+        return enumConstantNamed(enumClass, wanted);
+    }
+
     /**
      * The constant of an EMF enum named either the Java way or the way the platform spells it.
      * <p>
@@ -937,18 +940,6 @@ public class BmFormHelper
      * @param wanted the constant, in either spelling; case is ignored
      * @return the constant, or <code>null</code> when the enum has none by that name
      */
-    /**
-     * {@link #enumConstantNamed} for the test that pins the two spellings apart.
-     *
-     * @param enumClass the EMF enum class
-     * @param wanted the constant, in either spelling
-     * @return the constant, or <code>null</code>
-     */
-    static Object enumConstantNamedForTest(Class<?> enumClass, String wanted)
-    {
-        return enumConstantNamed(enumClass, wanted);
-    }
-
     private static Object enumConstantNamed(Class<?> enumClass, String wanted)
     {
         Object[] constants = enumClass.getEnumConstants();
@@ -967,6 +958,15 @@ public class BmFormHelper
         return null;
     }
 
+    /**
+     * Creates a decoration element with the specified properties.
+     *
+     * @param name decoration name
+     * @param title decoration title
+     * @param decorationType decoration type ("Label" or "Picture")
+     * @return the created decoration object
+     * @throws Exception if creation fails
+     */
     public Object createDecoration(String name, String title, String decorationType) throws Exception
     {
         return createDecoration(name, title, decorationType, null);
@@ -2308,12 +2308,6 @@ public class BmFormHelper
     }
 
     /**
-     * 1.43.x: reflectively sets a single-arg scalar property (boolean / int / enum /
-     * String) on a form item by setter name, coercing the string value to the
-     * setter's parameter type via {@link #coerceFormValue}. Returns {@code null} on
-     * success, an error description otherwise (setter absent / coercion failed).
-     */
-    /**
      * Whether the value written by the last {@link #setScalarProperty} equals the model default.
      * <p>
      * EDT does not serialize a feature whose value is the default, so such a write leaves no trace
@@ -2350,6 +2344,12 @@ public class BmFormHelper
         return BmObjectHelper.equalsModelDefault(target, property);
     }
 
+    /**
+     * 1.43.x: reflectively sets a single-arg scalar property (boolean / int / enum /
+     * String) on a form item by setter name, coercing the string value to the
+     * setter's parameter type via {@link #coerceFormValue}. Returns {@code null} on
+     * success, an error description otherwise (setter absent / coercion failed).
+     */
     String setScalarProperty(Object item, String property, String value)
     {
         String setter = "set" + Character.toUpperCase(property.charAt(0)) //$NON-NLS-1$

@@ -898,13 +898,6 @@ public class McpStatusBarItem
     }
 
     /**
-     * Opens the signal dialog and delivers whatever the user sends. Does nothing unless a tool is
-     * actually executing.
-     *
-     * @param type  the kind of signal
-     * @param title the dialog title
-     */
-    /**
      * Shows the call history, raising the window that is already up rather than opening a second.
      * <p>
      * The dialog is modeless and does not block, so it is kept here instead of being forgotten at
@@ -939,6 +932,13 @@ public class McpStatusBarItem
         return delivery == RunningToolCall.Delivery.NOT_ARBITRATED;
     }
 
+    /**
+     * Opens the signal dialog and delivers whatever the user sends. Does nothing unless a tool is
+     * actually executing.
+     *
+     * @param type  the kind of signal
+     * @param title the dialog title
+     */
     private void sendSignal(OperatorSignal.SignalType type, String title)
     {
         McpHttpEndpoint server = Activator.getDefault() != null ? Activator.getDefault().getMcpServer() : null;

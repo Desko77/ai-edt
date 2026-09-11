@@ -203,21 +203,6 @@ public class ProjectProblemsReader
     }
 
     /**
-     * Counts the errors standing against a named set of objects.
-     * <p>
-     * Exists so that "how many errors are on these objects" has ONE answer in this codebase. The
-     * caller is a merge, which leaves a configuration in a state nobody has looked at yet and must
-     * not report success without saying whether the project still validates - but a second counter
-     * written next to the merge would drift from this one, and two answers to one question is worse
-     * than a slightly wider public surface here.
-     * </p>
-     *
-     * @param projectName the project the objects belong to; may be <code>null</code> for all.
-     * @param objects the object FQNs to count against; empty counts nothing.
-     * @return the number of ERROR-severity markers, or -1 when the marker service is unavailable
-     *         and the question therefore has no answer rather than the answer zero
-     */
-    /**
      * Counts every error standing against a project, not only against named objects.
      * <p>
      * The baseline an irreversible operation is judged against. Counting only the objects that
@@ -245,6 +230,21 @@ public class ProjectProblemsReader
             .value;
     }
 
+    /**
+     * Counts the errors standing against a named set of objects.
+     * <p>
+     * Exists so that "how many errors are on these objects" has ONE answer in this codebase. The
+     * caller is a merge, which leaves a configuration in a state nobody has looked at yet and must
+     * not report success without saying whether the project still validates - but a second counter
+     * written next to the merge would drift from this one, and two answers to one question is worse
+     * than a slightly wider public surface here.
+     * </p>
+     *
+     * @param projectName the project the objects belong to; may be <code>null</code> for all.
+     * @param objects the object FQNs to count against; empty counts nothing.
+     * @return the number of ERROR-severity markers, or -1 when the marker service is unavailable
+     *         and the question therefore has no answer rather than the answer zero
+     */
     public static long countErrorsOn(String projectName, List<String> objects)
     {
         if (objects == null || objects.isEmpty())
@@ -485,23 +485,6 @@ public class ProjectProblemsReader
     }
 
     /**
-     * The answer for a query that matched nothing, naming every filter that was in
-     * force when it matched nothing.
-     * <p>
-     * Every filter, including the ones the caller did not set. An empty answer is a
-     * claim about the project, and it is only true within the filters that produced it;
-     * omitting one turns "nothing at this severity" into "nothing", which is how a check
-     * with live findings came to be recorded as a check that does not fire.
-     * </p>
-     *
-     * @param resolvedScope the scope actually used.
-     * @param projectName the project filter, or <code>null</code>/empty for none.
-     * @param severity the severity argument as given, <code>null</code> for the default.
-     * @param checkId the check filter, or <code>null</code>/empty for none.
-     * @param objects the object filter; never <code>null</code>.
-     * @return the markdown.
-     */
-    /**
      * The heading that names the requested addresses the model does not hold.
      * <p>
      * Asked through {@link BmExtensionHelper#addressResolves}, which is the same question
@@ -579,6 +562,23 @@ public class ProjectProblemsReader
     // reached this with the filters stripped, and told a caller who had asked for ALL
     // that the default was in force. A test is what keeps the two paths saying the same
     // thing.
+    /**
+     * The answer for a query that matched nothing, naming every filter that was in
+     * force when it matched nothing.
+     * <p>
+     * Every filter, including the ones the caller did not set. An empty answer is a
+     * claim about the project, and it is only true within the filters that produced it;
+     * omitting one turns "nothing at this severity" into "nothing", which is how a check
+     * with live findings came to be recorded as a check that does not fire.
+     * </p>
+     *
+     * @param resolvedScope the scope actually used.
+     * @param projectName the project filter, or <code>null</code>/empty for none.
+     * @param severity the severity argument as given, <code>null</code> for the default.
+     * @param checkId the check filter, or <code>null</code>/empty for none.
+     * @param objects the object filter; never <code>null</code>.
+     * @return the markdown.
+     */
     static String nothingFoundMessage(String resolvedScope, String projectName, String severity,
         String checkId, List<String> objects)
     {

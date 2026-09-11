@@ -934,30 +934,6 @@ public final class BmExtensionHelper
     }
 
     /**
-     * Resolves an EObject by FQN inside the base project's configuration.
-     * <p>
-     * Supported FQN forms:
-     * <ul>
-     *   <li>Top-level: {@code "Catalog.Users"}, {@code "Document.Order"} -
-     *       resolved via {@link MetadataTypeCatalog#findObject}.</li>
-     *   <li>Form: {@code "Catalog.Users.Form.UserForm"} - resolves the Form
-     *       metadata object (.mdo container; the BaseForm root has FQN
-     *       {@code "...Form.UserForm.Form"} which is also accepted).</li>
-     *   <li>Child element: {@code "Catalog.Users.Attribute.Email"},
-     *       {@code "Document.Order.TabularSection.Items"},
-     *       {@code "InformationRegister.Rates.Resource.Rate"},
-     *       {@code "Catalog.Users.Template.PrintForm"},
-     *       {@code "Catalog.Users.Command.Open"}.</li>
-     * </ul>
-     * <p>
-     * Strategy: first try {@code IBmTransaction.getTopObjectByFqn(fqn)} on the
-     * base project's BM model (forms / templates / many child types are
-     * registered as BM top objects in EDT 2026.1). If that returns null,
-     * fall back to splitting the FQN, finding the parent MdObject via
-     * {@link MetadataTypeCatalog}, and walking child collections by reflection
-     * ({@code getForms()}, {@code getAttributes()}, ...).
-     */
-    /**
      * Whether the model of a project holds the object a FQN names.
      * <p>
      * The one answer in this codebase to "does this address exist", and it is not
@@ -992,6 +968,30 @@ public final class BmExtensionHelper
         }
     }
 
+    /**
+     * Resolves an EObject by FQN inside the base project's configuration.
+     * <p>
+     * Supported FQN forms:
+     * <ul>
+     *   <li>Top-level: {@code "Catalog.Users"}, {@code "Document.Order"} -
+     *       resolved via {@link MetadataTypeCatalog#findObject}.</li>
+     *   <li>Form: {@code "Catalog.Users.Form.UserForm"} - resolves the Form
+     *       metadata object (.mdo container; the BaseForm root has FQN
+     *       {@code "...Form.UserForm.Form"} which is also accepted).</li>
+     *   <li>Child element: {@code "Catalog.Users.Attribute.Email"},
+     *       {@code "Document.Order.TabularSection.Items"},
+     *       {@code "InformationRegister.Rates.Resource.Rate"},
+     *       {@code "Catalog.Users.Template.PrintForm"},
+     *       {@code "Catalog.Users.Command.Open"}.</li>
+     * </ul>
+     * <p>
+     * Strategy: first try {@code IBmTransaction.getTopObjectByFqn(fqn)} on the
+     * base project's BM model (forms / templates / many child types are
+     * registered as BM top objects in EDT 2026.1). If that returns null,
+     * fall back to splitting the FQN, finding the parent MdObject via
+     * {@link MetadataTypeCatalog}, and walking child collections by reflection
+     * ({@code getForms()}, {@code getAttributes()}, ...).
+     */
     private static EObject resolveSourceEObject(IProject baseProject, String fqn)
     {
         if (fqn == null || fqn.isEmpty())
@@ -1291,18 +1291,6 @@ public final class BmExtensionHelper
     }
 
     /**
-     * Resolves the {@code IExtensionProject} for an {@link IProject}. EDT 2026.1
-     * exposes IExtensionProject as an {@link IV8Project} subtype, looked up
-     * through {@code IV8ProjectManager.getProject(IDtProject)} - the same
-     * sequence used by {@code ConfigurationInfoReader} (line 148-162).
-     * <p>
-     * 1.43.1: previous attempts went through {@code IDtProjectManager.getDtProject()}
-     * and probed {@code IDtProject.getAdapter(IExtensionProject)}, which always
-     * returned null on EDT 2026.1 because {@code IDtProject} is not an
-     * {@code IAdaptable} target for {@code IExtensionProject}. The right
-     * accessor lives on {@code IV8ProjectManager}.
-     */
-    /**
      * Auto-resolves the base configuration project of an extension by calling
      * {@code IExtensionProject.getParentProject()} (declared on IDependentProject)
      * reflectively on the already-resolved extension-project object. Returns null when
@@ -1329,6 +1317,18 @@ public final class BmExtensionHelper
         return null;
     }
 
+    /**
+     * Resolves the {@code IExtensionProject} for an {@link IProject}. EDT 2026.1
+     * exposes IExtensionProject as an {@link IV8Project} subtype, looked up
+     * through {@code IV8ProjectManager.getProject(IDtProject)} - the same
+     * sequence used by {@code ConfigurationInfoReader} (line 148-162).
+     * <p>
+     * 1.43.1: previous attempts went through {@code IDtProjectManager.getDtProject()}
+     * and probed {@code IDtProject.getAdapter(IExtensionProject)}, which always
+     * returned null on EDT 2026.1 because {@code IDtProject} is not an
+     * {@code IAdaptable} target for {@code IExtensionProject}. The right
+     * accessor lives on {@code IV8ProjectManager}.
+     */
     private static Object resolveExtensionProject(IProject project)
     {
         try

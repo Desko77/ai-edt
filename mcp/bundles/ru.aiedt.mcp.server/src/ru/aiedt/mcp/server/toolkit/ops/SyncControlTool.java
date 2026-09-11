@@ -957,11 +957,6 @@ public class SyncControlTool implements IMcpTool
     // reseed_baseline / mark_synchronized already use.
 
     /**
-     * Read-only: reports every infobase lock holder EDT has created THIS session and whether its
-     * flow-active flag is stuck (project != null). Only infobases touched this session appear -
-     * inherent to an in-memory-only map.
-     */
-    /**
      * Lists the support-mode snapshots a project holds, saying which cleanup will not touch.
      * <p>
      * The names matter, not the count. A protected snapshot is released one at a time, by the file
@@ -1083,6 +1078,11 @@ public class SyncControlTool implements IMcpTool
         return project.getLocation().toFile().toPath().resolve(".settings"); //$NON-NLS-1$
     }
 
+    /**
+     * Read-only: reports every infobase lock holder EDT has created THIS session and whether its
+     * flow-active flag is stuck (project != null). Only infobases touched this session appear -
+     * inherent to an in-memory-only map.
+     */
     private String doDiagnoseStuckLocks(IProject project)
     {
         try

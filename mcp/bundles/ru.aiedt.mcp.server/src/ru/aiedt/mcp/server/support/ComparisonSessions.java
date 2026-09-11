@@ -262,17 +262,6 @@ public final class ComparisonSessions
     }
 
     /**
-     * Drops sessions nobody has touched within the idle limit.
-     * <p>
-     * The handles are not closed here. Closing one means talking to the environment, and a
-     * registry that did that while holding its own lock would block every other caller behind an
-     * environment call. Forgotten sessions are dropped; the comparison behind them is left to the
-     * environment, which discards a comparison with its session.
-     * </p>
-     *
-     * @param now the current time in milliseconds.
-     */
-    /**
      * Runs the idle check on its own, for the sweep that does not otherwise touch the registry.
      * <p>
      * Every other caller expires as a side effect of doing something else, which is why an idle
@@ -284,6 +273,17 @@ public final class ComparisonSessions
         expire(System.currentTimeMillis());
     }
 
+    /**
+     * Drops sessions nobody has touched within the idle limit.
+     * <p>
+     * The handles are not closed here. Closing one means talking to the environment, and a
+     * registry that did that while holding its own lock would block every other caller behind an
+     * environment call. Forgotten sessions are dropped; the comparison behind them is left to the
+     * environment, which discards a comparison with its session.
+     * </p>
+     *
+     * @param now the current time in milliseconds.
+     */
     private static void expire(long now)
     {
         Iterator<Session> sessions = OPEN.values().iterator();

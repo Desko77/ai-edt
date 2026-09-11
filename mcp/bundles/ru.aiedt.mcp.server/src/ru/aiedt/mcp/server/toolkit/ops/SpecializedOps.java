@@ -222,14 +222,6 @@ final class SpecializedOps
         return EditMetadataTool.formatResult(r, "remove_command"); //$NON-NLS-1$
     }
 
-    /**
-     * 1.42 helper: returns the {@code getCommands()} EList of an MdObject via
-     * reflection. Returns {@code null} only when the type has no
-     * {@code getCommands()} method at all (e.g. Constant, CommonModule,
-     * Subsystem). When the method exists but throws at runtime the helper
-     * rethrows so the failure surfaces as an action error - hiding it would
-     * make the caller report a misleading "this type has no commands".
-     */
 
     /**
      * 1.42 (RSV 4.2 parity): blocks until every pending BM export for the
@@ -338,6 +330,14 @@ final class SpecializedOps
         return out.toJson();
     }
 
+    /**
+     * 1.42 helper: returns the {@code getCommands()} EList of an MdObject via
+     * reflection. Returns {@code null} only when the type has no
+     * {@code getCommands()} method at all (e.g. Constant, CommonModule,
+     * Subsystem). When the method exists but throws at runtime the helper
+     * rethrows so the failure surfaces as an action error - hiding it would
+     * make the caller report a misleading "this type has no commands".
+     */
     private static EList<MdObject> getCommandsCollection(MdObject owner)
     {
         try

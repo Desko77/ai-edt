@@ -1054,16 +1054,6 @@ public class McpRequestRouter
     }
 
     /**
-     * Shapes a tool's answer according to the kind of content it produces.
-     *
-     * @param tool the tool that ran
-     * @param arguments the arguments it ran with, needed to name the resource it produced
-     * @param rawResult what it produced
-     * @param signal a user signal picked up while it ran, or <code>null</code>
-     * @param plainTextMode whether rich shapes must degrade to text
-     * @return the tools/call result
-     */
-    /**
      * Marks an answer as a reported failure, leaving it alone otherwise.
      *
      * @param result the answer.
@@ -1075,6 +1065,16 @@ public class McpRequestRouter
         return failed && result != null ? result.asFailure() : result;
     }
 
+    /**
+     * Shapes a tool's answer according to the kind of content it produces.
+     *
+     * @param tool the tool that ran
+     * @param arguments the arguments it ran with, needed to name the resource it produced
+     * @param rawResult what it produced
+     * @param signal a user signal picked up while it ran, or <code>null</code>
+     * @param plainTextMode whether rich shapes must degrade to text
+     * @return the tools/call result
+     */
     static ToolCallResult shapeResult(IMcpTool tool, Map<String, String> arguments,
         String rawResult, OperatorSignal signal, boolean plainTextMode)
     {

@@ -310,19 +310,6 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
-     * Runs a Designer step under the handshake, without letting any step hide another.
-     * <p>
-     * The release goes first; when it throws, nothing else runs. When it released, the reconnection
-     * runs whatever the work did, and its failure is reported beside the work's rather than in
-     * place of it. When the infobase was not connected, nothing is reconnected.
-     * </p>
-     *
-     * @param release the release step
-     * @param work the Designer run
-     * @param reconnect the reconnection step
-     * @return what each step reported
-     */
-    /**
      * Runs the thick-client conversion under the per-infobase lock, and only that call under it.
      * <p>
      * Measured on a stand: holding {@code getLock(infobase)} across {@code connectInfobase} /
@@ -421,6 +408,19 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
+    /**
+     * Runs a Designer step under the handshake, without letting any step hide another.
+     * <p>
+     * The release goes first; when it throws, nothing else runs. When it released, the reconnection
+     * runs whatever the work did, and its failure is reported beside the work's rather than in
+     * place of it. When the infobase was not connected, nothing is reconnected.
+     * </p>
+     *
+     * @param release the release step
+     * @param work the Designer run
+     * @param reconnect the reconnection step
+     * @return what each step reported
+     */
     public static HandshakeOutcome runUnderHandshake(Release release, Work work, Reconnect reconnect)
     {
         HandshakeOutcome outcome = new HandshakeOutcome();

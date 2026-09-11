@@ -748,17 +748,6 @@ public class YamlClusterStore
 
 
 
-    /**
-
-     * Returns the project's clusters file handle.
-
-     *
-
-     * @param project the project
-
-     * @return the file handle, whether or not it exists
-
-     */
 
     /**
      * @param project the project whose settings folder is wanted
@@ -770,6 +759,17 @@ public class YamlClusterStore
         return location == null ? null : location.toFile().toPath();
     }
 
+    /**
+
+     * Returns the project's clusters file handle.
+
+     *
+
+     * @param project the project
+
+     * @return the file handle, whether or not it exists
+
+     */
     private static IFile clustersFile(IProject project)
 
     {

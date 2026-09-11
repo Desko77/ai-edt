@@ -719,9 +719,6 @@ public final class PendingWorkRegistry
     }
 
     /**
-     * Per-runKey state for the registry.
-     */
-    /**
      * What a caller gets when the work threw instead of answering.
      * <p>
      * A structured refusal, not the sentence {@code "Error: " + message} this used to return. That
@@ -753,6 +750,9 @@ public final class PendingWorkRegistry
             .toJson();
     }
 
+    /**
+     * Per-runKey state for the registry.
+     */
     public static final class PendingEntry
     {
         public final String runKey;

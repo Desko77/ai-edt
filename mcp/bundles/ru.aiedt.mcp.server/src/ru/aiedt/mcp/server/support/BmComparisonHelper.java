@@ -203,14 +203,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Which changed objects a caller wants named, and which page of them.
-     * <p>
-     * The counts are always over everything: filtering narrows what is listed, never what is
-     * counted. A census that shrank with the page would understate the update, and understating it
-     * is the one thing these numbers must not do.
-     * </p>
-     */
-    /**
      * Everything one comparison is asked to do.
      * <p>
      * <b>Eleven positional parameters were as far as that could go.</b> Six of them were strings
@@ -287,6 +279,14 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Which changed objects a caller wants named, and which page of them.
+     * <p>
+     * The counts are always over everything: filtering narrows what is listed, never what is
+     * counted. A census that shrank with the page would understate the update, and understating it
+     * is the one thing these numbers must not do.
+     * </p>
+     */
     public static final class Page
     {
         /** Report only objects with this attribution; every attribution when null. */
@@ -301,7 +301,6 @@ public final class BmComparisonHelper
         /** Report only objects the environment says must take part in a merge. */
         public boolean mustBeMergedOnly;
 
-        /** How many matching objects to skip. */
         /**
          * Look inside modules, so a change can be named by the piece of the module it is in.
          * <p>
@@ -312,6 +311,7 @@ public final class BmComparisonHelper
          */
         public boolean methodLevel;
 
+        /** How many matching objects to skip. */
         public int offset;
 
         /** How many to name, capped at {@link #PAGE_LIMIT}. */
@@ -1371,16 +1371,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Closes every comparison this server still has open.
-     * <p>
-     * For plugin stop. A comparison that outlives the server holds the comparison store of the
-     * environment, and the environment then waits on a transaction whose owner is gone - measured
-     * as an EDT sitting at no load for the better part of an hour, unable to shut down.
-     * </p>
-     *
-     * @return how many were closed
-     */
-    /**
      * Closes comparisons that have gone idle, without waiting for another comparison to ask.
      * <p>
      * <b>Expiry used to run only as a side effect of the next call.</b> A caller who took one
@@ -1434,6 +1424,16 @@ public final class BmComparisonHelper
         return closed;
     }
 
+    /**
+     * Closes every comparison this server still has open.
+     * <p>
+     * For plugin stop. A comparison that outlives the server holds the comparison store of the
+     * environment, and the environment then waits on a transaction whose owner is gone - measured
+     * as an EDT sitting at no load for the better part of an hour, unable to shut down.
+     * </p>
+     *
+     * @return how many were closed
+     */
     public static int closeEverything()
     {
         int closed = 0;
@@ -1461,23 +1461,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Builds the settings the comparison runs under, restoring saved decisions when asked.
-     * <p>
-     * This closes the circle the settings file opened. Writing decisions out is only half of
-     * handing work to a person: they open the file in EDT, decide the hard objects by eye, save,
-     * and the decisions then have to come back. The environment restores both halves of that file
-     * - the rules and the correspondences somebody established by hand between objects that do not
-     * match by uuid or name - and losing the second half would silently discard the most expensive
-     * part of their work.
-     * </p>
-     *
-     * @param manager the comparison service.
-     * @param handle the process, already built.
-     * @param decisionsFrom path to a saved settings file, or <code>null</code> for none.
-     * @param outcome the answer being built.
-     * @return the settings, or <code>null</code> when the file was named and could not be read
-     */
-    /**
      * Starts the settings for a comparison, with the one switch that changes what the tree holds.
      * <p>
      * {@code parseBslModuleStructure} makes the environment look inside modules instead of treating
@@ -1495,6 +1478,23 @@ public final class BmComparisonHelper
             MatchingStrategy.UUID_THEN_NAME).parseBslModuleStructure(outcome.sectionsWanted);
     }
 
+    /**
+     * Builds the settings the comparison runs under, restoring saved decisions when asked.
+     * <p>
+     * This closes the circle the settings file opened. Writing decisions out is only half of
+     * handing work to a person: they open the file in EDT, decide the hard objects by eye, save,
+     * and the decisions then have to come back. The environment restores both halves of that file
+     * - the rules and the correspondences somebody established by hand between objects that do not
+     * match by uuid or name - and losing the second half would silently discard the most expensive
+     * part of their work.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process, already built.
+     * @param decisionsFrom path to a saved settings file, or <code>null</code> for none.
+     * @param outcome the answer being built.
+     * @return the settings, or <code>null</code> when the file was named and could not be read
+     */
     private static ComparisonProcessSettings settingsFor(IComparisonManager manager,
         ComparisonProcessHandle handle, String decisionsFrom, Outcome outcome)
     {
@@ -2260,19 +2260,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Writes the pre-merge snapshot into the project, where a restore can find it.
-     * <p>
-     * Beside the plugin's other project state in {@code .settings}, and stamped with the time so a
-     * second merge cannot overwrite the record of what the first one found. The file is the only
-     * thing that makes the loss reversible, so failing to write it is reported in the answer rather
-     * than logged and forgotten.
-     * </p>
-     *
-     * @param projectName the project.
-     * @param snapshot what was taken; may be <code>null</code> when there was nothing to take.
-     * @param outcome where to record the path or the reason there is none.
-     */
-    /**
      * Whether a refusal to snapshot means the project simply is not on support.
      *
      * @param cannotTell what the snapshot said.
@@ -2283,16 +2270,6 @@ public final class BmComparisonHelper
         return cannotTell != null && cannotTell.contains("is not on support"); //$NON-NLS-1$
     }
 
-    /**
-     * The platform version a project declares, read from the file that carries it.
-     * <p>
-     * Read from {@code DT-INF/PROJECT.PMF} rather than asked of the environment, because what has
-     * to be compared is the value on disk before and after - the environment answers only for now.
-     * </p>
-     *
-     * @param projectName the project.
-     * @return the version, or <code>null</code> when the file will not say
-     */
     /**
      * Which of the objects both sides changed still held something of ours, before the merge ran.
      * <p>
@@ -2540,6 +2517,16 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * The platform version a project declares, read from the file that carries it.
+     * <p>
+     * Read from {@code DT-INF/PROJECT.PMF} rather than asked of the environment, because what has
+     * to be compared is the value on disk before and after - the environment answers only for now.
+     * </p>
+     *
+     * @param projectName the project.
+     * @return the version, or <code>null</code> when the file will not say
+     */
     private static String runtimeVersionOf(String projectName)
     {
         try
@@ -2583,31 +2570,6 @@ public final class BmComparisonHelper
         outcome.runtimeVersionAfter = after;
     }
 
-    /**
-     * Removes the support snapshot when the merge it was taken for never wrote anything.
-     * <p>
-     * <b>Measured: a refused merge left 976 KB in the project, and three of those accumulated in a
-     * day.</b> The snapshot is taken before the merge is attempted, and several refusals come
-     * later - no decisions to apply, objects that could not be held back, the protection list past
-     * its limit. Each of those wrote nothing at all, so the file records a state that is still the
-     * current one and can be taken again whenever it is wanted. Beside the code that writes it
-     * stands its own rule: reporting must leave no trace.
-     * </p>
-     * <p>
-     * <b>The test is not whether the merge was refused but whether writing could have begun.</b>
-     * Past {@link Outcome#writeMayHaveStarted} the file may be the only way back, and it is kept -
-     * including after a timeout or an exception, where what happened is simply not known. An
-     * unknown state is treated as written: a stray megabyte costs disk, a missing snapshot costs
-     * the support model.
-     * </p>
-     * <p>
-     * Only this call's own file is touched, and only the one whose path this call recorded. When
-     * the delete fails the path stays in the answer and says why, because an answer naming a file
-     * that is not there is worse than one naming a file nobody needs.
-     * </p>
-     *
-     * @param outcome the answer being built; its snapshot path is cleared when the file goes
-     */
     // Package-visible for the test: the decision it makes is what stands between a stray megabyte
     // and a lost support model, and it is reachable no other way without running a real merge.
     /**
@@ -2661,6 +2623,31 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Removes the support snapshot when the merge it was taken for never wrote anything.
+     * <p>
+     * <b>Measured: a refused merge left 976 KB in the project, and three of those accumulated in a
+     * day.</b> The snapshot is taken before the merge is attempted, and several refusals come
+     * later - no decisions to apply, objects that could not be held back, the protection list past
+     * its limit. Each of those wrote nothing at all, so the file records a state that is still the
+     * current one and can be taken again whenever it is wanted. Beside the code that writes it
+     * stands its own rule: reporting must leave no trace.
+     * </p>
+     * <p>
+     * <b>The test is not whether the merge was refused but whether writing could have begun.</b>
+     * Past {@link Outcome#writeMayHaveStarted} the file may be the only way back, and it is kept -
+     * including after a timeout or an exception, where what happened is simply not known. An
+     * unknown state is treated as written: a stray megabyte costs disk, a missing snapshot costs
+     * the support model.
+     * </p>
+     * <p>
+     * Only this call's own file is touched, and only the one whose path this call recorded. When
+     * the delete fails the path stays in the answer and says why, because an answer naming a file
+     * that is not there is worse than one naming a file nobody needs.
+     * </p>
+     *
+     * @param outcome the answer being built; its snapshot path is cleared when the file goes
+     */
     static void dropSnapshotNothingNeeds(Outcome outcome)
     {
         if (outcome.supportSnapshotFile == null || outcome.mergeRefused == null)
@@ -2688,6 +2675,19 @@ public final class BmComparisonHelper
 
     // Package-visible for the test: it is the gate that decides whether an irreversible merge may
     // go ahead, and reaching it any other way means running a real merge against a real project.
+    /**
+     * Writes the pre-merge snapshot into the project, where a restore can find it.
+     * <p>
+     * Beside the plugin's other project state in {@code .settings}, and stamped with the time so a
+     * second merge cannot overwrite the record of what the first one found. The file is the only
+     * thing that makes the loss reversible, so failing to write it is reported in the answer rather
+     * than logged and forgotten.
+     * </p>
+     *
+     * @param projectName the project.
+     * @param snapshot what was taken; may be <code>null</code> when there was nothing to take.
+     * @param outcome where to record the path or the reason there is none.
+     */
     static void keepSnapshot(String projectName, SupportSnapshot snapshot, Outcome outcome)
     {
         if (snapshot != null && snapshot.cannotTell != null)
@@ -2864,12 +2864,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * The merge rule of that name, or <code>null</code>.
-     *
-     * @param name what the caller wrote.
-     * @return the rule
-     */
-    /**
      * Says why a rule cannot be carried out from here.
      * <p>
      * <b>Measured on a stand, and only one of the two suspects is guilty.</b> On a node the
@@ -2901,6 +2895,12 @@ public final class BmComparisonHelper
             + "EDT."; //$NON-NLS-1$
     }
 
+    /**
+     * The merge rule of that name, or <code>null</code>.
+     *
+     * @param name what the caller wrote.
+     * @return the rule
+     */
     private static MergeRule ruleNamed(String name)
     {
         if (name == null)
@@ -3081,24 +3081,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Puts one object both sides changed under the delivery, keeping what only we have.
-     * <p>
-     * The rule was measured before it was chosen: on a module node
-     * {@link MergeRule#MERGE_PRIORITIZING_OTHER} resolves lines both sides touched toward the
-     * delivery and leaves methods the delivery does not carry in place. That is what an update
-     * with customisations preserved has to mean; holding the object instead means the delivery is
-     * never applied to anything anybody has worked on.
-     * </p>
-     * <p>
-     * <b>A node that will not take the rule is held and named.</b> Falling back quietly would
-     * restore the old behaviour object by object, and the answer would still say the update ran.
-     * </p>
-     *
-     * @param session the comparison.
-     * @param nodeId the node both sides changed.
-     * @param outcome where to record what was done and what was not
-     */
-    /**
      * Holds an object both sides changed, because at this granularity nothing can promise the work
      * on this side will survive being merged.
      * <p>
@@ -3157,6 +3139,24 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Puts one object both sides changed under the delivery, keeping what only we have.
+     * <p>
+     * The rule was measured before it was chosen: on a module node
+     * {@link MergeRule#MERGE_PRIORITIZING_OTHER} resolves lines both sides touched toward the
+     * delivery and leaves methods the delivery does not carry in place. That is what an update
+     * with customisations preserved has to mean; holding the object instead means the delivery is
+     * never applied to anything anybody has worked on.
+     * </p>
+     * <p>
+     * <b>A node that will not take the rule is held and named.</b> Falling back quietly would
+     * restore the old behaviour object by object, and the answer would still say the update ran.
+     * </p>
+     *
+     * @param session the comparison.
+     * @param nodeId the node both sides changed.
+     * @param outcome where to record what was done and what was not
+     */
     private static void mergeWithDeliveryInFront(IComparisonSession session, Long nodeId,
         Outcome outcome)
     {
@@ -3372,6 +3372,26 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Whether a merge was started and has not been seen to reach a terminal state.
+     * <p>
+     * The wait has a limit and a merge can outlive it. Treating that as finished stopped the
+     * handle mid-write, which is the one thing an irreversible operation must not have done to it
+     * from the outside.
+     * </p>
+     *
+     * @param outcome what the run recorded.
+     * @return <code>true</code> when a merge is, as far as this call knows, still going
+     */
+    private static boolean mergeStillRunning(Outcome outcome)
+    {
+        String status = outcome.mergeStatus;
+        return status != null
+            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name())
+            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_DISCARDED.name())
+            && !status.equals(ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED.name());
+    }
+
+    /**
      * Waits for a started merge to end, and reports what the environment actually did.
      * <p>
      * Three ends are distinguished, because they mean entirely different things to whoever asked:
@@ -3397,26 +3417,6 @@ public final class BmComparisonHelper
      * @param outcome the answer being built.
      * @throws InterruptedException when the wait is interrupted
      */
-    /**
-     * Whether a merge was started and has not been seen to reach a terminal state.
-     * <p>
-     * The wait has a limit and a merge can outlive it. Treating that as finished stopped the
-     * handle mid-write, which is the one thing an irreversible operation must not have done to it
-     * from the outside.
-     * </p>
-     *
-     * @param outcome what the run recorded.
-     * @return <code>true</code> when a merge is, as far as this call knows, still going
-     */
-    private static boolean mergeStillRunning(Outcome outcome)
-    {
-        String status = outcome.mergeStatus;
-        return status != null
-            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name())
-            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_DISCARDED.name())
-            && !status.equals(ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED.name());
-    }
-
     private static void awaitMergeEnd(IComparisonManager manager, ComparisonProcessHandle handle,
         Outcome outcome) throws InterruptedException
     {
@@ -3497,18 +3497,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Closes a comparison that has been read.
-     * <p>
-     * Failure to close is logged and nothing more: the answer is already complete and correct, and
-     * turning a successful comparison into a refusal because the cleanup stumbled would be the
-     * worse trade. It is logged rather than swallowed because a comparison that will not close is
-     * exactly what the caller will feel later, when the session declines to shut down.
-     * </p>
-     *
-     * @param manager the comparison service.
-     * @param handle the process to close.
-     */
-    /**
      * Closes the comparisons the registry dropped.
      * <p>
      * Called on the way out of any comparison, because that is a moment when talking to the
@@ -3530,6 +3518,18 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Closes a comparison that has been read.
+     * <p>
+     * Failure to close is logged and nothing more: the answer is already complete and correct, and
+     * turning a successful comparison into a refusal because the cleanup stumbled would be the
+     * worse trade. It is logged rather than swallowed because a comparison that will not close is
+     * exactly what the caller will feel later, when the session declines to shut down.
+     * </p>
+     *
+     * @param manager the comparison service.
+     * @param handle the process to close.
+     */
     private static void release(IComparisonManager manager, ComparisonProcessHandle handle)
     {
         try
@@ -3815,19 +3815,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Counts the tree without changing anything in it.
-     *
-     * @param node the node to count and descend from.
-     * @param outcome the answer being built.
-     */
-    /**
-     * Names one changed object and says on which side it stands.
-     *
-     * @param node the top node, which is a metadata object.
-     * @param oneSided whether it exists on one side only.
-     * @return the description
-     */
-    /**
      * Records a piece of a module when it is one that moved.
      * <p>
      * Three ways a piece can have moved, and the narrow one is not enough: it can exist on one side
@@ -3935,6 +3922,15 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Names one changed object and says on which side it stands.
+     *
+     * @param node the top node, which is a metadata object.
+     * @param oneSided whether it exists on one side only.
+     * @param threeWay whether an ancestor is in the comparison, which decides how attribution
+     *        is read.
+     * @return the description
+     */
     private static Change describeChange(TopComparisonNode node, boolean oneSided,
         boolean threeWay)
     {
@@ -4031,17 +4027,6 @@ public final class BmComparisonHelper
     }
 
     /**
-     * Copies the environment own merge recommendation onto a change.
-     * <p>
-     * The environment already worked out which rule suits each node. Recomputing that here would be
-     * inventing a second opinion; carrying it out means a caller can confirm or override a proposal
-     * instead of deciding from nothing.
-     * </p>
-     *
-     * @param node the node.
-     * @param change where to write the recommendation.
-     */
-    /**
      * Says whether the copy that survived a one-sided deletion was changed before it was deleted.
      * <p>
      * The question a deletion cannot answer by itself. An object the delivery removed matters
@@ -4079,6 +4064,17 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Copies the environment own merge recommendation onto a change.
+     * <p>
+     * The environment already worked out which rule suits each node. Recomputing that here would be
+     * inventing a second opinion; carrying it out means a caller can confirm or override a proposal
+     * instead of deciding from nothing.
+     * </p>
+     *
+     * @param node the node.
+     * @param change where to write the recommendation.
+     */
     private static void readRecommendation(ComparisonNode node, Change change)
     {
         try
@@ -4126,6 +4122,14 @@ public final class BmComparisonHelper
         }
     }
 
+    /**
+     * Counts the tree without changing anything in it.
+     *
+     * @param node the node to count and descend from.
+     * @param outcome the answer being built.
+     * @param page which changed objects are to be named, and which page of them.
+     * @param insideModule the module this node sits in, or <code>null</code> at the top.
+     */
     private static void walk(ComparisonNode node, Outcome outcome, Page page,
         String insideModule)
     {

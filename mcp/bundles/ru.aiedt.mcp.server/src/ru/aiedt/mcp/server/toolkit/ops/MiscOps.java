@@ -53,7 +53,6 @@ final class MiscOps
         return null;
     }
 
-    /** Adds {@code item} to a raw {@link EList} (unchecked, EMF validates element type). */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     /**
      * J2b (Functional Options on form items): adds or removes a FunctionalOption
@@ -192,13 +191,6 @@ final class MiscOps
         return ok.toJson();
     }
 
-    /**
-     * Finds the first single-argument setter method named {@code setterName} on
-     * {@code clazz}, scanning public methods (EMF reference setters take the
-     * referenced interface type, which the caller does not know ahead of time,
-     * so {@code getMethod(name, exactType)} is not usable). Returns {@code null}
-     * when no such method exists.
-     */
     // -----------------------------------------------------------------------
     // Common operations (1.37)
     // -----------------------------------------------------------------------
@@ -371,12 +363,6 @@ final class MiscOps
     // -----------------------------------------------------------------------
 
     /**
-     * 1.40: dispatcher for the 5 Extensions ops (adoptObject, adoptObjects,
-     * adoptChild, adoptFormItem, adoptModule). Probes the underlying adopt
-     * service via {@link BmExtensionHelper}; surfaces a graceful
-     * {@code adoptServiceNotFound} tag when the API is missing.
-     */
-    /**
      * Builds the FQN of a child when the caller named its owner, its kind and its name.
      * <p>
      * <b>Measured on a stand, and it borrowed the wrong thing.</b> The schema has said since 1.43
@@ -425,6 +411,12 @@ final class MiscOps
         return fqn + "." + kind.trim() + "." + name.trim(); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * 1.40: dispatcher for the 5 Extensions ops (adoptObject, adoptObjects,
+     * adoptChild, adoptFormItem, adoptModule). Probes the underlying adopt
+     * service via {@link BmExtensionHelper}; surfaces a graceful
+     * {@code adoptServiceNotFound} tag when the API is missing.
+     */
     String opExtensionAdopt(String op, Map<String, String> params)
     {
         if (!BmExtensionHelper.isAvailable())
@@ -700,9 +692,4 @@ final class MiscOps
         return m;
     }
 
-    /**
-     * Wraps a {@link BmFormHelper#executeFormOperation} return value into our
-     * standard JSON response shape. The helper returns {@code null} on
-     * success, or an "Error: ..." string otherwise.
-     */
 }

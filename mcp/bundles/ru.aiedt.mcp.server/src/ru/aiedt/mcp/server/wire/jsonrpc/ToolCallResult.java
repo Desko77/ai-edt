@@ -126,11 +126,6 @@ public class ToolCallResult
     }
 
     /**
-     * Returns the structured payload.
-     *
-     * @return the payload, or <code>null</code> when the result is not structured
-     */
-    /**
      * Marks this answer as a failure the tool reported rather than threw.
      *
      * @return this result, for chaining.
@@ -151,6 +146,11 @@ public class ToolCallResult
         return isError;
     }
 
+    /**
+     * Returns the structured payload.
+     *
+     * @return the payload, or <code>null</code> when the result is not structured
+     */
     public Object getStructuredContent()
     {
         return structuredContent;
