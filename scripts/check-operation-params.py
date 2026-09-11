@@ -79,6 +79,53 @@ EXTRACT = re.compile(READERS + r'\(\s*params\s*,\s*(?://[^\n]*\n\s*)*"([A-Za-z0-
 # SchemaComposer has no such method, so the alternative matched nothing.
 SCHEMA_PROP = re.compile(
     r'\.(?:stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+# The same call sites read for their kind as well. The builder's name IS the kind, which is why this
+# is read rather than inferred from how the parameter is used.
+SCHEMA_KIND = re.compile(
+    r'\.(stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+KIND_OF_BUILDER = {"stringArray": "string[]", "string": "string", "boolean": "boolean",
+                   "integer": "integer", "array": "array", "object": "object"}
+# What stands in the map for a parameter nobody declares. Not a guess, and not an empty column: the
+# 85 parameters read without being advertised have no declared kind anywhere, and writing a
+# plausible one would put an invention where a client looks for a fact.
+KIND_UNKNOWN = "?"
+
+
+def kinds_by_class() -> dict[str, dict[str, str]]:
+    """Every kind each class declares, keyed by the class that declares it."""
+    declared: dict[str, dict[str, str]] = {}
+    for path in sorted(OPS.glob("*.java")):
+        here: dict[str, str] = {}
+        for builder, name in SCHEMA_KIND.findall(path.read_text(encoding="utf-8")):
+            here.setdefault(name, KIND_OF_BUILDER[builder])
+        if here:
+            declared[path.stem] = here
+    return declared
+
+
+def kind_everywhere(declared: dict[str, dict[str, str]]) -> dict[str, str]:
+    """The kind of a name where every class that declares it agrees."""
+    seen: dict[str, set[str]] = {}
+    for here in declared.values():
+        for name, kind in here.items():
+            seen.setdefault(name, set()).add(kind)
+    return {name: next(iter(kinds)) for name, kinds in seen.items() if len(kinds) == 1}
+
+
+def kind_of(name: str, facade: str, declared: dict[str, dict[str, str]],
+            agreed: dict[str, str]) -> str:
+    """The kind to record: what the facade says, else what everyone says, else unknown."""
+    own = declared.get(facade, {}).get(name)
+    if own:
+        return own
+    return agreed.get(name, KIND_UNKNOWN)
+
+
+def with_kinds(row: dict[str, object], declared: dict[str, dict[str, str]],
+               agreed: dict[str, str]) -> list[str]:
+    """One operation's parameters, each written as name:kind."""
+    facade = str(row["facade"])
+    return [f"{name}:{kind_of(name, facade, declared, agreed)}" for name in row["parameters"]]
 CALLS = re.compile(r"\b([a-z]\w+)\s*\(")
 
 # Operations that read nothing on purpose. Each needs a reason, because "no parameters" is the same
@@ -758,8 +805,10 @@ def write_report(found: dict[str, dict[str, object]]) -> None:
         "| Фасад | Операция | Параметры | Откуда |",
         "|---|---|---|---|",
     ]
+    declared = kinds_by_class()
+    agreed = kind_everywhere(declared)
     for _, row in sorted(found.items()):
-        params = ", ".join(f"`{p}`" for p in row["parameters"]) or "-"
+        params = ", ".join(f"`{p}`" for p in with_kinds(row, declared, agreed)) or "-"
         how = row["how"] or "не установлено"
         lines.append(f"| `{row['facade']}` | `{row['operation']}` | {params} | {how} |")
     skipped = dispatches_otherwise()
@@ -780,10 +829,13 @@ def write_report(found: dict[str, dict[str, object]]) -> None:
 
 def resource_text(found: dict[str, dict[str, object]]) -> str:
     """The map as it is shipped, built the one way both writing and checking use."""
-    rows = ["# derived by scripts/check-operation-params.py - do not edit"]
+    rows = ["# derived by scripts/check-operation-params.py - do not edit",
+            "# a parameter is written name:kind; ? means no class declares it"]
+    declared = kinds_by_class()
+    agreed = kind_everywhere(declared)
     for _, row in sorted(found.items()):
         rows.append("\t".join((str(row["facade"]), str(row["operation"]),
-                               ",".join(row["parameters"]), str(row["how"]))))
+                               ",".join(with_kinds(row, declared, agreed)), str(row["how"]))))
     rows.append("")
     return "\n".join(rows)
 

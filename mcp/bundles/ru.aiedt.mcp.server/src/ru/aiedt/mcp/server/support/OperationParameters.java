@@ -59,13 +59,72 @@ public final class OperationParameters
      */
     public static List<String> of(String facadeClass, String operation)
     {
+        List<String> declared = withKinds(facadeClass, operation);
+        if (declared.isEmpty())
+        {
+            return Collections.emptyList();
+        }
+        List<String> names = new ArrayList<>(declared.size());
+        for (String entry : declared)
+        {
+            names.add(nameOf(entry));
+        }
+        return Collections.unmodifiableList(names);
+    }
+
+    /**
+     * The parameters an operation reads, each as {@code name:kind}.
+     * <p>
+     * The kind is read from the schema that declares the parameter - the builder that writes it is
+     * the kind - so it is a fact about what the tool advertises rather than a reading of how the
+     * value is used. A parameter no class declares carries {@code ?}: 29 of 4411 entries, and
+     * writing a plausible kind for those would put an invention where a caller looks for a fact.
+     * </p>
+     *
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param operation the operation name.
+     * @return the entries, or an empty list when the map has nothing for that pair
+     */
+    public static List<String> withKinds(String facadeClass, String operation)
+    {
         if (facadeClass == null || operation == null)
         {
             return Collections.emptyList();
         }
-        Map<String, List<String>> map = map();
-        List<String> found = map.get(facadeClass + ":" + operation); //$NON-NLS-1$
+        List<String> found = map().get(facadeClass + ":" + operation); //$NON-NLS-1$
         return found == null ? Collections.emptyList() : found;
+    }
+
+    /**
+     * The name out of a {@code name:kind} entry.
+     *
+     * @param entry one entry of the map.
+     * @return the name alone
+     */
+    public static String nameOf(String entry)
+    {
+        if (entry == null)
+        {
+            return null;
+        }
+        int colon = entry.lastIndexOf(':');
+        return colon < 0 ? entry : entry.substring(0, colon);
+    }
+
+    /**
+     * The kind out of a {@code name:kind} entry.
+     *
+     * @param entry one entry of the map.
+     * @return the kind, or <code>null</code> when the entry carries none
+     */
+    public static String kindOf(String entry)
+    {
+        if (entry == null)
+        {
+            return null;
+        }
+        int colon = entry.lastIndexOf(':');
+        return colon < 0 ? null : entry.substring(colon + 1);
     }
 
     /** True when the map was packaged and read, so an empty answer can be told from a missing map. */
@@ -119,16 +178,16 @@ public final class OperationParameters
                 {
                     continue;
                 }
-                List<String> names = new ArrayList<>();
-                for (String name : cells[2].split(",")) //$NON-NLS-1$
+                List<String> declared = new ArrayList<>();
+                for (String entry : cells[2].split(",")) //$NON-NLS-1$
                 {
-                    String trimmed = name.trim();
+                    String trimmed = entry.trim();
                     if (!trimmed.isEmpty())
                     {
-                        names.add(trimmed);
+                        declared.add(trimmed);
                     }
                 }
-                map.put(cells[0] + ":" + cells[1], Collections.unmodifiableList(names)); //$NON-NLS-1$
+                map.put(cells[0] + ":" + cells[1], Collections.unmodifiableList(declared)); //$NON-NLS-1$
             }
         }
         catch (Exception cannotRead)
