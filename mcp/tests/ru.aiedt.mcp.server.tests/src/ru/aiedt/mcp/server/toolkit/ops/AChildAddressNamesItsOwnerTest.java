@@ -134,4 +134,30 @@ public class AChildAddressNamesItsOwnerTest
         assertFalse(ObjectsRevalidator.namesAChild("Catalog..Attribute.Email"));
         assertFalse(ObjectsRevalidator.namesAChild("Catalog.Users.Attribute."));
     }
+
+    @Test
+    public void aTrailingDotOnAWholePairStillNamesNoChild()
+    {
+        // Measured: reported as a validated object. The one-argument split drops the empty step a
+        // trailing dot leaves, so the address arrived as four whole steps and passed.
+        assertFalse(ObjectsRevalidator.namesAChild("Catalog.Users.Attribute.Email."));
+        assertFalse(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Template.Batch."));
+    }
+
+    @Test
+    public void theFormMarkerIsNotAllowedAfterJustAnything()
+    {
+        // Measured: reported as a validated object. "Odd and ending in Form" admits far more than
+        // the form root it was written for - the walk resolves as far as the template and then
+        // answers with it.
+        assertFalse(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Template.Batch.Form"));
+        assertFalse(ObjectsRevalidator.namesAChild("Catalog.Users.Attribute.Email.Form"));
+    }
+
+    @Test
+    public void theFormMarkerIsAllowedOnAFormRoot()
+    {
+        assertTrue(ObjectsRevalidator.namesAChild("Catalog.Users.Form.UserForm.Form"));
+        assertTrue(ObjectsRevalidator.namesAChild("DataProcessor.PageCheck.Form.MainForm.Form"));
+    }
 }

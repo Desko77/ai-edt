@@ -210,6 +210,12 @@ public class ObjectsRevalidator
         return fqn.substring(0, secondDot);
     }
 
+    /** How the index spells a form's own root: the type, the object, Form, the name, Form. */
+    private static final int FORM_ROOT_STEPS = 5;
+
+    /** The step that names a form, and the marker the index puts after its name. */
+    private static final String FORM = "Form"; //$NON-NLS-1$
+
     /**
      * Whether an address names something under a top object, rather than stopping short of it.
      * <p>
@@ -220,9 +226,12 @@ public class ObjectsRevalidator
      * reported as validated objects.
      * </p>
      * <p>
-     * One trailing step is not a kind: {@code Catalog.Users.Form.UserForm.Form} is how the index
-     * spells the form's own root, and the walk treats that last step as a marker rather than as an
-     * address of anything. It is allowed here for the same reason.
+     * One shape is allowed to be odd: {@code Catalog.Users.Form.UserForm.Form} is how the index
+     * spells a form's own root, and the walk treats that last step as a marker rather than as an
+     * address of anything. Only that shape - five steps, with {@code Form} in the third and the
+     * fifth. Written as "odd and ending in Form" it also admitted
+     * {@code Catalog.Users.Attribute.Email.Form}, which the walk resolves as far as the attribute
+     * and then reports as an object.
      * </p>
      *
      * @param fqn the address, already normalised.
@@ -234,7 +243,9 @@ public class ObjectsRevalidator
         {
             return false;
         }
-        String[] steps = fqn.split("\\."); //$NON-NLS-1$
+        // A negative limit keeps the empty step a trailing dot leaves behind; the one-argument
+        // split drops it, and Catalog.Users.Attribute.Email. then arrives as four whole steps.
+        String[] steps = fqn.split("\\.", -1); //$NON-NLS-1$
         for (String step : steps)
         {
             if (step.isEmpty())
@@ -246,7 +257,12 @@ public class ObjectsRevalidator
         {
             return false;
         }
-        return steps.length % 2 == 0 || "Form".equalsIgnoreCase(steps[steps.length - 1]); //$NON-NLS-1$
+        if (steps.length % 2 == 0)
+        {
+            return true;
+        }
+        return steps.length == FORM_ROOT_STEPS && FORM.equalsIgnoreCase(steps[2])
+            && FORM.equalsIgnoreCase(steps[4]);
     }
 
     /**
@@ -269,13 +285,11 @@ public class ObjectsRevalidator
      * @param project the project being revalidated.
      * @param bmModel its model.
      * @param notFound the addresses the index missed; those resolved here are removed from it.
-     * @param undecided where addresses whose lookup established nothing are recorded.
      * @param objectsToValidate where the owners' ids are added.
      * @return the child addresses that were validated through their owner
      */
     private static List<String> validateChildrenThroughTheirOwners(IProject project,
-        IBmModel bmModel, List<String> notFound, List<String> undecided,
-        Collection<Object> objectsToValidate)
+        IBmModel bmModel, List<String> notFound, Collection<Object> objectsToValidate)
     {
         final List<String> children = new ArrayList<>();
         final List<String> owners = new ArrayList<>();
@@ -287,18 +301,12 @@ public class ObjectsRevalidator
             {
                 continue;
             }
-            Boolean holds = BmExtensionHelper.childResolves(project, candidate);
-            if (Boolean.TRUE.equals(holds))
+            if (BmExtensionHelper.childResolves(project, candidate))
             {
                 children.add(candidate);
                 owners.add(owner);
             }
-            else if (holds == null)
-            {
-                undecided.add(candidate);
-            }
         }
-        notFound.removeAll(undecided);
         if (children.isEmpty())
         {
             return children;
@@ -412,9 +420,8 @@ public class ObjectsRevalidator
             }
         });
 
-        List<String> undecided = new ArrayList<>();
-        List<String> throughOwner = validateChildrenThroughTheirOwners(project, bmModel, notFound,
-            undecided, objectsToValidate);
+        List<String> throughOwner =
+            validateChildrenThroughTheirOwners(project, bmModel, notFound, objectsToValidate);
         found.addAll(throughOwner);
 
         if (!objectsToValidate.isEmpty())
@@ -445,10 +452,6 @@ public class ObjectsRevalidator
         if (!throughOwner.isEmpty())
         {
             result.put("objectsValidatedThroughOwner", throughOwner); //$NON-NLS-1$
-        }
-        if (!undecided.isEmpty())
-        {
-            result.put("objectsNotResolved", undecided); //$NON-NLS-1$
         }
         if (!notFound.isEmpty())
         {

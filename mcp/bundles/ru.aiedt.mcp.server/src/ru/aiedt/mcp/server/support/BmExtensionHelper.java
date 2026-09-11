@@ -944,30 +944,31 @@ public final class BmExtensionHelper
      * through the model walk, and the same object arrives as two instances.
      * </p>
      * <p>
-     * The third answer exists because the other two are claims. A lookup that throws establishes
-     * neither that the model holds the address nor that it does not, and a caller deciding whether
-     * something was checked must be able to say so rather than pick a side.
+     * A failure of the lookup itself is not told apart from absence here, and cannot be: the two
+     * resolvers this sits on catch their own failures and answer <code>null</code>, so nothing
+     * reaches this method that would let it say "could not establish". Telling the two apart would
+     * mean changing what those resolvers report, which is a decision about every caller they have
+     * and not one to take from here.
      * </p>
      *
      * @param project the project whose model is asked.
      * @param fqn the child address, already known to name a child.
-     * @return <code>TRUE</code> when the model holds it, <code>FALSE</code> when it does not, and
-     *         <code>null</code> when the lookup could not establish either
+     * @return <code>true</code> when the model holds it
      */
-    public static Boolean childResolves(IProject project, String fqn)
+    public static boolean childResolves(IProject project, String fqn)
     {
         if (project == null || fqn == null || fqn.trim().isEmpty())
         {
-            return Boolean.FALSE;
+            return false;
         }
         try
         {
-            return Boolean.valueOf(resolveSourceEObject(project, fqn.trim()) != null);
+            return resolveSourceEObject(project, fqn.trim()) != null;
         }
         catch (Exception | LinkageError failed)
         {
             Activator.logWarning("could not resolve the child address " + fqn + ": " + failed); //$NON-NLS-1$ //$NON-NLS-2$
-            return null;
+            return false;
         }
     }
 
