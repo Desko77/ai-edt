@@ -44,6 +44,7 @@ public class DefaultPreferences
         store.setDefault(PrefKeys.PREF_VANESSA_EPF, PrefKeys.DEFAULT_VANESSA_EPF);
         store.setDefault(PrefKeys.PREF_VANESSA_1C_EXE,
             PrefKeys.DEFAULT_VANESSA_1C_EXE);
+        store.setDefault(PrefKeys.PREF_AUTH_ENABLED, PrefKeys.DEFAULT_AUTH_ENABLED);
         store.setDefault(PrefKeys.PREF_AUTH_TOKEN, PrefKeys.DEFAULT_AUTH_TOKEN);
         store.setDefault(PrefKeys.PREF_BIND_ALL_INTERFACES,
             PrefKeys.DEFAULT_BIND_ALL_INTERFACES);

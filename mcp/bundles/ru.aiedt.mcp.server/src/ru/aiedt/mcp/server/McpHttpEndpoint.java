@@ -334,7 +334,19 @@ public class McpHttpEndpoint
     private static final String MSG_INVALID_ORIGIN = "Invalid Origin"; //$NON-NLS-1$
 
     private static final String MSG_UNAUTHORIZED = "Unauthorized: send 'Authorization: Bearer <token>'. " //$NON-NLS-1$
-        + "The token is on the AI-EDT preference page of this EDT (Window > Preferences > AI-EDT)."; //$NON-NLS-1$
+        + "The token is on the AI-EDT preference page of this EDT (Window > Preferences > AI-EDT); " //$NON-NLS-1$
+        + "'Require bearer token' there turns the requirement off for a server that listens on " //$NON-NLS-1$
+        + "localhost only."; //$NON-NLS-1$
+
+    private static final String MSG_NO_SUCH_PATH = "AI-EDT: no such path. The MCP endpoint is POST /mcp " //$NON-NLS-1$
+        + "with 'Authorization: Bearer <token>'; the token is on the AI-EDT preference page of this " //$NON-NLS-1$
+        + "EDT (Window > Preferences > AI-EDT). GET /health answers without one."; //$NON-NLS-1$
+
+    private static final String CONTEXT_ROOT = "/"; //$NON-NLS-1$
+
+    private static final String MIME_TEXT = "text/plain; charset=utf-8"; //$NON-NLS-1$
+
+    private static final int HTTP_NOT_FOUND = 404;
 
     private static final String MSG_METHOD_NOT_ALLOWED = "Method not allowed"; //$NON-NLS-1$
 
@@ -554,6 +566,9 @@ public class McpHttpEndpoint
                 first = false;
                 server.createContext(CONTEXT_MCP, mcpHandler);
                 server.createContext(CONTEXT_HEALTH, healthHandler);
+                // Every other path: a client that walks OAuth discovery after a 401 (a well-known
+                // document, a registration endpoint) reads the answer, so it names what is here.
+                server.createContext(CONTEXT_ROOT, McpHttpEndpoint::answerNoSuchPath);
                 server.setExecutor(requestPool);
                 server.start();
                 Activator.logInfo("MCP server listening on " //$NON-NLS-1$
@@ -666,7 +681,7 @@ public class McpHttpEndpoint
      * </p>
      * <p>
      * Turning {@link PrefKeys#PREF_BIND_ALL_INTERFACES} on opens the socket to the network; the token
-     * is required there as everywhere.
+     * is demanded there whatever {@link PrefKeys#PREF_AUTH_ENABLED} holds.
      * </p>
      *
      * @param serverPort the TCP port to listen on
@@ -1825,7 +1840,7 @@ public class McpHttpEndpoint
                     sendNoBody(exchange, HTTP_NO_CONTENT);
                     return;
                 }
-                sendJson(exchange, HTTP_OK, healthJson(presentsTheToken(exchange)));
+                sendJson(exchange, HTTP_OK, healthJson(!requiresTheToken() || presentsTheToken(exchange)));
             }
             catch (IOException e)
             {
@@ -1956,8 +1971,9 @@ public class McpHttpEndpoint
     /**
      * Checks the bearer token.
      * <p>
-     * Every request carries one. A server that has no active token - which cannot be, as the socket
-     * does not open without one - answers as if the wrong one was sent.
+     * Every request carries one while the token is demanded. A server that has no active token -
+     * which cannot be, as the socket does not open without one - answers as if the wrong one was
+     * sent.
      * </p>
      *
      * @param exchange the connection
@@ -1967,7 +1983,7 @@ public class McpHttpEndpoint
      */
     private static boolean authorize(HttpExchange exchange) throws IOException
     {
-        if (presentsTheToken(exchange))
+        if (!requiresTheToken() || presentsTheToken(exchange))
         {
             return true;
         }
@@ -1975,6 +1991,54 @@ public class McpHttpEndpoint
         sendBody(exchange, HTTP_UNAUTHORIZED,
             JsonUtils.buildJsonRpcError(McpServerMeta.ERROR_INVALID_REQUEST, MSG_UNAUTHORIZED, null));
         return false;
+    }
+
+    /**
+     * Whether a request has to carry the token.
+     * <p>
+     * The preference decides for a socket on loopback. A socket open to every interface demands
+     * the token whatever the preference holds: it is the one thing between the network and the
+     * workspace there.
+     * </p>
+     *
+     * @return <code>true</code> when a request without the token is refused
+     */
+    static boolean requiresTheToken()
+    {
+        if (bindsEveryInterface())
+        {
+            return true;
+        }
+        Activator activator = Activator.getDefault();
+        if (activator == null)
+        {
+            return PrefKeys.DEFAULT_AUTH_ENABLED;
+        }
+        IPreferenceStore store = activator.getPreferenceStore();
+        if (store == null)
+        {
+            return PrefKeys.DEFAULT_AUTH_ENABLED;
+        }
+        return store.getBoolean(PrefKeys.PREF_AUTH_ENABLED);
+    }
+
+    /**
+     * Answers a request for a path this server does not serve.
+     *
+     * @param exchange the connection
+     * @throws IOException when the connection breaks
+     */
+    private static void answerNoSuchPath(HttpExchange exchange) throws IOException
+    {
+        try
+        {
+            exchange.getResponseHeaders().add(HEADER_CONTENT_TYPE, MIME_TEXT);
+            sendBody(exchange, HTTP_NOT_FOUND, MSG_NO_SUCH_PATH);
+        }
+        finally
+        {
+            exchange.close();
+        }
     }
 
     /**

@@ -169,9 +169,10 @@ public class StorageKeyConstantsTest
     }
 
     @Test
-    public void shippedAuthIsOffAndBindingIsLoopback()
+    public void shippedTokenIsNotDemandedAndBindingIsLoopback()
     {
-        // Safe by default only because the socket stays on loopback.
+        // A client configured before the token existed keeps working after the update; the socket
+        // stays on loopback, and a socket opened to the network demands the token on its own.
         assertFalse(PrefKeys.DEFAULT_AUTH_ENABLED);
         assertFalse(PrefKeys.DEFAULT_BIND_ALL_INTERFACES);
     }

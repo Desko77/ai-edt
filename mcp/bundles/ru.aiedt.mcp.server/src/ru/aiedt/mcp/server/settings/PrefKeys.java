@@ -60,12 +60,10 @@ public final class PrefKeys
     public static final String PREF_VANESSA_1C_EXE = "mcpVanessa1cExe"; //$NON-NLS-1$
 
     /**
-     * A switch that no longer switches anything: <code>/mcp</code> demands the bearer token
-     * whatever this holds. The key stays because a workspace may still carry it.
-     *
-     * @deprecated the token is required; nothing reads this key
+     * Whether <code>/mcp</code> demands the bearer token. Off, a request without a token is
+     * accepted while the socket is on loopback; a socket open to every interface demands the
+     * token whatever this holds.
      */
-    @Deprecated
     public static final String PREF_AUTH_ENABLED = "mcpAuthEnabled"; //$NON-NLS-1$
 
     /** The bearer token every request to <code>/mcp</code> carries. Created at start when empty. */
@@ -333,12 +331,7 @@ public final class PrefKeys
     /** Shipped Vanessa thick client: none. */
     public static final String DEFAULT_VANESSA_1C_EXE = ""; //$NON-NLS-1$
 
-    /**
-     * The shipped value of the switch that no longer switches anything.
-     *
-     * @deprecated the token is required; nothing reads this
-     */
-    @Deprecated
+    /** Shipped: a socket on loopback answers without the token; the token is created all the same. */
     public static final boolean DEFAULT_AUTH_ENABLED = false;
 
     /** Shipped token: none, so the first start creates and saves one. */

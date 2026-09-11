@@ -338,6 +338,44 @@ public final class BmInfobaseExtensionHelper
      * @param reconnect the reconnection step
      * @return what each step reported
      */
+    /**
+     * Runs the thick-client conversion under the per-infobase lock, and only that call under it.
+     * <p>
+     * Measured on a stand: holding {@code getLock(infobase)} across {@code connectInfobase} /
+     * {@code disconnectInfobase} deadlocks. EDT's own reconnection takes the connection's monitor
+     * first and that lock second; a background project-synchronization worker was mid-reconnect,
+     * holding the monitor and waiting for the lock, while this thread held the lock and waited for
+     * the monitor inside its own reconnection. EDT's UI holds the lock around the thick-client call
+     * alone, and the sync manager takes it itself where its own ordering wants it - so the lock
+     * wraps the launcher call and nothing else.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param xmlDir the directory the XML is written to (first launcher argument)
+     * @param binary the {@code .epf} / {@code .erf} to read (second launcher argument)
+     * @throws Exception when the Designer run fails
+     */
+    private static void convertUnderInfobaseLock(LauncherContext ctx, java.nio.file.Path xmlDir,
+        java.nio.file.Path binary)
+        throws Exception
+    {
+        if (ctx.lock != null)
+        {
+            ctx.lock.lock();
+        }
+        try
+        {
+            ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args, xmlDir, binary);
+        }
+        finally
+        {
+            if (ctx.lock != null)
+            {
+                ctx.lock.unlock();
+            }
+        }
+    }
+
     public static HandshakeOutcome runUnderHandshake(Release release, Work work, Reconnect reconnect)
     {
         HandshakeOutcome outcome = new HandshakeOutcome();
@@ -494,15 +532,15 @@ public final class BmInfobaseExtensionHelper
                 r.failureKind = ErrorTags.BUSY.wire();
                 return r;
             }
-            if (ctx.lock != null) ctx.lock.lock();
             try
             {
                 if (strictly)
                 {
+                    // Measured: the launcher takes the XML directory first and the binary second,
+                    // the order of /DumpExternalDataProcessorOrReportToFiles.
                     HandshakeOutcome handshake = runUnderHandshake(
                         () -> releaseForThickClient(ctx),
-                        () -> ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args,
-                            source, target),
+                        () -> convertUnderInfobaseLock(ctx, target, source),
                         () -> takeInfobaseBack(ctx));
                     if (handshake.reconnectError != null)
                     {
@@ -530,8 +568,7 @@ public final class BmInfobaseExtensionHelper
                     boolean disconnected = disconnectForThickClient(ctx);
                     try
                     {
-                        ctx.launcher.convertBinaryExternalToXml(ctx.component, ctx.infobase, ctx.args,
-                            source, target);
+                        convertUnderInfobaseLock(ctx, target, source);
                     }
                     finally
                     {
@@ -545,7 +582,6 @@ public final class BmInfobaseExtensionHelper
             finally
             {
                 claim.close();
-                if (ctx.lock != null) ctx.lock.unlock();
             }
             // A conversion that returns without writing anything is a failure that
             // announces itself nowhere else: the Designer is a separate process, and

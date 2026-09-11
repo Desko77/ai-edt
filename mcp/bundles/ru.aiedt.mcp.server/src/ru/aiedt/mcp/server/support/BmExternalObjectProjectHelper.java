@@ -374,13 +374,66 @@ public final class BmExternalObjectProjectHelper
             org.eclipse.core.runtime.IStatus status = operation.getStatus();
             if (status != null && status.getSeverity() >= org.eclipse.core.runtime.IStatus.ERROR)
             {
-                return "The import operation refused: " + status.getMessage(); //$NON-NLS-1$
+                return "The import operation refused: " + statusText(status); //$NON-NLS-1$
             }
             return null;
         }
         catch (Exception | LinkageError failed)
         {
             return "The import operation failed: " + TextSuggest.safeMessage(failed); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The text of a status and of every status under it: the import operation answers with a
+     * multi-status whose own message only says that several errors occurred.
+     *
+     * @param status the status
+     * @return the messages of the status tree, warnings and errors only, one per line
+     */
+    static String statusText(org.eclipse.core.runtime.IStatus status)
+    {
+        StringBuilder text = new StringBuilder();
+        appendStatus(text, status, 0);
+        return text.toString();
+    }
+
+    private static final int STATUS_LINES_MAX = 20;
+
+    private static void appendStatus(StringBuilder text, org.eclipse.core.runtime.IStatus status, int depth)
+    {
+        if (status == null || status.getSeverity() < org.eclipse.core.runtime.IStatus.WARNING)
+        {
+            return;
+        }
+        String message = status.getMessage();
+        Throwable cause = status.getException();
+        if (cause != null && (message == null || message.isEmpty() || !message.equals(cause.getMessage())))
+        {
+            message = (message == null || message.isEmpty() ? "" : message + ": ") //$NON-NLS-1$ //$NON-NLS-2$
+                + TextSuggest.safeMessage(cause);
+        }
+        if (message != null && !message.isEmpty())
+        {
+            if (text.length() > 0)
+            {
+                text.append('\n');
+            }
+            for (int i = 0; i < depth; i++)
+            {
+                text.append("  "); //$NON-NLS-1$
+            }
+            text.append(message);
+        }
+        int lines = 0;
+        for (org.eclipse.core.runtime.IStatus child : status.getChildren())
+        {
+            if (++lines > STATUS_LINES_MAX)
+            {
+                text.append('\n').append("  ..."); //$NON-NLS-1$
+                break;
+            }
+            appendStatus(text, child, depth + 1);
         }
     }
 

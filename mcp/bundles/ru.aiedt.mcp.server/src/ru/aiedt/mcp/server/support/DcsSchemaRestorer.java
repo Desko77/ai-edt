@@ -16,6 +16,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.function.Function;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -196,6 +197,8 @@ public final class DcsSchemaRestorer
 
     private static final String SCHEMA_SUFFIX = ".Template"; //$NON-NLS-1$
 
+    private static final String TEMPLATE_SEGMENT = ".Template."; //$NON-NLS-1$
+
     private DcsSchemaRestorer()
     {
         // Static entry points only.
@@ -285,6 +288,39 @@ public final class DcsSchemaRestorer
     public static Result restore(IBmModelManager manager, IProject project, String schemaFqn, boolean overwriteModel)
     {
         return restore(manager, project, schemaFqn, overwriteModel, false);
+    }
+
+    /**
+     * The template object behind a template FQN.
+     * <p>
+     * Measured: a template is held in its owner's {@code templates} list and the FQN index does
+     * not resolve it, so the owner is resolved and the template is taken from that list by name.
+     * A template the index does resolve is taken as is.
+     * </p>
+     *
+     * @param templateFqn the template FQN, {@code <Type>.<Object>.Template.<Name>}
+     * @param index the FQN index of the transaction
+     * @return the template, or <code>null</code> when neither the index nor the owner has it
+     */
+    static Object resolveTemplate(String templateFqn, Function<String, IBmObject> index)
+    {
+        IBmObject indexed = index.apply(templateFqn);
+        if (indexed != null)
+        {
+            return indexed;
+        }
+        int at = templateFqn.lastIndexOf(TEMPLATE_SEGMENT);
+        if (at < 0)
+        {
+            return null;
+        }
+        IBmObject owner = index.apply(templateFqn.substring(0, at));
+        if (owner == null)
+        {
+            return null;
+        }
+        return BmDcsHelper.findByNameInList(owner, "getTemplates", //$NON-NLS-1$
+            templateFqn.substring(at + TEMPLATE_SEGMENT.length()));
     }
 
     /**
@@ -553,7 +589,7 @@ public final class DcsSchemaRestorer
         @Override
         public Object template()
         {
-            return tx.getTopObjectByFqn(templateFqn);
+            return resolveTemplate(templateFqn, tx::getTopObjectByFqn);
         }
 
         @Override

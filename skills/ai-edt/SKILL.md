@@ -71,7 +71,7 @@ stuck or the plugin is incompatible. On a connection error or timeout do not cal
 it lives on the same server and will not answer either. `self_status` is useful in the opposite
 case: the server answers, but one operation fails.
 
-A `401` from `/mcp` while `/health` answers is not the server being down: the client sends no bearer token, or the wrong one. Every request carries `Authorization: Bearer <token>`; the token is on the AI-EDT preference page of that EDT (Window > Preferences > AI-EDT) and has to be put into the client configuration. Nothing else gets through, so there is nothing to work around.
+A `401` from `/mcp` while `/health` answers is not the server being down: the token check is on (**Require bearer token** on the AI-EDT preference page of that EDT, Window > Preferences > AI-EDT; off as shipped) and the client sends no bearer token, or the wrong one. The token is in the **Bearer token** field of that page and goes into the client configuration as `Authorization: Bearer <token>`; a server open to every interface demands it whatever the flag says. Nothing else gets through, so there is nothing to work around. A `404` naming `/mcp` on another path (`/register`, `/.well-known/...`) is the client walking OAuth discovery after that `401` - the answer is the same token.
 
 Reading and analysis without the server are fine. Writing into an EDT project without it is not.
 

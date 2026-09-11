@@ -102,6 +102,8 @@ public class GeneralPrefTab
 
     private Button allowNullOriginCheck;
 
+    private Button requireTokenCheck;
+
     private Text authTokenText;
 
     private Button showMarkersCheck;
@@ -253,6 +255,7 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_PLAIN_TEXT_MODE, plainTextCheck.getSelection());
         store.setValue(PrefKeys.PREF_BIND_ALL_INTERFACES, bindAllCheck.getSelection());
         store.setValue(PrefKeys.PREF_ALLOW_NULL_ORIGIN, allowNullOriginCheck.getSelection());
+        store.setValue(PrefKeys.PREF_AUTH_ENABLED, requireTokenCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_ENABLED, historyEnabledCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_DEPTH, historyDepthSpinner.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_ARG_CHARS, historyArgSpinner.getSelection());
@@ -320,6 +323,7 @@ public class GeneralPrefTab
         plainTextCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_PLAIN_TEXT_MODE));
         bindAllCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES));
         allowNullOriginCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
+        requireTokenCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_AUTH_ENABLED));
         authTokenText.setText(store.getDefaultString(PrefKeys.PREF_AUTH_TOKEN));
         upkeepEnabledCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_UPKEEP_ENABLED));
         upkeepSiteText.setText(store.getDefaultString(PrefKeys.PREF_UPKEEP_SITE_URL));
@@ -579,10 +583,20 @@ public class GeneralPrefTab
             + "and VS Code webviews are accepted without it."); //$NON-NLS-1$
         allowNullOriginCheck.setSelection(store.getBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
 
+        requireTokenCheck = new Button(section, SWT.CHECK);
+        requireTokenCheck.setText("Require bearer token"); //$NON-NLS-1$
+        requireTokenCheck.setLayoutData(span(section, 3));
+        requireTokenCheck.setToolTipText("OFF by default: a server listening on localhost only answers " //$NON-NLS-1$
+            + "requests without a token. On, every request to /mcp carries the token below and " //$NON-NLS-1$
+            + "a request without it gets 401. A server listening on all interfaces demands the token " //$NON-NLS-1$
+            + "whatever this says. Takes effect on Apply, on the next request."); //$NON-NLS-1$
+        requireTokenCheck.setSelection(store.getBoolean(PrefKeys.PREF_AUTH_ENABLED));
+
         Label tokenNote = new Label(section, SWT.WRAP);
-        tokenNote.setText("Every MCP client sends 'Authorization: Bearer <token>'. The token below is the " //$NON-NLS-1$
-            + "only place it is shown: copy it into each client's configuration. Apply with the field " //$NON-NLS-1$
-            + "empty and a new token is generated. A changed token takes effect on the next request."); //$NON-NLS-1$
+        tokenNote.setText("With the token required, every MCP client sends 'Authorization: Bearer <token>'. " //$NON-NLS-1$
+            + "The token below is the only place it is shown: copy it into each client's configuration. " //$NON-NLS-1$
+            + "Apply with the field empty and a new token is generated. A changed token takes effect " //$NON-NLS-1$
+            + "on the next request."); //$NON-NLS-1$
         tokenNote.setLayoutData(span(section, 3));
 
         Label tokenLabel = new Label(section, SWT.NONE);
