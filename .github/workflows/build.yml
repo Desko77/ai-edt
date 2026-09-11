@@ -74,7 +74,9 @@ jobs:
       # reach. Forty-two were already there when this was introduced and are recorded in
       # scripts/unadvertised-parameters.txt - a list that may only get shorter.
       - name: Operation parameter census
-        run: python3 scripts/check-operation-params.py --check
+        run: |
+          python3 scripts/tests/test_check_operation_params.py
+          python3 scripts/check-operation-params.py --check
 
       - name: Tool catalog census
         run: python3 scripts/check-tool-catalog.py

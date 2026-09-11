@@ -104,8 +104,8 @@
 | `DiagnosticsFacadeTool` | `clean_project` | `projectName` | delegate ProjectCleaner |
 | `DiagnosticsFacadeTool` | `get_check_description` | `checkId` | delegate CheckDocReader |
 | `DiagnosticsFacadeTool` | `get_problem_summary` | `projectName` | delegate ProblemSummaryReader |
-| `DiagnosticsFacadeTool` | `get_project_errors` | `checkId`, `compact`, `extraInfo`, `fileFilter`, `limit`, `projectName`, `scope`, `severity`, `waitForRefresh` | delegate ProjectProblemsReader |
-| `DiagnosticsFacadeTool` | `revalidate_objects` | `projectName` | delegate ObjectsRevalidator |
+| `DiagnosticsFacadeTool` | `get_project_errors` | `checkId`, `compact`, `extraInfo`, `fileFilter`, `limit`, `objects`, `projectName`, `scope`, `severity`, `waitForRefresh` | delegate ProjectProblemsReader |
+| `DiagnosticsFacadeTool` | `revalidate_objects` | `objectFqns`, `objects`, `projectName` | delegate ObjectsRevalidator |
 | `DiagnosticsFacadeTool` | `validate_for_export` | `checkFilter`, `limit`, `pathFilter`, `projectName` | delegate ValidateForExportTool |
 | `DocsLookupFacadeTool` | `get_object_help` | `format`, `language`, `objectName`, `projectName`, `typeName` | delegate GetObjectHelpTool |
 | `DocsLookupFacadeTool` | `get_platform_documentation` | `category`, `language`, `limit`, `memberName`, `memberType`, `projectName`, `typeName` | delegate PlatformDocReader |
@@ -368,7 +368,7 @@
 | `ProjectAdminFacadeTool` | `list_projects` | `operation`, `topic` | read in place |
 | `ProjectAdminFacadeTool` | `list_subsystems` | `includeContent`, `language`, `limit`, `nameFilter`, `projectName` | delegate GetSubsystemsTool |
 | `ProjectAdminFacadeTool` | `restart_edt` | `action`, `delayMs` | delegate RestartEdtTool |
-| `ProjectAdminFacadeTool` | `resync_to_disk` | `projectName`, `refresh`, `waitTimeoutMs` | delegate DiskResynchronizer |
+| `ProjectAdminFacadeTool` | `resync_to_disk` | `objects`, `projectName`, `refresh`, `waitTimeoutMs` | delegate DiskResynchronizer |
 | `ProjectAdminFacadeTool` | `self_upkeep` | `action`, `confirm`, `restart` | delegate SelfUpkeepTool |
 | `SecurityAuditFacadeTool` | `audit_role_rights` | `apply`, `format`, `includeRls`, `mode`, `objectFqn`, `objectType`, `projectName`, `roleName`, `roleNames` | delegate AuditRoleRightsTool |
 | `SecurityAuditFacadeTool` | `find_rls_violations` | `format`, `methodName`, `moduleFqn`, `projectName`, `roleName`, `scope`, `severity_filter` | delegate FindRlsViolationsTool |
@@ -389,7 +389,7 @@
 | `SyncControlTool` | `status` | `enabled`, `infobaseUuid`, `name`, `projectName` | passed in as locals |
 | `SyncControlTool` | `suppress` | `enabled`, `infobaseUuid`, `name`, `projectName` | read in place |
 | `WorkspaceMarksFacadeTool` | `get_bookmarks` | `filePath`, `limit`, `projectName` | delegate BookmarksReader |
-| `WorkspaceMarksFacadeTool` | `get_objects_by_tags` | `limit`, `projectName` | delegate TaggedObjectsReader |
+| `WorkspaceMarksFacadeTool` | `get_objects_by_tags` | `limit`, `projectName`, `tags` | delegate TaggedObjectsReader |
 | `WorkspaceMarksFacadeTool` | `get_tags` | `projectName` | delegate TagsReader |
 | `WorkspaceMarksFacadeTool` | `get_tasks` | `filePath`, `limit`, `priority`, `projectName` | delegate TasksReader |
 | `XdtoWorkshopTool` | `add_object_type` | `abstract`, `attributeFormQualified`, `dryRun`, `elementFormQualified`, `form`, `itemType`, `itemTypeNamespace`, `lowerBound`, `mixed`, `name`, `namespace`, `nillable`, `objectType`, `open`, `ownerFqn`, `packageName`, `projectName`, `type`, `typeNamespace`, `upperBound`, `variety` | read in place |

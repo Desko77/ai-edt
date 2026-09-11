@@ -72,7 +72,13 @@ def unclassified_helpers() -> list[str]:
                   if not name.startswith("extract")
                   and name not in READER_HELPERS and name not in NOT_READERS)
 EXTRACT = re.compile(READERS + r'\(\s*params\s*,\s*(?://[^\n]*\n\s*)*"([A-Za-z0-9_]+)"')
-SCHEMA_PROP = re.compile(r'\.(?:string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+# stringArray comes before string: the alternation is ordered, and "string" would match the
+# first six letters of stringArrayProperty and then fail on "Property". Measured: 12
+# declarations naming objectFqns, objects, sections and tags were invisible, and
+# revalidate_objects came out of the map knowing only projectName. numberProperty is gone -
+# SchemaComposer has no such method, so the alternative matched nothing.
+SCHEMA_PROP = re.compile(
+    r'\.(?:stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 CALLS = re.compile(r"\b([a-z]\w+)\s*\(")
 
 # Operations that read nothing on purpose. Each needs a reason, because "no parameters" is the same
