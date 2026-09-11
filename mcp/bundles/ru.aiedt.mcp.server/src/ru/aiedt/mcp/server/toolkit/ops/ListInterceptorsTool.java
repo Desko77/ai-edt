@@ -191,24 +191,65 @@ public class ListInterceptorsTool implements IMcpTool
         body.put("filesScanned", scanned[0]); //$NON-NLS-1$
         body.put("interceptorsFound", hits.size()); //$NON-NLS-1$
         body.put("truncated", hits.size() >= maxResults); //$NON-NLS-1$
-        if (baseProject != null)
-        {
-            int unresolved = 0;
-            for (Map<String, Object> e : hits)
-            {
-                if (Boolean.FALSE.equals(e.get("targetExists"))) //$NON-NLS-1$
-                {
-                    unresolved++;
-                }
-            }
-            body.put("baseProject", baseProjectName); //$NON-NLS-1$
-            body.put("unresolvedTargets", unresolved); //$NON-NLS-1$
-            body.put("validated", true); //$NON-NLS-1$
-        }
+        summarise(body, baseProject == null ? null : baseProjectName, hits);
         body.put("interceptors", hits); //$NON-NLS-1$
         body.put("hint", "kind=before/after/around/changeAndValidate maps to Russian " //$NON-NLS-1$ //$NON-NLS-2$
             + "&Перед/&После/&Вместо/&ИзменениеИКонтроль and their English aliases.");
         return ToolResult.success().put("listInterceptors", body).toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * Says what was checked against a delivery and what was not.
+     * <p>
+     * An interceptor is worth what the code it wraps is worth, and without a delivery to hold it
+     * against none of that was looked at. Said out loud rather than left to the absence of a key:
+     * a list of interceptors with nothing said against any of them reads as a list of interceptors
+     * with nothing wrong.
+     * </p>
+     * <p>
+     * The counts are in the summary and not only in the entries that carry them. A finding that
+     * lives inside the hundredth entry of a list has reached nobody.
+     * </p>
+     *
+     * @param body the answer being built.
+     * @param baseProjectName the delivery to check against, or <code>null</code> when none was
+     *        named.
+     * @param hits the interceptors found.
+     */
+    static void summarise(Map<String, Object> body, String baseProjectName,
+        List<Map<String, Object>> hits)
+    {
+        if (baseProjectName == null)
+        {
+            body.put("validated", false); //$NON-NLS-1$
+            body.put("validationNote", "no interceptor was checked against a delivery: name " //$NON-NLS-1$ //$NON-NLS-2$
+                + "baseProjectName to have each target looked up in the base configuration, and " //$NON-NLS-1$
+                + "each controlled fragment compared with the method it controls"); //$NON-NLS-1$
+            return;
+        }
+        int unresolved = 0;
+        int drifted = 0;
+        int unchecked = 0;
+        for (Map<String, Object> e : hits)
+        {
+            if (Boolean.FALSE.equals(e.get("targetExists"))) //$NON-NLS-1$
+            {
+                unresolved++;
+            }
+            if (Boolean.FALSE.equals(e.get("controlledMatches"))) //$NON-NLS-1$
+            {
+                drifted++;
+            }
+            else if (e.get("controlledNote") != null) //$NON-NLS-1$
+            {
+                unchecked++;
+            }
+        }
+        body.put("baseProject", baseProjectName); //$NON-NLS-1$
+        body.put("unresolvedTargets", unresolved); //$NON-NLS-1$
+        body.put("driftedControlled", drifted); //$NON-NLS-1$
+        body.put("controlledUnchecked", unchecked); //$NON-NLS-1$
+        body.put("validated", true); //$NON-NLS-1$
     }
 
     private static void scanFile(IFile file, List<String> allowedKinds,
