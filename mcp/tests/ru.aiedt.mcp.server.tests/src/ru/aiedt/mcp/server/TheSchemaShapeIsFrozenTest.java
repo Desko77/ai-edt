@@ -143,13 +143,18 @@ public class TheSchemaShapeIsFrozenTest
      */
     private static String shapeOf(JsonObject property)
     {
+        // The whole property goes through at once. Walking its members here and cleaning each value
+        // separately hands the property-name map of `properties` to the cleaner as if it were a
+        // schema, and a parameter called description is then dropped as if it were the keyword.
+        // The whole property goes through at once. Walking its members here and cleaning each value
+        // separately hands the property-name map of `properties` to the cleaner as if it were a
+        // schema, and a parameter called description is then dropped as if it were the keyword -
+        // without moving the snapshot, so nothing notices.
         Map<String, String> keys = new TreeMap<>();
-        for (Map.Entry<String, JsonElement> member : property.entrySet())
+        for (Map.Entry<String, JsonElement> member : withoutProse(property).getAsJsonObject()
+            .entrySet())
         {
-            if (!DESCRIPTION.equals(member.getKey()))
-            {
-                keys.put(member.getKey(), withoutProse(member.getValue()).toString());
-            }
+            keys.put(member.getKey(), member.getValue().toString());
         }
         StringBuilder line = new StringBuilder();
         for (Map.Entry<String, String> key : keys.entrySet())
@@ -298,12 +303,32 @@ public class TheSchemaShapeIsFrozenTest
                 + "\"properties\":{\"description\":{\"type\":\"string\"," //$NON-NLS-1$
                 + "\"description\":\"its own prose\"}}}").getAsJsonObject(); //$NON-NLS-1$
 
-        String shape = withoutProse(nested).toString();
+        // Asked of shapeOf, which is what the snapshot is built from. Asking withoutProse directly
+        // exercises the path that already worked and says nothing about the one that did not: the
+        // first cut walked the property's members itself and handed the property-name map over as
+        // if it were a schema, so the name went and no snapshot moved.
+        String shape = shapeOf(nested);
 
         assertTrue("the parameter name has to survive: " + shape, //$NON-NLS-1$
             shape.contains("\"description\":{\"type\":\"string\"}")); //$NON-NLS-1$
         assertTrue("the keyword beside it has to go: " + shape, //$NON-NLS-1$
             !shape.contains("the prose") && !shape.contains("its own prose")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void droppingANestedParameterMovesTheShape()
+    {
+        // The point of keeping the name: if it can leave without moving the shape, the contract is
+        // not held for anything declared inside an object parameter.
+        JsonObject withIt = JsonParser.parseString(
+            "{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"}," //$NON-NLS-1$
+                + "\"other\":{\"type\":\"string\"}}}").getAsJsonObject(); //$NON-NLS-1$
+        JsonObject withoutIt = JsonParser.parseString(
+            "{\"type\":\"object\",\"properties\":{\"other\":{\"type\":\"string\"}}}") //$NON-NLS-1$
+            .getAsJsonObject();
+
+        assertTrue("a parameter that left has to change the shape, whatever it is called", //$NON-NLS-1$
+            !shapeOf(withIt).equals(shapeOf(withoutIt)));
     }
 
     @Test
