@@ -45,6 +45,9 @@ public final class OperationParameters
 
     private static volatile Map<String, List<String>> loaded;
 
+    /** Filled by the same read as {@link #loaded}, and only under its lock. */
+    private static final Map<String, List<String>> establishedByKey = new LinkedHashMap<>();
+
     private OperationParameters()
     {
     }
@@ -150,8 +153,49 @@ public final class OperationParameters
         }
     }
 
+    /**
+     * The parameters established as this operation's own, without the ones the facade reads for
+     * every operation it has.
+     * <p>
+     * What per-operation help may print. The wider set {@link #of} returns is right for refusing a
+     * call over an argument nobody reads, and wrong for telling a caller what one operation takes:
+     * a facade that resolves its subject before dispatching reads those arguments on every call,
+     * and listing them under one operation says that operation takes them.
+     * </p>
+     * <p>
+     * Narrow rather than exact. The derivation follows one level into the handler, so an argument
+     * read deeper lands in the wider set instead - help prints both, labelled, so nothing is hidden
+     * and nothing is attributed to an operation that does not take it.
+     * </p>
+     *
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param operation the operation name.
+     * @return the established parameters as {@code name:kind}, or an empty list
+     */
+    public static List<String> establishedFor(String facadeClass, String operation)
+    {
+        map();
+        List<String> found = establishedByKey.get(facadeClass + ":" + operation); //$NON-NLS-1$
+        return found == null ? Collections.emptyList() : found;
+    }
+
+    private static List<String> entriesOf(String cell)
+    {
+        List<String> out = new ArrayList<>();
+        for (String entry : cell.split(",")) //$NON-NLS-1$
+        {
+            String trimmed = entry.trim();
+            if (!trimmed.isEmpty())
+            {
+                out.add(trimmed);
+            }
+        }
+        return out;
+    }
+
     private static Map<String, List<String>> read()
     {
+        establishedByKey.clear();
         Map<String, List<String>> map = new LinkedHashMap<>();
         Bundle bundle = FrameworkUtil.getBundle(OperationParameters.class);
         if (bundle == null)
@@ -178,16 +222,16 @@ public final class OperationParameters
                 {
                     continue;
                 }
-                List<String> declared = new ArrayList<>();
-                for (String entry : cells[2].split(",")) //$NON-NLS-1$
-                {
-                    String trimmed = entry.trim();
-                    if (!trimmed.isEmpty())
-                    {
-                        declared.add(trimmed);
-                    }
-                }
-                map.put(cells[0] + ":" + cells[1], Collections.unmodifiableList(declared)); //$NON-NLS-1$
+                List<String> established = entriesOf(cells[2]);
+                List<String> wide = cells.length >= 5 ? entriesOf(cells[4]) : new ArrayList<>();
+                String key = cells[0] + ":" + cells[1]; //$NON-NLS-1$
+                // Both columns together are what the map used to hold in one, and what
+                // UnreadArguments must keep seeing: it refuses a call over an argument nobody
+                // reads, so a set short of the truth turns away calls that work.
+                List<String> all = new ArrayList<>(established);
+                all.addAll(wide);
+                map.put(key, Collections.unmodifiableList(all));
+                establishedByKey.put(key, Collections.unmodifiableList(established));
             }
         }
         catch (Exception cannotRead)
