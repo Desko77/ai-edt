@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -136,14 +137,29 @@ public class FindRlsViolationsTool implements IMcpTool
 
         boolean noRlsConfigured = checkNoRls(project, roleName);
         List<Map<String, Object>> findings = new ArrayList<>();
+        WatchForCancel watch = WatchForCancel.begin();
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
             if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
             {
+                if (watch.stopHere())
+                {
+                    // Thrown rather than answered false: false prunes this one resource
+                    // and leaves the rest of the project to walk.
+                    throw new org.eclipse.core.runtime.OperationCanceledException();
+                }
                 scanFile((IFile) resource, findings);
             }
             return true;
         };
-        project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        try
+        {
+            project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        }
+        catch (org.eclipse.core.runtime.OperationCanceledException stopped)
+        {
+            // Caught here so the findings collected so far are kept; the answer says
+            // they are part of the work rather than all of it.
+        }
 
         // Severity filter
         List<Map<String, Object>> filtered = new ArrayList<>();
@@ -158,6 +174,7 @@ public class FindRlsViolationsTool implements IMcpTool
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("findings", filtered.size()); //$NON-NLS-1$
         ToolResult tr = ToolResult.success();
+        tr.put("cancelled", watch.note("files")); //$NON-NLS-1$
         if (noRlsConfigured)
         {
             tr.put("noRlsConfigured", true); //$NON-NLS-1$

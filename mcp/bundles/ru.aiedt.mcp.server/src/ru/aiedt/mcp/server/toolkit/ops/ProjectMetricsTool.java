@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -116,12 +117,16 @@ public class ProjectMetricsTool implements IMcpTool
     private String collect(IProject project, String scope, Map<String, String> params,
         boolean includeDebtList, int timeoutSeconds, String format) throws Exception
     {
+        // One watch for the whole call. The two walks that read files - modules and
+        // forms - both ask it; the reflection over the configuration between them is
+        // a handful of calls and is left alone.
+        WatchForCancel watch = WatchForCancel.begin();
         ProjectMetricsCollector collector = new ProjectMetricsCollector(project, timeoutSeconds,
             includeDebtList);
 
         // Step 1: BSL files
         List<IFile> bslFiles = collectBslFiles(project);
-        collector.scanBsl(bslFiles);
+        collector.scanBsl(bslFiles, watch);
 
         // Step 2: EDT markers
         collector.scanMarkers();
@@ -130,7 +135,7 @@ public class ProjectMetricsTool implements IMcpTool
         Map<String, Integer> objectsByType = collectObjectsByType(project);
 
         // Step 4: forms (best-effort - count *.form files)
-        FormStats formStats = collectFormStats(project);
+        FormStats formStats = collectFormStats(project, watch);
 
         Map<String, Object> metrics = collector.toMetrics(objectsByType, formStats.formCount,
             formStats.totalItems, formStats.largeFormsOver100);
@@ -140,10 +145,12 @@ public class ProjectMetricsTool implements IMcpTool
             return ToolResult.success()
                 .put("scope", scope) //$NON-NLS-1$
                 .put("format", "markdown") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("text", renderMarkdown(metrics)) //$NON-NLS-1$
+                .put("text", renderMarkdown(metrics, watch.note("files"))) //$NON-NLS-1$ //$NON-NLS-2$
+                .put("cancelled", watch.note("files")) //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
         }
-        ToolResult tr = ToolResult.success().put("scope", scope); //$NON-NLS-1$
+        ToolResult tr = ToolResult.success().put("scope", scope) //$NON-NLS-1$
+            .put("cancelled", watch.note("files")); //$NON-NLS-1$
         for (Map.Entry<String, Object> entry : metrics.entrySet())
         {
             tr.put(entry.getKey(), entry.getValue());
@@ -231,7 +238,8 @@ public class ProjectMetricsTool implements IMcpTool
         return result;
     }
 
-    private FormStats collectFormStats(IProject project) throws Exception
+    private FormStats collectFormStats(IProject project, WatchForCancel watch)
+        throws Exception
     {
         FormStats stats = new FormStats();
         IResourceVisitor visitor = new IResourceVisitor()
@@ -241,6 +249,12 @@ public class ProjectMetricsTool implements IMcpTool
             {
                 if (resource instanceof IFile && resource.getName().endsWith(".form")) //$NON-NLS-1$
                 {
+                    if (watch.stopHere())
+                    {
+                        // Thrown, not answered false: false skips this resource and
+                        // leaves the rest of the project to walk.
+                        throw new org.eclipse.core.runtime.OperationCanceledException();
+                    }
                     stats.formCount++;
                     int items = countFormItems((IFile) resource);
                     stats.totalItems += items;
@@ -252,7 +266,15 @@ public class ProjectMetricsTool implements IMcpTool
                 return true;
             }
         };
-        project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        try
+        {
+            project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        }
+        catch (org.eclipse.core.runtime.OperationCanceledException stopped)
+        {
+            // The counts gathered so far are kept, and the answer says they are
+            // part of the project rather than all of it.
+        }
         return stats;
     }
 
@@ -278,13 +300,20 @@ public class ProjectMetricsTool implements IMcpTool
         }
     }
 
-    private static String renderMarkdown(Map<String, Object> metrics)
+    private static String renderMarkdown(Map<String, Object> metrics, String cancelled)
     {
         StringBuilder sb = new StringBuilder();
         sb.append("# Project metrics\n\n"); //$NON-NLS-1$
+        if (cancelled != null)
+        {
+            sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (Boolean.TRUE.equals(metrics.get("partial"))) //$NON-NLS-1$
         {
-            sb.append("> **partial=true** — некоторые модули не отсканированы за timeout\n\n"); //$NON-NLS-1$
+            // The cause is not named here: the deadline and the operator both set it, and
+            // the line above says which when it was the operator.
+            sb.append("> **partial=true** - some modules were not read; every count below"
+                + " is a floor\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         appendMapAsTable(sb, "Objects", (Map<?, ?>) metrics.get("objects")); //$NON-NLS-1$ //$NON-NLS-2$
         appendMapAsTable(sb, "Modules", (Map<?, ?>) metrics.get("modules")); //$NON-NLS-1$ //$NON-NLS-2$

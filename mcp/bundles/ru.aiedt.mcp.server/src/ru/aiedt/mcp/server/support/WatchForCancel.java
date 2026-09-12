@@ -25,9 +25,11 @@ public final class WatchForCancel
 {
     private final ToolCallScope.Cancellation flag;
 
-    private boolean fired;
+    /** Written on the thread that walks and read on the one that answers; those are not always the
+     * same thread, and a stale read here would drop the note from the answer. */
+    private volatile boolean fired;
 
-    private int reached;
+    private volatile int reached;
 
     private WatchForCancel(ToolCallScope.Cancellation flag)
     {
@@ -69,9 +71,28 @@ public final class WatchForCancel
     }
 
     /**
+     * Whether the operator has cancelled, without counting a boundary.
+     * <p>
+     * For a walk this code does not own - the reference finder of the editing framework, say -
+     * which polls a progress monitor from threads of its own. Counting there would race, and the
+     * count is what the note reports, so the boundary count stays with the loops written here.
+     * </p>
+     *
+     * @return <code>true</code> when the operator cancelled and the caller should stop
+     */
+    public boolean raised()
+    {
+        if (flag != null && flag.isCancelled())
+        {
+            fired = true;
+        }
+        return fired;
+    }
+
+    /**
      * Whether the scan was stopped rather than finished.
      *
-     * @return <code>true</code> when {@link #stopHere} told the caller to stop
+     * @return <code>true</code> when {@link #stopHere} or {@link #raised} told the caller to stop
      */
     public boolean stopped()
     {

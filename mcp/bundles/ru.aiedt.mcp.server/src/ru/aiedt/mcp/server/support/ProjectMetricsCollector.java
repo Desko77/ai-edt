@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.support;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -77,8 +78,15 @@ public final class ProjectMetricsCollector
     /**
      * Runs the BSL scan: walks every {@code .bsl} file in the project, counts
      * LOC, methods, complexity, debt indicators, test modules.
+     * <p>
+     * A file the deadline or the operator cuts short is counted as unscanned rather
+     * than as empty, and the whole answer is marked partial.
+     * </p>
+     *
+     * @param bslFiles the modules to read
+     * @param watch the operator's cancel flag, asked once per file
      */
-    public void scanBsl(List<IFile> bslFiles)
+    public void scanBsl(List<IFile> bslFiles, WatchForCancel watch)
     {
         if (bslFiles == null || bslFiles.isEmpty())
         {
@@ -86,8 +94,11 @@ public final class ProjectMetricsCollector
         }
         for (IFile file : bslFiles)
         {
-            if (System.currentTimeMillis() > deadlineMillis)
+            if (System.currentTimeMillis() > deadlineMillis || watch.stopHere())
             {
+                // Kept as a continue rather than a break: the loop past this point only
+                // names the modules it did not read, and that list is what makes a
+                // partial answer readable as partial.
                 partial = true;
                 unscannedModules.add(file.getFullPath().toString());
                 continue;

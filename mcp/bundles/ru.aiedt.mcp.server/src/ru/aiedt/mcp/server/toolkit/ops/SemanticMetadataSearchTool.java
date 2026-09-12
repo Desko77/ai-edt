@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -119,10 +120,11 @@ public class SemanticMetadataSearchTool implements IMcpTool
         }
         String needle = query.toLowerCase();
         List<Map<String, Object>> hits = new ArrayList<>();
+        WatchForCancel watch = WatchForCancel.begin();
         // EMF references on Configuration include all the catalogs / documents / etc collections.
         for (EReference ref : cfg.eClass().getEAllReferences())
         {
-            if (hits.size() >= max)
+            if (hits.size() >= max || watch.stopped())
             {
                 break;
             }
@@ -138,7 +140,9 @@ public class SemanticMetadataSearchTool implements IMcpTool
             }
             for (Object item : list)
             {
-                if (hits.size() >= max)
+                // One object is the boundary: a name, a synonym and a comment are read
+                // per object, so stopping between two leaves every hit whole.
+                if (hits.size() >= max || watch.stopHere())
                 {
                     break;
                 }
@@ -214,6 +218,12 @@ public class SemanticMetadataSearchTool implements IMcpTool
         body.put("query", query); //$NON-NLS-1$
         body.put("matchCount", hits.size()); //$NON-NLS-1$
         body.put("truncated", hits.size() >= max); //$NON-NLS-1$
+        if (watch.stopped())
+        {
+            // Kept apart from truncated, which says the max cap was reached and invites
+            // the caller to raise it and ask again.
+            body.put("cancelled", watch.note("objects")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         body.put("results", hits); //$NON-NLS-1$
         return ToolResult.success().put("semanticMetadataSearch", body).toJson(); //$NON-NLS-1$
     }

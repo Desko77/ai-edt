@@ -101,6 +101,47 @@ public class AStoppedScanSaysItWasStoppedTest
     }
 
     @Test
+    public void askingWithoutCountingStillMakesTheAnswerSaySo()
+    {
+        // The boundary belongs to loops written here; a walk handed to someone else's progress
+        // monitor reports through the same watch without adding to a count it cannot keep.
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+            watch.stopHere();
+            flag.cancel("the operator asked to stop");
+
+            assertTrue("the flag is raised, so the walk has to stop", watch.raised());
+            assertEquals("asking without counting must not move the count", 1, watch.reached());
+            assertNotNull("a walk stopped this way still has to say so", watch.note("modules"));
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    @Test
+    public void askingWithoutCountingOnAQuietFlagStopsNothing()
+    {
+        ToolCallScope.enter(ToolCallScope.forCancellation(new ToolCallScope.Cancellation()));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+
+            assertFalse(watch.raised());
+            assertFalse(watch.stopped());
+            assertNull(watch.note("modules"));
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    @Test
     public void aScopeWithAFlagThatWasNeverRaisedStopsNothing()
     {
         // The control. Without it the two tests above would pass just as well against a watch that
