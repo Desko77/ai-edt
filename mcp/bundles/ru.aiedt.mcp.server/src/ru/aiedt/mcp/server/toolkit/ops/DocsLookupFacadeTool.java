@@ -156,7 +156,7 @@ public class DocsLookupFacadeTool implements IMcpTool
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
@@ -186,7 +186,7 @@ public class DocsLookupFacadeTool implements IMcpTool
         }
     }
 
-    private static String buildHelp(String topic)
+    private static String buildHelp(String topic, String schema)
     {
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
@@ -216,7 +216,8 @@ public class DocsLookupFacadeTool implements IMcpTool
                 + "get_object_help |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(), "workflow"); //$NON-NLS-1$
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
+            "workflow", "DocsLookupFacadeTool", schema); //$NON-NLS-1$
     }
 
     /**

@@ -296,7 +296,7 @@ public class InsightsFacadeTool implements IMcpTool
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
@@ -394,7 +394,7 @@ public class InsightsFacadeTool implements IMcpTool
         return Collections.unmodifiableMap(m);
     }
 
-    private static String buildHelp(String topic)
+    private static String buildHelp(String topic, String schema)
     {
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
@@ -456,7 +456,8 @@ public class InsightsFacadeTool implements IMcpTool
         // it routes to, and this facade's own schema does not repeat them. Without this, the detail
         // is reachable only by calling the standalone tool - which a caller who found the operation
         // here has no reason to know exists.
-        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(), "workflow"); //$NON-NLS-1$
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
+            "workflow", "InsightsFacadeTool", schema); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

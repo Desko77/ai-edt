@@ -6,10 +6,12 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -103,6 +105,97 @@ public final class ParameterHelp
             text.append("\n\n"); //$NON-NLS-1$
         }
         return text.toString();
+    }
+
+    /**
+     * The named parameters of one schema, in two groups.
+     * <p>
+     * For an operation a facade handles itself. There is no schema of its own to render, so the
+     * names come from the operation-parameter map and the descriptions from the schema the facade
+     * declares - the two halves of one answer, neither of which is enough alone.
+     * </p>
+     * <p>
+     * Two groups because the map answers two questions. What the operation's own code reads is
+     * established as its own; what the facade reads before dispatching is the same for every
+     * operation it has, and printing it as the operation's would say it takes something it does
+     * not. Both are shown, because a caller may send either.
+     * </p>
+     *
+     * @param operation the operation asked about, for the heading.
+     * @param inputSchema the facade's own schema, where the descriptions live.
+     * @param established parameter names established for this operation.
+     * @param shared parameter names the facade reads for every operation.
+     * @return markdown, or a line saying why there is none
+     */
+    public static String renderNamed(String operation, String inputSchema,
+        Collection<String> established, Collection<String> shared)
+    {
+        JsonObject properties = propertiesOf(inputSchema);
+        if (properties == null)
+        {
+            return "## " + operation + " - parameters\n\nThe schema this facade declares could " //$NON-NLS-1$ //$NON-NLS-2$
+                + "not be read, so the descriptions of these parameters cannot be shown.\n"; //$NON-NLS-1$
+        }
+        StringBuilder text = new StringBuilder("## ").append(operation) //$NON-NLS-1$
+            .append(" - parameters\n\n"); //$NON-NLS-1$
+        if (established.isEmpty() && shared.isEmpty())
+        {
+            return text.append("The parameters of this operation are not recorded. The schema " //$NON-NLS-1$
+                + "this facade declares is what a call is validated against.\n").toString(); //$NON-NLS-1$
+        }
+        appendGroup(text, properties, established,
+            "Established for this operation\n\n"); //$NON-NLS-1$
+        appendGroup(text, properties, shared,
+            "Read by this facade for every operation it has\n\n"); //$NON-NLS-1$
+        return text.toString();
+    }
+
+    private static void appendGroup(StringBuilder text, JsonObject properties,
+        Collection<String> names, String heading)
+    {
+        if (names.isEmpty())
+        {
+            return;
+        }
+        text.append("### ").append(heading); //$NON-NLS-1$
+        for (String name : new TreeSet<>(names))
+        {
+            text.append("- **").append(name).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
+            JsonElement property = properties.get(name);
+            if (property != null && property.isJsonObject())
+            {
+                JsonObject declared = property.getAsJsonObject();
+                text.append("  _").append(kindOf(declared)).append("_"); //$NON-NLS-1$ //$NON-NLS-2$
+                JsonElement described = declared.get("description"); //$NON-NLS-1$
+                if (described != null && described.isJsonPrimitive())
+                {
+                    text.append(" - ").append(described.getAsString()); //$NON-NLS-1$
+                }
+            }
+            else
+            {
+                // The map says the operation reads it and the schema does not declare it. Both
+                // facts are worth the caller's attention, and neither is this method's to settle.
+                text.append(" - read by the code, and not declared in this facade's schema"); //$NON-NLS-1$
+            }
+            text.append("\n"); //$NON-NLS-1$
+        }
+        text.append("\n"); //$NON-NLS-1$
+    }
+
+    private static JsonObject propertiesOf(String inputSchema)
+    {
+        try
+        {
+            JsonElement parsed = JsonParser.parseString(inputSchema);
+            return parsed.isJsonObject() ? parsed.getAsJsonObject().getAsJsonObject("properties") //$NON-NLS-1$
+                : null;
+        }
+        catch (RuntimeException notJson)
+        {
+            Activator.logWarning("a facade's schema would not parse for help: " + notJson); //$NON-NLS-1$
+            return null;
+        }
     }
 
     /**

@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -44,7 +46,7 @@ public final class FacadeParameterHelp
      * @return the parameters of that operation, or a refusal naming what can be asked for
      */
     public static String answer(String topic, Map<String, Supplier<IMcpTool>> described,
-        Set<String> dispatched, String namedTopics)
+        Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema)
     {
         Supplier<IMcpTool> known = topic == null ? null : described.get(topic);
         if (known != null)
@@ -59,25 +61,41 @@ public final class FacadeParameterHelp
             // An operation this facade handles itself rather than routing to a tool. Told apart
             // from a topic that names nothing, because a caller reading "unknown" about an
             // operation they just found in the catalog learns the wrong thing.
-            return notRecorded(topic);
+            return fromTheMap(topic, facadeClass, facadeSchema);
         }
         return "# Unknown topic '" + topic + "'.\n\nAvailable: " + namedTopics //$NON-NLS-1$ //$NON-NLS-2$
             + ", or the name of an operation for its parameters.\n"; //$NON-NLS-1$
     }
 
     /**
-     * The same, for a topic that names an operation the facade dispatches but cannot describe.
+     * What an operation the facade handles itself takes, named by the map and described by the
+     * facade's own schema.
      *
      * @param operation the operation asked about.
-     * @return a line saying the parameters are not recorded for it
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param facadeSchema the schema the facade declares.
+     * @return the parameters, or a line saying they are not recorded
      */
-    public static String notRecorded(String operation)
+    public static String fromTheMap(String operation, String facadeClass, String facadeSchema)
     {
-        // Said, because an empty answer and an unrecorded one read alike and mean opposite things:
-        // one says the operation takes nothing, the other that nobody wrote down what it takes.
-        return "# " + operation + " - parameters\n\nThis facade handles the operation itself " //$NON-NLS-1$ //$NON-NLS-2$
-            + "rather than routing it to a tool, so there is no separate schema to show. The " //$NON-NLS-1$
-            + "parameters it takes are among those this facade declares; which of them, the " //$NON-NLS-1$
-            + "descriptions of those parameters say.\n"; //$NON-NLS-1$
+        List<String> established = OperationParameters.establishedFor(facadeClass, operation);
+        List<String> all = OperationParameters.of(facadeClass, operation);
+        if (all.isEmpty())
+        {
+            // Said, because an empty answer and an unrecorded one read alike and mean opposite
+            // things: one says the operation takes nothing, the other that nobody wrote down what
+            // it takes.
+            return "## " + operation + " - parameters\n\nThe parameters of this operation are " //$NON-NLS-1$ //$NON-NLS-2$
+                + "not recorded. The schema this facade declares is what a call is validated " //$NON-NLS-1$
+                + "against.\n"; //$NON-NLS-1$
+        }
+        Set<String> own = new LinkedHashSet<>();
+        for (String entry : established)
+        {
+            own.add(OperationParameters.nameOf(entry));
+        }
+        Set<String> shared = new LinkedHashSet<>(all);
+        shared.removeAll(own);
+        return ParameterHelp.renderNamed(operation, facadeSchema, own, shared);
     }
 }

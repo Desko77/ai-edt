@@ -30,6 +30,14 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  */
 public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
 {
+    /**
+     * A facade schema for the answers that reach it. The class name passed beside it names no
+     * facade the operation-parameter map knows, so an operation handled inside the facade is
+     * answered as unrecorded rather than from a map row that belongs to something else.
+     */
+    private static final String SCHEMA = "{\"type\":\"object\",\"properties\":{"
+        + "\"projectName\":{\"type\":\"string\",\"description\":\"which project\"}}}";
+
     private static Map<String, Supplier<IMcpTool>> described()
     {
         Map<String, Supplier<IMcpTool>> map = new LinkedHashMap<>();
@@ -49,7 +57,7 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
     public void anOperationWithAToolBehindItAnswersThatToolsParameters()
     {
         String answer =
-            FacadeParameterHelp.answer("routed", described(), dispatched(), "workflow");
+            FacadeParameterHelp.answer("routed", described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
 
         assertTrue(answer, answer.contains("routed - parameters"));
         assertTrue("the parameters come from the tool the operation routes to",
@@ -60,7 +68,7 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
     public void anOperationTheFacadeHandlesItselfSaysItIsNotRecorded()
     {
         String answer =
-            FacadeParameterHelp.answer("handled_here", described(), dispatched(), "workflow");
+            FacadeParameterHelp.answer("handled_here", described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
 
         // What is asserted is the meaning, not the sentence: the answer is about this operation,
         // it does not call the operation unknown, and it does not pretend to list parameters. An
@@ -77,7 +85,7 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
     public void aTopicNamingNothingIsRefusedAndSaysWhatCanBeAsked()
     {
         String answer =
-            FacadeParameterHelp.answer("no such thing", described(), dispatched(), "workflow");
+            FacadeParameterHelp.answer("no such thing", described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
 
         assertTrue(answer, answer.contains("Unknown topic"));
         assertTrue(answer, answer.contains("workflow"));
@@ -88,11 +96,11 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
     {
         // The point of the class in one assertion: two of these were one answer before, and a
         // caller could not act differently on them because they read the same.
-        String routed = FacadeParameterHelp.answer("routed", described(), dispatched(), "workflow");
+        String routed = FacadeParameterHelp.answer("routed", described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
         String here =
-            FacadeParameterHelp.answer("handled_here", described(), dispatched(), "workflow");
+            FacadeParameterHelp.answer("handled_here", described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
         String nothing =
-            FacadeParameterHelp.answer("nothing", described(), dispatched(), "workflow");
+            FacadeParameterHelp.answer("nothing", described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
 
         assertTrue(!routed.equals(here) && !here.equals(nothing) && !routed.equals(nothing));
     }
@@ -100,7 +108,7 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
     @Test
     public void aNullTopicIsRefusedRatherThanThrown()
     {
-        String answer = FacadeParameterHelp.answer(null, described(), dispatched(), "workflow");
+        String answer = FacadeParameterHelp.answer(null, described(), dispatched(), "workflow", "NoSuchFacade", SCHEMA);
 
         assertTrue(answer, answer.contains("Unknown topic"));
     }
@@ -112,7 +120,7 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
         // must be the refusal, not an exception on the way to it.
         String answer = FacadeParameterHelp.answer("routed",
             Collections.<String, Supplier<IMcpTool>> emptyMap(), Collections.<String> emptySet(),
-            "workflow");
+            "workflow", "NoSuchFacade", SCHEMA);
 
         assertTrue(answer, answer.contains("Unknown topic"));
     }
