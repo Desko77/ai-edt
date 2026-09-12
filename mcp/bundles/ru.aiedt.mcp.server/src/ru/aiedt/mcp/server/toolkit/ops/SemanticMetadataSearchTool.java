@@ -124,7 +124,7 @@ public class SemanticMetadataSearchTool implements IMcpTool
         // EMF references on Configuration include all the catalogs / documents / etc collections.
         for (EReference ref : cfg.eClass().getEAllReferences())
         {
-            if (hits.size() >= max || watch.stopped())
+            if (hits.size() >= max || watch.raised())
             {
                 break;
             }

@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -36,7 +37,7 @@ public class WorkHandedToAnotherThreadKeepsTheCallTest
         Supplier<Boolean> carried;
         try
         {
-            carried = ToolCallScope.carry(() -> {
+            carried = ToolCallScope.carryCancellation(() -> {
                 ToolCallScope seen = ToolCallScope.current();
                 return seen != null && seen.cancellation().isCancelled();
             });
@@ -74,7 +75,8 @@ public class WorkHandedToAnotherThreadKeepsTheCallTest
             ToolCallScope.exit();
         }
 
-        assertNull("a plain hand-off carries no scope, which is why carry exists", seen.get());
+        assertNull("a plain hand-off carries no scope, which is why carryCancellation exists",
+            seen.get());
     }
 
     @Test
@@ -83,13 +85,13 @@ public class WorkHandedToAnotherThreadKeepsTheCallTest
         // Nesting: the UI thread can already be inside a call when a second one hands it work.
         // Removing the binding at the end would strand that outer call for the rest of its run.
         ToolCallScope outer = ToolCallScope.forCancellation(new ToolCallScope.Cancellation());
-        ToolCallScope inner = ToolCallScope.forCancellation(new ToolCallScope.Cancellation());
+        ToolCallScope.Cancellation innerFlag = new ToolCallScope.Cancellation();
 
-        ToolCallScope.enter(inner);
+        ToolCallScope.enter(ToolCallScope.forCancellation(innerFlag));
         Supplier<ToolCallScope> carried;
         try
         {
-            carried = ToolCallScope.carry(ToolCallScope::current);
+            carried = ToolCallScope.carryCancellation(ToolCallScope::current);
         }
         finally
         {
@@ -113,8 +115,38 @@ public class WorkHandedToAnotherThreadKeepsTheCallTest
         host.start();
         host.join();
 
-        assertSame("the carried call is the one the work runs under", inner, inside.get());
+        assertSame("the flag the work reads has to be the one the call raises", innerFlag,
+            inside.get().cancellation());
         assertSame("the host thread's own call has to come back", outer, after.get());
+    }
+
+    @Test
+    public void theCallItselfDoesNotTravelWithTheWork() throws Exception
+    {
+        // Work posted to a wedged UI thread outlives the caller's wait. Carrying the whole scope
+        // would hold that call - and its connection - alive until the queue drained.
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope mine = ToolCallScope.create(null);
+        ToolCallScope.enter(mine);
+        Supplier<ToolCallScope> carried;
+        try
+        {
+            carried = ToolCallScope.carryCancellation(ToolCallScope::current);
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+
+        AtomicReference<ToolCallScope> inside = new AtomicReference<>();
+        Thread elsewhere = new Thread(() -> inside.set(carried.get()));
+        elsewhere.start();
+        elsewhere.join();
+
+        assertNotSame("the call must not be handed over with the work", mine, inside.get());
+        assertSame("the flag must be, or nothing over there can stop", mine.cancellation(),
+            inside.get().cancellation());
+        assertFalse("a flag nobody raised stays down", flag.isCancelled());
     }
 
     @Test
@@ -123,9 +155,9 @@ public class WorkHandedToAnotherThreadKeepsTheCallTest
         ToolCallScope.exit();
         Supplier<ToolCallScope> work = ToolCallScope::current;
 
-        Supplier<ToolCallScope> carried = ToolCallScope.carry(work);
+        Supplier<ToolCallScope> carried = ToolCallScope.carryCancellation(work);
 
-        assertSame("with no scope to carry the work is handed back untouched", work, carried);
+        assertSame("with no call to carry the work is handed back untouched", work, carried);
         assertNull(carried.get());
     }
 
@@ -138,7 +170,7 @@ public class WorkHandedToAnotherThreadKeepsTheCallTest
         Supplier<String> carried;
         try
         {
-            carried = ToolCallScope.carry(() -> {
+            carried = ToolCallScope.carryCancellation(() -> {
                 WatchForCancel watch = WatchForCancel.begin();
                 int read = 0;
                 for (int i = 0; i < 5; i++)

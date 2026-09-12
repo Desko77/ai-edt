@@ -461,7 +461,7 @@ public class ReferenceLocator implements IMcpTool
 
             for (int i = 1; i < scope.projects.size(); i++)
             {
-                if (master.references.size() >= limit || watch.stopped())
+                if (master.references.size() >= limit || watch.raised())
                 {
                     break; // global cap reached, or the operator stopped
                 }
@@ -932,7 +932,7 @@ public class ReferenceLocator implements IMcpTool
             IBmObject targetBmObject = (IBmObject)targetObject;
             if (filter.back)
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     phasesCutShort.add("back"); //$NON-NLS-1$
                 }
@@ -943,7 +943,7 @@ public class ReferenceLocator implements IMcpTool
             }
             if (filter.produced)
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     phasesCutShort.add("produced"); //$NON-NLS-1$
                 }
@@ -954,7 +954,7 @@ public class ReferenceLocator implements IMcpTool
             }
             if (filter.predefined)
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     phasesCutShort.add("predefined"); //$NON-NLS-1$
                 }
@@ -965,7 +965,7 @@ public class ReferenceLocator implements IMcpTool
             }
             if (filter.fields)
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     phasesCutShort.add("fields"); //$NON-NLS-1$
                 }
@@ -976,7 +976,7 @@ public class ReferenceLocator implements IMcpTool
             }
             if (filter.bsl)
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     phasesCutShort.add("bsl"); //$NON-NLS-1$
                 }
@@ -1077,7 +1077,7 @@ public class ReferenceLocator implements IMcpTool
                 // Asked at the child, not only at the cross-reference: a child with no
                 // back-references never reaches the inner loop, and the walk would go
                 // on reading the model after the operator stopped it.
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     return;
                 }
@@ -1120,7 +1120,7 @@ public class ReferenceLocator implements IMcpTool
         {
             for (PredefinedItem item : PredefinedItemUtil.getItems((EObject)target))
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     return;
                 }
@@ -1163,7 +1163,7 @@ public class ReferenceLocator implements IMcpTool
             FieldSource fieldSource = (FieldSource)target;
             for (Object fieldObj : fieldSource.getFields())
             {
-                if (watch.stopped())
+                if (watch.raised())
                 {
                     return;
                 }
