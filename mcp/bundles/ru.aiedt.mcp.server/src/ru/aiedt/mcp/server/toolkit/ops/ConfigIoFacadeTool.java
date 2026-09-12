@@ -86,6 +86,8 @@ public class ConfigIoFacadeTool implements IMcpTool
         m.put("import_configuration_from_xml", ConfigurationXmlImporter::new); //$NON-NLS-1$
         m.put("export_object", ExportObjectTool::new); //$NON-NLS-1$
         m.put("export_common_picture", CommonPictureExporter::new); //$NON-NLS-1$
+        m.put("import_configuration_from_binary", ConfigurationBinaryImporter::new); //$NON-NLS-1$
+        m.put("unpack_external_binary", ExternalBinaryUnpacker::new); //$NON-NLS-1$
         return Collections.unmodifiableMap(m);
     }
 

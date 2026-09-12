@@ -75,8 +75,9 @@ public final class FacadeParameterHelp
     {
         // Said, because an empty answer and an unrecorded one read alike and mean opposite things:
         // one says the operation takes nothing, the other that nobody wrote down what it takes.
-        return "# " + operation + " - parameters\n\nThe parameters of this operation are not " //$NON-NLS-1$ //$NON-NLS-2$
-            + "recorded here. Its schema is the one this facade declares, and the operation's " //$NON-NLS-1$
-            + "own entry in the catalog says which of those it uses.\n"; //$NON-NLS-1$
+        return "# " + operation + " - parameters\n\nThis facade handles the operation itself " //$NON-NLS-1$ //$NON-NLS-2$
+            + "rather than routing it to a tool, so there is no separate schema to show. The " //$NON-NLS-1$
+            + "parameters it takes are among those this facade declares; which of them, the " //$NON-NLS-1$
+            + "descriptions of those parameters say.\n"; //$NON-NLS-1$
     }
 }

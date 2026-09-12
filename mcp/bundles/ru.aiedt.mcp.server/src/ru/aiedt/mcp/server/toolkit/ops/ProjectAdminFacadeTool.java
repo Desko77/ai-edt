@@ -89,6 +89,7 @@ public class ProjectAdminFacadeTool implements IMcpTool
         m.put("create_project", ProjectCreator::new); //$NON-NLS-1$
         m.put("delete_project", ProjectRemover::new); //$NON-NLS-1$
         m.put("resync_to_disk", DiskResynchronizer::new); //$NON-NLS-1$
+        m.put("self_upkeep", SelfUpkeepTool::new); //$NON-NLS-1$
         m.put("restart_edt", RestartEdtTool::new); //$NON-NLS-1$
         m.put("list_subsystems", GetSubsystemsTool::new); //$NON-NLS-1$
         return Collections.unmodifiableMap(m);

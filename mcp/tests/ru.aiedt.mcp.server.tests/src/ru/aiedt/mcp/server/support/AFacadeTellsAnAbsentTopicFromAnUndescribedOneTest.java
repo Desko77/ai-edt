@@ -62,9 +62,15 @@ public class AFacadeTellsAnAbsentTopicFromAnUndescribedOneTest
         String answer =
             FacadeParameterHelp.answer("handled_here", described(), dispatched(), "workflow");
 
-        assertTrue(answer, answer.contains("not"));
+        // What is asserted is the meaning, not the sentence: the answer is about this operation,
+        // it does not call the operation unknown, and it does not pretend to list parameters. An
+        // earlier version of this looked for the word "not" and broke when the wording improved,
+        // which tested the prose rather than the contract.
+        assertTrue(answer, answer.contains("handled_here"));
         assertTrue("an operation the catalogue offers must not be called an unknown topic",
             !answer.contains("Unknown topic"));
+        assertTrue("nothing is listed, because there is no schema of its own to list",
+            !answer.contains("_string") && !answer.contains("### "));
     }
 
     @Test

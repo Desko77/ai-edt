@@ -39,8 +39,11 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * answers as JSON; this facade always answers as MARKDOWN, the safest wrapper: it
  * carries any string body regardless of the routed tool's own native response type. An
  * agent that needs a JSON-typed result (structuredContent) should call the standalone
- * directly - the same tradeoff {@code code_search} and the other facades accept. All
- * three operations are read-only: this facade needs no preset-gating.
+ * directly - the same tradeoff {@code code_search} and the other facades accept. Every operation
+ * reads only, with one exception: {@code audit_role_rights} with {@code mode=orphans apply=true}
+ * removes rights from the role's file. That path asks {@code ToolGate} for a canonical writer
+ * before it does, inside {@link AuditRoleRightsTool}, because the security group stays on under a
+ * read-only preset.
  */
 public class SecurityAuditFacadeTool implements IMcpTool
 {
@@ -88,8 +91,11 @@ public class SecurityAuditFacadeTool implements IMcpTool
             + "sensitive-data scan. Operations: audit_role_rights, find_rls_violations, " //$NON-NLS-1$
             + "sensitive_data_scan, help. Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
             + "camelCase like auditRoleRights is also accepted); remaining parameters " //$NON-NLS-1$
-            + "follow the per-operation contracts (call operation=help for the catalog). " //$NON-NLS-1$
-            + "All three operations are read-only. The standalone tools remain available " //$NON-NLS-1$
+            + "follow the per-operation contracts (call operation=help for the catalog, or " //$NON-NLS-1$
+            + "operation=help topic=<operation> for one operation's parameters). Every " //$NON-NLS-1$
+            + "operation reads only, except audit_role_rights with mode=orphans apply=true, " //$NON-NLS-1$
+            + "which removes rights from the role's file and is refused under a preset " //$NON-NLS-1$
+            + "without write rights. The standalone tools remain available " //$NON-NLS-1$
             + "for back-compat."; //$NON-NLS-1$
     }
 

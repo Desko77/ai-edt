@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A facade that keeps a second list of its routing must agree with the one it dispatches by.
 
-A facade routes in a `switch (operation)`. One of them also keeps a map of the same operations to
-the same tools, so its help can describe the tool an operation reaches without asking the switch -
+A facade routes in a `switch (operation)`. Eight of them also keep a map of the same operations to
+the same tools, so their help can describe the tool an operation reaches without asking the switch -
 the operation-parameter census reads the widest `switch (operation)` in a file as the facade's
 vocabulary, and a second switch of equal width would leave which one it reads to the order the two
 happen to sit in.
@@ -13,8 +13,9 @@ delegates answer `projectName is required`, so a case pointing at the wrong one 
 behaves exactly like a case pointing at the right one until a workspace is loaded. The sources say
 which tool each case names, and this reads them.
 
-Silent on a file with no such map, which is every facade but one. A check that guesses at a
-structure would report the other twenty as broken.
+A facade that dispatches to standalone tools and keeps no map is a complaint of its own, unless it
+is named below with the reason. Counting the maps instead let one file's vanish behind the others
+still having theirs, which is the same shrink this refuses one operation at a time.
 """
 
 import pathlib
@@ -35,9 +36,16 @@ PUT_KEY = re.compile(r'\.put\(\s*"([a-z0-9_]+)"\s*,')
 # $NON-NLS marker; an expression matching only whitespace between the two finds nothing at all.
 # Labels may stack - `case "a": case "b": return new YTool()...` - so any run of them shares one
 # route, and each is recorded.
-DISPATCHED = re.compile(
-    r'((?:case\s+"[a-z0-9_]+"\s*:(?:\s*//[^\n]*)*\s*)+)'
-    r'return\s+new\s+(\w+)\s*\(\s*\)\s*\.execute\s*\(', re.S)
+#
+# The return must follow the label with nothing but comments in between, and that is the rule
+# rather than a convenience. A branch that does anything first is not a pass-through: the
+# infobase_admin case for sync_control reads syncOperation and forwards it as operation, so the
+# tool behind it declares an argument the caller does not send and does not declare the one they
+# do. Describing such an operation from the delegate's schema would publish the wrong names, so
+# it must not be recognised as a plain route. Loosening this expression to skip statements would
+# silently start doing exactly that.
+PLAIN_ROUTE = re.compile(r'new\s+(\w+)\s*\(\s*\)\s*\.execute\s*\(\s*params\s*\)')
+ANY_CALL_DOWN = re.compile(r'\.execute\s*\(')
 # `m.put("x", YTool::new);` - the class the second list names.
 DESCRIBED = re.compile(r'\.put\(\s*"([a-z0-9_]+)"\s*,\s*(\w+)::new\s*\)')
 
@@ -78,15 +86,51 @@ def map_body(source: str) -> str:
     return "" if not entries else source[entries[0].start():entries[-1].end()]
 
 
-def routes(source: str) -> tuple[dict[str, str], list[str]]:
-    """Operation to the class its case returns, and the operations named twice."""
+def branches(switch: str) -> list[tuple[list[str], str]]:
+    """Each run of case labels and the code that follows it, to the next label."""
+    marks = [(m.start(), m.end(), m.group(1)) for m in LABEL.finditer(switch)]
+    out = []
+    for index, (start, end, operation) in enumerate(marks):
+        body = switch[end:marks[index + 1][0]] if index + 1 < len(marks) else switch[end:]
+        if body.strip() == "":
+            # A label stacked directly on the next one shares its body.
+            out.append(([operation], None))
+        else:
+            out.append(([operation], body))
+    # Give a stacked label the body of the first labelled branch that has one.
+    resolved = []
+    for index, (labels, body) in enumerate(out):
+        if body is None:
+            for later in out[index + 1:]:
+                if later[1] is not None:
+                    body = later[1]
+                    break
+        resolved.append((labels, body or ""))
+    return resolved
+
+
+def routes(switch: str) -> tuple[dict[str, str], list[str]]:
+    """Operation to the tool its branch hands the call to unchanged, and any named twice.
+
+    Unchanged is the whole point, and it is read as `execute(params)` rather than as the shape of
+    the branch. A gate around the call is still a pass-through - config_io wraps two of its routes
+    so a preset that switched the standalone off is honoured, and project_admin wraps one - and
+    those were missed while this looked for a return sitting directly under the label. A branch
+    that hands down anything else is not one: infobase_admin builds a copy for sync_control and
+    forwards syncOperation as operation, so the tool behind it declares an argument the caller does
+    not send, and describing that operation from its schema would publish the wrong names.
+    """
     found: dict[str, str] = {}
     twice = []
-    for labels, tool in DISPATCHED.findall(source):
-        for operation in LABEL.findall(labels):
+    for labels, body in branches(switch):
+        plain = PLAIN_ROUTE.findall(body)
+        calls = ANY_CALL_DOWN.findall(body)
+        if len(plain) != 1 or len(calls) != 1:
+            continue
+        for operation in labels:
             if operation in found:
                 twice.append(operation)
-            found[operation] = tool
+            found[operation] = plain[0]
     return found, twice
 
 

@@ -39,6 +39,9 @@ public class EveryFacadeAnswersAboutItsOwnOperationsTest
     /** An operation in a facade's own catalogue, written `- **name** - ...`. */
     private static final Pattern CATALOGUED = Pattern.compile("\\*\\*([a-z0-9_]+)\\*\\*");
 
+    /** How many tools answer a catalogue of their own operations. Counted, not estimated. */
+    private static final int EXPECTED_FACADES = 10;
+
     private McpToolCatalog registry;
 
     @Before
@@ -89,15 +92,18 @@ public class EveryFacadeAnswersAboutItsOwnOperationsTest
     }
 
     @Test
-    public void theSweepFindsFacades()
+    public void theSweepFindsEveryFacadeItFoundBefore()
     {
-        // Without this, a change to the catalogue heading would leave the test below sweeping an
-        // empty list and reporting success over nothing.
+        // Counted against what is there rather than against a floor well under it. A facade drops
+        // out of this sweep when its catalogue heading changes or its help throws, and a floor of
+        // eight let two leave without a word - which is the same silent shrink the sweep exists to
+        // refuse one operation at a time.
         int found = facades(registry).size();
-        if (found < 8)
+        if (found != EXPECTED_FACADES)
         {
-            throw new AssertionError("only " + found + " facades answered their own catalogue, so "
-                + "the check below covers less than it reads as covering");
+            throw new AssertionError(found + " facades answered their own catalogue, and "
+                + EXPECTED_FACADES + " did when this was written. One that stops answering is "
+                + "not swept, and a sweep over fewer reads exactly like a sweep that passed.");
         }
     }
 
