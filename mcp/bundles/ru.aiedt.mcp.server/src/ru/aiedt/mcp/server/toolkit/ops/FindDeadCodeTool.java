@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -245,10 +246,13 @@ public class FindDeadCodeTool
         int interceptorsSkipped = 0;
         int loadFailures = 0;
         int indeterminate = 0;
+        // The scan runs on the worker thread, so the call's scope is here and its cancel
+        // flag can be read at the module boundary - the same place the scan cap stops.
+        WatchForCancel watch = WatchForCancel.begin();
 
         for (IFile file : bslFiles)
         {
-            if (modulesScanned >= MODULE_SCAN_CAP)
+            if (modulesScanned >= MODULE_SCAN_CAP || watch.stopHere())
             {
                 break;
             }
@@ -327,7 +331,8 @@ public class FindDeadCodeTool
         }
 
         return format(projectName, candidates, modulesScanned, modulesExcludedForms, exportMethods,
-            handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params);
+            handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params,
+            watch.note("modules")); //$NON-NLS-1$
     }
 
     // -- = --
@@ -336,11 +341,18 @@ public class FindDeadCodeTool
 
     private String format(String projectName, List<Candidate> candidates, int modulesScanned,
         int modulesExcludedForms, int exportMethods, int handlersSkipped, int interceptorsSkipped,
-        int loadFailures, int indeterminate, int limit, Map<String, String> params)
+        int loadFailures, int indeterminate, int limit, Map<String, String> params,
+        String cancelled)
     {
         StringBuilder out = new StringBuilder();
         out.append("# Dead-code candidates: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("**Candidates:** ").append(candidates.size()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (cancelled != null)
+        {
+            // Above the counts, because the counts are what a reader would otherwise take
+            // for the whole configuration.
+            out.append("**Stopped: ").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         out.append("- modules scanned: ").append(modulesScanned); //$NON-NLS-1$
         out.append(" | export methods examined: ").append(exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("- skipped: ").append(handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
