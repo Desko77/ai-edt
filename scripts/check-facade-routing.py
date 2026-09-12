@@ -100,8 +100,13 @@ def described(source: str) -> tuple[dict[str, str], list[str]]:
 
 def disagreements(source: str) -> list[str]:
     """Where the two lists in one file name different tools, or different operations."""
-    dispatched, dispatched_twice = routes(source)
-    second, described_twice = described(source)
+    # Resolved inside the blocks they belong to, exactly like the censuses below. Read over the
+    # whole file, a matching line in a comment or in a second switch resolves a label whose real
+    # route cannot be read, and the completeness check then finds nothing to complain about.
+    switch = switch_body(source)
+    entries = map_body(source)
+    dispatched, dispatched_twice = routes(switch)
+    second, described_twice = described(entries)
     if not second:
         return []
 
@@ -110,9 +115,9 @@ def disagreements(source: str) -> list[str]:
     # and an operation whose route this cannot parse leaves exactly that. So every label the switch
     # carries has to resolve to a class, and so does every key the second list holds - whatever the
     # two then say about each other.
-    for operation in sorted(set(LABEL.findall(switch_body(source))) - set(dispatched)):
+    for operation in sorted(set(LABEL.findall(switch)) - set(dispatched)):
         found.append(f"{operation}: has a case this cannot read a tool out of")
-    for operation in sorted(set(PUT_KEY.findall(map_body(source))) - set(second)):
+    for operation in sorted(set(PUT_KEY.findall(entries)) - set(second)):
         found.append(f"{operation}: is put into the map in a shape this cannot read a tool out of")
     for operation in sorted(set(dispatched_twice) | set(described_twice)):
         found.append(f"{operation}: is named more than once, so one of them is unreachable")

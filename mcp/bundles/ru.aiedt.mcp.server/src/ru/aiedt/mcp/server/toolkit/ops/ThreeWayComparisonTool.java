@@ -230,7 +230,8 @@ public class ThreeWayComparisonTool
                     + "whitespace-only value is not a request, so a client that fills every " //$NON-NLS-1$
                     + "declared string still compares.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
-                "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
+                "REPORT (default) changes nothing in the project; it does write the decisions " //$NON-NLS-1$
+                    + "file when decisionsPath names one. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
                     + "writing when it raises a blocking problem; merged says what actually " //$NON-NLS-1$
                     + "happened, not what was asked for. MERGE_IGNORING_PROBLEMS proceeds past " //$NON-NLS-1$

@@ -21,9 +21,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
- * Unified configuration-insight facade with nine operations.
+ * Unified configuration-insight facade with ten operations.
  *
- * <p>Collapses the read-only analysis and reporting tools under one name:
+ * <p>Collapses the analysis and reporting tools under one name:
  * <ul>
  *   <li>{@code project_metrics} - LOC, methods, modules and technical-debt metrics for a
  *       project or subsystem (delegates to {@link ProjectMetricsTool})</li>
@@ -431,6 +431,8 @@ public class InsightsFacadeTool implements IMcpTool
             sb.append("| What depends on what | dependency_graph |\n"); //$NON-NLS-1$
             sb.append("| What changed between two configurations | " //$NON-NLS-1$
                 + "compare_configurations |\n"); //$NON-NLS-1$
+            sb.append("| What a new delivery changes in a project on support, and " //$NON-NLS-1$
+                + "applying that update | compare_three_way |\n"); //$NON-NLS-1$
             sb.append("| Are there slow-query patterns in the code | " //$NON-NLS-1$
                 + "detect_query_anti_patterns |\n"); //$NON-NLS-1$
             sb.append("| One-call overview before starting work on a project | " //$NON-NLS-1$
