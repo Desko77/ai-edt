@@ -53,6 +53,29 @@ public class AFacadeDescribesTheOperationItRoutesToTest
         return new InsightsFacadeTool().execute(params);
     }
 
+    private static String answerOrThrow(IMcpTool tool, Map<String, String> call)
+    {
+        try
+        {
+            return tool.execute(call);
+        }
+        catch (RuntimeException | LinkageError thrown)
+        {
+            return "threw " + thrown;
+        }
+    }
+
+    private static String firstLineOf(String answer)
+    {
+        if (answer == null)
+        {
+            return "nothing";
+        }
+        int newline = answer.indexOf('\n');
+        String line = newline < 0 ? answer : answer.substring(0, newline);
+        return line.length() > 160 ? line.substring(0, 160) + "..." : line;
+    }
+
     /** Every operation the facade advertises in its own catalogue, help itself excluded. */
     private static List<String> catalogued()
     {
@@ -84,6 +107,13 @@ public class AFacadeDescribesTheOperationItRoutesToTest
         Collections.sort(offered);
 
         assertEquals("the operations this facade advertises have changed", expected, offered);
+
+        // The same list from the other side. Asking only about the names the catalogue holds would
+        // never see one described here and offered nowhere - help would answer for an operation no
+        // caller can reach through this facade.
+        List<String> describable = new ArrayList<>(InsightsFacadeTool.describedOperations());
+        Collections.sort(describable);
+        assertEquals("the operations this facade can describe have changed", expected, describable);
     }
 
     @Test
@@ -137,6 +167,20 @@ public class AFacadeDescribesTheOperationItRoutesToTest
                 && (answer.contains("Unhandled operation") || answer.contains("Unknown operation")))
             {
                 undispatched.add(operation);
+                continue;
+            }
+            // Presence is not agreement. A case that exists and routes to another tool describes
+            // one thing and does another, which is worse than a missing case because it answers.
+            // The facade returns what the delegate returned, so calling the tool the map names
+            // with the same arguments must produce the same string - and a different tool refuses
+            // in its own words.
+            IMcpTool named = InsightsFacadeTool.delegateFor(operation);
+            String direct = named == null ? null : answerOrThrow(named, call);
+            if (answer != null && !answer.equals(direct))
+            {
+                undispatched.add(operation + " is dispatched to a tool other than the one help "
+                    + "describes: through the facade " + firstLineOf(answer) + ", through "
+                    + (named == null ? "nothing" : named.getName()) + " " + firstLineOf(direct));
             }
         }
 

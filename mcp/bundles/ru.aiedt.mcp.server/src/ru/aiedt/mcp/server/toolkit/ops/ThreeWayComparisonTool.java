@@ -392,14 +392,45 @@ public class ThreeWayComparisonTool
             + "MERGE_IGNORING_PROBLEMS, UPDATE_UNCHANGED or UPDATE_KEEPING_OURS."); //$NON-NLS-1$
     }
 
+    /**
+     * Whether a value of the help argument is a request for the parameter listing.
+     * <p>
+     * A value has to carry a character that shows. Neither {@code trim} nor {@code isBlank} says
+     * that: trim cuts only up to U+0020, so an em space asked for help while an ordinary space did
+     * not; isBlank goes by {@code Character.isWhitespace}, which excludes the non-breaking spaces,
+     * so U+00A0 asked for help while U+0020 did not. Both readings leave the schema sentence true
+     * of some spellings of an empty value and false of others, which is the same argument answered
+     * two ways.
+     * </p>
+     *
+     * @param value the argument as the caller sent it; may be <code>null</code>.
+     * @return <code>true</code> when the value carries a character that shows
+     */
+    private static boolean asksForHelp(String value)
+    {
+        if (value == null)
+        {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++)
+        {
+            char symbol = value.charAt(i);
+            boolean invisible = Character.isWhitespace(symbol)
+                || Character.getType(symbol) == Character.FORMAT
+                || symbol == ' ' || symbol == ' ' || symbol == ' ';
+            if (!invisible)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
         String topic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
-        // isBlank and not trim().isEmpty(): trim cuts only characters up to U+0020, so an em space
-        // would have counted as a request while an ordinary space did not - two spellings of the
-        // same blank value, answered two different ways.
-        if (topic != null && !topic.isBlank())
+        if (asksForHelp(topic))
         {
             // Answered before anything is read: a caller asking what the parameters mean has not
             // supplied them yet, and refusing for a missing projectName would answer a question

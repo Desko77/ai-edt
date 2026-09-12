@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -342,6 +343,21 @@ public class InsightsFacadeTool implements IMcpTool
     {
         Supplier<IMcpTool> known = DESCRIBED.get(operation);
         return known == null ? null : known.get();
+    }
+
+    /**
+     * The operations this facade can describe.
+     * <p>
+     * Read by {@code AFacadeDescribesTheOperationItRoutesToTest} so the list can be compared whole
+     * rather than one lookup at a time: asking only about the operations the catalogue names would
+     * never notice one described here and offered nowhere.
+     * </p>
+     *
+     * @return the operation names, never <code>null</code>
+     */
+    static Set<String> describedOperations()
+    {
+        return DESCRIBED.keySet();
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()

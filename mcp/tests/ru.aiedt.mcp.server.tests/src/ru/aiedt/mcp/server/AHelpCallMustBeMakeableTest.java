@@ -144,12 +144,13 @@ public class AHelpCallMustBeMakeableTest
         // value would otherwise turn every call into a help answer and never compare anything. The
         // schema says an empty or whitespace-only value is not a request, and this holds it to it.
         //
-        // Every spelling, because the first cut used trim(), which stops at U+0020: an em space
-        // then asked for help while an ordinary space did not, and the sentence was true of
-        // neither reading. U+00A0 and its relatives are deliberately absent - Character.isWhitespace
-        // excludes the non-breaking spaces, so isBlank does not call them blank and neither does
-        // this. They reach the tool as a request, which is the boundary rather than a decision.
-        for (String blankValue : new String[] {"", " ", "   ", "\t", "\n", " "}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        // Every spelling, because two readings were tried before this one and each drew the line
+        // somewhere a caller would not: trim stops at U+0020, so an em space asked for help while
+        // an ordinary space did not; isBlank goes by Character.isWhitespace, which excludes the
+        // non-breaking spaces, so U+00A0 asked for help while U+0020 did not. What is asked now is
+        // whether anything shows, and these are the spellings that do not.
+        for (String blankValue : new String[] {"", " ", "   ", "\t", "\n", " ", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            " ", " ", " ", "​", "﻿", "  \t"}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
         {
             Map<String, String> blank = new LinkedHashMap<>();
             blank.put(HELP, blankValue);
