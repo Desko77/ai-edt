@@ -55,7 +55,14 @@ public final class OperationParameters
     }
 
     /**
-     * The parameters an operation reads.
+     * Everything a call to this operation may carry.
+     * <p>
+     * Wider than what the operation itself reads, and deliberately so: a facade reads arguments on
+     * the way down and the derivation attributes them to every operation it has. What this answers
+     * is the set {@link UnreadArguments} refuses outside of, where too wide only refuses less and
+     * too narrow refuses calls that work. For what one operation is established to take, which is
+     * what help may print as its own, see {@link #establishedFor}.
+     * </p>
      *
      * @param facadeClass the simple name of the facade class, as the map keys it.
      * @param operation the operation name.

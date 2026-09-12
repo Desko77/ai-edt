@@ -64,7 +64,12 @@ public final class ParameterHelp
             return "This tool declares no schema that could be read, so its parameters " //$NON-NLS-1$
                 + "cannot be listed here. The catalogue entry is the only description."; //$NON-NLS-1$
         }
-        JsonObject properties = schema.getAsJsonObject("properties"); //$NON-NLS-1$
+        // Asked for rather than cast into: getAsJsonObject throws when the member is there and is
+        // something else, and a schema that will not read must leave the caller with a sentence
+        // rather than with an exception thrown out of a help request.
+        JsonElement declared = schema.get("properties"); //$NON-NLS-1$
+        JsonObject properties = declared != null && declared.isJsonObject()
+            ? declared.getAsJsonObject() : null;
         if (properties == null || properties.size() == 0)
         {
             // Said, not left blank: a tool that takes nothing and a tool whose parameters could not
@@ -72,12 +77,16 @@ public final class ParameterHelp
             return "## " + toolName + " - parameters\n\nThis tool takes no parameters."; //$NON-NLS-1$ //$NON-NLS-2$
         }
         Set<String> required = new HashSet<>();
-        JsonArray insisted = schema.getAsJsonArray("required"); //$NON-NLS-1$
-        if (insisted != null)
+        JsonElement insistedOn = schema.get("required"); //$NON-NLS-1$
+        if (insistedOn != null && insistedOn.isJsonArray())
         {
+            JsonArray insisted = insistedOn.getAsJsonArray();
             for (JsonElement name : insisted)
             {
-                required.add(name.getAsString());
+                if (name.isJsonPrimitive())
+                {
+                    required.add(name.getAsString());
+                }
             }
         }
 
@@ -116,15 +125,17 @@ public final class ParameterHelp
      * </p>
      * <p>
      * Two groups because the map answers two questions. What the operation's own code reads is
-     * established as its own; what the facade reads before dispatching is the same for every
-     * operation it has, and printing it as the operation's would say it takes something it does
-     * not. Both are shown, because a caller may send either.
+     * established as its own. The rest is what the facade reads on the way down, and for a facade
+     * that dispatches with a switch that walk does not stop at the handlers - so the second group
+     * holds arguments of sibling operations as well, and calling it shared would claim more than
+     * holds. Both are shown, because a call may carry either.
      * </p>
      *
      * @param operation the operation asked about, for the heading.
      * @param inputSchema the facade's own schema, where the descriptions live.
      * @param established parameter names established for this operation.
-     * @param shared parameter names the facade reads for every operation.
+     * @param shared the rest of what the operation accepts, established for no operation in
+     *            particular.
      * @return markdown, or a line saying why there is none
      */
     public static String renderNamed(String operation, String inputSchema,
@@ -136,7 +147,8 @@ public final class ParameterHelp
         JsonObject properties = propertiesOf(inputSchema);
         StringBuilder text = new StringBuilder("## ").append(operation) //$NON-NLS-1$
             .append(" - parameters\n\n"); //$NON-NLS-1$
-        if (properties == null)
+        boolean schemaRead = properties != null;
+        if (!schemaRead)
         {
             text.append("_The schema this facade declares could not be read, so these are " //$NON-NLS-1$
                 + "named without their descriptions._\n\n"); //$NON-NLS-1$
@@ -147,7 +159,7 @@ public final class ParameterHelp
             return text.append("The parameters of this operation are not recorded. The schema " //$NON-NLS-1$
                 + "this facade declares is what a call is validated against.\n").toString(); //$NON-NLS-1$
         }
-        appendGroup(text, properties, established,
+        appendGroup(text, properties, schemaRead, established,
             "Established for this operation\n\n"); //$NON-NLS-1$
         // Not "read for every operation": the derivation attributes to an operation everything the
         // facade reads on the way down, and for a facade that dispatches with a switch that walk
@@ -155,13 +167,13 @@ public final class ParameterHelp
         // Narrowing it would narrow what the unread-argument guard allows, which is a different
         // contract; what can be said truthfully is that these were not established as this
         // operation's own.
-        appendGroup(text, properties, shared,
+        appendGroup(text, properties, schemaRead, shared,
             "Accepted here, not established as this operation's - the facade reads them on the " //$NON-NLS-1$
                 + "way down, and some belong to its other operations\n\n"); //$NON-NLS-1$
         return text.toString();
     }
 
-    private static void appendGroup(StringBuilder text, JsonObject properties,
+    private static void appendGroup(StringBuilder text, JsonObject properties, boolean schemaRead,
         Collection<String> names, String heading)
     {
         if (names.isEmpty())
@@ -182,6 +194,13 @@ public final class ParameterHelp
                 {
                     text.append(" - ").append(described.getAsString()); //$NON-NLS-1$
                 }
+            }
+            else if (!schemaRead)
+            {
+                // Nothing is said about a property when the schema it would come from could not be
+                // read. Saying "not declared" here would report as a fact what is only an absence
+                // of evidence - the heading above already says the descriptions are missing.
+                text.append(""); //$NON-NLS-1$
             }
             else if (property == null)
             {
