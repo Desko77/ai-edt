@@ -461,7 +461,8 @@ public class McpRequestRouter
         {
             return;
         }
-        Object why = request.getParams().get("reason"); //$NON-NLS-1$
+        Object why = request != null && request.getParams() != null
+            ? request.getParams().get("reason") : null; //$NON-NLS-1$
         String reason = why instanceof String && !((String)why).isEmpty()
             ? (String)why : "withdrawn by the client"; //$NON-NLS-1$
         // One question, answered under the server's own lock. Asked as two - is there a

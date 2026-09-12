@@ -965,6 +965,29 @@ public class McpHttpEndpoint
      */
     public RunningToolCall findCallByRequestId(Object requestId, String sessionId)
     {
+        return matchingCall(requestId, sessionId, false);
+    }
+
+    /**
+     * Finds the call an id names, optionally including one that has already answered.
+     * <p>
+     * Both sides of the id go through one rule: normalising only the question would make
+     * the match depend on a convention held in another method, and a convention held in
+     * two places drifts. The session counts too - an id is unique within one client,
+     * and clients start counting at one, so two of them have a call numbered 1 the
+     * moment both are busy. Absence is a value: a client that names a session cannot
+     * reach a call that named none, and two that both name none stay indistinguishable,
+     * which no rule here can mend.
+     * </p>
+     *
+     * @param requestId the id to look for
+     * @param sessionId the client asking
+     * @param includeAnswered whether a call that has already answered counts as found
+     * @return the call, or <code>null</code>
+     */
+    private RunningToolCall matchingCall(Object requestId, String sessionId,
+        boolean includeAnswered)
+    {
         Object wanted = asRequestId(requestId);
         if (wanted == null)
         {
@@ -972,16 +995,9 @@ public class McpHttpEndpoint
         }
         for (RunningToolCall call : runningCalls)
         {
-            // Both sides through the same rule. Normalising only the question would make the match
-            // depend on a convention held in another method - and a convention held in two places
-            // is one that drifts, silently, into a cancellation that finds nothing.
-            // The session as well as the id. An id is unique within one client, and clients
-            // start counting at one, so two of them have a call numbered 1 the moment both
-            // are busy. Absence counts as a value: a client that names a session cannot
-            // reach a call that named none, and two clients that both name none stay
-            // indistinguishable, which no rule here can mend.
-            if (wanted.equals(asRequestId(call.getRequestId())) && !call.hasResponded()
-                && java.util.Objects.equals(sessionId, call.getSessionId()))
+            if (wanted.equals(asRequestId(call.getRequestId()))
+                && java.util.Objects.equals(sessionId, call.getSessionId())
+                && (includeAnswered || !call.hasResponded()))
             {
                 return call;
             }
@@ -1011,13 +1027,45 @@ public class McpHttpEndpoint
                 call.cancellation().cancel(reason);
                 return call.runningToolName();
             }
+            if (matchingCall(requestId, sessionId, true) != null)
+            {
+                // Answered, but still in the queue until its thread tidies up. In that
+                // window it is in neither place, and a withdrawal kept as early would
+                // be spent on the next call to take this id.
+                return null;
+            }
             String key = withdrawalKey(requestId, sessionId);
-            if (key != null && !callsAlreadyDone.containsKey(key))
+            if (key != null && !recentlyFinished(key))
             {
                 rememberEarlyWithdrawal(key);
             }
             return null;
         }
+    }
+
+    /**
+     * Whether a call with this key finished recently enough for a withdrawal naming it
+     * to be a late one rather than an early one.
+     *
+     * @param key the call's key
+     * @return <code>true</code> while the record is still inside its window
+     */
+    private boolean recentlyFinished(String key)
+    {
+        Long at = callsAlreadyDone.get(key);
+        if (at == null)
+        {
+            return false;
+        }
+        if (System.currentTimeMillis() - at.longValue() > EARLY_WITHDRAWAL_TTL_MS)
+        {
+            // Read where it is used, not only swept when something else finishes: an id
+            // reused long afterwards would otherwise have its withdrawal thrown away
+            // because of a call that ended minutes ago.
+            callsAlreadyDone.remove(key);
+            return false;
+        }
+        return true;
     }
 
     private void rememberEarlyWithdrawal(String key)

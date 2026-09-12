@@ -228,6 +228,27 @@ public class TwoCallsInFlightStayTellableApartTest
     }
 
     @Test
+    public void aCallThatAnsweredButHasNotLeftTheQueueIsNotMissing()
+    {
+        // Between answering and being removed a call is in neither place: the lookup skips it and
+        // no record of its ending exists yet. A withdrawal arriving then looked early, and was kept
+        // for whatever took the id next.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall answered = new RunningToolCall(null, "code_search", Long.valueOf(3)); //$NON-NLS-1$
+        server.setActiveToolCall(answered);
+        answered.abandon();
+
+        server.withdrawCall(Long.valueOf(3), null, "too late"); //$NON-NLS-1$
+        server.clearActiveToolCall(answered);
+
+        RunningToolCall next = new RunningToolCall(null, "code_search", Long.valueOf(3)); //$NON-NLS-1$
+        server.setActiveToolCall(next);
+
+        assertFalse("the next call must not inherit that withdrawal",
+            next.cancellation().isCancelled());
+    }
+
+    @Test
     public void anAnsweredCallIsNoLongerCancellable()
     {
         // A late cancellation must not raise a flag on work that is over; nothing would read it,
