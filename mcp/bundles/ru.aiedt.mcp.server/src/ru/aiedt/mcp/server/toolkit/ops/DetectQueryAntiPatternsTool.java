@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -150,8 +151,15 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         List<IFile> bslFiles = collectBslFilesByScope(project, scope, params);
         List<Map<String, Object>> findings = new ArrayList<>();
         int queriesAnalyzed = 0;
+        // Read at the file boundary: stopping between files leaves the findings so far
+        // whole, and stopping inside one would leave half a module's worth.
+        WatchForCancel watch = WatchForCancel.begin();
         for (IFile file : bslFiles)
         {
+            if (watch.stopHere())
+            {
+                break;
+            }
             String content = readFile(file);
             if (content == null)
             {
@@ -204,12 +212,14 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
                 .put("scope", scope) //$NON-NLS-1$
                 .put("statistics", stats) //$NON-NLS-1$
                 .put("text", renderMarkdown(findings, stats)) //$NON-NLS-1$
+                .put("cancelled", watch.note("files")) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
             .put("scope", scope) //$NON-NLS-1$
             .put("statistics", stats) //$NON-NLS-1$
             .put("issues", findings) //$NON-NLS-1$
+                .put("cancelled", watch.note("files")) //$NON-NLS-1$
             .toJson();
     }
 
