@@ -13,7 +13,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -61,51 +60,84 @@ public final class ParameterHelp
         }
         if (schema == null)
         {
-            return "This tool declares no schema that could be read, so its parameters " //$NON-NLS-1$
-                + "cannot be listed here. The catalogue entry is the only description."; //$NON-NLS-1$
+            return "This tool's schema could not be read, so its parameters cannot be listed " //$NON-NLS-1$
+                + "here."; //$NON-NLS-1$
         }
         // Asked for rather than cast into: getAsJsonObject throws when the member is there and is
         // something else, and a schema that will not read must leave the caller with a sentence
         // rather than with an exception thrown out of a help request.
         JsonElement declared = schema.get("properties"); //$NON-NLS-1$
-        JsonObject properties = declared != null && declared.isJsonObject()
-            ? declared.getAsJsonObject() : null;
-        if (properties == null || properties.size() == 0)
+        if (declared != null && !declared.isJsonObject())
+        {
+            // Present and not an object is malformed, which is a different answer from empty.
+            return "## " + toolName + " - parameters\n\nThis tool's schema declares a " //$NON-NLS-1$ //$NON-NLS-2$
+                + "properties member that is not an object, so its parameters cannot be listed " //$NON-NLS-1$
+                + "here."; //$NON-NLS-1$
+        }
+        if (declared == null)
+        {
+            // Absent is not empty either: a schema with no properties member says nothing about
+            // what the tool takes, and answering "takes no parameters" would settle that.
+            return "## " + toolName + " - parameters\n\nThis tool's schema declares no " //$NON-NLS-1$ //$NON-NLS-2$
+                + "properties member, so what it takes is not stated there."; //$NON-NLS-1$
+        }
+        JsonObject properties = declared.getAsJsonObject();
+        if (properties.size() == 0)
         {
             // Said, not left blank: a tool that takes nothing and a tool whose parameters could not
             // be listed read the same way when the answer is empty.
             return "## " + toolName + " - parameters\n\nThis tool takes no parameters."; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        Set<String> required = new HashSet<>();
-        JsonElement insistedOn = schema.get("required"); //$NON-NLS-1$
-        if (insistedOn != null && insistedOn.isJsonArray())
-        {
-            JsonArray insisted = insistedOn.getAsJsonArray();
-            for (JsonElement name : insisted)
-            {
-                if (name.isJsonPrimitive())
-                {
-                    required.add(name.getAsString());
-                }
-            }
-        }
 
         StringBuilder text = new StringBuilder("## ").append(toolName) //$NON-NLS-1$
             .append(" - parameters\n\n"); //$NON-NLS-1$
-        Map<String, JsonObject> sorted = new TreeMap<>();
-        for (Map.Entry<String, JsonElement> property : properties.entrySet())
+        Set<String> required = new HashSet<>();
+        JsonElement insistedOn = schema.get("required"); //$NON-NLS-1$
+        boolean requirednessKnown = insistedOn == null || insistedOn.isJsonArray();
+        if (insistedOn != null && insistedOn.isJsonArray())
         {
-            if (property.getValue().isJsonObject())
+            for (JsonElement name : insistedOn.getAsJsonArray())
             {
-                sorted.put(property.getKey(), property.getValue().getAsJsonObject());
+                // A string and nothing else. A number in there would otherwise become the name
+                // "1" and mark a property of that name required, which nobody wrote.
+                if (name.isJsonPrimitive() && name.getAsJsonPrimitive().isString())
+                {
+                    required.add(name.getAsString());
+                }
+                else
+                {
+                    requirednessKnown = false;
+                }
             }
         }
-        for (Map.Entry<String, JsonObject> property : sorted.entrySet())
+        if (!requirednessKnown)
+        {
+            text.append("_This schema's required list is not a list of names, so which of " //$NON-NLS-1$
+                + "these must be present is not stated below._\n\n"); //$NON-NLS-1$
+        }
+        // Copied into a sorted map by hand rather than through JsonObject.asMap, which arrived in
+        // a later Gson than the one this bundle ships.
+        Map<String, JsonElement> sorted = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : properties.entrySet())
+        {
+            sorted.put(entry.getKey(), entry.getValue());
+        }
+        for (Map.Entry<String, JsonElement> property : sorted.entrySet())
         {
             text.append("### ").append(property.getKey()); //$NON-NLS-1$
-            text.append("  _").append(kindOf(property.getValue())); //$NON-NLS-1$
-            text.append(required.contains(property.getKey()) ? ", required_\n\n" : "_\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            JsonElement described = property.getValue().get("description"); //$NON-NLS-1$
+            if (!property.getValue().isJsonObject())
+            {
+                // Listed rather than dropped. Skipping it said the tool does not take the
+                // parameter, when what is true is that its declaration cannot be read.
+                text.append("\n\n_This parameter is declared in a shape that is not a property " //$NON-NLS-1$
+                    + "object, so nothing can be said about it here._\n\n"); //$NON-NLS-1$
+                continue;
+            }
+            JsonObject declaredProperty = property.getValue().getAsJsonObject();
+            text.append("  _").append(kindOf(declaredProperty)); //$NON-NLS-1$
+            text.append(requirednessKnown && required.contains(property.getKey())
+                ? ", required_\n\n" : "_\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            JsonElement described = declaredProperty.get("description"); //$NON-NLS-1$
             text.append(described != null && described.isJsonPrimitive()
                 ? described.getAsString()
                 // A parameter with no description is named anyway. Leaving it out would say the
@@ -150,14 +182,14 @@ public final class ParameterHelp
         boolean schemaRead = properties != null;
         if (!schemaRead)
         {
-            text.append("_The schema this facade declares could not be read, so these are " //$NON-NLS-1$
-                + "named without their descriptions._\n\n"); //$NON-NLS-1$
+            text.append("_The properties of the schema this facade declares could not be read, " //$NON-NLS-1$
+                + "so these are named without their descriptions._\n\n"); //$NON-NLS-1$
             properties = new JsonObject();
         }
         if (established.isEmpty() && shared.isEmpty())
         {
-            return text.append("The parameters of this operation are not recorded. The schema " //$NON-NLS-1$
-                + "this facade declares is what a call is validated against.\n").toString(); //$NON-NLS-1$
+            return text.append("The parameters of this operation are not recorded here. What " //$NON-NLS-1$
+                + "this facade declares in its own schema still applies.\n").toString(); //$NON-NLS-1$
         }
         appendGroup(text, properties, schemaRead, established,
             "Established for this operation\n\n"); //$NON-NLS-1$
@@ -197,16 +229,18 @@ public final class ParameterHelp
             }
             else if (!schemaRead)
             {
-                // Nothing is said about a property when the schema it would come from could not be
-                // read. Saying "not declared" here would report as a fact what is only an absence
-                // of evidence - the heading above already says the descriptions are missing.
+                // Deliberately nothing. When the schema could not be read, "not declared" would
+                // report as a fact what is only an absence of evidence, and the heading above
+                // already says the descriptions are missing.
                 text.append(""); //$NON-NLS-1$
             }
             else if (property == null)
             {
-                // The map says the operation reads it and the schema does not declare it. Both
-                // facts are worth the caller's attention, and neither is this method's to settle.
-                text.append(" - read by the code, and not declared in this facade's schema"); //$NON-NLS-1$
+                // The map says the operation reads it and it is not among the properties. Said as
+                // narrowly as that: a schema may declare a name elsewhere, and this looked in one
+                // place.
+                text.append(" - read by the code, and not among the properties this facade " //$NON-NLS-1$
+                    + "declares"); //$NON-NLS-1$
             }
             else
             {
@@ -225,8 +259,15 @@ public final class ParameterHelp
         try
         {
             JsonElement parsed = JsonParser.parseString(inputSchema);
-            return parsed.isJsonObject() ? parsed.getAsJsonObject().getAsJsonObject("properties") //$NON-NLS-1$
-                : null;
+            if (!parsed.isJsonObject())
+            {
+                return null;
+            }
+            // Asked for, not cast, for the same reason as in render: getAsJsonObject throws when
+            // the member is there and is something else, and the catch below would then report a
+            // schema that parsed perfectly well as one that could not be read.
+            JsonElement declared = parsed.getAsJsonObject().get("properties"); //$NON-NLS-1$
+            return declared != null && declared.isJsonObject() ? declared.getAsJsonObject() : null;
         }
         catch (RuntimeException notJson)
         {
