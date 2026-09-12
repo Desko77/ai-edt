@@ -204,6 +204,12 @@ public final class McpServerMeta
     /** Method: post-handshake notification, answered with no document at all. */
     public static final String METHOD_INITIALIZED = "notifications/initialized"; //$NON-NLS-1$
 
+    /**
+     * Method: the client withdraws a request it sent earlier. A notification, so it carries no id
+     * of its own; the id it names in its params belongs to the request being withdrawn.
+     */
+    public static final String METHOD_CANCELLED = "notifications/cancelled"; //$NON-NLS-1$
+
     /** Method: tool catalogue. */
     public static final String METHOD_TOOLS_LIST = "tools/list"; //$NON-NLS-1$
 

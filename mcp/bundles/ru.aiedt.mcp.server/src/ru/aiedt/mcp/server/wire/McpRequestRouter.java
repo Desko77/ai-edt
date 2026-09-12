@@ -56,8 +56,8 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * Turns a JSON-RPC document into a tool call and the tool's answer back into a JSON-RPC document.
  * <p>
  * The methods recognized are {@code initialize}, {@code notifications/initialized},
- * {@code tools/list}, {@code tools/call}, {@code ping}, {@code prompts/list},
- * {@code resources/templates/list}, {@code resources/list},
+ * {@code notifications/cancelled}, {@code tools/list}, {@code tools/call}, {@code ping},
+ * {@code prompts/list}, {@code resources/templates/list}, {@code resources/list},
  * {@code resources/read}, {@code server/discover} and the three {@code tasks/*} methods of the task
  * extension - everything else is a method-not-found. Transport
  * concerns (sockets, CORS, authentication, HTTP status, SSE framing) belong to the server that owns
@@ -191,6 +191,11 @@ public class McpRequestRouter
             }
             if (McpServerMeta.METHOD_INITIALIZED.equals(method))
             {
+                return null;
+            }
+            if (McpServerMeta.METHOD_CANCELLED.equals(method))
+            {
+                withdrawRequest(request);
                 return null;
             }
             if (McpServerMeta.METHOD_TOOLS_LIST.equals(method))
@@ -407,6 +412,46 @@ public class McpRequestRouter
         }
         Object id = request.getParams().get("taskId"); //$NON-NLS-1$
         return id instanceof String ? (String)id : null;
+    }
+
+    /**
+     * Raises the cancellation flag of the call a client has withdrawn.
+     * <p>
+     * This is the only way the flag rises from off the UI thread. The operator's button runs on the
+     * SWT thread, and a scan that reads the EDT model holds that same thread for its whole run, so
+     * for those tools the button cannot be pressed while there is anything to stop. A notification
+     * arrives on a request thread and is not blocked by any of that.
+     * </p>
+     * <p>
+     * The withdrawn call is still answered. The specification says a receiver should not respond to
+     * a cancelled request and that a sender must ignore a response that arrives anyway; over plain
+     * HTTP the request is an exchange that has to be closed, and the answer it closes with is the
+     * partial result the scan had reached - which is worth more to a caller that changed its mind
+     * about waiting than an empty socket.
+     * </p>
+     *
+     * @param request the notification; its params name the id of the request being withdrawn
+     */
+    private static void withdrawRequest(JsonRpcRequest request)
+    {
+        Object named = request != null && request.getParams() != null
+            ? request.getParams().get("requestId") : null; //$NON-NLS-1$
+        McpHttpEndpoint server = getServer();
+        RunningToolCall call = server != null ? server.findCallByRequestId(named) : null;
+        if (call == null)
+        {
+            // Nothing to stop: the call has finished, was never here, or the id names no call. A
+            // notification has no answer to carry this in, and it is not an error - a client that
+            // cancels late is behaving correctly.
+            Activator.logDebug("notifications/cancelled names no call in flight: " + named); //$NON-NLS-1$
+            return;
+        }
+        Object why = request.getParams().get("reason"); //$NON-NLS-1$
+        String reason = why instanceof String && !((String)why).isEmpty()
+            ? (String)why : "withdrawn by the client"; //$NON-NLS-1$
+        call.cancellation().cancel(reason);
+        Activator.logInfo("notifications/cancelled raised the flag on " + call.runningToolName() //$NON-NLS-1$
+            + ": " + reason); //$NON-NLS-1$
     }
 
     /**

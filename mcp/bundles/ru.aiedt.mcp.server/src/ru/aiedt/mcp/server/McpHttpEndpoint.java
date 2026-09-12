@@ -914,15 +914,49 @@ public class McpHttpEndpoint
      */
     public RunningToolCall findCallByRequestId(Object requestId)
     {
-        if (requestId == null)
+        Object wanted = asRequestId(requestId);
+        if (wanted == null)
         {
             return null;
         }
         for (RunningToolCall call : runningCalls)
         {
-            if (requestId.equals(call.getRequestId()) && !call.hasResponded())
+            // Both sides through the same rule. Normalising only the question would make the match
+            // depend on a convention held in another method - and a convention held in two places
+            // is one that drifts, silently, into a cancellation that finds nothing.
+            if (wanted.equals(asRequestId(call.getRequestId())) && !call.hasResponded())
             {
                 return call;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Brings an id read from anywhere to the shape {@link #readRequestId} stores.
+     * <p>
+     * A JSON number arrives as a {@link Double} through a generic parse and as a {@link Long}
+     * through the one above, and those two are never equal to each other. Matching a cancellation
+     * against a call would then find nothing and say nothing - the flag would simply never rise.
+     * The rule lives here, with the calls it has to match, rather than beside each caller.
+     * </p>
+     *
+     * @param raw a string, a number, or anything else
+     * @return the id as a {@link String} or a {@link Long}, or <code>null</code> when it is neither.
+     *         A string id and a numeric id stay different ids, as JSON-RPC has them
+     */
+    private static Object asRequestId(Object raw)
+    {
+        if (raw instanceof String)
+        {
+            return raw;
+        }
+        if (raw instanceof Number)
+        {
+            double value = ((Number)raw).doubleValue();
+            if (value == Math.floor(value) && !Double.isInfinite(value))
+            {
+                return Long.valueOf((long)value);
             }
         }
         return null;

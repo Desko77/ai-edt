@@ -99,6 +99,41 @@ public class TwoCallsInFlightStayTellableApartTest
     }
 
     @Test
+    public void aNumericIdMatchesWhicheverWayItWasParsed()
+    {
+        // The trap this is here for: a JSON number reaches the call as a Long and reaches a
+        // notification's params as a Double, and those two are never equal. A cancellation would
+        // then match nothing and say nothing - the flag would simply never rise.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall call = new RunningToolCall(null, "code_search", Long.valueOf(7)); //$NON-NLS-1$
+        server.setActiveToolCall(call);
+
+        assertSame("as a Double, which is what a generic JSON parse gives", call, //$NON-NLS-1$
+            server.findCallByRequestId(Double.valueOf(7.0)));
+        assertSame(call, server.findCallByRequestId(Integer.valueOf(7)));
+        assertSame(call, server.findCallByRequestId(Long.valueOf(7)));
+        assertNull("a string id and a numeric id are different ids in JSON-RPC", //$NON-NLS-1$
+            server.findCallByRequestId("7")); //$NON-NLS-1$
+        assertNull("a fractional id is not an id this server ever stored", //$NON-NLS-1$
+            server.findCallByRequestId(Double.valueOf(7.5)));
+    }
+
+    @Test
+    public void anAnsweredCallIsNoLongerCancellable()
+    {
+        // A late cancellation must not raise a flag on work that is over; nothing would read it,
+        // and the call may be sitting in the queue until its thread tidies up.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall call = new RunningToolCall(null, "code_search", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        server.setActiveToolCall(call);
+        assertSame(call, server.findCallByRequestId("1")); //$NON-NLS-1$
+
+        call.abandon();
+
+        assertNull("an answered call is past cancelling", server.findCallByRequestId("1")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aCallThatHasNotStartedItsToolIsNotOnShow()
     {
         // A call is enrolled when it arrives, which is before the router resolves and starts the
