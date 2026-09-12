@@ -162,18 +162,22 @@ public class SensitiveDataScanTool implements IMcpTool
         }
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("findings", filtered.size()); //$NON-NLS-1$
+        // One watch spans two walks that count different things - metadata objects, then module
+        // files - so the unit names both. "files" would report a count of objects as a count of
+        // files whenever ATTRIBUTE_NAME is on, which it is by default.
+        String cancelled = watch.note("objects and modules"); //$NON-NLS-1$
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
             return ToolResult.success()
                 .put("statistics", stats) //$NON-NLS-1$
-                .put("text", renderMarkdown(filtered, stats, watch.note("files"))) //$NON-NLS-1$
-            .put("cancelled", watch.note("files")) //$NON-NLS-1$
+                .put("text", renderMarkdown(filtered, stats, cancelled)) //$NON-NLS-1$
+                .put("cancelled", cancelled) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
             .put("statistics", stats) //$NON-NLS-1$
             .put("findings", filtered) //$NON-NLS-1$
-            .put("cancelled", watch.note("files")) //$NON-NLS-1$
+            .put("cancelled", cancelled) //$NON-NLS-1$
             .toJson();
     }
 

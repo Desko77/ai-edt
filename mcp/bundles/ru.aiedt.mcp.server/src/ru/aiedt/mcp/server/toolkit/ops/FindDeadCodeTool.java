@@ -334,7 +334,10 @@ public class FindDeadCodeTool
 
         return format(projectName, candidates, modulesScanned, modulesExcludedForms, exportMethods,
             handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params,
-            watch.note("modules")); //$NON-NLS-1$
+            // "candidate modules", not "modules": the count is loop entries, and a
+            // form module or an unreadable one is entered and then excluded, so it
+            // never reaches modulesScanned.
+            watch.note("candidate modules")); //$NON-NLS-1$
     }
 
     // -- = --
@@ -393,7 +396,11 @@ public class FindDeadCodeTool
 
         if (candidates.isEmpty())
         {
-            out.append("No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, an empty list means
+            // the scope was not walked, not that it holds nothing.
+            out.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
             return out.toString();
         }
 

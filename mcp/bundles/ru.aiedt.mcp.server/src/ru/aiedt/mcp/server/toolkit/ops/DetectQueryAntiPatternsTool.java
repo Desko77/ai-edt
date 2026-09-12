@@ -161,12 +161,15 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
             {
                 break;
             }
-            modulesScanned++;
             String content = readFile(file);
             if (content == null)
             {
                 continue;
             }
+            // Counted after the read, not before it: a file that could not be opened
+            // was not scanned, and reporting it as scanned hides that the rules never
+            // ran against it.
+            modulesScanned++;
             // QUERY_IN_LOOP - module-level pattern (BSL loop containing query.execute)
             if (isEnabled("QUERY_IN_LOOP", enabledRules)) //$NON-NLS-1$
             {

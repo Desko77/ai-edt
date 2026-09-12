@@ -126,25 +126,33 @@ public class ProjectMetricsTool implements IMcpTool
 
         // Four steps, each asked before it starts: a stop during the module scan must not be
         // followed by the marker, metadata and form work the operator asked to end. A step that
-        // does not run leaves its numbers at zero, which is why partial is set below - every
-        // count in the answer is then a floor rather than a measurement.
+        // does not run is then absent from the answer rather than present as zero - toMetrics
+        // reads these nulls and leaves a gap, because a zero is what a project with no errors
+        // and no forms reports.
         List<IFile> bslFiles = collectBslFiles(project);
         collector.scanBsl(bslFiles, watch);
 
-        if (!watch.raised())
+        boolean markersScanned = !watch.raised();
+        if (markersScanned)
         {
             collector.scanMarkers();
         }
-        Map<String, Integer> objectsByType =
-            watch.raised() ? new LinkedHashMap<>() : collectObjectsByType(project);
-        FormStats formStats = watch.raised() ? new FormStats() : collectFormStats(project, watch);
+        Map<String, Integer> objectsByType = watch.raised() ? null : collectObjectsByType(project);
+        ProjectMetricsCollector.FormCounts forms = null;
+        if (!watch.raised())
+        {
+            FormStats measured = collectFormStats(project, watch);
+            forms = new ProjectMetricsCollector.FormCounts();
+            forms.count = measured.formCount;
+            forms.totalItems = measured.totalItems;
+            forms.largerThan100 = measured.largeFormsOver100;
+        }
 
         if (watch.stopped())
         {
             collector.markPartial();
         }
-        Map<String, Object> metrics = collector.toMetrics(objectsByType, formStats.formCount,
-            formStats.totalItems, formStats.largeFormsOver100);
+        Map<String, Object> metrics = collector.toMetrics(objectsByType, forms, markersScanned);
 
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {

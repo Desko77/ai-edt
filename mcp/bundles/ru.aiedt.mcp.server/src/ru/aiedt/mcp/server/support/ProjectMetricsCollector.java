@@ -314,21 +314,45 @@ public final class ProjectMetricsCollector
         }
     }
 
+    /** The form numbers, or the absence of them when that step did not run. */
+    public static final class FormCounts
+    {
+        /** How many forms were read. */
+        public int count;
+
+        /** How many items those forms hold in total. */
+        public int totalItems;
+
+        /** How many of them hold more than a hundred items. */
+        public int largerThan100;
+    }
+
     /**
      * Renders metrics as a structured map suitable for ToolResult.
+     * <p>
+     * A step that did not run is ABSENT from the answer rather than present as zero.
+     * Zero is what a project with no errors and no forms reports, and a caller acts on
+     * the number it is given; a gap is the only shape that says the question was not
+     * asked.
+     * </p>
+     *
+     * @param objectsByType counts per metadata type, or <code>null</code> when that step did not run
+     * @param forms the form counts, or <code>null</code> when that step did not run
+     * @param markersScanned whether the marker step ran
+     * @return the metrics
      */
-    public Map<String, Object> toMetrics(Map<String, Integer> objectsByType, int formCount,
-        int formItemsTotal, int formsLargerThan100)
+    public Map<String, Object> toMetrics(Map<String, Integer> objectsByType, FormCounts forms,
+        boolean markersScanned)
     {
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("partial", partial); //$NON-NLS-1$
 
-        Map<String, Object> objects = new LinkedHashMap<>();
         if (objectsByType != null)
         {
+            Map<String, Object> objects = new LinkedHashMap<>();
             objects.putAll(objectsByType);
+            metrics.put("objects", objects); //$NON-NLS-1$
         }
-        metrics.put("objects", objects); //$NON-NLS-1$
 
         Map<String, Object> modules = new LinkedHashMap<>();
         modules.put("count", moduleCount); //$NON-NLS-1$
@@ -343,25 +367,36 @@ public final class ProjectMetricsCollector
         methods.put("complexHotMethods", complexHotMethods); //$NON-NLS-1$
         metrics.put("methods", methods); //$NON-NLS-1$
 
-        Map<String, Object> errors = new LinkedHashMap<>();
-        errors.put("error", errorCount); //$NON-NLS-1$
-        errors.put("warning", warningCount); //$NON-NLS-1$
-        errors.put("info", infoCount); //$NON-NLS-1$
-        errors.put("codeStyle", codeStyleCount); //$NON-NLS-1$
-        metrics.put("errors", errors); //$NON-NLS-1$
+        if (markersScanned)
+        {
+            Map<String, Object> errors = new LinkedHashMap<>();
+            errors.put("error", errorCount); //$NON-NLS-1$
+            errors.put("warning", warningCount); //$NON-NLS-1$
+            errors.put("info", infoCount); //$NON-NLS-1$
+            errors.put("codeStyle", codeStyleCount); //$NON-NLS-1$
+            metrics.put("errors", errors); //$NON-NLS-1$
+        }
 
         Map<String, Object> tests = new LinkedHashMap<>();
         tests.put("modules", testModules); //$NON-NLS-1$
         tests.put("methods", testMethods); //$NON-NLS-1$
-        tests.put("yaxunitDetected", testModules > 0); //$NON-NLS-1$
+        if (!partial)
+        {
+            // A categorical answer needs the whole corpus behind it. After a partial
+            // scan false would mean "not found yet", which reads as "not there".
+            tests.put("yaxunitDetected", testModules > 0); //$NON-NLS-1$
+        }
         metrics.put("tests", tests); //$NON-NLS-1$
 
-        Map<String, Object> forms = new LinkedHashMap<>();
-        forms.put("count", formCount); //$NON-NLS-1$
-        forms.put("totalItems", formItemsTotal); //$NON-NLS-1$
-        forms.put("avgItems", formCount == 0 ? 0 : formItemsTotal / formCount); //$NON-NLS-1$
-        forms.put("largeFormsOver100Items", formsLargerThan100); //$NON-NLS-1$
-        metrics.put("forms", forms); //$NON-NLS-1$
+        if (forms != null)
+        {
+            Map<String, Object> formStats = new LinkedHashMap<>();
+            formStats.put("count", forms.count); //$NON-NLS-1$
+            formStats.put("totalItems", forms.totalItems); //$NON-NLS-1$
+            formStats.put("avgItems", forms.count == 0 ? 0 : forms.totalItems / forms.count); //$NON-NLS-1$
+            formStats.put("largeFormsOver100Items", forms.largerThan100); //$NON-NLS-1$
+            metrics.put("forms", formStats); //$NON-NLS-1$
+        }
 
         Map<String, Object> debt = new LinkedHashMap<>();
         debt.put("count", debtItems.size()); //$NON-NLS-1$
