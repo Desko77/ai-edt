@@ -1,0 +1,134 @@
+/**
+ * AI-EDT - 1C AI tools for EDT - Tests
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
+/**
+ * The server runs a pool of request threads, so two tool calls can be in flight at once.
+ * <p>
+ * Held in one slot they were not tellable apart: the second to arrive replaced the first, so a
+ * signal meant for the call the operator could see went to whichever had started last, and the
+ * running-tool indicator - cleared unconditionally by whichever finished first - read "idle" over
+ * work still in progress. The second failure is the worse one because it is silent.
+ * </p>
+ * <p>
+ * These tests drive the endpoint's registry directly. They need no HTTP and no workbench: a
+ * {@link RunningToolCall} with a null exchange is answerable-to nobody, which is exactly the shape
+ * the registry has to handle anyway.
+ * </p>
+ */
+public class TwoCallsInFlightStayTellableApartTest
+{
+    @Test
+    public void theIndicatorKeepsNamingWorkThatIsStillRunning()
+    {
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall first = new RunningToolCall(null, "code_search", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        RunningToolCall second = new RunningToolCall(null, "project_metrics", "2"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        server.setActiveToolCall(first);
+        first.markRunning("code_search"); //$NON-NLS-1$
+        server.setActiveToolCall(second);
+        second.markRunning("project_metrics"); //$NON-NLS-1$
+
+        assertEquals("the oldest running call is the one on show", "code_search", //$NON-NLS-1$
+            server.getCurrentToolName());
+        assertEquals(2, server.runningToolCount());
+
+        // The first finishes. The indicator must move to the second, not go dark.
+        first.markRunning(null);
+        server.clearActiveToolCall(first);
+
+        assertTrue("a tool is still running", server.isToolExecuting());
+        assertEquals("project_metrics", server.getCurrentToolName()); //$NON-NLS-1$
+        assertEquals(1, server.runningToolCount());
+
+        second.markRunning(null);
+        server.clearActiveToolCall(second);
+
+        assertFalse(server.isToolExecuting());
+        assertNull(server.getCurrentToolName());
+        assertEquals(0, server.runningToolCount());
+    }
+
+    @Test
+    public void aSignalActsOnTheCallTheOperatorCanSee()
+    {
+        // Newest-wins was the defect: the operator reads one name off the strip and presses a
+        // button that reached a different call.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall shown = new RunningToolCall(null, "find_references", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        RunningToolCall later = new RunningToolCall(null, "validate_query", "2"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        server.setActiveToolCall(shown);
+        shown.markRunning("find_references"); //$NON-NLS-1$
+        server.setActiveToolCall(later);
+        later.markRunning("validate_query"); //$NON-NLS-1$
+
+        assertEquals("find_references", server.getCurrentToolName()); //$NON-NLS-1$
+        assertSame("the button must act on what the strip names", shown,
+            server.getActiveToolCall());
+    }
+
+    @Test
+    public void aCallIsFoundByTheIdItWillBeAnsweredWith()
+    {
+        // What a protocol cancellation needs: notifications/cancelled carries a request id, and the
+        // flag has to be raised on the call that id names rather than on whichever started last.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall first = new RunningToolCall(null, "code_search", "req-1"); //$NON-NLS-1$ //$NON-NLS-2$
+        RunningToolCall second = new RunningToolCall(null, "project_metrics", Integer.valueOf(7)); //$NON-NLS-1$
+        server.setActiveToolCall(first);
+        server.setActiveToolCall(second);
+
+        assertSame(first, server.findCallByRequestId("req-1")); //$NON-NLS-1$
+        assertSame(second, server.findCallByRequestId(Integer.valueOf(7)));
+        assertNull(server.findCallByRequestId("no-such-id")); //$NON-NLS-1$
+        assertNull("a notification with no id names no call", server.findCallByRequestId(null));
+    }
+
+    @Test
+    public void aCallThatHasNotStartedItsToolIsNotOnShow()
+    {
+        // A call is enrolled when it arrives, which is before the router resolves and starts the
+        // tool. There is nothing to name or to interrupt in that window.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall arrived = new RunningToolCall(null, "code_search", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        server.setActiveToolCall(arrived);
+
+        assertFalse(server.isToolExecuting());
+        assertNull(server.getCurrentToolName());
+        assertEquals(0, server.runningToolCount());
+        assertNull(server.getActiveToolCall());
+
+        // ...and it can still be found by id, because a cancellation may arrive in that window.
+        assertSame(arrived, server.findCallByRequestId("1")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theToolNameOnShowIsTheOneTheRouterResolved()
+    {
+        // The request may carry a back-compat alias; the strip shows the tool that actually runs.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall call = new RunningToolCall(null, "search_in_code", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        server.setActiveToolCall(call);
+
+        assertEquals("before the router resolves, the request's own name stands", //$NON-NLS-1$
+            "search_in_code", call.runningToolName()); //$NON-NLS-1$
+
+        call.markRunning("code_search"); //$NON-NLS-1$
+
+        assertEquals("code_search", server.getCurrentToolName()); //$NON-NLS-1$
+    }
+}

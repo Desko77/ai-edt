@@ -858,10 +858,14 @@ public class McpRequestRouter
      */
     private static String execute(IMcpTool tool, Map<String, String> arguments)
     {
-        McpHttpEndpoint server = getServer();
-        if (server != null)
+        // Marked on the CALL, not on the server: a field on the server is one slot, and the next
+        // call to finish would clear it while this one is still running - the indicator would then
+        // read idle over work in progress.
+        ToolCallScope running = ToolCallScope.current();
+        RunningToolCall marked = running != null ? running.runningCall() : null;
+        if (marked != null)
         {
-            server.setCurrentToolName(tool.getName());
+            marked.markRunning(tool.getName());
         }
         long start = System.currentTimeMillis();
         String result = null;
@@ -881,9 +885,9 @@ public class McpRequestRouter
         }
         finally
         {
-            if (server != null)
+            if (marked != null)
             {
-                server.setCurrentToolName(null);
+                marked.markRunning(null);
             }
             HistorySettings history = HistorySettings.current();
             if (history.isEnabled())

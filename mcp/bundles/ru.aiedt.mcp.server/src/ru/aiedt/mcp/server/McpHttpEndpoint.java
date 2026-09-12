@@ -397,18 +397,20 @@ public class McpHttpEndpoint
 
     private final AtomicLong requestCount = new AtomicLong();
 
-    private volatile String currentToolName;
-
-    private volatile long toolStartedAt;
-
     /** Raised by the user when no call was in flight to answer; the next tool result carries it. */
     private final AtomicReference<OperatorSignal> pendingSignal = new AtomicReference<>();
 
-    /** The call a user signal would pre-empt. One slot: the last call to arrive is the one on offer. */
-    private volatile RunningToolCall activeToolCall;
-
-    /** Guards set/clear of {@link #activeToolCall} so a finishing call cannot wipe a later running one. */
-    private final Object activeCallLock = new Object();
+    /**
+     * Every call in flight, oldest first.
+     * <p>
+     * A single slot held the last call to arrive, and the request pool runs 24 threads: with two
+     * calls in flight the older one became unreachable - a signal meant for the call the operator
+     * could see went to whichever started last - and the running-tool indicator, cleared
+     * unconditionally when any call finished, read "idle" while the other was still working.
+     * </p>
+     */
+    private final java.util.Queue<RunningToolCall> runningCalls =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /**
      * Opens the endpoint, restarting it if it was already open.
@@ -853,24 +855,77 @@ public class McpHttpEndpoint
     }
 
     /**
+     * The call the indicator names and a user signal acts on: the oldest one still running a tool.
+     * <p>
+     * Oldest rather than newest, and the same call for both, so that the button acts on the call
+     * the operator can see. A call that has arrived but whose tool the router has not started yet
+     * is skipped - there is nothing to show or to interrupt in it.
+     * </p>
+     *
+     * @return the call, or <code>null</code> when no tool is running
+     */
+    private RunningToolCall oldestRunningCall()
+    {
+        for (RunningToolCall call : runningCalls)
+        {
+            if (call.isRunningATool() && !call.hasResponded())
+            {
+                return call;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Returns the tool that is running.
      *
      * @return the tool name, or <code>null</code> when nothing is running
      */
     public String getCurrentToolName()
     {
-        return currentToolName;
+        RunningToolCall call = oldestRunningCall();
+        return call != null ? call.runningToolName() : null;
     }
 
     /**
-     * Announces which tool is running, so the status bar can show it and time it.
+     * How many calls are running a tool right now.
      *
-     * @param toolName the tool that has just started, or <code>null</code> now that it has finished
+     * @return the count, {@code 0} when the server is idle
      */
-    public void setCurrentToolName(String toolName)
+    public int runningToolCount()
     {
-        currentToolName = toolName;
-        toolStartedAt = toolName != null ? System.currentTimeMillis() : 0L;
+        int running = 0;
+        for (RunningToolCall call : runningCalls)
+        {
+            if (call.isRunningATool() && !call.hasResponded())
+            {
+                running++;
+            }
+        }
+        return running;
+    }
+
+    /**
+     * Finds the call a client's request id names, so a protocol cancellation reaches the call it
+     * was sent for rather than whichever started last.
+     *
+     * @param requestId the JSON-RPC id from the notification; may be <code>null</code>
+     * @return the call in flight with that id, or <code>null</code>
+     */
+    public RunningToolCall findCallByRequestId(Object requestId)
+    {
+        if (requestId == null)
+        {
+            return null;
+        }
+        for (RunningToolCall call : runningCalls)
+        {
+            if (requestId.equals(call.getRequestId()) && !call.hasResponded())
+            {
+                return call;
+            }
+        }
+        return null;
     }
 
     /**
@@ -880,7 +935,7 @@ public class McpHttpEndpoint
      */
     public boolean isToolExecuting()
     {
-        return currentToolName != null;
+        return oldestRunningCall() != null;
     }
 
     /**
@@ -890,12 +945,8 @@ public class McpHttpEndpoint
      */
     public long getToolExecutionSeconds()
     {
-        long startedAt = toolStartedAt;
-        if (startedAt == 0L)
-        {
-            return 0L;
-        }
-        return (System.currentTimeMillis() - startedAt) / MILLIS_PER_SECOND;
+        RunningToolCall call = oldestRunningCall();
+        return call != null ? call.getRunningSeconds() : 0L;
     }
 
     /**
@@ -940,8 +991,9 @@ public class McpHttpEndpoint
      */
     public synchronized RunningToolCall.Delivery interruptToolCall(OperatorSignal signal)
     {
-        RunningToolCall call = activeToolCall;
-        if (call == null || call.hasResponded())
+        // The call the indicator names, so the button acts on the work the operator can see.
+        RunningToolCall call = oldestRunningCall();
+        if (call == null)
         {
             return RunningToolCall.Delivery.NOT_ARBITRATED;
         }
@@ -958,48 +1010,43 @@ public class McpHttpEndpoint
         {
             return delivery;
         }
-        setCurrentToolName(null);
+        call.markRunning(null);
         clearActiveToolCall(call);
         return delivery;
     }
 
     /**
-     * Offers up the call a user signal may pre-empt.
+     * Enrols a call that has arrived, so a user signal can reach it and the indicator can show it.
      *
      * @param call the call now in flight
      */
     public void setActiveToolCall(RunningToolCall call)
     {
-        synchronized (activeCallLock)
-        {
-            activeToolCall = call;
-        }
+        runningCalls.add(call);
     }
 
     /**
-     * Returns the call a user signal would pre-empt.
+     * Returns the call a user signal would act on.
      *
-     * @return the call in flight, or <code>null</code>
+     * @return the oldest call still running a tool, or <code>null</code>
      */
     public RunningToolCall getActiveToolCall()
     {
-        return activeToolCall;
+        return oldestRunningCall();
     }
 
     /**
-     * Withdraws the call on offer.
+     * Withdraws a call that has finished.
+     * <p>
+     * Removal is by identity, so a call finishing takes only its own entry: the calls that started
+     * after it keep their place in the queue and the indicator keeps naming the oldest of them.
+     * </p>
+     *
+     * @param call the call that is done
      */
     public void clearActiveToolCall(RunningToolCall call)
     {
-        // Compare-and-clear: only wipe the slot if it still holds this call. A call finishing must not
-        // erase a later call that has since overwritten the slot and is still running.
-        synchronized (activeCallLock)
-        {
-            if (activeToolCall == call)
-            {
-                activeToolCall = null;
-            }
-        }
+        runningCalls.remove(call);
     }
 
     /**

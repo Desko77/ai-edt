@@ -74,6 +74,12 @@ public class RunningToolCall
 
     private final long startedAt;
 
+    /** The tool the router resolved this call to, while it is running. */
+    private volatile String runningToolName;
+
+    /** When that tool began, so the indicator times the tool rather than the connection. */
+    private volatile long runningSince;
+
     /** Set exactly once, by whoever answers first. */
     private final AtomicBoolean responded = new AtomicBoolean();
 
@@ -166,6 +172,55 @@ public class RunningToolCall
     public String getToolName()
     {
         return toolName;
+    }
+
+    /**
+     * Records which tool the router resolved this call to, and when it began running.
+     * <p>
+     * The name the request carried and the name of the tool that runs are not always the same: a
+     * back-compat alias resolves to the facade that absorbed it. The status bar shows the resolved
+     * one, so it is recorded here rather than on the server - a field on the server is a single
+     * slot, and a second call finishing would clear it while this one is still running.
+     * </p>
+     *
+     * @param resolved the tool now running, or <code>null</code> now that it has finished
+     */
+    public void markRunning(String resolved)
+    {
+        this.runningToolName = resolved;
+        this.runningSince = resolved != null ? System.currentTimeMillis() : 0L;
+    }
+
+    /**
+     * The tool this call is running, as the router resolved it.
+     *
+     * @return the resolved name while a tool is running, otherwise the name the request carried
+     */
+    public String runningToolName()
+    {
+        String resolved = runningToolName;
+        return resolved != null ? resolved : toolName;
+    }
+
+    /**
+     * Whether a tool is running under this call right now.
+     *
+     * @return <code>true</code> between {@link #markRunning} and its clearing
+     */
+    public boolean isRunningATool()
+    {
+        return runningToolName != null;
+    }
+
+    /**
+     * How long the running tool has been running, as opposed to how long the call has been open.
+     *
+     * @return whole seconds, or {@code 0} when no tool is running under this call
+     */
+    public long getRunningSeconds()
+    {
+        long since = runningSince;
+        return since == 0L ? 0L : (System.currentTimeMillis() - since) / MILLIS_PER_SECOND;
     }
 
     /**
