@@ -141,7 +141,7 @@ public class SensitiveDataScanTool implements IMcpTool
 
         if (isEnabled("ATTRIBUTE_NAME", checks)) //$NON-NLS-1$
         {
-            scanAttributes(project, custom, findings);
+            scanAttributes(project, custom, findings, watch);
         }
         if (isEnabled("HARDCODED_SECRET", checks) //$NON-NLS-1$
             || isEnabled("COMMENT_LEAK", checks) //$NON-NLS-1$
@@ -166,7 +166,7 @@ public class SensitiveDataScanTool implements IMcpTool
         {
             return ToolResult.success()
                 .put("statistics", stats) //$NON-NLS-1$
-                .put("text", renderMarkdown(filtered, stats)) //$NON-NLS-1$
+                .put("text", renderMarkdown(filtered, stats, watch.note("files"))) //$NON-NLS-1$
             .put("cancelled", watch.note("files")) //$NON-NLS-1$
                 .toJson();
         }
@@ -178,7 +178,7 @@ public class SensitiveDataScanTool implements IMcpTool
     }
 
     private void scanAttributes(IProject project, Set<Pattern> custom,
-        List<Map<String, Object>> findings)
+        List<Map<String, Object>> findings, WatchForCancel watch)
     {
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
         if (provider == null)
@@ -192,6 +192,10 @@ public class SensitiveDataScanTool implements IMcpTool
         }
         for (java.lang.reflect.Method m : config.getClass().getMethods())
         {
+            if (watch.raised())
+            {
+                return;
+            }
             if (m.getParameterCount() != 0)
             {
                 continue;
@@ -212,6 +216,12 @@ public class SensitiveDataScanTool implements IMcpTool
                 {
                     for (Object item : (java.util.List<?>) value)
                     {
+                        // One metadata object is the boundary: its attributes, dimensions
+                        // and resources are read together or not at all.
+                        if (watch.stopHere())
+                        {
+                            return;
+                        }
                         if (item instanceof MdObject)
                         {
                             scanMdObjectAttributes((MdObject) item, custom, findings);
@@ -473,13 +483,21 @@ public class SensitiveDataScanTool implements IMcpTool
     }
 
     private static String renderMarkdown(List<Map<String, Object>> findings,
-        Map<String, Object> stats)
+        Map<String, Object> stats, String cancelled)
     {
         StringBuilder sb = new StringBuilder("# Sensitive data scan\n\n"); //$NON-NLS-1$
         sb.append("**Findings:** ").append(stats.get("findings")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (cancelled != null)
+        {
+            sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (findings.isEmpty())
         {
-            sb.append("No sensitive data findings.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, nothing found
+            // means nothing was looked at, which is a different statement.
+            sb.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No sensitive data findings.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         sb.append("| Kind | Severity | Location | Message |\n"); //$NON-NLS-1$

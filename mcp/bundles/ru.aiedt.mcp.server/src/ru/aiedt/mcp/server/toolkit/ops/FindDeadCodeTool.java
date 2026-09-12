@@ -224,13 +224,18 @@ public class FindDeadCodeTool
             limit = DEFAULT_LIMIT;
         }
 
+        // The scan runs on the worker thread, so the call's scope is here and its cancel
+        // flag can be read at the module boundary - the same place the scan cap stops.
+        // Started before the walk that builds the list: on a large tree that walk is
+        // itself work the operator may have asked to end.
+        WatchForCancel watch = WatchForCancel.begin();
         List<IFile> bslFiles = new ArrayList<>();
         IFolder sourceFolder = project.getFolder("src"); //$NON-NLS-1$
         try
         {
             if (sourceFolder.exists())
             {
-                collectBslFiles(sourceFolder, bslFiles);
+                collectBslFiles(sourceFolder, bslFiles, watch);
             }
         }
         catch (CoreException e)
@@ -246,9 +251,6 @@ public class FindDeadCodeTool
         int interceptorsSkipped = 0;
         int loadFailures = 0;
         int indeterminate = 0;
-        // The scan runs on the worker thread, so the call's scope is here and its cancel
-        // flag can be read at the module boundary - the same place the scan cap stops.
-        WatchForCancel watch = WatchForCancel.begin();
 
         for (IFile file : bslFiles)
         {
@@ -509,13 +511,20 @@ public class FindDeadCodeTool
         return 0;
     }
 
-    private static void collectBslFiles(IFolder folder, List<IFile> out) throws CoreException
+    private static void collectBslFiles(IFolder folder, List<IFile> out, WatchForCancel watch)
+        throws CoreException
     {
         for (IResource member : folder.members())
         {
+            // Asked, not counted: building the list is not a module the scan read, and
+            // the number the answer reports names modules.
+            if (watch.raised())
+            {
+                return;
+            }
             if (member instanceof IFolder)
             {
-                collectBslFiles((IFolder)member, out);
+                collectBslFiles((IFolder)member, out, watch);
             }
             else if (member instanceof IFile && "bsl".equalsIgnoreCase(member.getFileExtension())) //$NON-NLS-1$
             {

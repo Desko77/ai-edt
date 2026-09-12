@@ -634,7 +634,10 @@ public class ReferenceLocator implements IMcpTool
         out.append("**Total references located:** ").append(totalCount).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         if (watch.stopped())
         {
-            out.append("\n> **").append(watch.note("references")).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            // "cross-references", not "references": the count is what the metadata phases examined,
+            // while the total above is what was kept. The BSL phase is polled through a progress
+            // monitor on threads of its own and adds to neither.
+            out.append("\n> **").append(watch.note("cross-references")).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
             if (!collector.phasesCutShort.isEmpty())
             {
                 out.append("> - phases not run: ") //$NON-NLS-1$

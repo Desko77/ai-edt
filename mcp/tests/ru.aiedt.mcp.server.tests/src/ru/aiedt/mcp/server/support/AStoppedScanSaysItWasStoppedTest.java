@@ -67,8 +67,9 @@ public class AStoppedScanSaysItWasStoppedTest
             assertTrue("a raised flag must stop the next boundary", watch.stopped());
             String note = watch.note("modules");
             assertNotNull("a stopped scan must have something to say", note);
-            assertTrue(note, note.contains("3"));
-            assertTrue(note, note.contains("modules"));
+            // Two, not three: the third boundary is where it STOPPED, so it is not one the scan
+            // got through. Counting it would say three modules were read when two were.
+            assertTrue(note, note.contains(" 2 modules"));
             assertTrue("the note has to warn that the answer is partial",
                 note.contains("not the whole answer"));
         }
@@ -97,9 +98,34 @@ public class AStoppedScanSaysItWasStoppedTest
                 watch.stopHere();
             }
 
-            assertEquals("the count names where the work ended, not how often it was asked", 3,
+            assertEquals("the count names where the work ended, not how often it was asked", 2,
                 watch.reached());
-            assertTrue(watch.note("files"), watch.note("files").contains(" 3 files"));
+            assertTrue(watch.note("files"), watch.note("files").contains(" 2 files"));
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    @Test
+    public void aStopAtTheVeryFirstBoundaryClaimsNoUnits()
+    {
+        // Nothing was read, so there is no count to name. "after 0 files" would read as a claim
+        // about the work rather than about the stop.
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            flag.cancel("the operator asked to stop");
+            WatchForCancel watch = WatchForCancel.begin();
+
+            assertTrue(watch.stopHere());
+            assertEquals(0, watch.reached());
+            String note = watch.note("files");
+            assertNotNull("a stop still has to be reported", note);
+            assertFalse(note, note.contains("0"));
+            assertTrue("the answer must still be marked partial", note.contains("not the whole"));
         }
         finally
         {

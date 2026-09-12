@@ -70,12 +70,15 @@ public final class WatchForCancel
             // answer reports.
             return true;
         }
-        reached++;
         if (flag != null && flag.isCancelled())
         {
+            // Counted after the check, not before: this boundary is where the work STOPS, so it is
+            // not one the scan got through. Counting first says "after 1 units" when none were read.
             fired = true;
+            return true;
         }
-        return fired;
+        reached++;
+        return false;
     }
 
     /**
@@ -126,7 +129,19 @@ public final class WatchForCancel
      */
     public String note(String unit)
     {
-        return fired ? "cancelled by the operator after " + reached + " " + unit //$NON-NLS-1$ //$NON-NLS-2$
-            + "; what is below is what had been found by then, not the whole answer" : null; //$NON-NLS-1$
+        if (!fired)
+        {
+            return null;
+        }
+        String partial = "; what is below is what had been found by then, not the whole answer"; //$NON-NLS-1$
+        if (reached == 0)
+        {
+            // No boundary was counted: the stop came before the first one, or the work that ran is
+            // work this watch does not count - a walk polled through a progress monitor on threads
+            // of its own. Naming a count of zero there would read as "nothing was scanned", which
+            // is a claim about the work rather than about the stop.
+            return "cancelled by the operator" + partial; //$NON-NLS-1$
+        }
+        return "cancelled by the operator after " + reached + " " + unit + partial; //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

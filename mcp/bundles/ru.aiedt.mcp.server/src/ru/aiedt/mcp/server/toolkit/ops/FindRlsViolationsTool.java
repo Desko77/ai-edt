@@ -135,9 +135,13 @@ public class FindRlsViolationsTool implements IMcpTool
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
         String roleName = JsonUtils.extractStringArgument(params, "roleName"); //$NON-NLS-1$
 
-        boolean noRlsConfigured = checkNoRls(project, roleName);
-        List<Map<String, Object>> findings = new ArrayList<>();
         WatchForCancel watch = WatchForCancel.begin();
+        // Asked before the predicate, and never inside it: checkNoRls answers whether ANY
+        // object has a rule, and a walk stopped half way would answer "none" when it
+        // merely stopped looking. Skipped entirely when the operator has already cancelled,
+        // which leaves noRlsConfigured absent from the answer rather than false.
+        boolean noRlsConfigured = !watch.raised() && checkNoRls(project, roleName);
+        List<Map<String, Object>> findings = new ArrayList<>();
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
             if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
             {
@@ -182,7 +186,7 @@ public class FindRlsViolationsTool implements IMcpTool
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
             return tr.put("statistics", stats) //$NON-NLS-1$
-                .put("text", renderMarkdown(filtered, stats)) //$NON-NLS-1$
+                .put("text", renderMarkdown(filtered, stats, watch.note("files"))) //$NON-NLS-1$
                 .toJson();
         }
         return tr.put("statistics", stats) //$NON-NLS-1$
@@ -398,13 +402,21 @@ public class FindRlsViolationsTool implements IMcpTool
     }
 
     private static String renderMarkdown(List<Map<String, Object>> findings,
-        Map<String, Object> stats)
+        Map<String, Object> stats, String cancelled)
     {
         StringBuilder sb = new StringBuilder("# RLS Violations\n\n"); //$NON-NLS-1$
         sb.append("**Findings:** ").append(stats.get("findings")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (cancelled != null)
+        {
+            sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (findings.isEmpty())
         {
-            sb.append("No violations.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, nothing found
+            // means nothing was looked at, which is a different statement.
+            sb.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No violations.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         sb.append("| Kind | Severity | File:Line | Method | Message |\n"); //$NON-NLS-1$

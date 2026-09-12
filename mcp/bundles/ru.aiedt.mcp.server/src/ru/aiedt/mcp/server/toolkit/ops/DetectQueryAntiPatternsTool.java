@@ -154,12 +154,14 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         // Read at the file boundary: stopping between files leaves the findings so far
         // whole, and stopping inside one would leave half a module's worth.
         WatchForCancel watch = WatchForCancel.begin();
+        int modulesScanned = 0;
         for (IFile file : bslFiles)
         {
             if (watch.stopHere())
             {
                 break;
             }
+            modulesScanned++;
             String content = readFile(file);
             if (content == null)
             {
@@ -202,7 +204,9 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         }
 
         Map<String, Object> stats = new LinkedHashMap<>();
-        stats.put("modulesScanned", bslFiles.size()); //$NON-NLS-1$
+        // What the scan got through, not what it was offered: after an early exit the
+        // candidate count is the number of modules it did NOT read.
+        stats.put("modulesScanned", modulesScanned); //$NON-NLS-1$
         stats.put("queriesAnalyzed", queriesAnalyzed); //$NON-NLS-1$
         stats.put("findings", findings.size()); //$NON-NLS-1$
 
@@ -211,7 +215,7 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
             return ToolResult.success()
                 .put("scope", scope) //$NON-NLS-1$
                 .put("statistics", stats) //$NON-NLS-1$
-                .put("text", renderMarkdown(findings, stats)) //$NON-NLS-1$
+                .put("text", renderMarkdown(findings, stats, watch.note("files"))) //$NON-NLS-1$
                 .put("cancelled", watch.note("files")) //$NON-NLS-1$
                 .toJson();
         }
@@ -389,15 +393,23 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
     }
 
     private static String renderMarkdown(List<Map<String, Object>> findings,
-        Map<String, Object> stats)
+        Map<String, Object> stats, String cancelled)
     {
         StringBuilder sb = new StringBuilder("# Query Anti-Patterns Report\n\n"); //$NON-NLS-1$
         sb.append("**Modules scanned:** ").append(stats.get("modulesScanned")).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         sb.append("**Queries analyzed:** ").append(stats.get("queriesAnalyzed")).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         sb.append("**Findings:** ").append(stats.get("findings")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (cancelled != null)
+        {
+            sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (findings.isEmpty())
         {
-            sb.append("No anti-patterns detected.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, nothing found
+            // means nothing was looked at, which is a different statement.
+            sb.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No anti-patterns detected.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         sb.append("| File | Line | Rule | Severity | Message |\n"); //$NON-NLS-1$

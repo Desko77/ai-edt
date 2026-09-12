@@ -124,24 +124,23 @@ public class ProjectMetricsTool implements IMcpTool
         ProjectMetricsCollector collector = new ProjectMetricsCollector(project, timeoutSeconds,
             includeDebtList);
 
-        // Step 1: BSL files
+        // Four steps, each asked before it starts: a stop during the module scan must not be
+        // followed by the marker, metadata and form work the operator asked to end. A step that
+        // does not run leaves its numbers at zero, which is why partial is set below - every
+        // count in the answer is then a floor rather than a measurement.
         List<IFile> bslFiles = collectBslFiles(project);
         collector.scanBsl(bslFiles, watch);
 
-        // Step 2: EDT markers
-        collector.scanMarkers();
-
-        // Step 3: metadata objects (BM read)
-        Map<String, Integer> objectsByType = collectObjectsByType(project);
-
-        // Step 4: forms (best-effort - count *.form files)
-        FormStats formStats = collectFormStats(project, watch);
+        if (!watch.raised())
+        {
+            collector.scanMarkers();
+        }
+        Map<String, Integer> objectsByType =
+            watch.raised() ? new LinkedHashMap<>() : collectObjectsByType(project);
+        FormStats formStats = watch.raised() ? new FormStats() : collectFormStats(project, watch);
 
         if (watch.stopped())
         {
-            // The form walk can be the half that stopped, and only the module scan sets
-            // this by itself - partial=false beside a cancellation note would deny what
-            // the note says.
             collector.markPartial();
         }
         Map<String, Object> metrics = collector.toMetrics(objectsByType, formStats.formCount,
@@ -317,10 +316,11 @@ public class ProjectMetricsTool implements IMcpTool
         }
         if (Boolean.TRUE.equals(metrics.get("partial"))) //$NON-NLS-1$
         {
-            // The cause is not named here: the deadline and the operator both set it, and
-            // the line above says which when it was the operator.
-            sb.append("> **partial=true** - some modules were not read; every count below"
-                + " is a floor\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            // Neither the cause nor the phase is named: the deadline and the operator both set it,
+            // and either can stop any of the four steps. The line above says which when it was the
+            // operator.
+            sb.append("> **partial=true** - the scan did not finish; every count below is a"
+                + " floor\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         appendMapAsTable(sb, "Objects", (Map<?, ?>) metrics.get("objects")); //$NON-NLS-1$ //$NON-NLS-2$
         appendMapAsTable(sb, "Modules", (Map<?, ?>) metrics.get("modules")); //$NON-NLS-1$ //$NON-NLS-2$
