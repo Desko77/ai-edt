@@ -87,6 +87,14 @@ jobs:
       - name: Facade gate census
         run: python3 scripts/check-facade-gates.py
 
+      # One facade keeps a map of operation to tool beside the switch it dispatches by, so its help
+      # can name the tool an operation reaches. Two lists of one routing drift, and the suite cannot
+      # tell the drift apart: four of the delegates refuse in the same words, so a case pointing at
+      # the wrong one of those behaves exactly like a case pointing at the right one until a
+      # workspace is loaded. The sources say which tool each case names.
+      - name: Facade routing census
+        run: python3 scripts/check-facade-routing.py
+
       # A reflection failure caught and discarded looks exactly like "this EDT does not offer it".
       # getWorkspaceProject() was reached by name on a non-public implementation for years: invoke
       # refused it, the catch dropped it, and everything downstream degraded in silence. Each

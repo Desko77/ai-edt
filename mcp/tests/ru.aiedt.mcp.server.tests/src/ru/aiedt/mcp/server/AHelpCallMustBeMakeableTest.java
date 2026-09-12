@@ -150,7 +150,10 @@ public class AHelpCallMustBeMakeableTest
         // non-breaking spaces, so U+00A0 asked for help while U+0020 did not. What is asked now is
         // whether anything shows, and these are the spellings that do not.
         for (String blankValue : new String[] {"", " ", "   ", "\t", "\n", " ", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
-            " ", " ", " ", "​", "﻿", "  \t"}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            " ", " ", " ", "​", "﻿", "  \t", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            // Above the basic plane, so it arrives as a surrogate pair. Read a char at a time,
+            // neither half is FORMAT and the value counted as something that shows.
+            new String(Character.toChars(0xE0001))})
         {
             Map<String, String> blank = new LinkedHashMap<>();
             blank.put(HELP, blankValue);

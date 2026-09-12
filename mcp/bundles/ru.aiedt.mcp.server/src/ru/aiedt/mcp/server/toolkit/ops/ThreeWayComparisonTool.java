@@ -412,18 +412,25 @@ public class ThreeWayComparisonTool
         {
             return false;
         }
-        for (int i = 0; i < value.length(); i++)
-        {
-            char symbol = value.charAt(i);
-            boolean invisible = Character.isWhitespace(symbol)
-                || Character.getType(symbol) == Character.FORMAT
-                || symbol == ' ' || symbol == ' ' || symbol == ' ';
-            if (!invisible)
-            {
-                return true;
-            }
-        }
-        return false;
+        // By code point and not by char: a format character above the basic plane arrives as a
+        // surrogate pair, and each half is categorised SURROGATE rather than FORMAT. Read one char
+        // at a time, U+E0001 counts as something that shows, which it is not.
+        return value.codePoints().anyMatch(symbol -> !isInvisible(symbol));
+    }
+
+    /**
+     * Whether one code point leaves nothing on the screen.
+     *
+     * @param symbol a code point.
+     * @return <code>true</code> for whitespace, formatting and the non-breaking spaces
+     */
+    private static boolean isInvisible(int symbol)
+    {
+        // The three named ones are spaces that Character.isWhitespace deliberately excludes,
+        // because they do not break a line. They still show nothing.
+        return Character.isWhitespace(symbol)
+            || Character.getType(symbol) == Character.FORMAT
+            || symbol == ' ' || symbol == ' ' || symbol == ' ';
     }
 
     @Override
