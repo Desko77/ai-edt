@@ -15,7 +15,7 @@ import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
-import ru.aiedt.mcp.server.support.ParameterHelp;
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -31,6 +31,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *       (delegates to {@link DependencyGraphTool})</li>
  *   <li>{@code compare_configurations} - diff two projects or two Designer-XML exports
  *       (delegates to {@link CompareConfigurationsTool})</li>
+ *   <li>{@code compare_three_way} - a project against a new delivery and the delivery both
+ *       came from; writes into the project when its intent is not REPORT
+ *       (delegates to {@link ThreeWayComparisonTool})</li>
  *   <li>{@code detect_query_anti_patterns} - scan queries for known performance
  *       anti-patterns (delegates to {@link DetectQueryAntiPatternsTool})</li>
  *   <li>{@code generate_health_snapshot} - composite errors+metadata+metrics+anti-patterns
@@ -39,9 +42,12 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *       (delegates to {@link ImpactAnalysisTool})</li>
  *   <li>{@code object_summary} - metadata+modules+methods summary for one object
  *       (delegates to {@link ObjectSummaryTool})</li>
+ *   <li>{@code describe_db_tables} - the database tables one object turns into and the fields
+ *       of each (delegates to {@link DbTablesReader})</li>
  *   <li>{@code semantic_metadata_search} - free-text search over object names, synonyms
  *       and comments (delegates to {@link SemanticMetadataSearchTool})</li>
- *   <li>{@code help} - built-in topic-driven help</li>
+ *   <li>{@code help} - the catalog, the operation picker, and the parameters of one
+ *       operation under {@code topic=<operation>}</li>
  * </ul>
  *
  * <p>Each operation routes to its standalone tool unchanged - params pass through as-is,
@@ -446,17 +452,11 @@ public class InsightsFacadeTool implements IMcpTool
                 + "semantic_metadata_search |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        IMcpTool named = delegateFor(topic);
-        if (named != null)
-        {
-            // The parameters of an operation reached through this facade are the parameters of the
-            // tool it routes to, and this facade's own schema does not repeat them. Without this,
-            // the detail is reachable only by calling the standalone tool - which a caller who
-            // found the operation here has no reason to know exists.
-            return ParameterHelp.render(named.getName(), named.getInputSchema());
-        }
-        return "# Unknown topic '" + topic //$NON-NLS-1$
-            + "'.\n\nAvailable: workflow, or any operation name for its parameters.\n"; //$NON-NLS-1$
+        // The parameters of an operation reached through this facade are the parameters of the tool
+        // it routes to, and this facade's own schema does not repeat them. Without this, the detail
+        // is reachable only by calling the standalone tool - which a caller who found the operation
+        // here has no reason to know exists.
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(), "workflow"); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

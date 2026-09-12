@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -547,7 +548,11 @@ public class SupportRegistryTool
                 + "\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: modes, workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        // No operation here routes to a standalone tool, so there is no schema to
+        // render. What this still owes a caller is the difference between a topic that
+        // names nothing and one of its own operations, which nothing describes yet.
+        return FacadeParameterHelp.answer(topic, Collections.emptyMap(), OPS.keySet(),
+            "modes, workflow"); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.function.Supplier;
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -43,6 +45,33 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 public class SecurityAuditFacadeTool implements IMcpTool
 {
     public static final String NAME = "security_audit"; //$NON-NLS-1$
+
+    private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
+
+    /**
+     * The tool each operation routes to, for describing it rather than running it.
+     * <p>
+     * A map and not a second switch on the same word: the operation-parameter census reads
+     * the widest {@code switch (operation)} in a file as the facade's vocabulary, and two
+     * switches of equal width leave which one it reads to the order they sit in. The two
+     * lists are held together by {@code scripts/check-facade-routing.py}.
+     * </p>
+     *
+     * @return operation name to the tool it reaches, never <code>null</code>
+     */
+    static Map<String, Supplier<IMcpTool>> describedOperations()
+    {
+        return DESCRIBED;
+    }
+
+    private static Map<String, Supplier<IMcpTool>> buildDescribed()
+    {
+        Map<String, Supplier<IMcpTool>> m = new LinkedHashMap<>();
+        m.put("audit_role_rights", AuditRoleRightsTool::new); //$NON-NLS-1$
+        m.put("find_rls_violations", FindRlsViolationsTool::new); //$NON-NLS-1$
+        m.put("sensitive_data_scan", SensitiveDataScanTool::new); //$NON-NLS-1$
+        return Collections.unmodifiableMap(m);
+    }
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
@@ -186,7 +215,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
                 + "comment or a log | sensitive_data_scan |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(), "workflow"); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

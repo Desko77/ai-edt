@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.function.Supplier;
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -61,6 +63,39 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 public class InfobaseAdminFacadeTool implements IMcpTool
 {
     public static final String NAME = "infobase_admin"; //$NON-NLS-1$
+
+    private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
+
+    /**
+     * The tool each operation routes to, for describing it rather than running it.
+     * <p>
+     * A map and not a second switch on the same word: the operation-parameter census reads
+     * the widest {@code switch (operation)} in a file as the facade's vocabulary, and two
+     * switches of equal width leave which one it reads to the order they sit in. The two
+     * lists are held together by {@code scripts/check-facade-routing.py}.
+     * </p>
+     *
+     * @return operation name to the tool it reaches, never <code>null</code>
+     */
+    static Map<String, Supplier<IMcpTool>> describedOperations()
+    {
+        return DESCRIBED;
+    }
+
+    private static Map<String, Supplier<IMcpTool>> buildDescribed()
+    {
+        Map<String, Supplier<IMcpTool>> m = new LinkedHashMap<>();
+        m.put("get_applications", ApplicationsReader::new); //$NON-NLS-1$
+        m.put("read_event_log", EventLogTool::new); //$NON-NLS-1$
+        m.put("create_infobase", InfobaseCreator::new); //$NON-NLS-1$
+        m.put("delete_infobase", InfobaseRemover::new); //$NON-NLS-1$
+        m.put("set_infobase_credentials", InfobaseCredentialsWriter::new); //$NON-NLS-1$
+        m.put("create_launch_config", LaunchConfigCreator::new); //$NON-NLS-1$
+        m.put("start_client", ClientSessionStarter::new); //$NON-NLS-1$
+        m.put("branch_infobase", BranchInfobaseTool::new); //$NON-NLS-1$
+        m.put("update_database", DatabaseUpdater::new); //$NON-NLS-1$
+        return Collections.unmodifiableMap(m);
+    }
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
@@ -356,7 +391,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "sync_control (syncOperation=status / diagnose / suppress / ...) |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(), "workflow"); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

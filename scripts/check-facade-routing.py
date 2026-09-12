@@ -42,7 +42,10 @@ DISPATCHED = re.compile(
 DESCRIBED = re.compile(r'\.put\(\s*"([a-z0-9_]+)"\s*,\s*(\w+)::new\s*\)')
 
 
-DISPATCH_SWITCH = re.compile(r"switch\s*\(\s*operation\s*\)")
+# Anchored to the start of a line, because the words also occur in prose: the javadoc above each
+# map explains why the map is not a second switch on that word, and a search that took the first
+# occurrence anywhere brace-matched from inside a comment and found no routes at all.
+DISPATCH_SWITCH = re.compile(r"^[ \t]*switch\s*\(\s*operation\s*\)", re.M)
 
 
 def switch_body(source: str) -> str:
@@ -115,8 +118,13 @@ def disagreements(source: str) -> list[str]:
     # and an operation whose route this cannot parse leaves exactly that. So every label the switch
     # carries has to resolve to a class, and so does every key the second list holds - whatever the
     # two then say about each other.
-    for operation in sorted(set(LABEL.findall(switch)) - set(dispatched)):
-        found.append(f"{operation}: has a case this cannot read a tool out of")
+    # A label whose route this cannot read is a complaint only when the map claims to describe it:
+    # a facade handles some operations inline, and those have no delegate to name. What must not
+    # happen is a map entry pointing at a route nobody can read - that is the pair going quiet
+    # together, which equality between two unread things would have called agreement.
+    for operation in sorted((set(LABEL.findall(switch)) & set(second)) - set(dispatched)):
+        found.append(f"{operation}: is described, and its case is one this cannot read a tool "
+                     "out of")
     for operation in sorted(set(PUT_KEY.findall(entries)) - set(second)):
         found.append(f"{operation}: is put into the map in a shape this cannot read a tool out of")
     for operation in sorted(set(dispatched_twice) | set(described_twice)):
@@ -125,13 +133,24 @@ def disagreements(source: str) -> list[str]:
     for operation in sorted(set(dispatched) | set(second)):
         goes_to = dispatched.get(operation)
         described_as = second.get(operation)
-        if goes_to is None:
+        if goes_to is None and operation not in set(LABEL.findall(switch)):
             found.append(f"{operation}: described as {described_as}, dispatched nowhere")
+        elif goes_to is None:
+            continue
         elif described_as is None:
             found.append(f"{operation}: dispatched to {goes_to}, described nowhere")
         elif goes_to != described_as:
             found.append(f"{operation}: dispatched to {goes_to}, described as {described_as}")
     return found
+
+
+# A facade whose operations are renamed or whose arguments are rewritten on the way down cannot
+# describe itself from the delegate's schema: the delegate declares what it receives, not what the
+# caller sends. Such a facade answers from the operation-parameter map instead, and keeps no second
+# list here.
+NO_SECOND_LIST = {
+    "CodeSearchTool": "renames all eight of its operations and rewrites the arguments of five",
+}
 
 
 def main() -> int:
@@ -142,6 +161,12 @@ def main() -> int:
         found = disagreements(source)
         if DESCRIBED.search(source):
             read += 1
+        elif path.stem not in NO_SECOND_LIST and routes(switch_body(source))[0]:
+            # Counted facades would let one file's map vanish behind the others still having
+            # theirs, which is the same shrink this check exists to refuse one operation at a
+            # time. A facade that dispatches to standalone tools describes them or is named above.
+            complaints.append(f"{path.name}: dispatches to standalone tools and keeps no list "
+                              "describing them, so its help cannot name what an operation takes")
         for line in found:
             complaints.append(f"{path.name}: {line}")
 
