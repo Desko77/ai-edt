@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -134,6 +135,9 @@ public class SensitiveDataScanTool implements IMcpTool
         Set<Pattern> custom = parseCustomPatterns(
             JsonUtils.extractStringArgument(params, "customPatterns")); //$NON-NLS-1$
         List<Map<String, Object>> findings = new ArrayList<>();
+        // One watch for the whole call: both scans walk the same project, and an operator
+        // who cancels means the call, not one of its halves.
+        WatchForCancel watch = WatchForCancel.begin();
 
         if (isEnabled("ATTRIBUTE_NAME", checks)) //$NON-NLS-1$
         {
@@ -143,7 +147,7 @@ public class SensitiveDataScanTool implements IMcpTool
             || isEnabled("COMMENT_LEAK", checks) //$NON-NLS-1$
             || isEnabled("LOG_SENSITIVE", checks)) //$NON-NLS-1$
         {
-            scanBslFiles(project, checks, findings);
+            scanBslFiles(project, checks, findings, watch);
         }
 
         // Severity filter
@@ -163,11 +167,13 @@ public class SensitiveDataScanTool implements IMcpTool
             return ToolResult.success()
                 .put("statistics", stats) //$NON-NLS-1$
                 .put("text", renderMarkdown(filtered, stats)) //$NON-NLS-1$
+            .put("cancelled", watch.note("files")) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
             .put("statistics", stats) //$NON-NLS-1$
             .put("findings", filtered) //$NON-NLS-1$
+            .put("cancelled", watch.note("files")) //$NON-NLS-1$
             .toJson();
     }
 
@@ -292,16 +298,30 @@ public class SensitiveDataScanTool implements IMcpTool
     }
 
     private void scanBslFiles(IProject project, Set<String> checks,
-        List<Map<String, Object>> findings) throws Exception
+        List<Map<String, Object>> findings, WatchForCancel watch) throws Exception
     {
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
             if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
             {
+                if (watch.stopHere())
+                {
+                    // Returning false would only skip this one resource's children, and a
+                    // walk over a whole project has plenty more to visit. Thrown, and
+                    // caught below, so the findings collected so far are kept.
+                    throw new org.eclipse.core.runtime.OperationCanceledException();
+                }
                 scanBslFile((IFile) resource, checks, findings);
             }
             return true;
         };
-        project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        try
+        {
+            project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        }
+        catch (org.eclipse.core.runtime.OperationCanceledException stopped)
+        {
+            // The watch already remembers it, and the answer reads that rather than this.
+        }
     }
 
     private void scanBslFile(IFile file, Set<String> checks, List<Map<String, Object>> findings)
