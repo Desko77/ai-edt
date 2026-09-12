@@ -6,7 +6,6 @@
 
 package ru.aiedt.mcp.server.support;
 
-import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -66,6 +65,9 @@ public final class ProjectMetricsCollector
     private final List<String> unscannedModules = new ArrayList<>();
     private boolean partial;
 
+    /** Whether the MODULE scan specifically was cut short, as opposed to the call. */
+    private boolean modulesPartial;
+
     public ProjectMetricsCollector(IProject project, long timeoutSeconds, boolean includeDebtList)
     {
         this.project = project;
@@ -100,6 +102,7 @@ public final class ProjectMetricsCollector
                 // names the modules it did not read, and that list is what makes a
                 // partial answer readable as partial.
                 partial = true;
+                modulesPartial = true;
                 unscannedModules.add(file.getFullPath().toString());
                 continue;
             }
@@ -380,10 +383,13 @@ public final class ProjectMetricsCollector
         Map<String, Object> tests = new LinkedHashMap<>();
         tests.put("modules", testModules); //$NON-NLS-1$
         tests.put("methods", testMethods); //$NON-NLS-1$
-        if (!partial)
+        if (testModules > 0 || !modulesPartial)
         {
-            // A categorical answer needs the whole corpus behind it. After a partial
-            // scan false would mean "not found yet", which reads as "not there".
+            // The two answers do not need the same evidence. One test module found PROVES
+            // detection, whole corpus or not; only a false needs the whole corpus behind
+            // it, because on a cut scan it means "not found yet" and reads as "not there".
+            // And the corpus here is the MODULES: a form walk stopped later says nothing
+            // about whether they were all read, so the global partial is the wrong gate.
             tests.put("yaxunitDetected", testModules > 0); //$NON-NLS-1$
         }
         metrics.put("tests", tests); //$NON-NLS-1$
