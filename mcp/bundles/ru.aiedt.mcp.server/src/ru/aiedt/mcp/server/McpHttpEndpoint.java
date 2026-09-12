@@ -307,8 +307,9 @@ public class McpHttpEndpoint
      */
     private static final int REQUEST_POOL_SIZE = 24;
 
-    /** Above this a double stops holding every whole number, so an id read through one
-     * may be a neighbour of the id that was sent. */
+    /** At and above this a double stops holding every whole number, so an id read through
+     * one may be a neighbour of the id that was sent - 9007199254740993 rounds to this
+     * very value, so the boundary itself is already ambiguous. */
     private static final double MAX_EXACT_INTEGER_IN_DOUBLE = 9007199254740992d;
 
     /** How long a withdrawal waits for the call it named. Seconds: the two requests are
@@ -441,6 +442,25 @@ public class McpHttpEndpoint
      */
     private final java.util.Map<String, Long> withdrawnBeforeArrival =
         new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Calls that have finished, so a withdrawal that arrives late is told apart from
+     * one that arrives early. They look identical at the queue - neither names a call -
+     * and treating the late one as early spends it on whatever next reuses the id.
+     */
+    private final java.util.Map<String, Long> callsAlreadyDone =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Held across deciding what a withdrawal means and across enrolling a call.
+     * <p>
+     * Without it the two interleave: the withdrawal looks for a call and finds none,
+     * the call enrols and looks for a memo and finds none, and then the memo is written
+     * - the stop is lost and the note is left for someone else. Nothing else is taken
+     * inside it, so it cannot take part in a deadlock.
+     * </p>
+     */
+    private final Object withdrawalLock = new Object();
 
     /**
      * Opens the endpoint, restarting it if it was already open.
@@ -978,14 +998,30 @@ public class McpHttpEndpoint
      *
      * @param requestId the id the withdrawal named
      * @param sessionId the client that sent it
+     * @param reason what to record on the flag
+     * @return the tool that was stopped, or <code>null</code> when no call was in flight
      */
-    public void rememberEarlyWithdrawal(Object requestId, String sessionId)
+    public String withdrawCall(Object requestId, String sessionId, String reason)
     {
-        String key = withdrawalKey(requestId, sessionId);
-        if (key == null)
+        synchronized (withdrawalLock)
         {
-            return;
+            RunningToolCall call = findCallByRequestId(requestId, sessionId);
+            if (call != null)
+            {
+                call.cancellation().cancel(reason);
+                return call.runningToolName();
+            }
+            String key = withdrawalKey(requestId, sessionId);
+            if (key != null && !callsAlreadyDone.containsKey(key))
+            {
+                rememberEarlyWithdrawal(key);
+            }
+            return null;
         }
+    }
+
+    private void rememberEarlyWithdrawal(String key)
+    {
         long now = System.currentTimeMillis();
         withdrawnBeforeArrival.values()
             .removeIf(at -> now - at.longValue() > EARLY_WITHDRAWAL_TTL_MS);
@@ -1008,8 +1044,20 @@ public class McpHttpEndpoint
     private boolean applyEarlyWithdrawal(RunningToolCall call)
     {
         String key = withdrawalKey(call.getRequestId(), call.getSessionId());
-        if (key == null || withdrawnBeforeArrival.remove(key) == null)
+        if (key == null)
         {
+            return false;
+        }
+        Long remembered = withdrawnBeforeArrival.remove(key);
+        if (remembered == null)
+        {
+            return false;
+        }
+        if (System.currentTimeMillis() - remembered.longValue() > EARLY_WITHDRAWAL_TTL_MS)
+        {
+            // Swept on the way past rather than on a timer: an entry is only reached
+            // when a call claims it, and without this check one nobody swept would be
+            // spent hours later on whatever had taken the id since.
             return false;
         }
         call.cancellation().cancel("withdrawn by the client"); //$NON-NLS-1$
@@ -1069,7 +1117,7 @@ public class McpHttpEndpoint
                 // to match it.
                 return Double.valueOf(value);
             }
-            if (Math.abs(value) > MAX_EXACT_INTEGER_IN_DOUBLE)
+            if (Math.abs(value) >= MAX_EXACT_INTEGER_IN_DOUBLE)
             {
                 // Past here a double no longer holds every whole number, so this value
                 // may be a neighbour of the id that was actually sent. Naming no call is
@@ -1176,8 +1224,13 @@ public class McpHttpEndpoint
      */
     public void setActiveToolCall(RunningToolCall call)
     {
-        runningCalls.add(call);
-        if (applyEarlyWithdrawal(call))
+        boolean claimed;
+        synchronized (withdrawalLock)
+        {
+            runningCalls.add(call);
+            claimed = applyEarlyWithdrawal(call);
+        }
+        if (claimed)
         {
             Activator.logInfo("call " + call.getRequestId() //$NON-NLS-1$
                 + " was withdrawn before it arrived"); //$NON-NLS-1$
@@ -1205,7 +1258,21 @@ public class McpHttpEndpoint
      */
     public void clearActiveToolCall(RunningToolCall call)
     {
-        runningCalls.remove(call);
+        synchronized (withdrawalLock)
+        {
+            runningCalls.remove(call);
+            String key = withdrawalKey(call.getRequestId(), call.getSessionId());
+            if (key != null)
+            {
+                long now = System.currentTimeMillis();
+                callsAlreadyDone.values()
+                    .removeIf(at -> now - at.longValue() > EARLY_WITHDRAWAL_TTL_MS);
+                if (callsAlreadyDone.size() < MAX_EARLY_WITHDRAWALS)
+                {
+                    callsAlreadyDone.put(key, Long.valueOf(now));
+                }
+            }
+        }
     }
 
     /**

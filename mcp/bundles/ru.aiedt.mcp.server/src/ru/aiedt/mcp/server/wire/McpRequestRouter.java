@@ -457,26 +457,23 @@ public class McpRequestRouter
         Object named = request != null && request.getParams() != null
             ? request.getParams().get("requestId") : null; //$NON-NLS-1$
         McpHttpEndpoint server = getServer();
-        RunningToolCall call =
-            server != null ? server.findCallByRequestId(named, sessionId) : null;
-        if (call == null)
+        if (server == null)
         {
-            // Nothing to stop YET. The call and this notification travel on separate requests and
-            // separate threads, so a client that withdraws at once can be observed in this order;
-            // the server keeps the withdrawal for a short while and raises the flag when the call
-            // turns up. A call that has already finished simply never claims it.
-            if (server != null)
-            {
-                server.rememberEarlyWithdrawal(named, sessionId);
-            }
-            Activator.logDebug("notifications/cancelled names no call in flight: " + named); //$NON-NLS-1$
             return;
         }
         Object why = request.getParams().get("reason"); //$NON-NLS-1$
         String reason = why instanceof String && !((String)why).isEmpty()
             ? (String)why : "withdrawn by the client"; //$NON-NLS-1$
-        call.cancellation().cancel(reason);
-        Activator.logInfo("notifications/cancelled raised the flag on " + call.runningToolName() //$NON-NLS-1$
+        // One question, answered under the server's own lock. Asked as two - is there a
+        // call, and if not remember this - the call could enrol in between, find no
+        // memo, and run on while the memo waited for somebody else.
+        String stopped = server.withdrawCall(named, sessionId, reason);
+        if (stopped == null)
+        {
+            Activator.logDebug("notifications/cancelled names no call in flight: " + named); //$NON-NLS-1$
+            return;
+        }
+        Activator.logInfo("notifications/cancelled raised the flag on " + stopped //$NON-NLS-1$
             + ": " + reason); //$NON-NLS-1$
     }
 

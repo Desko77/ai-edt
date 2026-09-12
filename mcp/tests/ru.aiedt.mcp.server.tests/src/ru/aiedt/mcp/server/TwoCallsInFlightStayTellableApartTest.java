@@ -142,7 +142,7 @@ public class TwoCallsInFlightStayTellableApartTest
         // that withdraws at once can be observed in this order. Forgotten, the call would enrol a
         // moment later and run to the end with its flag down.
         McpHttpEndpoint server = new McpHttpEndpoint();
-        server.rememberEarlyWithdrawal(Long.valueOf(4), "session-a"); //$NON-NLS-1$
+        server.withdrawCall(Long.valueOf(4), "session-a", "test"); //$NON-NLS-1$ //$NON-NLS-2$
 
         RunningToolCall arriving = new RunningToolCall(null, "code_search", Long.valueOf(4)); //$NON-NLS-1$
         assertFalse("a call starts with its flag down", arriving.cancellation().isCancelled());
@@ -151,7 +151,7 @@ public class TwoCallsInFlightStayTellableApartTest
         // The call named no session, so a withdrawal from a named one is not for it.
         assertFalse(arriving.cancellation().isCancelled());
 
-        server.rememberEarlyWithdrawal(Long.valueOf(5), null);
+        server.withdrawCall(Long.valueOf(5), null, "test"); //$NON-NLS-1$
         RunningToolCall mine = new RunningToolCall(null, "code_search", Long.valueOf(5)); //$NON-NLS-1$
         server.setActiveToolCall(mine);
 
@@ -164,7 +164,7 @@ public class TwoCallsInFlightStayTellableApartTest
         // A second call reusing the id - a client that restarted its counter - must not inherit a
         // stop meant for the first.
         McpHttpEndpoint server = new McpHttpEndpoint();
-        server.rememberEarlyWithdrawal(Long.valueOf(1), null);
+        server.withdrawCall(Long.valueOf(1), null, "test"); //$NON-NLS-1$
 
         RunningToolCall first = new RunningToolCall(null, "code_search", Long.valueOf(1)); //$NON-NLS-1$
         server.setActiveToolCall(first);
@@ -205,6 +205,26 @@ public class TwoCallsInFlightStayTellableApartTest
         assertNull(server.findCallByRequestId(Double.valueOf(7.25), null));
         assertNull("still not the whole number beside it", //$NON-NLS-1$
             server.findCallByRequestId(Long.valueOf(7), null));
+    }
+
+    @Test
+    public void aWithdrawalArrivingAfterTheCallIsNotKeptForTheNextOne()
+    {
+        // A late withdrawal and an early one look identical at the queue: neither names a call.
+        // Treated as early, the late one is spent on whatever next reuses the id - and a client
+        // that counts from one reuses ids all the time.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall done = new RunningToolCall(null, "code_search", Long.valueOf(9)); //$NON-NLS-1$
+        server.setActiveToolCall(done);
+        server.clearActiveToolCall(done);
+
+        server.withdrawCall(Long.valueOf(9), null, "too late"); //$NON-NLS-1$
+
+        RunningToolCall next = new RunningToolCall(null, "code_search", Long.valueOf(9)); //$NON-NLS-1$
+        server.setActiveToolCall(next);
+
+        assertFalse("the next call must not inherit a stop meant for the last one",
+            next.cancellation().isCancelled());
     }
 
     @Test
