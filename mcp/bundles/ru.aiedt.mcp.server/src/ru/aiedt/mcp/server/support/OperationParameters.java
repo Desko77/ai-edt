@@ -14,6 +14,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.osgi.framework.Bundle;
 import org.osgi.framework.FrameworkUtil;
@@ -228,9 +230,13 @@ public final class OperationParameters
                 // Both columns together are what the map used to hold in one, and what
                 // UnreadArguments must keep seeing: it refuses a call over an argument nobody
                 // reads, so a set short of the truth turns away calls that work.
-                List<String> all = new ArrayList<>(established);
-                all.addAll(wide);
-                map.put(key, Collections.unmodifiableList(all));
+                //
+                // Sorted and deduplicated, so the answer is the one column that was here before
+                // down to its order. Concatenating returned a name twice when both columns held
+                // it, and put the established ones first instead of leaving the whole sorted.
+                Set<String> together = new TreeSet<>(established);
+                together.addAll(wide);
+                map.put(key, Collections.unmodifiableList(new ArrayList<>(together)));
                 establishedByKey.put(key, Collections.unmodifiableList(established));
             }
         }

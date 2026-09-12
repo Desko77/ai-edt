@@ -1,9 +1,12 @@
 # derived by scripts/check-operation-params.py - do not edit
 # a parameter is written name:kind; ? means no class declares it
 # column 3 is established for the operation - read by the code that handles it
-# column 5 is read by the facade before it dispatches, so it is the same for every
-# operation the facade has. Both are parameters a caller may send; only the first is
-# established as this operation's, which is what per-operation help may print.
+# column 5 is the rest of what this operation accepts: read by the facade on the way
+# down, and for a switch facade that walk does not stop at the handlers, so some of
+# it belongs to sibling operations. Both columns are parameters a caller may send -
+# together they are what the unread-argument guard allows, unchanged - and only the
+# first is established as this operation's, which is what per-operation help prints
+# as its own.
 BranchInfobaseTool	bind	applicationId:string	read in place	action:string,branch:string,projectName:string
 BranchInfobaseTool	current	projectName:string	passed in as locals	action:string,applicationId:string,branch:string
 BranchInfobaseTool	list	projectName:string	passed in as locals	action:string,applicationId:string,branch:string

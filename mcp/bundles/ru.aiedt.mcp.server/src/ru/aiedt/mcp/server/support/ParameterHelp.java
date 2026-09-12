@@ -130,14 +130,18 @@ public final class ParameterHelp
     public static String renderNamed(String operation, String inputSchema,
         Collection<String> established, Collection<String> shared)
     {
+        // An unreadable schema costs the descriptions, not the names: those came from the map and
+        // are the half a caller needs most. Returning here would have hidden them to report a
+        // problem with the other half.
         JsonObject properties = propertiesOf(inputSchema);
-        if (properties == null)
-        {
-            return "## " + operation + " - parameters\n\nThe schema this facade declares could " //$NON-NLS-1$ //$NON-NLS-2$
-                + "not be read, so the descriptions of these parameters cannot be shown.\n"; //$NON-NLS-1$
-        }
         StringBuilder text = new StringBuilder("## ").append(operation) //$NON-NLS-1$
             .append(" - parameters\n\n"); //$NON-NLS-1$
+        if (properties == null)
+        {
+            text.append("_The schema this facade declares could not be read, so these are " //$NON-NLS-1$
+                + "named without their descriptions._\n\n"); //$NON-NLS-1$
+            properties = new JsonObject();
+        }
         if (established.isEmpty() && shared.isEmpty())
         {
             return text.append("The parameters of this operation are not recorded. The schema " //$NON-NLS-1$
@@ -145,8 +149,15 @@ public final class ParameterHelp
         }
         appendGroup(text, properties, established,
             "Established for this operation\n\n"); //$NON-NLS-1$
+        // Not "read for every operation": the derivation attributes to an operation everything the
+        // facade reads on the way down, and for a facade that dispatches with a switch that walk
+        // does not stop at the handlers - so this group holds arguments of sibling operations too.
+        // Narrowing it would narrow what the unread-argument guard allows, which is a different
+        // contract; what can be said truthfully is that these were not established as this
+        // operation's own.
         appendGroup(text, properties, shared,
-            "Read by this facade for every operation it has\n\n"); //$NON-NLS-1$
+            "Accepted here, not established as this operation's - the facade reads them on the " //$NON-NLS-1$
+                + "way down, and some belong to its other operations\n\n"); //$NON-NLS-1$
         return text.toString();
     }
 
@@ -172,11 +183,18 @@ public final class ParameterHelp
                     text.append(" - ").append(described.getAsString()); //$NON-NLS-1$
                 }
             }
-            else
+            else if (property == null)
             {
                 // The map says the operation reads it and the schema does not declare it. Both
                 // facts are worth the caller's attention, and neither is this method's to settle.
                 text.append(" - read by the code, and not declared in this facade's schema"); //$NON-NLS-1$
+            }
+            else
+            {
+                // Declared and unreadable is a third thing, and calling it undeclared would send
+                // whoever reads this looking for a property that is right there.
+                text.append(" - declared in this facade's schema in a shape that is not a " //$NON-NLS-1$
+                    + "property object, so nothing can be said about it here"); //$NON-NLS-1$
             }
             text.append("\n"); //$NON-NLS-1$
         }
