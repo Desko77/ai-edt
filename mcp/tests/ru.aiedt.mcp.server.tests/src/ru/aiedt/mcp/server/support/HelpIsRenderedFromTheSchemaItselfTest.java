@@ -84,6 +84,69 @@ public class HelpIsRenderedFromTheSchemaItselfTest
     }
 
     @Test
+    public void aSchemaWithNoPropertiesIsNotAToolThatTakesNothing()
+    {
+        // Two different facts that used to share an answer: a tool with an empty properties object
+        // takes nothing, and a schema with no properties member says nothing about what it takes.
+        String silent = ParameterHelp.render("a_tool", "{\"type\":\"object\"}");
+        String empty = ParameterHelp.render("a_tool", "{\"type\":\"object\",\"properties\":{}}");
+
+        assertFalse("a schema that says nothing must not answer as one that says none",
+            silent.equals(empty));
+        assertTrue(silent, silent.contains("no properties member"));
+        assertTrue(empty, empty.contains("takes no parameters"));
+    }
+
+    @Test
+    public void aPropertiesMemberThatIsNotAnObjectIsCalledMalformed()
+    {
+        String help = ParameterHelp.render("a_tool", "{\"type\":\"object\",\"properties\":[]}");
+
+        assertTrue(help, help.contains("not an object"));
+        assertFalse("malformed is not empty", help.contains("takes no parameters"));
+    }
+
+    @Test
+    public void aRequiredListThatIsNotAListOfNamesLeavesRequirednessUnstated()
+    {
+        // It used to be read as nothing being required, which is a claim about every parameter
+        // made from a member nobody could read.
+        String help = ParameterHelp.render("a_tool", "{\"type\":\"object\",\"properties\":"
+            + "{\"projectName\":{\"type\":\"string\"}},\"required\":\"projectName\"}");
+
+        assertTrue(help, help.contains("projectName"));
+        assertTrue("the caller has to be told that requiredness is not stated here",
+            help.contains("not a list of names"));
+        assertFalse(help, help.contains(", required_"));
+    }
+
+    @Test
+    public void aNumberInTheRequiredListDoesNotMakeAParameterOfThatNameRequired()
+    {
+        // getAsString turns 1 into "1", which marked a property named "1" required - a fact
+        // nobody wrote into the schema.
+        String help = ParameterHelp.render("a_tool", "{\"type\":\"object\",\"properties\":"
+            + "{\"1\":{\"type\":\"string\"}},\"required\":[1]}");
+
+        assertFalse(help, help.contains(", required_"));
+        assertTrue(help, help.contains("not a list of names"));
+    }
+
+    @Test
+    public void aParameterDeclaredAsSomethingOtherThanAnObjectIsStillListed()
+    {
+        // It used to disappear. A caller reading the answer then learned the tool does not take
+        // the parameter, when what is true is that its declaration cannot be read.
+        String help = ParameterHelp.render("a_tool", "{\"type\":\"object\",\"properties\":"
+            + "{\"good\":{\"type\":\"string\"},\"broken\":\"not a property object\"}}");
+
+        assertTrue(help, help.contains("good"));
+        assertTrue("the parameter exists and its declaration does not read; both are facts",
+            help.contains("broken"));
+        assertTrue(help, help.contains("nothing can be said about it"));
+    }
+
+    @Test
     public void everyParameterOfTheSchemaAppears()
     {
         // Rendering some of them is worse than rendering none: the missing ones read as parameters
