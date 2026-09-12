@@ -62,6 +62,14 @@ public final class WatchForCancel
      */
     public boolean stopHere()
     {
+        if (fired)
+        {
+            // Counting past the stop would make the note say the scan reached boundaries it never
+            // looked at. A caller that keeps asking - a loop that continues to record what it is
+            // skipping, a phase entered after another stopped - must not inflate the number the
+            // answer reports.
+            return true;
+        }
         reached++;
         if (flag != null && flag.isCancelled())
         {
@@ -100,9 +108,10 @@ public final class WatchForCancel
     }
 
     /**
-     * How many boundaries were reached before the answer was built.
+     * How many boundaries were reached before the scan stopped.
      *
-     * @return the count, whether or not the scan was cancelled
+     * @return the count; it stops moving once the scan is stopped, so it names where the work
+     *         actually ended rather than how often the caller kept asking
      */
     public int reached()
     {

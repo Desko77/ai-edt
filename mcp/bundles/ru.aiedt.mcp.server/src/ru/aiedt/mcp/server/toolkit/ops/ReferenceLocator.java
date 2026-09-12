@@ -1074,6 +1074,13 @@ public class ReferenceLocator implements IMcpTool
             }
             for (EObject type : producedTypes.eContents())
             {
+                // Asked at the child, not only at the cross-reference: a child with no
+                // back-references never reaches the inner loop, and the walk would go
+                // on reading the model after the operator stopped it.
+                if (watch.stopped())
+                {
+                    return;
+                }
                 TypeItem typeItem = getTypeItem(type);
                 if (!(typeItem instanceof IBmObject))
                 {
@@ -1113,6 +1120,10 @@ public class ReferenceLocator implements IMcpTool
         {
             for (PredefinedItem item : PredefinedItemUtil.getItems((EObject)target))
             {
+                if (watch.stopped())
+                {
+                    return;
+                }
                 if (!(item instanceof IBmObject))
                 {
                     continue;
@@ -1152,6 +1163,10 @@ public class ReferenceLocator implements IMcpTool
             FieldSource fieldSource = (FieldSource)target;
             for (Object fieldObj : fieldSource.getFields())
             {
+                if (watch.stopped())
+                {
+                    return;
+                }
                 if (!(fieldObj instanceof IBmObject))
                 {
                     continue;

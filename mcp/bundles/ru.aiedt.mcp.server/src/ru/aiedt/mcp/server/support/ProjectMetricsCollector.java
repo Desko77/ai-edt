@@ -265,6 +265,15 @@ public final class ProjectMetricsCollector
     }
 
     /**
+     * Records that work outside this collector stopped short, so every count in the
+     * answer is a floor rather than a measurement.
+     */
+    public void markPartial()
+    {
+        partial = true;
+    }
+
+    /**
      * Collects EDT marker-based metrics (errors / warnings / info / code style).
      */
     public void scanMarkers()

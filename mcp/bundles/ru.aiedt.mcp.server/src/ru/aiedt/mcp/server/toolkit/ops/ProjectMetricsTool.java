@@ -137,6 +137,13 @@ public class ProjectMetricsTool implements IMcpTool
         // Step 4: forms (best-effort - count *.form files)
         FormStats formStats = collectFormStats(project, watch);
 
+        if (watch.stopped())
+        {
+            // The form walk can be the half that stopped, and only the module scan sets
+            // this by itself - partial=false beside a cancellation note would deny what
+            // the note says.
+            collector.markPartial();
+        }
         Map<String, Object> metrics = collector.toMetrics(objectsByType, formStats.formCount,
             formStats.totalItems, formStats.largeFormsOver100);
 

@@ -255,9 +255,14 @@ public final class PendingWorkRegistry
         // its HttpExchange) alive for the run's duration.
         //
         // On coalesce the first caller's flag wins - a later caller's cancel does not reach the shared
-        // work. That is right for a read whose result the later caller still wants; for a mutator that
-        // coalesces (UPDATE/EXPORT/REFERENCES/batch) it means a second caller cannot cancel the first's
-        // work, which those tools do not rely on today (they carry no cancellation checkpoints yet).
+        // work. That is right for a read whose result the later caller still wants; it also means a
+        // second caller cannot cancel the first's work.
+        //
+        // REFERENCES now carries cancellation checkpoints, so this is visible rather than theoretical:
+        // find_references answers Pending past its await timeout, and a cancel arriving on the resumed
+        // call reaches that caller's own flag while the work runs under the first one's. Closing it
+        // needs the entry to hold the flag the work reads and every waiter to be able to raise it -
+        // a change to this registry, not to the tools.
         ToolCallScope current = ToolCallScope.current();
         ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
         return entries.computeIfAbsent(runKey, k ->

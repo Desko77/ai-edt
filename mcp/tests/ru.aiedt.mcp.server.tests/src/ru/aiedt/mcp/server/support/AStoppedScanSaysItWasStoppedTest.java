@@ -79,6 +79,35 @@ public class AStoppedScanSaysItWasStoppedTest
     }
 
     @Test
+    public void theCountStopsWhereTheWorkStopped()
+    {
+        // A loop that keeps asking after the stop - one that goes on recording what it is skipping -
+        // must not push the number the answer reports up towards the size of the whole project.
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+            watch.stopHere();
+            watch.stopHere();
+            flag.cancel("the operator asked to stop");
+            watch.stopHere();
+            for (int i = 0; i < 97; i++)
+            {
+                watch.stopHere();
+            }
+
+            assertEquals("the count names where the work ended, not how often it was asked", 3,
+                watch.reached());
+            assertTrue(watch.note("files"), watch.note("files").contains(" 3 files"));
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    @Test
     public void onceStoppedItStaysStopped()
     {
         // The caller breaks out of its loop on the first true, but a caller that checks again -

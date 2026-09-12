@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.support;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.RunningToolCall;
 
@@ -183,6 +184,54 @@ public final class ToolCallScope
     public static void exit()
     {
         CURRENT.remove();
+    }
+
+    /**
+     * Wraps work so it runs under THIS thread's scope wherever it is run.
+     * <p>
+     * The binding is a {@link ThreadLocal}, so work handed to another thread - the UI thread, a
+     * worker, a pool - arrives with no scope and reads no cancellation flag. A checkpoint there
+     * then answers "not cancelled" for the life of the call, which is indistinguishable from a
+     * tool that never asks.
+     * </p>
+     * <p>
+     * The scope is captured now, on the calling thread, and bound around the work later. A thread
+     * that already has a scope of its own keeps it: the previous binding is restored rather than
+     * removed, so nesting does not strand the outer call.
+     * </p>
+     *
+     * @param <T> what the work returns
+     * @param work the work to run elsewhere; must not be <code>null</code>
+     * @return the same work, bound to this thread's scope, or <code>work</code> itself when there
+     *         is no scope to carry
+     */
+    public static <T> Supplier<T> carry(Supplier<T> work)
+    {
+        Objects.requireNonNull(work, "work"); //$NON-NLS-1$
+        ToolCallScope captured = CURRENT.get();
+        if (captured == null)
+        {
+            return work;
+        }
+        return () -> {
+            ToolCallScope previous = CURRENT.get();
+            enter(captured);
+            try
+            {
+                return work.get();
+            }
+            finally
+            {
+                if (previous != null)
+                {
+                    enter(previous);
+                }
+                else
+                {
+                    exit();
+                }
+            }
+        };
     }
 
     /**
