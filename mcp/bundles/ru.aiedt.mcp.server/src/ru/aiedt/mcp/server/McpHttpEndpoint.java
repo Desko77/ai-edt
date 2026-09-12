@@ -910,9 +910,10 @@ public class McpHttpEndpoint
      * was sent for rather than whichever started last.
      *
      * @param requestId the JSON-RPC id from the notification; may be <code>null</code>
-     * @return the call in flight with that id, or <code>null</code>
+     * @param sessionId which client is asking, from its session header; may be <code>null</code>
+     * @return the call in flight with that id from that client, or <code>null</code>
      */
-    public RunningToolCall findCallByRequestId(Object requestId)
+    public RunningToolCall findCallByRequestId(Object requestId, String sessionId)
     {
         Object wanted = asRequestId(requestId);
         if (wanted == null)
@@ -924,7 +925,13 @@ public class McpHttpEndpoint
             // Both sides through the same rule. Normalising only the question would make the match
             // depend on a convention held in another method - and a convention held in two places
             // is one that drifts, silently, into a cancellation that finds nothing.
-            if (wanted.equals(asRequestId(call.getRequestId())) && !call.hasResponded())
+            // The session as well as the id. An id is unique within one client, and clients
+            // start counting at one, so two of them have a call numbered 1 the moment both
+            // are busy. Absence counts as a value: a client that names a session cannot
+            // reach a call that named none, and two clients that both name none stay
+            // indistinguishable, which no rule here can mend.
+            if (wanted.equals(asRequestId(call.getRequestId())) && !call.hasResponded()
+                && java.util.Objects.equals(sessionId, call.getSessionId()))
             {
                 return call;
             }
@@ -1546,7 +1553,8 @@ public class McpHttpEndpoint
                     runToolCall(exchange, body);
                     return;
                 }
-                document = protocolHandler.processRequest(body);
+                document = protocolHandler.processRequest(body,
+                    exchange.getRequestHeaders().getFirst(McpServerMeta.HEADER_SESSION_ID));
             }
             catch (Exception e)
             {

@@ -74,6 +74,9 @@ public class RunningToolCall
 
     private final long startedAt;
 
+    /** Which client this call belongs to, from the session header it arrived with. */
+    private final String sessionId;
+
     /** The tool the router resolved this call to, while it is running. */
     private volatile String runningToolName;
 
@@ -150,6 +153,7 @@ public class RunningToolCall
         this.exchange = exchange;
         this.toolName = toolName;
         this.requestId = requestId;
+        this.sessionId = sessionOf(exchange);
         this.startedAt = System.currentTimeMillis();
     }
 
@@ -221,6 +225,30 @@ public class RunningToolCall
     {
         long since = runningSince;
         return since == 0L ? 0L : (System.currentTimeMillis() - since) / MILLIS_PER_SECOND;
+    }
+
+    /**
+     * Which client sent this call.
+     * <p>
+     * Read from the session header the client echoes back after the handshake. A client
+     * that sends none leaves this <code>null</code>, and so does a call made with no
+     * connection at all.
+     * </p>
+     *
+     * @return the session id, or <code>null</code> when the client named none
+     */
+    public String getSessionId()
+    {
+        return sessionId;
+    }
+
+    private static String sessionOf(HttpExchange source)
+    {
+        if (source == null || source.getRequestHeaders() == null)
+        {
+            return null;
+        }
+        return source.getRequestHeaders().getFirst("MCP-Session-Id"); //$NON-NLS-1$
     }
 
     /**

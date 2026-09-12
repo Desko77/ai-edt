@@ -147,6 +147,25 @@ public class McpRequestRouter
      */
     public String processRequest(String requestBody)
     {
+        return processRequest(requestBody, null);
+    }
+
+    /**
+     * Handles one JSON-RPC document on behalf of a named client.
+     * <p>
+     * The session is the client's own name for itself, echoed back after the handshake.
+     * It is a string and nothing else - the transport stays where it is. It matters for
+     * one method: a withdrawal names a request id, and ids are unique within a client
+     * rather than across the server.
+     * </p>
+     *
+     * @param requestBody the raw request body; may be malformed or <code>null</code>
+     * @param sessionId the client's session, or <code>null</code> when it named none
+     * @return the response document, or <code>null</code> when the request was a notification and
+     *         there is nothing to answer
+     */
+    public String processRequest(String requestBody, String sessionId)
+    {
         Object requestId = FALLBACK_REQUEST_ID;
         try
         {
@@ -195,7 +214,7 @@ public class McpRequestRouter
             }
             if (McpServerMeta.METHOD_CANCELLED.equals(method))
             {
-                withdrawRequest(request);
+                withdrawRequest(request, sessionId);
                 return null;
             }
             if (McpServerMeta.METHOD_TOOLS_LIST.equals(method))
@@ -431,13 +450,15 @@ public class McpRequestRouter
      * </p>
      *
      * @param request the notification; its params name the id of the request being withdrawn
+     * @param sessionId the client that sent it, so the id is matched within that client
      */
-    private static void withdrawRequest(JsonRpcRequest request)
+    private static void withdrawRequest(JsonRpcRequest request, String sessionId)
     {
         Object named = request != null && request.getParams() != null
             ? request.getParams().get("requestId") : null; //$NON-NLS-1$
         McpHttpEndpoint server = getServer();
-        RunningToolCall call = server != null ? server.findCallByRequestId(named) : null;
+        RunningToolCall call =
+            server != null ? server.findCallByRequestId(named, sessionId) : null;
         if (call == null)
         {
             // Nothing to stop: the call has finished, was never here, or the id names no call. A

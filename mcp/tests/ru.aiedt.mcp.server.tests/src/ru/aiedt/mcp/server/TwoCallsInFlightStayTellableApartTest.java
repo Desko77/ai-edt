@@ -92,10 +92,10 @@ public class TwoCallsInFlightStayTellableApartTest
         server.setActiveToolCall(first);
         server.setActiveToolCall(second);
 
-        assertSame(first, server.findCallByRequestId("req-1")); //$NON-NLS-1$
-        assertSame(second, server.findCallByRequestId(Integer.valueOf(7)));
-        assertNull(server.findCallByRequestId("no-such-id")); //$NON-NLS-1$
-        assertNull("a notification with no id names no call", server.findCallByRequestId(null));
+        assertSame(first, server.findCallByRequestId("req-1", null)); //$NON-NLS-1$
+        assertSame(second, server.findCallByRequestId(Integer.valueOf(7), null));
+        assertNull(server.findCallByRequestId("no-such-id", null)); //$NON-NLS-1$
+        assertNull("a notification with no id names no call", server.findCallByRequestId(null, null));
     }
 
     @Test
@@ -109,13 +109,30 @@ public class TwoCallsInFlightStayTellableApartTest
         server.setActiveToolCall(call);
 
         assertSame("as a Double, which is what a generic JSON parse gives", call, //$NON-NLS-1$
-            server.findCallByRequestId(Double.valueOf(7.0)));
-        assertSame(call, server.findCallByRequestId(Integer.valueOf(7)));
-        assertSame(call, server.findCallByRequestId(Long.valueOf(7)));
+            server.findCallByRequestId(Double.valueOf(7.0), null));
+        assertSame(call, server.findCallByRequestId(Integer.valueOf(7), null));
+        assertSame(call, server.findCallByRequestId(Long.valueOf(7), null));
         assertNull("a string id and a numeric id are different ids in JSON-RPC", //$NON-NLS-1$
-            server.findCallByRequestId("7")); //$NON-NLS-1$
+            server.findCallByRequestId("7", null)); //$NON-NLS-1$
         assertNull("a fractional id is not an id this server ever stored", //$NON-NLS-1$
-            server.findCallByRequestId(Double.valueOf(7.5)));
+            server.findCallByRequestId(Double.valueOf(7.5), null));
+    }
+
+    @Test
+    public void oneClientCannotWithdrawAnotherClientsCall()
+    {
+        // JSON-RPC ids are unique within a client, and clients start counting at one, so the moment
+        // two of them are busy they both have a call numbered 1. Matched on the id alone, the
+        // second client's withdrawal stops the first client's work - and the client that asked for
+        // the stop goes on waiting.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall theirs = new RunningToolCall(null, "code_search", Long.valueOf(1)); //$NON-NLS-1$
+        server.setActiveToolCall(theirs);
+
+        assertNull("a client that names a session cannot reach a call that named none", //$NON-NLS-1$
+            server.findCallByRequestId(Long.valueOf(1), "session-b")); //$NON-NLS-1$
+        assertSame("and the client that made it still can", theirs, //$NON-NLS-1$
+            server.findCallByRequestId(Long.valueOf(1), null));
     }
 
     @Test
@@ -126,11 +143,11 @@ public class TwoCallsInFlightStayTellableApartTest
         McpHttpEndpoint server = new McpHttpEndpoint();
         RunningToolCall call = new RunningToolCall(null, "code_search", "1"); //$NON-NLS-1$ //$NON-NLS-2$
         server.setActiveToolCall(call);
-        assertSame(call, server.findCallByRequestId("1")); //$NON-NLS-1$
+        assertSame(call, server.findCallByRequestId("1", null)); //$NON-NLS-1$
 
         call.abandon();
 
-        assertNull("an answered call is past cancelling", server.findCallByRequestId("1")); //$NON-NLS-1$
+        assertNull("an answered call is past cancelling", server.findCallByRequestId("1", null)); //$NON-NLS-1$
     }
 
     @Test
@@ -148,7 +165,7 @@ public class TwoCallsInFlightStayTellableApartTest
         assertNull(server.getActiveToolCall());
 
         // ...and it can still be found by id, because a cancellation may arrive in that window.
-        assertSame(arrived, server.findCallByRequestId("1")); //$NON-NLS-1$
+        assertSame(arrived, server.findCallByRequestId("1", null)); //$NON-NLS-1$
     }
 
     @Test
