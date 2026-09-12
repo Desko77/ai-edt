@@ -461,9 +461,14 @@ public class McpRequestRouter
             server != null ? server.findCallByRequestId(named, sessionId) : null;
         if (call == null)
         {
-            // Nothing to stop: the call has finished, was never here, or the id names no call. A
-            // notification has no answer to carry this in, and it is not an error - a client that
-            // cancels late is behaving correctly.
+            // Nothing to stop YET. The call and this notification travel on separate requests and
+            // separate threads, so a client that withdraws at once can be observed in this order;
+            // the server keeps the withdrawal for a short while and raises the flag when the call
+            // turns up. A call that has already finished simply never claims it.
+            if (server != null)
+            {
+                server.rememberEarlyWithdrawal(named, sessionId);
+            }
             Activator.logDebug("notifications/cancelled names no call in flight: " + named); //$NON-NLS-1$
             return;
         }

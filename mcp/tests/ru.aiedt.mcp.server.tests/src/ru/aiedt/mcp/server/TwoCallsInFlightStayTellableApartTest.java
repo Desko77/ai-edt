@@ -136,6 +136,78 @@ public class TwoCallsInFlightStayTellableApartTest
     }
 
     @Test
+    public void aWithdrawalThatOutrunsItsCallStillStopsIt()
+    {
+        // The call and the withdrawal travel on separate requests and separate threads, so a client
+        // that withdraws at once can be observed in this order. Forgotten, the call would enrol a
+        // moment later and run to the end with its flag down.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        server.rememberEarlyWithdrawal(Long.valueOf(4), "session-a"); //$NON-NLS-1$
+
+        RunningToolCall arriving = new RunningToolCall(null, "code_search", Long.valueOf(4)); //$NON-NLS-1$
+        assertFalse("a call starts with its flag down", arriving.cancellation().isCancelled());
+        server.setActiveToolCall(arriving);
+
+        // The call named no session, so a withdrawal from a named one is not for it.
+        assertFalse(arriving.cancellation().isCancelled());
+
+        server.rememberEarlyWithdrawal(Long.valueOf(5), null);
+        RunningToolCall mine = new RunningToolCall(null, "code_search", Long.valueOf(5)); //$NON-NLS-1$
+        server.setActiveToolCall(mine);
+
+        assertTrue("the withdrawal was waiting for this call", mine.cancellation().isCancelled());
+    }
+
+    @Test
+    public void aRememberedWithdrawalIsClaimedOnce()
+    {
+        // A second call reusing the id - a client that restarted its counter - must not inherit a
+        // stop meant for the first.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        server.rememberEarlyWithdrawal(Long.valueOf(1), null);
+
+        RunningToolCall first = new RunningToolCall(null, "code_search", Long.valueOf(1)); //$NON-NLS-1$
+        server.setActiveToolCall(first);
+        RunningToolCall second = new RunningToolCall(null, "code_search", Long.valueOf(1)); //$NON-NLS-1$
+        server.setActiveToolCall(second);
+
+        assertTrue(first.cancellation().isCancelled());
+        assertFalse("the memo is spent", second.cancellation().isCancelled());
+    }
+
+    @Test
+    public void anIdTooBigForADoubleNamesNoCall()
+    {
+        // Past 2^53 a double stops holding every whole number, so an id read through one may be a
+        // neighbour of the id that was sent. Stopping the neighbour's work is worse than stopping
+        // nothing.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall call = new RunningToolCall(null, "code_search", //$NON-NLS-1$
+            Long.valueOf(9007199254740993L));
+        server.setActiveToolCall(call);
+
+        assertSame("an exact integer still matches", call, //$NON-NLS-1$
+            server.findCallByRequestId(Long.valueOf(9007199254740993L), null));
+        assertNull("a double that far out names no call", //$NON-NLS-1$
+            server.findCallByRequestId(Double.valueOf(9007199254740993d), null));
+    }
+
+    @Test
+    public void aFractionalIdIsMatchedRatherThanDropped()
+    {
+        // JSON-RPC discourages one and this server never makes one up, but it answers with the id
+        // it was given, so it has to be able to match it.
+        McpHttpEndpoint server = new McpHttpEndpoint();
+        RunningToolCall call = new RunningToolCall(null, "code_search", Double.valueOf(7.5)); //$NON-NLS-1$
+        server.setActiveToolCall(call);
+
+        assertSame(call, server.findCallByRequestId(Double.valueOf(7.5), null));
+        assertNull(server.findCallByRequestId(Double.valueOf(7.25), null));
+        assertNull("still not the whole number beside it", //$NON-NLS-1$
+            server.findCallByRequestId(Long.valueOf(7), null));
+    }
+
+    @Test
     public void anAnsweredCallIsNoLongerCancellable()
     {
         // A late cancellation must not raise a flag on work that is over; nothing would read it,

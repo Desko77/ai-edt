@@ -237,9 +237,16 @@ public class McpHttpEndpoint
 
     private static final String HEADER_ALLOW_HEADERS = "Access-Control-Allow-Headers"; //$NON-NLS-1$
 
+    /** Without this a browser cannot READ the session the handshake hands it, so it has
+     * nothing to send back on the next request. */
+    private static final String HEADER_EXPOSE_HEADERS = "Access-Control-Expose-Headers"; //$NON-NLS-1$
+
     private static final String ALLOWED_METHODS = "GET, POST, DELETE, OPTIONS"; //$NON-NLS-1$
 
-    private static final String ALLOWED_HEADERS = "Content-Type, Accept, Authorization"; //$NON-NLS-1$
+    /** MCP-Session-Id is in here because a browser cannot send a header it is not allowed,
+     * and without it every call from a web origin reports no client at all. */
+    private static final String ALLOWED_HEADERS =
+        "Content-Type, Accept, Authorization, MCP-Session-Id"; //$NON-NLS-1$
 
     private static final String MIME_JSON = "application/json"; //$NON-NLS-1$
 
@@ -299,6 +306,18 @@ public class McpHttpEndpoint
      * separately by the heavy-tool limiter, and idle threads are reclaimed (core-thread timeout).
      */
     private static final int REQUEST_POOL_SIZE = 24;
+
+    /** Above this a double stops holding every whole number, so an id read through one
+     * may be a neighbour of the id that was sent. */
+    private static final double MAX_EXACT_INTEGER_IN_DOUBLE = 9007199254740992d;
+
+    /** How long a withdrawal waits for the call it named. Seconds: the two requests are
+     * sent one after the other, and a call that has not arrived by then is not coming.
+     */
+    private static final long EARLY_WITHDRAWAL_TTL_MS = 30_000L;
+
+    /** How many such withdrawals are kept at once, so a client cannot fill the heap. */
+    private static final int MAX_EARLY_WITHDRAWALS = 256;
 
     /** A safety net for memory, not a queue anyone should reach: admission control bites first. */
     private static final int REQUEST_QUEUE_CAPACITY = 200;
@@ -411,6 +430,17 @@ public class McpHttpEndpoint
      */
     private final java.util.Queue<RunningToolCall> runningCalls =
         new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /**
+     * Withdrawals that named no call, kept in case the call is still on its way.
+     * <p>
+     * The call and the withdrawal arrive on separate requests and separate threads, so
+     * a client that withdraws at once can be observed in that order. Without this the
+     * withdrawal is forgotten and the call runs to the end with its flag down.
+     * </p>
+     */
+    private final java.util.Map<String, Long> withdrawnBeforeArrival =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Opens the endpoint, restarting it if it was already open.
@@ -940,6 +970,66 @@ public class McpHttpEndpoint
     }
 
     /**
+     * Records a withdrawal for a call that has not arrived yet.
+     * <p>
+     * Bounded by age and by count: a client can send these at will, and a map that only
+     * ever grows would be a way to fill the heap of the environment this runs inside.
+     * </p>
+     *
+     * @param requestId the id the withdrawal named
+     * @param sessionId the client that sent it
+     */
+    public void rememberEarlyWithdrawal(Object requestId, String sessionId)
+    {
+        String key = withdrawalKey(requestId, sessionId);
+        if (key == null)
+        {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        withdrawnBeforeArrival.values()
+            .removeIf(at -> now - at.longValue() > EARLY_WITHDRAWAL_TTL_MS);
+        if (withdrawnBeforeArrival.size() >= MAX_EARLY_WITHDRAWALS)
+        {
+            // Still full after the sweep: a client is sending these faster than they
+            // expire. Dropping the new one keeps the map bounded, and the cost is a
+            // withdrawal that behaves as it did before this existed.
+            return;
+        }
+        withdrawnBeforeArrival.put(key, Long.valueOf(now));
+    }
+
+    /**
+     * Raises the flag of a call that was withdrawn before it got here.
+     *
+     * @param call the call just enrolled
+     * @return <code>true</code> when a withdrawal was waiting for it
+     */
+    private boolean applyEarlyWithdrawal(RunningToolCall call)
+    {
+        String key = withdrawalKey(call.getRequestId(), call.getSessionId());
+        if (key == null || withdrawnBeforeArrival.remove(key) == null)
+        {
+            return false;
+        }
+        call.cancellation().cancel("withdrawn by the client"); //$NON-NLS-1$
+        return true;
+    }
+
+    private static String withdrawalKey(Object requestId, String sessionId)
+    {
+        Object id = asRequestId(requestId);
+        if (id == null)
+        {
+            return null;
+        }
+        // The class is part of the key: a string id and a numeric id are different ids,
+        // and their text can be identical.
+        return (sessionId == null ? "" : sessionId) + "\u0000" //$NON-NLS-1$ //$NON-NLS-2$
+            + id.getClass().getName() + "\u0000" + id; //$NON-NLS-1$
+    }
+
+    /**
      * Brings an id read from anywhere to the shape {@link #readRequestId} stores.
      * <p>
      * A JSON number arrives as a {@link Double} through a generic parse and as a {@link Long}
@@ -958,13 +1048,36 @@ public class McpHttpEndpoint
         {
             return raw;
         }
+        if (raw instanceof Long || raw instanceof Integer || raw instanceof Short
+            || raw instanceof Byte || raw instanceof java.math.BigInteger)
+        {
+            // Exact already. Sending these through double would lose the low bits of
+            // anything past 2^53 and make two different ids look like one.
+            return Long.valueOf(((Number)raw).longValue());
+        }
         if (raw instanceof Number)
         {
             double value = ((Number)raw).doubleValue();
-            if (value == Math.floor(value) && !Double.isInfinite(value))
+            if (Double.isNaN(value) || Double.isInfinite(value))
             {
-                return Long.valueOf((long)value);
+                return null;
             }
+            if (value != Math.floor(value))
+            {
+                // A fractional id. JSON-RPC discourages one and this server never makes
+                // one up, but it answers with the id it was given, so it has to be able
+                // to match it.
+                return Double.valueOf(value);
+            }
+            if (Math.abs(value) > MAX_EXACT_INTEGER_IN_DOUBLE)
+            {
+                // Past here a double no longer holds every whole number, so this value
+                // may be a neighbour of the id that was actually sent. Naming no call is
+                // the safe reading: the work goes on, which is what happens when a
+                // withdrawal finds nothing at all.
+                return null;
+            }
+            return Long.valueOf((long)value);
         }
         return null;
     }
@@ -1064,6 +1177,11 @@ public class McpHttpEndpoint
     public void setActiveToolCall(RunningToolCall call)
     {
         runningCalls.add(call);
+        if (applyEarlyWithdrawal(call))
+        {
+            Activator.logInfo("call " + call.getRequestId() //$NON-NLS-1$
+                + " was withdrawn before it arrived"); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -1634,7 +1752,8 @@ public class McpHttpEndpoint
             boolean workerStarted = false;
             try
             {
-                ToolExecution execution = new ToolExecution(body, call, releasePermit);
+                ToolExecution execution = new ToolExecution(body, call, releasePermit,
+                    exchange.getRequestHeaders().getFirst(McpServerMeta.HEADER_SESSION_ID));
                 Thread worker = new Thread(execution, TOOL_EXECUTOR_THREAD);
                 worker.start();
                 workerStarted = true;
@@ -2004,6 +2123,9 @@ public class McpHttpEndpoint
 
         private final RunningToolCall call;
 
+        /** Which client sent it, so every method the router serves here knows the same. */
+        private final String sessionId;
+
         private final Runnable onComplete;
 
         private final CountDownLatch finished = new CountDownLatch(1);
@@ -2012,11 +2134,12 @@ public class McpHttpEndpoint
 
         private volatile Exception failure;
 
-        ToolExecution(String body, RunningToolCall call, Runnable onComplete)
+        ToolExecution(String body, RunningToolCall call, Runnable onComplete, String sessionId)
         {
             this.body = body;
             this.call = call;
             this.onComplete = onComplete;
+            this.sessionId = sessionId;
         }
 
         @Override
@@ -2027,7 +2150,7 @@ public class McpHttpEndpoint
                 // Inside the try so that even if scope setup throws an Error, the finally still runs
                 // countDown() - otherwise the waiting request thread would poll forever.
                 ToolCallScope.enter(ToolCallScope.create(call));
-                document = protocolHandler.processRequest(body);
+                document = protocolHandler.processRequest(body, sessionId);
             }
             catch (Exception e)
             {
@@ -2192,6 +2315,7 @@ public class McpHttpEndpoint
         headers.add(HEADER_ALLOW_ORIGIN, origin);
         headers.add(HEADER_ALLOW_METHODS, ALLOWED_METHODS);
         headers.add(HEADER_ALLOW_HEADERS, ALLOWED_HEADERS);
+        headers.add(HEADER_EXPOSE_HEADERS, McpServerMeta.HEADER_SESSION_ID);
         return true;
     }
 
@@ -2411,15 +2535,21 @@ public class McpHttpEndpoint
         {
             return primitive.getAsString();
         }
-        if (primitive.isNumber())
+        if (!primitive.isNumber())
         {
-            double value = primitive.getAsDouble();
-            if (value == Math.floor(value) && !Double.isInfinite(value))
-            {
-                return Long.valueOf((long)value);
-            }
+            return null;
         }
-        return null;
+        // Read from the text the client sent, not through a double: a whole number too
+        // big for a double comes back as a neighbour of itself, and the answer would
+        // then carry an id the client never used.
+        try
+        {
+            return Long.valueOf(Long.parseLong(primitive.getAsString()));
+        }
+        catch (NumberFormatException notWhole)
+        {
+            return asRequestId(Double.valueOf(primitive.getAsDouble()));
+        }
     }
 
     /**
