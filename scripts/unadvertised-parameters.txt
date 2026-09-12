@@ -44,7 +44,6 @@ InsightsFacadeTool:batchSize
 InsightsFacadeTool:help
 InsightsFacadeTool:includeStandard
 InsightsFacadeTool:methodName
-InsightsFacadeTool:otherPath
 LaunchDebuggerTool:kind
 LaunchDebuggerTool:timeoutMs
 ProjectAdminFacadeTool:confirm

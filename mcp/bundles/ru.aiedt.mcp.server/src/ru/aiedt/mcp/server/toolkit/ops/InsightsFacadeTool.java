@@ -50,8 +50,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * MARKDOWN, the safest wrapper: it carries any string body regardless of the routed
  * tool's own native response type. An agent that needs a JSON-typed result
  * (structuredContent) should call the standalone directly - the same tradeoff
- * {@code code_search} and the other facades accept. All eight operations are read-only:
- * this facade needs no preset-gating.
+ * {@code code_search} and the other facades accept. Every operation reads only, with one
+ * exception: {@code compare_three_way} writes into the project when its intent is anything but
+ * REPORT, and that path asks {@code ToolGate} before it does.
  */
 public class InsightsFacadeTool implements IMcpTool
 {
@@ -74,12 +75,16 @@ public class InsightsFacadeTool implements IMcpTool
             + "comparison, query anti-patterns, health snapshot, impact analysis, object " //$NON-NLS-1$
             + "summary, database tables of an object, semantic metadata search. Operations: " //$NON-NLS-1$
             + "project_metrics, dependency_graph, compare_configurations, " //$NON-NLS-1$
-            + "detect_query_anti_patterns, generate_health_snapshot, impact_analysis, " //$NON-NLS-1$
-            + "object_summary, describe_db_tables, semantic_metadata_search, help. Pass " //$NON-NLS-1$
+            + "compare_three_way, detect_query_anti_patterns, generate_health_snapshot, " //$NON-NLS-1$
+            + "impact_analysis, object_summary, describe_db_tables, " //$NON-NLS-1$
+            + "semantic_metadata_search, help. Pass " //$NON-NLS-1$
             + "operation=<name> (snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
             + "accepted); remaining parameters follow the per-operation contracts (call " //$NON-NLS-1$
-            + "operation=help for the catalog). All nine operations are read-only. The " //$NON-NLS-1$
-            + "standalone tools remain available for back-compat."; //$NON-NLS-1$
+            + "operation=help for the catalog, or operation=help topic=<operation> for one " //$NON-NLS-1$
+            + "operation's parameters). Every operation reads only, except compare_three_way " //$NON-NLS-1$
+            + "with an intent other than REPORT, which writes into the project and is refused " //$NON-NLS-1$
+            + "under a preset without write rights. The standalone tools remain available for " //$NON-NLS-1$
+            + "back-compat."; //$NON-NLS-1$
     }
 
     @Override
@@ -88,12 +93,13 @@ public class InsightsFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "project_metrics / dependency_graph / compare_configurations / " //$NON-NLS-1$
-                    + "detect_query_anti_patterns / generate_health_snapshot / " //$NON-NLS-1$
+                    + "compare_three_way / detect_query_anti_patterns / " //$NON-NLS-1$
+                    + "generate_health_snapshot / " //$NON-NLS-1$
                     + "impact_analysis / object_summary / describe_db_tables / " //$NON-NLS-1$
                     + "semantic_metadata_search / help " //$NON-NLS-1$
                     + "(snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
                     + "accepted). Pass operation=help without other params for the operation " //$NON-NLS-1$
-                    + "catalog.", true) //$NON-NLS-1$
+                    + "catalog, or topic=<operation> for that operation's parameters.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -140,6 +146,11 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_configurations: for mode=projects, the second project's name; for " //$NON-NLS-1$
                     + "mode=files, the path to the second export. Required for that " //$NON-NLS-1$
                     + "operation.") //$NON-NLS-1$
+            .stringProperty("otherPath", //$NON-NLS-1$
+                "compare_three_way: directory holding the configuration to compare against " //$NON-NLS-1$
+                    + "(OTHER). Required for that operation. Its remaining parameters - " //$NON-NLS-1$
+                    + "ancestorPath, intent, decisions and the rest - are listed by " //$NON-NLS-1$
+                    + "operation=help topic=compare_three_way.") //$NON-NLS-1$
             .booleanProperty("showRenames", //$NON-NLS-1$
                 "compare_configurations: detect renames via structural similarity (default " //$NON-NLS-1$
                     + "true).") //$NON-NLS-1$
@@ -271,7 +282,8 @@ public class InsightsFacadeTool implements IMcpTool
         if (operation == null || operation.isBlank())
         {
             return ToolResult.error("operation is required. Allowed: project_metrics / " //$NON-NLS-1$
-                + "dependency_graph / compare_configurations / detect_query_anti_patterns / " //$NON-NLS-1$
+                + "dependency_graph / compare_configurations / compare_three_way / " //$NON-NLS-1$
+                + "detect_query_anti_patterns / " //$NON-NLS-1$
                 + "generate_health_snapshot / impact_analysis / object_summary / " //$NON-NLS-1$
                 + "describe_db_tables / semantic_metadata_search / help.").toJson(); //$NON-NLS-1$
         }
@@ -391,7 +403,7 @@ public class InsightsFacadeTool implements IMcpTool
                 + "Designer-XML exports.\n"); //$NON-NLS-1$
             sb.append("- **compare_three_way** - an open project against a new delivery and " //$NON-NLS-1$
                 + "the delivery both came from, which is what an update on support is. " //$NON-NLS-1$
-                + "Reads only.\n"); //$NON-NLS-1$
+                + "Reads by default; an intent other than REPORT writes into the project.\n"); //$NON-NLS-1$
             sb.append("- **detect_query_anti_patterns** - scan queries for known " //$NON-NLS-1$
                 + "performance anti-patterns.\n"); //$NON-NLS-1$
             sb.append("- **generate_health_snapshot** - composite errors+metadata+" //$NON-NLS-1$

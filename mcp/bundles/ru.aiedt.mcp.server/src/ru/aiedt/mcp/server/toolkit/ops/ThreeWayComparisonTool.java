@@ -373,7 +373,7 @@ public class ThreeWayComparisonTool
      *
      * @param argument the value as written; may be <code>null</code>.
      * @return the intent, REPORT when nothing was asked for
-     * @throws IllegalArgumentException when the value is not one of the three
+     * @throws IllegalArgumentException when the value names no intent
      */
     private static BmComparisonHelper.Intent readIntent(String argument)
     {
@@ -395,16 +395,23 @@ public class ThreeWayComparisonTool
     /**
      * Whether a value of the help argument is a request for the parameter listing.
      * <p>
-     * A value has to carry a character that shows. Neither {@code trim} nor {@code isBlank} says
-     * that: trim cuts only up to U+0020, so an em space asked for help while an ordinary space did
-     * not; isBlank goes by {@code Character.isWhitespace}, which excludes the non-breaking spaces,
-     * so U+00A0 asked for help while U+0020 did not. Both readings leave the schema sentence true
-     * of some spellings of an empty value and false of others, which is the same argument answered
-     * two ways.
+     * What the schema promises is narrow on purpose: an empty or whitespace-only value is not a
+     * request, so a client that fills every declared string with a default still compares. Two
+     * earlier readings broke even that. {@code trim} cuts only up to U+0020, so an em space asked
+     * for help while an ordinary space did not; {@code isBlank} goes by
+     * {@code Character.isWhitespace}, which excludes the non-breaking spaces, so U+00A0 asked while
+     * U+0020 did not. The same argument answered two ways, depending on which space the caller
+     * happened to send.
+     * </p>
+     * <p>
+     * Whitespace, formatting and the non-breaking spaces are all read as absent, which is wider
+     * than the promise and narrower than "invisible" - a variation selector or a combining joiner
+     * alone still counts as a request. Nothing rests on that: it is not a value a client sends as
+     * a default.
      * </p>
      *
      * @param value the argument as the caller sent it; may be <code>null</code>.
-     * @return <code>true</code> when the value carries a character that shows
+     * @return <code>true</code> when the value carries anything but space and formatting
      */
     private static boolean asksForHelp(String value)
     {
@@ -419,7 +426,7 @@ public class ThreeWayComparisonTool
     }
 
     /**
-     * Whether one code point leaves nothing on the screen.
+     * Whether one code point is space or formatting rather than content.
      *
      * @param symbol a code point.
      * @return <code>true</code> for whitespace, formatting and the non-breaking spaces
@@ -493,7 +500,11 @@ public class ThreeWayComparisonTool
                 .gateIfPresetDisabled("write_module_source"); //$NON-NLS-1$
             if (forbidden != null)
             {
-                return forbidden;
+                // Wrapped, because the gate answers in prose and this tool answers JSON. Returned
+                // as it comes, the refusal reaches the router, fails to parse and arrives as an
+                // internal error - the caller is told the call broke rather than that a preset
+                // forbids it.
+                return ToolResult.error(forbidden).toJson();
             }
         }
 
