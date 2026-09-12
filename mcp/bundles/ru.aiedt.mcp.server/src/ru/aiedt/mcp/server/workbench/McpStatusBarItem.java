@@ -282,7 +282,9 @@ public class McpStatusBarItem
             // Only a working marker travels; parking the phase at zero otherwise means the marker is
             // always back at the start when a call begins, so the sweep reads from the same origin.
             sweepPhase = (sweepPhase + 1) % SWEEP_STEPS;
-            statusLabel.setText("AI-EDT - " + shorten(toolName)); //$NON-NLS-1$
+            int alsoRunning = server != null ? server.runningToolCount() - 1 : 0;
+            statusLabel.setText("AI-EDT - " + shorten(toolName) //$NON-NLS-1$
+                + (alsoRunning > 0 ? " +" + alsoRunning : "")); //$NON-NLS-1$ //$NON-NLS-2$
             counterLabel.setText(formatDuration(seconds));
         }
         else if (!running)
@@ -308,7 +310,8 @@ public class McpStatusBarItem
 
         announceUpdateOnce();
 
-        String tooltip = buildTooltip(activity, toolName, seconds, port, requests);
+        String tooltip = buildTooltip(activity, toolName, seconds, port, requests,
+            server != null ? server.runningToolCount() : 0);
         indicatorCanvas.setToolTipText(tooltip);
         statusLabel.setToolTipText(tooltip);
         counterLabel.setToolTipText(tooltip);
@@ -431,18 +434,19 @@ public class McpStatusBarItem
      * @param seconds  how long it has been running
      * @param port     the configured port
      * @param calls    calls served since this server came up
+     * @param running  how many calls are running a tool right now
      * @return the tooltip text
      */
     private static String buildTooltip(Activity state, String toolName, long seconds, int port,
-        long calls)
+        long calls, int running)
     {
         if (state == Activity.STOPPED)
         {
-            return describeActivity(state, toolName, seconds)
+            return describeActivity(state, toolName, seconds, running)
                 + "\nClick to open the endpoint on port " + port //$NON-NLS-1$
                 + "\n\nbuild " + McpServerMeta.PLUGIN_VERSION; //$NON-NLS-1$
         }
-        return describeActivity(state, toolName, seconds)
+        return describeActivity(state, toolName, seconds, running)
             + (state == Activity.WORKING
                 ? "\nClick to step in: interrupt, send to background, hand off" //$NON-NLS-1$
                 : "\nClick to stop or restart") //$NON-NLS-1$
@@ -558,7 +562,8 @@ public class McpStatusBarItem
      * @param seconds  how long it has been running
      * @return the line
      */
-    private static String describeActivity(Activity state, String toolName, long seconds)
+    private static String describeActivity(Activity state, String toolName, long seconds,
+        int running)
     {
         if (state == Activity.STOPPED)
         {
@@ -566,7 +571,10 @@ public class McpStatusBarItem
         }
         if (state == Activity.WORKING)
         {
-            return toolName + " - " + formatDuration(seconds) + " and counting"; //$NON-NLS-1$ //$NON-NLS-2$
+            String what = toolName + " - " + formatDuration(seconds) + " and counting"; //$NON-NLS-1$ //$NON-NLS-2$
+            // The count names what the interrupt dialog does NOT reach: it acts on this
+            // one, the oldest, and the others keep running.
+            return running > 1 ? what + " (" + running + " calls running)" : what; //$NON-NLS-1$ //$NON-NLS-2$
         }
         return describeLastCall();
     }
@@ -712,7 +720,8 @@ public class McpStatusBarItem
         int port = started > 0 ? started : storedPort();
         Activity state = toolName != null ? Activity.WORKING : running ? Activity.LISTENING : Activity.STOPPED;
 
-        addHeadingItem(popupMenu, describeActivity(state, toolName, seconds));
+        addHeadingItem(popupMenu, describeActivity(state, toolName, seconds,
+            server != null ? server.runningToolCount() : 0));
         addHeadingItem(popupMenu, describeConnection(port, requests));
         new MenuItem(popupMenu, SWT.SEPARATOR);
 

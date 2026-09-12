@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.wire;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -28,6 +29,21 @@ public class ProtocolBaseMethodsTest
         String body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\"" //$NON-NLS-1$ //$NON-NLS-2$
             + (params == null ? "" : ",\"params\":" + params) + "}"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         return new McpRequestRouter().processRequest(body);
+    }
+
+    /**
+     * A withdrawal is a notification: it has no id of its own and gets no document back. The one
+     * with no params at all is the shape that matters - it reached a read of those params and threw,
+     * so a malformed notification came back as an internal error instead of being ignored.
+     */
+    @Test
+    public void aWithdrawalIsAnsweredWithNothingAtAll()
+    {
+        assertNull(call("notifications/cancelled", null)); //$NON-NLS-1$
+        assertNull(call("notifications/cancelled", "{}")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(call("notifications/cancelled", "{\"requestId\":42}")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(call("notifications/cancelled", //$NON-NLS-1$
+            "{\"requestId\":42,\"reason\":\"changed my mind\"}")); //$NON-NLS-1$
     }
 
     /** A ping asks whether anything is listening. The answer is that something answered. */

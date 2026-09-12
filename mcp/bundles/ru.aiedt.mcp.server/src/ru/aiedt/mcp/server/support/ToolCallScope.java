@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.support;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.RunningToolCall;
 
@@ -183,6 +184,62 @@ public final class ToolCallScope
     public static void exit()
     {
         CURRENT.remove();
+    }
+
+    /**
+     * Wraps work so it runs under this call's cancellation wherever it is run.
+     * <p>
+     * The binding is a {@link ThreadLocal}, so work handed to another thread - the UI thread, a
+     * worker, a pool - arrives with no scope and reads no cancellation flag. A checkpoint there
+     * then answers "not cancelled" for the life of the call, which is indistinguishable from a
+     * tool that never asks.
+     * </p>
+     * <p>
+     * What travels is the flag, not the call. Handed-over work can outlive the call that queued it
+     * - work posted to a busy UI thread stays in its queue after the caller has given up waiting -
+     * and a captured {@link #create(RunningToolCall) full scope} would hold that call's
+     * {@link RunningToolCall} and its {@code HttpExchange} alive until the queue drained. The
+     * response-size cap and the call record are read on the thread that runs the tool, not inside
+     * work handed elsewhere, so a cancellation-only scope loses nothing a checkpoint needs.
+     * </p>
+     * <p>
+     * A thread that already has a scope of its own keeps it: the previous binding is restored
+     * rather than removed, so nesting does not strand the outer call.
+     * </p>
+     *
+     * @param <T> what the work returns
+     * @param work the work to run elsewhere; must not be <code>null</code>
+     * @return the work bound to this call's cancellation, or <code>work</code> itself when there is
+     *         no call to carry
+     */
+    public static <T> Supplier<T> carryCancellation(Supplier<T> work)
+    {
+        Objects.requireNonNull(work, "work"); //$NON-NLS-1$
+        ToolCallScope here = CURRENT.get();
+        if (here == null)
+        {
+            return work;
+        }
+        ToolCallScope captured = forCancellation(here.cancellation());
+        return () -> {
+            ToolCallScope previous = CURRENT.get();
+            enter(captured);
+            try
+            {
+                return work.get();
+            }
+            finally
+            {
+                if (previous != null)
+                {
+                    enter(previous);
+                }
+                else
+                {
+                    exit();
+                }
+            }
+        };
     }
 
     /**

@@ -65,6 +65,11 @@ public final class UiSync
         {
             return work.get();
         }
+        // The UI thread has no scope of its own, and the binding is a ThreadLocal, so work
+        // handed over unwrapped would read no cancellation flag and every checkpoint
+        // inside it would answer "not cancelled" for the life of the call. The flag travels;
+        // the call does not, because this runnable outlives the wait below when the UI is wedged.
+        Supplier<T> carried = ToolCallScope.carryCancellation(work);
         Display display = Display.getDefault();
         AtomicReference<T> result = new AtomicReference<>();
         AtomicReference<RuntimeException> failure = new AtomicReference<>();
@@ -72,7 +77,7 @@ public final class UiSync
         display.asyncExec(() -> {
             try
             {
-                result.set(work.get());
+                result.set(carried.get());
             }
             catch (RuntimeException e)
             {

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.support.BmComparisonHelper;
+import ru.aiedt.mcp.server.support.ParameterHelp;
 import ru.aiedt.mcp.server.support.UpdateReport;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -125,9 +126,10 @@ public class ThreeWayComparisonTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", //$NON-NLS-1$
-                "Open project that plays our side (MAIN)", true) //$NON-NLS-1$
+                "Open project that plays our side (MAIN). Required for every call except help.") //$NON-NLS-1$
             .stringProperty("otherPath", //$NON-NLS-1$
-                "Directory holding the configuration to compare against (OTHER)", true) //$NON-NLS-1$
+                "Directory holding the configuration to compare against (OTHER). Required for " //$NON-NLS-1$
+                    + "every call except help.") //$NON-NLS-1$
             .stringProperty("parentId", //$NON-NLS-1$
                 "Which vendor configuration of the project the deliveries are measured " //$NON-NLS-1$
                     + "against, by id or by name. Required when the project descends from " //$NON-NLS-1$
@@ -222,8 +224,14 @@ public class ThreeWayComparisonTool
                     + "inverts every changedBy in the answer without failing. Legitimate cases " //$NON-NLS-1$
                     + "exist - a renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
                     + "then reported in originMismatches rather than swallowed.") //$NON-NLS-1$
+            .stringProperty("help", //$NON-NLS-1$
+                "Pass a word - help=parameters - to be told what the parameters mean and " //$NON-NLS-1$
+                    + "nothing else; the rest of the call is then ignored. An empty or " //$NON-NLS-1$
+                    + "whitespace-only value is not a request, so a client that fills every " //$NON-NLS-1$
+                    + "declared string still compares.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
-                "REPORT (default) reads and changes nothing. MERGE applies the decisions to the " //$NON-NLS-1$
+                "REPORT (default) changes nothing in the project; it does write the decisions " //$NON-NLS-1$
+                    + "file when decisionsPath names one. MERGE applies the decisions to the " //$NON-NLS-1$
                     + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
                     + "writing when it raises a blocking problem; merged says what actually " //$NON-NLS-1$
                     + "happened, not what was asked for. MERGE_IGNORING_PROBLEMS proceeds past " //$NON-NLS-1$
@@ -366,7 +374,7 @@ public class ThreeWayComparisonTool
      *
      * @param argument the value as written; may be <code>null</code>.
      * @return the intent, REPORT when nothing was asked for
-     * @throws IllegalArgumentException when the value is not one of the three
+     * @throws IllegalArgumentException when the value names no intent
      */
     private static BmComparisonHelper.Intent readIntent(String argument)
     {
@@ -385,11 +393,81 @@ public class ThreeWayComparisonTool
             + "MERGE_IGNORING_PROBLEMS, UPDATE_UNCHANGED or UPDATE_KEEPING_OURS."); //$NON-NLS-1$
     }
 
+    /**
+     * Whether a value of the help argument is a request for the parameter listing.
+     * <p>
+     * What the schema promises is narrow on purpose: an empty or whitespace-only value is not a
+     * request, so a client that fills every declared string with a default still compares. Two
+     * earlier readings broke even that. {@code trim} cuts only up to U+0020, so an em space asked
+     * for help while an ordinary space did not; {@code isBlank} goes by
+     * {@code Character.isWhitespace}, which excludes the non-breaking spaces, so U+00A0 asked while
+     * U+0020 did not. The same argument answered two ways, depending on which space the caller
+     * happened to send.
+     * </p>
+     * <p>
+     * Whitespace, formatting and the non-breaking spaces are all read as absent, which is wider
+     * than the promise and narrower than "invisible" - a variation selector or a combining joiner
+     * alone still counts as a request. Nothing rests on that: it is not a value a client sends as
+     * a default.
+     * </p>
+     *
+     * @param value the argument as the caller sent it; may be <code>null</code>.
+     * @return <code>true</code> when the value carries anything but space and formatting
+     */
+    private static boolean asksForHelp(String value)
+    {
+        if (value == null)
+        {
+            return false;
+        }
+        // By code point and not by char: a format character above the basic plane arrives as a
+        // surrogate pair, and each half is categorised SURROGATE rather than FORMAT. Read one char
+        // at a time, U+E0001 counts as something that shows, which it is not.
+        return value.codePoints().anyMatch(symbol -> !isInvisible(symbol));
+    }
+
+    /**
+     * Whether one code point is space or formatting rather than content.
+     *
+     * @param symbol a code point.
+     * @return <code>true</code> for whitespace, formatting and the non-breaking spaces
+     */
+    private static boolean isInvisible(int symbol)
+    {
+        // The three named ones are spaces that Character.isWhitespace deliberately excludes,
+        // because they do not break a line. They still show nothing.
+        return Character.isWhitespace(symbol)
+            || Character.getType(symbol) == Character.FORMAT
+            || symbol == ' ' || symbol == ' ' || symbol == ' ';
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
+        String topic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
+        if (asksForHelp(topic))
+        {
+            // Answered before anything is read: a caller asking what the parameters mean has not
+            // supplied them yet, and refusing for a missing projectName would answer a question
+            // nobody asked.
+            //
+            // Carried inside a JSON document because this tool declares ResponseType.JSON, and the
+            // router parses whatever a JSON tool returns. Markdown handed back raw becomes an
+            // internal error rather than an answer.
+            return ToolResult.success()
+                .put("help", ParameterHelp.render(getName(), getInputSchema())) //$NON-NLS-1$
+                .toJson();
+        }
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String otherPath = JsonUtils.extractStringArgument(params, "otherPath"); //$NON-NLS-1$
+        if (projectName == null || projectName.isBlank() || otherPath == null
+            || otherPath.isBlank())
+        {
+            // The schema cannot insist on these: a help call carries neither, and a client that
+            // validates would refuse it before the branch above could run. The obligation is real
+            // all the same, so it is checked here, in the same words the comparison uses.
+            return ToolResult.error("projectName and otherPath are required").toJson(); //$NON-NLS-1$
+        }
         String ancestorPath = JsonUtils.extractStringArgument(params, "ancestorPath"); //$NON-NLS-1$
 
         String decisionsJson = JsonUtils.extractStringArgument(params, "decisions"); //$NON-NLS-1$
@@ -423,7 +501,11 @@ public class ThreeWayComparisonTool
                 .gateIfPresetDisabled("write_module_source"); //$NON-NLS-1$
             if (forbidden != null)
             {
-                return forbidden;
+                // Wrapped, because the gate answers in prose and this tool answers JSON. Returned
+                // as it comes, the refusal reaches the router, fails to parse and arrives as an
+                // internal error - the caller is told the call broke rather than that a preset
+                // forbids it.
+                return ToolResult.error(forbidden).toJson();
             }
         }
 

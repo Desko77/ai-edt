@@ -647,11 +647,16 @@ def registry_operations(path: pathlib.Path, source: str) -> dict[str, dict[str, 
     found: dict[str, dict[str, object]] = {}
     for operation, body in entries:
         names, how, renamed = registration_read_set(body, source, path.stem, fields, operation)
+        # Taken before the union, and not as a subtraction after it: a parameter the handler reads
+        # AND the facade reads before dispatching is established for this operation, and removing
+        # everything the facade reads would demote it.
+        established = sorted(names)
         if common:
             names = set(names) | common
         found[f"{path.stem}:{operation}"] = {
             "renamed": renamed,
             "common": sorted(common),
+            "established": established,
             "facade": path.stem,
             "operation": operation,
             "parameters": sorted(names),
@@ -675,11 +680,21 @@ def collect() -> dict[str, dict[str, object]]:
         common = facade_common_reads(source, set()) - CALL_KEYS
         for operation, branch in branches(body).items():
             names, how = parameters_of(branch, source)
+            # Established before the union, and the union is left exactly as it was. Stopping the
+            # walk at the handlers instead looked tidier and narrowed the union on 101 operations -
+            # which is the guard refusing calls that work, the one thing this split must not do.
+            established = sorted(names)
             names = set(names) | common
             key = f"{path.stem}:{operation}"
             result[key] = {
                 "facade": path.stem,
                 "operation": operation,
+                # Kept apart rather than only unioned. The union is what the unread-argument guard
+                # needs - it refuses on what nobody reads, and a set short of the truth refuses
+                # calls that work. What per-operation help may print is narrower: a parameter read
+                # before the dispatch belongs to the facade, not to the operation the caller asked
+                # about, and printing it under that operation says it takes something it does not.
+                "established": established,
                 "parameters": sorted(names),
                 "how": how,
             }
@@ -695,7 +710,10 @@ def resolve_renamed(rows: dict[str, dict[str, object]]) -> None:
     """
     for row in rows.values():
         renamed = row.pop("renamed", None)
-        common = row.pop("common", [])
+        # Read, not taken: the shipped map keeps the two apart, so what the facade reads before it
+        # dispatches has to survive this pass. Popping it left every row looking as though all of
+        # its parameters were established for the operation.
+        common = row.get("common") or []
         if not renamed:
             continue
         target = rows.get(f"{renamed[0]}:{renamed[1]}")
@@ -708,6 +726,9 @@ def resolve_renamed(rows: dict[str, dict[str, object]]) -> None:
             row["how"] += " - target row not found, read from the handler instead"
             continue
         row["parameters"] = sorted(set(target["parameters"]) | set(common))
+        # The alias takes what the target operation takes, so what is established for one is
+        # established for the other. Left behind, the alias would print none of its parameters.
+        row["established"] = sorted(target.get("established") or [])
 
 
 def unadvertised(found: dict[str, dict[str, object]]) -> list[str]:
@@ -835,12 +856,25 @@ def write_report(found: dict[str, dict[str, object]]) -> None:
 def resource_text(found: dict[str, dict[str, object]]) -> str:
     """The map as it is shipped, built the one way both writing and checking use."""
     rows = ["# derived by scripts/check-operation-params.py - do not edit",
-            "# a parameter is written name:kind; ? means no class declares it"]
+            "# a parameter is written name:kind; ? means no class declares it",
+            "# column 3 is established for the operation - read by the code that handles it",
+            "# column 5 is the rest of what this operation accepts: read by the facade on the way",
+            "# down, and for a switch facade that walk does not stop at the handlers, so some of",
+            "# it belongs to sibling operations. Both columns are parameters a caller may send -",
+            "# together they are what the unread-argument guard allows, unchanged - and only the",
+            "# first is established as this operation's, which is what per-operation help prints",
+            "# as its own."]
     declared = kinds_by_class()
     agreed = kind_everywhere(declared)
     for _, row in sorted(found.items()):
+        established = set(row.get("established") or []) & set(row["parameters"])
+        own = dict(row)
+        own["parameters"] = sorted(established)
+        wide = dict(row)
+        wide["parameters"] = sorted(set(row["parameters"]) - established)
         rows.append("\t".join((str(row["facade"]), str(row["operation"]),
-                               ",".join(with_kinds(row, declared, agreed)), str(row["how"]))))
+                               ",".join(with_kinds(own, declared, agreed)), str(row["how"]),
+                               ",".join(with_kinds(wide, declared, agreed)))))
     rows.append("")
     return "\n".join(rows)
 

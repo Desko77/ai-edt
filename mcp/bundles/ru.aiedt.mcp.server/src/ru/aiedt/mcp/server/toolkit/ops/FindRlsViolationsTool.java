@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -134,16 +135,35 @@ public class FindRlsViolationsTool implements IMcpTool
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
         String roleName = JsonUtils.extractStringArgument(params, "roleName"); //$NON-NLS-1$
 
-        boolean noRlsConfigured = checkNoRls(project, roleName);
+        WatchForCancel watch = WatchForCancel.begin();
+        // Asked before the predicate, and never inside it: checkNoRls answers whether ANY
+        // object has a rule, and a walk stopped half way would answer "none" when it
+        // merely stopped looking. Skipped entirely when the operator has already cancelled,
+        // which leaves noRlsConfigured absent from the answer rather than false.
+        boolean noRlsConfigured = !watch.raised() && checkNoRls(project, roleName);
         List<Map<String, Object>> findings = new ArrayList<>();
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
             if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
             {
+                if (watch.stopHere())
+                {
+                    // Thrown rather than answered false: false prunes this one resource
+                    // and leaves the rest of the project to walk.
+                    throw new org.eclipse.core.runtime.OperationCanceledException();
+                }
                 scanFile((IFile) resource, findings);
             }
             return true;
         };
-        project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        try
+        {
+            project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        }
+        catch (org.eclipse.core.runtime.OperationCanceledException stopped)
+        {
+            // Caught here so the findings collected so far are kept; the answer says
+            // they are part of the work rather than all of it.
+        }
 
         // Severity filter
         List<Map<String, Object>> filtered = new ArrayList<>();
@@ -158,6 +178,7 @@ public class FindRlsViolationsTool implements IMcpTool
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("findings", filtered.size()); //$NON-NLS-1$
         ToolResult tr = ToolResult.success();
+        tr.put("cancelled", watch.note("files")); //$NON-NLS-1$
         if (noRlsConfigured)
         {
             tr.put("noRlsConfigured", true); //$NON-NLS-1$
@@ -165,7 +186,7 @@ public class FindRlsViolationsTool implements IMcpTool
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
             return tr.put("statistics", stats) //$NON-NLS-1$
-                .put("text", renderMarkdown(filtered, stats)) //$NON-NLS-1$
+                .put("text", renderMarkdown(filtered, stats, watch.note("files"))) //$NON-NLS-1$
                 .toJson();
         }
         return tr.put("statistics", stats) //$NON-NLS-1$
@@ -381,13 +402,21 @@ public class FindRlsViolationsTool implements IMcpTool
     }
 
     private static String renderMarkdown(List<Map<String, Object>> findings,
-        Map<String, Object> stats)
+        Map<String, Object> stats, String cancelled)
     {
         StringBuilder sb = new StringBuilder("# RLS Violations\n\n"); //$NON-NLS-1$
         sb.append("**Findings:** ").append(stats.get("findings")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (cancelled != null)
+        {
+            sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (findings.isEmpty())
         {
-            sb.append("No violations.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, nothing found
+            // means nothing was looked at, which is a different statement.
+            sb.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No violations.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         sb.append("| Kind | Severity | File:Line | Method | Message |\n"); //$NON-NLS-1$

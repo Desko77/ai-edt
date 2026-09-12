@@ -237,9 +237,16 @@ public class McpHttpEndpoint
 
     private static final String HEADER_ALLOW_HEADERS = "Access-Control-Allow-Headers"; //$NON-NLS-1$
 
+    /** Without this a browser cannot READ the session the handshake hands it, so it has
+     * nothing to send back on the next request. */
+    private static final String HEADER_EXPOSE_HEADERS = "Access-Control-Expose-Headers"; //$NON-NLS-1$
+
     private static final String ALLOWED_METHODS = "GET, POST, DELETE, OPTIONS"; //$NON-NLS-1$
 
-    private static final String ALLOWED_HEADERS = "Content-Type, Accept, Authorization"; //$NON-NLS-1$
+    /** MCP-Session-Id is in here because a browser cannot send a header it is not allowed,
+     * and without it every call from a web origin reports no client at all. */
+    private static final String ALLOWED_HEADERS =
+        "Content-Type, Accept, Authorization, MCP-Session-Id"; //$NON-NLS-1$
 
     private static final String MIME_JSON = "application/json"; //$NON-NLS-1$
 
@@ -299,6 +306,19 @@ public class McpHttpEndpoint
      * separately by the heavy-tool limiter, and idle threads are reclaimed (core-thread timeout).
      */
     private static final int REQUEST_POOL_SIZE = 24;
+
+    /** At and above this a double stops holding every whole number, so an id read through
+     * one may be a neighbour of the id that was sent - 9007199254740993 rounds to this
+     * very value, so the boundary itself is already ambiguous. */
+    private static final double MAX_EXACT_INTEGER_IN_DOUBLE = 9007199254740992d;
+
+    /** How long a withdrawal waits for the call it named. Seconds: the two requests are
+     * sent one after the other, and a call that has not arrived by then is not coming.
+     */
+    private static final long EARLY_WITHDRAWAL_TTL_MS = 30_000L;
+
+    /** How many such withdrawals are kept at once, so a client cannot fill the heap. */
+    private static final int MAX_EARLY_WITHDRAWALS = 256;
 
     /** A safety net for memory, not a queue anyone should reach: admission control bites first. */
     private static final int REQUEST_QUEUE_CAPACITY = 200;
@@ -397,18 +417,50 @@ public class McpHttpEndpoint
 
     private final AtomicLong requestCount = new AtomicLong();
 
-    private volatile String currentToolName;
-
-    private volatile long toolStartedAt;
-
     /** Raised by the user when no call was in flight to answer; the next tool result carries it. */
     private final AtomicReference<OperatorSignal> pendingSignal = new AtomicReference<>();
 
-    /** The call a user signal would pre-empt. One slot: the last call to arrive is the one on offer. */
-    private volatile RunningToolCall activeToolCall;
+    /**
+     * Every call in flight, oldest first.
+     * <p>
+     * A single slot held the last call to arrive, and the request pool runs 24 threads: with two
+     * calls in flight the older one became unreachable - a signal meant for the call the operator
+     * could see went to whichever started last - and the running-tool indicator, cleared
+     * unconditionally when any call finished, read "idle" while the other was still working.
+     * </p>
+     */
+    private final java.util.Queue<RunningToolCall> runningCalls =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
 
-    /** Guards set/clear of {@link #activeToolCall} so a finishing call cannot wipe a later running one. */
-    private final Object activeCallLock = new Object();
+    /**
+     * Withdrawals that named no call, kept in case the call is still on its way.
+     * <p>
+     * The call and the withdrawal arrive on separate requests and separate threads, so
+     * a client that withdraws at once can be observed in that order. Without this the
+     * withdrawal is forgotten and the call runs to the end with its flag down.
+     * </p>
+     */
+    private final java.util.Map<String, Long> withdrawnBeforeArrival =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Calls that have finished, so a withdrawal that arrives late is told apart from
+     * one that arrives early. They look identical at the queue - neither names a call -
+     * and treating the late one as early spends it on whatever next reuses the id.
+     */
+    private final java.util.Map<String, Long> callsAlreadyDone =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Held across deciding what a withdrawal means and across enrolling a call.
+     * <p>
+     * Without it the two interleave: the withdrawal looks for a call and finds none,
+     * the call enrols and looks for a memo and finds none, and then the memo is written
+     * - the stop is lost and the note is left for someone else. Nothing else is taken
+     * inside it, so it cannot take part in a deadlock.
+     * </p>
+     */
+    private final Object withdrawalLock = new Object();
 
     /**
      * Opens the endpoint, restarting it if it was already open.
@@ -853,24 +905,277 @@ public class McpHttpEndpoint
     }
 
     /**
+     * The call the indicator names and a user signal acts on: the oldest one still running a tool.
+     * <p>
+     * Oldest rather than newest, and the same call for both, so that the button acts on the call
+     * the operator can see. A call that has arrived but whose tool the router has not started yet
+     * is skipped - there is nothing to show or to interrupt in it.
+     * </p>
+     *
+     * @return the call, or <code>null</code> when no tool is running
+     */
+    private RunningToolCall oldestRunningCall()
+    {
+        for (RunningToolCall call : runningCalls)
+        {
+            if (call.isRunningATool() && !call.hasResponded())
+            {
+                return call;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Returns the tool that is running.
      *
      * @return the tool name, or <code>null</code> when nothing is running
      */
     public String getCurrentToolName()
     {
-        return currentToolName;
+        RunningToolCall call = oldestRunningCall();
+        return call != null ? call.runningToolName() : null;
     }
 
     /**
-     * Announces which tool is running, so the status bar can show it and time it.
+     * How many calls are running a tool right now.
      *
-     * @param toolName the tool that has just started, or <code>null</code> now that it has finished
+     * @return the count, {@code 0} when the server is idle
      */
-    public void setCurrentToolName(String toolName)
+    public int runningToolCount()
     {
-        currentToolName = toolName;
-        toolStartedAt = toolName != null ? System.currentTimeMillis() : 0L;
+        int running = 0;
+        for (RunningToolCall call : runningCalls)
+        {
+            if (call.isRunningATool() && !call.hasResponded())
+            {
+                running++;
+            }
+        }
+        return running;
+    }
+
+    /**
+     * Finds the call a client's request id names, so a protocol cancellation reaches the call it
+     * was sent for rather than whichever started last.
+     *
+     * @param requestId the JSON-RPC id from the notification; may be <code>null</code>
+     * @param sessionId which client is asking, from its session header; may be <code>null</code>
+     * @return the call in flight with that id from that client, or <code>null</code>
+     */
+    public RunningToolCall findCallByRequestId(Object requestId, String sessionId)
+    {
+        return matchingCall(requestId, sessionId, false);
+    }
+
+    /**
+     * Finds the call an id names, optionally including one that has already answered.
+     * <p>
+     * Both sides of the id go through one rule: normalising only the question would make
+     * the match depend on a convention held in another method, and a convention held in
+     * two places drifts. The session counts too - an id is unique within one client,
+     * and clients start counting at one, so two of them have a call numbered 1 the
+     * moment both are busy. Absence is a value: a client that names a session cannot
+     * reach a call that named none, and two that both name none stay indistinguishable,
+     * which no rule here can mend.
+     * </p>
+     *
+     * @param requestId the id to look for
+     * @param sessionId the client asking
+     * @param includeAnswered whether a call that has already answered counts as found
+     * @return the call, or <code>null</code>
+     */
+    private RunningToolCall matchingCall(Object requestId, String sessionId,
+        boolean includeAnswered)
+    {
+        Object wanted = asRequestId(requestId);
+        if (wanted == null)
+        {
+            return null;
+        }
+        for (RunningToolCall call : runningCalls)
+        {
+            if (wanted.equals(asRequestId(call.getRequestId()))
+                && java.util.Objects.equals(sessionId, call.getSessionId())
+                && (includeAnswered || !call.hasResponded()))
+            {
+                return call;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Records a withdrawal for a call that has not arrived yet.
+     * <p>
+     * Bounded by age and by count: a client can send these at will, and a map that only
+     * ever grows would be a way to fill the heap of the environment this runs inside.
+     * </p>
+     *
+     * @param requestId the id the withdrawal named
+     * @param sessionId the client that sent it
+     * @param reason what to record on the flag
+     * @return the tool that was stopped, or <code>null</code> when no call was in flight
+     */
+    public String withdrawCall(Object requestId, String sessionId, String reason)
+    {
+        synchronized (withdrawalLock)
+        {
+            RunningToolCall call = findCallByRequestId(requestId, sessionId);
+            if (call != null)
+            {
+                call.cancellation().cancel(reason);
+                return call.runningToolName();
+            }
+            if (matchingCall(requestId, sessionId, true) != null)
+            {
+                // Answered, but still in the queue until its thread tidies up. In that
+                // window it is in neither place, and a withdrawal kept as early would
+                // be spent on the next call to take this id.
+                return null;
+            }
+            String key = withdrawalKey(requestId, sessionId);
+            if (key != null && !recentlyFinished(key))
+            {
+                rememberEarlyWithdrawal(key);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Whether a call with this key finished recently enough for a withdrawal naming it
+     * to be a late one rather than an early one.
+     *
+     * @param key the call's key
+     * @return <code>true</code> while the record is still inside its window
+     */
+    private boolean recentlyFinished(String key)
+    {
+        Long at = callsAlreadyDone.get(key);
+        if (at == null)
+        {
+            return false;
+        }
+        if (System.currentTimeMillis() - at.longValue() > EARLY_WITHDRAWAL_TTL_MS)
+        {
+            // Read where it is used, not only swept when something else finishes: an id
+            // reused long afterwards would otherwise have its withdrawal thrown away
+            // because of a call that ended minutes ago.
+            callsAlreadyDone.remove(key);
+            return false;
+        }
+        return true;
+    }
+
+    private void rememberEarlyWithdrawal(String key)
+    {
+        long now = System.currentTimeMillis();
+        withdrawnBeforeArrival.values()
+            .removeIf(at -> now - at.longValue() > EARLY_WITHDRAWAL_TTL_MS);
+        if (withdrawnBeforeArrival.size() >= MAX_EARLY_WITHDRAWALS)
+        {
+            // Still full after the sweep: a client is sending these faster than they
+            // expire. Dropping the new one keeps the map bounded, and the cost is a
+            // withdrawal that behaves as it did before this existed.
+            return;
+        }
+        withdrawnBeforeArrival.put(key, Long.valueOf(now));
+    }
+
+    /**
+     * Raises the flag of a call that was withdrawn before it got here.
+     *
+     * @param call the call just enrolled
+     * @return <code>true</code> when a withdrawal was waiting for it
+     */
+    private boolean applyEarlyWithdrawal(RunningToolCall call)
+    {
+        String key = withdrawalKey(call.getRequestId(), call.getSessionId());
+        if (key == null)
+        {
+            return false;
+        }
+        Long remembered = withdrawnBeforeArrival.remove(key);
+        if (remembered == null)
+        {
+            return false;
+        }
+        if (System.currentTimeMillis() - remembered.longValue() > EARLY_WITHDRAWAL_TTL_MS)
+        {
+            // Swept on the way past rather than on a timer: an entry is only reached
+            // when a call claims it, and without this check one nobody swept would be
+            // spent hours later on whatever had taken the id since.
+            return false;
+        }
+        call.cancellation().cancel("withdrawn by the client"); //$NON-NLS-1$
+        return true;
+    }
+
+    private static String withdrawalKey(Object requestId, String sessionId)
+    {
+        Object id = asRequestId(requestId);
+        if (id == null)
+        {
+            return null;
+        }
+        // The class is part of the key: a string id and a numeric id are different ids,
+        // and their text can be identical.
+        return (sessionId == null ? "" : sessionId) + "\u0000" //$NON-NLS-1$ //$NON-NLS-2$
+            + id.getClass().getName() + "\u0000" + id; //$NON-NLS-1$
+    }
+
+    /**
+     * Brings an id read from anywhere to the shape {@link #readRequestId} stores.
+     * <p>
+     * A JSON number arrives as a {@link Double} through a generic parse and as a {@link Long}
+     * through the one above, and those two are never equal to each other. Matching a cancellation
+     * against a call would then find nothing and say nothing - the flag would simply never rise.
+     * The rule lives here, with the calls it has to match, rather than beside each caller.
+     * </p>
+     *
+     * @param raw a string, a number, or anything else
+     * @return the id as a {@link String} or a {@link Long}, or <code>null</code> when it is neither.
+     *         A string id and a numeric id stay different ids, as JSON-RPC has them
+     */
+    private static Object asRequestId(Object raw)
+    {
+        if (raw instanceof String)
+        {
+            return raw;
+        }
+        if (raw instanceof Long || raw instanceof Integer || raw instanceof Short
+            || raw instanceof Byte || raw instanceof java.math.BigInteger)
+        {
+            // Exact already. Sending these through double would lose the low bits of
+            // anything past 2^53 and make two different ids look like one.
+            return Long.valueOf(((Number)raw).longValue());
+        }
+        if (raw instanceof Number)
+        {
+            double value = ((Number)raw).doubleValue();
+            if (Double.isNaN(value) || Double.isInfinite(value))
+            {
+                return null;
+            }
+            if (value != Math.floor(value))
+            {
+                // A fractional id. JSON-RPC discourages one and this server never makes
+                // one up, but it answers with the id it was given, so it has to be able
+                // to match it.
+                return Double.valueOf(value);
+            }
+            if (Math.abs(value) >= MAX_EXACT_INTEGER_IN_DOUBLE)
+            {
+                // Past here a double no longer holds every whole number, so this value
+                // may be a neighbour of the id that was actually sent. Naming no call is
+                // the safe reading: the work goes on, which is what happens when a
+                // withdrawal finds nothing at all.
+                return null;
+            }
+            return Long.valueOf((long)value);
+        }
+        return null;
     }
 
     /**
@@ -880,7 +1185,7 @@ public class McpHttpEndpoint
      */
     public boolean isToolExecuting()
     {
-        return currentToolName != null;
+        return oldestRunningCall() != null;
     }
 
     /**
@@ -890,12 +1195,8 @@ public class McpHttpEndpoint
      */
     public long getToolExecutionSeconds()
     {
-        long startedAt = toolStartedAt;
-        if (startedAt == 0L)
-        {
-            return 0L;
-        }
-        return (System.currentTimeMillis() - startedAt) / MILLIS_PER_SECOND;
+        RunningToolCall call = oldestRunningCall();
+        return call != null ? call.getRunningSeconds() : 0L;
     }
 
     /**
@@ -940,8 +1241,9 @@ public class McpHttpEndpoint
      */
     public synchronized RunningToolCall.Delivery interruptToolCall(OperatorSignal signal)
     {
-        RunningToolCall call = activeToolCall;
-        if (call == null || call.hasResponded())
+        // The call the indicator names, so the button acts on the work the operator can see.
+        RunningToolCall call = oldestRunningCall();
+        if (call == null)
         {
             return RunningToolCall.Delivery.NOT_ARBITRATED;
         }
@@ -958,46 +1260,65 @@ public class McpHttpEndpoint
         {
             return delivery;
         }
-        setCurrentToolName(null);
+        call.markRunning(null);
         clearActiveToolCall(call);
         return delivery;
     }
 
     /**
-     * Offers up the call a user signal may pre-empt.
+     * Enrols a call that has arrived, so a user signal can reach it and the indicator can show it.
      *
      * @param call the call now in flight
      */
     public void setActiveToolCall(RunningToolCall call)
     {
-        synchronized (activeCallLock)
+        boolean claimed;
+        synchronized (withdrawalLock)
         {
-            activeToolCall = call;
+            runningCalls.add(call);
+            claimed = applyEarlyWithdrawal(call);
+        }
+        if (claimed)
+        {
+            Activator.logInfo("call " + call.getRequestId() //$NON-NLS-1$
+                + " was withdrawn before it arrived"); //$NON-NLS-1$
         }
     }
 
     /**
-     * Returns the call a user signal would pre-empt.
+     * Returns the call a user signal would act on.
      *
-     * @return the call in flight, or <code>null</code>
+     * @return the oldest call still running a tool, or <code>null</code>
      */
     public RunningToolCall getActiveToolCall()
     {
-        return activeToolCall;
+        return oldestRunningCall();
     }
 
     /**
-     * Withdraws the call on offer.
+     * Withdraws a call that has finished.
+     * <p>
+     * Removal is by identity, so a call finishing takes only its own entry: the calls that started
+     * after it keep their place in the queue and the indicator keeps naming the oldest of them.
+     * </p>
+     *
+     * @param call the call that is done
      */
     public void clearActiveToolCall(RunningToolCall call)
     {
-        // Compare-and-clear: only wipe the slot if it still holds this call. A call finishing must not
-        // erase a later call that has since overwritten the slot and is still running.
-        synchronized (activeCallLock)
+        synchronized (withdrawalLock)
         {
-            if (activeToolCall == call)
+            runningCalls.remove(call);
+            String key = withdrawalKey(call.getRequestId(), call.getSessionId());
+            if (key != null)
             {
-                activeToolCall = null;
+                long now = System.currentTimeMillis();
+                callsAlreadyDone.values()
+                    .removeIf(at -> now - at.longValue() > EARLY_WITHDRAWAL_TTL_MS);
+                if (callsAlreadyDone.size() < MAX_EARLY_WITHDRAWALS)
+                {
+                    callsAlreadyDone.put(key, Long.valueOf(now));
+                }
             }
         }
     }
@@ -1465,7 +1786,8 @@ public class McpHttpEndpoint
                     runToolCall(exchange, body);
                     return;
                 }
-                document = protocolHandler.processRequest(body);
+                document = protocolHandler.processRequest(body,
+                    exchange.getRequestHeaders().getFirst(McpServerMeta.HEADER_SESSION_ID));
             }
             catch (Exception e)
             {
@@ -1545,7 +1867,8 @@ public class McpHttpEndpoint
             boolean workerStarted = false;
             try
             {
-                ToolExecution execution = new ToolExecution(body, call, releasePermit);
+                ToolExecution execution = new ToolExecution(body, call, releasePermit,
+                    exchange.getRequestHeaders().getFirst(McpServerMeta.HEADER_SESSION_ID));
                 Thread worker = new Thread(execution, TOOL_EXECUTOR_THREAD);
                 worker.start();
                 workerStarted = true;
@@ -1915,6 +2238,9 @@ public class McpHttpEndpoint
 
         private final RunningToolCall call;
 
+        /** Which client sent it, so every method the router serves here knows the same. */
+        private final String sessionId;
+
         private final Runnable onComplete;
 
         private final CountDownLatch finished = new CountDownLatch(1);
@@ -1923,11 +2249,12 @@ public class McpHttpEndpoint
 
         private volatile Exception failure;
 
-        ToolExecution(String body, RunningToolCall call, Runnable onComplete)
+        ToolExecution(String body, RunningToolCall call, Runnable onComplete, String sessionId)
         {
             this.body = body;
             this.call = call;
             this.onComplete = onComplete;
+            this.sessionId = sessionId;
         }
 
         @Override
@@ -1938,7 +2265,7 @@ public class McpHttpEndpoint
                 // Inside the try so that even if scope setup throws an Error, the finally still runs
                 // countDown() - otherwise the waiting request thread would poll forever.
                 ToolCallScope.enter(ToolCallScope.create(call));
-                document = protocolHandler.processRequest(body);
+                document = protocolHandler.processRequest(body, sessionId);
             }
             catch (Exception e)
             {
@@ -2103,6 +2430,7 @@ public class McpHttpEndpoint
         headers.add(HEADER_ALLOW_ORIGIN, origin);
         headers.add(HEADER_ALLOW_METHODS, ALLOWED_METHODS);
         headers.add(HEADER_ALLOW_HEADERS, ALLOWED_HEADERS);
+        headers.add(HEADER_EXPOSE_HEADERS, McpServerMeta.HEADER_SESSION_ID);
         return true;
     }
 
@@ -2322,15 +2650,21 @@ public class McpHttpEndpoint
         {
             return primitive.getAsString();
         }
-        if (primitive.isNumber())
+        if (!primitive.isNumber())
         {
-            double value = primitive.getAsDouble();
-            if (value == Math.floor(value) && !Double.isInfinite(value))
-            {
-                return Long.valueOf((long)value);
-            }
+            return null;
         }
-        return null;
+        // Read from the text the client sent, not through a double: a whole number too
+        // big for a double comes back as a neighbour of itself, and the answer would
+        // then carry an id the client never used.
+        try
+        {
+            return Long.valueOf(Long.parseLong(primitive.getAsString()));
+        }
+        catch (NumberFormatException notWhole)
+        {
+            return asRequestId(Double.valueOf(primitive.getAsDouble()));
+        }
     }
 
     /**

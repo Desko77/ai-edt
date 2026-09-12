@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -134,16 +135,19 @@ public class SensitiveDataScanTool implements IMcpTool
         Set<Pattern> custom = parseCustomPatterns(
             JsonUtils.extractStringArgument(params, "customPatterns")); //$NON-NLS-1$
         List<Map<String, Object>> findings = new ArrayList<>();
+        // One watch for the whole call: both scans walk the same project, and an operator
+        // who cancels means the call, not one of its halves.
+        WatchForCancel watch = WatchForCancel.begin();
 
         if (isEnabled("ATTRIBUTE_NAME", checks)) //$NON-NLS-1$
         {
-            scanAttributes(project, custom, findings);
+            scanAttributes(project, custom, findings, watch);
         }
         if (isEnabled("HARDCODED_SECRET", checks) //$NON-NLS-1$
             || isEnabled("COMMENT_LEAK", checks) //$NON-NLS-1$
             || isEnabled("LOG_SENSITIVE", checks)) //$NON-NLS-1$
         {
-            scanBslFiles(project, checks, findings);
+            scanBslFiles(project, checks, findings, watch);
         }
 
         // Severity filter
@@ -158,21 +162,27 @@ public class SensitiveDataScanTool implements IMcpTool
         }
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("findings", filtered.size()); //$NON-NLS-1$
+        // One watch spans two walks that count different things - metadata objects, then module
+        // files - so the unit names both. "files" would report a count of objects as a count of
+        // files whenever ATTRIBUTE_NAME is on, which it is by default.
+        String cancelled = watch.note("objects and modules"); //$NON-NLS-1$
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
             return ToolResult.success()
                 .put("statistics", stats) //$NON-NLS-1$
-                .put("text", renderMarkdown(filtered, stats)) //$NON-NLS-1$
+                .put("text", renderMarkdown(filtered, stats, cancelled)) //$NON-NLS-1$
+                .put("cancelled", cancelled) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
             .put("statistics", stats) //$NON-NLS-1$
             .put("findings", filtered) //$NON-NLS-1$
+            .put("cancelled", cancelled) //$NON-NLS-1$
             .toJson();
     }
 
     private void scanAttributes(IProject project, Set<Pattern> custom,
-        List<Map<String, Object>> findings)
+        List<Map<String, Object>> findings, WatchForCancel watch)
     {
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
         if (provider == null)
@@ -186,6 +196,10 @@ public class SensitiveDataScanTool implements IMcpTool
         }
         for (java.lang.reflect.Method m : config.getClass().getMethods())
         {
+            if (watch.raised())
+            {
+                return;
+            }
             if (m.getParameterCount() != 0)
             {
                 continue;
@@ -206,6 +220,12 @@ public class SensitiveDataScanTool implements IMcpTool
                 {
                     for (Object item : (java.util.List<?>) value)
                     {
+                        // One metadata object is the boundary: its attributes, dimensions
+                        // and resources are read together or not at all.
+                        if (watch.stopHere())
+                        {
+                            return;
+                        }
                         if (item instanceof MdObject)
                         {
                             scanMdObjectAttributes((MdObject) item, custom, findings);
@@ -292,16 +312,30 @@ public class SensitiveDataScanTool implements IMcpTool
     }
 
     private void scanBslFiles(IProject project, Set<String> checks,
-        List<Map<String, Object>> findings) throws Exception
+        List<Map<String, Object>> findings, WatchForCancel watch) throws Exception
     {
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
             if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
             {
+                if (watch.stopHere())
+                {
+                    // Returning false would only skip this one resource's children, and a
+                    // walk over a whole project has plenty more to visit. Thrown, and
+                    // caught below, so the findings collected so far are kept.
+                    throw new org.eclipse.core.runtime.OperationCanceledException();
+                }
                 scanBslFile((IFile) resource, checks, findings);
             }
             return true;
         };
-        project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        try
+        {
+            project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+        }
+        catch (org.eclipse.core.runtime.OperationCanceledException stopped)
+        {
+            // The watch already remembers it, and the answer reads that rather than this.
+        }
     }
 
     private void scanBslFile(IFile file, Set<String> checks, List<Map<String, Object>> findings)
@@ -453,13 +487,21 @@ public class SensitiveDataScanTool implements IMcpTool
     }
 
     private static String renderMarkdown(List<Map<String, Object>> findings,
-        Map<String, Object> stats)
+        Map<String, Object> stats, String cancelled)
     {
         StringBuilder sb = new StringBuilder("# Sensitive data scan\n\n"); //$NON-NLS-1$
         sb.append("**Findings:** ").append(stats.get("findings")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (cancelled != null)
+        {
+            sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (findings.isEmpty())
         {
-            sb.append("No sensitive data findings.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, nothing found
+            // means nothing was looked at, which is a different statement.
+            sb.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No sensitive data findings.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         sb.append("| Kind | Severity | Location | Message |\n"); //$NON-NLS-1$
