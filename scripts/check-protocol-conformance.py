@@ -31,7 +31,10 @@ SPEC_VERSION = "2025-11-25"
 DEFAULT_URL = "http://127.0.0.1:12250/mcp"
 BASELINE = pathlib.Path(__file__).with_name("conformance-baseline.yml")
 SUMMARY = re.compile(r"^([✓✗])\s+(\S+):\s+(\d+) passed,\s+(\d+) failed")
-TOTAL = re.compile(r"^Total:\s+(\d+) passed,\s+(\d+) failed")
+# MULTILINE, because the line sits in the middle of the suite's output: without it search
+# only ever looks at the start of the string, the count never prints, and the gate says OK
+# with no number - which is the shape of a pass that checked nothing.
+TOTAL = re.compile(r"^Total:\s+(\d+) passed,\s+(\d+) failed", re.M)
 
 
 def serverAnswers(url):
@@ -89,6 +92,12 @@ def main():
     total = TOTAL.search(output)
     if total:
         print("scenarios: {} passed, {} failed".format(total.group(1), total.group(2)))
+    else:
+        # The suite always prints this line. Its absence means the output is not what this
+        # reads, and reporting success over output nobody read is the failure mode here.
+        print("FAIL: the suite printed no total. Its output follows.")
+        print(output[-2000:])
+        return 2
 
     if options.capture:
         print("\n# failing scenarios, for conformance-baseline.yml")

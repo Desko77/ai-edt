@@ -33,9 +33,15 @@ PLATFORM_ARCHIVE = {
                "eclipse-platform-4.38-linux-gtk-x86_64.tar.gz",
 }
 
-# The features that make an EDT, as opposed to the platform-support features, of which the target
-# lists one per 1C platform version and none is needed to answer protocol questions.
-WANTED_IUS = ("com._1c.g5.v8.dt.feature.feature.group",
+# What makes an EDT, as opposed to the platform-support features - the target lists one of
+# those per 1C platform version and none is needed to answer protocol questions.
+#
+# The rcp unit is here because without it the boot is Eclipse Platform wearing EDT
+# features: the product stays Eclipse's, and the server reports the platform's version as
+# the EDT version. That answers protocol questions perfectly well and misleads anyone
+# reading the log about what was under test.
+WANTED_IUS = ("com._1c.g5.v8.dt.rcp",
+              "com._1c.g5.v8.dt.feature.feature.group",
               "com._1c.g5.v8.dt.thirdparty.feature.group")
 
 
