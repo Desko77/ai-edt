@@ -438,6 +438,16 @@ An `edit_metadata batch` answer also carries `progress`: how many operations are
 
 A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
 
+### Withdrawing a call
+
+A client withdraws a call it has sent with a `notifications/cancelled` notification naming its `requestId`. A withdrawal reaches only its own client: the id is matched among the calls carrying the same `MCP-Session-Id` the server hands out at the handshake. One that outruns its call takes effect when the call arrives.
+
+Eight scans stop at a boundary that leaves what they have gathered whole: `find_dead_code`, `detect_query_anti_patterns`, `sensitive_data_scan`, `find_rls_violations`, `project_metrics`, `dependency_graph`, `semantic_metadata_search`, `find_references`. The answer carries what was found by then and a `cancelled` field naming the count reached. An empty result from a stopped scan says the scan stopped, not that there is nothing to find.
+
+`project_metrics` answers `partial=true` with an `unscannedModules` list; the sections whose step did not run are absent from the answer rather than zero.
+
+The operator stops a call from the status bar. With several in flight the button and the indicator act on the oldest one running, and the strip shows `+N` for the rest.
+
 ## 🔐 Tool presets and safety
 
 The **Tools** preference page groups tools by capability and supports these presets:

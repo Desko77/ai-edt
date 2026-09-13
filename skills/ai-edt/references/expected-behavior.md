@@ -84,6 +84,27 @@ nobody has established is protected and stays: only a person can establish what 
 behind. `sync_control operation=release_support_snapshot name=<file>` takes the protection off one
 snapshot, after which the limit applies to it. Deliberate, and one at a time.
 
+## An answer that is part of the work says so
+
+Eight scans stop when the call is withdrawn, at a boundary that leaves what they have gathered
+whole: `find_dead_code`, `detect_query_anti_patterns`, `sensitive_data_scan`,
+`find_rls_violations`, `project_metrics`, `dependency_graph`, `semantic_metadata_search`,
+`find_references`. Such an answer carries a `cancelled` field naming how far it got - "cancelled by
+the operator after 2304 files" - and everything beside it is a part of the work, not all of it.
+
+Read that field before drawing anything from the result. An empty list under it means the scan
+stopped, not that there is nothing to find, and these tools say as much in words: "Nothing had been
+found when the scan stopped", never "No violations".
+
+`project_metrics` is the one to read most carefully, because its answer is counts rather than
+findings. When it stops it reports `partial=true` and lists `unscannedModules`, every count in it is
+a floor, and the sections whose step never ran - `objects`, `errors`, `forms` - are ABSENT rather
+than zero. A missing section is the answer to "was this measured", and `tests.yaxunitDetected`
+appears only when the module scan finished or a test module was actually found.
+
+A withdrawal comes from the client as `notifications/cancelled` naming the call's `requestId`, or
+from the person at the status bar. Either way the tool is not interrupted mid-unit.
+
 ## Cancelling an update that never gave you a runKey
 
 `update_database` can be cancelled without one, addressed by `projectName` instead: that is what
