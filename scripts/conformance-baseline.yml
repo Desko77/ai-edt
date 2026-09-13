@@ -1,0 +1,58 @@
+# Protocol conformance baseline: the scenarios that are expected to fail.
+#
+# Run through scripts/check-protocol-conformance.py, which calls
+#   npx @modelcontextprotocol/conformance@latest server \
+#     --url <server>/mcp --spec-version 2025-11-25 \
+#     --expected-failures scripts/conformance-baseline.yml
+#
+# Every entry here is a gap this server has on purpose. The gate exists to catch the other kind: a
+# scenario NOT listed here that fails is a protocol defect, and a scenario listed here that starts
+# passing means the list is stale and the entry comes out.
+#
+# Captured 2026-09-12 against a live server (build 0.2.45.202609120609, EDT 2026.2.0.289):
+# 9 passed, 23 failed. Passing, and therefore deliberately absent from this list:
+#   server-initialize, ping, tools-list, server-sse-multiple-streams (2), resources-list,
+#   prompts-list, dns-rebinding-protection (2).
+#
+# Two scenarios the active suite does not run at all: json-schema-2020-12 needs a fixture tool
+# named json_schema_2020_12_tool, and server-sse-polling reports no checks. Neither is listed,
+# because a list of expected failures may only hold scenarios that actually run.
+
+server:
+  # The suite calls tools it expects the server to ship as test fixtures - a `test_simple_text`
+  # that returns a canned body, and so on. This server exposes the tools it exists for and no
+  # fixtures, so every one of these ends in "tool not found". Shipping them would put test doubles
+  # in a production catalogue that agents read.
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-with-logging
+  - tools-call-error
+  - tools-call-with-progress
+  - tools-call-sampling
+  - tools-call-elicitation
+
+  # Capabilities this server does not declare in its handshake. It answers with tools and
+  # resources; logging, completion, prompts/get, sampling and elicitation are not offered, so the
+  # scenarios exercising them have nothing to reach. An entry leaves this list when the capability
+  # is implemented, not when the scenario is silenced.
+  - logging-set-level
+  - completion-complete
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+
+  # Resource scenarios that also want fixtures: test://static-text, a binary one, a template, and
+  # a subscription. This server serves aiedt://checks/<check id> - the descriptions of the EDT
+  # validation checks - and says so by name when asked for something else. Subscriptions are not
+  # implemented: nothing here changes under a reader's feet.
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - resources-subscribe
+  - resources-unsubscribe
