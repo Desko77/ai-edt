@@ -10,17 +10,20 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
- * Unified configuration-insight facade with nine operations.
+ * Unified configuration-insight facade with ten operations.
  *
- * <p>Collapses the read-only analysis and reporting tools under one name:
+ * <p>Collapses the analysis and reporting tools under one name:
  * <ul>
  *   <li>{@code project_metrics} - LOC, methods, modules and technical-debt metrics for a
  *       project or subsystem (delegates to {@link ProjectMetricsTool})</li>
@@ -28,6 +31,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *       (delegates to {@link DependencyGraphTool})</li>
  *   <li>{@code compare_configurations} - diff two projects or two Designer-XML exports
  *       (delegates to {@link CompareConfigurationsTool})</li>
+ *   <li>{@code compare_three_way} - a project against a new delivery and the delivery both
+ *       came from; writes into the project when its intent is not REPORT
+ *       (delegates to {@link ThreeWayComparisonTool})</li>
  *   <li>{@code detect_query_anti_patterns} - scan queries for known performance
  *       anti-patterns (delegates to {@link DetectQueryAntiPatternsTool})</li>
  *   <li>{@code generate_health_snapshot} - composite errors+metadata+metrics+anti-patterns
@@ -36,9 +42,12 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *       (delegates to {@link ImpactAnalysisTool})</li>
  *   <li>{@code object_summary} - metadata+modules+methods summary for one object
  *       (delegates to {@link ObjectSummaryTool})</li>
+ *   <li>{@code describe_db_tables} - the database tables one object turns into and the fields
+ *       of each (delegates to {@link DbTablesReader})</li>
  *   <li>{@code semantic_metadata_search} - free-text search over object names, synonyms
  *       and comments (delegates to {@link SemanticMetadataSearchTool})</li>
- *   <li>{@code help} - built-in topic-driven help</li>
+ *   <li>{@code help} - the catalog, the operation picker, and the parameters of one
+ *       operation under {@code topic=<operation>}</li>
  * </ul>
  *
  * <p>Each operation routes to its standalone tool unchanged - params pass through as-is,
@@ -47,14 +56,17 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * MARKDOWN, the safest wrapper: it carries any string body regardless of the routed
  * tool's own native response type. An agent that needs a JSON-typed result
  * (structuredContent) should call the standalone directly - the same tradeoff
- * {@code code_search} and the other facades accept. All eight operations are read-only:
- * this facade needs no preset-gating.
+ * {@code code_search} and the other facades accept. Every operation reads only, with one
+ * exception: {@code compare_three_way} writes into the project when its intent is anything but
+ * REPORT, and that path asks {@code ToolGate} before it does.
  */
 public class InsightsFacadeTool implements IMcpTool
 {
     public static final String NAME = "insights"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
+
+    private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
 
     @Override
     public String getName()
@@ -69,12 +81,16 @@ public class InsightsFacadeTool implements IMcpTool
             + "comparison, query anti-patterns, health snapshot, impact analysis, object " //$NON-NLS-1$
             + "summary, database tables of an object, semantic metadata search. Operations: " //$NON-NLS-1$
             + "project_metrics, dependency_graph, compare_configurations, " //$NON-NLS-1$
-            + "detect_query_anti_patterns, generate_health_snapshot, impact_analysis, " //$NON-NLS-1$
-            + "object_summary, describe_db_tables, semantic_metadata_search, help. Pass " //$NON-NLS-1$
+            + "compare_three_way, detect_query_anti_patterns, generate_health_snapshot, " //$NON-NLS-1$
+            + "impact_analysis, object_summary, describe_db_tables, " //$NON-NLS-1$
+            + "semantic_metadata_search, help. Pass " //$NON-NLS-1$
             + "operation=<name> (snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
             + "accepted); remaining parameters follow the per-operation contracts (call " //$NON-NLS-1$
-            + "operation=help for the catalog). All nine operations are read-only. The " //$NON-NLS-1$
-            + "standalone tools remain available for back-compat."; //$NON-NLS-1$
+            + "operation=help for the catalog, or operation=help topic=<operation> for one " //$NON-NLS-1$
+            + "operation's parameters). Every operation reads only, except compare_three_way " //$NON-NLS-1$
+            + "with an intent other than REPORT, which writes into the project and is refused " //$NON-NLS-1$
+            + "under a preset without write rights. The standalone tools remain available for " //$NON-NLS-1$
+            + "back-compat."; //$NON-NLS-1$
     }
 
     @Override
@@ -83,12 +99,13 @@ public class InsightsFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "project_metrics / dependency_graph / compare_configurations / " //$NON-NLS-1$
-                    + "detect_query_anti_patterns / generate_health_snapshot / " //$NON-NLS-1$
+                    + "compare_three_way / detect_query_anti_patterns / " //$NON-NLS-1$
+                    + "generate_health_snapshot / " //$NON-NLS-1$
                     + "impact_analysis / object_summary / describe_db_tables / " //$NON-NLS-1$
                     + "semantic_metadata_search / help " //$NON-NLS-1$
                     + "(snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
                     + "accepted). Pass operation=help without other params for the operation " //$NON-NLS-1$
-                    + "catalog.", true) //$NON-NLS-1$
+                    + "catalog, or topic=<operation> for that operation's parameters.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -135,6 +152,11 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_configurations: for mode=projects, the second project's name; for " //$NON-NLS-1$
                     + "mode=files, the path to the second export. Required for that " //$NON-NLS-1$
                     + "operation.") //$NON-NLS-1$
+            .stringProperty("otherPath", //$NON-NLS-1$
+                "compare_three_way: directory holding the configuration to compare against " //$NON-NLS-1$
+                    + "(OTHER). Required for that operation. Its remaining parameters - " //$NON-NLS-1$
+                    + "ancestorPath, intent, decisions and the rest - are listed by " //$NON-NLS-1$
+                    + "operation=help topic=compare_three_way.") //$NON-NLS-1$
             .booleanProperty("showRenames", //$NON-NLS-1$
                 "compare_configurations: detect renames via structural similarity (default " //$NON-NLS-1$
                     + "true).") //$NON-NLS-1$
@@ -266,14 +288,15 @@ public class InsightsFacadeTool implements IMcpTool
         if (operation == null || operation.isBlank())
         {
             return ToolResult.error("operation is required. Allowed: project_metrics / " //$NON-NLS-1$
-                + "dependency_graph / compare_configurations / detect_query_anti_patterns / " //$NON-NLS-1$
+                + "dependency_graph / compare_configurations / compare_three_way / " //$NON-NLS-1$
+                + "detect_query_anti_patterns / " //$NON-NLS-1$
                 + "generate_health_snapshot / impact_analysis / object_summary / " //$NON-NLS-1$
                 + "describe_db_tables / semantic_metadata_search / help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
@@ -317,7 +340,61 @@ public class InsightsFacadeTool implements IMcpTool
         }
     }
 
-    private static String buildHelp(String topic)
+    /**
+     * The tool one operation routes to, for describing it rather than running it.
+     * <p>
+     * A map and not a second switch on the same word: {@code scripts/check-operation-params.py}
+     * takes the widest {@code switch (operation)} in a file as the facade's vocabulary, and two
+     * switches of equal width leave which one it reads to the order they happen to sit in.
+     * </p>
+     * <p>
+     * That leaves this list and the dispatch as two places naming the same routing, so
+     * {@code AFacadeDescribesTheOperationItRoutesToTest} holds all three together: every operation
+     * the catalogue offers resolves here, to a tool whose own name is that operation, and the
+     * dispatcher has a case for it rather than falling to its default branch.
+     * </p>
+     *
+     * @param operation a normalized operation token.
+     * @return the tool, or <code>null</code> when no operation of that name is dispatched
+     */
+    static IMcpTool delegateFor(String operation)
+    {
+        Supplier<IMcpTool> known = DESCRIBED.get(operation);
+        return known == null ? null : known.get();
+    }
+
+    /**
+     * The operations this facade can describe.
+     * <p>
+     * Read by {@code AFacadeDescribesTheOperationItRoutesToTest} so the list can be compared whole
+     * rather than one lookup at a time: asking only about the operations the catalogue names would
+     * never notice one described here and offered nowhere.
+     * </p>
+     *
+     * @return the operation names, never <code>null</code>
+     */
+    static Set<String> describedOperations()
+    {
+        return DESCRIBED.keySet();
+    }
+
+    private static Map<String, Supplier<IMcpTool>> buildDescribed()
+    {
+        Map<String, Supplier<IMcpTool>> m = new LinkedHashMap<>();
+        m.put("project_metrics", ProjectMetricsTool::new); //$NON-NLS-1$
+        m.put("dependency_graph", DependencyGraphTool::new); //$NON-NLS-1$
+        m.put("compare_configurations", CompareConfigurationsTool::new); //$NON-NLS-1$
+        m.put("compare_three_way", ThreeWayComparisonTool::new); //$NON-NLS-1$
+        m.put("detect_query_anti_patterns", DetectQueryAntiPatternsTool::new); //$NON-NLS-1$
+        m.put("generate_health_snapshot", GenerateHealthSnapshotTool::new); //$NON-NLS-1$
+        m.put("impact_analysis", ImpactAnalysisTool::new); //$NON-NLS-1$
+        m.put("object_summary", ObjectSummaryTool::new); //$NON-NLS-1$
+        m.put("describe_db_tables", DbTablesReader::new); //$NON-NLS-1$
+        m.put("semantic_metadata_search", SemanticMetadataSearchTool::new); //$NON-NLS-1$
+        return Collections.unmodifiableMap(m);
+    }
+
+    private static String buildHelp(String topic, String schema)
     {
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
@@ -332,7 +409,7 @@ public class InsightsFacadeTool implements IMcpTool
                 + "Designer-XML exports.\n"); //$NON-NLS-1$
             sb.append("- **compare_three_way** - an open project against a new delivery and " //$NON-NLS-1$
                 + "the delivery both came from, which is what an update on support is. " //$NON-NLS-1$
-                + "Reads only.\n"); //$NON-NLS-1$
+                + "Reads by default; an intent other than REPORT writes into the project.\n"); //$NON-NLS-1$
             sb.append("- **detect_query_anti_patterns** - scan queries for known " //$NON-NLS-1$
                 + "performance anti-patterns.\n"); //$NON-NLS-1$
             sb.append("- **generate_health_snapshot** - composite errors+metadata+" //$NON-NLS-1$
@@ -346,7 +423,8 @@ public class InsightsFacadeTool implements IMcpTool
             sb.append("- **semantic_metadata_search** - free-text search over object " //$NON-NLS-1$
                 + "names, synonyms and comments.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the " //$NON-NLS-1$
-                + "operation-picker guide.\n"); //$NON-NLS-1$
+                + "operation-picker guide, or topic=<operation> for that operation's " //$NON-NLS-1$
+                + "parameters.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         if ("workflow".equals(topic)) //$NON-NLS-1$
@@ -359,6 +437,8 @@ public class InsightsFacadeTool implements IMcpTool
             sb.append("| What depends on what | dependency_graph |\n"); //$NON-NLS-1$
             sb.append("| What changed between two configurations | " //$NON-NLS-1$
                 + "compare_configurations |\n"); //$NON-NLS-1$
+            sb.append("| What a new delivery changes in a project on support, and " //$NON-NLS-1$
+                + "applying that update | compare_three_way |\n"); //$NON-NLS-1$
             sb.append("| Are there slow-query patterns in the code | " //$NON-NLS-1$
                 + "detect_query_anti_patterns |\n"); //$NON-NLS-1$
             sb.append("| One-call overview before starting work on a project | " //$NON-NLS-1$
@@ -372,7 +452,12 @@ public class InsightsFacadeTool implements IMcpTool
                 + "semantic_metadata_search |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        // The parameters of an operation reached through this facade are the parameters of the tool
+        // it routes to, and this facade's own schema does not repeat them. Without this, the detail
+        // is reachable only by calling the standalone tool - which a caller who found the operation
+        // here has no reason to know exists.
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
+            "workflow", "InsightsFacadeTool", schema); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

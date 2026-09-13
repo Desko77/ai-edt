@@ -56,8 +56,8 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * Turns a JSON-RPC document into a tool call and the tool's answer back into a JSON-RPC document.
  * <p>
  * The methods recognized are {@code initialize}, {@code notifications/initialized},
- * {@code tools/list}, {@code tools/call}, {@code ping}, {@code prompts/list},
- * {@code resources/templates/list}, {@code resources/list},
+ * {@code notifications/cancelled}, {@code tools/list}, {@code tools/call}, {@code ping},
+ * {@code prompts/list}, {@code resources/templates/list}, {@code resources/list},
  * {@code resources/read}, {@code server/discover} and the three {@code tasks/*} methods of the task
  * extension - everything else is a method-not-found. Transport
  * concerns (sockets, CORS, authentication, HTTP status, SSE framing) belong to the server that owns
@@ -147,6 +147,25 @@ public class McpRequestRouter
      */
     public String processRequest(String requestBody)
     {
+        return processRequest(requestBody, null);
+    }
+
+    /**
+     * Handles one JSON-RPC document on behalf of a named client.
+     * <p>
+     * The session is the client's own name for itself, echoed back after the handshake.
+     * It is a string and nothing else - the transport stays where it is. It matters for
+     * one method: a withdrawal names a request id, and ids are unique within a client
+     * rather than across the server.
+     * </p>
+     *
+     * @param requestBody the raw request body; may be malformed or <code>null</code>
+     * @param sessionId the client's session, or <code>null</code> when it named none
+     * @return the response document, or <code>null</code> when the request was a notification and
+     *         there is nothing to answer
+     */
+    public String processRequest(String requestBody, String sessionId)
+    {
         Object requestId = FALLBACK_REQUEST_ID;
         try
         {
@@ -191,6 +210,11 @@ public class McpRequestRouter
             }
             if (McpServerMeta.METHOD_INITIALIZED.equals(method))
             {
+                return null;
+            }
+            if (McpServerMeta.METHOD_CANCELLED.equals(method))
+            {
+                withdrawRequest(request, sessionId);
                 return null;
             }
             if (McpServerMeta.METHOD_TOOLS_LIST.equals(method))
@@ -407,6 +431,51 @@ public class McpRequestRouter
         }
         Object id = request.getParams().get("taskId"); //$NON-NLS-1$
         return id instanceof String ? (String)id : null;
+    }
+
+    /**
+     * Raises the cancellation flag of the call a client has withdrawn.
+     * <p>
+     * This is the only way the flag rises from off the UI thread. The operator's button runs on the
+     * SWT thread, and a scan that reads the EDT model holds that same thread for its whole run, so
+     * for those tools the button cannot be pressed while there is anything to stop. A notification
+     * arrives on a request thread and is not blocked by any of that.
+     * </p>
+     * <p>
+     * The withdrawn call is still answered. The specification says a receiver should not respond to
+     * a cancelled request and that a sender must ignore a response that arrives anyway; over plain
+     * HTTP the request is an exchange that has to be closed, and the answer it closes with is the
+     * partial result the scan had reached - which is worth more to a caller that changed its mind
+     * about waiting than an empty socket.
+     * </p>
+     *
+     * @param request the notification; its params name the id of the request being withdrawn
+     * @param sessionId the client that sent it, so the id is matched within that client
+     */
+    private static void withdrawRequest(JsonRpcRequest request, String sessionId)
+    {
+        Object named = request != null && request.getParams() != null
+            ? request.getParams().get("requestId") : null; //$NON-NLS-1$
+        McpHttpEndpoint server = getServer();
+        if (server == null)
+        {
+            return;
+        }
+        Object why = request != null && request.getParams() != null
+            ? request.getParams().get("reason") : null; //$NON-NLS-1$
+        String reason = why instanceof String && !((String)why).isEmpty()
+            ? (String)why : "withdrawn by the client"; //$NON-NLS-1$
+        // One question, answered under the server's own lock. Asked as two - is there a
+        // call, and if not remember this - the call could enrol in between, find no
+        // memo, and run on while the memo waited for somebody else.
+        String stopped = server.withdrawCall(named, sessionId, reason);
+        if (stopped == null)
+        {
+            Activator.logDebug("notifications/cancelled names no call in flight: " + named); //$NON-NLS-1$
+            return;
+        }
+        Activator.logInfo("notifications/cancelled raised the flag on " + stopped //$NON-NLS-1$
+            + ": " + reason); //$NON-NLS-1$
     }
 
     /**
@@ -858,10 +927,14 @@ public class McpRequestRouter
      */
     private static String execute(IMcpTool tool, Map<String, String> arguments)
     {
-        McpHttpEndpoint server = getServer();
-        if (server != null)
+        // Marked on the CALL, not on the server: a field on the server is one slot, and the next
+        // call to finish would clear it while this one is still running - the indicator would then
+        // read idle over work in progress.
+        ToolCallScope running = ToolCallScope.current();
+        RunningToolCall marked = running != null ? running.runningCall() : null;
+        if (marked != null)
         {
-            server.setCurrentToolName(tool.getName());
+            marked.markRunning(tool.getName());
         }
         long start = System.currentTimeMillis();
         String result = null;
@@ -881,9 +954,9 @@ public class McpRequestRouter
         }
         finally
         {
-            if (server != null)
+            if (marked != null)
             {
-                server.setCurrentToolName(null);
+                marked.markRunning(null);
             }
             HistorySettings history = HistorySettings.current();
             if (history.isEnabled())

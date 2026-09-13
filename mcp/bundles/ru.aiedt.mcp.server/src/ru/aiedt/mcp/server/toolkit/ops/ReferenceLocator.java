@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -447,7 +448,11 @@ public class ReferenceLocator implements IMcpTool
         String ownerKindForScope = inferOwnerKindForScope(project, isExternalProject);
         ProjectScopeResolver.ScopeResult scope = ProjectScopeResolver.resolveScope(project, ownerKindForScope);
 
-        BmReferenceHarvester master = new BmReferenceHarvester(bmModel, targetObject, limit, deep, filter);
+        // Started here rather than inside the task: the watch reads the call scope of this
+        // thread, and the harvester body runs on the model's.
+        WatchForCancel watch = WatchForCancel.begin();
+        BmReferenceHarvester master = new BmReferenceHarvester(bmModel, targetObject, limit, deep, filter,
+            watch);
         List<String> searchedProjectNames = new ArrayList<>();
         try
         {
@@ -456,9 +461,9 @@ public class ReferenceLocator implements IMcpTool
 
             for (int i = 1; i < scope.projects.size(); i++)
             {
-                if (master.references.size() >= limit)
+                if (master.references.size() >= limit || watch.raised())
                 {
-                    break; // global cap reached
+                    break; // global cap reached, or the operator stopped
                 }
                 IProject sister = scope.projects.get(i);
                 IBmModel sisterBm = bmModelManager.getModel(sister);
@@ -467,7 +472,8 @@ public class ReferenceLocator implements IMcpTool
                     continue;
                 }
                 BmReferenceHarvester sisterCollector =
-                    new BmReferenceHarvester(sisterBm, targetObject, limit, deep, filter);
+                    new BmReferenceHarvester(sisterBm, targetObject, limit, deep, filter,
+                        watch);
                 // Share the dedup set so a reference already seen in the owner is not re-added.
                 sisterCollector.seenReferences.addAll(master.seenReferences);
                 try
@@ -501,7 +507,7 @@ public class ReferenceLocator implements IMcpTool
             return "Error: the reference search failed: " + e.getMessage(); //$NON-NLS-1$
         }
 
-        return formatOutput(objectFqn, master, filter, scope, searchedProjectNames);
+        return formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
     }
 
     /**
@@ -619,12 +625,26 @@ public class ReferenceLocator implements IMcpTool
      * @return the MARKDOWN string
      */
     private static String formatOutput(String objectFqn, BmReferenceHarvester collector, CategoryFilter filter,
-        ProjectScopeResolver.ScopeResult scope, List<String> searchedProjectNames)
+        ProjectScopeResolver.ScopeResult scope, List<String> searchedProjectNames,
+        WatchForCancel watch)
     {
         int totalCount = collector.getTotalCount();
         StringBuilder out = new StringBuilder();
         out.append("# Usages of ").append(objectFqn).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("**Total references located:** ").append(totalCount).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (watch.stopped())
+        {
+            // "cross-references", not "references": the count is what the metadata phases examined,
+            // while the total above is what was kept. The BSL phase is polled through a progress
+            // monitor on threads of its own and adds to neither.
+            out.append("\n> **").append(watch.note("cross-references")).append("**\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (!collector.phasesCutShort.isEmpty())
+            {
+                out.append("> - phases not run: ") //$NON-NLS-1$
+                    .append(String.join(", ", collector.phasesCutShort)) //$NON-NLS-1$
+                    .append("\n"); //$NON-NLS-1$
+            }
+        }
 
         if (scope != null && !searchedProjectNames.isEmpty())
         {
@@ -673,7 +693,11 @@ public class ReferenceLocator implements IMcpTool
 
         if (totalCount == 0)
         {
-            out.append("\nNothing references this object.\n"); //$NON-NLS-1$
+            // Only sayable when the search finished. Stopped short, nothing found means
+            // nothing was looked at, which is a different statement entirely.
+            out.append(watch.stopped()
+                ? "\nNothing had been found when the search stopped.\n" //$NON-NLS-1$
+                : "\nNothing references this object.\n"); //$NON-NLS-1$
             return out.toString();
         }
 
@@ -885,11 +909,15 @@ public class ReferenceLocator implements IMcpTool
         private final int limit;
         private final boolean deep;
         private final CategoryFilter filter;
+        private final WatchForCancel watch;
+        /** Phases the operator's stop kept from running, as opposed to those the filter switched off. */
+        final List<String> phasesCutShort = new ArrayList<>();
 
         final List<UsageHit> references = Collections.synchronizedList(new ArrayList<>());
         final Set<String> seenReferences = Collections.synchronizedSet(new HashSet<>());
 
-        BmReferenceHarvester(IBmModel bmModel, MdObject targetObject, int limit, boolean deep, CategoryFilter filter)
+        BmReferenceHarvester(IBmModel bmModel, MdObject targetObject, int limit, boolean deep, CategoryFilter filter,
+            WatchForCancel watch)
         {
             super("Locate references to " + targetObject.getName()); //$NON-NLS-1$
             this.bmModel = bmModel;
@@ -897,6 +925,7 @@ public class ReferenceLocator implements IMcpTool
             this.limit = limit;
             this.deep = deep;
             this.filter = filter;
+            this.watch = watch;
         }
 
         @Override
@@ -906,23 +935,58 @@ public class ReferenceLocator implements IMcpTool
             IBmObject targetBmObject = (IBmObject)targetObject;
             if (filter.back)
             {
-                scanBackRefs(engine, targetBmObject);
+                if (watch.raised())
+                {
+                    phasesCutShort.add("back"); //$NON-NLS-1$
+                }
+                else
+                {
+                    scanBackRefs(engine, targetBmObject);
+                }
             }
             if (filter.produced)
             {
-                collectProducedTypesReferences(engine, targetObject);
+                if (watch.raised())
+                {
+                    phasesCutShort.add("produced"); //$NON-NLS-1$
+                }
+                else
+                {
+                    collectProducedTypesReferences(engine, targetObject);
+                }
             }
             if (filter.predefined)
             {
-                collectPredefinedItemsReferences(engine, targetObject);
+                if (watch.raised())
+                {
+                    phasesCutShort.add("predefined"); //$NON-NLS-1$
+                }
+                else
+                {
+                    collectPredefinedItemsReferences(engine, targetObject);
+                }
             }
             if (filter.fields)
             {
-                collectFieldReferences(engine, targetObject);
+                if (watch.raised())
+                {
+                    phasesCutShort.add("fields"); //$NON-NLS-1$
+                }
+                else
+                {
+                    collectFieldReferences(engine, targetObject);
+                }
             }
             if (filter.bsl)
             {
-                collectBslReferences(targetBmObject);
+                if (watch.raised())
+                {
+                    phasesCutShort.add("bsl"); //$NON-NLS-1$
+                }
+                else
+                {
+                    collectBslReferences(targetBmObject);
+                }
             }
             return null;
         }
@@ -954,6 +1018,17 @@ public class ReferenceLocator implements IMcpTool
             return true;
         }
 
+        /**
+         * Whether this loop has gathered all it is going to: the per-phase cap, or the
+         * operator. Which of the two it was is read off the watch.
+         *
+         * @return <code>true</code> when the caller should stop the loop it is in
+         */
+        private boolean enough()
+        {
+            return references.size() >= limit * PER_PHASE_CAP_MULTIPLIER || watch.stopHere();
+        }
+
         int getTotalCount()
         {
             return references.size();
@@ -966,7 +1041,7 @@ public class ReferenceLocator implements IMcpTool
             Collection<IBmCrossReference> refs = engine.getBackReferences(target);
             for (IBmCrossReference ref : refs)
             {
-                if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER)
+                if (enough())
                 {
                     break;
                 }
@@ -1002,6 +1077,13 @@ public class ReferenceLocator implements IMcpTool
             }
             for (EObject type : producedTypes.eContents())
             {
+                // Asked at the child, not only at the cross-reference: a child with no
+                // back-references never reaches the inner loop, and the walk would go
+                // on reading the model after the operator stopped it.
+                if (watch.raised())
+                {
+                    return;
+                }
                 TypeItem typeItem = getTypeItem(type);
                 if (!(typeItem instanceof IBmObject))
                 {
@@ -1011,7 +1093,7 @@ public class ReferenceLocator implements IMcpTool
                 Collection<IBmCrossReference> refs = engine.getBackReferences((IBmObject)typeItem);
                 for (IBmCrossReference ref : refs)
                 {
-                    if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER)
+                    if (enough())
                     {
                         break;
                     }
@@ -1041,6 +1123,10 @@ public class ReferenceLocator implements IMcpTool
         {
             for (PredefinedItem item : PredefinedItemUtil.getItems((EObject)target))
             {
+                if (watch.raised())
+                {
+                    return;
+                }
                 if (!(item instanceof IBmObject))
                 {
                     continue;
@@ -1048,7 +1134,7 @@ public class ReferenceLocator implements IMcpTool
                 Collection<IBmCrossReference> refs = engine.getBackReferences((IBmObject)item);
                 for (IBmCrossReference ref : refs)
                 {
-                    if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER)
+                    if (enough())
                     {
                         break;
                     }
@@ -1080,6 +1166,10 @@ public class ReferenceLocator implements IMcpTool
             FieldSource fieldSource = (FieldSource)target;
             for (Object fieldObj : fieldSource.getFields())
             {
+                if (watch.raised())
+                {
+                    return;
+                }
                 if (!(fieldObj instanceof IBmObject))
                 {
                     continue;
@@ -1088,7 +1178,7 @@ public class ReferenceLocator implements IMcpTool
                 Collection<IBmCrossReference> refs = engine.getBackReferences(field);
                 for (IBmCrossReference ref : refs)
                 {
-                    if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER)
+                    if (enough())
                     {
                         break;
                     }
@@ -1154,8 +1244,17 @@ public class ReferenceLocator implements IMcpTool
                     }
                 }
 
+                // The finder polls this between resources; a NullProgressMonitor here meant
+                // an index-wide search no cancel could ever cut short.
                 finder.findAllReferences(targetURIs, null, this::onBslRefHit,
-                    new NullProgressMonitor());
+                    new NullProgressMonitor()
+                    {
+                        @Override
+                        public boolean isCanceled()
+                        {
+                            return watch.raised();
+                        }
+                    });
             }
             catch (Exception e)
             {
@@ -1166,7 +1265,7 @@ public class ReferenceLocator implements IMcpTool
         /** The acceptor callback for {@link IReferenceFinder#findAllReferences}. */
         private void onBslRefHit(IReferenceDescription refDesc)
         {
-            if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER)
+            if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER || watch.raised())
             {
                 return;
             }

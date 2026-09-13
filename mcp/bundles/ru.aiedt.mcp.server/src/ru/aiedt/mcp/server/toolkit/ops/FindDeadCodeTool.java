@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -223,13 +224,18 @@ public class FindDeadCodeTool
             limit = DEFAULT_LIMIT;
         }
 
+        // The scan runs on the worker thread, so the call's scope is here and its cancel
+        // flag can be read at the module boundary - the same place the scan cap stops.
+        // Started before the walk that builds the list: on a large tree that walk is
+        // itself work the operator may have asked to end.
+        WatchForCancel watch = WatchForCancel.begin();
         List<IFile> bslFiles = new ArrayList<>();
         IFolder sourceFolder = project.getFolder("src"); //$NON-NLS-1$
         try
         {
             if (sourceFolder.exists())
             {
-                collectBslFiles(sourceFolder, bslFiles);
+                collectBslFiles(sourceFolder, bslFiles, watch);
             }
         }
         catch (CoreException e)
@@ -248,7 +254,7 @@ public class FindDeadCodeTool
 
         for (IFile file : bslFiles)
         {
-            if (modulesScanned >= MODULE_SCAN_CAP)
+            if (modulesScanned >= MODULE_SCAN_CAP || watch.stopHere())
             {
                 break;
             }
@@ -327,7 +333,11 @@ public class FindDeadCodeTool
         }
 
         return format(projectName, candidates, modulesScanned, modulesExcludedForms, exportMethods,
-            handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params);
+            handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params,
+            // "candidate modules", not "modules": the count is loop entries, and a
+            // form module or an unreadable one is entered and then excluded, so it
+            // never reaches modulesScanned.
+            watch.note("candidate modules")); //$NON-NLS-1$
     }
 
     // -- = --
@@ -336,11 +346,18 @@ public class FindDeadCodeTool
 
     private String format(String projectName, List<Candidate> candidates, int modulesScanned,
         int modulesExcludedForms, int exportMethods, int handlersSkipped, int interceptorsSkipped,
-        int loadFailures, int indeterminate, int limit, Map<String, String> params)
+        int loadFailures, int indeterminate, int limit, Map<String, String> params,
+        String cancelled)
     {
         StringBuilder out = new StringBuilder();
         out.append("# Dead-code candidates: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("**Candidates:** ").append(candidates.size()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (cancelled != null)
+        {
+            // Above the counts, because the counts are what a reader would otherwise take
+            // for the whole configuration.
+            out.append("**Stopped: ").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         out.append("- modules scanned: ").append(modulesScanned); //$NON-NLS-1$
         out.append(" | export methods examined: ").append(exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("- skipped: ").append(handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
@@ -379,7 +396,11 @@ public class FindDeadCodeTool
 
         if (candidates.isEmpty())
         {
-            out.append("No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short, an empty list means
+            // the scope was not walked, not that it holds nothing.
+            out.append(cancelled != null
+                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
+                : "No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
             return out.toString();
         }
 
@@ -497,13 +518,20 @@ public class FindDeadCodeTool
         return 0;
     }
 
-    private static void collectBslFiles(IFolder folder, List<IFile> out) throws CoreException
+    private static void collectBslFiles(IFolder folder, List<IFile> out, WatchForCancel watch)
+        throws CoreException
     {
         for (IResource member : folder.members())
         {
+            // Asked, not counted: building the list is not a module the scan read, and
+            // the number the answer reports names modules.
+            if (watch.raised())
+            {
+                return;
+            }
             if (member instanceof IFolder)
             {
-                collectBslFiles((IFolder)member, out);
+                collectBslFiles((IFolder)member, out, watch);
             }
             else if (member instanceof IFile && "bsl".equalsIgnoreCase(member.getFileExtension())) //$NON-NLS-1$
             {

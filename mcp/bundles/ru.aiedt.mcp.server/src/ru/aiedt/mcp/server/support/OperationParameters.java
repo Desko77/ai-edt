@@ -14,6 +14,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.osgi.framework.Bundle;
 import org.osgi.framework.FrameworkUtil;
@@ -45,12 +47,22 @@ public final class OperationParameters
 
     private static volatile Map<String, List<String>> loaded;
 
+    /** Filled by the same read as {@link #loaded}, and only under its lock. */
+    private static final Map<String, List<String>> establishedByKey = new LinkedHashMap<>();
+
     private OperationParameters()
     {
     }
 
     /**
-     * The parameters an operation reads.
+     * Everything a call to this operation may carry.
+     * <p>
+     * Wider than what the operation itself reads, and deliberately so: a facade reads arguments on
+     * the way down and the derivation attributes them to every operation it has. What this answers
+     * is the set {@link UnreadArguments} refuses outside of, where too wide only refuses less and
+     * too narrow refuses calls that work. For what one operation is established to take, which is
+     * what help may print as its own, see {@link #establishedFor}.
+     * </p>
      *
      * @param facadeClass the simple name of the facade class, as the map keys it.
      * @param operation the operation name.
@@ -150,8 +162,49 @@ public final class OperationParameters
         }
     }
 
+    /**
+     * The parameters established as this operation's own, without the ones the facade reads for
+     * every operation it has.
+     * <p>
+     * What per-operation help may print. The wider set {@link #of} returns is right for refusing a
+     * call over an argument nobody reads, and wrong for telling a caller what one operation takes:
+     * a facade that resolves its subject before dispatching reads those arguments on every call,
+     * and listing them under one operation says that operation takes them.
+     * </p>
+     * <p>
+     * Narrow rather than exact. The derivation follows one level into the handler, so an argument
+     * read deeper lands in the wider set instead - help prints both, labelled, so nothing is hidden
+     * and nothing is attributed to an operation that does not take it.
+     * </p>
+     *
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param operation the operation name.
+     * @return the established parameters as {@code name:kind}, or an empty list
+     */
+    public static List<String> establishedFor(String facadeClass, String operation)
+    {
+        map();
+        List<String> found = establishedByKey.get(facadeClass + ":" + operation); //$NON-NLS-1$
+        return found == null ? Collections.emptyList() : found;
+    }
+
+    private static List<String> entriesOf(String cell)
+    {
+        List<String> out = new ArrayList<>();
+        for (String entry : cell.split(",")) //$NON-NLS-1$
+        {
+            String trimmed = entry.trim();
+            if (!trimmed.isEmpty())
+            {
+                out.add(trimmed);
+            }
+        }
+        return out;
+    }
+
     private static Map<String, List<String>> read()
     {
+        establishedByKey.clear();
         Map<String, List<String>> map = new LinkedHashMap<>();
         Bundle bundle = FrameworkUtil.getBundle(OperationParameters.class);
         if (bundle == null)
@@ -178,16 +231,20 @@ public final class OperationParameters
                 {
                     continue;
                 }
-                List<String> declared = new ArrayList<>();
-                for (String entry : cells[2].split(",")) //$NON-NLS-1$
-                {
-                    String trimmed = entry.trim();
-                    if (!trimmed.isEmpty())
-                    {
-                        declared.add(trimmed);
-                    }
-                }
-                map.put(cells[0] + ":" + cells[1], Collections.unmodifiableList(declared)); //$NON-NLS-1$
+                List<String> established = entriesOf(cells[2]);
+                List<String> wide = cells.length >= 5 ? entriesOf(cells[4]) : new ArrayList<>();
+                String key = cells[0] + ":" + cells[1]; //$NON-NLS-1$
+                // Both columns together are what the map used to hold in one, and what
+                // UnreadArguments must keep seeing: it refuses a call over an argument nobody
+                // reads, so a set short of the truth turns away calls that work.
+                //
+                // Sorted and deduplicated, so the answer is the one column that was here before
+                // down to its order. Concatenating returned a name twice when both columns held
+                // it, and put the established ones first instead of leaving the whole sorted.
+                Set<String> together = new TreeSet<>(established);
+                together.addAll(wide);
+                map.put(key, Collections.unmodifiableList(new ArrayList<>(together)));
+                establishedByKey.put(key, Collections.unmodifiableList(established));
             }
         }
         catch (Exception cannotRead)

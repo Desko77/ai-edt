@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -193,6 +194,9 @@ public class DependencyGraphTool implements IMcpTool
 
         AtomicReference<BmReferencesHelper.BfsResult> bfsRef = new AtomicReference<>();
         AtomicReference<Exception> errRef = new AtomicReference<>();
+        // Started outside the task: WatchForCancel reads the call scope, which belongs
+        // to this thread, and the task body runs on the BM one.
+        WatchForCancel watch = WatchForCancel.begin();
         bmModel.executeReadonlyTask(new AbstractBmTask<Void>("dependency_graph.bfs") //$NON-NLS-1$
         {
             @Override
@@ -211,12 +215,13 @@ public class DependencyGraphTool implements IMcpTool
                     if (level == Level.MODULES)
                     {
                         result = buildModuleGraph(project, bmModel, roots, direction, depth,
-                            maxNodes, maxEdges, monitor);
+                            maxNodes, maxEdges, monitor, watch);
                     }
                     else
                     {
                         result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots, direction,
-                            maxNodes, maxEdges, depth, monitor::isCanceled);
+                            maxNodes, maxEdges, depth,
+                            () -> monitor.isCanceled() || watch.stopHere());
                     }
                     bfsRef.set(result);
                 }
@@ -243,6 +248,7 @@ public class DependencyGraphTool implements IMcpTool
         {
             tr.put(entry.getKey(), entry.getValue());
         }
+        tr.put("cancelled", watch.note("nodes")); //$NON-NLS-1$ //$NON-NLS-2$
         tr.put("level", level.name().toLowerCase()); //$NON-NLS-1$
         tr.put("depth", depth); //$NON-NLS-1$
         return tr.toJson();
@@ -250,7 +256,7 @@ public class DependencyGraphTool implements IMcpTool
 
     private BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
         Collection<IBmObject> roots, BmReferencesHelper.Direction direction, int depth,
-        int maxNodes, int maxEdges, IProgressMonitor monitor)
+        int maxNodes, int maxEdges, IProgressMonitor monitor, WatchForCancel watch)
     {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         java.util.Deque<IBmObject> queue = new java.util.ArrayDeque<>(roots);
@@ -273,7 +279,7 @@ public class DependencyGraphTool implements IMcpTool
             int levelSize = queue.size();
             for (int i = 0; i < levelSize; i++)
             {
-                if (monitor != null && monitor.isCanceled())
+                if ((monitor != null && monitor.isCanceled()) || watch.stopHere())
                 {
                     result.truncated = true;
                     return result;

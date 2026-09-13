@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.function.Supplier;
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -37,12 +39,42 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * answers as JSON; this facade always answers as MARKDOWN, the safest wrapper: it
  * carries any string body regardless of the routed tool's own native response type. An
  * agent that needs a JSON-typed result (structuredContent) should call the standalone
- * directly - the same tradeoff {@code code_search} and the other facades accept. All
- * three operations are read-only: this facade needs no preset-gating.
+ * directly - the same tradeoff {@code code_search} and the other facades accept. Every operation
+ * reads only, with one exception: {@code audit_role_rights} with {@code mode=orphans apply=true}
+ * removes rights from the role's file. That path asks {@code ToolGate} for a canonical writer
+ * before it does, inside {@link AuditRoleRightsTool}, because the security group stays on under a
+ * read-only preset.
  */
 public class SecurityAuditFacadeTool implements IMcpTool
 {
     public static final String NAME = "security_audit"; //$NON-NLS-1$
+
+    private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
+
+    /**
+     * The tool each operation routes to, for describing it rather than running it.
+     * <p>
+     * A map and not a second switch on the same word: the operation-parameter census reads
+     * the widest {@code switch (operation)} in a file as the facade's vocabulary, and two
+     * switches of equal width leave which one it reads to the order they sit in. The two
+     * lists are held together by {@code scripts/check-facade-routing.py}.
+     * </p>
+     *
+     * @return operation name to the tool it reaches, never <code>null</code>
+     */
+    static Map<String, Supplier<IMcpTool>> describedOperations()
+    {
+        return DESCRIBED;
+    }
+
+    private static Map<String, Supplier<IMcpTool>> buildDescribed()
+    {
+        Map<String, Supplier<IMcpTool>> m = new LinkedHashMap<>();
+        m.put("audit_role_rights", AuditRoleRightsTool::new); //$NON-NLS-1$
+        m.put("find_rls_violations", FindRlsViolationsTool::new); //$NON-NLS-1$
+        m.put("sensitive_data_scan", SensitiveDataScanTool::new); //$NON-NLS-1$
+        return Collections.unmodifiableMap(m);
+    }
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
@@ -59,8 +91,11 @@ public class SecurityAuditFacadeTool implements IMcpTool
             + "sensitive-data scan. Operations: audit_role_rights, find_rls_violations, " //$NON-NLS-1$
             + "sensitive_data_scan, help. Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
             + "camelCase like auditRoleRights is also accepted); remaining parameters " //$NON-NLS-1$
-            + "follow the per-operation contracts (call operation=help for the catalog). " //$NON-NLS-1$
-            + "All three operations are read-only. The standalone tools remain available " //$NON-NLS-1$
+            + "follow the per-operation contracts (call operation=help for the catalog, or " //$NON-NLS-1$
+            + "operation=help topic=<operation> for one operation's parameters). Every " //$NON-NLS-1$
+            + "operation reads only, except audit_role_rights with mode=orphans apply=true, " //$NON-NLS-1$
+            + "which removes rights from the role's file and is refused under a preset " //$NON-NLS-1$
+            + "without write rights. The standalone tools remain available " //$NON-NLS-1$
             + "for back-compat."; //$NON-NLS-1$
     }
 
@@ -124,7 +159,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
@@ -154,7 +189,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
         }
     }
 
-    private static String buildHelp(String topic)
+    private static String buildHelp(String topic, String schema)
     {
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
@@ -186,7 +221,8 @@ public class SecurityAuditFacadeTool implements IMcpTool
                 + "comment or a log | sensitive_data_scan |\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
+            "workflow", "SecurityAuditFacadeTool", schema); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()

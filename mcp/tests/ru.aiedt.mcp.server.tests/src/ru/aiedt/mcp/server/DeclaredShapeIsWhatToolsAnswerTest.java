@@ -38,9 +38,10 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * delegate returned rather than by building it. Only calling the tool sees that.
  * </p>
  * <p>
- * The two shapes called here are the two an agent tries before it knows anything: the bare call and
- * the request for help. Neither needs a workspace, so both are answerable in this runtime - what
- * comes back is a refusal, and a refusal has to parse just as much as an answer does.
+ * The shapes called here are the ones an agent tries before it knows anything: the bare call, the
+ * request for help by operation, and the request for help by argument. None needs a workspace, so
+ * all are answerable in this runtime - what comes back is a refusal, and a refusal has to parse
+ * just as much as an answer does.
  * </p>
  * <p>
  * Only the JSON direction is held. A markdown tool that answers a JSON object renders as text and
@@ -71,6 +72,11 @@ public class DeclaredShapeIsWhatToolsAnswerTest
         Map<String, String> bare = new LinkedHashMap<>();
         Map<String, String> askingForHelp = new LinkedHashMap<>();
         askingForHelp.put("operation", "help"); //$NON-NLS-1$ //$NON-NLS-2$
+        // A tool with no operations asks the other way, by argument. The first tool to answer that
+        // way returned markdown from a JSON tool, and the two shapes above did not reach it: they
+        // ask a facade for its catalog, and this asks a single tool about itself.
+        Map<String, String> askingByArgument = new LinkedHashMap<>();
+        askingByArgument.put("help", "yes"); //$NON-NLS-1$ //$NON-NLS-2$
 
         List<String> offenders = new ArrayList<>();
         for (IMcpTool tool : registry.getAllTools())
@@ -81,6 +87,7 @@ public class DeclaredShapeIsWhatToolsAnswerTest
             }
             complain(tool, bare, "called with no arguments", offenders); //$NON-NLS-1$
             complain(tool, askingForHelp, "asked for help", offenders); //$NON-NLS-1$
+            complain(tool, askingByArgument, "asked for help by argument", offenders); //$NON-NLS-1$
         }
 
         if (!offenders.isEmpty())
