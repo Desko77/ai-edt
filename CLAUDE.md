@@ -99,6 +99,18 @@ Supporting scripts:
   (`direct` / `exercised` / `tool-sweep` / `ui-bound` / `workspace-bound` / `untested`), report in
   `docs/test-coverage.md`. `--check` fails while anything sits in `untested`, so a new class
   without a test breaks the census instead of sliding in unnoticed. CI runs it.
+- `scripts/check-protocol-conformance.py` - runs the official MCP conformance suite
+  (`@modelcontextprotocol/conformance`, fetched with npx) against a **running** server, so the
+  question "does this obey the wire specification" is answered by a client written by the people
+  who write the specification rather than by reading our own source. Covers the handshake, version
+  and capability negotiation, the session header, `Accept`/`Content-Type`, `isError`, `ping`, the
+  SSE streams and DNS-rebinding protection.
+  `scripts/conformance-baseline.yml` pins the scenarios that fail on purpose - the ones wanting
+  test fixtures a production catalogue must not ship, and the capabilities this server does not
+  declare. A scenario failing outside that list is a protocol defect; one inside it that starts
+  passing means the entry comes out. Baseline captured 2026-09-12: 9 passed, 23 failed.
+  It refuses when nothing is listening rather than passing, because a gate that goes green having
+  checked nothing is worse than no gate.
 
 ## Architecture
 
