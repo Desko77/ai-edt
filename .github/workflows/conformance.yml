@@ -118,8 +118,14 @@ jobs:
           tail -200 /tmp/edt-boot.log
           exit 1
 
+      # Said out loud because the version the server reports next to it is Eclipse Platform's:
+      # what boots here is the platform carrying the EDT features, which answers every question
+      # about the wire and exercises none of the EDT model.
       - name: Conformance census
-        run: python3 scripts/check-protocol-conformance.py
+        run: |
+          echo "Under test: Eclipse Platform + 1C:EDT features, protocol only."
+          echo "The version below is the platform's; the EDT model is not exercised here."
+          python3 scripts/check-protocol-conformance.py
 
       - name: Stop EDT
         if: always()

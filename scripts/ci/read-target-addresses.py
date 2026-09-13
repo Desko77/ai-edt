@@ -33,15 +33,19 @@ PLATFORM_ARCHIVE = {
                "eclipse-platform-4.38-linux-gtk-x86_64.tar.gz",
 }
 
-# What makes an EDT, as opposed to the platform-support features - the target lists one of
-# those per 1C platform version and none is needed to answer protocol questions.
+# What makes an EDT, as opposed to the platform-support features - the target lists one of those
+# per 1C platform version and none is needed to answer protocol questions.
 #
-# The rcp unit is here because without it the boot is Eclipse Platform wearing EDT
-# features: the product stays Eclipse's, and the server reports the platform's version as
-# the EDT version. That answers protocol questions perfectly well and misleads anyone
-# reading the log about what was under test.
-WANTED_IUS = ("com._1c.g5.v8.dt.rcp",
-              "com._1c.g5.v8.dt.feature.feature.group",
+# The target also names com._1c.g5.v8.dt.rcp, and it is deliberately NOT here. Installing it boots
+# the real product, which on a stock runner fails twice: a Guice binding for IBslDeepAnalisysService
+# that this feature set does not carry, and EDT's environment checker refusing without JavaFX, which
+# a stock runner has not got. Measured 2026-09-13.
+#
+# So this boots Eclipse Platform carrying the EDT features - enough to answer every question about
+# the wire protocol, and not enough to exercise the EDT model. The server therefore reports the
+# platform's version where it would otherwise report EDT's, and the job says so rather than letting
+# a reader take 4.30 for an EDT release.
+WANTED_IUS = ("com._1c.g5.v8.dt.feature.feature.group",
               "com._1c.g5.v8.dt.thirdparty.feature.group")
 
 
