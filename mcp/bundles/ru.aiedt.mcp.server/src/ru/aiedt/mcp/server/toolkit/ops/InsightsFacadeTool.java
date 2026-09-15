@@ -100,45 +100,33 @@ public class InsightsFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "project_metrics / dependency_graph / compare_configurations / " //$NON-NLS-1$
-                    + "compare_three_way / detect_query_anti_patterns / " //$NON-NLS-1$
-                    + "generate_health_snapshot / " //$NON-NLS-1$
-                    + "impact_analysis / object_summary / describe_db_tables / " //$NON-NLS-1$
-                    + "semantic_metadata_search / help " //$NON-NLS-1$
-                    + "(snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
-                    + "accepted). Pass operation=help without other params for the operation " //$NON-NLS-1$
-                    + "catalog, or topic=<operation> for that operation's parameters.", true) //$NON-NLS-1$
+                    + "compare_three_way / detect_query_anti_patterns / generate_health_snapshot " //$NON-NLS-1$
+                    + "/ impact_analysis / object_summary / describe_db_tables / " //$NON-NLS-1$
+                    + "semantic_metadata_search / help (snake_case canonical; camelCase like " //$NON-NLS-1$
+                    + "projectMetrics is also accepted). operation=help topic=<operation> " //$NON-NLS-1$
+                    + "answers what that operation takes.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project name. Required for every operation except help; for " //$NON-NLS-1$
-                    + "compare_configurations this is the FIRST project (the second comes " //$NON-NLS-1$
-                    + "from target).") //$NON-NLS-1$
+                "EDT project name.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
-                "FQN of the object in question, e.g. 'Catalog.Products'. Russian type names " //$NON-NLS-1$
-                    + "supported. Required for impact_analysis, object_summary and " //$NON-NLS-1$
-                    + "describe_db_tables; used by " //$NON-NLS-1$
-                    + "dependency_graph when scope=object and by compare_configurations when " //$NON-NLS-1$
-                    + "scope=objectFqn. describe_db_tables also takes the four-segment address " //$NON-NLS-1$
-                    + "of a table of an external data source, " //$NON-NLS-1$
-                    + "'ExternalDataSource.Src.Table.Orders'; the other operations expect the " //$NON-NLS-1$
-                    + "two-segment form.") //$NON-NLS-1$
+                "FQN of the object in question, e.g. 'Catalog.Products'.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "project_metrics: project / subsystem (default project). dependency_graph: " //$NON-NLS-1$
                     + "project / subsystem / object / module (default project). " //$NON-NLS-1$
-                    + "detect_query_anti_patterns: project / module / method (default " //$NON-NLS-1$
-                    + "project). compare_configurations: project / objectType / objectFqn " //$NON-NLS-1$
-                    + "(default project). Different valid values per operation.") //$NON-NLS-1$
+                    + "detect_query_anti_patterns: project / module / method (default project). " //$NON-NLS-1$
+                    + "compare_configurations: project / objectType / objectFqn (default " //$NON-NLS-1$
+                    + "project).") //$NON-NLS-1$
             .stringProperty("subsystemName", //$NON-NLS-1$
                 "Subsystem name when scope=subsystem (project_metrics, dependency_graph).") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
                 "Module FQN when scope=module (dependency_graph) or scope=module/method " //$NON-NLS-1$
                     + "(detect_query_anti_patterns).") //$NON-NLS-1$
             .stringProperty("level", //$NON-NLS-1$
-                "dependency_graph: metadata / modules / mixed (default metadata) - what the " //$NON-NLS-1$
-                    + "graph nodes are. compare_configurations: object / attribute / module / " //$NON-NLS-1$
-                    + "template (default object) - granularity of the diff. Same key, " //$NON-NLS-1$
-                    + "different meaning per operation.") //$NON-NLS-1$
+                "dependency_graph: metadata / modules / mixed (default metadata) - what " //$NON-NLS-1$
+                    + "the graph nodes are. compare_configurations: object / attribute / module " //$NON-NLS-1$
+                    + "/ template (default object) - granularity of the diff.") //$NON-NLS-1$
             .integerProperty("depth", //$NON-NLS-1$
                 "dependency_graph: BFS depth, 1-5 (default 2).") //$NON-NLS-1$
             .stringProperty("direction", //$NON-NLS-1$
@@ -151,13 +139,10 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_configurations: projects / files. Required for that operation.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
                 "compare_configurations: for mode=projects, the second project's name; for " //$NON-NLS-1$
-                    + "mode=files, the path to the second export. Required for that " //$NON-NLS-1$
-                    + "operation.") //$NON-NLS-1$
+                    + "mode=files, the path to the second export.") //$NON-NLS-1$
             .stringProperty("otherPath", //$NON-NLS-1$
                 "compare_three_way: directory holding the configuration to compare against " //$NON-NLS-1$
-                    + "(OTHER). Required for that operation. Its remaining parameters - " //$NON-NLS-1$
-                    + "ancestorPath, intent, decisions and the rest - are listed by " //$NON-NLS-1$
-                    + "operation=help topic=compare_three_way.") //$NON-NLS-1$
+                    + "(OTHER).") //$NON-NLS-1$
             .booleanProperty("showRenames", //$NON-NLS-1$
                 "compare_configurations: detect renames via structural similarity (default " //$NON-NLS-1$
                     + "true).") //$NON-NLS-1$
@@ -181,14 +166,13 @@ public class InsightsFacadeTool implements IMcpTool
             .booleanProperty("includeErrors", //$NON-NLS-1$
                 "generate_health_snapshot: include the errors/warnings summary (default " //$NON-NLS-1$
                     + "true). object_summary: run get_project_errors to count validation " //$NON-NLS-1$
-                    + "problems (default true). Same key, two operations.") //$NON-NLS-1$
+                    + "problems (default true).") //$NON-NLS-1$
             .stringProperty("action", //$NON-NLS-1$
                 "impact_analysis: planned action - delete / rename / modify. Optional, " //$NON-NLS-1$
                     + "influences the recommendation text only.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "impact_analysis: maximum references per category (default 100). " //$NON-NLS-1$
-                    + "semantic_metadata_search: maximum results (default 50). Same key, two " //$NON-NLS-1$
-                    + "operations.") //$NON-NLS-1$
+                    + "semantic_metadata_search: maximum results (default 50).") //$NON-NLS-1$
             .booleanProperty("skipBsl", //$NON-NLS-1$
                 "impact_analysis: skip BSL code references, metadata back-references only " //$NON-NLS-1$
                     + "(default false).") //$NON-NLS-1$
@@ -197,11 +181,10 @@ public class InsightsFacadeTool implements IMcpTool
                     + "back-references (default true).") //$NON-NLS-1$
             .booleanProperty("includeFields", //$NON-NLS-1$
                 "describe_db_tables: include the fields and virtual-table parameters " //$NON-NLS-1$
-                    + "(default true). Pass false for table names and field counts alone.") //$NON-NLS-1$
+                    + "(default true).") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
                 "semantic_metadata_search: free-text query, matched case-insensitively " //$NON-NLS-1$
-                    + "against name, synonym and comment of every object. Required for that " //$NON-NLS-1$
-                    + "operation.") //$NON-NLS-1$
+                    + "against name, synonym and comment of every object.") //$NON-NLS-1$
             .stringProperty("metadataType", //$NON-NLS-1$
                 "semantic_metadata_search: optional filter by type (English singular: " //$NON-NLS-1$
                     + "Catalog / Document / InformationRegister / ... or Russian " //$NON-NLS-1$
@@ -223,9 +206,8 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_three_way: directory holding the delivery both sides came from. Omit for " //$NON-NLS-1$
                     + "a two-sided comparison.") //$NON-NLS-1$
             .stringProperty("parentId", //$NON-NLS-1$
-                "compare_three_way: which vendor configuration of the project the deliveries are " //$NON-NLS-1$
-                    + "measured against, by id or by name. Required when the project descends " //$NON-NLS-1$
-                    + "from more than one, where the check is refused rather than guessed.") //$NON-NLS-1$
+                "compare_three_way: which vendor configuration of the project the " //$NON-NLS-1$
+                    + "deliveries are measured against, by id or by name.") //$NON-NLS-1$
             .stringProperty("decisions", //$NON-NLS-1$
                 "compare_three_way: what to do with individual objects, as a JSON array of " //$NON-NLS-1$
                     + "{\"object\":\"...\",\"rule\":\"...\"}.") //$NON-NLS-1$
@@ -250,29 +232,23 @@ public class InsightsFacadeTool implements IMcpTool
                 "compare_three_way: list only objects the environment says must take part in a " //$NON-NLS-1$
                     + "merge.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
-                "compare_three_way: how many matching objects to skip. With limit this walks the " //$NON-NLS-1$
-                    + "whole set - a real update runs to tens of thousands of changed objects.") //$NON-NLS-1$
+                "compare_three_way: how many matching objects to skip.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
-                "compare_three_way: compare the sides even when they do not identify as the same " //$NON-NLS-1$
-                    + "configuration in different versions. Off by default: a wrong ancestor " //$NON-NLS-1$
-                    + "inverts every changedBy without failing.") //$NON-NLS-1$
+                "compare_three_way: compare the sides even when they do not identify as " //$NON-NLS-1$
+                    + "the same configuration in different versions.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
                 "compare_three_way: assemble the answer into one document - the sides, what " //$NON-NLS-1$
                     + "moved and on whose side, what an update overwrites if nobody intervenes, " //$NON-NLS-1$
                     + "the conflicts to decide by hand, the support state, and what the run did " //$NON-NLS-1$
                     + "NOT check. summary or full.") //$NON-NLS-1$
             .booleanProperty("methodLevel", //$NON-NLS-1$
-                "compare_three_way: look inside modules, so a change comes back named by the " //$NON-NLS-1$
-                    + "method it is in - CommonModule.X.Module.MethodName - with its own " //$NON-NLS-1$
+                "compare_three_way: look inside modules, so a change comes back named by " //$NON-NLS-1$
+                    + "the method it is in - CommonModule.X.Module.MethodName - with its own " //$NON-NLS-1$
                     + "attribution, and a decision can be addressed at one method without " //$NON-NLS-1$
-                    + "touching its neighbours. Off by default; comparedInMs reports the cost " //$NON-NLS-1$
-                    + "either way.") //$NON-NLS-1$
+                    + "touching its neighbours.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
                 "compare_three_way: close the comparison after answering instead of " //$NON-NLS-1$
-                    + "keeping it open for the next page. Off by default, because a " //$NON-NLS-1$
-                    + "comparison of two configurations takes minutes and paging would " //$NON-NLS-1$
-                    + "otherwise cost one per page. Pass it on the last call: an open " //$NON-NLS-1$
-                    + "comparison holds the comparison store of the environment.") //$NON-NLS-1$
+                    + "keeping it open for the next page.") //$NON-NLS-1$
             .build();
     }
 

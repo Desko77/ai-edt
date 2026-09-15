@@ -262,7 +262,8 @@ public class EditMetadataTool implements IMcpTool
     {
         return "Single constructor for metadata, forms, DCS, templates, extensions, reports. " //$NON-NLS-1$
             + "Pass operation=<name> with operation-specific parameters. " //$NON-NLS-1$
-            + "Call operation=help for the full catalog (" + operationSummary() + "). " //$NON-NLS-1$ //$NON-NLS-2$
+            + "Call operation=help for the full catalog (" + operationSummary() + "), " //$NON-NLS-1$ //$NON-NLS-2$
+            + "operation=help topic=parameters for the full rules of the parameters. " //$NON-NLS-1$
             + "Add dryRun=true to any operation to preview changes without applying them. " //$NON-NLS-1$
             + "Supports: idempotent skip with propertyMismatch tag, cascade form cleanup " //$NON-NLS-1$
             + "(cascadeForms=true), object commands, form command-interface items, " //$NON-NLS-1$
@@ -277,39 +278,32 @@ public class EditMetadataTool implements IMcpTool
                 "Operation name. Use 'help' to list available operations and topics.", true) //$NON-NLS-1$
             .stringProperty("projectName", "EDT project name (most operations).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("ownerFqn", //$NON-NLS-1$
-                "FQN of the owning metadata object. Where an operation acts on a child it may address one " //$NON-NLS-1$
-                + "directly as Type.Name.Kind.Child. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "FQN of the owning metadata object.") //$NON-NLS-1$
             .stringProperty("property", //$NON-NLS-1$
                 "The reference property to change. add / remove_object_reference take a LIST-valued one, set " //$NON-NLS-1$
                 + "/ clear_object_reference a SCALAR one. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("valueFqn", //$NON-NLS-1$
-                "FQN of the referenced object, for the reference and content operations. Which shape each of " //$NON-NLS-1$
-                + "them expects differs. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "FQN of the referenced object, for the reference and content operations.") //$NON-NLS-1$
             .stringProperty("autoRecord", //$NON-NLS-1$
                 "add_exchange_plan_content: per-item auto change registration - Deny (default) or Allow.") //$NON-NLS-1$
             .stringProperty("use", //$NON-NLS-1$
                 "add_common_attribute_content: per-object usage of the common attribute - " //$NON-NLS-1$
                 + "Auto (default), Use or DontUse.") //$NON-NLS-1$
             .stringProperty("subsystems", //$NON-NLS-1$
-                "set_subsystems_order: comma-separated top-level subsystems in the wanted leading order. " //$NON-NLS-1$
-                + "Participating ones not listed are appended after them.") //$NON-NLS-1$ //$NON-NLS-1$
+                "set_subsystems_order: comma-separated top-level subsystems in the wanted " //$NON-NLS-1$
+                    + "leading order.") //$NON-NLS-1$
             .stringProperty("subsystem", //$NON-NLS-1$
-                "The subsystem whose command interface or section visibility to change. Top-level " //$NON-NLS-1$
-                + "(Subsystem.X), nested (Subsystem.A.Subsystem.B) and bare dotted (A.B) are all accepted.") //$NON-NLS-1$ //$NON-NLS-1$
+                "The subsystem whose command interface or section visibility to change.") //$NON-NLS-1$
             .stringProperty("command", //$NON-NLS-1$
-                "set_main_section_command_visibility / set_subsystem_command_visibility / " //$NON-NLS-1$
-                + "set_command_placement: the command FQN whose visibility/placement to set - a " //$NON-NLS-1$
-                + "CommonCommand (CommonCommand.X) or an object command " //$NON-NLS-1$
-                + "(e.g. Catalog.X.Command.Y).") //$NON-NLS-1$
+                "The command to place or show: CommonCommand.X or an object command such " //$NON-NLS-1$
+                    + "as Catalog.X.Command.Y.") //$NON-NLS-1$
             .stringProperty("group", //$NON-NLS-1$
                 "set_command_placement / set_command_order: the command-interface group - a friendly name, a " //$NON-NLS-1$
                 + "platform token, or CommandGroup.<name>. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("commands", //$NON-NLS-1$
-                "set_command_order: JSON array of command FQNs in the wanted leading order. They are " //$NON-NLS-1$
-                + "reordered within one group; the rest keep their relative order after them.") //$NON-NLS-1$ //$NON-NLS-1$
+                "set_command_order: JSON array of command FQNs in the wanted leading order.") //$NON-NLS-1$
             .stringProperty("visible", //$NON-NLS-1$
-                "true shows, false hides, for the visibility operations. Sets the common value, or one role's " //$NON-NLS-1$
-                + "when role is given; per-role exceptions are preserved either way.") //$NON-NLS-1$ //$NON-NLS-1$
+                "true shows, false hides, for the visibility operations.") //$NON-NLS-1$
             .stringProperty("role", //$NON-NLS-1$
                 "Optional Role FQN for the visibility operations: sets that one role's value instead of the " //$NON-NLS-1$
                 + "common, role-independent one.") //$NON-NLS-1$ //$NON-NLS-1$
@@ -318,17 +312,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("name", //$NON-NLS-1$
                 "Name of the new element (createObject / addObjectAttribute / ...).") //$NON-NLS-1$
             .stringProperty("synonym", //$NON-NLS-1$
-                "Synonym for a newly created object or field. Auto-generated from the name when omitted, the " //$NON-NLS-1$
-                + "way the EDT wizard does it; a JSON object keyed by language code sets several languages at " //$NON-NLS-1$
-                + "once. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "Synonym for a newly created object or field.") //$NON-NLS-1$
             .objectProperty("properties", //$NON-NLS-1$
-                "create_object: a JSON object of property name to value, applied to the new object before it " //$NON-NLS-1$
-                + "joins the configuration - e.g. {\"methodName\":\"CommonModule.A.B\",\"use\":false} on a " //$NON-NLS-1$
-                + "ScheduledJob. A property the object's type does not have is refused and NOTHING is created. " //$NON-NLS-1$
-                + "A property given both here and as its own argument must carry the same value.") //$NON-NLS-1$ //$NON-NLS-1$
+                "create_object: a JSON object of property name to value, applied before " //$NON-NLS-1$
+                    + "the new object joins the configuration.") //$NON-NLS-1$
             .booleanProperty("server", //$NON-NLS-1$
-                "create_object CommonModule: the Server context. Defaults to true when no context is given - " //$NON-NLS-1$
-                + "the common-module-type check requires one.") //$NON-NLS-1$ //$NON-NLS-1$
+                "create_object CommonModule: the Server context.") //$NON-NLS-1$
             .booleanProperty("externalConnection", //$NON-NLS-1$
                 "create_object CommonModule: the External connection context.") //$NON-NLS-1$
             .booleanProperty("clientOrdinaryApplication", //$NON-NLS-1$
@@ -340,23 +329,16 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("privileged", //$NON-NLS-1$
                 "create_object CommonModule: privileged mode.") //$NON-NLS-1$
             .stringProperty("propertyName", //$NON-NLS-1$
-                "set_object_property: which property to set. A few names take a shaped value rather than a " //$NON-NLS-1$
-                + "plain one - fillValue, inputByString, choiceParameters, choiceParameterLinks. Full text: " //$NON-NLS-1$
-                + "operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "set_object_property: which property to set.") //$NON-NLS-1$
             .stringProperty("propertyValue", //$NON-NLS-1$
-                "Property value for setObjectProperty (string; coerced to setter type). For a " //$NON-NLS-1$
-                + "list-shaped property it is JSON: an array of literals, an array of objects, or " //$NON-NLS-1$
-                + "an object naming inner lists.") //$NON-NLS-1$
+                "Property value for setObjectProperty (string; coerced to setter type).") //$NON-NLS-1$
             .stringProperty("listMode", //$NON-NLS-1$
-                "set_object_property on a list-shaped property: replace (default), add, remove, " //$NON-NLS-1$
-                + "clear. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
-                + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
-                + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
-                + "usedMobileApplicationFunctionalities.") //$NON-NLS-1$
+                "set_object_property on a list-shaped property: replace (default), add, " //$NON-NLS-1$
+                    + "remove, clear.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
-                "Type for the attribute-creating operations and set_object_type. A primitive (String / Number " //$NON-NLS-1$
-                + "/ Date / Boolean / UUID), a reference (CatalogRef.X), or a composite as one comma-separated " //$NON-NLS-1$
-                + "string. Qualifiers are separate parameters. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "Type for the attribute-creating operations and set_object_type: String / " //$NON-NLS-1$
+                    + "Number / Date / Boolean / UUID, CatalogRef.X, or several comma-separated. " //$NON-NLS-1$
+                    + "Full text: operation=help topic=parameters.") //$NON-NLS-1$
             .booleanProperty("multiLine", //$NON-NLS-1$
                 "Multi-line input mode for the attribute (BasicFeature.multiLine). Optional.") //$NON-NLS-1$
             .integerProperty("length", //$NON-NLS-1$
@@ -372,54 +354,48 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("allowedLength", //$NON-NLS-1$
                 "Variable / Fixed (AllowedLength) for type=String. Default Variable. Optional.") //$NON-NLS-1$
             .stringProperty("fillChecking", //$NON-NLS-1$
-                "Fill-check mode for a new field: DontCheck or ShowError. A field kind that does not support " //$NON-NLS-1$
-                + "it surfaces in failedProperties.") //$NON-NLS-1$ //$NON-NLS-1$
+                "Fill-check mode for a new field: DontCheck or ShowError.") //$NON-NLS-1$
             .stringProperty("fullTextSearch", //$NON-NLS-1$
                 "addObjectAttribute / addTabularSectionAttribute / addRegisterField: full-text search usage. DontUse | Use. Optional.") //$NON-NLS-1$
             .stringProperty("indexing", //$NON-NLS-1$
-                "addObjectAttribute / addTabularSectionAttribute / addRegisterField: index mode. DontIndex | Index | IndexWithAdditionalOrder. Optional.") //$NON-NLS-1$
+                "Index mode for a new field: DontIndex, Index or IndexWithAdditionalOrder.") //$NON-NLS-1$
             .stringProperty("toolTip", //$NON-NLS-1$
-                "addObjectAttribute / addTabularSectionAttribute / addRegisterField: tooltip text (localized, stored under 'ru'). Optional.") //$NON-NLS-1$
+                "addObjectAttribute / addTabularSectionAttribute / addRegisterField: " //$NON-NLS-1$
+                    + "tooltip text (localized, stored under 'ru').") //$NON-NLS-1$
             .stringProperty("comment", //$NON-NLS-1$
-                "addObjectAttribute / addTabularSectionAttribute / addRegisterField: developer comment. " //$NON-NLS-1$
-                + "Also the FormParameter comment for add_form_parameter. Optional.") //$NON-NLS-1$
+                "addObjectAttribute / addTabularSectionAttribute / addRegisterField: " //$NON-NLS-1$
+                    + "developer comment.") //$NON-NLS-1$
             .stringProperty("formFqn", //$NON-NLS-1$
                 "FQN of the form for form operations (e.g. Catalog.Users.Form.ItemForm, " //$NON-NLS-1$
-                + "CommonForm.X.Form). Used by add_form_attribute / add_form_parameter / add_field / ...") //$NON-NLS-1$
+                    + "CommonForm.X.Form).") //$NON-NLS-1$
             .booleanProperty("keyParameter", //$NON-NLS-1$
                 "add_form_parameter: mark the parameter as a key parameter (FormParameter.keyParameter). " //$NON-NLS-1$
                 + "Default false.") //$NON-NLS-1$
             .stringProperty("formName", //$NON-NLS-1$
-                "Form name for createForm. Falls back to `name` when omitted. " //$NON-NLS-1$
-                + "For a CommonForm pass ownerFqn=CommonForm.<Name> (or ownerFqn=CommonForm + formName=<Name>) " //$NON-NLS-1$
-                + "- it is created as a top-level common form, not attached to a Forms collection.") //$NON-NLS-1$
+                "Form name for createForm.") //$NON-NLS-1$
             .stringProperty("formType", //$NON-NLS-1$
                 "Form type for createForm: ORDINARY or MANAGED (default MANAGED). Legacy purpose values are normalized to MANAGED.") //$NON-NLS-1$
             .stringProperty("layout", //$NON-NLS-1$
                 "Form layout for createForm: auto (typed defaults) / empty (manual layout) / standard.") //$NON-NLS-1$
             .stringProperty("purpose", //$NON-NLS-1$
-                "create_form: which form the EDT generator should build - ItemForm, ListForm, ChoiceForm, " //$NON-NLS-1$
-                + "FolderForm, RecordSetForm, RecordForm, Generic. Derived from the owner type and the form " //$NON-NLS-1$
-                + "name when omitted. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "create_form: which form the EDT generator should build - ItemForm, " //$NON-NLS-1$
+                    + "ListForm, ChoiceForm, FolderForm, RecordSetForm, RecordForm, Generic. " //$NON-NLS-1$
+                    + "Full text: operation=help topic=parameters.") //$NON-NLS-1$
             .booleanProperty("setAsDefault", //$NON-NLS-1$
                 "Set this form as the owner's default form (createForm).") //$NON-NLS-1$
             .stringProperty("templateName", //$NON-NLS-1$
-                "Template name. For addTemplate: the metadata Template name (falls back to `name` when " //$NON-NLS-1$
-                + "omitted). For set_restriction_template / remove_restriction_template: the RLS " //$NON-NLS-1$
-                + "restriction-template name (required, no fallback; matched case-insensitively).") //$NON-NLS-1$
+                "Template name.") //$NON-NLS-1$
             .stringProperty("templateType", //$NON-NLS-1$
                 "Template type for addTemplate: SpreadsheetDocument / TextDocument / BinaryData / ActiveDocument / GraphicalScheme / DataCompositionSchema / DataCompositionAppearanceTemplate / Geographical Schema / HTMLDocument / AddIn.") //$NON-NLS-1$
             .stringProperty("content", //$NON-NLS-1$
-                "Plain-text body of a TextDocument or HTMLDocument template - filled on create, replaced by " //$NON-NLS-1$
-                + "set_template_content, returned by get_template_content. Spreadsheets go through mxl_workshop " //$NON-NLS-1$
-                + "and DCS through dcs_workshop.") //$NON-NLS-1$ //$NON-NLS-1$
+                "Plain-text body of a TextDocument or HTMLDocument template - filled on " //$NON-NLS-1$
+                    + "create, replaced by set_template_content, returned by " //$NON-NLS-1$
+                    + "get_template_content. Full text: operation=help topic=parameters.") //$NON-NLS-1$
             // create_route_map parameters (BusinessProcess Flowchart.scheme).
             .stringProperty("points", //$NON-NLS-1$
-                "create_route_map: JSON array of route points, laid out top to bottom. Needs exactly one " //$NON-NLS-1$
-                + "Start and at least one Completion. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "create_route_map: JSON array of route points, laid out top to bottom.") //$NON-NLS-1$
             .stringProperty("transitions", //$NON-NLS-1$
-                "create_route_map: JSON array of transitions. Each object: {\"from\":<point name>, \"to\":<point name>, " //$NON-NLS-1$
-                    + "\"branch\"? = true|false (REQUIRED when 'from' is a Condition; yes/no, да/нет accepted), \"title\"?}.") //$NON-NLS-1$
+                "create_route_map: JSON array of transitions.") //$NON-NLS-1$
             .stringProperty("bpFqn", //$NON-NLS-1$
                 "create/get/remove_route_map: BusinessProcess FQN (alias of ownerFqn), e.g. BusinessProcess.Order.") //$NON-NLS-1$
             .booleanProperty("overwrite", //$NON-NLS-1$
@@ -436,22 +412,21 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("aliases", //$NON-NLS-1$
                 "create_http_service: comma-separated alias paths (optional).") //$NON-NLS-1$
             .booleanProperty("reuseSessions", //$NON-NLS-1$
-                "create_http_service: reuse HTTP sessions across requests. Maps to the platform " //$NON-NLS-1$
-                + "SessionReuseMode enum - true -> Use, false -> DontUse; omitted leaves the platform " //$NON-NLS-1$
-                + "default (AutoUse is not exposed by this boolean).") //$NON-NLS-1$
+                "create_http_service: reuse HTTP sessions across requests.") //$NON-NLS-1$
             .integerProperty("sessionMaxAge", //$NON-NLS-1$
                 "create_http_service: session max age in seconds (optional).") //$NON-NLS-1$
             .stringProperty("urlTemplateName", //$NON-NLS-1$
                 "create_http_service: name of the initial URLTemplate. Default 'Template1'.") //$NON-NLS-1$
             .stringProperty("urlTemplate", //$NON-NLS-1$
-                "create_http_service / add_url_template: URL pattern with leading slash (e.g. '/clients/{id}'). Default = '/<urlTemplateName>'. Bare '/' is rejected by platform validator.") //$NON-NLS-1$
+                "create_http_service / add_url_template: URL pattern with leading slash " //$NON-NLS-1$
+                    + "(e.g. '/clients/{id}').") //$NON-NLS-1$
             .stringProperty("methodName", //$NON-NLS-1$
                 "create_http_service: name of the initial Method. Default 'Get'.") //$NON-NLS-1$
             .stringProperty("httpMethod", //$NON-NLS-1$
                 "create_http_service / add_url_template_method: GET/POST/PUT/DELETE/MERGE/PATCH/HEAD/OPTIONS/TRACE/CONNECT/PROPFIND/PROPPATCH/MKCOL/COPY/MOVE/LOCK/UNLOCK/Any. Default GET.") //$NON-NLS-1$
             .stringProperty("handler", //$NON-NLS-1$
-                "create_http_service / add_url_template_method: handler procedure name (default '<urlTemplateName><methodName>'). " //$NON-NLS-1$
-                + "set_event_subscription: handler reference, normalized to 'CommonModule.<Module>.<Method>' (short '<Module>.<Method>' accepted).") //$NON-NLS-1$
+                "Handler procedure: a name for the HTTP-service operations, a " //$NON-NLS-1$
+                    + "CommonModule.<Module>.<Method> reference for set_event_subscription.") //$NON-NLS-1$
             .stringProperty("source", //$NON-NLS-1$
                 "set_event_subscription: comma-separated source value-type FQNs, e.g. " //$NON-NLS-1$
                 + "'DocumentObject.X,InformationRegisterRecordSet.Y,ConstantValueManager.Z,DefinedType.W'. Replaces the subscription source.") //$NON-NLS-1$
@@ -466,7 +441,8 @@ public class EditMetadataTool implements IMcpTool
                 "add_url_template: URL pattern (alias of urlTemplate for older call sites).") //$NON-NLS-1$
             // 1.43: create_web_service parameters
             .stringProperty("namespace", //$NON-NLS-1$
-                "create_web_service: XML URI namespace (e.g. 'http://example.com/myservice'). Required - platform rejects empty namespaces.") //$NON-NLS-1$
+                "create_web_service: XML URI namespace (e.g. " //$NON-NLS-1$
+                    + "'http://example.com/myservice').") //$NON-NLS-1$
             .stringProperty("operationName", //$NON-NLS-1$
                 "create_web_service: name of the initial Operation (default 'Default'). " //$NON-NLS-1$
                 + "add_operation_parameter: name of the existing Operation to add the parameter to.") //$NON-NLS-1$
@@ -478,14 +454,14 @@ public class EditMetadataTool implements IMcpTool
                 + "'{nsUri}localName' or a bare local name (e.g. 'string') combined with " //$NON-NLS-1$
                 + "returningValueTypeNs (default XSD namespace). HTTP services are untyped. Optional.") //$NON-NLS-1$
             .stringProperty("returningValueTypeNs", //$NON-NLS-1$
-                "add_web_service_operation: namespace URI for returningValueType when given as a bare " //$NON-NLS-1$
-                + "local name. Default 'http://www.w3.org/2001/XMLSchema'. Optional.") //$NON-NLS-1$
+                "add_web_service_operation: namespace URI for returningValueType when " //$NON-NLS-1$
+                    + "given as a bare local name.") //$NON-NLS-1$
             .stringProperty("valueType", //$NON-NLS-1$
                 "add_operation_parameter: XDTO parameter value type as a QName - '{nsUri}localName' " //$NON-NLS-1$
                 + "or a bare local name + valueTypeNs (default XSD namespace).") //$NON-NLS-1$
             .stringProperty("valueTypeNs", //$NON-NLS-1$
-                "add_operation_parameter: namespace URI for valueType when given as a bare local " //$NON-NLS-1$
-                + "name. Default 'http://www.w3.org/2001/XMLSchema'. Optional.") //$NON-NLS-1$
+                "add_operation_parameter: namespace URI for valueType when given as a bare " //$NON-NLS-1$
+                    + "local name.") //$NON-NLS-1$
             .stringProperty("transferDirection", //$NON-NLS-1$
                 "add_operation_parameter: parameter direction IN / OUT / IN_OUT. Default IN. Optional.") //$NON-NLS-1$
             .booleanProperty("nillable", //$NON-NLS-1$
@@ -507,7 +483,7 @@ public class EditMetadataTool implements IMcpTool
                 + "with a warning). Optional.") //$NON-NLS-1$
             .booleanProperty("isFolder", //$NON-NLS-1$
                 "add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
-                + "ChartOfCharacteristicTypes only). Default false. Optional.") //$NON-NLS-1$
+                    + "ChartOfCharacteristicTypes only).") //$NON-NLS-1$
             // 1.43.x RSV-5.2 Tier 2: ChartOfAccounts predefined-account fields + subconto.
             .stringProperty("accountType", //$NON-NLS-1$
                 "add_predefined_item (ChartOfAccounts): Active / Passive / ActivePassive (RU aliases ok). Optional.") //$NON-NLS-1$
@@ -540,25 +516,23 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("value", //$NON-NLS-1$
                 "set_role_right: grant (true) or revoke (false) the right on targetFqn. Default true.") //$NON-NLS-1$
             .booleanProperty("cascadeDependencies", //$NON-NLS-1$
-                "set_role_right: also grant the rights this one requires (Update needs Read, Posting needs " //$NON-NLS-1$
-                + "Read and Update). Grant-direction only, never revokes; what it added comes back in " //$NON-NLS-1$
-                + "cascadedRights. Default false.") //$NON-NLS-1$ //$NON-NLS-1$
+                "set_role_right: also grant the rights this one requires (Update needs " //$NON-NLS-1$
+                    + "Read, Posting needs Read and Update).") //$NON-NLS-1$
             .stringProperty("condition", //$NON-NLS-1$
                 "The RLS condition body: a restriction template for set_restriction_template, a row-level " //$NON-NLS-1$
                 + "condition on the right for set_role_restriction. Other role content is preserved.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
                 "Alias of targetFqn for adopt_* operations.") //$NON-NLS-1$
             .stringProperty("childKind", //$NON-NLS-1$
-                "Child kind for adopt_child: Form / Attribute / TabularSection / Template / Command / Dimension / Resource. " //$NON-NLS-1$
-                    + "Russian aliases accepted (Форма / Реквизит / ТабличнаяЧасть / Макет / Команда / Измерение / Ресурс).") //$NON-NLS-1$
+                "Child kind for adopt_child: Form / Attribute / TabularSection / Template " //$NON-NLS-1$
+                    + "/ Command / Dimension / Resource.") //$NON-NLS-1$
             .stringProperty("containerFqn", //$NON-NLS-1$
                 "remove_item: the form item holding the one named by `name`. move_item: the form itself, with " //$NON-NLS-1$
                 + "parentName naming the destination container.") //$NON-NLS-1$ //$NON-NLS-1$
             // ---- Composition settings, for the operations run by dcs_workshop under an alias ----
             .stringProperty("parentPath", //$NON-NLS-1$
-                "add_settings_group: the group to nest the new one inside, as dot-separated " //$NON-NLS-1$
-                    + "group names. Omitted means the root of the structure; an unnamed group is " //$NON-NLS-1$
-                    + "addressed by its position at its level, as [0].") //$NON-NLS-1$
+                "add_settings_group: the group to nest the new one inside, as " //$NON-NLS-1$
+                    + "dot-separated group names.") //$NON-NLS-1$
             .stringProperty("variantName", //$NON-NLS-1$
                 "set_settings_parameter: the settings variant to work on. Omitted means the " //$NON-NLS-1$
                     + "default settings, which is the first variant.") //$NON-NLS-1$
@@ -569,23 +543,18 @@ public class EditMetadataTool implements IMcpTool
             //      (add_metadata_attribute / rename_metadata_object) ----
             .stringProperty("parentFqn", //$NON-NLS-1$
                 "add_metadata_attribute: the object the attribute is added to, for example " //$NON-NLS-1$
-                    + "'Catalog.Products' or 'Document.SalesOrder'. Type names may be given in " //$NON-NLS-1$
-                    + "Russian. A register field, which carries a kind and a type, is added by " //$NON-NLS-1$
-                    + "add_register_field instead.") //$NON-NLS-1$
+                    + "'Catalog.Products' or 'Document.SalesOrder'.") //$NON-NLS-1$
             .stringProperty("newName", //$NON-NLS-1$
                 "rename_metadata_object: the name to give the object.") //$NON-NLS-1$
             .stringProperty("disableIndices", //$NON-NLS-1$
-                "rename_metadata_object: indices of change points to leave out, comma-separated " //$NON-NLS-1$
-                    + "(taken from the dry-run list). Only skippable changes may be turned off. " //$NON-NLS-1$
-                    + "Example: '2,3,5'") //$NON-NLS-1$
+                "rename_metadata_object: indices of change points to leave out, " //$NON-NLS-1$
+                    + "comma-separated (taken from the dry-run list).") //$NON-NLS-1$
             .integerProperty("maxResults", //$NON-NLS-1$
                 "rename_metadata_object: upper bound on how many change points the dry run lists " //$NON-NLS-1$
                     + "(default 20). 0 removes the cap.") //$NON-NLS-1$
             .booleanProperty("scanLeftovers", //$NON-NLS-1$
-                "rename_metadata_object: once the rename is confirmed, comb BSL modules for " //$NON-NLS-1$
-                    + "whole-word plain-text traces of the FORMER name (string literals / query " //$NON-NLS-1$
-                    + "text / comments) that the semantic refactoring leaves untouched. Default " //$NON-NLS-1$
-                    + "true; listed as items to review by hand.") //$NON-NLS-1$
+                "rename_metadata_object: after the rename, list plain-text traces of the " //$NON-NLS-1$
+                    + "former name the refactoring leaves alone. Default true.") //$NON-NLS-1$
             // ---- Form-operation parameters (add_field / add_button / add_table /
             //      add_decoration / add_dynamic_list_table / set_property / ...) ----
             .stringProperty("itemName", //$NON-NLS-1$
@@ -608,19 +577,17 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("title", //$NON-NLS-1$
                 "Title / caption for a new form element (field / group / button / table).") //$NON-NLS-1$
             .stringProperty("parentName", //$NON-NLS-1$
-                "Parent container name for add_field / add_group / add_button / add_table / " //$NON-NLS-1$
-                    + "add_decoration (default: form root). A button targeted at a table is " //$NON-NLS-1$
-                    + "auto-placed in the table's command bar.") //$NON-NLS-1$
+                "Parent container name for add_field / add_group / add_button / add_table " //$NON-NLS-1$
+                    + "/ add_decoration (default: form root).") //$NON-NLS-1$
             .stringProperty("elementType", //$NON-NLS-1$
-                "Element subtype for add_field, add_group and add_decoration. The accepted values differ per " //$NON-NLS-1$
-                + "operation. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "Element subtype for add_field, add_group and add_decoration.") //$NON-NLS-1$
             .stringProperty("dataPath", //$NON-NLS-1$
                 "Data path binding for add_field / add_table (e.g. Object.Name).") //$NON-NLS-1$
             .stringProperty("beforeName", //$NON-NLS-1$
                 "Insert the new element before this sibling element (default: append).") //$NON-NLS-1$
             .stringProperty("standardCommand", //$NON-NLS-1$
                 "Bind an add_button to a platform stock command (PostAndClose / Write / " //$NON-NLS-1$
-                    + "Refresh / ...). Rejected on DataProcessor / ExternalReport forms.") //$NON-NLS-1$
+                    + "Refresh / ...).") //$NON-NLS-1$
             .stringProperty("handlerName", //$NON-NLS-1$
                 "BSL handler procedure name for add_form_event_handler (default derived " //$NON-NLS-1$
                     + "from the event / item).") //$NON-NLS-1$
@@ -631,35 +598,31 @@ public class EditMetadataTool implements IMcpTool
                 "Render a Label decoration / Label field as a clickable hyperlink. Default false.") //$NON-NLS-1$
             .booleanProperty("autoGenerateColumns", //$NON-NLS-1$
                 "add_table with dataPath: auto-create columns for every attribute of the " //$NON-NLS-1$
-                    + "underlying tabular section / value table. Default false.") //$NON-NLS-1$
+                    + "underlying tabular section / value table.") //$NON-NLS-1$
             .booleanProperty("overwriteModel", //$NON-NLS-1$
-                "repair_report_schema: replace a schema the model holds when it differs from the " //$NON-NLS-1$
-                    + ".dcs; the model's schema is written to a backup beside the file first. Default " //$NON-NLS-1$
-                    + "false: a differing schema is reported and left alone.") //$NON-NLS-1$
+                "repair_report_schema: replace a schema the model holds when it differs " //$NON-NLS-1$
+                    + "from the .dcs; the model's schema is written to a backup beside the file " //$NON-NLS-1$
+                    + "first. Full text: operation=help topic=parameters.") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "Preview the operation inside a BM transaction and roll back. Default false.") //$NON-NLS-1$
             .booleanProperty("confirm", //$NON-NLS-1$
-                "delete_metadata_object only: applies the deletion rather than returning a preview. " //$NON-NLS-1$
-                    + "Call once without confirm to see what would be affected, then call again with " //$NON-NLS-1$
-                    + "confirm=true to carry it out. Ignored by every other operation.") //$NON-NLS-1$
+                "delete_metadata_object only: applies the deletion rather than returning a " //$NON-NLS-1$
+                    + "preview.") //$NON-NLS-1$
             .booleanProperty("batch", //$NON-NLS-1$
-                "Run several operations from ONE call, in order, each in its own transaction. NOT atomic: a " //$NON-NLS-1$
-                + "failure partway leaves the earlier ones applied. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "Run several operations from ONE call, in order, each in its own " //$NON-NLS-1$
+                    + "transaction.") //$NON-NLS-1$
             .booleanProperty("stopOnError", //$NON-NLS-1$
-                "batch only: stop at the first failing operation instead of running the rest. " //$NON-NLS-1$
-                + "Already-committed operations are NOT rolled back. Default false.") //$NON-NLS-1$ //$NON-NLS-1$
+                "batch only: stop at the first failing operation instead of running the " //$NON-NLS-1$
+                    + "rest.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "Handle to a run already going, from a previous answer that came back " //$NON-NLS-1$
-                + "status=Pending. Re-call with it to collect that run's result; the work is not " //$NON-NLS-1$
-                + "restarted and nothing is applied twice. Without it a call is a fresh request.") //$NON-NLS-1$
+                    + "status=Pending.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "How long to wait before answering status=Pending with a runKey instead of the " //$NON-NLS-1$
-                + "result. 5 to 120, default 25. The work continues either way - this bounds the " //$NON-NLS-1$
-                + "wait, not the operation.") //$NON-NLS-1$
+                "How long to wait before answering status=Pending with a runKey instead of " //$NON-NLS-1$
+                    + "the result.") //$NON-NLS-1$
             .stringProperty("operations", //$NON-NLS-1$
-                "batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that " //$NON-NLS-1$
-                + "op's own params}. Per-item params override the inherited projectName / ownerFqn / formFqn / dryRun. Full text: operation=help " //$NON-NLS-1$
-                + "topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "batch=true payload: a JSON array of operation objects, each " //$NON-NLS-1$
+                    + "{\"operation\":<name>, ...that op's own params}.") //$NON-NLS-1$
             .build();
     }
 
@@ -2476,44 +2439,141 @@ public class EditMetadataTool implements IMcpTool
             + "not a second list of parameters.\n\n"); //$NON-NLS-1$
         sb.append("### attributeName\n\n"); //$NON-NLS-1$
         sb.append("Form attribute name for add_dynamic_list_table / add_form_attribute_column and for set_property targeting an attribute's extInfo (e.g. a DynamicList's queryText / customQuery). For add_form_attribute_column prefer parentAttributeName; attributeName is accepted as an alias.\n\n"); //$NON-NLS-1$
+        sb.append("### autoGenerateColumns\n\n"); //$NON-NLS-1$
+        sb.append("add_table with dataPath: auto-create columns for every attribute of the " //$NON-NLS-1$
+            + "underlying tabular section / value table. Default false.\n\n"); //$NON-NLS-1$
         sb.append("### batch\n\n"); //$NON-NLS-1$
         sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
         sb.append("### cascadeDependencies\n\n"); //$NON-NLS-1$
         sb.append("set_role_right: when granting (value=true), ALSO grant the rights this one REQUIRES per the platform dependency model (Update->Read, Posting->Read+Update, InteractiveInsert->Insert+View+Edit, ...) so the role stays consistent. Grant-direction only - never revokes, never over-grants (granting Read never implies Update). Auto-added prerequisites are listed in cascadedRights. Default false.\n\n"); //$NON-NLS-1$
+        sb.append("### childKind\n\n"); //$NON-NLS-1$
+        sb.append("Child kind for adopt_child: Form / Attribute / TabularSection / Template " //$NON-NLS-1$
+            + "/ Command / Dimension / Resource. Russian aliases accepted (Форма / " //$NON-NLS-1$
+            + "Реквизит / ТабличнаяЧасть / Макет / Команда / Измерение / Ресурс).\n\n"); //$NON-NLS-1$
         sb.append("### commands\n\n"); //$NON-NLS-1$
         sb.append("set_command_order: a JSON array of command FQNs/names in the desired leading order, e.g. [\"CommonCommand.X\", \"Catalog.Y.Command.Z\"]. Reorders these within the group in one transaction; commands already present but not listed keep their relative order after them.\n\n"); //$NON-NLS-1$
+        sb.append("### comment\n\n"); //$NON-NLS-1$
+        sb.append("addObjectAttribute / addTabularSectionAttribute / addRegisterField: " //$NON-NLS-1$
+            + "developer comment. Also the FormParameter comment for add_form_parameter. " //$NON-NLS-1$
+            + "Optional.\n\n"); //$NON-NLS-1$
         sb.append("### condition\n\n"); //$NON-NLS-1$
         sb.append("set_restriction_template: the RLS restriction-template condition body (referenced by object RLS via #<templateName>(...)). set_role_restriction: the ROW-LEVEL RLS condition written on targetFqn's <right> (<restrictionByCondition><condition>). Ignored by the remove_* variants. Other role content is preserved.\n\n"); //$NON-NLS-1$
+        sb.append("### confirm\n\n"); //$NON-NLS-1$
+        sb.append("delete_metadata_object only: applies the deletion rather than returning a " //$NON-NLS-1$
+            + "preview. Call once without confirm to see what would be affected, then " //$NON-NLS-1$
+            + "call again with confirm=true to carry it out. Ignored by every other " //$NON-NLS-1$
+            + "operation.\n\n"); //$NON-NLS-1$
         sb.append("### containerFqn\n\n"); //$NON-NLS-1$
         sb.append("For remove_item: FQN of the form-item container - the item (group / table / command bar) that holds the target named by `name`. For move_item: the form FQN, accepted as an alias of formFqn; the destination container is parentName (omit it to move the item to the form root) and beforeName places it in front of a named sibling.\n\n"); //$NON-NLS-1$
         sb.append("### content\n\n"); //$NON-NLS-1$
         sb.append("Plain-text content for a TextDocument (Template.txt) or HTMLDocument (Template.htmldoc) template. Used by add_template (fill on create), set_template_content (replace whole content, empty string clears), and returned by get_template_content. For SpreadsheetDocument use mxl_workshop, for DataCompositionSchema use dcs_workshop.\n\n"); //$NON-NLS-1$
+        sb.append("### disableIndices\n\n"); //$NON-NLS-1$
+        sb.append("rename_metadata_object: indices of change points to leave out, " //$NON-NLS-1$
+            + "comma-separated (taken from the dry-run list). Only skippable changes may " //$NON-NLS-1$
+            + "be turned off. Example: '2,3,5'\n\n"); //$NON-NLS-1$
         sb.append("### elementType\n\n"); //$NON-NLS-1$
         sb.append("Element subtype: add_field (InputField / CheckBox / RadioButton / Label / Image / SpreadSheetDocument / HTMLDocument / TextDocument / FormattedDocument / Calendar / ProgressBar / TrackBar / Period / Planner / PDFDocument / Chart / GanttChart / Dendrogram / Flowchart / GeographicalMap); add_group (UsualGroup / Pages / Page / Column / CommandBar / ButtonGroup / Popup); add_decoration (Label / Picture).\n\n"); //$NON-NLS-1$
         sb.append("### event\n\n"); //$NON-NLS-1$
         sb.append("Event name. set_event_subscription: a platform event (BeforeWrite / OnWrite / BeforeDelete / Filling / Posting / UndoPosting; free string, soft-validated - an unknown value is set with a warning, not rejected). add_form_event_handler / set_form_event_handler: a form event name (OnOpen, BeforeWrite; Russian ПриОткрытии / ПередЗаписью accepted).\n\n"); //$NON-NLS-1$
         sb.append("### fillChecking\n\n"); //$NON-NLS-1$
         sb.append("addObjectAttribute / addTabularSectionAttribute / addRegisterField: fill-check mode. DontCheck | ShowError. Applied in the same call (1 call instead of a follow-up setObjectProperty) where the field kind supports the property; unsupported ones surface in failedProperties. Optional.\n\n"); //$NON-NLS-1$
+        sb.append("### formName\n\n"); //$NON-NLS-1$
+        sb.append("Form name for createForm. Falls back to `name` when omitted. For a " //$NON-NLS-1$
+            + "CommonForm pass ownerFqn=CommonForm.<Name> (or ownerFqn=CommonForm + " //$NON-NLS-1$
+            + "formName=<Name>) - it is created as a top-level common form, not attached " //$NON-NLS-1$
+            + "to a Forms collection.\n\n"); //$NON-NLS-1$
+        sb.append("### formFqn\n\n"); //$NON-NLS-1$
+        sb.append("FQN of the form for form operations (e.g. Catalog.Users.Form.ItemForm, " //$NON-NLS-1$
+            + "CommonForm.X.Form). Used by add_form_attribute / add_form_parameter / " //$NON-NLS-1$
+            + "add_field / ...\n\n"); //$NON-NLS-1$
         sb.append("### group\n\n"); //$NON-NLS-1$
         sb.append("set_command_placement: the target command-interface group. Either a friendly name - Important / Normal / SeeAlso / Create / Reports / Service - a bare or StandardCommandGroup.-prefixed platform token (NavigationPanelImportant / NavigationPanelOrdinary / NavigationPanelSeeAlso / ActionsPanelCreate / ActionsPanelReports / ActionsPanelTools), or a custom group FQN CommandGroup.<name>. set_command_order: same group selection (one group, reordered).\n\n"); //$NON-NLS-1$
+        sb.append("### namespace\n\n"); //$NON-NLS-1$
+        sb.append("create_web_service: XML URI namespace (e.g. " //$NON-NLS-1$
+            + "'http://example.com/myservice'). Required - platform rejects empty " //$NON-NLS-1$
+            + "namespaces.\n\n"); //$NON-NLS-1$
+        sb.append("### listMode\n\n"); //$NON-NLS-1$
+        sb.append("set_object_property on a list-shaped property: replace (default), add, " //$NON-NLS-1$
+            + "remove, clear. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
+            + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
+            + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
+            + "usedMobileApplicationFunctionalities.\n\n"); //$NON-NLS-1$
+        sb.append("### isFolder\n\n"); //$NON-NLS-1$
+        sb.append("add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
+            + "ChartOfCharacteristicTypes only). Default false. Optional.\n\n"); //$NON-NLS-1$
+        sb.append("### indexing\n\n"); //$NON-NLS-1$
+        sb.append("addObjectAttribute / addTabularSectionAttribute / addRegisterField: index " //$NON-NLS-1$
+            + "mode. DontIndex | Index | IndexWithAdditionalOrder. Optional.\n\n"); //$NON-NLS-1$
         sb.append("### operations\n\n"); //$NON-NLS-1$
         sb.append("batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that op's params}. Per-item params override the inherited projectName / ownerFqn / formFqn / dryRun. Numbers may be JSON numbers or strings. Example - a whole Catalog in one call with outer ownerFqn=Catalog.X: [{\"operation\":\"create_object\",\"objectType\":\"Catalog\",\"name\":\"X\"},{\"operation\":\"add_object_attribute\",\"name\":\"Сумма\",\"type\":\"Number\",\"precision\":15,\"fractionDigits\":2,\"fillChecking\":\"ShowError\"},{\"operation\":\"add_tabular_section\",\"name\":\"Строки\"},{\"operation\":\"add_tabular_section_attribute\",\"tabularSectionName\":\"Строки\",\"name\":\"Товар\",\"type\":\"CatalogRef.Номенклатура\"},{\"operation\":\"create_form\",\"purpose\":\"ListForm\",\"formName\":\"ФормаСписка\"}].\n\n"); //$NON-NLS-1$
         sb.append("### order\n\n"); //$NON-NLS-1$
         sb.append("add_predefined_item (ChartOfAccounts): account display order. set_command_placement: 0-based target position within the group (applied to both the CommandsPlacement fragment and, only when given, the separate CommandsOrder overlay); omit to just append/leave the command's position untouched and skip CommandsOrder entirely. Optional.\n\n"); //$NON-NLS-1$
+        sb.append("### overwriteModel\n\n"); //$NON-NLS-1$
+        sb.append("repair_report_schema: replace a schema the model holds when it differs " //$NON-NLS-1$
+            + "from the .dcs; the model's schema is written to a backup beside the file " //$NON-NLS-1$
+            + "first. Default false: a differing schema is reported and left alone.\n\n"); //$NON-NLS-1$
         sb.append("### ownerFqn\n\n"); //$NON-NLS-1$
         sb.append("FQN of the owning metadata object for object/attribute/TC operations. For set_object_property / set_object_type / set_object_reference it may address a child element (Type.Name.Kind.Child, e.g. Task.X.AddressingAttribute.Y) to target that child rather than the top-level object. set_command_placement: Configuration (main section) or Subsystem.<name>.\n\n"); //$NON-NLS-1$
+        sb.append("### parentPath\n\n"); //$NON-NLS-1$
+        sb.append("add_settings_group: the group to nest the new one inside, as " //$NON-NLS-1$
+            + "dot-separated group names. Omitted means the root of the structure; an " //$NON-NLS-1$
+            + "unnamed group is addressed by its position at its level, as [0].\n\n"); //$NON-NLS-1$
+        sb.append("### parentName\n\n"); //$NON-NLS-1$
+        sb.append("Parent container name for add_field / add_group / add_button / add_table " //$NON-NLS-1$
+            + "/ add_decoration (default: form root). A button targeted at a table is " //$NON-NLS-1$
+            + "auto-placed in the table's command bar.\n\n"); //$NON-NLS-1$
+        sb.append("### parentFqn\n\n"); //$NON-NLS-1$
+        sb.append("add_metadata_attribute: the object the attribute is added to, for example " //$NON-NLS-1$
+            + "'Catalog.Products' or 'Document.SalesOrder'. Type names may be given in " //$NON-NLS-1$
+            + "Russian. A register field, which carries a kind and a type, is added by " //$NON-NLS-1$
+            + "add_register_field instead.\n\n"); //$NON-NLS-1$
         sb.append("### points\n\n"); //$NON-NLS-1$
         sb.append("create_route_map: JSON array of route points, laid out top to bottom. Each object: {\"type\":Start|Action|Condition|Completion|NestedBusinessProcess, \"name\":<unique>, \"title\"?, \"taskDescription\"? (Action/Nested), \"subprocess\"? (Nested = a BusinessProcess FQN)}. Action points auto-carry the linked Task's addressing attributes. Points are laid out top to bottom in array order - declare a shared target (e.g. a common Completion) after its sources for cleaner connectors. Needs exactly one Start and at least one Completion.\n\n"); //$NON-NLS-1$
+        sb.append("### properties\n\n"); //$NON-NLS-1$
+        sb.append("create_object: a JSON object of property name to value, applied to the " //$NON-NLS-1$
+            + "new object before it joins the configuration - e.g. " //$NON-NLS-1$
+            + "{\"methodName\":\"CommonModule.A.B\",\"use\":false} on a ScheduledJob. A " //$NON-NLS-1$
+            + "property the object's type does not have is refused and NOTHING is " //$NON-NLS-1$
+            + "created. A property given both here and as its own argument must carry " //$NON-NLS-1$
+            + "the same value.\n\n"); //$NON-NLS-1$
         sb.append("### property\n\n"); //$NON-NLS-1$
         sb.append("Reference property name. For add_object_reference / remove_object_reference it is a LIST-valued reference (registerRecords on a Document = its movements, owners on a Catalog, basedOn, baseCalculationTypes on a ChartOfCalculationTypes; also registeredDocuments on a DocumentJournal, and documents / registerRecords on a Sequence - each takes a top-level object FQN in valueFqn). For set_object_reference / clear_object_reference it is a SCALAR reference (e.g. extDimensionTypes on a ChartOfAccounts = a ChartOfCharacteristicTypes; addressing / currentPerformer on a Task; mainAddressingAttribute on a Task = a child AddressingAttribute).\n\n"); //$NON-NLS-1$
         sb.append("### propertyName\n\n"); //$NON-NLS-1$
         sb.append("Property name for setObjectProperty (coerced from propertyValue: enum literals, booleans, localized synonym / toolTip). Special: propertyName=fillValue builds a type-aware default value - propertyValue is Boolean (true/false) / Number / String per the attribute's type, empty or 'Undefined' clears it (Date / reference defaults not supported). Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y). Special: a list-shaped property takes listMode - replace (default), add, remove, clear - and a JSON propertyValue. On the configuration root (ownerFqn=Configuration) those are usePurposes and requiredMobileApplicationPermissions (arrays of literals), requiredMobileApplicationPermissions8315 (array of {permission,use,description}) and usedMobileApplicationFunctionalities (an object naming its inner lists functionality and permissionMessage). A description is a string or an object of language to text. Every element is checked before anything is written, and dryRun answers with wouldWrite in the property's own shape.\n\n"); //$NON-NLS-1$
+        sb.append("### propertyValue\n\n"); //$NON-NLS-1$
+        sb.append("Property value for setObjectProperty (string; coerced to setter type). " //$NON-NLS-1$
+            + "For a list-shaped property it is JSON: an array of literals, an array of " //$NON-NLS-1$
+            + "objects, or an object naming inner lists.\n\n"); //$NON-NLS-1$
         sb.append("### purpose\n\n"); //$NON-NLS-1$
         sb.append("create_form: form purpose driving the EDT form generator (renderable form with main attribute + default layout). Values: ItemForm/ObjectForm (OBJECT), ListForm (LIST), ChoiceForm (CHOICE), FolderForm (FOLDER), FolderChoiceForm (FOLDER_CHOICE), RecordSetForm (RECORD_SET), RecordForm (RECORD), Generic (GENERIC); RU synonyms accepted. When omitted the purpose is derived from the owner type and the form name (object-owning types -> OBJECT, registers -> RECORD_SET, a 'Список'/'List' name -> LIST, a 'Выбор'/'Choice' name -> CHOICE, DataProcessor/Report and ExternalDataProcessor/ExternalReport -> OBJECT (main form, Объект attr; pass purpose=Generic for a custom empty form), CommonForm -> GENERIC). Optional. Ignored for ORDINARY forms and when the generator is unavailable (the form is then created empty).\n\n"); //$NON-NLS-1$
+        sb.append("### reuseSessions\n\n"); //$NON-NLS-1$
+        sb.append("create_http_service: reuse HTTP sessions across requests. Maps to the " //$NON-NLS-1$
+            + "platform SessionReuseMode enum - true -> Use, false -> DontUse; omitted " //$NON-NLS-1$
+            + "leaves the platform default (AutoUse is not exposed by this boolean).\n\n"); //$NON-NLS-1$
+        sb.append("### returningValueTypeNs\n\n"); //$NON-NLS-1$
+        sb.append("add_web_service_operation: namespace URI for returningValueType when " //$NON-NLS-1$
+            + "given as a bare local name. Default 'http://www.w3.org/2001/XMLSchema'. " //$NON-NLS-1$
+            + "Optional.\n\n"); //$NON-NLS-1$
         sb.append("### rightName\n\n"); //$NON-NLS-1$
         sb.append("set_role_right / set_role_restriction: the access right on targetFqn (Read / Insert / Update / Delete / View / Edit / ...; Russian Чтение / Добавление / Изменение / Удаление / Просмотр / Редактирование accepted - normalized to the platform right name).\n\n"); //$NON-NLS-1$
         sb.append("### role\n\n"); //$NON-NLS-1$
         sb.append("Optional Role FQN (e.g. Role.FullAccess) for set_subsystem_visibility / set_main_section_command_visibility / set_subsystem_command_visibility: sets ONE role's per-role visibility (AdjustableBoolean.getFor()) instead of the common value. Omit to set the common (role-independent) value.\n\n"); //$NON-NLS-1$
+        sb.append("### standardCommand\n\n"); //$NON-NLS-1$
+        sb.append("Bind an add_button to a platform stock command (PostAndClose / Write / " //$NON-NLS-1$
+            + "Refresh / ...). Rejected on DataProcessor / ExternalReport forms.\n\n"); //$NON-NLS-1$
+        sb.append("### server\n\n"); //$NON-NLS-1$
+        sb.append("create_object CommonModule: the Server context. Defaults to true when no " //$NON-NLS-1$
+            + "context is given - the common-module-type check requires one.\n\n"); //$NON-NLS-1$
+        sb.append("### scanLeftovers\n\n"); //$NON-NLS-1$
+        sb.append("rename_metadata_object: once the rename is confirmed, comb BSL modules " //$NON-NLS-1$
+            + "for whole-word plain-text traces of the FORMER name (string literals / " //$NON-NLS-1$
+            + "query text / comments) that the semantic refactoring leaves untouched. " //$NON-NLS-1$
+            + "Default true; listed as items to review by hand.\n\n"); //$NON-NLS-1$
+        sb.append("### runKey\n\n"); //$NON-NLS-1$
+        sb.append("Handle to a run already going, from a previous answer that came back " //$NON-NLS-1$
+            + "status=Pending. Re-call with it to collect that run's result; the work is " //$NON-NLS-1$
+            + "not restarted and nothing is applied twice. Without it a call is a fresh " //$NON-NLS-1$
+            + "request.\n\n"); //$NON-NLS-1$
         sb.append("### stopOnError\n\n"); //$NON-NLS-1$
         sb.append("batch only. When true, stop at the first failing operation instead of running the rest; the operations that did not run are listed in batchResults with skipped=true. Already-committed ops are NOT rolled back. Default false (run every op, recording each failure).\n\n"); //$NON-NLS-1$
         sb.append("### subsystem\n\n"); //$NON-NLS-1$
@@ -2524,10 +2584,34 @@ public class EditMetadataTool implements IMcpTool
         sb.append("Synonym for create_object / add_object_attribute / add_tabular_section_attribute / add_register_field (Dimension/Resource/Attribute) / add_addressing_attribute / add_accounting_flag / add_ext_dimension_accounting_flag / add_recalculation (optional). When omitted it is auto-generated from the name like the EDT wizard (СуммаДокумента -> 'Сумма документа', АдресЭП -> 'Адрес ЭП'). Configuration.namePrefix (ВТ_, ПСБ_, ...) is stripped before generation - pass synonym explicitly to override. MULTI-LANGUAGE: pass a JSON object keyed by language code to set several languages at once - {\"ru\":\"Контрагент\",\"en\":\"Counterparty\"}. The object REPLACES the whole synonym map (one entry per code). A plain string sets the default language only.\n\n"); //$NON-NLS-1$
         sb.append("### targetFqn\n\n"); //$NON-NLS-1$
         sb.append("Full child-FQN for adopt_* operations (alias of objectFqn). Examples: Catalog.Users, Catalog.Users.Form.UserForm, Document.Order.Attribute.Total. When omitted, adopt_child / adopt_form_item compose the FQN from ownerFqn + childKind + name. Also: set_role_right / set_role_restriction - the metadata object the right / RLS condition is set on (e.g. Catalog.Goods).\n\n"); //$NON-NLS-1$
+        sb.append("### transitions\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map: JSON array of transitions. Each object: " //$NON-NLS-1$
+            + "{\"from\":<point name>, \"to\":<point name>, \"branch\"? = true|false " //$NON-NLS-1$
+            + "(REQUIRED when 'from' is a Condition; yes/no, да/нет accepted), " //$NON-NLS-1$
+            + "\"title\"?}.\n\n"); //$NON-NLS-1$
+        sb.append("### toolTip\n\n"); //$NON-NLS-1$
+        sb.append("addObjectAttribute / addTabularSectionAttribute / addRegisterField: " //$NON-NLS-1$
+            + "tooltip text (localized, stored under 'ru'). Optional.\n\n"); //$NON-NLS-1$
+        sb.append("### timeoutSeconds\n\n"); //$NON-NLS-1$
+        sb.append("How long to wait before answering status=Pending with a runKey instead of " //$NON-NLS-1$
+            + "the result. 5 to 120, default 25. The work continues either way - this " //$NON-NLS-1$
+            + "bounds the wait, not the operation.\n\n"); //$NON-NLS-1$
+        sb.append("### templateName\n\n"); //$NON-NLS-1$
+        sb.append("Template name. For addTemplate: the metadata Template name (falls back to " //$NON-NLS-1$
+            + "`name` when omitted). For set_restriction_template / " //$NON-NLS-1$
+            + "remove_restriction_template: the RLS restriction-template name (required, " //$NON-NLS-1$
+            + "no fallback; matched case-insensitively).\n\n"); //$NON-NLS-1$
         sb.append("### type\n\n"); //$NON-NLS-1$
         sb.append("Type for addObjectAttribute / addTabularSectionAttribute / setObjectType. Primitives: String / Number / Date / Boolean / UUID. References: CatalogRef.X / DocumentRef.X / EnumRef.X / DefinedType.X. Composite: list the types comma-separated in one string, e.g. 'CatalogRef.A,DocumentRef.B' - this works when creating the attribute, so there is no need to create it single-typed and widen it afterwards. TypeDescription qualifiers (length / precision / fractionDigits / nonNegative / dateFractions / allowedLength) are wired as separate parameters. Defaults: Number precision=10 / fractionDigits=0, Date dateFractions=Date, String length=0 (unlimited).\n\n"); //$NON-NLS-1$
+        sb.append("### urlTemplate\n\n"); //$NON-NLS-1$
+        sb.append("create_http_service / add_url_template: URL pattern with leading slash " //$NON-NLS-1$
+            + "(e.g. '/clients/{id}'). Default = '/<urlTemplateName>'. Bare '/' is " //$NON-NLS-1$
+            + "rejected by platform validator.\n\n"); //$NON-NLS-1$
         sb.append("### valueFqn\n\n"); //$NON-NLS-1$
         sb.append("FQN of the referenced object. For add_object_reference / remove_object_reference a top-level object (e.g. AccumulationRegister.Sales for registerRecords). For set_object_reference the single target: a top-level object OR a child object (Type.Name.Kind.Child, e.g. Task.X.AddressingAttribute.Y for mainAddressingAttribute); omit for clear_object_reference. Also the content target for add/remove_exchange_plan_content (ownerFqn=ExchangePlan.X), add/remove_common_attribute_content (ownerFqn=CommonAttribute.X), add/remove_functional_option_content (ownerFqn=FunctionalOption.X for the controlled object/attribute e.g. Document.X.Attribute.Y, or ownerFqn=FunctionalOptionsParameter.X for a use-list object e.g. Catalog.Y), and add/remove_subsystem_content (ownerFqn=Subsystem.X; the 'name'/'targetFqn' params are aliases for this value).\n\n"); //$NON-NLS-1$
+        sb.append("### valueTypeNs\n\n"); //$NON-NLS-1$
+        sb.append("add_operation_parameter: namespace URI for valueType when given as a bare " //$NON-NLS-1$
+            + "local name. Default 'http://www.w3.org/2001/XMLSchema'. Optional.\n\n"); //$NON-NLS-1$
         sb.append("### visible\n\n"); //$NON-NLS-1$
         sb.append("set_subsystem_visibility / set_main_section_command_visibility / set_subsystem_command_visibility: true shows, false hides. Sets the common (role-independent) value; true reverts a plain hide-override back to the default. Per-role visibility exceptions are preserved. When `role` is given, sets that one role's per-role value instead of the common one.\n\n"); //$NON-NLS-1$
         return sb.toString();

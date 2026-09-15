@@ -470,11 +470,22 @@ public class MetadataObjectDeleter implements IMcpTool
             // the object was gone and its files were still there for the next export to pick up.
             String leftOver = whatIsLeftOnDisk(project, objectFqn);
             String stillHeld = whatTheOwnerStillHolds(project, objectFqn);
+            String removed = null;
+            if (leftOver != null && stillHeld == null && hasItsOwnResource(objectFqn))
+            {
+                removed = removeOrphanedResource(project, leftOver);
+                leftOver = whatIsLeftOnDisk(project, objectFqn);
+            }
             if (leftOver == null && stillHeld == null)
             {
-                return ToolResult.success()
+                ToolResult done = ToolResult.success()
                     .put("action", "executed") //$NON-NLS-1$ //$NON-NLS-2$
-                    .put("objectFqn", objectFqn) //$NON-NLS-1$
+                    .put("objectFqn", objectFqn); //$NON-NLS-1$
+                if (removed != null)
+                {
+                    done.put("removedAfterRefactoring", removed); //$NON-NLS-1$
+                }
+                return done
                     .put("message", "The delete refactoring finished. Nothing is left under this " //$NON-NLS-1$ //$NON-NLS-2$
                         + "address: no resource of its own on disk, and the model no longer " //$NON-NLS-1$
                         + "resolves it.") //$NON-NLS-1$
@@ -533,6 +544,40 @@ public class MetadataObjectDeleter implements IMcpTool
                     .toJson();
             }
             return ToolResult.error("Deletion failed: " + TextSuggest.safeMessage(e)).toJson(); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Removes the directory or file a deleted child left behind.
+     * <p>
+     * Called only once the model says the child is gone, and only for a child with a resource of its
+     * own, so what is removed is an orphan of the deletion that was asked for. EDT's refactoring
+     * takes the whole directory of a table or a text template and leaves the one of an HTML document
+     * where it is, content file included - and an export then writes that back into the
+     * configuration as an object the model no longer has.
+     * </p>
+     *
+     * @param project the project it sits in
+     * @param workspacePath the leftover path, as {@link #whatIsLeftOnDisk} reported it
+     * @return the path that was removed, or <code>null</code> when nothing could be
+     */
+    private static String removeOrphanedResource(IProject project, String workspacePath)
+    {
+        IResource orphan = project.getWorkspace().getRoot().findMember(new Path(workspacePath));
+        if (orphan == null || !orphan.exists())
+        {
+            return null;
+        }
+        try
+        {
+            orphan.delete(true, null);
+            return workspacePath;
+        }
+        catch (CoreException held)
+        {
+            // Left for the caller to see in filesLeftOnDisk, with the refusal that follows.
+            Activator.logDebug("Removing the orphaned " + workspacePath + " failed: " + held); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
         }
     }
 

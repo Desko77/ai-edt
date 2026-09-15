@@ -40,7 +40,7 @@ public class EveryFacadeAnswersAboutItsOwnOperationsTest
     private static final Pattern CATALOGUED = Pattern.compile("\\*\\*([a-z0-9_]+)\\*\\*");
 
     /** How many tools answer a catalogue of their own operations. Counted, not estimated. */
-    private static final int EXPECTED_FACADES = 10;
+    private static final int EXPECTED_FACADES = 11;
 
     private McpToolCatalog registry;
 
@@ -76,14 +76,22 @@ public class EveryFacadeAnswersAboutItsOwnOperationsTest
         }
     }
 
-    /** Facades, recognised by answering their own catalogue to `operation=help`. */
+    /**
+     * Facades, recognised by answering a catalogue headed with their own name.
+     * <p>
+     * The heading used to have to read exactly "name - operations", and `edit_metadata` heads its
+     * catalogue with its name alone - so the tool with the largest catalogue of all was not swept,
+     * and the count of facades was short by it.
+     * </p>
+     */
     private static List<IMcpTool> facades(McpToolCatalog registry)
     {
         List<IMcpTool> found = new ArrayList<>();
         for (IMcpTool tool : registry.getAllTools())
         {
             String catalogue = help(tool, null);
-            if (catalogue != null && catalogue.contains(tool.getName() + " - operations"))
+            if (catalogue != null && catalogue.contains("# " + tool.getName())
+                && CATALOGUED.matcher(catalogue).find())
             {
                 found.add(tool);
             }
