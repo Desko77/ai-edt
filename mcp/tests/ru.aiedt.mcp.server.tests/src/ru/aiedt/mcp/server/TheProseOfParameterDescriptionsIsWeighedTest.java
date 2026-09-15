@@ -175,7 +175,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     static
     {
         PROSE.put("edit_metadata", Integer.valueOf(12715));
-        PROSE.put("compare_three_way", Integer.valueOf(7967));
+        PROSE.put("compare_three_way", Integer.valueOf(3558));
         PROSE.put("insights", Integer.valueOf(5393));
         PROSE.put("dcs_workshop", Integer.valueOf(5176));
         PROSE.put("write_module_source", Integer.valueOf(4985));
@@ -223,5 +223,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     }
 
     /** The whole document's parameter prose, from the same run. */
-    private static final int DOCUMENT_PROSE = 89547;
+    private static final int DOCUMENT_PROSE = 85138;
 }

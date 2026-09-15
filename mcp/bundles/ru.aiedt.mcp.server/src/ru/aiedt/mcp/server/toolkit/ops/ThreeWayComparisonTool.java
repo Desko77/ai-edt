@@ -7,6 +7,8 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -121,6 +123,116 @@ public class ThreeWayComparisonTool
             + "against them are reported."; //$NON-NLS-1$
     }
 
+    /**
+     * What each parameter carries beyond the sentence in its schema.
+     * <p>
+     * Every client holds the schema for the whole conversation, so the schema names the values and
+     * says what the parameter is for in one sentence. When a mode refuses, what it does to each
+     * group of objects, what a measurement showed - that is answered when {@code help=parameters}
+     * asks for it. The two texts continue each other rather than repeating.
+     * </p>
+     */
+    private static final Map<String, String> PARAMETER_RULES = buildParameterRules();
+
+    /**
+     * Builds the rules map.
+     *
+     * @return parameter name to the rules its description no longer carries
+     */
+    private static Map<String, String> buildParameterRules()
+    {
+        Map<String, String> rules = new LinkedHashMap<>();
+        rules.put("intent", "MERGE applies the decisions to the project - IRREVERSIBLE. The " //$NON-NLS-1$
+            + "environment validates first and stops before writing when it raises a " //$NON-NLS-1$
+            + "blocking problem; merged says what actually happened, not what was " //$NON-NLS-1$
+            + "asked for. MERGE_IGNORING_PROBLEMS proceeds past those problems; it " //$NON-NLS-1$
+            + "is a separate value and not a flag, because overriding the " //$NON-NLS-1$
+            + "environment's own objection should not share a word with ordinary " //$NON-NLS-1$
+            + "merging. A merge needs decisions: without them there is nothing to " //$NON-NLS-1$
+            + "apply. UPDATE_UNCHANGED is the exception - it takes the delivery " //$NON-NLS-1$
+            + "whole and needs no decisions, and is refused unless the comparison is " //$NON-NLS-1$
+            + "three-sided, finished, and found nothing changed here, on both sides, " //$NON-NLS-1$
+            + "or unattributed. The tool checks that itself rather than trusting the " //$NON-NLS-1$
+            + "caller, and names the counts when it refuses. UPDATE_KEEPING_OURS is " //$NON-NLS-1$
+            + "the ordinary update on support, and it treats three groups " //$NON-NLS-1$
+            + "differently. Objects only the delivery changed take the rule the " //$NON-NLS-1$
+            + "environment proposes. Objects only this side reworked are held at " //$NON-NLS-1$
+            + "DO_NOT_MERGE and read back to confirm it. Objects BOTH sides changed " //$NON-NLS-1$
+            + "are merged with the delivery in front - contested lines resolve " //$NON-NLS-1$
+            + "toward it while methods only this side has stay - and are counted in " //$NON-NLS-1$
+            + "mergedWithDelivery. An object that will not take that merge is held " //$NON-NLS-1$
+            + "instead and named in deliveryNotApplied, because for it the " //$NON-NLS-1$
+            + "delivery's change does NOT arrive. This applies only with " //$NON-NLS-1$
+            + "methodLevel=true, where a decision can reach a method. WITHOUT it the " //$NON-NLS-1$
+            + "comparison stops at the object, nothing can promise a method only " //$NON-NLS-1$
+            + "this side has would survive, and such an object is HELD instead - the " //$NON-NLS-1$
+            + "delivery's change to it does not arrive and is named in " //$NON-NLS-1$
+            + "deliveryNotApplied, together with the call that decides it method by " //$NON-NLS-1$
+            + "method. Measured: same material and scope, the flag the only " //$NON-NLS-1$
+            + "difference - with it the customisation survived, without it it was " //$NON-NLS-1$
+            + "lost. Putting the delivery in front does NOT guarantee that work only " //$NON-NLS-1$
+            + "this side had survives: where the delivery rewrote the whole of an " //$NON-NLS-1$
+            + "object there is nothing of ours left to interleave, and that was " //$NON-NLS-1$
+            + "measured on a real update. So every object both sides changed is read " //$NON-NLS-1$
+            + "after the merge and compared with the delivery's copy; the ones that " //$NON-NLS-1$
+            + "came out identical to it are named in ourContentLost, and the ones " //$NON-NLS-1$
+            + "that could not be read either side in ourContentUnchecked. It refuses " //$NON-NLS-1$
+            + "outright when an object of ours could not be held at all, because " //$NON-NLS-1$
+            + "merging then would overwrite named work."); //$NON-NLS-1$
+        rules.put("scope", "Omit to compare the whole configuration, which on a real one means " //$NON-NLS-1$
+            + "minutes and a tree of some two hundred thousand nodes. The " //$NON-NLS-1$
+            + "environment adds what the named objects cannot be compared without, " //$NON-NLS-1$
+            + "and the additions come back in scopeExtendedBy. A name the " //$NON-NLS-1$
+            + "environment does not recognise is reported in scopeUnrecognised " //$NON-NLS-1$
+            + "rather than dropped: a scope of misspelled names compares nothing and " //$NON-NLS-1$
+            + "would otherwise answer that there are no differences. An object " //$NON-NLS-1$
+            + "renamed between the two sides cannot be scoped - it is called one " //$NON-NLS-1$
+            + "thing here and another in the delivery - so compare the whole " //$NON-NLS-1$
+            + "configuration for those. With a scope the answer also carries " //$NON-NLS-1$
+            + "closureAdds: what the named objects cannot be carried without, " //$NON-NLS-1$
+            + "followed outward through every reference the model records, " //$NON-NLS-1$
+            + "transitively, cycles visited once. closureBlindSpots names what a " //$NON-NLS-1$
+            + "reference walk structurally cannot find - metadata named as a string " //$NON-NLS-1$
+            + "in code, inside a query or a template - and it is never omitted."); //$NON-NLS-1$
+        rules.put("decisions", "An entry names one object - {\"object\":\"...\",\"rule\":\"...\"} - " //$NON-NLS-1$
+            + "or a whole class of them - " //$NON-NLS-1$
+            + "{\"select\":\"matching\",\"rule\":\"...\"}, which covers every object " //$NON-NLS-1$
+            + "the filter arguments matched, so changedBy=OURS with select=matching " //$NON-NLS-1$
+            + "is one call instead of thousands. The rule each object ends up " //$NON-NLS-1$
+            + "carrying is read back from the comparison, and the ones that did not " //$NON-NLS-1$
+            + "take are named in massRefused and massMismatched. The object is named " //$NON-NLS-1$
+            + "as this tool names it in changed; the rule is one of GET_FROM_OTHER, " //$NON-NLS-1$
+            + "DO_NOT_MERGE, MERGE_PRIORITIZING_MAIN, MERGE_PRIORITIZING_OTHER, " //$NON-NLS-1$
+            + "MERGE_USING_EXTERNAL_TOOL. CUSTOM_MERGE is refused: it composes the " //$NON-NLS-1$
+            + "result in the merge editor, and measured from here it is accepted, " //$NON-NLS-1$
+            + "reports success and changes nothing. Recorded on the comparison, and " //$NON-NLS-1$
+            + "applied only when intent says to."); //$NON-NLS-1$
+        rules.put("methodLevel", "Off by default: telling a module apart piece by piece is more tree to " //$NON-NLS-1$
+            + "build and to walk. comparedInMs comes back either way, so the cost is " //$NON-NLS-1$
+            + "measurable. Each piece comes back in sections with its full name - " //$NON-NLS-1$
+            + "CommonModule.X.Module.MethodName - its own attribution, and the kind " //$NON-NLS-1$
+            + "of node the environment made it. A decision may be addressed at one " //$NON-NLS-1$
+            + "of those names, which is how one method is decided about without " //$NON-NLS-1$
+            + "touching its neighbours."); //$NON-NLS-1$
+        rules.put("report", "Built from the same numbers as the fields beside it, so the two " //$NON-NLS-1$
+            + "cannot disagree."); //$NON-NLS-1$
+        rules.put("ignoreOriginMismatch", "Off by default: an ancestor from another configuration inverts every " //$NON-NLS-1$
+            + "changedBy in the answer without failing. Legitimate cases exist - a " //$NON-NLS-1$
+            + "renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
+            + "then reported in originMismatches rather than swallowed."); //$NON-NLS-1$
+        rules.put("closeSession", "Off by default: a comparison of a real configuration takes minutes, " //$NON-NLS-1$
+            + "and walking what changed a page at a time would otherwise pay that " //$NON-NLS-1$
+            + "cost per page. An open comparison expires by itself after 20 idle " //$NON-NLS-1$
+            + "minutes."); //$NON-NLS-1$
+        rules.put("decisionsFrom", "This is how work decided by eye comes back to be carried out."); //$NON-NLS-1$
+        rules.put("parentId", "Required when the project descends from more than one - with several " //$NON-NLS-1$
+            + "vendors the check is refused rather than guessed."); //$NON-NLS-1$
+        rules.put("offset", "Default 0. With limit this walks the whole set: a real update runs to " //$NON-NLS-1$
+            + "tens of thousands of changed objects and one page names at most 500 " //$NON-NLS-1$
+            + "of them."); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
+    }
+
     @Override
     public String getInputSchema()
     {
@@ -132,35 +244,25 @@ public class ThreeWayComparisonTool
                     + "every call except help.") //$NON-NLS-1$
             .stringProperty("parentId", //$NON-NLS-1$
                 "Which vendor configuration of the project the deliveries are measured " //$NON-NLS-1$
-                    + "against, by id or by name. Required when the project descends from " //$NON-NLS-1$
-                    + "more than one - with several vendors the check is refused rather " //$NON-NLS-1$
-                    + "than guessed.") //$NON-NLS-1$
+                    + "against, by id or by name. Required when the project descends from more " //$NON-NLS-1$
+                    + "than one.") //$NON-NLS-1$
             .stringProperty("ancestorPath", //$NON-NLS-1$
                 "Directory holding the common ancestor (COMMON_ANCESTOR). Omit for a two-sided " //$NON-NLS-1$
                     + "comparison.") //$NON-NLS-1$
             .stringProperty("decisions", //$NON-NLS-1$
-                "What to do with objects, as a JSON array. An entry names one object - " //$NON-NLS-1$
-                    + "{\"object\":\"...\",\"rule\":\"...\"} - or a whole class of them - " //$NON-NLS-1$
-                    + "{\"select\":\"matching\",\"rule\":\"...\"}, which covers every object " //$NON-NLS-1$
-                    + "the filter arguments matched, so changedBy=OURS with select=matching is " //$NON-NLS-1$
-                    + "one call instead of thousands. The rule each object ends up carrying is " //$NON-NLS-1$
-                    + "read back from the comparison, and the ones that did not take are named " //$NON-NLS-1$
-                    + "in massRefused and massMismatched. The object is named as this tool " //$NON-NLS-1$
-                    + "names it in changed; " //$NON-NLS-1$
-                    + "the rule is one of GET_FROM_OTHER, DO_NOT_MERGE, MERGE_PRIORITIZING_MAIN, " //$NON-NLS-1$
-                    + "MERGE_PRIORITIZING_OTHER, MERGE_USING_EXTERNAL_TOOL. CUSTOM_MERGE is " //$NON-NLS-1$
-                    + "refused: it composes the result in the merge editor, and measured from " //$NON-NLS-1$
-                    + "here it is accepted, reports success and changes nothing. " //$NON-NLS-1$
-                    + "Recorded on the comparison, and applied only when intent says to.") //$NON-NLS-1$
+                "What to do with objects, as a JSON array: {\"object\":...,\"rule\":...} or " //$NON-NLS-1$
+                    + "{\"select\":\"matching\",\"rule\":...}. Rules: GET_FROM_OTHER, DO_NOT_MERGE, " //$NON-NLS-1$
+                    + "MERGE_PRIORITIZING_MAIN, MERGE_PRIORITIZING_OTHER, " //$NON-NLS-1$
+                    + "MERGE_USING_EXTERNAL_TOOL. CUSTOM_MERGE is refused - it composes the " //$NON-NLS-1$
+                    + "result in the merge editor. The rule each object ends up carrying is " //$NON-NLS-1$
+                    + "read back from the comparison.") //$NON-NLS-1$
             .stringProperty("decisionsPath", //$NON-NLS-1$
                 "Absolute path to write the recorded decisions to, in the format EDT reads back " //$NON-NLS-1$
                     + "when a person runs the merge. Must end in .zip. Without it the decisions " //$NON-NLS-1$
                     + "die with the comparison.") //$NON-NLS-1$
             .stringProperty("decisionsFrom", //$NON-NLS-1$
-                "Absolute path to a settings file (.zip) written earlier - by this tool or by a " //$NON-NLS-1$
-                    + "person in EDT - whose decisions and hand-made object correspondences are " //$NON-NLS-1$
-                    + "applied to this comparison before anything else. This is how work decided " //$NON-NLS-1$
-                    + "by eye comes back to be carried out.") //$NON-NLS-1$
+                "Absolute path to a settings file (.zip) written earlier, whose decisions " //$NON-NLS-1$
+                    + "and object correspondences are applied before anything else.") //$NON-NLS-1$
             .stringProperty("changedBy", //$NON-NLS-1$
                 "List only objects with this attribution: OURS, VENDOR, BOTH or UNKNOWN. The " //$NON-NLS-1$
                     + "counts are unaffected - they always cover everything. OURS is what a " //$NON-NLS-1$
@@ -174,98 +276,46 @@ public class ThreeWayComparisonTool
             .booleanProperty("mustBeMergedOnly", //$NON-NLS-1$
                 "List only objects the environment says must take part in a merge.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
-                "How many matching objects to skip. Default 0. With limit this walks the whole " //$NON-NLS-1$
-                    + "set: a real update runs to tens of thousands of changed objects and one " //$NON-NLS-1$
-                    + "page names at most 500 of them.") //$NON-NLS-1$
+                "How many matching objects to skip. Default 0.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "How many objects to name. Default and maximum 500.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
-                "Compare only these objects, comma separated and named as this tool names them " //$NON-NLS-1$
-                    + "(Catalog.X,Document.Y). Omit to compare the whole configuration, which on " //$NON-NLS-1$
-                    + "a real one means minutes and a tree of some two hundred thousand nodes. " //$NON-NLS-1$
-                    + "The environment adds what the named objects cannot be compared without, " //$NON-NLS-1$
-                    + "and the additions come back in scopeExtendedBy. A name the environment " //$NON-NLS-1$
-                    + "does not recognise is reported in scopeUnrecognised rather than dropped: " //$NON-NLS-1$
-                    + "a scope of misspelled names compares nothing and would otherwise answer " //$NON-NLS-1$
-                    + "that there are no differences. An object renamed between the two sides " //$NON-NLS-1$
-                    + "cannot be scoped - it is called one thing here and another in the " //$NON-NLS-1$
-                    + "delivery - so compare the whole configuration for those. With a scope the " //$NON-NLS-1$
-                    + "answer also carries closureAdds: what the named objects cannot be carried " //$NON-NLS-1$
-                    + "without, followed outward through every reference the model records, " //$NON-NLS-1$
-                    + "transitively, cycles visited once. closureBlindSpots names what a " //$NON-NLS-1$
-                    + "reference walk structurally cannot find - metadata named as a string in " //$NON-NLS-1$
-                    + "code, inside a query or a template - and it is never omitted.") //$NON-NLS-1$
+                "Compare only these objects, comma separated and named as this tool names " //$NON-NLS-1$
+                    + "them (Catalog.X,Document.Y). Omit for the whole configuration. What the " //$NON-NLS-1$
+                    + "environment added comes back in scopeExtendedBy, and a name it does not " //$NON-NLS-1$
+                    + "recognise in scopeUnrecognised rather than dropped.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
-                "Assemble the whole answer into one document a person can read before deciding " //$NON-NLS-1$
-                    + "to update: the sides and their releases, what moved and on whose side, " //$NON-NLS-1$
-                    + "what an update overwrites if nobody intervenes, the conflicts to decide by " //$NON-NLS-1$
-                    + "hand, the vendor support state, and what this run did NOT check. " //$NON-NLS-1$
-                    + "\"summary\" lists ten names per section and says how many it left out; " //$NON-NLS-1$
-                    + "\"full\" lists everything. Built from the same numbers as the fields " //$NON-NLS-1$
-                    + "beside it, so the two cannot disagree.") //$NON-NLS-1$
+                "Assemble the answer into one document a person can read before deciding to " //$NON-NLS-1$
+                    + "update: summary (ten names per section) or full.") //$NON-NLS-1$
             .booleanProperty("methodLevel", //$NON-NLS-1$
-                "Look inside modules, so a change is named by the piece of the module it sits in " //$NON-NLS-1$
-                    + "rather than as \"this module was changed by both sides\". Off by default: " //$NON-NLS-1$
-                    + "telling a module apart piece by piece is more tree to build and to walk. " //$NON-NLS-1$
-                    + "comparedInMs comes back either way, so the cost is measurable. Each piece " //$NON-NLS-1$
-                    + "comes back in sections with its full name - " //$NON-NLS-1$
-                    + "CommonModule.X.Module.MethodName - its own attribution, and the kind of " //$NON-NLS-1$
-                    + "node the environment made it. A decision may be addressed at one of those " //$NON-NLS-1$
-                    + "names, which is how one method is decided about without touching its " //$NON-NLS-1$
-                    + "neighbours.") //$NON-NLS-1$
+                "Look inside modules, so a change is named CommonModule.X.Module.MethodName " //$NON-NLS-1$
+                    + "and a decision can be addressed at one method. Off by default; " //$NON-NLS-1$
+                    + "comparedInMs comes back either way, so the cost is measurable.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
-                "Close the comparison after answering instead of keeping it open for further " //$NON-NLS-1$
-                    + "pages. Off by default: a comparison of a real configuration takes minutes, " //$NON-NLS-1$
-                    + "and walking what changed a page at a time would otherwise pay that cost " //$NON-NLS-1$
-                    + "per page. An open comparison expires by itself after 20 idle minutes.") //$NON-NLS-1$
+                "Close the comparison after answering instead of keeping it open for the " //$NON-NLS-1$
+                    + "next page. Off by default; an open comparison expires after 20 idle " //$NON-NLS-1$
+                    + "minutes.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
-                "Compare the sides even when they do not identify as the same configuration in " //$NON-NLS-1$
-                    + "different versions. Off by default: an ancestor from another configuration " //$NON-NLS-1$
-                    + "inverts every changedBy in the answer without failing. Legitimate cases " //$NON-NLS-1$
-                    + "exist - a renamed configuration, a vendor handover - and the mismatches are " //$NON-NLS-1$
-                    + "then reported in originMismatches rather than swallowed.") //$NON-NLS-1$
+                "Compare the sides even when they do not identify as the same configuration " //$NON-NLS-1$
+                    + "in different versions. Off by default.") //$NON-NLS-1$
             .stringProperty("help", //$NON-NLS-1$
                 "Pass a word - help=parameters - to be told what the parameters mean and " //$NON-NLS-1$
                     + "nothing else; the rest of the call is then ignored. An empty or " //$NON-NLS-1$
                     + "whitespace-only value is not a request, so a client that fills every " //$NON-NLS-1$
                     + "declared string still compares.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
-                "REPORT (default) changes nothing in the project; it does write the decisions " //$NON-NLS-1$
-                    + "file when decisionsPath names one. MERGE applies the decisions to the " //$NON-NLS-1$
-                    + "project - IRREVERSIBLE. The environment validates first and stops before " //$NON-NLS-1$
-                    + "writing when it raises a blocking problem; merged says what actually " //$NON-NLS-1$
-                    + "happened, not what was asked for. MERGE_IGNORING_PROBLEMS proceeds past " //$NON-NLS-1$
-                    + "those problems; it is a " //$NON-NLS-1$
-                    + "separate value and not a flag, because overriding the environment's own " //$NON-NLS-1$
-                    + "objection should not share a word with ordinary merging. A merge needs " //$NON-NLS-1$
-                    + "decisions: without them there is nothing to apply. UPDATE_UNCHANGED is the " //$NON-NLS-1$
-                    + "exception - it takes the delivery whole and needs no decisions, and is " //$NON-NLS-1$
-                    + "refused unless the comparison is three-sided, finished, and found nothing " //$NON-NLS-1$
-                    + "changed here, on both sides, or unattributed. The tool checks that itself " //$NON-NLS-1$
-                    + "rather than trusting the caller, and names the counts when it refuses. " //$NON-NLS-1$
-                    + "UPDATE_KEEPING_OURS is the ordinary update on support, and it treats three " //$NON-NLS-1$
-                    + "groups differently. Objects only the delivery changed take the rule the " //$NON-NLS-1$
-                    + "environment proposes. Objects only this side reworked are held at " //$NON-NLS-1$
-                    + "DO_NOT_MERGE and read back to confirm it. Objects BOTH sides changed are " //$NON-NLS-1$
-                    + "merged with the delivery in front - contested lines resolve toward it while " //$NON-NLS-1$
-                    + "methods only this side has stay - and are counted in mergedWithDelivery. " //$NON-NLS-1$
-                    + "An object that will not take that merge is held instead and named in " //$NON-NLS-1$
-                    + "deliveryNotApplied, because for it the delivery's change does NOT arrive. " //$NON-NLS-1$
-            + "This applies only with methodLevel=true, where a decision can reach a method. " //$NON-NLS-1$
-            + "WITHOUT it the comparison stops at the object, nothing can promise a method only " //$NON-NLS-1$
-            + "this side has would survive, and such an object is HELD instead - the delivery's " //$NON-NLS-1$
-            + "change to it does not arrive and is named in deliveryNotApplied, together with the " //$NON-NLS-1$
-            + "call that decides it method by method. Measured: same material and scope, the flag " //$NON-NLS-1$
-            + "the only difference - with it the customisation survived, without it it was lost. " //$NON-NLS-1$
-            + "Putting the delivery in front does NOT guarantee that work only this side had " //$NON-NLS-1$
-            + "survives: where the delivery rewrote the whole of an object there is nothing " //$NON-NLS-1$
-            + "of ours left to interleave, and that was measured on a real update. So every " //$NON-NLS-1$
-            + "object both sides changed is read after the merge and compared with the " //$NON-NLS-1$
-            + "delivery's copy; the ones that came out identical to it are named in " //$NON-NLS-1$
-            + "ourContentLost, and the ones that could not be read either side in " //$NON-NLS-1$
-            + "ourContentUnchecked. " //$NON-NLS-1$
-                    + "It refuses outright when an object of ours could not be held at all, " //$NON-NLS-1$
-                    + "because merging then would overwrite named work.") //$NON-NLS-1$
+                "What the run does. REPORT (default) changes nothing in the project. MERGE " //$NON-NLS-1$
+                    + "and MERGE_IGNORING_PROBLEMS apply the decisions - IRREVERSIBLE. " //$NON-NLS-1$
+                    + "UPDATE_UNCHANGED takes the delivery whole. UPDATE_KEEPING_OURS is the " //$NON-NLS-1$
+                    + "ordinary update on support: objects both sides changed are merged with " //$NON-NLS-1$
+                    + "the delivery in front, methods only this side has stay, an object that " //$NON-NLS-1$
+                    + "will not take that merge is named in deliveryNotApplied, and it refuses " //$NON-NLS-1$
+                    + "outright when an object of ours could not be held at all. This applies " //$NON-NLS-1$
+                    + "only with methodLevel=true; WITHOUT it the comparison stops at the " //$NON-NLS-1$
+                    + "object and such an object is held instead. Putting the delivery in " //$NON-NLS-1$
+                    + "front does NOT guarantee that work only this side had survives - what " //$NON-NLS-1$
+                    + "came out identical to the delivery is named in ourContentLost. Why each " //$NON-NLS-1$
+                    + "mode behaves so, and when it refuses: help=parameters.") //$NON-NLS-1$
             .build();
     }
 
@@ -455,7 +505,7 @@ public class ThreeWayComparisonTool
             // router parses whatever a JSON tool returns. Markdown handed back raw becomes an
             // internal error rather than an answer.
             return ToolResult.success()
-                .put("help", ParameterHelp.render(getName(), getInputSchema())) //$NON-NLS-1$
+                .put("help", ParameterHelp.render(getName(), getInputSchema(), PARAMETER_RULES)) //$NON-NLS-1$
                 .toJson();
         }
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$

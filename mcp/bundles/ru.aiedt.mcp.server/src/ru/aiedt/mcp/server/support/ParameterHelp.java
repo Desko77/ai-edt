@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -46,6 +47,26 @@ public final class ParameterHelp
      * @return markdown, or a line saying why there is none
      */
     public static String render(String toolName, String inputSchema)
+    {
+        return render(toolName, inputSchema, Collections.emptyMap());
+    }
+
+    /**
+     * The same, with the rules a parameter carries beyond its one-sentence description.
+     * <p>
+     * The schema description is carried by every client for the whole conversation, so it holds one
+     * sentence and the closed list of values a caller has to pick from. What is left - when a mode
+     * refuses, what it does to each group of objects, what a measurement showed - is asked for here.
+     * The two do not overlap: the detail continues the description rather than repeating it, so
+     * neither can drift out of step with the other.
+     * </p>
+     *
+     * @param toolName the tool's wire name, for the heading.
+     * @param inputSchema the tool's schema, as {@code getInputSchema} returns it.
+     * @param detail parameter name to the rules that did not fit in its description; may be empty.
+     * @return markdown, or a line saying why there is none
+     */
+    public static String render(String toolName, String inputSchema, Map<String, String> detail)
     {
         JsonObject schema;
         try
@@ -143,6 +164,11 @@ public final class ParameterHelp
                 // A parameter with no description is named anyway. Leaving it out would say the
                 // tool does not take it, which is a different thing from taking it undescribed.
                 : "_No description is declared for this parameter._"); //$NON-NLS-1$
+            String rules = detail.get(property.getKey());
+            if (rules != null && !rules.isEmpty())
+            {
+                text.append("\n\n").append(rules); //$NON-NLS-1$
+            }
             text.append("\n\n"); //$NON-NLS-1$
         }
         return text.toString();
