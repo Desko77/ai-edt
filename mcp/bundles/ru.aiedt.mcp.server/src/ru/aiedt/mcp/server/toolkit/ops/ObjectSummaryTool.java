@@ -44,9 +44,6 @@ public class ObjectSummaryTool implements IMcpTool
 {
     public static final String NAME = "object_summary"; //$NON-NLS-1$
 
-    private static final Pattern TOTAL_PATTERN = Pattern.compile(
-        "\\*\\*Total references found:\\*\\*\\s*(\\d+)"); //$NON-NLS-1$
-
     @Override
     public String getName()
     {
@@ -232,32 +229,18 @@ public class ObjectSummaryTool implements IMcpTool
 
     private static int delegateReferenceCount(String projectName, String objectFqn)
     {
-        IMcpTool findRefs = McpToolCatalog.getInstance().getTool("find_references"); //$NON-NLS-1$
-        if (findRefs == null)
-        {
-            return -1;
-        }
-        Map<String, String> p = new LinkedHashMap<>();
-        p.put("projectName", projectName); //$NON-NLS-1$
-        p.put("objectFqn", objectFqn); //$NON-NLS-1$
-        p.put("skipBsl", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-        p.put("limit", "1"); //$NON-NLS-1$ //$NON-NLS-2$
+        // limit=1 used to be passed here to keep the call cheap, which made the count a floor of
+        // one before it was even read. The cap is the server's ordinary one, and a count that did
+        // not come out whole is reported as unknown rather than as a number.
         try
         {
-            String md = findRefs.execute(p);
-            if (md == null)
-            {
-                return -1;
-            }
-            Matcher m = TOTAL_PATTERN.matcher(md);
-            if (m.find())
-            {
-                return Integer.parseInt(m.group(1));
-            }
+            ReferenceLocator.Result found =
+                ReferenceLocator.locateFor(projectName, objectFqn, 500, false, true);
+            return found.isExact() ? found.count : -1;
         }
         catch (Exception ignored)
         {
-            // network/cache error - return -1 so caller knows the count is unknown
+            // the search did not run to an answer - the caller prints "unknown"
         }
         return -1;
     }

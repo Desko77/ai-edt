@@ -6,15 +6,11 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
-import java.util.HashMap;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
-import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 
 /**
  * 1.43+: composite tool that runs {@code find_references} with {@code deep=true}
@@ -25,16 +21,15 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * {@code remove_object}, {@code remove_tabular_section}) to size the blast
  * radius and decide whether the change is safe.
  * <p>
- * The tool delegates the actual search to {@code find_references} via the
- * shared {@link McpToolCatalog}, then parses the {@code **Total references
- * found:** N} marker to compute severity.
+ * The search itself is {@link ReferenceLocator#locateFor}, which hands back both the report and the
+ * count as a value. The count used to be read out of that report by matching a heading, the heading
+ * was reworded, and every call answered "LOW (no references)" with nothing going red - so the
+ * severity here is graded only when the search says its count is the whole answer.
  */
 public class ImpactAnalysisTool implements IMcpTool
 {
     public static final String NAME = "impact_analysis"; //$NON-NLS-1$
 
-    private static final Pattern TOTAL_PATTERN = Pattern.compile(
-        "\\*\\*Total references found:\\*\\*\\s*(\\d+)"); //$NON-NLS-1$
 
     @Override
     public String getName()
@@ -90,35 +85,28 @@ public class ImpactAnalysisTool implements IMcpTool
         }
         String action = JsonUtils.extractStringArgument(params, "action"); //$NON-NLS-1$
 
-        IMcpTool findRefs = McpToolCatalog.getInstance().getTool("find_references"); //$NON-NLS-1$
-        if (findRefs == null)
-        {
-            return "Error: find_references tool is not registered."; //$NON-NLS-1$
-        }
-        // Build delegate params. Always force deep=true to catch derived types
-        // (CatalogRef, CatalogManager, CatalogSelection, etc.) - that is the
-        // entire point of impact analysis.
-        Map<String, String> delegateParams = new HashMap<>(params);
-        delegateParams.put("deep", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-        delegateParams.remove("action"); //$NON-NLS-1$
-        String findRefsResult;
+        // deep=true always: derived types (CatalogRef, CatalogManager, CatalogSelection and the
+        // rest) are the entire point of impact analysis.
+        int limit = readLimit(params);
+        boolean skipBsl = JsonUtils.extractBooleanArgument(params, "skipBsl", false); //$NON-NLS-1$
+        ReferenceLocator.Result found;
         try
         {
-            findRefsResult = findRefs.execute(delegateParams);
+            found = ReferenceLocator.locateFor(projectName, objectFqn, limit, true, skipBsl);
         }
         catch (Exception e)
         {
-            return "Error: find_references delegate failed: " //$NON-NLS-1$
+            return "Error: the reference search failed: " //$NON-NLS-1$
                 + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }
-        if (findRefsResult == null)
-        {
-            findRefsResult = "(no output from find_references)"; //$NON-NLS-1$
-        }
+        String findRefsResult = found.markdown;
 
-        int total = parseTotalReferences(findRefsResult);
-        SeverityTier severity = computeSeverity(total);
-        String recommendation = buildRecommendation(severity, action);
+        int total = found.count;
+        // A grade is a claim about the whole picture, so it is made only when the whole picture was
+        // seen. A floor graded as a total is how "LOW (no references)" used to be printed over an
+        // object with hundreds of them.
+        SeverityTier severity = found.isExact() ? computeSeverity(total) : null;
+        String recommendation = severity == null ? null : buildRecommendation(severity, action);
 
         StringBuilder sb = new StringBuilder();
         sb.append("# Impact Analysis: `").append(objectFqn).append("`\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -126,34 +114,50 @@ public class ImpactAnalysisTool implements IMcpTool
         {
             sb.append("**Planned action:** ").append(action).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        sb.append("**Severity:** ").append(severity.label).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        sb.append("**Total references (deep):** ").append(total).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        sb.append("**Recommendation:** ").append(recommendation).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (severity != null)
+        {
+            sb.append("**Severity:** ").append(severity.label).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append("**Total references (deep):** ").append(total).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append("**Recommendation:** ").append(recommendation).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else if (total >= 0)
+        {
+            sb.append("**Severity:** not graded - the count below is a floor, not a total\n\n"); //$NON-NLS-1$
+            sb.append("**References found so far (deep):** at least ").append(total).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append("**Why:** ").append(found.whyNotExact()).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else
+        {
+            sb.append("**Severity:** not graded - the search did not run to an answer\n\n"); //$NON-NLS-1$
+            sb.append("**Why:** ").append(found.whyNotExact()).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         sb.append("---\n\n"); //$NON-NLS-1$
         sb.append("## Detailed references (from find_references deep=true)\n\n"); //$NON-NLS-1$
         sb.append(findRefsResult);
         return sb.toString();
     }
 
-    private static int parseTotalReferences(String md)
+    /**
+     * The per-category cap handed to the reference search.
+     *
+     * @param params the call
+     * @return the cap, 100 when the call names none
+     */
+    private static int readLimit(Map<String, String> params)
     {
-        if (md == null)
+        String raw = JsonUtils.extractStringArgument(params, "limit"); //$NON-NLS-1$
+        if (raw == null || raw.isEmpty())
         {
-            return 0;
+            return 100;
         }
-        Matcher m = TOTAL_PATTERN.matcher(md);
-        if (m.find())
+        try
         {
-            try
-            {
-                return Integer.parseInt(m.group(1));
-            }
-            catch (NumberFormatException ignored)
-            {
-                // fall through
-            }
+            return Math.max(1, Math.min((int)Double.parseDouble(raw), 500));
         }
-        return 0;
+        catch (NumberFormatException e)
+        {
+            return 100;
+        }
     }
 
     private static SeverityTier computeSeverity(int total)

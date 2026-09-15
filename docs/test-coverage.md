@@ -6,18 +6,18 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 116 | a test class named after it |
-| exercised | 87 | reached by some other test |
-| tool-sweep | 86 | declaration checked by the registry-wide contract sweep |
+| exercised | 92 | reached by some other test |
+| tool-sweep | 82 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
-| workspace-bound | 56 | drives a live EDT project or debug session |
+| workspace-bound | 55 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **393** | across 275 test classes |
+| **total** | **393** | across 277 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (56)
+## workspace-bound (55)
 
 **folders**
 - IClusterChangeObserver
@@ -71,7 +71,6 @@ _none_
 - LaunchConfigAccess
 - MetadataDiffEngine
 - PictureValidator
-- ProjectMetricsCollector
 - ProjectReadinessGate
 - ProjectResolver
 - ProjectScopeResolver
@@ -165,7 +164,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (86)
+## tool-sweep (82)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -194,7 +193,6 @@ _none_
 - DebugVariablesReader
 - DefinitionNavigator
 - DependencyGraphTool
-- DetectQueryAntiPatternsTool
 - DiskResynchronizer
 - EdtVersionReader
 - EventLogTool
@@ -205,14 +203,12 @@ _none_
 - ExtensionLifecycleTool
 - ExternalDataSourceWorkshopTool
 - FindDeadCodeTool
-- FindRlsViolationsTool
 - FormScreenshotGrabber
 - GenerateHealthSnapshotTool
 - GetCommandInterfaceTool
 - GetFormStructureTool
 - GetObjectHelpTool
 - GetSubsystemsTool
-- ImpactAnalysisTool
 - InfobaseCreator
 - InfobaseCredentialsWriter
 - InfobaseRemover
@@ -228,7 +224,6 @@ _none_
 - ModuleOutlineReader
 - ModuleSourceReader
 - ModulesLister
-- ObjectSummaryTool
 - OutgoingStructuresReader
 - PlatformDocReader
 - ProblemSummaryReader
@@ -255,7 +250,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (87)
+## exercised (92)
 
 **(root)**
 - Activator
@@ -314,6 +309,7 @@ _none_
 - ParameterHelp
 - PendingEnvelope
 - PendingWorkRegistry
+- ProjectMetricsCollector
 - ProjectStateGuard
 - QlValidator
 - SupportSnapshotStore
@@ -332,12 +328,15 @@ _none_
 - ConfigIoFacadeTool
 - ContentAssistReader
 - DcsWorkshopTool
+- DetectQueryAntiPatternsTool
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
 - ExternalObjectWorkshopTool
+- FindRlsViolationsTool
 - FormCommandInterfaceOps
 - FormItemsOps
 - GenerateEventHandlersTool
+- ImpactAnalysisTool
 - InfobaseAdminFacadeTool
 - InsightsFacadeTool
 - LaunchDebuggerTool
@@ -347,6 +346,7 @@ _none_
 - MiscOps
 - MxlWorkshopTool
 - ObjectOps
+- ObjectSummaryTool
 - ObjectsRevalidator
 - ProjectAdminFacadeTool
 - ProjectProblemsReader
@@ -526,9 +526,9 @@ closes.
 | 9-16 | 48 |
 | 17+ | 15 |
 
-2569 test methods across 275 test classes; 116 classes have a test of their own, median 9 methods each.
+2586 test methods across 277 test classes; 116 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 393 classes have one: 86 are covered by the registry-wide contract sweep and 56 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 393 classes have one: 82 are covered by the registry-wide contract sweep and 55 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 

@@ -95,6 +95,157 @@ public class ReferenceLocator implements IMcpTool
     private static final int PER_PHASE_CAP_MULTIPLIER = 10;
 
     /**
+     * What a reference search established, beside the text it rendered.
+     * <p>
+     * Kept as a value because the alternative was read out of the report: {@code impact_analysis}
+     * and {@code object_summary} matched a heading this class prints, the wording moved on, and both
+     * reported no references at all without anything going red. A count that travels as a number
+     * cannot be lost to a rewritten sentence.
+     * </p>
+     * <p>
+     * How sure the number is travels with it. A walk that hit its cap, one the operator stopped and
+     * one whose sister project failed all produce a number that is a floor, not a total, and a
+     * caller that grades impact on a floor as though it were a total is back to answering wrongly.
+     * </p>
+     */
+    public static final class Result
+    {
+        /** How much of the search stands behind the number. */
+        public enum Certainty
+        {
+            /** Every phase ran over every project in scope. */
+            COMPLETE,
+            /** The cap stopped the walk: the number is a floor. */
+            TRUNCATED,
+            /** The operator stopped the walk: the number is a floor. */
+            CANCELLED,
+            /** A project in scope could not be searched: the number is a floor. */
+            PARTIAL,
+            /** The search did not run to an answer. */
+            FAILED
+        }
+
+        /** The report as the tool renders it. */
+        public final String markdown;
+
+        /** References found, or -1 when the search did not get to an answer. */
+        public final int count;
+
+        /** How much of the search stands behind {@link #count}. */
+        public final Certainty certainty;
+
+        /** Phases the operator's stop kept from running. */
+        public final List<String> phasesNotRun;
+
+        /** Projects in scope that could not be searched. */
+        public final List<String> projectsNotSearched;
+
+        Result(String markdown, int count, Certainty certainty, List<String> phasesNotRun,
+            List<String> projectsNotSearched)
+        {
+            this.markdown = markdown;
+            this.count = count;
+            this.certainty = certainty;
+            this.phasesNotRun = Collections.unmodifiableList(new ArrayList<>(phasesNotRun));
+            this.projectsNotSearched = Collections.unmodifiableList(new ArrayList<>(projectsNotSearched));
+        }
+
+        /** @return <code>true</code> when the count is the whole answer rather than a floor. */
+        public boolean isExact()
+        {
+            return certainty == Certainty.COMPLETE;
+        }
+
+        /** @return the reason the count is a floor, or <code>null</code> when it is not. */
+        public String whyNotExact()
+        {
+            switch (certainty)
+            {
+            case TRUNCATED:
+                return "the result cap stopped the walk"; //$NON-NLS-1$
+            case CANCELLED:
+                return phasesNotRun.isEmpty() ? "the operator stopped the walk" //$NON-NLS-1$
+                    : "the operator stopped the walk before " + String.join(", ", phasesNotRun); //$NON-NLS-1$ //$NON-NLS-2$
+            case PARTIAL:
+                return "these projects could not be searched: " //$NON-NLS-1$
+                    + String.join(", ", projectsNotSearched); //$NON-NLS-1$
+            case FAILED:
+                return "the search did not run to an answer"; //$NON-NLS-1$
+            default:
+                return null;
+            }
+        }
+    }
+
+    /** Filled by the search so its outcome can leave as a value rather than as prose. */
+    private static final class Sink
+    {
+        int count = -1;
+        boolean capped;
+        boolean stopped;
+        List<String> phasesNotRun = new ArrayList<>();
+        final List<String> projectsNotSearched = new ArrayList<>();
+
+        Result toResult(String markdown)
+        {
+            Result.Certainty certainty;
+            if (count < 0)
+            {
+                certainty = Result.Certainty.FAILED;
+            }
+            else if (stopped)
+            {
+                certainty = Result.Certainty.CANCELLED;
+            }
+            else if (!projectsNotSearched.isEmpty())
+            {
+                certainty = Result.Certainty.PARTIAL;
+            }
+            else if (capped)
+            {
+                certainty = Result.Certainty.TRUNCATED;
+            }
+            else
+            {
+                certainty = Result.Certainty.COMPLETE;
+            }
+            return new Result(markdown, count, certainty, phasesNotRun, projectsNotSearched);
+        }
+    }
+
+    /**
+     * Runs a reference search and hands back both the report and what it established.
+     * <p>
+     * The caller gets the same markdown {@code find_references} returns, so nothing has to be
+     * re-rendered, plus the count as a number. There is no hand-off here: a caller that wants the
+     * count waits for it, because a Pending envelope is exactly what the old readers mistook for
+     * "no references".
+     * </p>
+     *
+     * @param projectName the project that owns the object; must not be <code>null</code>
+     * @param objectFqn the object to search for; must not be <code>null</code>
+     * @param limit how many references to collect
+     * @param deep whether to expand produced-type kinds
+     * @param skipBsl whether to leave the BSL phase out
+     * @return what the search established; never <code>null</code>
+     */
+    public static Result locateFor(String projectName, String objectFqn, int limit, boolean deep,
+        boolean skipBsl)
+    {
+        Sink sink = new Sink();
+        CategoryFilter filter = CategoryFilter.from(null, skipBsl, false);
+        String markdown = new ReferenceLocator()
+            .findReferencesInternal(projectName, objectFqn, limit, deep, filter, sink);
+        if (markdown == null || markdown.startsWith("Error: ")) //$NON-NLS-1$
+        {
+            return new Result(markdown == null ? "Error: the reference search returned nothing" //$NON-NLS-1$
+                : markdown, -1, Result.Certainty.FAILED, Collections.emptyList(),
+                Collections.emptyList());
+        }
+        return sink.toResult(markdown);
+    }
+
+    /**
      * Ordered substring rules that turn an EClass name into a human-readable pluralized bucket
      * label. First match wins, so order matters - keep parallel-derivation parity with EDT's
      * own category resolver.
@@ -374,6 +525,23 @@ public class ReferenceLocator implements IMcpTool
     private String findReferencesInternal(String projectName, String objectFqn, int limit, boolean deep,
         CategoryFilter filter)
     {
+        return findReferencesInternal(projectName, objectFqn, limit, deep, filter, null);
+    }
+
+    /**
+     * The same search, with somewhere to record what it established.
+     *
+     * @param projectName the project that owns the object
+     * @param objectFqn the object to search for
+     * @param limit how many references to collect
+     * @param deep whether to expand produced-type kinds
+     * @param filter the category filter
+     * @param sink filled with the outcome, or <code>null</code> when only the report is wanted
+     * @return a MARKDOWN report (or an {@code "Error: ..."} plain string)
+     */
+    private String findReferencesInternal(String projectName, String objectFqn, int limit, boolean deep,
+        CategoryFilter filter, Sink sink)
+    {
         Activator.logInfo("find_references filter: back=" + filter.back //$NON-NLS-1$
             + " produced=" + filter.produced //$NON-NLS-1$
             + " predefined=" + filter.predefined //$NON-NLS-1$
@@ -494,6 +662,13 @@ public class ReferenceLocator implements IMcpTool
                 }
                 catch (Exception sisterEx)
                 {
+                    // Logged AND recorded: a project that could not be searched makes the count a
+                    // floor, and a caller grading impact has to be told that rather than shown a
+                    // number that looks whole.
+                    if (sink != null)
+                    {
+                        sink.projectsNotSearched.add(sister.getName());
+                    }
                     Activator.logWarning("find_references sister-scope pass failed for " + sister.getName() //$NON-NLS-1$
                         + ": " //$NON-NLS-1$
                         + (sisterEx.getMessage() != null ? sisterEx.getMessage()
@@ -507,6 +682,13 @@ public class ReferenceLocator implements IMcpTool
             return "Error: the reference search failed: " + e.getMessage(); //$NON-NLS-1$
         }
 
+        if (sink != null)
+        {
+            sink.count = master.getTotalCount();
+            sink.capped = master.getTotalCount() >= limit;
+            sink.stopped = watch.stopped() || !master.phasesCutShort.isEmpty();
+            sink.phasesNotRun = master.phasesCutShort;
+        }
         return formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
     }
 
