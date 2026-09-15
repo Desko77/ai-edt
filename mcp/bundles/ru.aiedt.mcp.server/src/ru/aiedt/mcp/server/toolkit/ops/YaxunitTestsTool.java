@@ -99,10 +99,6 @@ public class YaxunitTestsTool implements IMcpTool
             .stringProperty("extensions", "CSV: extension names to run.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modules", "CSV: common module names with tests.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("tests", "CSV: test FQNs (Module.Method).") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("suites", "CSV: suite names.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("tags", "CSV: tag names.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("contexts", //$NON-NLS-1$
-                "CSV: contexts (Server/Client/ExternalConnection).") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "Polling window in seconds (default 60). Legacy alias: timeout.") //$NON-NLS-1$
             .stringProperty("updateBeforeLaunch", //$NON-NLS-1$

@@ -70,8 +70,6 @@ public class SensitiveDataScanTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", "project | subsystem | module (default project)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("subsystemName", "Subsystem when scope=subsystem") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("moduleFqn", "Module when scope=module") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("checks", //$NON-NLS-1$
                 "Comma-separated: ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, LOG_SENSITIVE") //$NON-NLS-1$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$

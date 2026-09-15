@@ -88,8 +88,6 @@ public class DependencyGraphTool implements IMcpTool
             .integerProperty("depth", "BFS depth (1-5, default 2)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | mermaid | plantuml | dot (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("direction", "in | out | both (default both)") //$NON-NLS-1$ //$NON-NLS-2$
-            .booleanProperty("includeStandard", //$NON-NLS-1$
-                "Include edges via standard reference types like CatalogRef. Default false.") //$NON-NLS-1$
             .integerProperty("maxNodes", "Cap for BFS (default 200)") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("maxEdges", "Cap for edges (default 500)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();

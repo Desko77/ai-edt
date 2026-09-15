@@ -316,6 +316,12 @@ public class MetadataObjectDeleter implements IMcpTool
             return null;
         }
         String[] parts = objectFqn.split("\\."); //$NON-NLS-1$
+        if (parts.length == 4 && OWN_RESOURCE_KINDS.contains(parts[2]))
+        {
+            // A child with a file of its own: the owner's directory stays, so the question is
+            // whether the child's own file went.
+            return whatIsLeftOfChild(project, parts);
+        }
         if (parts.length != 2)
         {
             return null;
@@ -344,6 +350,81 @@ public class MetadataObjectDeleter implements IMcpTool
         org.eclipse.core.resources.IFolder folder =
             project.getFolder(new Path("src").append(directory).append(parts[1])); //$NON-NLS-1$
         return folder.exists() ? folder.getFullPath().toString() : null;
+    }
+
+    /**
+     * Kinds of child that live in a file of their own, as opposed to inside the owner's {@code .mdo}.
+     * <p>
+     * The split decides what "gone" can be asked about. A form, a template, a command and a
+     * scheduled-job-like child each have a folder or a file under the owner; an attribute, a tabular
+     * section or a dimension is a few lines inside the owner's own file, and asking the disk about
+     * those would answer "the owner is still there" - which is true and says nothing about the
+     * child. Those are confirmed by reading the owner back, not by looking at the disk.
+     * </p>
+     */
+    private static final java.util.Set<String> OWN_RESOURCE_KINDS =
+        java.util.Collections.unmodifiableSet(new java.util.HashSet<>(java.util.Arrays.asList(
+            "Form", "Template", "Command", "Форма", "Макет", "Команда"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+
+    /**
+     * What a child with a file of its own left behind, if anything.
+     *
+     * @param project the project that owned it
+     * @param parts the address split on dots: type, object, child kind, child name
+     * @return the workspace-relative path still on disk, or <code>null</code> when nothing is left
+     */
+    private static String whatIsLeftOfChild(IProject project, String[] parts)
+    {
+        MetadataTypeCatalog.MetadataTypeInfo type = MetadataTypeCatalog.resolve(parts[0]);
+        if (type == null)
+        {
+            return null;
+        }
+        try
+        {
+            project.refreshLocal(IResource.DEPTH_INFINITE, null);
+        }
+        catch (CoreException stale)
+        {
+            Activator.logDebug("refresh before the child leftover check failed: " + stale); //$NON-NLS-1$
+        }
+        String kindFolder = englishKindFolder(parts[2]);
+        org.eclipse.core.resources.IFolder folder = project.getFolder(new Path("src") //$NON-NLS-1$
+            .append(type.getEnglishPlural())
+            .append(parts[1])
+            .append(kindFolder)
+            .append(parts[3]));
+        if (folder.exists())
+        {
+            return folder.getFullPath().toString();
+        }
+        org.eclipse.core.resources.IFile file = project.getFile(new Path("src") //$NON-NLS-1$
+            .append(type.getEnglishPlural())
+            .append(parts[1])
+            .append(kindFolder)
+            .append(parts[3] + ".mdo")); //$NON-NLS-1$
+        return file.exists() ? file.getFullPath().toString() : null;
+    }
+
+    /**
+     * The folder a kind of child sits in, in the spelling the export uses.
+     *
+     * @param kind the kind as the caller wrote it, in either language
+     * @return the English plural folder name
+     */
+    private static String englishKindFolder(String kind)
+    {
+        switch (kind)
+        {
+        case "Форма": //$NON-NLS-1$
+        case "Form": //$NON-NLS-1$
+            return "Forms"; //$NON-NLS-1$
+        case "Макет": //$NON-NLS-1$
+        case "Template": //$NON-NLS-1$
+            return "Templates"; //$NON-NLS-1$
+        default:
+            return "Commands"; //$NON-NLS-1$
+        }
     }
 
     /**

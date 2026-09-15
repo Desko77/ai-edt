@@ -82,8 +82,6 @@ public class FindRlsViolationsTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", "project | module | method (default project)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("moduleFqn", "Module FQN when scope=module/method") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("methodName", "Method name when scope=method") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("roleName", "Limit checks to RLS of this role (default: any RLS)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$

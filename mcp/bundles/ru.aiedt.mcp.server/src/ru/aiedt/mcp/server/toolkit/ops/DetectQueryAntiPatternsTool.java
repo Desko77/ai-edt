@@ -81,16 +81,14 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("scope", "project | module | method (default project)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("moduleFqn", "Module FQN when scope=module/method") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("methodName", "Method name when scope=method") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("scope", "project | module (default project)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("moduleFqn", "Module FQN when scope=module") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("rules", //$NON-NLS-1$
                 "Comma-separated rule names (default all): SELECT_STAR, NO_WHERE_ON_LARGE_TABLE, " //$NON-NLS-1$
                     + "VIRTUAL_TABLE_PARAMS, CROSS_JOIN_NO_CONDITION, NESTED_QUERY_DEPTH, " //$NON-NLS-1$
                     + "SUBQUERY_IN_SELECT, QUERY_IN_LOOP") //$NON-NLS-1$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("batchSize", "Module batch size for ResourceSet cleanup (default 50)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
 

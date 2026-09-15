@@ -327,7 +327,9 @@ public final class BmReferencesHelper
         {
             return;
         }
-        result.edges.add(new Edge(fromFqn, toFqn, featureName));
+        // The target goes in FIRST. The edge used to be added before the cap was consulted, so a
+        // walk that stopped at maxNodes returned an edge whose target was in no node of the graph -
+        // a reader follows it and finds nothing, with the graph saying nothing about why.
         if (!visited.contains(toFqn))
         {
             if (result.nodes.size() >= maxNodes)
@@ -339,6 +341,18 @@ public final class BmReferencesHelper
             result.nodes.put(toFqn, to);
             queue.add(to);
         }
+        // The source has to be in the graph too: a root is put in before the walk starts, but a
+        // backward reference arrives from an object no ring has reached yet.
+        if (!result.nodes.containsKey(fromFqn))
+        {
+            if (result.nodes.size() >= maxNodes)
+            {
+                result.truncated = true;
+                return;
+            }
+            result.nodes.put(fromFqn, from);
+        }
+        result.edges.add(new Edge(fromFqn, toFqn, featureName));
     }
 
     private static String safeFqn(IBmObject obj)

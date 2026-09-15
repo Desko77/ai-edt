@@ -61,7 +61,6 @@ public class ProjectMetricsTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", "project | subsystem (default project)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("subsystemName", "subsystem name when scope=subsystem") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("includeDebtList", //$NON-NLS-1$
                 "Include detailed debt items list with file:line. Default false.") //$NON-NLS-1$

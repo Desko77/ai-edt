@@ -109,6 +109,12 @@ jobs:
       - name: Identifier word class census
         run: python3 scripts/check-identifier-word-class.py
 
+      # A client builds its call from the schema, so an argument advertised there and read by
+      # nothing is a promise the server does not keep: the call succeeds and the value is
+      # dropped. Seven were found this way, among them writeToModule, which wrote nothing.
+      - name: Declared arguments census
+        run: python3 scripts/check-declared-arguments-are-read.py
+
       # A javadoc block with no declaration under it documents whatever follows, or nothing. They
       # arrive when a method moves or is replaced and its old block stays behind, and nothing in the
       # build says a word, because a comment always compiles. The count may fall and never rise.

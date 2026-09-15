@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -158,12 +159,127 @@ public class GenerateEventHandlersTool implements IMcpTool
         result.put("kind", kind); //$NON-NLS-1$
         result.put("generated", generated); //$NON-NLS-1$
         result.put("bsl", bsl.toString()); //$NON-NLS-1$
+
+        boolean writeToModule = JsonUtils.extractBooleanArgument(params, "writeToModule", false); //$NON-NLS-1$
+        boolean skipExisting = JsonUtils.extractBooleanArgument(params, "skipExisting", true); //$NON-NLS-1$
+        if (writeToModule)
+        {
+            appendToModule(project, objectFqn, generated, bsl.toString(), skipExisting, result);
+        }
+
         ToolResult tr = ToolResult.success();
         for (Map.Entry<String, Object> entry : result.entrySet())
         {
             tr.put(entry.getKey(), entry.getValue());
         }
         return tr.toJson();
+    }
+
+    /**
+     * Appends the generated handlers to the object's module, skipping the ones already declared.
+     * <p>
+     * The two arguments that ask for this were advertised and read by nothing: a caller who passed
+     * {@code writeToModule=true} received the text and an untouched module, with the answer saying
+     * nothing about it. What the module now holds is reported under {@code written}, and a refusal
+     * to write is reported rather than swallowed - the text is still in the answer, so a failed
+     * write costs the caller nothing but has to be visible.
+     * </p>
+     *
+     * @param project the project that owns the object
+     * @param objectFqn the object whose module receives the handlers
+     * @param generated the names of the handlers rendered above
+     * @param bsl the rendered text
+     * @param skipExisting whether a handler already present in the module is left alone
+     * @param result the answer being assembled
+     */
+    private static void appendToModule(IProject project, String objectFqn, List<String> generated,
+        String bsl, boolean skipExisting, Map<String, Object> result)
+    {
+        String modulePath = objectFqn + ".ObjectModule"; //$NON-NLS-1$
+        String existing = null;
+        try
+        {
+            BslModuleAccess.ModulePathResolution resolved =
+                BslModuleAccess.resolveModulePath(project, modulePath);
+            if (resolved.isResolved())
+            {
+                existing = BslModuleAccess.readFileText(project.getFile(resolved.getPath()));
+            }
+        }
+        catch (Exception cannotRead)
+        {
+            // Read failures are reported below with the same wording as a write failure: from the
+            // caller's side both mean the module was not changed.
+            Activator.logWarning("generate_event_handlers could not read " + modulePath //$NON-NLS-1$
+                + ": " + cannotRead.getMessage()); //$NON-NLS-1$
+        }
+
+        List<String> alreadyThere = new ArrayList<>();
+        StringBuilder toWrite = new StringBuilder();
+        for (String name : generated)
+        {
+            boolean present = existing != null && declares(existing, name);
+            if (present && skipExisting)
+            {
+                alreadyThere.add(name);
+                continue;
+            }
+            int at = bsl.indexOf("Процедура " + name); //$NON-NLS-1$
+            if (at < 0)
+            {
+                at = bsl.indexOf("Функция " + name); //$NON-NLS-1$
+            }
+            if (at < 0)
+            {
+                continue;
+            }
+            int end = bsl.indexOf("\n\n", at);
+            toWrite.append(end < 0 ? bsl.substring(at) : bsl.substring(at, end)).append("\n\n"); //$NON-NLS-1$
+        }
+
+        result.put("skippedAsAlreadyPresent", alreadyThere); //$NON-NLS-1$
+        if (toWrite.length() == 0)
+        {
+            result.put("written", Collections.emptyList()); //$NON-NLS-1$
+            result.put("writeNote", alreadyThere.isEmpty() //$NON-NLS-1$
+                ? "nothing to write" //$NON-NLS-1$
+                : "every requested handler is already declared in the module"); //$NON-NLS-1$
+            return;
+        }
+
+        Map<String, String> writeParams = new LinkedHashMap<>();
+        writeParams.put("projectName", project.getName()); //$NON-NLS-1$
+        writeParams.put("modulePath", modulePath); //$NON-NLS-1$
+        writeParams.put("mode", ModuleSourceWriter.MODE_APPEND); //$NON-NLS-1$
+        writeParams.put("content", toWrite.toString()); //$NON-NLS-1$
+        String answer = new ModuleSourceWriter().execute(writeParams);
+        boolean wrote = answer != null && !answer.contains("\"success\": false") //$NON-NLS-1$
+            && !answer.startsWith("Error:"); //$NON-NLS-1$
+        List<String> written = new ArrayList<>(generated);
+        written.removeAll(alreadyThere);
+        result.put("written", wrote ? written : Collections.emptyList()); //$NON-NLS-1$
+        if (!wrote)
+        {
+            result.put("writeFailed", answer == null ? "the module writer answered nothing" : answer); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Whether a module already declares a method by this name.
+     *
+     * @param moduleText the module as it stands
+     * @param methodName the handler name
+     * @return <code>true</code> when the module declares it
+     */
+    private static boolean declares(String moduleText, String methodName)
+    {
+        return java.util.regex.Pattern
+            .compile("^\\s*(Процедура|Функция|Procedure|Function)\\s+" + java.util.regex.Pattern.quote(methodName) //$NON-NLS-1$
+                + "\\s*\\(", //$NON-NLS-1$
+                java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+                    | java.util.regex.Pattern.UNICODE_CHARACTER_CLASS)
+            .matcher(moduleText)
+            .find();
     }
 
     /**

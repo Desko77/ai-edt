@@ -113,8 +113,6 @@ public class ExtensionWorkshopTool implements IMcpTool
                 "borrow_objects: a large batch can exceed the soft timeout and return a " //$NON-NLS-1$
                     + "Pending status with a runKey - re-call borrow_objects with the same " //$NON-NLS-1$
                     + "objectFqns and this runKey to fetch the final per-FQN batchResults.") //$NON-NLS-1$
-            .booleanProperty("recursive", //$NON-NLS-1$
-                "borrow_object: include attributes/forms/commands. Default false.") //$NON-NLS-1$
             .stringProperty("childKind", //$NON-NLS-1$
                 "borrow_child: Attribute / TabularSection / Form / Template") //$NON-NLS-1$
             .stringProperty("itemName", //$NON-NLS-1$

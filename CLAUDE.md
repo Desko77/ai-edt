@@ -99,6 +99,12 @@ Supporting scripts:
   (`direct` / `exercised` / `tool-sweep` / `ui-bound` / `workspace-bound` / `untested`), report in
   `docs/test-coverage.md`. `--check` fails while anything sits in `untested`, so a new class
   without a test breaks the census instead of sliding in unnoticed. CI runs it.
+- `scripts/check-declared-arguments-are-read.py` - census of every argument a tool declares
+  against the code that reads it. A client builds its call from the schema, so an argument
+  advertised and read by nothing is a promise the server does not keep: the call succeeds,
+  the value is dropped, and the caller reads success as applied. A name read by a shared
+  helper under `support/` counts as read, and a facade declaring what its delegate reads is
+  listed in the script with the reason. CI runs it.
 - `scripts/check-identifier-word-class.py` - census of every regular expression whose text carries
   Cyrillic. Java reads `\w`, `\b` and `CASE_INSENSITIVE` as ASCII unless told otherwise, while 1C
   source is written in Cyrillic and does not distinguish case, so a pattern built on the defaults
