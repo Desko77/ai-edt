@@ -12,6 +12,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -80,6 +81,18 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     static Map<String, Supplier<IMcpTool>> describedOperations()
     {
         return DESCRIBED;
+    }
+
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
+        if (operation == null || operation.isEmpty())
+        {
+            return null;
+        }
+        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        return delegate == null ? null : delegate.get().getName();
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()

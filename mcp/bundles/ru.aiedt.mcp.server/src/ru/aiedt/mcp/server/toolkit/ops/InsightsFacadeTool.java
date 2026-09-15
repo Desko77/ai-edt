@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -376,6 +377,18 @@ public class InsightsFacadeTool implements IMcpTool
     static Set<String> describedOperations()
     {
         return DESCRIBED.keySet();
+    }
+
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
+        if (operation == null || operation.isEmpty())
+        {
+            return null;
+        }
+        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        return delegate == null ? null : delegate.get().getName();
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()

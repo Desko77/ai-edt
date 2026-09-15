@@ -121,6 +121,28 @@ public class YaxunitTestsTool implements IMcpTool
             .build();
     }
 
+    /**
+     * Where a call goes when no mode is named.
+     * <p>
+     * The selector here is {@code mode}, not {@code operation}, and leaving it out does not mean
+     * nothing happens: the call runs the tests. A rule that read a missing selector as "no work"
+     * would take the guard off exactly the call that launches a platform client.
+     * </p>
+     *
+     * @param arguments the call arguments
+     * @return the tool the call reaches
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String mode = JsonUtils.extractStringArgument(arguments, "mode"); //$NON-NLS-1$
+        if (mode != null && "debug".equals(mode.trim().toLowerCase(java.util.Locale.ROOT))) //$NON-NLS-1$
+        {
+            return "debug_yaxunit_tests"; //$NON-NLS-1$
+        }
+        return "run_yaxunit_tests"; //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

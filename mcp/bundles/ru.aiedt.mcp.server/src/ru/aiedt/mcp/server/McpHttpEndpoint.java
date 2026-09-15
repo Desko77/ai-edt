@@ -16,7 +16,9 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -1832,7 +1834,13 @@ public class McpHttpEndpoint
             JsonObject header = asJsonObject(body);
             String toolName = readToolName(header);
             Semaphore permits = heavyPermits;
-            boolean heavy = HeavyTools.isHeavy(toolName);
+            // Asked about the tool that will do the work, not about the name the call arrived under.
+            // Under the Canonical preset a client calls the facade, and the facade is not what runs:
+            // insights carries eight operations that are heavy, extension_workshop five, config_io
+            // four. Asking by the arriving name answered "light" for every one of them.
+            String routed = routedTool(toolName, readToolArguments(header));
+            boolean heavy = HeavyTools.isHeavy(toolName)
+                || (routed != null && HeavyTools.isHeavy(routed));
             if (heavy)
             {
                 // The concurrency limit below bounds how many heavy tools run together, which never
@@ -2665,6 +2673,62 @@ public class McpHttpEndpoint
         {
             return asRequestId(Double.valueOf(primitive.getAsDouble()));
         }
+    }
+
+    /**
+     * The arguments of a tool call, as far as a decision made before the call needs them.
+     * <p>
+     * Only the primitives: the selector a facade routes by is a string, and nothing decided here
+     * looks deeper. A call with no arguments gives an empty map rather than null, because the
+     * facades read it without checking.
+     * </p>
+     *
+     * @param request the parsed request
+     * @return the arguments, never <code>null</code>
+     */
+    private static Map<String, String> readToolArguments(JsonObject request)
+    {
+        Map<String, String> arguments = new LinkedHashMap<>();
+        if (request == null)
+        {
+            return arguments;
+        }
+        JsonElement params = request.get(PARAM_PARAMS);
+        if (params == null || !params.isJsonObject())
+        {
+            return arguments;
+        }
+        JsonElement raw = params.getAsJsonObject().get("arguments"); //$NON-NLS-1$
+        if (raw == null || !raw.isJsonObject())
+        {
+            return arguments;
+        }
+        for (Map.Entry<String, JsonElement> entry : raw.getAsJsonObject().entrySet())
+        {
+            JsonElement value = entry.getValue();
+            if (value != null && value.isJsonPrimitive())
+            {
+                arguments.put(entry.getKey(), value.getAsString());
+            }
+        }
+        return arguments;
+    }
+
+    /**
+     * The tool a call reaches, when the name it arrived under only routes it onward.
+     *
+     * @param toolName the name in the request
+     * @param arguments the call arguments
+     * @return the tool that will run, or <code>null</code> when the named tool runs it itself
+     */
+    private static String routedTool(String toolName, Map<String, String> arguments)
+    {
+        if (toolName == null || toolName.isEmpty())
+        {
+            return null;
+        }
+        IMcpTool tool = McpToolCatalog.getInstance().getTool(toolName);
+        return tool == null ? null : tool.routesTo(arguments);
     }
 
     /**

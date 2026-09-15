@@ -153,4 +153,27 @@ public interface IMcpTool
     {
         return getName() + ".md"; //$NON-NLS-1$
     }
+
+    /**
+     * The tool this call will actually run, when this one only routes it onward.
+     * <p>
+     * A facade is one name over many tools, and everything the server decides BEFORE the call runs -
+     * whether it is heavy enough to need heap headroom, whether it counts against the limit on
+     * concurrent heavy work - was decided by the name in the request. Under the Canonical preset
+     * that name is the facade's, while the tool that does the work is the one underneath, so the
+     * guard was asked about a name that never does any work and answered "light" for calls that
+     * rebuild a configuration.
+     * </p>
+     * <p>
+     * A facade answers from the same map it dispatches by, so there is no second list to drift. A
+     * tool that routes nowhere returns <code>null</code>, which is the default here.
+     * </p>
+     *
+     * @param arguments the call arguments, as the client sent them; may be <code>null</code>
+     * @return the name of the tool this call reaches, or <code>null</code> when this tool runs it
+     */
+    default String routesTo(Map<String, String> arguments)
+    {
+        return null;
+    }
 }

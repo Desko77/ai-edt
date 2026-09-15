@@ -669,6 +669,34 @@ public class EditMetadataTool implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * Where an operation sends the call.
+     * <p>
+     * Renaming an object walks every reference in the configuration, so it is heavy; a batch may
+     * carry any operation at all, including that one, and is treated as heavy without looking
+     * inside. Everything else this facade does itself.
+     * </p>
+     *
+     * @param arguments the call arguments
+     * @return the tool the call reaches, or <code>null</code> when this facade runs it
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        if (JsonUtils.extractBooleanArgument(arguments, "batch", false)) //$NON-NLS-1$
+        {
+            return "rename_metadata_object"; //$NON-NLS-1$
+        }
+        String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
+        if (operation == null)
+        {
+            return null;
+        }
+        return "rename_metadata_object".equals(operation.trim().toLowerCase(java.util.Locale.ROOT)) //$NON-NLS-1$
+            ? "rename_metadata_object" //$NON-NLS-1$
+            : null;
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

@@ -171,6 +171,42 @@ public class ExtensionWorkshopTool implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * Where an operation sends the call, for the operations that send it to a tool of its own.
+     * <p>
+     * Read off the dispatch below one case at a time: these five construct another tool and hand it
+     * the call, and four of the five are heavy enough that the server has to know before it starts.
+     * The rest is work this facade does itself, and answers <code>null</code>.
+     * </p>
+     *
+     * @param arguments the call arguments
+     * @return the tool the call reaches, or <code>null</code> when this facade runs it
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
+        if (operation == null)
+        {
+            return null;
+        }
+        switch (operation.trim().toLowerCase(java.util.Locale.ROOT))
+        {
+        case "install_extension": //$NON-NLS-1$
+            return "install_extension"; //$NON-NLS-1$
+        case "uninstall_extension": //$NON-NLS-1$
+            return "uninstall_extension"; //$NON-NLS-1$
+        case "list_extension": //$NON-NLS-1$
+            return "list_extension"; //$NON-NLS-1$
+        case "export_extension": //$NON-NLS-1$
+            return "export_extension"; //$NON-NLS-1$
+        case "list_interceptors": //$NON-NLS-1$
+            return "list_interceptors"; //$NON-NLS-1$
+        default:
+            return null;
+        }
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
