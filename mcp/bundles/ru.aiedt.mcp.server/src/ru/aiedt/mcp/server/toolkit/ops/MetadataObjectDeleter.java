@@ -316,10 +316,10 @@ public class MetadataObjectDeleter implements IMcpTool
             return null;
         }
         String[] parts = objectFqn.split("\\."); //$NON-NLS-1$
-        if (parts.length == 4 && OWN_RESOURCE_KINDS.contains(parts[2]))
+        if (hasItsOwnResource(objectFqn))
         {
-            // A child with a file of its own: the owner's directory stays, so the question is
-            // whether the child's own file went.
+            // A child with a resource of its own: the owner's directory stays, so the question is
+            // whether the child's own folder or file went.
             return whatIsLeftOfChild(project, parts);
         }
         if (parts.length != 2)
@@ -367,6 +367,28 @@ public class MetadataObjectDeleter implements IMcpTool
             "Form", "Template", "Command", "Форма", "Макет", "Команда"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
 
     /**
+     * Whether the address names a child that has a resource of its own on disk.
+     * <p>
+     * A form, a template and a command each own a folder under the owner; an attribute, a tabular
+     * section, a dimension or an enum value is a few lines inside the owner's own {@code .mdo} and
+     * has nothing on disk to look for. The answer decides which question can be asked after a
+     * delete - the disk, or the model.
+     * </p>
+     *
+     * @param objectFqn the address, already normalized to English type names
+     * @return whether the disk can be asked about this address
+     */
+    static boolean hasItsOwnResource(String objectFqn)
+    {
+        if (objectFqn == null)
+        {
+            return false;
+        }
+        String[] parts = objectFqn.split("\\."); //$NON-NLS-1$
+        return parts.length == 4 && OWN_RESOURCE_KINDS.contains(parts[2]);
+    }
+
+    /**
      * What a child with a file of its own left behind, if anything.
      *
      * @param project the project that owned it
@@ -412,7 +434,7 @@ public class MetadataObjectDeleter implements IMcpTool
      * @param kind the kind as the caller wrote it, in either language
      * @return the English plural folder name
      */
-    private static String englishKindFolder(String kind)
+    static String englishKindFolder(String kind)
     {
         switch (kind)
         {
@@ -443,26 +465,49 @@ public class MetadataObjectDeleter implements IMcpTool
         try
         {
             refactoring.perform();
-            // Asked of the disk, not of the call that returned. The refactoring reported success
-            // while the object's directory stayed where it was, so the answer said the object was
-            // gone and its files were still there for the next export to pick up.
+            // Asked of the disk and of the model, not of the call that returned. The refactoring
+            // reported success while the object's directory stayed where it was, so the answer said
+            // the object was gone and its files were still there for the next export to pick up.
             String leftOver = whatIsLeftOnDisk(project, objectFqn);
-            ToolResult done = ToolResult.success()
-                .put("action", "executed") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("objectFqn", objectFqn); //$NON-NLS-1$
-            if (leftOver == null)
+            String stillHeld = whatTheOwnerStillHolds(project, objectFqn);
+            if (leftOver == null && stillHeld == null)
             {
-                return done
-                    .put("message", "The delete refactoring finished and no directory of this " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "object was found on disk.") //$NON-NLS-1$
+                return ToolResult.success()
+                    .put("action", "executed") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("objectFqn", objectFqn) //$NON-NLS-1$
+                    .put("message", "The delete refactoring finished. Nothing is left under this " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "address: no resource of its own on disk, and the model no longer " //$NON-NLS-1$
+                        + "resolves it.") //$NON-NLS-1$
                     .toJson();
             }
-            return done
-                .put("filesLeftOnDisk", leftOver) //$NON-NLS-1$
-                .put("message", "The delete refactoring finished, but the object's directory is " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "still on disk. Whatever holds it has to be closed before it can go; until " //$NON-NLS-1$
-                    + "then an export writes it back into the configuration.") //$NON-NLS-1$
-                .toJson();
+            StringBuilder why = new StringBuilder();
+            if (leftOver != null)
+            {
+                why.append("its resource is still on disk (").append(leftOver).append(')'); //$NON-NLS-1$
+            }
+            if (stillHeld != null)
+            {
+                if (why.length() > 0)
+                {
+                    why.append(" and "); //$NON-NLS-1$
+                }
+                why.append("the model still resolves the address"); //$NON-NLS-1$
+            }
+            ToolResult refused = ToolResult
+                .error("The delete refactoring ran without an error and '" + objectFqn //$NON-NLS-1$
+                    + "' is still there: " + why + ". Whatever holds it has to be released before " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "it can go; until then an export writes it back into the configuration.") //$NON-NLS-1$
+                .put("action", "executed") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("objectFqn", objectFqn); //$NON-NLS-1$
+            if (leftOver != null)
+            {
+                refused.put("filesLeftOnDisk", leftOver); //$NON-NLS-1$
+            }
+            if (stillHeld != null)
+            {
+                refused.put("stillResolvedInModel", stillHeld); //$NON-NLS-1$
+            }
+            return refused.toJson();
         }
         catch (Exception e)
         {
@@ -489,6 +534,35 @@ public class MetadataObjectDeleter implements IMcpTool
             }
             return ToolResult.error("Deletion failed: " + TextSuggest.safeMessage(e)).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * What the model still holds under this address after the delete, if anything.
+     * <p>
+     * A child that lives in its owner's {@code .mdo} leaves no file behind, so the disk has nothing
+     * to say about it: it answers that the owner is still there, which is true and is not what was
+     * asked. The configuration is read again instead, and an address that still resolves names a
+     * child the delete did not take. An unreadable configuration answers <code>null</code> rather
+     * than a refusal - an unaskable question is not evidence of a leftover.
+     * </p>
+     *
+     * @param project the project that owned the object
+     * @param objectFqn the address that was deleted, already normalized
+     * @return the address when the model still resolves it, <code>null</code> otherwise
+     */
+    private String whatTheOwnerStillHolds(IProject project, String objectFqn)
+    {
+        IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
+        if (provider == null)
+        {
+            return null;
+        }
+        Configuration config = provider.getConfiguration(project);
+        if (config == null)
+        {
+            return null;
+        }
+        return resolveObject(config, objectFqn) != null ? objectFqn : null;
     }
 
     /**

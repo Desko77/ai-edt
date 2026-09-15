@@ -212,7 +212,7 @@ public class DependencyGraphTool implements IMcpTool
                     BmReferencesHelper.BfsResult result;
                     if (level == Level.MODULES)
                     {
-                        result = buildModuleGraph(project, bmModel, roots, direction, depth,
+                        result = buildModuleGraph(project, bmModel, tx, roots, direction, depth,
                             maxNodes, maxEdges, monitor, watch);
                     }
                     else
@@ -253,8 +253,8 @@ public class DependencyGraphTool implements IMcpTool
     }
 
     private BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
-        Collection<IBmObject> roots, BmReferencesHelper.Direction direction, int depth,
-        int maxNodes, int maxEdges, IProgressMonitor monitor, WatchForCancel watch)
+        IBmTransaction tx, Collection<IBmObject> roots, BmReferencesHelper.Direction direction,
+        int depth, int maxNodes, int maxEdges, IProgressMonitor monitor, WatchForCancel watch)
     {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         java.util.Deque<IBmObject> queue = new java.util.ArrayDeque<>(roots);
@@ -264,6 +264,12 @@ public class DependencyGraphTool implements IMcpTool
             if (root instanceof Module)
             {
                 String fqn = BslCallGraphHelper.moduleFqnOf((Module) root);
+                if (fqn == null)
+                {
+                    // The module is its own top object on some builds, and then the lookup that
+                    // walks up to a container has nothing to walk to.
+                    fqn = fqnOf(root);
+                }
                 if (fqn != null)
                 {
                     visited.add(fqn);
@@ -307,11 +313,8 @@ public class DependencyGraphTool implements IMcpTool
                         }
                         result.edges.add(new BmReferencesHelper.Edge(edge.fromFqn, edge.toFqn,
                             "calls")); //$NON-NLS-1$
-                        // Note: at module level we cannot easily resolve the caller / callee
-                        // module IBmObject without an additional lookup. Adding the FQN to the
-                        // node map without an IBmObject reference is acceptable for rendering.
-                        addModuleNodeIfNew(result, edge.fromFqn, visited, maxNodes);
-                        addModuleNodeIfNew(result, edge.toFqn, visited, maxNodes);
+                        addModuleNodeIfNew(result, queue, visited, tx, edge.fromFqn, maxNodes);
+                        addModuleNodeIfNew(result, queue, visited, tx, edge.toFqn, maxNodes);
                     });
             }
             currentDepth++;
@@ -319,8 +322,24 @@ public class DependencyGraphTool implements IMcpTool
         return result;
     }
 
-    private void addModuleNodeIfNew(BmReferencesHelper.BfsResult result, String fqn,
-        java.util.Set<String> visited, int maxNodes)
+    /**
+     * Records a module the walk has just found, and puts it in the queue so the next ring walks it.
+     * <p>
+     * The node used to be recorded without the object behind it, and the queue was never told. The
+     * walk then had nothing to expand after the first ring: {@code depth=2} at module level returned
+     * the same graph as {@code depth=1}, the neighbours of the roots and nothing past them.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param queue the walk's queue
+     * @param visited the FQNs already recorded
+     * @param tx the live transaction, which resolves the FQN back to the module
+     * @param fqn the module's FQN as the edge names it
+     * @param maxNodes the node cap
+     */
+    private void addModuleNodeIfNew(BmReferencesHelper.BfsResult result,
+        java.util.Deque<IBmObject> queue, java.util.Set<String> visited, IBmTransaction tx,
+        String fqn, int maxNodes)
     {
         if (fqn == null || visited.contains(fqn))
         {
@@ -332,11 +351,128 @@ public class DependencyGraphTool implements IMcpTool
             return;
         }
         visited.add(fqn);
-        result.nodes.put(fqn, null); // module placeholder; renderer reads only the FQN key
+        IBmObject module = moduleByFqn(tx, fqn);
+        result.nodes.put(fqn, module); // the renderer reads the key; the walk needs the object
+        if (module != null)
+        {
+            queue.add(module);
+        }
+    }
+
+    /**
+     * The module a FQN names, or <code>null</code> when it names something else.
+     *
+     * @param tx the live transaction
+     * @param fqn a module FQN such as {@code CommonModule.Sales.Module}
+     * @return the module, or <code>null</code>
+     */
+    private static IBmObject moduleByFqn(IBmTransaction tx, String fqn)
+    {
+        if (tx == null || fqn == null)
+        {
+            return null;
+        }
+        Object top = tx.getTopObjectByFqn(fqn);
+        return top instanceof Module ? (IBmObject)top : null;
+    }
+
+    /**
+     * The FQN a BM object carries, or <code>null</code> when it carries none.
+     *
+     * @param object the object
+     * @return its FQN
+     */
+    private static String fqnOf(IBmObject object)
+    {
+        if (object == null)
+        {
+            return null;
+        }
+        try
+        {
+            return object.bmGetFqn();
+        }
+        catch (Exception notATopObject)
+        {
+            // Only a top object answers this; anything else is not a node of this graph.
+            return null;
+        }
+    }
+
+    /**
+     * The modules behind a set of roots, for the level whose nodes are modules.
+     * <p>
+     * The roots of {@code scope=project} are common modules - that is, the metadata objects that own
+     * a module - and the walk works on modules, so every root was dropped and the graph came back
+     * empty. An owner is asked for each module name it can carry; a root that is already a module is
+     * kept as it is.
+     * </p>
+     *
+     * @param roots the roots as the scope resolved them
+     * @param tx the live transaction
+     * @return the modules, in the order the roots named them, each once
+     */
+    private static Collection<IBmObject> asModules(Collection<IBmObject> roots, IBmTransaction tx)
+    {
+        List<IBmObject> modules = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (IBmObject root : roots)
+        {
+            if (root instanceof Module)
+            {
+                String own = fqnOf(root);
+                if (own == null || seen.add(own))
+                {
+                    modules.add(root);
+                }
+                continue;
+            }
+            String ownerFqn = fqnOf(root);
+            if (ownerFqn == null)
+            {
+                continue;
+            }
+            for (String segment : MODULE_SEGMENTS)
+            {
+                String candidateFqn = ownerFqn + "." + segment; //$NON-NLS-1$
+                IBmObject module = moduleByFqn(tx, candidateFqn);
+                if (module != null && seen.add(candidateFqn))
+                {
+                    modules.add(module);
+                }
+            }
+        }
+        return modules;
+    }
+
+    /** The module names an owning metadata object can carry, in the spelling a BM FQN uses. */
+    private static final List<String> MODULE_SEGMENTS = java.util.Arrays.asList(
+        "Module", "ObjectModule", "ManagerModule", "RecordSetModule", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "ValueManagerModule", "CommandModule"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * The roots of the walk, in the form the level walks.
+     *
+     * @param level the level asked for
+     * @param scopeStr the scope asked for
+     * @param params the call arguments
+     * @param configuration the project configuration
+     * @param tx the live transaction
+     * @return the roots, or <code>null</code> when the scope names nothing
+     */
+    private Collection<IBmObject> resolveRoots(Level level, String scopeStr,
+        Map<String, String> params, Configuration configuration, IBmTransaction tx)
+    {
+        Collection<IBmObject> roots = resolveScopeRoots(level, scopeStr, params, configuration, tx);
+        if (roots == null || level != Level.MODULES)
+        {
+            return roots;
+        }
+        return asModules(roots, tx);
     }
 
     @SuppressWarnings("unchecked")
-    private Collection<IBmObject> resolveRoots(Level level, String scopeStr,
+    private Collection<IBmObject> resolveScopeRoots(Level level, String scopeStr,
         Map<String, String> params, Configuration configuration, IBmTransaction tx)
     {
         List<IBmObject> roots = new ArrayList<>();

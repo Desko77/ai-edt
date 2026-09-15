@@ -84,6 +84,21 @@ public class QueryAntiPatternRulesTest
     }
 
     @Test
+    public void aFilterInsideASubqueryClearsThatRuleToo()
+    {
+        // The rule reads the query as one text: a ГДЕ anywhere in it, subquery included, counts as a
+        // filter. Pinned because the outer select over the whole table is the case the rule exists
+        // for, and this is where it stops looking.
+        assertFalse(rulesFor("ВЫБРАТЬ Товары.Код ИЗ Справочник.Товары КАК Товары ГДЕ Товары.Ссылка В " //$NON-NLS-1$
+            + "(ВЫБРАТЬ Ц.Товар ИЗ РегистрСведений.Цены КАК Ц ГДЕ Ц.Цена > 0)") //$NON-NLS-1$
+            .contains("NO_WHERE_ON_LARGE_TABLE")); //$NON-NLS-1$
+        assertFalse("and with the filter only in the subquery", //$NON-NLS-1$
+            rulesFor("ВЫБРАТЬ Товары.Код ИЗ Справочник.Товары КАК Товары, " //$NON-NLS-1$
+                + "(ВЫБРАТЬ Ц.Товар КАК Товар ИЗ РегистрСведений.Цены КАК Ц ГДЕ Ц.Цена > 0) КАК Ц") //$NON-NLS-1$
+                .contains("NO_WHERE_ON_LARGE_TABLE")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aVirtualTableCalledWithoutParametersIsReported()
     {
         // The classic 1C performance trap: the platform materializes the whole register.

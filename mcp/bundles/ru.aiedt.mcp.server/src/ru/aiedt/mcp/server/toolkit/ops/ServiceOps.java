@@ -14,8 +14,14 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import org.eclipse.core.resources.IContainer;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.Path;
 import org.eclipse.emf.common.util.EList;
 
 import com._1c.g5.v8.bm.core.IBmObject;
@@ -35,6 +41,7 @@ import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
 /**
@@ -412,6 +419,26 @@ final class ServiceOps
         boolean createModule = JsonUtils.extractBooleanArgument(params, "createModule", true); //$NON-NLS-1$
         boolean withHandlerStub = JsonUtils.extractBooleanArgument(params, "withHandlerStub", true); //$NON-NLS-1$
 
+        MdObject alreadyThere = MetadataTypeCatalog.findObject(config, "WebService", name); //$NON-NLS-1$
+        if (alreadyThere != null && !dryRun)
+        {
+            Map<String, Object> asked = new LinkedHashMap<>();
+            asked.put("getNamespace|getURL", namespace); //$NON-NLS-1$
+            if (transactional != null)
+            {
+                asked.put("getTransactional", transactional); //$NON-NLS-1$
+            }
+            Map<String, String> children = new LinkedHashMap<>();
+            String namedOperation = JsonUtils.extractStringArgument(params, "operationName"); //$NON-NLS-1$
+            if (namedOperation != null && !namedOperation.isEmpty())
+            {
+                children.put("getOperations", namedOperation); //$NON-NLS-1$
+            }
+            String body = createModule ? (withHandlerStub ? buildWebServiceModuleStub(handler) : "") : null; //$NON-NLS-1$
+            return completeExistingService(project, "WebService", name, alreadyThere, asked, //$NON-NLS-1$
+                children, "WebServices", body); //$NON-NLS-1$
+        }
+
         IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
         IBmModel bmModel = bmModelManager != null ? bmModelManager.getModel(project) : null;
         if (bmModel == null)
@@ -514,16 +541,28 @@ final class ServiceOps
                 String moduleBody = withHandlerStub
                     ? buildWebServiceModuleStub(handler)
                     : ""; //$NON-NLS-1$
-                String modulePath = writeWebServiceModule(project, name, moduleBody);
-                moduleInfo.put("path", modulePath); //$NON-NLS-1$
-                moduleInfo.put("handlerStub", withHandlerStub); //$NON-NLS-1$
+                String modulePath = writeServiceModule(project, "WebServices", name, moduleBody); //$NON-NLS-1$
+                if (modulePath == null)
+                {
+                    moduleInfo.put("leftAlone", //$NON-NLS-1$
+                        "a module with code in it was already there and was not rewritten"); //$NON-NLS-1$
+                }
+                else
+                {
+                    moduleInfo.put("path", modulePath); //$NON-NLS-1$
+                    moduleInfo.put("handlerStub", withHandlerStub); //$NON-NLS-1$
+                }
             }
-            catch (Exception moduleEx)
+            catch (CoreException moduleEx)
             {
-                moduleInfo.put("error", "Module.bsl write failed: " + moduleEx.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-                moduleInfo.put("hint", //$NON-NLS-1$
-                    "BM object is created. Add the module manually via write_module_source " //$NON-NLS-1$
-                        + "with objectName=WebService." + name + " moduleType=Module."); //$NON-NLS-1$ //$NON-NLS-2$
+                return ToolResult
+                    .error("create_web_service put WebService." + name //$NON-NLS-1$
+                        + " into the configuration and could not write its module: " //$NON-NLS-1$
+                        + moduleEx.getMessage() + ". Call create_web_service again with the same " //$NON-NLS-1$
+                        + "arguments to finish it, or write the module with write_module_source.") //$NON-NLS-1$
+                    .put("fqn", "WebService." + name) //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("cause", "module_write_failed") //$NON-NLS-1$ //$NON-NLS-2$
+                    .toJson();
             }
         }
 
@@ -904,6 +943,9 @@ final class ServiceOps
         // single identifier ([a-zA-Z0-9_]+). Empty/"/" url templates are also
         // rejected as "Неверный формат шаблона".
         String rootURL = JsonUtils.extractStringArgument(params, "rootURL"); //$NON-NLS-1$
+        // Named by the request or defaulted from the name: only the first takes part in the
+        // comparison below, because a default is not something the caller asked for.
+        boolean rootURLNamed = rootURL != null && !rootURL.isEmpty();
         if (rootURL == null || rootURL.isEmpty())
         {
             rootURL = name;
@@ -966,6 +1008,37 @@ final class ServiceOps
             ? handlerParam : (urlTemplateName + methodName);
         boolean createModule = JsonUtils.extractBooleanArgument(params, "createModule", true); //$NON-NLS-1$
         boolean withHandlerStub = JsonUtils.extractBooleanArgument(params, "withHandlerStub", true); //$NON-NLS-1$
+
+        MdObject alreadyThere = MetadataTypeCatalog.findObject(config, "HTTPService", name); //$NON-NLS-1$
+        if (alreadyThere != null && !dryRun)
+        {
+            Map<String, Object> asked = new LinkedHashMap<>();
+            if (rootURLNamed)
+            {
+                asked.put("getRootURL", rootURL); //$NON-NLS-1$
+            }
+            if (aliases != null && !aliases.isEmpty())
+            {
+                asked.put("getAliases", aliases); //$NON-NLS-1$
+            }
+            if (reuseSessions != null)
+            {
+                asked.put("getReuseSessions", reuseSessions ? "USE" : "DONT_USE"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            }
+            if (sessionMaxAge != null)
+            {
+                asked.put("getSessionMaxAge", sessionMaxAge); //$NON-NLS-1$
+            }
+            Map<String, String> children = new LinkedHashMap<>();
+            String namedTemplate = JsonUtils.extractStringArgument(params, "urlTemplateName"); //$NON-NLS-1$
+            if (namedTemplate != null && !namedTemplate.isEmpty())
+            {
+                children.put("getUrlTemplates", namedTemplate); //$NON-NLS-1$
+            }
+            String body = createModule ? (withHandlerStub ? buildHttpServiceModuleStub(handler) : "") : null; //$NON-NLS-1$
+            return completeExistingService(project, "HTTPService", name, alreadyThere, asked, //$NON-NLS-1$
+                children, "HTTPServices", body); //$NON-NLS-1$
+        }
 
         IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
         IBmModel bmModel = bmModelManager != null ? bmModelManager.getModel(project) : null;
@@ -1093,16 +1166,28 @@ final class ServiceOps
                 String moduleBody = withHandlerStub
                     ? buildHttpServiceModuleStub(handler)
                     : ""; //$NON-NLS-1$
-                String modulePath = writeHttpServiceModule(project, name, moduleBody);
-                moduleInfo.put("path", modulePath); //$NON-NLS-1$
-                moduleInfo.put("handlerStub", withHandlerStub); //$NON-NLS-1$
+                String modulePath = writeServiceModule(project, "HTTPServices", name, moduleBody); //$NON-NLS-1$
+                if (modulePath == null)
+                {
+                    moduleInfo.put("leftAlone", //$NON-NLS-1$
+                        "a module with code in it was already there and was not rewritten"); //$NON-NLS-1$
+                }
+                else
+                {
+                    moduleInfo.put("path", modulePath); //$NON-NLS-1$
+                    moduleInfo.put("handlerStub", withHandlerStub); //$NON-NLS-1$
+                }
             }
-            catch (Exception moduleEx)
+            catch (CoreException moduleEx)
             {
-                moduleInfo.put("error", "Module.bsl write failed: " + moduleEx.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-                moduleInfo.put("hint", //$NON-NLS-1$
-                    "BM object is created. Add the module manually via write_module_source " //$NON-NLS-1$
-                        + "with objectName=HTTPService." + name + " moduleType=Module."); //$NON-NLS-1$ //$NON-NLS-2$
+                return ToolResult
+                    .error("create_http_service put HTTPService." + name //$NON-NLS-1$
+                        + " into the configuration and could not write its module: " //$NON-NLS-1$
+                        + moduleEx.getMessage() + ". Call create_http_service again with the same " //$NON-NLS-1$
+                        + "arguments to finish it, or write the module with write_module_source.") //$NON-NLS-1$
+                    .put("fqn", "HTTPService." + name) //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("cause", "module_write_failed") //$NON-NLS-1$ //$NON-NLS-2$
+                    .toJson();
             }
         }
 
@@ -1308,40 +1393,6 @@ final class ServiceOps
             + "КонецФункции\n"; //$NON-NLS-1$
     }
 
-    private static String writeWebServiceModule(IProject project, String name, String content)
-        throws Exception
-    {
-        org.eclipse.core.resources.IFolder srcFolder = project.getFolder("src"); //$NON-NLS-1$
-        org.eclipse.core.resources.IContainer base = srcFolder.exists()
-            ? srcFolder : (org.eclipse.core.resources.IContainer) project;
-        org.eclipse.core.resources.IFolder webServices = base.getFolder(
-            new org.eclipse.core.runtime.Path("WebServices")); //$NON-NLS-1$
-        if (!webServices.exists())
-        {
-            webServices.create(true, true, null);
-        }
-        org.eclipse.core.resources.IFolder serviceDir = webServices.getFolder(name);
-        if (!serviceDir.exists())
-        {
-            serviceDir.create(true, true, null);
-        }
-        org.eclipse.core.resources.IFile moduleFile = serviceDir.getFile("Module.bsl"); //$NON-NLS-1$
-        // The stubs above are written with \n for readability; the file gets whatever the module
-        // already uses, or the configured delimiter when it is new.
-        content = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(content,
-            ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
-        byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream(bytes);
-        if (moduleFile.exists())
-        {
-            moduleFile.setContents(stream, true, true, null);
-        }
-        else
-        {
-            moduleFile.create(stream, true, null);
-        }
-        return moduleFile.getFullPath().toString();
-    }
 
     private static final Set<String> VALID_HTTP_METHODS =
         new LinkedHashSet<>(Arrays.asList(
@@ -1534,30 +1585,260 @@ final class ServiceOps
             + "КонецФункции\n"; //$NON-NLS-1$
     }
 
-    private static String writeHttpServiceModule(IProject project, String name, String content)
-        throws Exception
+    /**
+     * Completes a service the configuration already holds, or refuses and names what differs.
+     * <p>
+     * A repeat call is the ordinary way in here: the first one wrote the description and failed to
+     * write the module, so the object exists without one. Only what the request named is compared -
+     * an argument the request left out is not weighed against a platform default - and a property
+     * this EDT build does not expose is not a difference either. Nothing is overwritten: a module
+     * that already carries code is left where it is and the answer says so.
+     * </p>
+     *
+     * @param project the project that holds the service
+     * @param typeName the metadata type, for the FQN in the answer
+     * @param name the service name
+     * @param service the object the configuration already holds
+     * @param asked the properties the request named: reader name (alternatives separated by
+     *            <code>|</code>) to requested value
+     * @param children the child collections the request named: reader name to required child name
+     * @param kindFolder the source folder modules of this kind live in
+     * @param moduleBody the module to write when it is missing, or <code>null</code> when the request
+     *            asked for no module
+     * @return a JSON body
+     */
+    private String completeExistingService(IProject project, String typeName, String name,
+        MdObject service, Map<String, Object> asked, Map<String, String> children, String kindFolder,
+        String moduleBody)
     {
-        org.eclipse.core.resources.IFolder srcFolder = project.getFolder("src"); //$NON-NLS-1$
-        if (!srcFolder.exists())
+        String fqn = typeName + "." + name; //$NON-NLS-1$
+        String difference = firstDifference(service, asked, children);
+        if (difference != null)
         {
-            srcFolder = null;
+            return ToolResult
+                .error(fqn + " is already in the configuration and is not what the request " //$NON-NLS-1$
+                    + "describes - " + difference + ". Nothing was changed.") //$NON-NLS-1$
+                .put("fqn", fqn) //$NON-NLS-1$
+                .put("cause", "exists_and_differs") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("difference", difference) //$NON-NLS-1$
+                .toJson();
         }
-        org.eclipse.core.resources.IContainer base = srcFolder != null
-            ? srcFolder : (org.eclipse.core.resources.IContainer) project;
-        org.eclipse.core.resources.IFolder httpServices = base.getFolder(
-            new org.eclipse.core.runtime.Path("HTTPServices")); //$NON-NLS-1$
-        if (!httpServices.exists())
+        if (moduleBody == null)
         {
-            httpServices.create(true, true, null);
+            return ToolResult
+                .error(fqn + " is already in the configuration and matches the request, and the " //$NON-NLS-1$
+                    + "request asked for no module, so there was nothing left to create.") //$NON-NLS-1$
+                .put("fqn", fqn) //$NON-NLS-1$
+                .put("cause", "exists_complete") //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
         }
-        org.eclipse.core.resources.IFolder serviceDir = httpServices.getFolder(name);
-        if (!serviceDir.exists())
+        try
         {
-            serviceDir.create(true, true, null);
+            String path = writeServiceModule(project, kindFolder, name, moduleBody);
+            if (path == null)
+            {
+                return ToolResult
+                    .error(fqn + " is already in the configuration, matches the request, and its " //$NON-NLS-1$
+                        + "module already carries code, so there was nothing left to create. The " //$NON-NLS-1$
+                        + "module was not touched.") //$NON-NLS-1$
+                    .put("fqn", fqn) //$NON-NLS-1$
+                    .put("cause", "exists_complete") //$NON-NLS-1$ //$NON-NLS-2$
+                    .toJson();
+            }
+            return ToolResult.success()
+                .put("fqn", fqn) //$NON-NLS-1$
+                .put("completed", "module") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("module", path) //$NON-NLS-1$
+                .put("message", fqn + " was already in the configuration and matches the request; " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "its module was missing and has been written. Nothing else was changed.") //$NON-NLS-1$
+                .toJson();
         }
-        org.eclipse.core.resources.IFile moduleFile = serviceDir.getFile("Module.bsl"); //$NON-NLS-1$
-        // The stubs above are written with \n for readability; the file gets whatever the module
-        // already uses, or the configured delimiter when it is new.
+        catch (CoreException moduleFailure)
+        {
+            return ToolResult
+                .error(fqn + " is already in the configuration and its missing module could not be " //$NON-NLS-1$
+                    + "written: " + moduleFailure.getMessage()) //$NON-NLS-1$
+                .put("fqn", fqn) //$NON-NLS-1$
+                .put("cause", "module_write_failed") //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
+        }
+    }
+
+    /**
+     * The first way an existing service differs from what the request named, or <code>null</code>.
+     *
+     * @param service the object the configuration holds
+     * @param asked reader name (alternatives separated by <code>|</code>) to requested value
+     * @param children reader name of a child collection to the child name the request named
+     * @return a sentence naming the difference, or <code>null</code> when nothing named differs
+     */
+    private static String firstDifference(MdObject service, Map<String, Object> asked,
+        Map<String, String> children)
+    {
+        for (Map.Entry<String, Object> entry : asked.entrySet())
+        {
+            Object current = readProperty(service, entry.getKey());
+            if (current == UNREADABLE)
+            {
+                continue;
+            }
+            if (!sameValue(current, entry.getValue()))
+            {
+                return propertyLabel(entry.getKey()) + " is '" + current + "' and the request asks " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "for '" + entry.getValue() + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        for (Map.Entry<String, String> entry : children.entrySet())
+        {
+            Object collection = readProperty(service, entry.getKey());
+            if (collection == UNREADABLE || !(collection instanceof EList))
+            {
+                continue;
+            }
+            boolean found = false;
+            for (Object child : (EList<?>)collection)
+            {
+                if (child instanceof MdObject md && entry.getValue().equalsIgnoreCase(md.getName()))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                return propertyLabel(entry.getKey()) + " has no '" + entry.getValue() + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        return null;
+    }
+
+    /** Stands for a property this EDT build does not expose, which is not a difference. */
+    private static final Object UNREADABLE = new Object();
+
+    /**
+     * Reads a property through the first reader the object actually has.
+     *
+     * @param object the metadata object
+     * @param readers one reader name, or several separated by <code>|</code> - EDT builds disagree
+     *            on whether a web service carries its namespace as Namespace or as URL
+     * @return the value, or {@link #UNREADABLE} when no reader of that name exists
+     */
+    private static Object readProperty(MdObject object, String readers)
+    {
+        for (String reader : readers.split("\\|")) //$NON-NLS-1$
+        {
+            try
+            {
+                return object.getClass().getMethod(reader).invoke(object);
+            }
+            catch (NoSuchMethodException notOnThisBuild)
+            {
+                continue;
+            }
+            catch (Exception unreadable)
+            {
+                Activator.logDebug("Reading " + reader + " failed: " + unreadable); //$NON-NLS-1$ //$NON-NLS-2$
+                return UNREADABLE;
+            }
+        }
+        return UNREADABLE;
+    }
+
+    /**
+     * Whether what the object carries is what the request asked for.
+     * <p>
+     * An enumerated property reads back as the platform's own literal - {@code DontUse} - while the
+     * request carries the constant name {@code DONT_USE}; those are compared on letters and digits
+     * alone. Everything else is compared exactly as written.
+     * </p>
+     *
+     * @param current what the object carries
+     * @param requested what the request named
+     * @return whether they are the same value
+     */
+    private static boolean sameValue(Object current, Object requested)
+    {
+        if (current == null || requested == null)
+        {
+            return current == null && requested == null;
+        }
+        String mine = String.valueOf(current);
+        String theirs = String.valueOf(requested);
+        if (current.getClass().isEnum())
+        {
+            return lettersAndDigits(mine).equalsIgnoreCase(lettersAndDigits(theirs));
+        }
+        return mine.equals(theirs);
+    }
+
+    /**
+     * The string with everything that is not a letter or a digit removed.
+     *
+     * @param value the string
+     * @return the reduced string
+     */
+    private static String lettersAndDigits(String value)
+    {
+        StringBuilder reduced = new StringBuilder(value.length());
+        for (int at = 0; at < value.length(); at++)
+        {
+            char character = value.charAt(at);
+            if (Character.isLetterOrDigit(character))
+            {
+                reduced.append(character);
+            }
+        }
+        return reduced.toString();
+    }
+
+    /**
+     * The argument name behind a reader name, for the message.
+     *
+     * @param readers the reader name, alternatives included
+     * @return the property name as a caller writes it
+     */
+    private static String propertyLabel(String readers)
+    {
+        String first = readers.split("\\|")[0]; //$NON-NLS-1$
+        String bare = first.startsWith("get") ? first.substring(3) : first; //$NON-NLS-1$
+        if (bare.isEmpty())
+        {
+            return first;
+        }
+        return Character.toLowerCase(bare.charAt(0)) + bare.substring(1);
+    }
+
+    /**
+     * Writes a service module, and never over a module that already carries code.
+     * <p>
+     * The directory is asked of the file system rather than of the workspace tree alone: the export
+     * writes the service directory behind the workspace's back, so the tree answers that it is not
+     * there, {@code create} then fails with "resource already exists", and the module never reaches
+     * the disk. That is what left every service after the first one without a module.
+     * </p>
+     *
+     * @param project the project
+     * @param kindFolder the folder modules of this kind live in
+     * @param name the service name
+     * @param content the module text
+     * @return the workspace path of the module, or <code>null</code> when a module with code in it
+     *         was left alone
+     * @throws CoreException when the directory or the file cannot be written
+     */
+    private static String writeServiceModule(IProject project, String kindFolder, String name,
+        String content) throws CoreException
+    {
+        IFile moduleFile = serviceModuleFile(project, kindFolder, name);
+        if (moduleFile.exists())
+        {
+            String existing = readText(moduleFile);
+            if (existing == null || !existing.trim().isEmpty())
+            {
+                return null;
+            }
+        }
+        // The stubs are written with \n for readability; the file gets whatever the module already
+        // uses, or the configured delimiter when it is new.
         content = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(content,
             ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
         byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -1571,5 +1852,82 @@ final class ServiceOps
             moduleFile.create(stream, true, null);
         }
         return moduleFile.getFullPath().toString();
+    }
+
+    /**
+     * The module file of a service, with the directories on the way to it in place.
+     *
+     * @param project the project
+     * @param kindFolder the folder modules of this kind live in
+     * @param name the service name
+     * @return the module file handle
+     * @throws CoreException when a directory cannot be created
+     */
+    private static IFile serviceModuleFile(IProject project, String kindFolder, String name)
+        throws CoreException
+    {
+        IFolder source = project.getFolder("src"); //$NON-NLS-1$
+        if (!source.exists())
+        {
+            project.refreshLocal(IResource.DEPTH_ONE, null);
+        }
+        IContainer base = source.exists() ? source : project;
+        IFolder kind = ensureFolder(base, kindFolder);
+        IFolder serviceDirectory = ensureFolder(kind, name);
+        return serviceDirectory.getFile("Module.bsl"); //$NON-NLS-1$
+    }
+
+    /**
+     * The folder, brought into the workspace whether it was created by us or found on disk.
+     *
+     * @param parent the container it sits in
+     * @param name the folder name
+     * @return the folder, existing
+     * @throws CoreException when it can be neither found nor created
+     */
+    private static IFolder ensureFolder(IContainer parent, String name) throws CoreException
+    {
+        IFolder folder = parent.getFolder(new Path(name));
+        if (!folder.exists())
+        {
+            parent.refreshLocal(IResource.DEPTH_ONE, null);
+        }
+        if (folder.exists())
+        {
+            return folder;
+        }
+        try
+        {
+            folder.create(true, true, null);
+        }
+        catch (CoreException appearedMeanwhile)
+        {
+            parent.refreshLocal(IResource.DEPTH_ONE, null);
+            if (!folder.exists())
+            {
+                throw appearedMeanwhile;
+            }
+        }
+        return folder;
+    }
+
+    /**
+     * The text of a file.
+     *
+     * @param file an existing file
+     * @return its text, or <code>null</code> when it cannot be read - which counts as "has content",
+     *         because a module nobody can read is not one to overwrite
+     */
+    private static String readText(IFile file)
+    {
+        try (java.io.InputStream stream = file.getContents())
+        {
+            return new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        catch (Exception unreadable)
+        {
+            Activator.logDebug("Reading " + file.getFullPath() + " failed: " + unreadable); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
     }
 }

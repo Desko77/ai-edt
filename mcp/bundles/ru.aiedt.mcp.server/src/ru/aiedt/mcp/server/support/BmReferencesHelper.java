@@ -321,10 +321,18 @@ public final class BmReferencesHelper
             result.truncated = true;
             return;
         }
-        String fromFqn = safeFqn(from);
-        String toFqn = safeFqn(to);
-        if (fromFqn == null || toFqn == null)
+        IBmObject fromEnd = reportableEnd(from);
+        IBmObject toEnd = reportableEnd(to);
+        if (fromEnd == null || toEnd == null)
         {
+            return;
+        }
+        String fromFqn = safeFqn(fromEnd);
+        String toFqn = safeFqn(toEnd);
+        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        {
+            // Both ends collapsed onto the same owner: the reference is internal to one object and
+            // says nothing about the graph between objects.
             return;
         }
         // The target goes in FIRST. The edge used to be added before the cap was consulted, so a
@@ -338,21 +346,58 @@ public final class BmReferencesHelper
                 return;
             }
             visited.add(toFqn);
-            result.nodes.put(toFqn, to);
-            queue.add(to);
+            result.nodes.put(toFqn, toEnd);
+            queue.add(toEnd);
         }
-        // The source has to be in the graph too: a root is put in before the walk starts, but a
-        // backward reference arrives from an object no ring has reached yet.
-        if (!result.nodes.containsKey(fromFqn))
+        // The source is put in the graph AND in the queue. A backward reference arrives from an
+        // object no ring has reached, and it used to be recorded as a node without being queued:
+        // direction=in then found the referencers of the roots and stopped there, whatever depth
+        // was asked for.
+        if (!visited.contains(fromFqn))
         {
             if (result.nodes.size() >= maxNodes)
             {
                 result.truncated = true;
                 return;
             }
-            result.nodes.put(fromFqn, from);
+            visited.add(fromFqn);
+            result.nodes.put(fromFqn, fromEnd);
+            queue.add(fromEnd);
         }
         result.edges.add(new Edge(fromFqn, toFqn, featureName));
+    }
+
+    /**
+     * The object an edge end should name, or <code>null</code> when the end is not part of this
+     * graph at all.
+     * <p>
+     * A backward reference arrives from the object that holds it, and that is often an internal
+     * piece of the model: a type, a field of a database view, a derived command group. None of them
+     * carries an FQN, so the graph named them after their class - one node called {@code Type}
+     * collecting hundreds of edges, standing for nothing a reader can look up. The end is collapsed
+     * to the top object that owns it, and an end with no such owner is dropped.
+     * </p>
+     *
+     * @param end one end of a reference
+     * @return the top object to name it by, or <code>null</code>
+     */
+    private static IBmObject reportableEnd(IBmObject end)
+    {
+        IBmObject top = findTopContainer(end);
+        if (top == null)
+        {
+            return null;
+        }
+        try
+        {
+            String fqn = top.bmGetFqn();
+            return fqn != null && !fqn.isEmpty() ? top : null;
+        }
+        catch (Exception notATopObject)
+        {
+            // Only a top object answers this, and only a top object is a node of this graph.
+            return null;
+        }
     }
 
     private static String safeFqn(IBmObject obj)
