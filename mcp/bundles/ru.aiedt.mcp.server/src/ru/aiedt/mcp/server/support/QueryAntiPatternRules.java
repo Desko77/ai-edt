@@ -66,7 +66,8 @@ public final class QueryAntiPatternRules
     }
 
     private static final Pattern SELECT_STAR_PATTERN = Pattern.compile(
-        "(ВЫБРАТЬ|SELECT)\\s+(РАЗЛИЧНЫЕ\\s+|DISTINCT\\s+)?\\*", Pattern.CASE_INSENSITIVE); //$NON-NLS-1$
+        "(ВЫБРАТЬ|SELECT)\\s+(РАЗЛИЧНЫЕ\\s+|DISTINCT\\s+)?\\*", //$NON-NLS-1$
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     // UNICODE_CHARACTER_CLASS is not optional here. Java's \w is ASCII-only by default, so without
     // the flag the table name never matches and the rule silently reports nothing for any query
@@ -75,8 +76,11 @@ public final class QueryAntiPatternRules
         .compile("(ВЫБРАТЬ|SELECT)[^;]*?(ИЗ|FROM)\\s+([\\w\\.]+)", //$NON-NLS-1$
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.UNICODE_CHARACTER_CLASS);
 
+    // Measured: plain CASE_INSENSITIVE folds ASCII only, so ГДЕ matched and где did not, and a
+    // query whose filter is written in lower case was reported as a query without a filter. The
+    // word boundary was never the problem - Java matches it around Cyrillic either way.
     private static final Pattern WHERE_PATTERN = Pattern.compile("\\b(ГДЕ|WHERE)\\b", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     // Same reason as NO_WHERE_PATTERN: the leading \w+ is the register's name, and an ASCII-only
     // \w cannot match one.
@@ -86,10 +90,11 @@ public final class QueryAntiPatternRules
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     private static final Pattern CROSS_JOIN_PATTERN = Pattern
-        .compile("(КРОСС\\s+СОЕДИНЕНИЕ|CROSS\\s+JOIN)", Pattern.CASE_INSENSITIVE); //$NON-NLS-1$
+        .compile("(КРОСС\\s+СОЕДИНЕНИЕ|CROSS\\s+JOIN)", //$NON-NLS-1$
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private static final Pattern SUBQUERY_PATTERN = Pattern.compile("\\(\\s*(ВЫБРАТЬ|SELECT)", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     /**
      * Runs all enabled rules over the query text. {@code enabledRules=null}
@@ -231,7 +236,7 @@ public final class QueryAntiPatternRules
         // Heuristic: подзапрос внутри SELECT (между ВЫБРАТЬ и ИЗ)
         Pattern selectInSelect = Pattern.compile(
             "(ВЫБРАТЬ|SELECT)\\s+[^;]*?\\(\\s*(ВЫБРАТЬ|SELECT)", //$NON-NLS-1$
-            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.UNICODE_CASE);
         Matcher m = selectInSelect.matcher(queryText);
         if (m.find())
         {

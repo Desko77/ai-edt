@@ -51,15 +51,15 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
 
     private static final Pattern QUERY_TEXT_ASSIGN = Pattern.compile(
         "(\\w+\\.[Тт]екст|Запрос\\.Текст|Query\\.Text)\\s*=\\s*(\"[\\s\\S]*?[^\"]\")", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     private static final Pattern LOOP_BLOCK = Pattern.compile(
         "(Для\\s+|Пока\\s+|For\\s+|While\\s+).*?(Цикл|Do)([\\s\\S]*?)(КонецЦикла|EndDo)", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private static final Pattern QUERY_EXEC_IN_BSL = Pattern.compile(
         "(Запрос\\.Выполнить|Запрос\\.ВыполнитьПакет|\\.Выполнить\\(\\)|\\.Execute\\(\\))", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     @Override
     public String getName()

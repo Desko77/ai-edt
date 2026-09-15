@@ -46,19 +46,20 @@ public class FindRlsViolationsTool implements IMcpTool
     private static final Pattern PRIVILEGED_MODE_SET = Pattern.compile(
         "УстановитьПривилегированныйРежим\\s*\\(\\s*Истина\\s*\\)|" //$NON-NLS-1$
             + "SetPrivilegedMode\\s*\\(\\s*True\\s*\\)", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private static final Pattern PRIVILEGED_MODE_RESET = Pattern.compile(
         "УстановитьПривилегированныйРежим\\s*\\(\\s*Ложь\\s*\\)|" //$NON-NLS-1$
             + "SetPrivilegedMode\\s*\\(\\s*False\\s*\\)", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE);
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private static final Pattern PROC_BOUNDARY = Pattern.compile(
-        "^\\s*(Процедура|Функция|Procedure|Function)\\s+\\w+", Pattern.MULTILINE); //$NON-NLS-1$
+        "^\\s*(Процедура|Функция|Procedure|Function)\\s+\\w+", //$NON-NLS-1$
+        Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     private static final Pattern PROC_END = Pattern
         .compile("^\\s*(КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)", //$NON-NLS-1$
-            Pattern.MULTILINE);
+            Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     @Override
     public String getName()

@@ -99,6 +99,13 @@ Supporting scripts:
   (`direct` / `exercised` / `tool-sweep` / `ui-bound` / `workspace-bound` / `untested`), report in
   `docs/test-coverage.md`. `--check` fails while anything sits in `untested`, so a new class
   without a test breaks the census instead of sliding in unnoticed. CI runs it.
+- `scripts/check-identifier-word-class.py` - census of every regular expression whose text carries
+  Cyrillic. Java reads `\w`, `\b` and `CASE_INSENSITIVE` as ASCII unless told otherwise, while 1C
+  source is written in Cyrillic and does not distinguish case, so a pattern built on the defaults
+  answers nothing about Russian code and that reads as a clean result. Each such pattern must
+  declare `UNICODE_CHARACTER_CLASS` where it reads a word class or boundary and `UNICODE_CASE`
+  where it folds case; patterns that read ASCII by nature are listed in the script with the reason.
+  CI runs it.
 - `scripts/check-protocol-conformance.py` - runs the official MCP conformance suite
   (`@modelcontextprotocol/conformance`, fetched with npx) against a **running** server, so the
   question "does this obey the wire specification" is answered by a client written by the people

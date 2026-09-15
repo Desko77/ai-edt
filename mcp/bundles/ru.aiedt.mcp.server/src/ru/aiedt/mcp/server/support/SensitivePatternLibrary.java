@@ -42,7 +42,7 @@ public final class SensitivePatternLibrary
 
     public static final Pattern LOG_RECORD = Pattern.compile(
         "(ЗаписьЖурналаРегистрации|WriteLogRecord|WriteLogEvent)\\s*\\([^)]*\\)", //$NON-NLS-1$
-        Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+        Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.UNICODE_CASE);
 
     private SensitivePatternLibrary()
     {

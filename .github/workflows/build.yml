@@ -102,6 +102,13 @@ jobs:
       - name: Swallowed reflection census
         run: python3 scripts/check-swallowed-reflection.py
 
+      # Java reads \w, \b and CASE_INSENSITIVE as ASCII unless told otherwise, and 1C source is
+      # neither ASCII nor case-sensitive. A scan built on those defaults does not fail: it answers
+      # nothing about a configuration written in Russian and calls that a clean result. Sixteen
+      # patterns were doing exactly that.
+      - name: Identifier word class census
+        run: python3 scripts/check-identifier-word-class.py
+
       # A javadoc block with no declaration under it documents whatever follows, or nothing. They
       # arrive when a method moves or is replaced and its old block stays behind, and nothing in the
       # build says a word, because a comment always compiles. The count may fall and never rise.

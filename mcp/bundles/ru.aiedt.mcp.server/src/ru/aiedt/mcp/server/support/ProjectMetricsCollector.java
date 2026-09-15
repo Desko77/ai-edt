@@ -36,14 +36,16 @@ import ru.aiedt.mcp.server.Activator;
 public final class ProjectMetricsCollector
 {
     private static final Pattern PROC_PATTERN = Pattern
-        .compile("^\\s*(Процедура|Функция|Procedure|Function)\\s+([\\w_]+)", Pattern.MULTILINE); //$NON-NLS-1$
+        .compile("^\\s*(Процедура|Функция|Procedure|Function)\\s+([\\w_]+)", //$NON-NLS-1$
+            Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     private static final Pattern BRANCH_PATTERN = Pattern
         .compile("\\b(Если|ИначеЕсли|Цикл|Попытка|If|ElsIf|For|While|Try|Case|Когда)\\b", //$NON-NLS-1$
-            Pattern.CASE_INSENSITIVE);
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     private static final Pattern YAXUNIT_PATTERN = Pattern.compile(
-        "&YaxUnitTestSuite|&Test|РегистрацияТестов", Pattern.CASE_INSENSITIVE); //$NON-NLS-1$
+        "&YaxUnitTestSuite|&Test|РегистрацияТестов", //$NON-NLS-1$
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private final IProject project;
     private final long deadlineMillis;
