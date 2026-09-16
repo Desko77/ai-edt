@@ -590,4 +590,24 @@ public class MetadataTypeCatalogTest
         assertEquals(MetadataTypeCatalog.getConfigReferenceName("DefinedType"), //$NON-NLS-1$
             MetadataTypeCatalog.getConfigReferenceName("ОпределяемыйТип")); //$NON-NLS-1$
     }
+
+    /**
+     * The platform writes a web service with a Latin Web and a Cyrillic tail.
+     * <p>
+     * Метаданные.WebСервисы is how it appears in code and in the Designer, and the catalogue knew
+     * only the transliteration ВебСервис - so an address written the way the platform writes it
+     * resolved to nothing, and a search for the object found none.
+     * </p>
+     */
+    @Test
+    public void aWebServiceIsSpeltTheWayThePlatformSpellsIt()
+    {
+        assertEquals("WebService", MetadataTypeCatalog.toEnglishSingular("WebСервис")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("WebService", MetadataTypeCatalog.toEnglishSingular("WebСервисы")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the transliteration still resolves", "WebService", //$NON-NLS-1$ //$NON-NLS-2$
+            MetadataTypeCatalog.toEnglishSingular("ВебСервис")); //$NON-NLS-1$
+        assertEquals("HTTPService", MetadataTypeCatalog.toEnglishSingular("HTTPСервис")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("HTTPService", MetadataTypeCatalog.toEnglishSingular("HTTPСервисы")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("WebService.Обмен", MetadataTypeCatalog.normalizeFqn("WebСервис.Обмен")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
 }

@@ -101,10 +101,14 @@ public final class MetadataTypeCatalog
             "\u041e\u0431\u0449\u0430\u044f\u041a\u043e\u043c\u0430\u043d\u0434\u0430"),
         COMMON_FORM("CommonForm", "CommonForms", "commonForms", "CommonForms",
             "\u041e\u0431\u0449\u0430\u044f\u0424\u043e\u0440\u043c\u0430"),
+        // The platform writes this one with a Latin Web and a Cyrillic tail -
+        // Метаданные.WebСервисы - so that spelling comes first; the transliteration is kept
+        // for a caller who wrote it that way.
         WEB_SERVICE("WebService", "WebServices", "webServices", "WebServices",
-            "\u0412\u0435\u0431\u0421\u0435\u0440\u0432\u0438\u0441"),
+            "Web\u0421\u0435\u0440\u0432\u0438\u0441", "Web\u0421\u0435\u0440\u0432\u0438\u0441\u044b",
+            "\u0412\u0435\u0431\u0421\u0435\u0440\u0432\u0438\u0441", "\u0412\u0435\u0431\u0421\u0435\u0440\u0432\u0438\u0441\u044b"),
         HTTP_SERVICE("HTTPService", "HTTPServices", "httpServices", "HTTPServices",
-            "HTTP\u0421\u0435\u0440\u0432\u0438\u0441"),
+            "HTTP\u0421\u0435\u0440\u0432\u0438\u0441", "HTTP\u0421\u0435\u0440\u0432\u0438\u0441\u044b"),
         CONSTANT("Constant", "Constants", "constants", "Constants",
             "\u041a\u043e\u043d\u0441\u0442\u0430\u043d\u0442\u0430",
             "\u041a\u043e\u043d\u0441\u0442\u0430\u043d\u0442\u044b"),
