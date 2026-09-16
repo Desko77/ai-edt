@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,9 +54,9 @@ import com.google.gson.JsonParser;
  * OSGi bundle would collide with EDT's own Guice and bloat the plugin. Instead
  * the user installs the {@code -exec.jar} once and points
  * {@link PrefKeys#PREF_BSL_LS_JAR} at it; this tool spawns
- * {@code java -jar <jar> --analyze -s <src> -r json -o <tmp> -q} (on the configured
- * JRE, defaulting to EDT's own), parses the {@code bsl-json.json} report, and cleans
- * up. When the jar is
+ * {@code java -jar <jar> --analyze -w <project> -s <src> -r json -o <tmp> -q} (on the
+ * configured JRE, defaulting to EDT's own) with the project as the working directory,
+ * parses the {@code bsl-json.json} report, and cleans up. When the jar is
  * not configured the tool returns a download/setup hint instead of failing hard.
  */
 public class BslCodeReviewTool implements IMcpTool
@@ -180,7 +181,10 @@ public class BslCodeReviewTool implements IMcpTool
         {
             outDir = Files.createTempDirectory("ai-edt-codereview"); //$NON-NLS-1$
             String javaExe = resolveJavaExe(store);
-            ProcessResult pr = runAnalyzer(jarFile, srcDir, outDir.toFile(), timeoutSec, javaExe);
+            File workspaceDir = project.getLocation() != null
+                ? project.getLocation().toFile() : srcDir;
+            ProcessResult pr =
+                runAnalyzer(jarFile, workspaceDir, srcDir, outDir.toFile(), timeoutSec, javaExe);
             if (pr.timedOut)
             {
                 return ToolResult.error("BSL Language Server analysis timed out after " + timeoutSec //$NON-NLS-1$
@@ -319,20 +323,62 @@ public class BslCodeReviewTool implements IMcpTool
     }
 
     /**
-     * Spawns {@code java -jar <jar> --analyze -s <src> -r json -o <out> -q},
-     * draining the merged stdout/stderr on a daemon thread so a chatty analyzer
-     * cannot deadlock the wait. Destroys the process on timeout.
+     * The command line the analyzer is spawned with.
+     * <p>
+     * Separate from the spawning so the arguments can be read without starting a process. What has
+     * to be true of them: the workspace is given explicitly, and it sits on the same root as the
+     * sources - see {@link #runAnalyzer} for what happens when it does not.
+     * </p>
+     *
+     * @param jar the analyzer jar.
+     * @param workspaceDir the project, which is the workspace and the working directory.
+     * @param srcDir the sources to analyze.
+     * @param outDir where the report is written.
+     * @param javaExe the JRE to run it on.
+     * @return the command, ready for a {@link ProcessBuilder}
      */
-    private static ProcessResult runAnalyzer(File jar, File srcDir, File outDir, int timeoutSec,
-        String javaExe) throws Exception
+    static List<String> analyzerCommand(File jar, File workspaceDir, File srcDir, File outDir,
+        String javaExe)
     {
-        ProcessBuilder pb = new ProcessBuilder(
+        return Arrays.asList(
             javaExe, "-jar", jar.getAbsolutePath(), //$NON-NLS-1$
             "--analyze", //$NON-NLS-1$
+            "-w", workspaceDir.getAbsolutePath(), //$NON-NLS-1$
             "-s", srcDir.getAbsolutePath(), //$NON-NLS-1$
             "-r", "json", //$NON-NLS-1$ //$NON-NLS-2$
             "-o", outDir.getAbsolutePath(), //$NON-NLS-1$
             "-q"); //$NON-NLS-1$
+    }
+
+    /**
+     * Spawns {@link #analyzerCommand}, draining the merged stdout/stderr on a daemon thread so a
+     * chatty analyzer cannot deadlock the wait. Destroys the process on timeout.
+     *
+     * @param jar the analyzer jar.
+     * @param workspaceDir the project: the analyzer's workspace and this process's working
+     *            directory.
+     * @param srcDir the sources to analyze.
+     * @param outDir where the report is written.
+     * @param timeoutSec how long to wait before destroying the process.
+     * @param javaExe the JRE to run it on.
+     * @return what the process exited with, and what it printed
+     * @throws Exception when the process cannot be started or the wait is interrupted
+     */
+    private static ProcessResult runAnalyzer(File jar, File workspaceDir, File srcDir, File outDir,
+        int timeoutSec, String javaExe) throws Exception
+    {
+        ProcessBuilder pb = new ProcessBuilder(
+            analyzerCommand(jar, workspaceDir, srcDir, outDir, javaExe));
+        // Both the argument and the working directory, and both on the project: the analyzer
+        // relativizes every source path against its workspace, and without -w that workspace is
+        // the directory this process was started in - the EDT installation. Measured on Windows
+        // with sources on another drive: Path.relativize across two roots throws
+        // "'other' has different root", no report is written at all, and the call fails with
+        // exit 1. The working directory is set as well because the analyzer resolves the paths
+        // it writes into the report against it, so leaving it on the EDT installation produced a
+        // report naming files that do not exist. The workspace is the project rather than its
+        // src, which is also where the analyzer looks for .bsl-language-server.json.
+        pb.directory(workspaceDir);
         pb.redirectErrorStream(true);
         Process proc = pb.start();
 
