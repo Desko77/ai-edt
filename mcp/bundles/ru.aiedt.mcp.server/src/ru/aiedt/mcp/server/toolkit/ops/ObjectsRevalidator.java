@@ -314,12 +314,14 @@ public class ObjectsRevalidator
         for (String candidate : notFound)
         {
             String normalized = MetadataTypeCatalog.normalizeFqn(candidate);
-            String owner = ownerOf(normalized);
-            if (owner == null || !namesAChild(normalized))
+            if (ownerOf(normalized) == null || !namesAChild(normalized))
             {
                 continue;
             }
-            if (BmExtensionHelper.childResolves(project, candidate))
+            // The owner as the model writes it. Taking it from the address the caller typed made
+            // the index lookup below depend on the case they used, and the index is case-sensitive.
+            String owner = BmExtensionHelper.resolvedChildOwner(project, candidate);
+            if (owner != null)
             {
                 children.add(candidate);
                 owners.add(owner);

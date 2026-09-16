@@ -951,24 +951,38 @@ public final class BmExtensionHelper
      * and not one to take from here.
      * </p>
      *
+     * <p>
+     * What comes back is the owner's address as the MODEL writes it, not as the caller wrote it. A
+     * name resolves through the model whatever case it is typed in, and the index the next step
+     * asks is case-sensitive: an address of Catalog.товары.Attribute.Цена used to resolve here and
+     * then fail there, and the answer said the address was not found after it had been found.
+     * </p>
+     *
      * @param project the project whose model is asked.
      * @param fqn the child address, already known to name a child.
-     * @return <code>true</code> when the model holds it
+     * @return the owner's canonical address, or <code>null</code> when the model does not hold the
+     *         child
      */
-    public static boolean childResolves(IProject project, String fqn)
+    public static String resolvedChildOwner(IProject project, String fqn)
     {
         if (project == null || fqn == null || fqn.trim().isEmpty())
         {
-            return false;
+            return null;
         }
         try
         {
-            return resolveSourceEObject(project, fqn.trim()) != null;
+            EObject child = resolveSourceEObject(project, fqn.trim());
+            if (!(child instanceof IBmObject))
+            {
+                return null;
+            }
+            IBmObject top = BmReferencesHelper.findTopContainer((IBmObject)child);
+            return top == null ? null : top.bmGetFqn();
         }
         catch (Exception | LinkageError failed)
         {
             Activator.logWarning("could not resolve the child address " + fqn + ": " + failed); //$NON-NLS-1$ //$NON-NLS-2$
-            return false;
+            return null;
         }
     }
 
