@@ -41,6 +41,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.support.UnreadArguments;
 import ru.aiedt.mcp.server.support.MetadataMutationLock;
+import ru.aiedt.mcp.server.support.OperationParameters;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonFormPostCreate;
@@ -610,7 +611,8 @@ public class EditMetadataTool implements IMcpTool
                     + "preview.") //$NON-NLS-1$
             .booleanProperty("batch", //$NON-NLS-1$
                 "Run several operations from ONE call, in order, each in its own " //$NON-NLS-1$
-                    + "transaction.") //$NON-NLS-1$
+                    + "transaction. An operation or argument name that does not exist stops " //$NON-NLS-1$
+                    + "the whole batch before anything runs.") //$NON-NLS-1$
             .booleanProperty("stopOnError", //$NON-NLS-1$
                 "batch only: stop at the first failing operation instead of running the " //$NON-NLS-1$
                     + "rest.") //$NON-NLS-1$
@@ -835,6 +837,105 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * What a batch cannot do, established before any of it runs.
+     * <p>
+     * Only what can be told without touching the project: an operation this tool does not have, an
+     * entry that names no operation, an argument of a name neither the schema nor the operation map
+     * knows, and an entry carrying the batch arguments themselves. Everything else - the object is
+     * not there, the attribute name is taken - is visible only while running and stays where it
+     * was, in {@code batchResults}.
+     * </p>
+     * <p>
+     * The list is complete rather than first-wrong: a caller who fixes one typo and calls again to
+     * meet the next has been made to pay twice for one reading.
+     * </p>
+     *
+     * @param ops the parsed operations
+     * @return one sentence per entry that cannot run, empty when the batch can be started
+     */
+    private java.util.List<String> whatCannotBeRun(java.util.List<Map<String, String>> ops)
+    {
+        java.util.List<String> refusals = new java.util.ArrayList<>();
+        java.util.Set<String> declared = declaredArgumentNames();
+        boolean namesKnown = OperationParameters.available() && !declared.isEmpty();
+        for (int i = 0; i < ops.size(); i++)
+        {
+            Map<String, String> opParams = ops.get(i);
+            String subOp = JsonUtils.normalizeOperationToken(
+                JsonUtils.extractStringArgument(opParams, "operation")); //$NON-NLS-1$
+            if (subOp == null || subOp.isEmpty())
+            {
+                refusals.add("[" + i + "] names no operation"); //$NON-NLS-1$ //$NON-NLS-2$
+                continue;
+            }
+            if (!registry.containsKey(subOp))
+            {
+                refusals.add("[" + i + "] unknown operation '" + subOp + "', did you mean " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + suggest(subOp) + "?"); //$NON-NLS-1$
+                continue;
+            }
+            if (opParams.containsKey("batch") || opParams.containsKey("operations")) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                refusals.add("[" + i + "] " + subOp + ": a batch entry cannot carry batch or " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + "operations of its own"); //$NON-NLS-1$
+            }
+            if (!namesKnown)
+            {
+                continue;
+            }
+            java.util.Set<String> accepted = new java.util.HashSet<>(declared);
+            for (String entry : OperationParameters.of(FACADE_CLASS, subOp))
+            {
+                accepted.add(OperationParameters.nameOf(entry));
+            }
+            // An operation the map says nothing about is left alone: silence there is an absence of
+            // record, not a statement that the operation takes no arguments.
+            if (OperationParameters.of(FACADE_CLASS, subOp).isEmpty())
+            {
+                continue;
+            }
+            for (String key : opParams.keySet())
+            {
+                if (!accepted.contains(key))
+                {
+                    refusals.add("[" + i + "] " + subOp + ": no argument named '" + key + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                }
+            }
+        }
+        return refusals;
+    }
+
+    /** The class name the operation-parameter map keys this facade by. */
+    private static final String FACADE_CLASS = "EditMetadataTool"; //$NON-NLS-1$
+
+    /**
+     * Every argument name this facade declares in its own schema.
+     *
+     * @return the names, or an empty set when the schema cannot be read
+     */
+    private java.util.Set<String> declaredArgumentNames()
+    {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        try
+        {
+            com.google.gson.JsonElement parsed =
+                com.google.gson.JsonParser.parseString(getInputSchema());
+            com.google.gson.JsonElement properties =
+                parsed.getAsJsonObject().get("properties"); //$NON-NLS-1$
+            if (properties != null && properties.isJsonObject())
+            {
+                names.addAll(properties.getAsJsonObject().keySet());
+            }
+        }
+        catch (RuntimeException notJson)
+        {
+            // An unreadable schema switches the name check off rather than refusing every batch.
+            Activator.logWarning("the batch check could not read the schema: " + notJson); //$NON-NLS-1$
+        }
+        return names;
+    }
+
+    /**
      * Sequential batch mode: applies a list of operations one by one. Each
      * sub-operation runs in its own BM transaction; on per-op failure the
      * batch continues by default and records the failure in {@code batchResults}.
@@ -861,6 +962,17 @@ public class EditMetadataTool implements IMcpTool
         if (ops.isEmpty())
         {
             return ToolResult.error("batch operations parsed empty - check format").toJson(); //$NON-NLS-1$
+        }
+        java.util.List<String> unrunnable = whatCannotBeRun(ops);
+        if (!unrunnable.isEmpty())
+        {
+            return ToolResult
+                .error("This batch was not started: " + unrunnable.size() //$NON-NLS-1$
+                    + " of its " + ops.size() + " operations cannot run as written. Nothing was " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "changed in the project. " + String.join("; ", unrunnable)) //$NON-NLS-1$ //$NON-NLS-2$
+                .put("notStarted", Integer.valueOf(ops.size())) //$NON-NLS-1$
+                .put("refusedBeforeRunning", unrunnable) //$NON-NLS-1$
+                .toJson();
         }
         boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
         java.util.List<Map<String, Object>> results = new java.util.ArrayList<>();
@@ -2444,6 +2556,7 @@ public class EditMetadataTool implements IMcpTool
             + "underlying tabular section / value table. Default false.\n\n"); //$NON-NLS-1$
         sb.append("### batch\n\n"); //$NON-NLS-1$
         sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
+        sb.append("Before anything runs, the whole batch is read for what can be told without touching the project: an operation this tool does not have, an entry naming no operation, an argument of a name neither the schema nor the operation map knows, an entry carrying batch or operations of its own. If any of that is found the batch is NOT started, nothing is changed, and the answer lists every such entry by its index in refusedBeforeRunning. What is visible only while running - the object is not there, the name is taken - still comes back per operation in batchResults.\n\n"); //$NON-NLS-1$
         sb.append("### cascadeDependencies\n\n"); //$NON-NLS-1$
         sb.append("set_role_right: when granting (value=true), ALSO grant the rights this one REQUIRES per the platform dependency model (Update->Read, Posting->Read+Update, InteractiveInsert->Insert+View+Edit, ...) so the role stays consistent. Grant-direction only - never revokes, never over-grants (granting Read never implies Update). Auto-added prerequisites are listed in cascadedRights. Default false.\n\n"); //$NON-NLS-1$
         sb.append("### childKind\n\n"); //$NON-NLS-1$

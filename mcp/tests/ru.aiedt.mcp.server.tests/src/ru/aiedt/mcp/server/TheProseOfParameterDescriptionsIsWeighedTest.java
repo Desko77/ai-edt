@@ -222,6 +222,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("self_status", Integer.valueOf(0));
     }
 
-    /** The whole document's parameter prose, from the same run. */
-    private static final int DOCUMENT_PROSE = 85138;
+    /**
+     * The whole document's parameter prose, from the same run.
+     * <p>
+     * Raised once, by 94 bytes: the batch argument now states that an operation or argument name
+     * that does not exist stops the whole batch before anything runs. A caller has to read that
+     * without asking, because it changes what a failed call leaves behind.
+     * </p>
+     */
+    private static final int DOCUMENT_PROSE = 85232;
 }
