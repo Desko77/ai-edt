@@ -48,6 +48,31 @@ public final class FacadeParameterHelp
     public static String answer(String topic, Map<String, Supplier<IMcpTool>> described,
         Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema)
     {
+        return answer(topic, described, dispatched, namedTopics, facadeClass, facadeSchema,
+            java.util.Collections.emptyMap());
+    }
+
+    /**
+     * The same, with the rules the facade's own descriptions no longer carry.
+     * <p>
+     * They reach an operation the facade handles itself, whose help is rendered from the facade's
+     * schema. An operation that routes to a tool is answered from that tool's schema, which carries
+     * its own detail and needs none from here.
+     * </p>
+     *
+     * @param topic the operation asked about.
+     * @param described the operations this facade routes to a tool.
+     * @param dispatched every operation it offers.
+     * @param namedTopics the topics it offers besides operations.
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param facadeSchema the schema the facade declares.
+     * @param detail parameter name to the rules its description no longer carries.
+     * @return markdown, or a line saying why there is none
+     */
+    public static String answer(String topic, Map<String, Supplier<IMcpTool>> described,
+        Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema,
+        Map<String, String> detail)
+    {
         Supplier<IMcpTool> known = topic == null ? null : described.get(topic);
         if (known != null)
         {
@@ -61,7 +86,7 @@ public final class FacadeParameterHelp
             // An operation this facade handles itself rather than routing to a tool. Told apart
             // from a topic that names nothing, because a caller reading "unknown" about an
             // operation they just found in the catalog learns the wrong thing.
-            return fromTheMap(topic, facadeClass, facadeSchema);
+            return fromTheMap(topic, facadeClass, facadeSchema, detail);
         }
         return "# Unknown topic '" + topic + "'.\n\nAvailable: " + namedTopics //$NON-NLS-1$ //$NON-NLS-2$
             + ", or the name of an operation for its parameters.\n"; //$NON-NLS-1$
@@ -77,6 +102,21 @@ public final class FacadeParameterHelp
      * @return the parameters, or a line saying they are not recorded
      */
     public static String fromTheMap(String operation, String facadeClass, String facadeSchema)
+    {
+        return fromTheMap(operation, facadeClass, facadeSchema, java.util.Collections.emptyMap());
+    }
+
+    /**
+     * The same, with the rules the facade's own descriptions no longer carry.
+     *
+     * @param operation the operation asked about.
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param facadeSchema the schema the facade declares.
+     * @param detail parameter name to the rules its description no longer carries.
+     * @return the parameters, or a line saying they are not recorded
+     */
+    public static String fromTheMap(String operation, String facadeClass, String facadeSchema,
+        Map<String, String> detail)
     {
         List<String> established = OperationParameters.establishedFor(facadeClass, operation);
         List<String> all = OperationParameters.of(facadeClass, operation);
@@ -96,6 +136,6 @@ public final class FacadeParameterHelp
         }
         Set<String> shared = new LinkedHashSet<>(all);
         shared.removeAll(own);
-        return ParameterHelp.renderNamed(operation, facadeSchema, own, shared);
+        return ParameterHelp.renderNamed(operation, facadeSchema, own, shared, detail);
     }
 }

@@ -199,6 +199,23 @@ public final class ParameterHelp
     public static String renderNamed(String operation, String inputSchema,
         Collection<String> established, Collection<String> shared)
     {
+        return renderNamed(operation, inputSchema, established, shared, Collections.emptyMap());
+    }
+
+    /**
+     * The same, with the rules a parameter carries beyond its one-sentence description.
+     *
+     * @param operation the operation asked about, for the heading.
+     * @param inputSchema the facade's own schema, where the descriptions live.
+     * @param established parameter names established for this operation.
+     * @param shared the rest of what the operation accepts, established for no operation in
+     *            particular.
+     * @param detail parameter name to the rules its description no longer carries; may be empty.
+     * @return markdown, or a line saying why there is none
+     */
+    public static String renderNamed(String operation, String inputSchema,
+        Collection<String> established, Collection<String> shared, Map<String, String> detail)
+    {
         // An unreadable schema costs the descriptions, not the names: those came from the map and
         // are the half a caller needs most. Returning here would have hidden them to report a
         // problem with the other half.
@@ -218,7 +235,7 @@ public final class ParameterHelp
                 + "this facade declares in its own schema still applies.\n").toString(); //$NON-NLS-1$
         }
         appendGroup(text, properties, schemaRead, established,
-            "Established for this operation\n\n"); //$NON-NLS-1$
+            "Established for this operation\n\n", detail); //$NON-NLS-1$
         // Not "read for every operation": the derivation attributes to an operation everything the
         // facade reads on the way down, and for a facade that dispatches with a switch that walk
         // does not stop at the handlers - so this group holds arguments of sibling operations too.
@@ -227,12 +244,12 @@ public final class ParameterHelp
         // operation's own.
         appendGroup(text, properties, schemaRead, shared,
             "Accepted here, not established as this operation's - the facade reads them on the " //$NON-NLS-1$
-                + "way down, and some belong to its other operations\n\n"); //$NON-NLS-1$
+                + "way down, and some belong to its other operations\n\n", detail); //$NON-NLS-1$
         return text.toString();
     }
 
     private static void appendGroup(StringBuilder text, JsonObject properties, boolean schemaRead,
-        Collection<String> names, String heading)
+        Collection<String> names, String heading, Map<String, String> detail)
     {
         if (names.isEmpty())
         {
@@ -251,6 +268,13 @@ public final class ParameterHelp
                 if (described != null && described.isJsonPrimitive())
                 {
                     text.append(" - ").append(described.getAsString()); //$NON-NLS-1$
+                }
+                String rules = detail.get(name);
+                if (rules != null && !rules.isEmpty())
+                {
+                    // On its own line: the rules continue the description rather than repeating it,
+                    // and a list where one entry runs to a paragraph stops reading as a list.
+                    text.append("\n  ").append(rules); //$NON-NLS-1$
                 }
             }
             else if (!schemaRead)

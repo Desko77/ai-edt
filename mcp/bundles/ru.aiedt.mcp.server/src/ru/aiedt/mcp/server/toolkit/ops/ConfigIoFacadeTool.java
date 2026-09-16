@@ -131,17 +131,53 @@ public class ConfigIoFacadeTool implements IMcpTool
             + "changes). The standalone tools remain available for back-compat."; //$NON-NLS-1$
     }
 
+    /**
+     * What each parameter carries beyond the sentence in its schema.
+     * <p>
+     * Every client holds the schema for the whole conversation, so it says what the parameter is
+     * for in one sentence and names the values a caller picks from. The rest - when a value is
+     * refused, what it does to what is already there, what a measurement showed - is answered when
+     * operation=help topic=parameters asks for it. The two continue each other rather than
+     * repeating, so neither can drift out of step with the other.
+     * </p>
+     */
+    private static final Map<String, String> PARAMETER_RULES = buildParameterRules();
+
+    /**
+     * Builds the rules map.
+     *
+     * @return parameter name to the rules its description no longer carries
+     */
+    private static Map<String, String> buildParameterRules()
+    {
+        Map<String, String> rules = new LinkedHashMap<>();
+        rules.put("operation", "Pass operation=help without other params for the operation catalog."); //$NON-NLS-1$
+        rules.put("platform", "Omit for the newest installed."); //$NON-NLS-1$
+        rules.put("projectName", "Required for export_configuration_to_xml, export_object and " //$NON-NLS-1$
+            + "export_common_picture. For import_configuration_from_xml and " //$NON-NLS-1$
+            + "import_configuration_from_binary this is instead the name of the NEW " //$NON-NLS-1$
+            + "project to create (required; must not already exist)."); //$NON-NLS-1$
+        rules.put("targetPath", "Feed it to import_configuration_from_xml as importPath afterwards."); //$NON-NLS-1$
+        rules.put("applicationId", "Optional - the project's default infobase is used when omitted."); //$NON-NLS-1$
+        rules.put("skipValidation", "By default the dump is blocked when export-breakers are found (run " //$NON-NLS-1$
+            + "validate_for_export for the full list); skip only to dump a " //$NON-NLS-1$
+            + "configuration you have already checked."); //$NON-NLS-1$
+        rules.put("objectName", "Optional - required only when the project contains more than one " //$NON-NLS-1$
+            + "external object."); //$NON-NLS-1$
+        rules.put("runKey", "Still pass operation - the facade needs it to know which run you are " //$NON-NLS-1$
+            + "collecting."); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
+    }
+
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
-                    + "import_configuration_from_binary / export_object / " //$NON-NLS-1$
-                    + "export_common_picture / export_configuration_to_cf / unpack_external_binary / " //$NON-NLS-1$
-                    + "help (snake_case " //$NON-NLS-1$
-                    + "canonical; camelCase like exportObject is also accepted). Pass " //$NON-NLS-1$
-                    + "operation=help without other params for the operation catalog.", true) //$NON-NLS-1$
+                    + "import_configuration_from_binary / export_object / export_common_picture " //$NON-NLS-1$
+                    + "/ export_configuration_to_cf / unpack_external_binary / help (snake_case " //$NON-NLS-1$
+                    + "canonical; camelCase like exportObject is also accepted).", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -149,8 +185,8 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "import_configuration_from_binary: absolute path to the .cf or .cfe to " //$NON-NLS-1$
                     + "import. Required for that operation.") //$NON-NLS-1$
             .stringProperty("platform", //$NON-NLS-1$
-                "import_configuration_from_binary: platform version for the staging infobase " //$NON-NLS-1$
-                    + "(e.g. 8.3.24). Omit for the newest installed.") //$NON-NLS-1$
+                "import_configuration_from_binary: platform version for the staging " //$NON-NLS-1$
+                    + "infobase (e.g. 8.3.24).") //$NON-NLS-1$
             .stringProperty("extensionName", //$NON-NLS-1$
                 "import_configuration_from_binary, .cfe only: the name to load the extension " //$NON-NLS-1$
                     + "under. Omit to take it from the file name.") //$NON-NLS-1$
@@ -161,10 +197,8 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "import_configuration_from_binary: keep the intermediate Designer-XML here " //$NON-NLS-1$
                     + "instead of in a temporary directory that is deleted.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project name. Required for export_configuration_to_xml, export_object and " //$NON-NLS-1$
-                    + "export_common_picture. For import_configuration_from_xml and " //$NON-NLS-1$
-                    + "import_configuration_from_binary this is instead the name of the NEW " //$NON-NLS-1$
-                    + "project to create (required; must not already exist).") //$NON-NLS-1$
+                "EDT project name. For the import operations it is instead the NEW " //$NON-NLS-1$
+                    + "project to create, which must not already exist.") //$NON-NLS-1$
             .stringProperty("outputPath", //$NON-NLS-1$
                 "Absolute output path (required for export_configuration_to_xml, " //$NON-NLS-1$
                     + "export_object, export_common_picture and export_configuration_to_cf). " //$NON-NLS-1$
@@ -181,17 +215,14 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "unpack_external_binary: absolute path to the .epf or .erf file to convert " //$NON-NLS-1$
                     + "(required for that operation).") //$NON-NLS-1$
             .stringProperty("targetPath", //$NON-NLS-1$
-                "unpack_external_binary: directory the XML is written into (required for that " //$NON-NLS-1$
-                    + "operation). Feed it to import_configuration_from_xml as importPath " //$NON-NLS-1$
-                    + "afterwards.")
+                "unpack_external_binary: directory the XML is written into (required for " //$NON-NLS-1$
+                    + "that operation).") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "export_configuration_to_cf: infobase application id (from get_applications). " //$NON-NLS-1$
-                    + "Optional - the project's default infobase is used when omitted.") //$NON-NLS-1$
+                "export_configuration_to_cf: infobase application id (from " //$NON-NLS-1$
+                    + "get_applications).") //$NON-NLS-1$
             .stringProperty("skipValidation", //$NON-NLS-1$
-                "export_configuration_to_cf: pass 'true' to skip the built-in validate_for_export " //$NON-NLS-1$
-                    + "guard. By default the dump is blocked when export-breakers are found (run " //$NON-NLS-1$
-                    + "validate_for_export for the full list); skip only to dump a configuration you " //$NON-NLS-1$
-                    + "have already checked.") //$NON-NLS-1$
+                "export_configuration_to_cf: pass 'true' to skip the built-in " //$NON-NLS-1$
+                    + "validate_for_export guard.") //$NON-NLS-1$
             .stringProperty("projectNature", //$NON-NLS-1$
                 "import_configuration_from_xml: EDT nature id, or omit to auto-detect (e.g. " //$NON-NLS-1$
                     + "com._1c.g5.v8.dt.core.V8ConfigurationNature).") //$NON-NLS-1$
@@ -199,17 +230,15 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "import_configuration_from_xml: platform XML format version (e.g. 8.3.20), " //$NON-NLS-1$
                     + "or omit to auto-detect.") //$NON-NLS-1$
             .stringProperty("objectName", //$NON-NLS-1$
-                "export_object: object name within the project. Optional - required only " //$NON-NLS-1$
-                    + "when the project contains more than one external object.") //$NON-NLS-1$
+                "export_object: object name within the project.") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "export_object: soft timeout in seconds before returning a Pending JSON with " //$NON-NLS-1$
                     + "a runKey (default 30, range 5-120, clamped). " //$NON-NLS-1$
                     + "import_configuration_from_binary: the same, for its staging run.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "export_object and import_configuration_from_binary: resumes a previously " //$NON-NLS-1$
-                    + "issued Pending run by its runKey; other params are ignored once runKey " //$NON-NLS-1$
-                    + "is supplied. Still pass operation - the facade needs it to know which " //$NON-NLS-1$
-                    + "run you are collecting.") //$NON-NLS-1$
+                    + "issued Pending run by its runKey; other params are ignored once runKey is " //$NON-NLS-1$
+                    + "supplied.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "export_common_picture: CommonPicture name, either 'CommonPicture.<Name>' or " //$NON-NLS-1$
                     + "the bare '<Name>' (required for that operation).") //$NON-NLS-1$
@@ -347,7 +376,7 @@ public class ConfigIoFacadeTool implements IMcpTool
             return sb.toString();
         }
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
-            "workflow", "ConfigIoFacadeTool", schema); //$NON-NLS-1$
+            "workflow", "ConfigIoFacadeTool", schema, PARAMETER_RULES); //$NON-NLS-1$
     }
 
     /**

@@ -138,6 +138,51 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "The standalone tools remain available for back-compat."; //$NON-NLS-1$
     }
 
+    /**
+     * What each parameter carries beyond the sentence in its schema.
+     * <p>
+     * Every client holds the schema for the whole conversation, so it says what the parameter is
+     * for in one sentence and names the values a caller picks from. The rest - when a value is
+     * refused, what it does to what is already there, what a measurement showed - is answered when
+     * operation=help topic=parameters asks for it. The two continue each other rather than
+     * repeating, so neither can drift out of step with the other.
+     * </p>
+     */
+    private static final Map<String, String> PARAMETER_RULES = buildParameterRules();
+
+    /**
+     * Builds the rules map.
+     *
+     * @return parameter name to the rules its description no longer carries
+     */
+    private static Map<String, String> buildParameterRules()
+    {
+        Map<String, String> rules = new LinkedHashMap<>();
+        rules.put("operation", "Pass operation=help without other params for the operation catalog."); //$NON-NLS-1$
+        rules.put("ignoreBranchBinding", "Declared here because the refusal tells the caller to pass it, and a " //$NON-NLS-1$
+            + "facade that does not accept it leaves that instruction impossible to " //$NON-NLS-1$
+            + "follow."); //$NON-NLS-1$
+        rules.put("projectName", "Required for get_applications, set_infobase_credentials, " //$NON-NLS-1$
+            + "create_launch_config and sync_control; optional association target " //$NON-NLS-1$
+            + "for create_infobase; optional dissociation target for " //$NON-NLS-1$
+            + "delete_infobase; required for update_database when " //$NON-NLS-1$
+            + "launchConfigurationName is not supplied - on its own it is enough, " //$NON-NLS-1$
+            + "applicationId may be omitted."); //$NON-NLS-1$
+        rules.put("applicationId", "Optional for set_infobase_credentials when the project has a single " //$NON-NLS-1$
+            + "application, and for update_database, which falls back to the " //$NON-NLS-1$
+            + "project's default application and - for an extension project, which " //$NON-NLS-1$
+            + "has no infobase of its own - to the default of the configuration it " //$NON-NLS-1$
+            + "extends."); //$NON-NLS-1$
+        rules.put("accessMode", "Optional - defaults to INFOBASE when userName is supplied, else OS."); //$NON-NLS-1$
+        rules.put("syncOperation", "Kept separate from this facade's routing operation on purpose - " //$NON-NLS-1$
+            + "sync_control has its own operation concept."); //$NON-NLS-1$
+        rules.put("name", "A protected snapshot is the only way back from a merge whose outcome " //$NON-NLS-1$
+            + "is not known here; releasing it says that merge has been dealt with."); //$NON-NLS-1$
+        rules.put("confirm", "These are DANGEROUS - only on explicit user request and only when " //$NON-NLS-1$
+            + "certain of the state."); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
+    }
+
     @Override
     public String getInputSchema()
     {
@@ -145,34 +190,23 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("operation", //$NON-NLS-1$
                 "get_applications / read_event_log / create_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
-                    + "branch_infobase / update_database / " //$NON-NLS-1$
-                    + "sync_control / help (snake_case canonical; camelCase like " //$NON-NLS-1$
-                    + "getApplications is also accepted). Pass operation=help without other " //$NON-NLS-1$
-                    + "params for the operation catalog.", true) //$NON-NLS-1$
+                    + "branch_infobase / update_database / sync_control / help (snake_case " //$NON-NLS-1$
+                    + "canonical; camelCase like getApplications is also accepted).", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("action", //$NON-NLS-1$
                 "branch_infobase: current (default) / list / bind / unbind.") //$NON-NLS-1$
             .booleanProperty("ignoreBranchBinding", //$NON-NLS-1$
-                "update_database: update even when the branch is bound to another application. " //$NON-NLS-1$
-                    + "Declared here because the refusal tells the caller to pass it, and a facade " //$NON-NLS-1$
-                    + "that does not accept it leaves that instruction impossible to follow.") //$NON-NLS-1$
+                "update_database: update even when the branch is bound to another " //$NON-NLS-1$
+                    + "application.") //$NON-NLS-1$
             .stringProperty("branch", //$NON-NLS-1$
                 "branch_infobase: the branch to bind or unbind. Defaults to the branch the " //$NON-NLS-1$
                     + "project is on.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project name. Required for get_applications, set_infobase_credentials, " //$NON-NLS-1$
-                    + "create_launch_config and sync_control; optional association target for " //$NON-NLS-1$
-                    + "create_infobase; optional dissociation target for delete_infobase; " //$NON-NLS-1$
-                    + "required for update_database when launchConfigurationName is not " //$NON-NLS-1$
-                    + "supplied - on its own it is enough, applicationId may be omitted.") //$NON-NLS-1$
+                "EDT project name.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "Application (infobase) id from get_applications. Optional for " //$NON-NLS-1$
-                    + "set_infobase_credentials when the project has a single application, and " //$NON-NLS-1$
-                    + "for update_database, which falls back to the project's default application " //$NON-NLS-1$
-                    + "and - for an extension project, which has no infobase of its own - to the " //$NON-NLS-1$
-                    + "default of the configuration it extends.") //$NON-NLS-1$
+                "Application (infobase) id from get_applications.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "Infobase name. Required for create_infobase (the new infobase's name) and " //$NON-NLS-1$
                     + "delete_infobase (the infobase to remove).") //$NON-NLS-1$
@@ -194,8 +228,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "associate (required for that operation).") //$NON-NLS-1$
             .stringProperty("accessMode", //$NON-NLS-1$
                 "set_infobase_credentials: INFOBASE (user + password) or OS (pass-through, " //$NON-NLS-1$
-                    + "no user/password). Optional - defaults to INFOBASE when userName is " //$NON-NLS-1$
-                    + "supplied, else OS.") //$NON-NLS-1$
+                    + "no user/password).") //$NON-NLS-1$
             .stringProperty("userName", //$NON-NLS-1$
                 "set_infobase_credentials: infobase user name (for INFOBASE access).") //$NON-NLS-1$
             .stringProperty("password", //$NON-NLS-1$
@@ -231,17 +264,13 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "update_database: combined with runKey, detach and stop tracking that update " //$NON-NLS-1$
                     + "(best-effort only).") //$NON-NLS-1$
             .stringProperty("syncOperation", //$NON-NLS-1$
-                "sync_control's OWN action - status / diagnose / diagnose_delta / suppress / " //$NON-NLS-1$
-                    + "reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
-                    + "recover_stuck_merge / list_support_snapshots / " //$NON-NLS-1$
-                    + "release_support_snapshot (required when operation=sync_control). Kept " //$NON-NLS-1$
-                    + "separate from this facade's routing operation on purpose - sync_control " //$NON-NLS-1$
-                    + "has its own operation concept.") //$NON-NLS-1$
+                "sync_control's OWN action - status / diagnose / diagnose_delta / suppress " //$NON-NLS-1$
+                    + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
+                    + "recover_stuck_merge / list_support_snapshots / release_support_snapshot " //$NON-NLS-1$
+                    + "(required when operation=sync_control).") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
-                "sync_control syncOperation=release_support_snapshot: the snapshot's file name, as " //$NON-NLS-1$
-                    + "syncOperation=list_support_snapshots reports it. A protected snapshot is the " //$NON-NLS-1$
-                    + "only way back from a merge whose outcome is not known here; releasing it says " //$NON-NLS-1$
-                    + "that merge has been dealt with.") //$NON-NLS-1$
+                "sync_control syncOperation=release_support_snapshot: the snapshot's file " //$NON-NLS-1$
+                    + "name, as syncOperation=list_support_snapshots reports it.") //$NON-NLS-1$
             .booleanProperty("enabled", //$NON-NLS-1$
                 "sync_control syncOperation=suppress: true = suppress synchronization for " //$NON-NLS-1$
                     + "the project (skip it on update), false = re-enable.") //$NON-NLS-1$
@@ -251,8 +280,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "syncOperation=status / diagnose_stuck_locks).") //$NON-NLS-1$
             .booleanProperty("confirm", //$NON-NLS-1$
                 "sync_control syncOperation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$
-                    + "recover_stuck_merge: must be true to proceed. These are DANGEROUS - " //$NON-NLS-1$
-                    + "only on explicit user request and only when certain of the state.") //$NON-NLS-1$
+                    + "recover_stuck_merge: must be true to proceed.") //$NON-NLS-1$
             .build();
     }
 
@@ -405,7 +433,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             return sb.toString();
         }
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
-            "workflow", "InfobaseAdminFacadeTool", schema); //$NON-NLS-1$
+            "workflow", "InfobaseAdminFacadeTool", schema, PARAMETER_RULES); //$NON-NLS-1$
     }
 
     private static Map<String, String> buildOpsCatalog()
