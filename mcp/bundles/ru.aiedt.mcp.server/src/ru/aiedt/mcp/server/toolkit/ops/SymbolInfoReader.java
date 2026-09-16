@@ -269,8 +269,38 @@ public class SymbolInfoReader
             .put("projectName", projectName) //$NON-NLS-1$
             .put("module", filePath) //$NON-NLS-1$
             .put("line", line) //$NON-NLS-1$
-            .put("column", column); //$NON-NLS-1$
+            .put("column", column) //$NON-NLS-1$
+            .put("modelState", modelStateOf(projectName)); //$NON-NLS-1$
         return fm.wrapContent(result);
+    }
+
+    /**
+     * What state the model was in when the position was read.
+     * <p>
+     * The same position answers Неопределено on one run and a type on the next - measured four runs
+     * apart - and the difference is how far the model has got, not chance. Without this the two
+     * answers read alike, and a caller cannot tell "there is no type here" from "the model was
+     * still building". What is reported is the state at the moment of the answer; a model that
+     * finishes building a second later does not change what this run saw.
+     * </p>
+     *
+     * @param projectName the project the position is in
+     * @return the state, or "unknown" when it cannot be established
+     */
+    private static String modelStateOf(String projectName)
+    {
+        try
+        {
+            ru.aiedt.mcp.server.support.ProjectStateGuard.ProjectStateResult state =
+                ru.aiedt.mcp.server.support.ProjectStateGuard.checkProjectState(
+                    ru.aiedt.mcp.server.support.ProjectResolver.resolve(projectName));
+            return state == null ? "unknown" : state.getState().name(); //$NON-NLS-1$
+        }
+        catch (Exception | LinkageError cannotTell)
+        {
+            Activator.logDebug("could not read the model state: " + cannotTell); //$NON-NLS-1$
+            return "unknown"; //$NON-NLS-1$
+        }
     }
 
     /**
@@ -354,7 +384,8 @@ public class SymbolInfoReader
         YamlFrontMatter fm = YamlFrontMatter.create()
             .put("projectName", projectName) //$NON-NLS-1$
             .put("module", filePath) //$NON-NLS-1$
-            .put("positions", positions.size()); //$NON-NLS-1$
+            .put("positions", positions.size()) //$NON-NLS-1$
+            .put("modelState", modelStateOf(projectName)); //$NON-NLS-1$
         return fm.wrapContent(body.toString().trim());
     }
 
