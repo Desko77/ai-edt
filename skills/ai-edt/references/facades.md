@@ -116,6 +116,25 @@ Names differ from the former standalone tools: `set_breakpoint` is `action=add_b
 `evaluate_expression` is `action=evaluate`, `terminate_launch` is `action=terminate`. Call
 `action=help` for the current list.
 
+`action=launch` can open an external data processor or report in the client it starts:
+`externalObjectName` names the object, `externalObjectProject` the project that holds it when that
+is not the project being launched. A name that resolves to nothing stops the launch before the
+infobase is updated, and the answer says `nothingWasLaunchedOrUpdated`.
+
+## When the workbench is waiting on a dialog
+
+A modal dialog stops the workbench, and from outside it is indistinguishable from a hang: the call
+that raised it never returns and nothing says why. Two places name it. `self_status` reports the
+dialog that is up with its title, message and buttons; and a long operation answering
+`status=Pending` carries `blockedByDialog`, `dialogs` and `blockedExplanation` when a dialog is what
+holds it.
+
+`project_admin operation=answer_dialog button=<label>` presses one of those buttons. Nothing is
+pressed by itself, and a label matching no button or several is refused rather than guessed. The
+infobase-update question does not have to appear at all: `launch_debugger action=launch` updates
+before launching by default, and `infobase_admin operation=start_client` does so with
+`updateBeforeLaunch=true`.
+
 ## Tests
 
 `yaxunit_tests` with `mode=run` or `mode=debug`. Filters: `extensions`, `modules`, `tests`,
@@ -142,8 +161,9 @@ Not every tool belongs to a facade. These are called by name.
 | `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
 | `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |
 
-Two more are reached through a facade rather than by name, because the Canonical preset hides
-them: `extension_workshop operation=list_interceptors` and `project_admin operation=self_upkeep`.
+Three more are reached through a facade rather than by name, because the Canonical preset hides
+them: `extension_workshop operation=list_interceptors`, `project_admin operation=self_upkeep` and
+`project_admin operation=answer_dialog`.
 
 ## Will this delivery break the extension
 

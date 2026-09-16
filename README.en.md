@@ -61,6 +61,8 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🔀 **Update a configuration on support** | Compare the project with a new delivery and their common ancestor, decide per object or per method, and apply the update keeping local changes. Read the vendor support registry and record object modes to a file before merging. |
 | 🧯 **Check an extension before an update** | Get the extension objects that stop applying after a new delivery, with the reason for each: a changed signature on an intercepted method, a target that is gone, a borrowed object that no longer matches. |
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
+| 🧪 **Run a data processor under the debugger** | Open an external data processor or report in the client that starts under the debugger, so its code runs with the breakpoints already set. |
+| 🔔 **See that the IDE is waiting for an answer** | Read the modal dialog holding a call - title, message and buttons - and press a named one instead of waiting for a person at the keyboard. |
 | 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind, whether it is ready for one, and what stands in the way: `update_database` with `dryRun=true` answers and starts nothing. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |

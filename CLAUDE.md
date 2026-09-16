@@ -31,11 +31,13 @@ assistants can work against the live EDT model instead of scraping project files
   five things follow before the task is done: the tree version is bumped one micro above the
   newest tag; `README.md` and `README.en.md` say what the user can now do, both or neither;
   `CHANGELOG.md` gains a row for the release, and `docs/tools/README.ru.md` gains the arguments
-  a caller has to know; the skill under `skills/ai-edt/` learns the new tool names, operations
-  and arguments, and so do the copies of it that live outside this repository, which
-  `CLAUDE.local.md` lists; and the announcement is written. Code that only a reader of the diff
-  knows about has not been shipped, and a skill that still describes the old behaviour teaches
-  the agent the new one does not exist.
+  a caller has to know; the new tool names, operations and arguments reach **all four** places the
+  agent reads them from - the skill under `skills/ai-edt/` in this repository, the skill
+  repositories published outside it, the local skill and the local rules, which `CLAUDE.local.md`
+  lists by path - in the same pass as the code; and the announcement is written. Updating the
+  plugin means updating the rules: a release that leaves one of the four behind is not released.
+  Code that only a reader of the diff knows about has not been shipped, and a skill that still
+  describes the old behaviour teaches the agent the new one does not exist.
 - **PARITY BY FUNCTION, NOT BY NAME.** When adding a capability another plugin also has, implement
   it under our own name at every visible layer - the MCP tool name, the operation name inside a
   facade, and the Java class name. Another product's name is admissible only as a hidden

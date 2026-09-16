@@ -281,6 +281,35 @@ public final class DebugSessionStarter implements IMcpTool
                 }
             }
 
+            // Before the update, not after: an object that cannot be resolved is a typo, and a typo
+            // should not cost an infobase update and leave the caller with a changed database and no
+            // launch.
+            String openedObject = null;
+            String objectProjectName = null;
+            String openedObjectClassName = null;
+            if (externalObjectName != null && !externalObjectName.isEmpty())
+            {
+                IProject objectProject = externalObjectProject == null || externalObjectProject.isEmpty()
+                    ? project : ProjectResolver.resolve(externalObjectProject);
+                if (objectProject == null)
+                {
+                    return ToolResult.error(ProjectResolver.describeNotFound(externalObjectProject)).toJson();
+                }
+                BmExternalObjectDumpHelper.RootResolution found =
+                    BmExternalObjectDumpHelper.resolveRoot(objectProject, externalObjectName);
+                if (found.error != null)
+                {
+                    return ToolResult.error(found.error)
+                        .put("externalObjectName", externalObjectName) //$NON-NLS-1$
+                        .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                openedObject = found.objectName;
+                objectProjectName = objectProject.getName();
+                openedObjectClassName = found.object.getClass().getName();
+            }
+
             if (updateBeforeLaunch && appManager != null && application != null)
             {
                 String updateError = updateDatabase(appManager, application);
@@ -358,29 +387,12 @@ public final class DebugSessionStarter implements IMcpTool
                     .toJson();
             }
 
-            String openedObject = null;
-            if (externalObjectName != null && !externalObjectName.isEmpty())
+            if (openedObject != null)
             {
-                IProject objectProject = externalObjectProject == null || externalObjectProject.isEmpty()
-                    ? project : ProjectResolver.resolve(externalObjectProject);
-                if (objectProject == null)
-                {
-                    return ToolResult.error(ProjectResolver.describeNotFound(externalObjectProject)).toJson();
-                }
-                BmExternalObjectDumpHelper.RootResolution found =
-                    BmExternalObjectDumpHelper.resolveRoot(objectProject, externalObjectName);
-                if (found.error != null)
-                {
-                    return ToolResult.error(found.error)
-                        .put("externalObjectName", externalObjectName) //$NON-NLS-1$
-                        .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
-                        .toJson();
-                }
                 // The class of the instance, not the metadata type: that is what the environment
                 // matches the object by - see LaunchConfigAccess.ATTR_EXTERNAL_OBJECT_TYPE.
                 matchingConfig = LaunchConfigAccess.openingExternalObject(matchingConfig,
-                    objectProject.getName(), found.objectName, found.object.getClass().getName());
-                openedObject = found.objectName;
+                    objectProjectName, openedObject, openedObjectClassName);
             }
 
             String launchError = performLaunch(matchingConfig);
