@@ -1196,6 +1196,49 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The text placement a caller named, in whatever case they wrote it.
+     * <p>
+     * Asked of the values the enum publishes rather than through {@code getByName} with an
+     * upper-cased word: the names in the model are not upper case, so that lookup answered nothing
+     * for every value the tool published as allowed.
+     * </p>
+     *
+     * @param wanted the value as the caller wrote it
+     * @return the placement, or <code>null</code> when nothing of that name exists
+     */
+    private static TextPlacement placementNamed(String wanted)
+    {
+        for (TextPlacement candidate : TextPlacement.VALUES)
+        {
+            if (candidate.getName().equalsIgnoreCase(wanted)
+                || candidate.getLiteral().equalsIgnoreCase(wanted))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The placements this model has, for the refusal.
+     *
+     * @return the literals, comma separated
+     */
+    private static String placementValues()
+    {
+        StringBuilder values = new StringBuilder();
+        for (TextPlacement candidate : TextPlacement.VALUES)
+        {
+            if (values.length() > 0)
+            {
+                values.append(", "); //$NON-NLS-1$
+            }
+            values.append(candidate.getLiteral());
+        }
+        return values.toString();
+    }
+
+    /**
      * Applies presentation properties to a rectangle of cells, and column width to its columns.
      * <p>
      * Formats in a spreadsheet are shared: a cell does not own one, it points at an index in the
@@ -1233,10 +1276,12 @@ public final class BmTemplateHelper
         TextPlacement wanted = null;
         if (placement != null && !placement.isEmpty())
         {
-            wanted = TextPlacement.getByName(placement.toUpperCase(java.util.Locale.ROOT));
+            wanted = placementNamed(placement);
             if (wanted == null)
             {
-                outcome.error = "textPlacement must be one of auto, cut, block, wrap - got: " //$NON-NLS-1$
+                // The values the enum itself publishes, not a list written beside it: the two had
+                // drifted, and every value of the published list was refused.
+                outcome.error = "textPlacement must be one of " + placementValues() + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
                     + placement;
                 return outcome;
             }
@@ -1388,14 +1433,51 @@ public final class BmTemplateHelper
     }
 
     /**
-     * Merges a rectangle of cells. Adds a new {@link Merge} entry to the
-     * spreadsheet's merge list with the requested {@link Rect}.
+     * The span of a merge as the platform stores it: the cells AFTER the first.
+     * <p>
+     * The file says which it is. A merge of one cell carries no span at all in the mxl
+     * serialization, and that reads back as zero - a count of cells would have been one. Written as
+     * a count, a merge of three columns opened in the environment as four.
+     * </p>
      *
-     * <p>Both the {@code from} and {@code to} corners are inclusive.
-     * Coordinates are 1-based.
+     * @param from the first cell, 1-based
+     * @param to the last cell, 1-based and inclusive
+     * @return what goes into Rect width or height
+     */
+    private static int mergeSpan(int from, int to)
+    {
+        return to - from;
+    }
+
+    /**
+     * The last cell of a merge, from the span the platform stored.
+     * <p>
+     * The reverse of {@link #mergeSpan}, and here so the two cannot drift apart. A negative span is
+     * read as none, which is how an absent one arrives.
+     * </p>
      *
-     * <p>Uses {@code Rect}'s X/Y/Width/Height: X=col, Y=row, Width=colSpan,
-     * Height=rowSpan - matching the platform's mxl serialization layout.
+     * @param from the first cell, 1-based
+     * @param span the Rect width or height
+     * @return the last cell, 1-based and inclusive
+     */
+    private static int mergeFarCorner(int from, int span)
+    {
+        return from + Math.max(0, span);
+    }
+
+    /**
+     * Merges a rectangle of cells, adding a {@link Merge} with the requested {@link Rect}.
+     * <p>
+     * Both the {@code from} and {@code to} corners are inclusive, and coordinates are 1-based.
+     * Rect carries X=col and Y=row 0-based, and Width and Height as the cells AFTER the first -
+     * see {@link #mergeSpan}.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param fromRow the first row, 1-based
+     * @param fromCol the first column, 1-based
+     * @param toRow the last row, 1-based and inclusive
+     * @param toCol the last column, 1-based and inclusive
      */
     public static void mergeCells(SpreadsheetDocument doc, int fromRow, int fromCol, int toRow,
         int toCol)
@@ -1411,13 +1493,12 @@ public final class BmTemplateHelper
         }
         Merge merge = MoxelFactory.eINSTANCE.createMerge();
         Rect rect = MoxelFactory.eINSTANCE.createRect();
-        // Rect X=col, Y=row are 0-based in the moxel model (see setCellText);
-        // convert the 1-based corners. Width/Height are spans (cell counts),
-        // not positions, so they are base-invariant.
+        // Rect X=col, Y=row are 0-based in the moxel model (see setCellText); convert the 1-based
+        // corners. Width and Height are the cells AFTER the first - see mergeSpan.
         rect.setX(fromCol - 1);
         rect.setY(fromRow - 1);
-        rect.setWidth(toCol - fromCol + 1);
-        rect.setHeight(toRow - fromRow + 1);
+        rect.setWidth(mergeSpan(fromCol, toCol));
+        rect.setHeight(mergeSpan(fromRow, toRow));
         merge.setPosition(rect);
         doc.getMerges().add(merge);
     }
@@ -1649,13 +1730,8 @@ public final class BmTemplateHelper
                 Rect p = m.getPosition();
                 int fromCol = p.getX() + 1;
                 int fromRow = p.getY() + 1;
-                // The merge stores its span in width/height. In the mxl
-                // serialization an absent <w>/<h> (a single column/row merge)
-                // deserializes to 0, so treat a non-positive span as 1.
-                int w = p.getWidth() > 0 ? p.getWidth() : 1;
-                int h = p.getHeight() > 0 ? p.getHeight() : 1;
-                int toCol = fromCol + w - 1;
-                int toRow = fromRow + h - 1;
+                int toCol = mergeFarCorner(fromCol, p.getWidth());
+                int toRow = mergeFarCorner(fromRow, p.getHeight());
                 Map<String, Object> mm = new LinkedHashMap<>();
                 mm.put("fromRow", Integer.valueOf(fromRow)); //$NON-NLS-1$
                 mm.put("fromCol", Integer.valueOf(fromCol)); //$NON-NLS-1$
