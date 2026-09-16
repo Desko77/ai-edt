@@ -122,6 +122,52 @@ public class DcsWorkshopTool implements IMcpTool
             + "DCS direct save to .dcs disk file is automatic for extension projects."; //$NON-NLS-1$
     }
 
+    /**
+     * What each parameter carries beyond the sentence in its schema.
+     * <p>
+     * Every client holds the schema for the whole conversation, so it says what the parameter is
+     * for in one sentence and names the values a caller picks from. The rest - when a value is
+     * refused, what it does to what is already there, what a measurement showed - is answered when
+     * operation=help topic=parameters asks for it. The two continue each other rather than
+     * repeating, so neither can drift out of step with the other.
+     * </p>
+     */
+    private static final Map<String, String> PARAMETER_RULES = buildParameterRules();
+
+    /**
+     * Builds the rules map.
+     *
+     * @return parameter name to the rules its description no longer carries
+     */
+    private static Map<String, String> buildParameterRules()
+    {
+        Map<String, String> rules = new LinkedHashMap<>();
+        rules.put("formFqn", "Pass with attributeName instead of objectName to work on the list's " //$NON-NLS-1$
+            + "settings"); //$NON-NLS-1$
+        rules.put("templateName", "Default follows the configuration script variant: " //$NON-NLS-1$
+            + "ОсновнаяСхемаКомпоновкиДанных (Russian) / MainDataCompositionSchema " //$NON-NLS-1$
+            + "(English)"); //$NON-NLS-1$
+        rules.put("parentPath", "Omitted means the root of the structure. Space around a step is " //$NON-NLS-1$
+            + "ignored. A group a name cannot reach - one with no name, with a dot " //$NON-NLS-1$
+            + "in it, or one of two with the same name - is addressed by its " //$NON-NLS-1$
+            + "position at its level, as [0]."); //$NON-NLS-1$
+        rules.put("variantName", "Omitted means the default settings, which is the first variant. A " //$NON-NLS-1$
+            + "dynamic list has no variants and refuses this argument."); //$NON-NLS-1$
+        rules.put("field", "Also the SELECT-list field for add_query_field / remove_query_field."); //$NON-NLS-1$
+        rules.put("appearance", "Font='Arial,12,bold', colors='#RRGGBB'. Keys: " //$NON-NLS-1$
+            + "TextColor/BackColor/BorderColor/Font/Format (or Russian equivalents)."); //$NON-NLS-1$
+        rules.put("overwriteModel", "The model's schema is written to a backup beside the file first. " //$NON-NLS-1$
+            + "Default false: a differing schema is reported and left alone."); //$NON-NLS-1$
+        rules.put("dataObjectName", "Distinct from objectName, which names the owner whose schema is being " //$NON-NLS-1$
+            + "edited."); //$NON-NLS-1$
+        rules.put("groupName", "For add_total_template, the first of the two that cross."); //$NON-NLS-1$
+        rules.put("schemaTemplateName", "Distinct from templateName, which names the configuration template " //$NON-NLS-1$
+            + "the schema lives in."); //$NON-NLS-1$
+        rules.put("nestedSchemaName", "Without it an operation applies to the schema itself; with it, to the " //$NON-NLS-1$
+            + "schema of that name within it."); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
+    }
+
     @Override
     public String getInputSchema()
     {
@@ -131,13 +177,12 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("objectName", //$NON-NLS-1$
                 "Owner FQN (Report.X / DataProcessor.X) or full schema FQN") //$NON-NLS-1$
             .stringProperty("formFqn", //$NON-NLS-1$
-                "Form holding a dynamic list, e.g. Catalog.X.Form.ListForm. Pass with " //$NON-NLS-1$
-                    + "attributeName instead of objectName to work on the list's settings") //$NON-NLS-1$
+                "Form holding a dynamic list, e.g. Catalog.X.Form.ListForm.") //$NON-NLS-1$
             .stringProperty("attributeName", //$NON-NLS-1$
                 "Dynamic-list attribute on formFqn whose settings the operation applies to") //$NON-NLS-1$
             .stringProperty("templateName", //$NON-NLS-1$
-                "DCS template name. Default follows the configuration script variant: " //$NON-NLS-1$
-                    + "ОсновнаяСхемаКомпоновкиДанных (Russian) / MainDataCompositionSchema (English)") //$NON-NLS-1$
+                "DCS template name. Default ОсновнаяСхемаКомпоновкиДанных, or " //$NON-NLS-1$
+                    + "MainDataCompositionSchema on an English configuration.") //$NON-NLS-1$
             .stringProperty("name", "Name of the new element (parameter / field / etc.)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("dataSetName", "Target dataset for field/calc operations") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("queryText", "BSL query text for add_dataset (Query type) and set_dataset_query " //$NON-NLS-1$ //$NON-NLS-2$
@@ -160,15 +205,11 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("property", "Property name for set_*_property ops") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("value", "Property/parameter value for set_* ops") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("parentPath", //$NON-NLS-1$
-                "add_grouping: the group to nest the new one inside, as dot-separated group " //$NON-NLS-1$
-                    + "names ('Объект.Статья'). Omitted means the root of the structure. Space " //$NON-NLS-1$
-                    + "around a step is ignored. A group a name cannot reach - one with no name, " //$NON-NLS-1$
-                    + "with a dot in it, or one of two with the same name - is addressed by its " //$NON-NLS-1$
-                    + "position at its level, as [0].") //$NON-NLS-1$
+                "add_grouping: the group to nest the new one inside, as dot-separated " //$NON-NLS-1$
+                    + "group names ('Объект.Статья').") //$NON-NLS-1$
             .stringProperty("variantName", //$NON-NLS-1$
-                "set_settings_parameter: the settings variant to work on. Omitted means the " //$NON-NLS-1$
-                    + "default settings, which is the first variant. A dynamic list has no " //$NON-NLS-1$
-                    + "variants and refuses this argument.") //$NON-NLS-1$
+                "set_settings_parameter: the settings variant to work on. Omitted means " //$NON-NLS-1$
+                    + "the default settings, which is the first variant.") //$NON-NLS-1$
             .stringProperty("userSettingID", //$NON-NLS-1$
                 "set_settings_parameter: the identifier under which the parameter appears in " //$NON-NLS-1$
                     + "user settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
@@ -179,17 +220,17 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("container", //$NON-NLS-1$
                 "selection / filter / order (set_settings_item_user_mode)") //$NON-NLS-1$
             .stringProperty("field", //$NON-NLS-1$
-                "Field path for grouping / order / selected-field / filter ops and the field-match " //$NON-NLS-1$
-                + "branch of remove_settings_filter / remove_settings_order (alternative to index). " //$NON-NLS-1$
-                + "Also the SELECT-list field for add_query_field / remove_query_field.") //$NON-NLS-1$
+                "Field path for grouping / order / selected-field / filter ops and the " //$NON-NLS-1$
+                    + "field-match branch of remove_settings_filter / remove_settings_order " //$NON-NLS-1$
+                    + "(alternative to index).") //$NON-NLS-1$
             .stringProperty("condition", //$NON-NLS-1$
                 "Query condition expression for add_query_condition / remove_query_condition " //$NON-NLS-1$
                 + "(e.g. 'T.Sum > &MinSum'). add splices it into WHERE/ГДЕ; remove matches it " //$NON-NLS-1$
                 + "(parenthesised or bare) and drops it with one adjacent AND/И.") //$NON-NLS-1$
             .stringProperty("appearance", //$NON-NLS-1$
                 "Appearance spec 'Name=Value;Name=Value' for add_appearance / " //$NON-NLS-1$
-                + "set_data_set_field_appearance. Font='Arial,12,bold', colors='#RRGGBB'. " //$NON-NLS-1$
-                + "Keys: TextColor/BackColor/BorderColor/Font/Format (or Russian equivalents).") //$NON-NLS-1$
+                    + "set_data_set_field_appearance. Keys: TextColor, BackColor, " //$NON-NLS-1$
+                    + "BorderColor, Font, Format, or their Russian equivalents.") //$NON-NLS-1$
             .stringProperty("title", //$NON-NLS-1$
                 "Presentation/title for selected-field / calculated-field / parameter, and what a " //$NON-NLS-1$
                     + "nested schema is called on screen (optional).") //$NON-NLS-1$
@@ -200,9 +241,8 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("topic", "Help topic name (use with operation=help)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("dryRun", "Preview changes inside BM transaction (default false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("overwriteModel", //$NON-NLS-1$
-                "repair_schema: replace a schema the model holds when it differs from the .dcs. " //$NON-NLS-1$
-                    + "The model's schema is written to a backup beside the file first. Default false: " //$NON-NLS-1$
-                    + "a differing schema is reported and left alone.") //$NON-NLS-1$
+                "repair_schema: replace a schema the model holds when it differs from the " //$NON-NLS-1$
+                    + ".dcs. Default false.") //$NON-NLS-1$
             .booleanProperty("validate_query", "Validate queryText before write (default true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("validate_expression", //$NON-NLS-1$
                 "Validate expression before write (default true)") //$NON-NLS-1$
@@ -231,11 +271,9 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("url", //$NON-NLS-1$
                 "add_nested_schema: where the nested schema reads its data from.") //$NON-NLS-1$
             .stringProperty("dataObjectName", //$NON-NLS-1$
-                "add_union_item dataSetType=Object: the object that child dataset reads. Distinct " //$NON-NLS-1$
-                    + "from objectName, which names the owner whose schema is being edited.") //$NON-NLS-1$
+                "add_union_item dataSetType=Object: the object that child dataset reads.") //$NON-NLS-1$
             .stringProperty("groupName", //$NON-NLS-1$
-                "add_group_template / remove_group_template: the grouping being drawn. For " //$NON-NLS-1$
-                    + "add_total_template, the first of the two that cross.") //$NON-NLS-1$
+                "add_group_template / remove_group_template: the grouping being drawn.") //$NON-NLS-1$
             .stringProperty("groupName2", //$NON-NLS-1$
                 "add_total_template / remove_total_template: the second grouping of the " //$NON-NLS-1$
                     + "crossing.") //$NON-NLS-1$
@@ -250,11 +288,9 @@ public class DcsWorkshopTool implements IMcpTool
             .integerProperty("rowIndex", //$NON-NLS-1$
                 "add_template_cell: which row of the template body, 0-based. Default the last.") //$NON-NLS-1$
             .stringProperty("schemaTemplateName", //$NON-NLS-1$
-                "The template INSIDE the schema that an operation works on. Distinct from " //$NON-NLS-1$
-                    + "templateName, which names the configuration template the schema lives in.") //$NON-NLS-1$
+                "The template INSIDE the schema that an operation works on.") //$NON-NLS-1$
             .stringProperty("nestedSchemaName", //$NON-NLS-1$
-                "Name of a nested schema to work inside. Without it an operation applies to the " //$NON-NLS-1$
-                    + "schema itself; with it, to the schema of that name within it.") //$NON-NLS-1$
+                "Name of a nested schema to work inside.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
                 "remove_conditional_appearance: where to remove from - schema (default) / settings.") //$NON-NLS-1$
             .stringProperty("userSettingPresentation", //$NON-NLS-1$
@@ -5668,7 +5704,8 @@ public class DcsWorkshopTool implements IMcpTool
                 + "firstDifferenceAt; overwriteModel=true replaces it after writing the model's " //$NON-NLS-1$
                 + "schema to a backup beside the file (backupPath). dryRun=true reports the outcome " //$NON-NLS-1$
                 + "and plannedBackupPath without changing anything. The file is never written.\n\n"); //$NON-NLS-1$
-            sb.append("**Topics:** workflow, dcsWorkflow, propertyValues, examples, errorTags\n"); //$NON-NLS-1$
+            sb.append("**Topics:** workflow, dcsWorkflow, propertyValues, parameters, " //$NON-NLS-1$
+                + "examples, errorTags\n"); //$NON-NLS-1$
             return ToolResult.success().put("help", sb.toString()).toJson(); //$NON-NLS-1$
         }
         switch (topic.toLowerCase())
@@ -5686,6 +5723,11 @@ public class DcsWorkshopTool implements IMcpTool
             case "errortags": //$NON-NLS-1$
                 return ToolResult.success().put("topic", topic) //$NON-NLS-1$
                     .put("text", buildErrorTagsHelp()).toJson(); //$NON-NLS-1$
+            case "parameters": //$NON-NLS-1$
+                // Every parameter with the rules its one-sentence description no longer carries.
+                return ToolResult.success().put("topic", topic) //$NON-NLS-1$
+                    .put("text", ru.aiedt.mcp.server.support.ParameterHelp.render(NAME, //$NON-NLS-1$
+                        getInputSchema(), PARAMETER_RULES)).toJson();
             default:
                 return ToolResult.error("Unknown topic: " + topic //$NON-NLS-1$
                     + ". Available: dcsWorkflow, propertyValues, examples, errorTags.") //$NON-NLS-1$

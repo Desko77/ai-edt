@@ -177,7 +177,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("edit_metadata", Integer.valueOf(12715));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
         PROSE.put("insights", Integer.valueOf(5393));
-        PROSE.put("dcs_workshop", Integer.valueOf(5176));
+        PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(4701));
         PROSE.put("infobase_admin", Integer.valueOf(4560));
@@ -230,5 +230,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * without asking, because it changes what a failed call leaves behind.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 85232;
+    private static final int DOCUMENT_PROSE = 84294;
 }
