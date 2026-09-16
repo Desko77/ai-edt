@@ -162,7 +162,7 @@ public final class PlatformDocReader implements IMcpTool
         case CATEGORY_TYPE:
             return getTypeDocumentation(typeName, memberName, memberType, projectName, limit, useRussian);
         case CATEGORY_BUILTIN:
-            return getBuiltinFunctionDocumentation(typeName, useRussian);
+            return getBuiltinFunctionDocumentation(typeName, projectName, useRussian);
         default:
             return "Error: unrecognized category '" + category + "'. Supported values: 'type', 'builtin'"; //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -423,11 +423,13 @@ public final class PlatformDocReader implements IMcpTool
         return sb.toString();
     }
 
-    private String getBuiltinFunctionDocumentation(String functionName, boolean useRussian)
+    private String getBuiltinFunctionDocumentation(String functionName, String projectName,
+        boolean useRussian)
     {
         try
         {
-            return UiSync.call(() -> getBuiltinFunctionDocumentationInternal(functionName, useRussian));
+            return UiSync.call(
+                () -> getBuiltinFunctionDocumentationInternal(functionName, projectName, useRussian));
         }
         catch (Exception e)
         {
@@ -436,9 +438,13 @@ public final class PlatformDocReader implements IMcpTool
         }
     }
 
-    private String getBuiltinFunctionDocumentationInternal(String functionName, boolean useRussian)
+    private String getBuiltinFunctionDocumentationInternal(String functionName, String projectName,
+        boolean useRussian)
     {
-        Version version = getProjectVersion(null);
+        // The project the caller named, not the first one the workspace lists. A workspace holds
+        // several configurations, and their platform versions differ; the answer used to come from
+        // whichever project came first.
+        Version version = getProjectVersion(projectName);
         if (version == null)
         {
             version = Version.LATEST;
