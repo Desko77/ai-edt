@@ -308,7 +308,9 @@ public class SupportRegistryTool
             return ToolResult.error("objectFqn is required for object_mode.").toJson(); //$NON-NLS-1$
         }
         ru.aiedt.mcp.server.support.BmSupportRegistryHelper.ObjectState state =
-            ru.aiedt.mcp.server.support.BmSupportRegistryHelper.objectMode(projectName, objectFqn);
+            ru.aiedt.mcp.server.support.BmSupportRegistryHelper.objectMode(projectName, objectFqn,
+                JsonUtils.extractIntArgument(params, "offset", 0), //$NON-NLS-1$
+                JsonUtils.extractIntArgument(params, "limit", 0)); //$NON-NLS-1$
         if (state.cannotTell != null)
         {
             return ToolResult.error(state.cannotTell).toJson();
@@ -327,7 +329,9 @@ public class SupportRegistryTool
             // who sees a page and a number naturally reads the number as the page.
             .put("dependentsTotal", state.dependentsTotal) //$NON-NLS-1$
             .put("dependentsShown", state.dependents.size()) //$NON-NLS-1$
+            .put("dependentsOffset", state.dependentsOffset) //$NON-NLS-1$
             .put("dependentsMore", state.dependentsMore) //$NON-NLS-1$
+            .put("editabilityNote", state.editabilityNote) //$NON-NLS-1$
             .put("dependentsUnnamed", state.dependentsUnnamed) //$NON-NLS-1$
             .put("dependentsUnreadable", state.dependentsUnreadable) //$NON-NLS-1$
             .put("serviceRoute", state.serviceRoute) //$NON-NLS-1$

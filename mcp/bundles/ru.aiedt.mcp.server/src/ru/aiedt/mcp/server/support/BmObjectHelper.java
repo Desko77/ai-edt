@@ -1541,6 +1541,7 @@ public final class BmObjectHelper
         put(kinds, "getAddressingAttributes", "addressingattribute", "реквизитадресации"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(kinds, "getColumns", "column", "графа"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(kinds, "getStandardAttributes", "standardattribute", "стандартныйреквизит"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getSubsystems", "subsystem", "подсистема"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(kinds, "getForms", "form", "форма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(kinds, "getTemplates", "template", "макет"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(kinds, "getUrlTemplates", "urltemplate", "шаблонurl"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$

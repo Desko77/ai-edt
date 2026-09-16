@@ -62,6 +62,8 @@ public class OneListOfChildKindsTest
         kinds.put("Method", "getMethods"); //$NON-NLS-1$ //$NON-NLS-2$
         kinds.put("Метод", "getMethods"); //$NON-NLS-1$ //$NON-NLS-2$
         kinds.put("Operation", "getOperations"); //$NON-NLS-1$ //$NON-NLS-2$
+        kinds.put("Subsystem", "getSubsystems"); //$NON-NLS-1$ //$NON-NLS-2$
+        kinds.put("Подсистема", "getSubsystems"); //$NON-NLS-1$ //$NON-NLS-2$
         kinds.put("Операция", "getOperations"); //$NON-NLS-1$ //$NON-NLS-2$
         return kinds;
     }

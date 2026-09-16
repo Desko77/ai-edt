@@ -73,6 +73,9 @@ public final class BmSupportRegistryHelper
     /** How many objects one page of the object listing may carry. */
     public static final int PAGE_LIMIT = 500;
 
+    /** The mode that says an object may be changed, as the environment writes it. */
+    private static final String CHANGES_ALLOWED = "ChangesAllowed"; //$NON-NLS-1$
+
     private BmSupportRegistryHelper()
     {
         // Static helper.
@@ -195,6 +198,19 @@ public final class BmSupportRegistryHelper
 
         /** How many dependents there are in total, named or not, page or no page. */
         public int dependentsTotal;
+
+        /** Where the page of dependents starts. */
+        public int dependentsOffset;
+
+        /**
+         * Why the environment edits nothing here while the registry records that it may.
+         * <p>
+         * A configuration in the vendor distribution state records ChangesAllowed on every object
+         * and is edited as a whole by nobody. The two answers side by side read as a contradiction,
+         * and a reader takes the one that says the object can be changed.
+         * </p>
+         */
+        public String editabilityNote;
 
         /** True when the page stops short of the total. */
         public boolean dependentsMore;
@@ -976,7 +992,7 @@ public final class BmSupportRegistryHelper
      * @param fqn the object, named as the rest of this server names metadata objects.
      * @return what was found, or a refusal saying why nothing could be
      */
-    public static ObjectState objectMode(String projectName, String fqn)
+    public static ObjectState objectMode(String projectName, String fqn, int offset, int limit)
     {
         ObjectState state = new ObjectState();
         state.object = fqn;
@@ -1016,6 +1032,13 @@ public final class BmSupportRegistryHelper
         collectPerParent(support, object.getUuid(), state.perParent);
         state.canEdit = service.manager.canEdit(object);
         state.canDelete = service.manager.canDelete(object);
+        if (!state.canEdit && CHANGES_ALLOWED.equals(state.userMode))
+        {
+            state.editabilityNote = "the registry records " + state.userMode + " for this object " //$NON-NLS-1$ //$NON-NLS-2$
+                + "and the environment still edits nothing: a configuration read as a vendor " //$NON-NLS-1$
+                + "distribution is not editable as a whole, whatever its records say. Read " //$NON-NLS-1$
+                + "fileState from operation=status."; //$NON-NLS-1$
+        }
         List<String> named = new ArrayList<>();
         for (MdObject dependent : service.manager.getDependentMdObjects(object))
         {
@@ -1042,14 +1065,17 @@ public final class BmSupportRegistryHelper
         // paging through sees some dependents twice and others not at all.
         java.util.Collections.sort(named);
         state.dependentsTotal = named.size();
-        for (String name : named)
+        // A page with no way to ask for the next one leaves the tail of a list of 8783 unreachable.
+        state.dependentsOffset = Math.max(0, offset);
+        int page = limit <= 0 ? PAGE_LIMIT : Math.min(limit, PAGE_LIMIT);
+        for (int at = state.dependentsOffset; at < named.size(); at++)
         {
-            if (state.dependents.size() >= PAGE_LIMIT)
+            if (state.dependents.size() >= page)
             {
                 state.dependentsMore = true;
                 break;
             }
-            state.dependents.add(name);
+            state.dependents.add(named.get(at));
         }
         return state;
     }
@@ -1721,7 +1747,27 @@ public final class BmSupportRegistryHelper
             // mode has to be set before any other can be, so it must be addressable by name.
             return configuration;
         }
-        return BmSubsystemHelper.resolveByFqn(configuration, wanted);
+        MdObject top = BmSubsystemHelper.resolveByFqn(configuration, wanted);
+        if (top != null)
+        {
+            return top;
+        }
+        // A child of an object, or a subsystem inside a subsystem. The registry names 9088 objects
+        // on a demonstration configuration and 6159 of those names are of this shape, so an address
+        // the tool prints has to be one the tool takes.
+        String[] segments = MetadataTypeCatalog.normalizeFqn(wanted).split("\\."); //$NON-NLS-1$
+        if (segments.length < 4 || (segments.length % 2) != 0)
+        {
+            return null;
+        }
+        MdObject owner = BmSubsystemHelper.resolveByFqn(configuration,
+            segments[0] + "." + segments[1]); //$NON-NLS-1$
+        if (owner == null)
+        {
+            return null;
+        }
+        Object child = BmObjectHelper.resolveChildByPath(owner, segments, 2);
+        return child instanceof MdObject ? (MdObject)child : null;
     }
 
     /**
@@ -1758,6 +1804,50 @@ public final class BmSupportRegistryHelper
     }
 
     /**
+     * The address of a child, through the object that holds it.
+     * <p>
+     * A dependent used to be named by its class and its own name, so CatalogAttribute.Автор stood
+     * for the attribute of any of dozens of catalogs and named none of them. What comes back now is
+     * the address the same tool takes back: Catalog.Товары.Attribute.Автор.
+     * </p>
+     * <p>
+     * The child kind is the child class name with the owner class name taken off its front -
+     * CatalogAttribute inside a Catalog is an Attribute - which is how the model names these
+     * classes throughout.
+     * </p>
+     *
+     * @param object a metadata object that may be a child of another.
+     * @return the address, or <code>null</code> when the object is not a child of a named owner
+     */
+    private static String addressOf(MdObject object)
+    {
+        org.eclipse.emf.ecore.EObject container = object.eContainer();
+        if (!(container instanceof MdObject))
+        {
+            return null;
+        }
+        MdObject owner = (MdObject)container;
+        String ownerName = owner instanceof Configuration ? "Configuration" : nameOf(owner); //$NON-NLS-1$
+        if (ownerName == null)
+        {
+            return null;
+        }
+        String childClass = object.eClass() == null ? null : object.eClass().getName();
+        String ownerClass = owner.eClass() == null ? null : owner.eClass().getName();
+        if (childClass == null)
+        {
+            return null;
+        }
+        String kind = ownerClass != null && childClass.startsWith(ownerClass)
+            ? childClass.substring(ownerClass.length()) : childClass;
+        if (kind.isEmpty())
+        {
+            kind = childClass;
+        }
+        return ownerName + "." + kind + "." + object.getName(); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Names a metadata object for the answer.
      *
      * @param object the object.
@@ -1774,12 +1864,17 @@ public final class BmSupportRegistryHelper
             // Qualified, not bare. A listing that answers "Products" leaves the caller to guess
             // whether that is a catalog or a document, and the name cannot be handed back to
             // object_mode, which is the one thing a caller will want to do with it.
-            String type = object.eClass() == null ? null : object.eClass().getName();
             String name = object.getName();
             if (name == null)
             {
                 return null;
             }
+            String address = addressOf(object);
+            if (address != null)
+            {
+                return address;
+            }
+            String type = object.eClass() == null ? null : object.eClass().getName();
             return type == null || type.isEmpty() ? name : type + "." + name; //$NON-NLS-1$
         }
         catch (RuntimeException unnamed)

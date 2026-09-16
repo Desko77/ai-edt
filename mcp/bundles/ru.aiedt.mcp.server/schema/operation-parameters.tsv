@@ -375,7 +375,7 @@ SecurityAuditFacadeTool	audit_role_rights	apply:boolean,format:string,includeRls
 SecurityAuditFacadeTool	find_rls_violations	format:string,projectName:string,roleName:string,scope:string,severity_filter:string	delegate FindRlsViolationsTool	
 SecurityAuditFacadeTool	sensitive_data_scan	checks:string,customPatterns:string,format:string,projectName:string,scope:string,severity_filter:string	delegate SensitiveDataScanTool	
 SupportRegistryTool	list_objects	limit:integer,offset:integer,parentId:string,userMode:string	read in place	apply:boolean,objectFqn:string,projectName:string,snapshotPath:string
-SupportRegistryTool	object_mode	objectFqn:string	read in place	apply:boolean,limit:integer,offset:integer,parentId:string,projectName:string,snapshotPath:string,userMode:string
+SupportRegistryTool	object_mode	limit:integer,objectFqn:string,offset:integer	read in place	apply:boolean,parentId:string,projectName:string,snapshotPath:string,userMode:string
 SupportRegistryTool	restore_modes	apply:boolean,snapshotPath:string	read in place	limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
 SupportRegistryTool	snapshot_modes	snapshotPath:string	read in place	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
 SupportRegistryTool	status	projectName:string	passed in as locals	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,snapshotPath:string,userMode:string
