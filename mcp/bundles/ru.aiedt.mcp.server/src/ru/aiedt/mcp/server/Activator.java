@@ -26,6 +26,7 @@ import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectRestorer;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.core.resource.IResourceStoreManager;
 import com._1c.g5.v8.dt.lifecycle.IServicesOrchestrator;
+import com._1c.g5.v8.dt.cmi.tasks.ICommandInterfaceTaskFactory;
 import com._1c.g5.v8.dt.md.refactoring.core.IMdRefactoringService;
 import com._1c.g5.v8.dt.navigator.providers.INavigatorContentProviderStateProvider;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
@@ -145,6 +146,9 @@ public class Activator
         INavigatorContentProviderStateProvider> navigatorStateProviderTracker;
 
     private ServiceTracker<IMdRefactoringService, IMdRefactoringService> mdRefactoringServiceTracker;
+
+    /** The environment's own builder of command-interface write tasks. */
+    private ServiceTracker<ICommandInterfaceTaskFactory, ICommandInterfaceTaskFactory> commandInterfaceTaskFactoryTracker;
 
     private ServiceTracker<IRuntimeVersionSupport, IRuntimeVersionSupport> runtimeVersionSupportTracker;
 
@@ -525,6 +529,21 @@ public class Activator
     }
 
     /**
+     * Returns the environment's builder of command-interface write tasks.
+     * <p>
+     * A task it builds writes the command interface through the environment's own path, so what it
+     * changes is exported like anything else. Absent on a build that does not publish the service,
+     * and the caller then keeps to what it did before.
+     * </p>
+     *
+     * @return the factory, or <code>null</code> when this EDT does not publish it
+     */
+    public ICommandInterfaceTaskFactory getCommandInterfaceTaskFactory()
+    {
+        return service(commandInterfaceTaskFactoryTracker);
+    }
+
+    /**
      * Returns the service that reports which platform version a project targets.
      *
      * @return the service, or <code>null</code> when EDT does not offer it
@@ -742,6 +761,8 @@ public class Activator
             openTracker(context, IResolvableRuntimeInstallationManager.class);
         navigatorStateProviderTracker = openTracker(context, INavigatorContentProviderStateProvider.class);
         mdRefactoringServiceTracker = openTracker(context, IMdRefactoringService.class);
+        commandInterfaceTaskFactoryTracker =
+            openTracker(context, ICommandInterfaceTaskFactory.class);
         runtimeVersionSupportTracker = openTracker(context, IRuntimeVersionSupport.class);
         extensionProjectManagerTracker = openTracker(context, IExtensionProjectManager.class);
         configurationProjectManagerTracker = openTracker(context, IConfigurationProjectManager.class);
@@ -783,6 +804,7 @@ public class Activator
             closeTracker(resolvableRuntimeInstallationManagerTracker);
         navigatorStateProviderTracker = closeTracker(navigatorStateProviderTracker);
         mdRefactoringServiceTracker = closeTracker(mdRefactoringServiceTracker);
+        commandInterfaceTaskFactoryTracker = closeTracker(commandInterfaceTaskFactoryTracker);
         runtimeVersionSupportTracker = closeTracker(runtimeVersionSupportTracker);
         extensionProjectManagerTracker = closeTracker(extensionProjectManagerTracker);
         configurationProjectManagerTracker = closeTracker(configurationProjectManagerTracker);

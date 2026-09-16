@@ -171,15 +171,18 @@ public class BmCommandInterfaceHelper
 
         CommandInterface ci = getOrCreateConfigCommandInterface(config, tx);
         String ciFqn = topObjectFqn(ci);
-        SubsystemsOrder so = ci.getSubsystemsOrder();
-        if (so == null)
+        if (!writtenByTheEnvironment(ci, ordered, tx))
         {
-            so = CmiFactory.eINSTANCE.createSubsystemsOrder();
-            ci.setSubsystemsOrder(so);
+            SubsystemsOrder so = ci.getSubsystemsOrder();
+            if (so == null)
+            {
+                so = CmiFactory.eINSTANCE.createSubsystemsOrder();
+                ci.setSubsystemsOrder(so);
+            }
+            EList<Subsystem> list = so.getSubsystems();
+            list.clear();
+            list.addAll(ordered);
         }
-        EList<Subsystem> list = so.getSubsystems();
-        list.clear();
-        list.addAll(ordered);
 
         List<String> finalNames = new ArrayList<>();
         for (Subsystem s : ordered)
@@ -187,6 +190,57 @@ public class BmCommandInterfaceHelper
             finalNames.add("Subsystem." + s.getName()); //$NON-NLS-1$
         }
         return new OrderResult(finalNames, autoAppended, ciFqn);
+    }
+
+    /**
+     * Writes the order through the task the environment builds for it, when it offers one.
+     * <p>
+     * {@code ICommandInterfaceTaskFactory} hands out a BM task for exactly this
+     * ({@code createSetSubsystemOrderTask}), and a task the environment built writes through its own
+     * path - what it changes is exported like anything else, rather than written into the model here
+     * and then forced out to disk. Its body runs in the transaction already open, which is how a BM
+     * task is run.
+     * </p>
+     * <p>
+     * A build that does not publish the service answers <code>false</code>, and the caller writes
+     * the model itself exactly as before.
+     * </p>
+     *
+     * @param commandInterface the configuration's command interface.
+     * @param ordered the subsystems in the order they are to appear.
+     * @param tx the write transaction.
+     * @return whether the environment's task did it
+     */
+    private static boolean writtenByTheEnvironment(CommandInterface commandInterface,
+        List<Subsystem> ordered, IBmTransaction tx)
+    {
+        com._1c.g5.v8.dt.cmi.tasks.ICommandInterfaceTaskFactory factory =
+            ru.aiedt.mcp.server.Activator.getDefault().getCommandInterfaceTaskFactory();
+        if (factory == null)
+        {
+            return false;
+        }
+        try
+        {
+            org.eclipse.core.runtime.IStatus status = factory
+                .createSetSubsystemOrderTask(commandInterface, ordered)
+                .execute(tx, new org.eclipse.core.runtime.NullProgressMonitor());
+            if (status != null && status.getSeverity() >= org.eclipse.core.runtime.IStatus.ERROR)
+            {
+                // Said rather than swallowed: an order the environment refused is not an order
+                // written, and falling back to the hand-written path would hide the refusal.
+                throw new RuntimeException("the environment refused the subsystems order: " //$NON-NLS-1$
+                    + status.getMessage());
+            }
+            return true;
+        }
+        catch (LinkageError notOnThisBuild)
+        {
+            ru.aiedt.mcp.server.Activator.logWarning(
+                "the command-interface task factory is not callable on this build: " //$NON-NLS-1$
+                    + notOnThisBuild);
+            return false;
+        }
     }
 
     /**
