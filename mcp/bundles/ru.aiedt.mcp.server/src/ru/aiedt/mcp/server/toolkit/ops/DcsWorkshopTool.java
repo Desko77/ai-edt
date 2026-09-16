@@ -117,7 +117,8 @@ public class DcsWorkshopTool implements IMcpTool
     public String getDescription()
     {
         return "DCS schema constructor for reports / data processors / register macros. " //$NON-NLS-1$
-            + "Pass operation=<name>; call operation=help for the catalog. " //$NON-NLS-1$
+            + "Pass operation=<name>; call operation=help for the catalog and " //$NON-NLS-1$
+            + "operation=help topic=parameters for the full rules of the parameters. " //$NON-NLS-1$
             + "Auto-validates queryText and expressions before write. " //$NON-NLS-1$
             + "DCS direct save to .dcs disk file is automatic for extension projects."; //$NON-NLS-1$
     }

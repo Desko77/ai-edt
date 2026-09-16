@@ -137,7 +137,8 @@ public class CodeSearchTool implements IMcpTool
                 "Operation: text_search / object_references / method_references / " //$NON-NLS-1$
                     + "resolve_symbol / call_hierarchy / symbol_info / content_assist / " //$NON-NLS-1$
                     + "outgoing_structures / help (snake_case canonical; camelCase like " //$NON-NLS-1$
-                    + "textSearch is also accepted).", true) //$NON-NLS-1$
+                    + "textSearch is also accepted). operation=help topic=<operation> " //$NON-NLS-1$
+                    + "answers what that one takes.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help: workflow or the name of an operation. " //$NON-NLS-1$
                     + "Without it, every operation with a one-line summary.") //$NON-NLS-1$

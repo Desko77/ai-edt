@@ -191,7 +191,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "get_applications / read_event_log / create_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
                     + "branch_infobase / update_database / sync_control / help (snake_case " //$NON-NLS-1$
-                    + "canonical; camelCase like getApplications is also accepted).", true) //$NON-NLS-1$
+                    + "canonical; camelCase like getApplications is also accepted). " //$NON-NLS-1$
+                    + "operation=help lists them; topic=<operation> answers what that one " //$NON-NLS-1$
+                    + "takes.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$

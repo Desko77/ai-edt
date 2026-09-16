@@ -177,7 +177,9 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
                     + "import_configuration_from_binary / export_object / export_common_picture " //$NON-NLS-1$
                     + "/ export_configuration_to_cf / unpack_external_binary / help (snake_case " //$NON-NLS-1$
-                    + "canonical; camelCase like exportObject is also accepted).", true) //$NON-NLS-1$
+                    + "canonical; camelCase like exportObject is also accepted). " //$NON-NLS-1$
+                    + "operation=help lists them; topic=<operation> answers what that one " //$NON-NLS-1$
+                    + "takes.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
