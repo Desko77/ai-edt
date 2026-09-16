@@ -336,6 +336,165 @@ public class SensitiveDataScanTool implements IMcpTool
         }
     }
 
+    /** How many lines one log-record call may be gathered across before it is judged as it is. */
+    private static final int LOG_RECORD_LINE_LIMIT = 20;
+
+    /** A log-record call being gathered across the lines it is written on. */
+    private static final class OpenLogRecord
+    {
+        /** The line the call starts on - the one a finding names. */
+        private final int line;
+
+        /** The text gathered so far, from the call name onward. */
+        private final StringBuilder text = new StringBuilder();
+
+        /** How many lines have been gathered into it. */
+        private int lines;
+
+        OpenLogRecord(int line)
+        {
+            this.line = line;
+        }
+    }
+
+    /**
+     * Gathers a log-record call across the lines it spans, and judges it once it is whole.
+     *
+     * @param open the call being gathered, or <code>null</code> when none is
+     * @param line the line just read
+     * @param lineNumber its number, one-based
+     * @param file the file being scanned
+     * @param findings where a finding goes
+     * @return the call still being gathered, or <code>null</code> when nothing is open
+     */
+    private OpenLogRecord trackLogRecord(OpenLogRecord open, String line, int lineNumber, IFile file,
+        List<Map<String, Object>> findings)
+    {
+        OpenLogRecord gathering = open;
+        if (gathering == null)
+        {
+            Matcher start = SensitivePatternLibrary.LOG_RECORD_START.matcher(line);
+            if (!start.find())
+            {
+                return null;
+            }
+            gathering = new OpenLogRecord(lineNumber);
+            gathering.text.append(line.substring(start.start()));
+        }
+        else
+        {
+            gathering.text.append(' ').append(line);
+        }
+        gathering.lines++;
+        if (bracketsStillOpen(gathering.text.toString())
+            && gathering.lines < LOG_RECORD_LINE_LIMIT)
+        {
+            return gathering;
+        }
+        reportSensitiveNames(gathering, file, findings);
+        return null;
+    }
+
+    /**
+     * Whether the gathered text has an unclosed bracket, counting outside string literals.
+     * <p>
+     * Outside them because a comment or a message inside a call is written in the language of the
+     * user - "Ошибка (код 5)" - and its brackets say nothing about where the call ends.
+     * </p>
+     *
+     * @param text the gathered text
+     * @return whether the call is still open
+     */
+    private static boolean bracketsStillOpen(String text)
+    {
+        String outsideLiterals = STRING_LITERAL.matcher(text).replaceAll("\"\""); //$NON-NLS-1$
+        int depth = 0;
+        for (int at = 0; at < outsideLiterals.length(); at++)
+        {
+            char character = outsideLiterals.charAt(at);
+            if (character == '(')
+            {
+                depth++;
+            }
+            else if (character == ')')
+            {
+                depth--;
+            }
+        }
+        return depth > 0;
+    }
+
+    /**
+     * Whether the text carries this name as a name of its own, rather than inside a longer one.
+     * <p>
+     * The first argument of a log record is conventionally ИмяСобытия, which carries "имя" as a
+     * substring; a check that counted that reported nearly every call in a configuration and so
+     * said nothing about any of them. A name counts when what sits on either side of it is not
+     * part of an identifier - a dot, a bracket, a space, a quote, the end of the text.
+     * </p>
+     *
+     * @param lowered the text, lower case
+     * @param name the sensitive name, lower case
+     * @return whether the text names it
+     */
+    private static boolean carriesAsAName(String lowered, String name)
+    {
+        int at = lowered.indexOf(name);
+        while (at >= 0)
+        {
+            boolean clearBefore = at == 0 || !partOfAName(lowered.charAt(at - 1));
+            int after = at + name.length();
+            boolean clearAfter = after >= lowered.length() || !partOfAName(lowered.charAt(after));
+            if (clearBefore && clearAfter)
+            {
+                return true;
+            }
+            at = lowered.indexOf(name, at + 1);
+        }
+        return false;
+    }
+
+    /**
+     * Whether a character can be part of an identifier.
+     *
+     * @param character the character
+     * @return whether it continues a name
+     */
+    private static boolean partOfAName(char character)
+    {
+        return Character.isLetterOrDigit(character) || character == '_';
+    }
+
+    /**
+     * Reports the first sensitive field name the gathered call carries, if any.
+     *
+     * @param record the gathered call
+     * @param file the file it is in
+     * @param findings where a finding goes
+     */
+    private static void reportSensitiveNames(OpenLogRecord record, IFile file,
+        List<Map<String, Object>> findings)
+    {
+        String lowered = record.text.toString().toLowerCase();
+        for (String sensitive : SensitivePatternLibrary.SENSITIVE_NAMES)
+        {
+            if (!carriesAsAName(lowered, sensitive))
+            {
+                continue;
+            }
+            Map<String, Object> finding = new LinkedHashMap<>();
+            finding.put("kind", "LOG_SENSITIVE"); //$NON-NLS-1$ //$NON-NLS-2$
+            finding.put("severity", "INFO"); //$NON-NLS-1$ //$NON-NLS-2$
+            finding.put("file", file.getProjectRelativePath().toString()); //$NON-NLS-1$
+            finding.put("line", Integer.valueOf(record.line)); //$NON-NLS-1$
+            finding.put("matchedTerm", sensitive); //$NON-NLS-1$
+            finding.put("message", //$NON-NLS-1$
+                "Log record may include sensitive field '" + sensitive + "'"); //$NON-NLS-1$ //$NON-NLS-2$
+            findings.add(finding);
+            return;
+        }
+    }
+
     private void scanBslFile(IFile file, Set<String> checks, List<Map<String, Object>> findings)
     {
         try (BufferedReader reader = new BufferedReader(
@@ -343,6 +502,7 @@ public class SensitiveDataScanTool implements IMcpTool
         {
             String line;
             int lineNumber = 0;
+            OpenLogRecord openRecord = null;
             while ((line = reader.readLine()) != null)
             {
                 lineNumber++;
@@ -394,27 +554,15 @@ public class SensitiveDataScanTool implements IMcpTool
                 }
                 if (isEnabled("LOG_SENSITIVE", checks)) //$NON-NLS-1$
                 {
-                    if (SensitivePatternLibrary.LOG_RECORD.matcher(line).find())
-                    {
-                        // Heuristic: check if the line contains a sensitive attribute name
-                        for (String sensitive : SensitivePatternLibrary.SENSITIVE_NAMES)
-                        {
-                            if (line.toLowerCase().contains(sensitive))
-                            {
-                                Map<String, Object> finding = new LinkedHashMap<>();
-                                finding.put("kind", "LOG_SENSITIVE"); //$NON-NLS-1$ //$NON-NLS-2$
-                                finding.put("severity", "INFO"); //$NON-NLS-1$ //$NON-NLS-2$
-                                finding.put("file", file.getProjectRelativePath().toString()); //$NON-NLS-1$
-                                finding.put("line", lineNumber); //$NON-NLS-1$
-                                finding.put("matchedTerm", sensitive); //$NON-NLS-1$
-                                finding.put("message", //$NON-NLS-1$
-                                    "Log record may include sensitive field '" + sensitive + "'"); //$NON-NLS-1$ //$NON-NLS-2$
-                                findings.add(finding);
-                                break;
-                            }
-                        }
-                    }
+                    openRecord = trackLogRecord(openRecord, line, lineNumber, file, findings);
                 }
+            }
+            if (openRecord != null)
+            {
+                // The file ended with the call still open. What was gathered is judged rather than
+                // dropped: a call whose bracket never closes is a file this scan could not parse,
+                // not a call without sensitive fields.
+                reportSensitiveNames(openRecord, file, findings);
             }
         }
         catch (Exception e)

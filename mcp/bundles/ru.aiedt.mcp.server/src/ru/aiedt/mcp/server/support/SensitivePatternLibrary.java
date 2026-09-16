@@ -44,6 +44,19 @@ public final class SensitivePatternLibrary
         "(ЗаписьЖурналаРегистрации|WriteLogRecord|WriteLogEvent)\\s*\\([^)]*\\)", //$NON-NLS-1$
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.UNICODE_CASE);
 
+    /**
+     * Where a log-record call begins, without requiring it to end.
+     * <p>
+     * A file is read line by line, and a call that carries an event name, a level and a comment is
+     * written across several of them - so the pattern above, which needs the closing bracket, saw
+     * none of those. This finds the opening, and the caller gathers the lines until the brackets
+     * balance.
+     * </p>
+     */
+    public static final Pattern LOG_RECORD_START = Pattern.compile(
+        "(ЗаписьЖурналаРегистрации|WriteLogRecord|WriteLogEvent)\\s*\\(", //$NON-NLS-1$
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+
     private SensitivePatternLibrary()
     {
         // utility class
