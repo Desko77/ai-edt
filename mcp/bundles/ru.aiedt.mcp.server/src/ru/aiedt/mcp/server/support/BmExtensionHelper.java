@@ -1258,38 +1258,15 @@ public final class BmExtensionHelper
         return null;
     }
 
-    private static final Map<String, String> CHILD_KIND_GETTERS = buildChildKindGetters();
-
-    private static Map<String, String> buildChildKindGetters()
-    {
-        Map<String, String> m = new HashMap<>();
-        m.put("form", "getForms"); //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("attribute", "getAttributes"); //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("tabularsection", "getTabularSections"); //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("template", "getTemplates"); //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("command", "getCommands"); //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("dimension", "getDimensions"); //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("resource", "getResources"); //$NON-NLS-1$ //$NON-NLS-2$
-        // 1.43: HTTP services + Web services children
-        m.put("urltemplate", "getUrlTemplates"); // HTTPService -> URLTemplate //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("method", "getMethods"); // URLTemplate -> HTTPServiceMethod //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("operation", "getOperations"); // WebService -> WebServiceOperation //$NON-NLS-1$ //$NON-NLS-2$
-        m.put("форма", "getForms"); // форма //$NON-NLS-1$
-        m.put("реквизит", "getAttributes"); // реквизит //$NON-NLS-1$
-        m.put("табличнаячасть", "getTabularSections"); // табличнаячасть //$NON-NLS-1$
-        m.put("макет", "getTemplates"); // макет //$NON-NLS-1$
-        m.put("команда", "getCommands"); // команда //$NON-NLS-1$
-        m.put("измерение", "getDimensions"); // измерение //$NON-NLS-1$
-        m.put("ресурс", "getResources"); // ресурс //$NON-NLS-1$
-        m.put("шаблонurl", "getUrlTemplates"); // шаблонURL //$NON-NLS-1$
-        m.put("метод", "getMethods"); // метод //$NON-NLS-1$
-        m.put("операция", "getOperations"); // операция //$NON-NLS-1$
-        return m;
-    }
-
+    /**
+     * The getter of a child collection, from the one list of child kinds.
+     *
+     * @param childKind the kind as the caller wrote it, in either language
+     * @return the getter, or <code>null</code> when nothing knows that kind
+     */
     private static String childKindGetter(String childKind)
     {
-        return CHILD_KIND_GETTERS.get(childKind.toLowerCase());
+        return BmObjectHelper.childKindGetter(childKind);
     }
 
     private static String invokeNameGetter(Object obj)

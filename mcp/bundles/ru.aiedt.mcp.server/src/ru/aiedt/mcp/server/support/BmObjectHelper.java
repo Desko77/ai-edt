@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.support;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1501,47 +1502,65 @@ public final class BmObjectHelper
      */
     public static String childKindGetter(String kind)
     {
-        if (kind == null)
+        return kind == null ? null : CHILD_KIND_GETTERS.get(kind.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Every child kind an address or a borrow may name, in either language, and the getter that
+     * returns that collection.
+     * <p>
+     * One list, because there were two and they had drifted: the one used for addresses knew
+     * accounting flags, enum values, addressing attributes, columns and standard attributes and not
+     * forms, templates or the children of a service; the one used for borrowing into an extension
+     * knew the other half. Whichever kind a list happened to lack came back as no such child.
+     * </p>
+     * <p>
+     * Keyed in lower case and asked in lower case: the kind arrives from a caller, who writes it as
+     * they please - Attribute, attribute, РЕКВИЗИТ.
+     * </p>
+     */
+    private static final Map<String, String> CHILD_KIND_GETTERS = buildChildKindGetters();
+
+    /**
+     * Builds the child-kind map.
+     *
+     * @return kind in lower case to the getter of its collection
+     */
+    private static Map<String, String> buildChildKindGetters()
+    {
+        Map<String, String> kinds = new HashMap<>();
+        put(kinds, "getAttributes", "attribute", "реквизит"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getTabularSections", "tabularsection", "табличнаячасть"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getDimensions", "dimension", "измерение"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getResources", "resource", "ресурс"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getAccountingFlags", "accountingflag", "признакучета"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getExtDimensionAccountingFlags", "extdimensionaccountingflag", //$NON-NLS-1$ //$NON-NLS-2$
+            "признакучетасубконто"); //$NON-NLS-1$
+        put(kinds, "getCommands", "command", "команда"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getEnumValues", "enumvalue", "значениеперечисления"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getAddressingAttributes", "addressingattribute", "реквизитадресации"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getColumns", "column", "графа"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getStandardAttributes", "standardattribute", "стандартныйреквизит"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getForms", "form", "форма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getTemplates", "template", "макет"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getUrlTemplates", "urltemplate", "шаблонurl"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getMethods", "method", "метод"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getOperations", "operation", "операция"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return kinds;
+    }
+
+    /**
+     * Records one kind under each spelling it is written in.
+     *
+     * @param kinds the map being built
+     * @param getter the getter of that collection
+     * @param spellings the kind as a caller may write it, lower case
+     */
+    private static void put(Map<String, String> kinds, String getter, String... spellings)
+    {
+        for (String spelling : spellings)
         {
-            return null;
-        }
-        switch (kind)
-        {
-            case "Attribute": //$NON-NLS-1$
-            case "Реквизит": //$NON-NLS-1$
-                return "getAttributes"; //$NON-NLS-1$
-            case "TabularSection": //$NON-NLS-1$
-            case "ТабличнаяЧасть": //$NON-NLS-1$
-                return "getTabularSections"; //$NON-NLS-1$
-            case "Dimension": //$NON-NLS-1$
-            case "Измерение": //$NON-NLS-1$
-                return "getDimensions"; //$NON-NLS-1$
-            case "Resource": //$NON-NLS-1$
-            case "Ресурс": //$NON-NLS-1$
-                return "getResources"; //$NON-NLS-1$
-            case "AccountingFlag": //$NON-NLS-1$
-            case "ПризнакУчета": //$NON-NLS-1$
-                return "getAccountingFlags"; //$NON-NLS-1$
-            case "ExtDimensionAccountingFlag": //$NON-NLS-1$
-            case "ПризнакУчетаСубконто": //$NON-NLS-1$
-                return "getExtDimensionAccountingFlags"; //$NON-NLS-1$
-            case "Command": //$NON-NLS-1$
-            case "Команда": //$NON-NLS-1$
-                return "getCommands"; //$NON-NLS-1$
-            case "EnumValue": //$NON-NLS-1$
-            case "ЗначениеПеречисления": //$NON-NLS-1$
-                return "getEnumValues"; //$NON-NLS-1$
-            case "AddressingAttribute": //$NON-NLS-1$
-            case "РеквизитАдресации": //$NON-NLS-1$
-                return "getAddressingAttributes"; //$NON-NLS-1$
-            case "Column": //$NON-NLS-1$
-            case "Графа": //$NON-NLS-1$
-                return "getColumns"; //$NON-NLS-1$
-            case "StandardAttribute": //$NON-NLS-1$
-            case "СтандартныйРеквизит": //$NON-NLS-1$
-                return "getStandardAttributes"; //$NON-NLS-1$
-            default:
-                return null;
+            kinds.put(spelling, getter);
         }
     }
 
