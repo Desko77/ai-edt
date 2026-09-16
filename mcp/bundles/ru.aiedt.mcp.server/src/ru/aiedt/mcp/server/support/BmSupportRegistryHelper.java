@@ -507,7 +507,7 @@ public final class BmSupportRegistryHelper
             @Override
             public Void execute(IBmTransaction tx, IProgressMonitor monitor)
             {
-                applyInTransaction(project, before, now, restore, setter);
+                applyInTransaction(project, before, now, restore, setter, tx);
                 return null;
             }
         });
@@ -522,9 +522,10 @@ public final class BmSupportRegistryHelper
      * @param now what the project holds.
      * @param restore where to record what happened.
      * @param setter the write method this release offers.
+     * @param tx the write transaction, which holds the instances a write has to reach.
      */
     private static void applyInTransaction(IProject project, SupportSnapshot before,
-        SupportSnapshot now, Restore restore, Method setter)
+        SupportSnapshot now, Restore restore, Method setter, IBmTransaction tx)
     {
         Service service = findService();
         if (service.manager == null)
@@ -577,7 +578,7 @@ public final class BmSupportRegistryHelper
                     }
                     continue;
                 }
-                MdObject object = objects.get(recorded.getKey());
+                MdObject object = attachedCopy(tx, objects.get(recorded.getKey()));
                 if (object == null)
                 {
                     restore.missing++;
@@ -586,6 +587,53 @@ public final class BmSupportRegistryHelper
                 setOne(service, setter, info, object, recorded, support, restore);
             }
         }
+    }
+
+    /**
+     * The instance of an object that the write transaction holds.
+     * <p>
+     * The support model is a BM top object - its file is written by the same exporter path every BM
+     * object's file goes through - so a change reaches {@code Configuration.distr} only when it is
+     * made to what the transaction holds. Taken from a manager outside the transaction, the object
+     * is a copy the export never looks at, and the answer says restored while the file stays as it
+     * was.
+     * </p>
+     * <p>
+     * An object with no address of its own, or one the transaction cannot resolve, comes back as
+     * <code>null</code> and is counted as missing rather than written to a copy.
+     * </p>
+     *
+     * @param tx the write transaction.
+     * @param object the object as it was read outside the transaction.
+     * @return the transaction's own instance, or <code>null</code>
+     */
+    private static MdObject attachedCopy(IBmTransaction tx, MdObject object)
+    {
+        if (tx == null || object == null)
+        {
+            return object;
+        }
+        if (!(object instanceof com._1c.g5.v8.bm.core.IBmObject))
+        {
+            return object;
+        }
+        String fqn;
+        try
+        {
+            fqn = ((com._1c.g5.v8.bm.core.IBmObject)object).bmGetFqn();
+        }
+        catch (RuntimeException notATopObject)
+        {
+            // A child carries no address of its own; the mode of a child follows its owner, and the
+            // registry records owners.
+            return null;
+        }
+        if (fqn == null || fqn.isEmpty())
+        {
+            return null;
+        }
+        Object attached = tx.getTopObjectByFqn(fqn);
+        return attached instanceof MdObject ? (MdObject)attached : null;
     }
 
     /**
