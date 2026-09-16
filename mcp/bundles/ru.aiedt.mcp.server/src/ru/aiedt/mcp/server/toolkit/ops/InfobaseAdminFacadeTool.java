@@ -132,7 +132,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
             + "delete_infobase / set_infobase_credentials / update_database mutate, and " //$NON-NLS-1$
             + "update_database / sync_control may reply with a Pending status and a runKey to " //$NON-NLS-1$
-            + "resume - the facade only routes, it adds no dryRun. sync_control has its own " //$NON-NLS-1$
+            + "resume. update_database takes dryRun to answer what an update would face and " //$NON-NLS-1$
+            + "start nothing. sync_control has its own " //$NON-NLS-1$
             + "inner operation (status / diagnose / suppress / ...): pass it as syncOperation, " //$NON-NLS-1$
             + "not operation - operation here always selects the infobase_admin routing target. " //$NON-NLS-1$
             + "The standalone tools remain available for back-compat."; //$NON-NLS-1$
@@ -199,6 +200,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("action", //$NON-NLS-1$
                 "branch_infobase: current (default) / list / bind / unbind.") //$NON-NLS-1$
+            .booleanProperty("dryRun", //$NON-NLS-1$
+                "update_database: answer what an update would face and start nothing.") //$NON-NLS-1$
             .booleanProperty("ignoreBranchBinding", //$NON-NLS-1$
                 "update_database: update even when the branch is bound to another " //$NON-NLS-1$
                     + "application.") //$NON-NLS-1$

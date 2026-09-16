@@ -225,12 +225,14 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     /**
      * The whole document's parameter prose, from the same run.
      * <p>
-     * Raised twice. By 94 bytes, for the batch argument to state that an operation or argument name
-     * that does not exist stops the whole batch before anything runs - a caller has to read that
-     * without asking, because it changes what a failed call leaves behind. And by 210, for three
-     * facades whose descriptions were cut to name once where the rest of them now is: a description
-     * that stops at one sentence is honest only while the address of the rest is reachable.
+     * Raised three times, each for a contract a caller has to read without asking. By 94 bytes, for
+     * the batch argument to state that an operation or argument name that does not exist stops the
+     * whole batch before anything runs - it changes what a failed call leaves behind. By 210, for
+     * three facades whose descriptions were cut to name once where the rest of them now is: a
+     * description that stops at one sentence is honest only while the address of the rest is
+     * reachable. And by 68, for the dryRun of update_database, which is how a caller asks what an
+     * update would face without starting one.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 81236;
+    private static final int DOCUMENT_PROSE = 81304;
 }

@@ -120,6 +120,10 @@ public class DatabaseUpdater implements IMcpTool
                 "Application identifier from get_applications. Optional: omitted, the project's default " //$NON-NLS-1$
                     + "application is used, and for an extension project - which has no infobase of its own - " //$NON-NLS-1$
                     + "the default of the configuration it extends. The response says which was updated.") //$NON-NLS-1$
+            .booleanProperty("dryRun", //$NON-NLS-1$
+                "Answer what an update would face and start nothing: the update state, the " //$NON-NLS-1$
+                    + "environment's readiness check, and whether an update is needed. No run " //$NON-NLS-1$
+                    + "is recorded and no infobase is claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
@@ -234,6 +238,7 @@ public class DatabaseUpdater implements IMcpTool
         // Same word the .cf dump uses for the same guard, so one habit covers both.
         boolean skipValidation =
             JsonUtils.extractBooleanArgument(params, "skipValidation", false); //$NON-NLS-1$
+        boolean checkOnly = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         boolean hasName = configName != null && !configName.isEmpty();
         if (!hasName)
@@ -296,6 +301,7 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
+        final boolean fCheckOnly = checkOnly;
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
         // to a caller who had said to go ahead.
@@ -318,7 +324,7 @@ public class DatabaseUpdater implements IMcpTool
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation));
+                fSkipValidation, fCheckOnly));
         // So a caller who never got the runKey can still address this run.
         entry.subject = fProjectName;
 
@@ -365,7 +371,6 @@ public class DatabaseUpdater implements IMcpTool
         return buildPendingJson(runKey, entry, null, timeoutMs);
     }
 
-
     /**
      * The application to update when the caller named none.
      * <p>
@@ -392,6 +397,80 @@ public class DatabaseUpdater implements IMcpTool
                 + project.getName() + ": " + e.getMessage()); //$NON-NLS-1$
             return Optional.empty();
         }
+    }
+
+    /**
+     * What an update would face, without starting one.
+     * <p>
+     * Two things are reachable without running: the update state the environment holds - whether an
+     * update is needed and of which kind - and its own readiness check, which answers a status and
+     * changes nothing. The COMPOSITION of an update, object by object, is not: nothing in the
+     * application API offers it, and it is not worth running an update to find out. That is said
+     * here rather than left for the caller to infer from a short answer.
+     * </p>
+     * <p>
+     * Nothing is claimed and nothing is recorded: no run, no infobase claim, no change to the
+     * update state.
+     * </p>
+     *
+     * @param appManager the application manager.
+     * @param application the application that would be updated.
+     * @param applicationId its id, as the answer names it.
+     * @param projectName the project the call named.
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension.
+     * @param viaParent whether the infobase belongs to the parent configuration.
+     * @param state the update state the environment holds.
+     * @return the answer
+     */
+    private static String whatAnUpdateWouldFace(IApplicationManager appManager,
+        IApplication application, String applicationId, String projectName, IProject infobaseProject,
+        boolean viaParent, ApplicationUpdateState state)
+    {
+        ToolResult answer = ToolResult.success()
+            .put("dryRun", Boolean.TRUE) //$NON-NLS-1$
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("updateState", state == null ? "UNKNOWN" : state.name()) //$NON-NLS-1$ //$NON-NLS-2$
+            .put("wouldUpdate", Boolean.valueOf(state == ApplicationUpdateState.INCREMENTAL_UPDATE_REQUIRED //$NON-NLS-1$
+                || state == ApplicationUpdateState.FULL_UPDATE_REQUIRED));
+        if (viaParent)
+        {
+            answer.put("infobaseOwner", infobaseProject.getName()); //$NON-NLS-1$
+        }
+        try
+        {
+            org.eclipse.core.runtime.IStatus readiness = appManager.check(application,
+                com.e1c.g5.dt.applications.ApplicationCheckUnknownStateTreatment.TREAT_AS_NOT_READY,
+                new com.e1c.g5.dt.applications.ExecutionContext(),
+                new org.eclipse.core.runtime.NullProgressMonitor());
+            if (readiness != null)
+            {
+                answer.put("readiness", readiness.isOK() ? "ok" : readiness.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+                List<String> problems = new ArrayList<>();
+                for (org.eclipse.core.runtime.IStatus child : readiness.getChildren())
+                {
+                    if (child != null && !child.isOK())
+                    {
+                        problems.add(child.getMessage());
+                    }
+                }
+                if (!problems.isEmpty())
+                {
+                    answer.put("readinessProblems", problems); //$NON-NLS-1$
+                }
+            }
+        }
+        catch (Exception | LinkageError cannotCheck)
+        {
+            // Said, not swallowed: a readiness that could not be asked for is a different answer
+            // from one that came back clean.
+            answer.put("readiness", "could not be established: " + cannotCheck); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return answer
+            .put("composition", "not available without running an update - the application API " //$NON-NLS-1$ //$NON-NLS-2$
+                + "reports the state and the readiness, not the objects an update would carry. " //$NON-NLS-1$
+                + "Nothing was claimed, started or recorded by this call.") //$NON-NLS-1$
+            .toJson();
     }
 
     /**
@@ -438,11 +517,13 @@ public class DatabaseUpdater implements IMcpTool
      * @param autoRestructure whether EDT may restructure
      * @param autoFreeClients whether to free held clients first
      * @param ignoreBranchBinding whether to go ahead when the branch names another application
+     * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
+     * @param checkOnly whether to answer what an update would face and start nothing
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean skipValidation)
+        boolean skipValidation, boolean checkOnly)
     {
         String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
         if (blocked != null)
@@ -530,6 +611,11 @@ public class DatabaseUpdater implements IMcpTool
             IApplication application = appOpt.get();
 
             ApplicationUpdateState stateBefore = appManager.getUpdateState(application);
+            if (checkOnly)
+            {
+                return whatAnUpdateWouldFace(appManager, application, applicationId, projectName,
+                    infobaseProject, viaParent, stateBefore);
+            }
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
                 return ToolResult.error("This application has an update already in progress - wait for it to finish.").toJson(); //$NON-NLS-1$
