@@ -200,6 +200,29 @@ public final class MetadataGuards
         }
     }
 
+    /**
+     * Refuses a name that carries a letter of the other alphabet inside one of its words.
+     * <p>
+     * Such a name is accepted by the platform and printed exactly like the one it imitates, so the
+     * object looks right everywhere and is found by no search for the name a person types. The
+     * refusal names the character, where it sits, and the name in one alphabet.
+     * </p>
+     *
+     * @param candidate the name as the caller gave it
+     * @return a verdict that passes unless a letter slipped in from the other alphabet
+     */
+    public static Verdict checkOneAlphabet(String candidate)
+    {
+        String wrong = OneAlphabetPerWord.whatIsWrong(candidate);
+        if (wrong == null)
+        {
+            return Verdict.pass();
+        }
+        return Verdict.block(wrong,
+            "Write the name in one alphabet. A letter that looks the same in both is the one to " //$NON-NLS-1$
+                + "check."); //$NON-NLS-1$
+    }
+
     // -----------------------------------------------------------------------
     // Standard attribute conflict
     // -----------------------------------------------------------------------

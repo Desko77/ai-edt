@@ -283,6 +283,11 @@ final class ObjectOps
         {
             return ToolResult.error(err.trim()).toJson();
         }
+        MetadataGuards.Verdict alphabet = MetadataGuards.checkOneAlphabet(name);
+        if (alphabet.blocked)
+        {
+            return ToolResult.error(alphabet.error).put("hint", alphabet.hint).toJson(); //$NON-NLS-1$
+        }
         String englishType = MetadataTypeCatalog.toEnglishSingular(objectType);
         if (englishType == null)
         {

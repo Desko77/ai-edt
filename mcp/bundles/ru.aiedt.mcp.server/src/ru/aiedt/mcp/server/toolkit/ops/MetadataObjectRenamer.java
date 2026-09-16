@@ -197,6 +197,11 @@ public class MetadataObjectRenamer implements IMcpTool
             return "Error: newName must be supplied. " //$NON-NLS-1$
                 + "Example: {projectName: 'MyProject', objectFqn: 'Catalog.Products', newName: 'Goods'}"; //$NON-NLS-1$
         }
+        String mixedAlphabet = ru.aiedt.mcp.server.support.OneAlphabetPerWord.whatIsWrong(newName);
+        if (mixedAlphabet != null)
+        {
+            return "Error: " + mixedAlphabet; //$NON-NLS-1$
+        }
 
         final Set<Integer> finalDisableIndices = disableIndices;
         AtomicReference<String> resultRef = new AtomicReference<>();

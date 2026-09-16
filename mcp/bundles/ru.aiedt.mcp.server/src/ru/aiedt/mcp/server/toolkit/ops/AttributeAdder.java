@@ -247,6 +247,13 @@ public class AttributeAdder implements IMcpTool
                         throw new MetadataGuards.BlockedGuardException(conflict);
                     }
 
+                    MetadataGuards.Verdict alphabet =
+                        MetadataGuards.checkOneAlphabet(attributeName);
+                    if (alphabet.blocked)
+                    {
+                        throw new MetadataGuards.BlockedGuardException(alphabet);
+                    }
+
                     if (hasAttribute(parent, attributeName))
                     {
                         Map<String, Object> data = new LinkedHashMap<>();
