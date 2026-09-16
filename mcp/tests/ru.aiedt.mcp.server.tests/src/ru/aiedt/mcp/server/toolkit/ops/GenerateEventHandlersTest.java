@@ -45,6 +45,31 @@ public class GenerateEventHandlersTest
         assertEquals("Отказ", find("Catalog", "ПередЗаписью").signature); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
+    /**
+     * The fill handler takes three arguments, not two.
+     * <p>
+     * The platform passes the fill text between the data and the standard-processing flag. Counted
+     * in a configuration of 2571 modules: 32 declarations with three arguments, one with two. A stub
+     * with two does not match the call the platform makes.
+     * </p>
+     */
+    @Test
+    public void theFillHandlerTakesTheFillTextToo()
+    {
+        assertEquals("ДанныеЗаполнения, " //$NON-NLS-1$
+            + "ТекстЗаполнения, " //$NON-NLS-1$
+            + "СтандартнаяОбработка", //$NON-NLS-1$
+            find("Catalog", "ОбработкаЗаполнения").signature); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A document is filled the same way, so it must not have kept the two-argument shape. */
+    @Test
+    public void aDocumentIsFilledWithTheSameThreeArguments()
+    {
+        assertEquals(find("Catalog", "ОбработкаЗаполнения").signature, //$NON-NLS-1$ //$NON-NLS-2$
+            find("Document", "ОбработкаЗаполнения").signature); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Test
     public void aDocumentStillGetsItsPostingEvents()
     {

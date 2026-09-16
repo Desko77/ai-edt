@@ -404,7 +404,11 @@ public class GenerateEventHandlersTool implements IMcpTool
             "    Если ЭтоНовый() Тогда\n        // Логика для нового объекта\n    КонецЕсли;\n")); //$NON-NLS-1$
         writable.add(new EventDef("ПриЗаписи", "Отказ", null)); //$NON-NLS-1$ //$NON-NLS-2$
         writable.add(new EventDef("ПередУдалением", "Отказ", null)); //$NON-NLS-1$ //$NON-NLS-2$
-        writable.add(new EventDef("ОбработкаЗаполнения", "ДанныеЗаполнения, СтандартнаяОбработка", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        // Three arguments, not two: the platform passes the fill text between the data and the
+        // standard-processing flag. Counted in a configuration of 2571 modules - 32 declarations
+        // with three, one with two - and a stub with two does not match the call.
+        writable.add(new EventDef("ОбработкаЗаполнения", //$NON-NLS-1$
+            "ДанныеЗаполнения, ТекстЗаполнения, СтандартнаяОбработка", null)); //$NON-NLS-1$
         writable.add(new EventDef("ПриКопировании", "ОбъектКопирования", null)); //$NON-NLS-1$ //$NON-NLS-2$
         map.put("Catalog", writable); //$NON-NLS-1$
         // Documents share most of these but not all: the platform calls a document's ПередЗаписью

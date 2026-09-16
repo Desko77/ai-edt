@@ -109,8 +109,12 @@ public final class EventStubGenerator
         put(m, "ПриКопировании", "OnCopy", "Источник, ОбъектКопирования"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(m, "ПриУстановкеНовогоКода", "OnSetNewCode", "Источник, СтандартнаяОбработка, Префикс"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(m, "ПриУстановкеНовогоНомера", "OnSetNewNumber", "Источник, СтандартнаяОбработка, Префикс"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(m, "ОбработкаЗаполнения", "FillCheckProcessing", "Источник, ДанныеЗаполнения, СтандартнаяОбработка"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(m, "ОбработкаПроверкиЗаполнения", "FillProcessing", "Источник, Отказ, ПроверяемыеРеквизиты"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        // The English name of each is the one the rest of this plugin uses - BmEventSubscriptionHelper
+        // and FormEventRegistry both read FillCheckProcessing as the CHECK. They were swapped here, so
+        // a caller asking by the English name was handed the other event's signature. The filling
+        // handler also takes the fill text, between the data and the standard-processing flag.
+        put(m, "ОбработкаЗаполнения", "Filling", "Источник, ДанныеЗаполнения, ТекстЗаполнения, СтандартнаяОбработка"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(m, "ОбработкаПроверкиЗаполнения", "FillCheckProcessing", "Источник, Отказ, ПроверяемыеРеквизиты"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         // Registers — record set
         put(m, "ПередЗаписьюНаборЗаписей", "BeforeWriteRecordSet", "Источник, Отказ, Замещение"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         put(m, "ПриЗаписиНаборЗаписей", "OnWriteRecordSet", "Источник, Отказ, Замещение"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
