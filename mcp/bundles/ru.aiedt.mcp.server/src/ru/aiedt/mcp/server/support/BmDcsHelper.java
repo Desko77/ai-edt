@@ -300,11 +300,20 @@ public final class BmDcsHelper
      * argument still produces an empty StringValue. Returns {@code null} when the
      * mcore factory is unreachable.
      * <p>
-     * <b>1.43.x batch 4a:</b> String-only for now - number / boolean / date typing
-     * is a later refinement.
+     * The class matches the KIND of what was written, because mcore has one class per kind:
+     * BooleanValue takes a boolean, NumberValue a BigDecimal, DateValue an mcore Date,
+     * UndefinedValue and NullValue take nothing, and everything else is a StringValue. Written as a
+     * StringValue whatever it was, a date came back as text and a number as text - which is what
+     * the schema then carried.
+     * </p>
      */
     public static Object createLiteralValue(String s)
     {
+        Object typed = typedLiteral(s);
+        if (typed != null)
+        {
+            return typed;
+        }
         Object created = invokeFactoryMethod(getMcoreFactory(), "createStringValue"); //$NON-NLS-1$
         if (created == null)
         {
@@ -319,6 +328,167 @@ public final class BmDcsHelper
             Activator.logWarning("createLiteralValue setValue failed: " + e.getMessage()); //$NON-NLS-1$
         }
         return created;
+    }
+
+    /**
+     * The value of the kind the text names, or <code>null</code> when it names a string.
+     * <p>
+     * Read from mcore: a value is an {@code mcore.Value}, and the model has one class per kind. The
+     * text a caller wrote is what says which - the words for true and false in either language, a
+     * number, a date in the form the model itself prints, the words for undefined and null.
+     * Anything else is a string, and the caller gets the string class from {@link
+     * #createLiteralValue}.
+     * </p>
+     *
+     * @param s the literal as the caller wrote it
+     * @return the value, or <code>null</code> when the text is a string or the factory is unreachable
+     */
+    private static Object typedLiteral(String s)
+    {
+        if (s == null)
+        {
+            return null;
+        }
+        String written = s.trim();
+        if (written.isEmpty())
+        {
+            return null;
+        }
+        String lowered = written.toLowerCase(java.util.Locale.ROOT);
+        if ("true".equals(lowered) || "\u0438\u0441\u0442\u0438\u043d\u0430".equals(lowered)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return booleanValue(true);
+        }
+        if ("false".equals(lowered) || "\u043b\u043e\u0436\u044c".equals(lowered)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return booleanValue(false);
+        }
+        if ("undefined".equals(lowered) //$NON-NLS-1$
+            || "\u043d\u0435\u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u043e".equals(lowered)) //$NON-NLS-1$
+        {
+            return invokeFactoryMethod(getMcoreFactory(), "createUndefinedValue"); //$NON-NLS-1$
+        }
+        if ("null".equals(lowered)) //$NON-NLS-1$
+        {
+            return invokeFactoryMethod(getMcoreFactory(), "createNullValue"); //$NON-NLS-1$
+        }
+        Object number = numberValue(written);
+        if (number != null)
+        {
+            return number;
+        }
+        return dateValue(written);
+    }
+
+    /**
+     * A boolean value.
+     *
+     * @param yes what it carries
+     * @return the value, or <code>null</code> when the factory is unreachable
+     */
+    private static Object booleanValue(boolean yes)
+    {
+        Object created = invokeFactoryMethod(getMcoreFactory(), "createBooleanValue"); //$NON-NLS-1$
+        if (created == null)
+        {
+            return null;
+        }
+        try
+        {
+            created.getClass().getMethod("setValue", boolean.class).invoke(created, //$NON-NLS-1$
+                Boolean.valueOf(yes));
+            return created;
+        }
+        catch (Exception notThisShape)
+        {
+            Activator.logWarning("createBooleanValue setValue failed: " + notThisShape); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * A number value, when the text is a number.
+     *
+     * @param written the literal
+     * @return the value, or <code>null</code> when the text is not a number
+     */
+    private static Object numberValue(String written)
+    {
+        java.math.BigDecimal amount;
+        try
+        {
+            amount = new java.math.BigDecimal(written);
+        }
+        catch (NumberFormatException notANumber)
+        {
+            return null;
+        }
+        Object created = invokeFactoryMethod(getMcoreFactory(), "createNumberValue"); //$NON-NLS-1$
+        if (created == null)
+        {
+            return null;
+        }
+        try
+        {
+            created.getClass().getMethod("setValue", java.math.BigDecimal.class) //$NON-NLS-1$
+                .invoke(created, amount);
+            return created;
+        }
+        catch (Exception notThisShape)
+        {
+            Activator.logWarning("createNumberValue setValue failed: " + notThisShape); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * A date value, when the text is a date the model can read.
+     * <p>
+     * Read through {@code mcore.util.Date.fromString}, which is the model's own reader of the form
+     * it prints; a text it refuses is a string, not a date this guesses at.
+     * </p>
+     *
+     * @param written the literal
+     * @return the value, or <code>null</code> when the text is not a date
+     */
+    private static Object dateValue(String written)
+    {
+        if (written.length() < 8 || written.indexOf(':') < 0 && written.indexOf('-') < 0
+            && !written.chars().allMatch(Character::isDigit))
+        {
+            return null;
+        }
+        Object date;
+        try
+        {
+            Class<?> dateClass = Class.forName("com._1c.g5.v8.dt.mcore.util.Date", false, //$NON-NLS-1$
+                BmDcsHelper.class.getClassLoader());
+            date = dateClass.getMethod("fromString", String.class).invoke(null, written); //$NON-NLS-1$
+        }
+        catch (Exception notADate)
+        {
+            // The model's own reader refused it, so it is a string.
+            return null;
+        }
+        if (date == null)
+        {
+            return null;
+        }
+        Object created = invokeFactoryMethod(getMcoreFactory(), "createDateValue"); //$NON-NLS-1$
+        if (created == null)
+        {
+            return null;
+        }
+        try
+        {
+            created.getClass().getMethod("setValue", date.getClass()).invoke(created, date); //$NON-NLS-1$
+            return created;
+        }
+        catch (Exception notThisShape)
+        {
+            Activator.logWarning("createDateValue setValue failed: " + notThisShape); //$NON-NLS-1$
+            return null;
+        }
     }
 
     /**
