@@ -36,6 +36,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
+import ru.aiedt.mcp.server.support.BmExternalObjectDumpHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -97,6 +98,14 @@ public final class DebugSessionStarter implements IMcpTool
                     + "Use this for Attach configurations or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "true updates the database before launching (default: true; ignored for Attach)") //$NON-NLS-1$
+            .stringProperty("externalObjectName", //$NON-NLS-1$
+                "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
+                    + "runs under the debugger. The object is one this workspace holds as an " //$NON-NLS-1$
+                    + "external-object project; a ready .epf / .erf from elsewhere goes in first " //$NON-NLS-1$
+                    + "through config_io operation=import_external_object. Omit to open nothing.") //$NON-NLS-1$
+            .stringProperty("externalObjectProject", //$NON-NLS-1$
+                "The external-object project holding externalObjectName. Omit when the project has " //$NON-NLS-1$
+                    + "one object and its name is unambiguous in the workspace.") //$NON-NLS-1$
             .build();
     }
 
@@ -113,6 +122,8 @@ public final class DebugSessionStarter implements IMcpTool
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
         boolean updateBeforeLaunch = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
+        String externalObjectName = JsonUtils.extractStringArgument(params, "externalObjectName"); //$NON-NLS-1$
+        String externalObjectProject = JsonUtils.extractStringArgument(params, "externalObjectProject"); //$NON-NLS-1$
 
         if (configName != null && !configName.isEmpty())
         {
@@ -137,7 +148,8 @@ public final class DebugSessionStarter implements IMcpTool
             return ToolResult.error(notReadyError).toJson();
         }
 
-        return launchDebug(projectName, applicationId, updateBeforeLaunch);
+        return launchDebug(projectName, applicationId, updateBeforeLaunch,
+            externalObjectProject, externalObjectName);
     }
 
     private String launchByConfigName(String configName, boolean updateBeforeLaunch)
@@ -234,7 +246,8 @@ public final class DebugSessionStarter implements IMcpTool
         }
     }
 
-    private String launchDebug(String projectName, String applicationId, boolean updateBeforeLaunch)
+    private String launchDebug(String projectName, String applicationId,
+        boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName)
     {
         LAUNCH_LOCK.lock();
         try
@@ -345,6 +358,31 @@ public final class DebugSessionStarter implements IMcpTool
                     .toJson();
             }
 
+            String openedObject = null;
+            if (externalObjectName != null && !externalObjectName.isEmpty())
+            {
+                IProject objectProject = externalObjectProject == null || externalObjectProject.isEmpty()
+                    ? project : ProjectResolver.resolve(externalObjectProject);
+                if (objectProject == null)
+                {
+                    return ToolResult.error(ProjectResolver.describeNotFound(externalObjectProject)).toJson();
+                }
+                BmExternalObjectDumpHelper.RootResolution found =
+                    BmExternalObjectDumpHelper.resolveRoot(objectProject, externalObjectName);
+                if (found.error != null)
+                {
+                    return ToolResult.error(found.error)
+                        .put("externalObjectName", externalObjectName) //$NON-NLS-1$
+                        .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
+                        .toJson();
+                }
+                // The class of the instance, not the metadata type: that is what the environment
+                // matches the object by - see LaunchConfigAccess.ATTR_EXTERNAL_OBJECT_TYPE.
+                matchingConfig = LaunchConfigAccess.openingExternalObject(matchingConfig,
+                    objectProject.getName(), found.objectName, found.object.getClass().getName());
+                openedObject = found.objectName;
+            }
+
             String launchError = performLaunch(matchingConfig);
             if (launchError != null)
             {
@@ -359,6 +397,7 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("autoCreatedConfiguration", autoCreatedConfig) //$NON-NLS-1$
                 .put("attach", false) //$NON-NLS-1$
                 .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("externalObjectOpened", openedObject) //$NON-NLS-1$
                 .put("message", autoCreatedConfig //$NON-NLS-1$
                     ? "Debug session is now running (a launch configuration was auto-created for it)"
                     : "Debug session is now running")

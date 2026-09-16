@@ -145,6 +145,7 @@ import ru.aiedt.mcp.server.toolkit.ops.MethodSourceReader;
 import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceReader;
 import ru.aiedt.mcp.server.toolkit.ops.BreakpointRemover;
 import ru.aiedt.mcp.server.toolkit.ops.MetadataObjectRenamer;
+import ru.aiedt.mcp.server.toolkit.ops.DialogAnswerer;
 import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.toolkit.ops.DebugResumer;
 import ru.aiedt.mcp.server.toolkit.ops.DiskResynchronizer;
@@ -1430,6 +1431,7 @@ public class McpHttpEndpoint
             new DebugResumer(),
             new LaunchTerminator(),
             new RestartEdtTool(),
+            new DialogAnswerer(),
             new BslCodeReviewTool(),
             new VanessaTool(),
             new ExpressionEvaluator(),

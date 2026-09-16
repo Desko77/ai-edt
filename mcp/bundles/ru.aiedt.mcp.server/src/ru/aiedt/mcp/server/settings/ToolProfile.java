@@ -297,6 +297,7 @@ public enum ToolProfile
             "delete_project", //$NON-NLS-1$
             "resync_to_disk", //$NON-NLS-1$
             "restart_edt", //$NON-NLS-1$
+            "answer_dialog", //$NON-NLS-1$
             "self_upkeep", //$NON-NLS-1$
             "list_subsystems", //$NON-NLS-1$
 
@@ -375,6 +376,7 @@ public enum ToolProfile
             "sync_control", //$NON-NLS-1$
             "resync_to_disk", //$NON-NLS-1$
             "restart_edt", //$NON-NLS-1$
+            "answer_dialog", //$NON-NLS-1$
             "self_upkeep"); //$NON-NLS-1$
     }
 

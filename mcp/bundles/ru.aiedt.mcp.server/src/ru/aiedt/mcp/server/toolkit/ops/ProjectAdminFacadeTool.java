@@ -104,6 +104,7 @@ public class ProjectAdminFacadeTool implements IMcpTool
         m.put("resync_to_disk", DiskResynchronizer::new); //$NON-NLS-1$
         m.put("self_upkeep", SelfUpkeepTool::new); //$NON-NLS-1$
         m.put("restart_edt", RestartEdtTool::new); //$NON-NLS-1$
+        m.put("answer_dialog", DialogAnswerer::new); //$NON-NLS-1$
         m.put("list_subsystems", GetSubsystemsTool::new); //$NON-NLS-1$
         return Collections.unmodifiableMap(m);
     }
@@ -122,7 +123,7 @@ public class ProjectAdminFacadeTool implements IMcpTool
         return "Project and configuration administration - list, inspect, create, delete, " //$NON-NLS-1$
             + "resync, restart, subsystem listing. Operations: list_projects, " //$NON-NLS-1$
             + "list_configurations, get_configuration_properties, create_project, " //$NON-NLS-1$
-            + "delete_project, resync_to_disk, restart_edt, self_upkeep, list_subsystems, " //$NON-NLS-1$
+            + "delete_project, resync_to_disk, restart_edt, answer_dialog, self_upkeep, list_subsystems, " //$NON-NLS-1$
             + "help. Pass " //$NON-NLS-1$
             + "operation=<name> (snake_case canonical; camelCase like listProjects is also " //$NON-NLS-1$
             + "accepted); remaining parameters follow the per-operation contracts (call " //$NON-NLS-1$
@@ -138,11 +139,14 @@ public class ProjectAdminFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "list_projects / list_configurations / get_configuration_properties / " //$NON-NLS-1$
-                    + "create_project / delete_project / resync_to_disk / restart_edt / " //$NON-NLS-1$
+                    + "create_project / delete_project / resync_to_disk / restart_edt / answer_dialog / " //$NON-NLS-1$
                     + "self_upkeep / list_subsystems / help (snake_case canonical; " //$NON-NLS-1$
                     + "camelCase like " //$NON-NLS-1$
                     + "listProjects is also accepted). Pass operation=help without other " //$NON-NLS-1$
                     + "params for the operation catalog.", true) //$NON-NLS-1$
+            .stringProperty("button", //$NON-NLS-1$
+                "answer_dialog: the button to press, as the dialog spells it (matched " //$NON-NLS-1$
+                    + "ignoring case and the underlined mnemonic).") //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -241,6 +245,8 @@ public class ProjectAdminFacadeTool implements IMcpTool
                 return new DiskResynchronizer().execute(params);
             case "restart_edt": //$NON-NLS-1$
                 return new RestartEdtTool().execute(params);
+            case "answer_dialog": //$NON-NLS-1$
+                return new DialogAnswerer().execute(params);
             case "self_upkeep": //$NON-NLS-1$
             {
                 // Gate-checked, unlike the delegations above: self_upkeep is the one operation
@@ -277,6 +283,10 @@ public class ProjectAdminFacadeTool implements IMcpTool
                 + "MUTATING.\n"); //$NON-NLS-1$
             sb.append("- **restart_edt** - gracefully restart or shut down the host EDT " //$NON-NLS-1$
                 + "instance.\n"); //$NON-NLS-1$
+            sb.append("- **answer_dialog** - press a named button of the modal dialog EDT is " //$NON-NLS-1$
+                + "waiting on, so a call blocked behind a question goes on without a person. " //$NON-NLS-1$
+                + "Read the dialog first: self_status names its title, message and buttons, and " //$NON-NLS-1$
+                + "so does any Pending answer while one is up. Nothing is pressed on its own.\n"); //$NON-NLS-1$
             sb.append("- **self_upkeep** - whether a newer build of this plugin is published " //$NON-NLS-1$
                 + "on the configured update site.\n"); //$NON-NLS-1$
             sb.append("- **list_subsystems** - configuration subsystems as a hierarchy.\n"); //$NON-NLS-1$
@@ -315,7 +325,8 @@ public class ProjectAdminFacadeTool implements IMcpTool
             "list_projects", "list_configurations", //$NON-NLS-1$ //$NON-NLS-2$
             "get_configuration_properties", "create_project", //$NON-NLS-1$ //$NON-NLS-2$
             "delete_project", "resync_to_disk", //$NON-NLS-1$ //$NON-NLS-2$
-            "restart_edt", "self_upkeep", //$NON-NLS-1$ //$NON-NLS-2$
+            "restart_edt", "answer_dialog", //$NON-NLS-1$ //$NON-NLS-2$
+            "self_upkeep", //$NON-NLS-1$
             "list_subsystems")) //$NON-NLS-1$
         {
             m.put(op, op);

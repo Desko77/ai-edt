@@ -100,6 +100,27 @@ public final class LaunchConfigAccess
     public static final String ATTR_USE_LOCAL_DEBUG_SERVER =
         "com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER"; //$NON-NLS-1$
 
+    /** Launch attribute: the external-object project whose object the client opens at startup. */
+    public static final String ATTR_EXTERNAL_OBJECT_PROJECT_NAME =
+        "com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_PROJECT_NAME"; //$NON-NLS-1$
+
+    /** Launch attribute: the name of that external object. */
+    public static final String ATTR_EXTERNAL_OBJECT_NAME =
+        "com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_NAME"; //$NON-NLS-1$
+
+    /**
+     * Launch attribute: which external object of that project, as its Java class name.
+     * <p>
+     * Read from the environment: {@code ExternalObjectHelper.getExternalObject} matches an object of
+     * the project by {@code getName()} AND by {@code object.getClass().getName()}, so the value here
+     * is the class of the EMF instance - not the metadata type as a caller would spell it. That is
+     * why a caller of this server names the object and nothing else: the class is read off the
+     * object this resolves.
+     * </p>
+     */
+    public static final String ATTR_EXTERNAL_OBJECT_TYPE =
+        "com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_TYPE"; //$NON-NLS-1$
+
     /**
      * Marks an application id that was invented for an attach configuration rather than read from one.
      * <p>
@@ -320,6 +341,32 @@ public final class LaunchConfigAccess
             Activator.logError("Failed to list runtime client launch configurations", e); //$NON-NLS-1$
             return new ILaunchConfiguration[0];
         }
+    }
+
+    /**
+     * A copy of a launch configuration that opens an external object at startup.
+     * <p>
+     * The copy is NOT saved: the object to open belongs to this one launch, not to the caller's list
+     * of configurations, and a saved copy per object would fill that list with entries nobody asked
+     * for. A working copy launches the same way a saved configuration does.
+     * </p>
+     *
+     * @param config the configuration to base it on.
+     * @param objectProjectName the external-object project.
+     * @param objectName the object in it.
+     * @param objectClassName the object's Java class name, as
+     *            {@link #ATTR_EXTERNAL_OBJECT_TYPE} describes.
+     * @return the working copy, ready to launch
+     * @throws CoreException if the copy cannot be made
+     */
+    public static ILaunchConfiguration openingExternalObject(ILaunchConfiguration config,
+        String objectProjectName, String objectName, String objectClassName) throws CoreException
+    {
+        ILaunchConfigurationWorkingCopy copy = config.getWorkingCopy();
+        copy.setAttribute(ATTR_EXTERNAL_OBJECT_PROJECT_NAME, objectProjectName);
+        copy.setAttribute(ATTR_EXTERNAL_OBJECT_NAME, objectName);
+        copy.setAttribute(ATTR_EXTERNAL_OBJECT_TYPE, objectClassName);
+        return copy;
     }
 
     /**

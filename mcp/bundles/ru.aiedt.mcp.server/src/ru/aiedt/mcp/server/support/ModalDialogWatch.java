@@ -15,9 +15,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Event;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 
@@ -188,9 +190,189 @@ public final class ModalDialogWatch
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("title", text(shell.getText())); //$NON-NLS-1$
             entry.put("message", firstLabel(shell)); //$NON-NLS-1$
+            entry.put("buttons", buttonLabels(shell)); //$NON-NLS-1$
             dialogs.add(entry);
         }
         return dialogs;
+    }
+
+    /**
+     * The labels of the dialog's push buttons, in the order the dialog lays them out.
+     * <p>
+     * Without them a caller is told a dialog is up and not what it can answer. The ampersand
+     * mnemonic is dropped, because it is how the label is drawn and not how it reads.
+     * </p>
+     *
+     * @param parent the shell.
+     * @return the labels, possibly empty
+     */
+    private static List<String> buttonLabels(Composite parent)
+    {
+        List<String> labels = new ArrayList<>();
+        collectButtons(parent, labels);
+        return labels;
+    }
+
+    private static void collectButtons(Composite parent, List<String> into)
+    {
+        for (Control child : parent.getChildren())
+        {
+            if (child instanceof Button && (child.getStyle() & SWT.PUSH) != 0)
+            {
+                String label = text(((Button)child).getText()).replace("&", ""); //$NON-NLS-1$ //$NON-NLS-2$
+                if (!label.isEmpty())
+                {
+                    into.add(label);
+                }
+            }
+            if (child instanceof Composite)
+            {
+                collectButtons((Composite)child, into);
+            }
+        }
+    }
+
+    /** What pressing a button did, or why it was not pressed. */
+    public static final class Press
+    {
+        private final boolean pressed;
+        private final String label;
+        private final String refusal;
+
+        Press(boolean pressed, String label, String refusal)
+        {
+            this.pressed = pressed;
+            this.label = label;
+            this.refusal = refusal;
+        }
+
+        /** Whether a button was pressed. */
+        public boolean isPressed()
+        {
+            return this.pressed;
+        }
+
+        /** The label of the button that was pressed, or <code>null</code>. */
+        public String getLabel()
+        {
+            return this.label;
+        }
+
+        /** Why nothing was pressed, or <code>null</code> when something was. */
+        public String getRefusal()
+        {
+            return this.refusal;
+        }
+    }
+
+    /**
+     * Presses a named button of the modal dialog that is up.
+     * <p>
+     * Deliberate, never automatic. Nothing here decides WHICH button is right: the caller names it,
+     * having read what the dialog says. A label matching no button, or matching more than one, is
+     * refused rather than guessed - an unintended press on a modal is the one mistake that cannot be
+     * taken back.
+     * </p>
+     * <p>
+     * Runs on the modal's own event loop, the same way the reading does.
+     * </p>
+     *
+     * @param label the button to press, matched ignoring case and the mnemonic ampersand.
+     * @return what happened
+     */
+    public static Press press(String label)
+    {
+        if (label == null || label.trim().isEmpty())
+        {
+            return new Press(false, null, "name the button to press"); //$NON-NLS-1$
+        }
+        String wanted = label.trim();
+        Display display = existingDisplay();
+        if (display == null || display.isDisposed())
+        {
+            return new Press(false, null, "there is no workbench here to press anything in"); //$NON-NLS-1$
+        }
+        AtomicReference<Press> outcome = new AtomicReference<>();
+        CountDownLatch answered = new CountDownLatch(1);
+        try
+        {
+            display.asyncExec(() -> {
+                try
+                {
+                    outcome.set(pressOnUiThread(display, wanted));
+                }
+                finally
+                {
+                    answered.countDown();
+                }
+            });
+            if (!answered.await(UI_ANSWER_MS, TimeUnit.MILLISECONDS))
+            {
+                return new Press(false, null, "EDT's UI thread did not answer within " //$NON-NLS-1$
+                    + UI_ANSWER_MS + "ms, so nothing was pressed"); //$NON-NLS-1$
+            }
+        }
+        catch (InterruptedException stop)
+        {
+            Thread.currentThread().interrupt();
+            return new Press(false, null, "interrupted before anything was pressed"); //$NON-NLS-1$
+        }
+        Press result = outcome.get();
+        return result != null ? result
+            : new Press(false, null, "the workbench answered with nothing"); //$NON-NLS-1$
+    }
+
+    private static Press pressOnUiThread(Display display, String wanted)
+    {
+        List<Button> found = new ArrayList<>();
+        int modals = 0;
+        for (Shell shell : display.getShells())
+        {
+            if (shell == null || shell.isDisposed() || !shell.isVisible()
+                || (shell.getStyle() & MODAL) == 0)
+            {
+                continue;
+            }
+            modals++;
+            matchButtons(shell, wanted, found);
+        }
+        if (modals == 0)
+        {
+            return new Press(false, null, "no modal dialog is up"); //$NON-NLS-1$
+        }
+        if (found.isEmpty())
+        {
+            return new Press(false, null, "no button of the dialog reads '" + wanted //$NON-NLS-1$
+                + "' - read the dialog again for the buttons it offers"); //$NON-NLS-1$
+        }
+        if (found.size() > 1)
+        {
+            return new Press(false, null, found.size() + " buttons read '" + wanted //$NON-NLS-1$
+                + "', so which one was meant is not decidable here"); //$NON-NLS-1$
+        }
+        Button button = found.get(0);
+        String label = text(button.getText()).replace("&", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        button.notifyListeners(SWT.Selection, new Event());
+        return new Press(true, label, null);
+    }
+
+    private static void matchButtons(Composite parent, String wanted, List<Button> into)
+    {
+        for (Control child : parent.getChildren())
+        {
+            if (child instanceof Button && (child.getStyle() & SWT.PUSH) != 0)
+            {
+                String label = text(((Button)child).getText()).replace("&", ""); //$NON-NLS-1$ //$NON-NLS-2$
+                if (label.equalsIgnoreCase(wanted))
+                {
+                    into.add((Button)child);
+                }
+            }
+            if (child instanceof Composite)
+            {
+                matchButtons((Composite)child, wanted, into);
+            }
+        }
     }
 
     /**

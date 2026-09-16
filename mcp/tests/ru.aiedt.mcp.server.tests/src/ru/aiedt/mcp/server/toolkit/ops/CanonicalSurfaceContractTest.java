@@ -202,12 +202,12 @@ public class CanonicalSurfaceContractTest
             "get_project_errors", "get_problem_summary", "revalidate_objects", "clean_project",
             "validate_for_export", "get_check_description", "help"));
 
-        // project_admin (ProjectAdminFacadeTool.execute + its OPS catalog): nine operations, all
+        // project_admin (ProjectAdminFacadeTool.execute + its OPS catalog): ten operations, all
         // literally the standalone names they replace, plus help.
         m.put("project_admin", Set.of(
             "list_projects", "list_configurations", "get_configuration_properties",
             "create_project", "delete_project", "resync_to_disk", "restart_edt",
-            "self_upkeep", "list_subsystems", "help"));
+            "answer_dialog", "self_upkeep", "list_subsystems", "help"));
 
         // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): nine operations,
         // all literally the standalone names they replace, plus help. sync_control's own inner
@@ -328,7 +328,7 @@ public class CanonicalSurfaceContractTest
         // Tripwire 1: exactly how many standalone names CANONICAL currently hides. A change here
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
-        assertEquals(83, ToolProfile.CANONICAL.getUnlistedTools().size());
+        assertEquals(84, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

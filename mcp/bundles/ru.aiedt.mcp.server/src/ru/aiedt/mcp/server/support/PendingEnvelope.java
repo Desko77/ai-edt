@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.support;
 
+import org.eclipse.swt.widgets.Display;
+
 import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
@@ -42,7 +44,52 @@ public final class PendingEnvelope
      */
     public static ToolResult mark(ToolResult result)
     {
-        return result.put(MARK, true);
+        result.put(MARK, true);
+        return alsoSayWhatIsHoldingIt(result);
+    }
+
+    /**
+     * Adds the modal dialog that is holding the work, when one is.
+     * <p>
+     * A Pending answer says the work has outlived its wait budget. It does not say WHY, and the
+     * commonest why is a question on screen: an update asking whether to go ahead, a dump asking
+     * where to put a file. To a caller those look the same as slow work, so it waits, polls, and
+     * waits again while a dialog no agent can see holds everything.
+     * </p>
+     * <p>
+     * Stamped here because this is the one place every producer of an envelope passes through, so
+     * every long operation gains it at once rather than each remembering to.
+     * </p>
+     *
+     * @param result the envelope being built.
+     * @return the same result, for chaining
+     */
+    private static ToolResult alsoSayWhatIsHoldingIt(ToolResult result)
+    {
+        if (Display.getCurrent() != null)
+        {
+            // Reading the shells means posting to the UI thread and waiting for it. On the UI
+            // thread that is a wait on ourselves, and a caller running there is not the one being
+            // held by a modal anyway.
+            return result;
+        }
+        try
+        {
+            ModalDialogWatch.Reading reading = ModalDialogWatch.current();
+            if (!reading.isBlocked())
+            {
+                return result;
+            }
+            return result.put("blockedByDialog", Boolean.TRUE) //$NON-NLS-1$
+                .put("dialogs", reading.getDialogs()) //$NON-NLS-1$
+                .put("blockedExplanation", reading.describe() //$NON-NLS-1$
+                    + " Press one of the buttons with answer_dialog, or answer it in EDT."); //$NON-NLS-1$
+        }
+        catch (RuntimeException | LinkageError noUi)
+        {
+            // Headless, or SWT absent: an envelope without this is the ordinary case, not a failure.
+            return result;
+        }
     }
 
     /**

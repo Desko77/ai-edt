@@ -138,10 +138,13 @@ public class ToolCategoryTest
         // the merge that such a comparison leads to is deliberately not implemented.
         // A drift here means a tool was added or removed without the group
         // table being told, which is exactly what the coverage test elsewhere is built to catch.
+        // On 2026-09-16 answer_dialog joined APPLICATIONS (+1 -> 130): it presses a button of
+        // the modal dialog EDT is waiting on, which is a change to the workbench like the
+        // restart beside it, and a preset that switches that off switches this off too.
         // On 2026-08-21 support_registry joined ANALYSIS (+1 -> 129): it reads the vendor
         // support state of a configuration and changes nothing, which is the same house as
         // the comparison tools it is read alongside.
-        assertEquals(129, ToolCategory.getTotalToolCount());
+        assertEquals(130, ToolCategory.getTotalToolCount());
     }
 
     @Test

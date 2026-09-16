@@ -238,6 +238,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * names it in the refusal, while the schema described the argument for adopt_* alone - so the
      * one instruction the refusal gives could not be followed from what the schema said.
      * </p>
+     * <p>
+     * And a fifth, by 407, for two capabilities a caller cannot reach without being told they
+     * exist: the external object the debugged client opens at startup, which is how code under a
+     * breakpoint gets run at all, and the button of the modal dialog EDT is waiting on, which is
+     * how a call blocked behind a question goes on without a person at the keyboard.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 81428;
+    private static final int DOCUMENT_PROSE = 81835;
 }

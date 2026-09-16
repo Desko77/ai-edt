@@ -109,6 +109,7 @@ public enum ToolCategory
         "sync_control", //$NON-NLS-1$
         "resync_to_disk", //$NON-NLS-1$
         "restart_edt", //$NON-NLS-1$
+        "answer_dialog", //$NON-NLS-1$
         "self_upkeep", //$NON-NLS-1$
         "delete_project", //$NON-NLS-1$
         "create_project", //$NON-NLS-1$

@@ -191,5 +191,8 @@ probe com._1c.g5.v8.dt.template.model.SpreadsheetDocument
 probe com._1c.g5.v8.dt.template.model.TemplateFactory
 probe com._1c.g5.v8.dt.ui.platform.PlatformPictures
 com._1c.g5.v8.dt.mcore.util.Date fromString
+com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_PROJECT_NAME
+com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_NAME
+com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_TYPE
 com._1c.g5.wiring.ServiceAccess get
 com.e1c.g5.v8.dt.internal.distribution.DistributionPlugin getDefault,getInjector

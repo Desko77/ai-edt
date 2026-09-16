@@ -101,6 +101,12 @@ public class LaunchDebuggerTool implements IMcpTool
                     + "scheduled jobs) or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "launch: update the database before launching (default true; ignored for Attach).") //$NON-NLS-1$
+            .stringProperty("externalObjectName", //$NON-NLS-1$
+                "launch: open this external data processor or report in the client that starts, so " //$NON-NLS-1$
+                    + "its code runs under the debugger. A ready .epf / .erf from elsewhere goes in " //$NON-NLS-1$
+                    + "first through config_io operation=import_external_object.") //$NON-NLS-1$
+            .stringProperty("externalObjectProject", //$NON-NLS-1$
+                "launch: the external-object project holding externalObjectName.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$
                 "terminate: stop every active EDT launch (default false).") //$NON-NLS-1$
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
