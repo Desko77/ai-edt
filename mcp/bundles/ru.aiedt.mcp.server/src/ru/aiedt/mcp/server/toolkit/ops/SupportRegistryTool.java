@@ -103,12 +103,11 @@ public class SupportRegistryTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project to read. Required for status, list_objects and object_mode.") //$NON-NLS-1$
+                "EDT project to read. Required for every operation except help.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
-                "object_mode: the object to report on, named as elsewhere in this server " //$NON-NLS-1$
-                    + "(Catalog.Name, Document.Name). Pass Configuration for the configuration " //$NON-NLS-1$
-                    + "root, which must be set to CHANGES_ALLOWED before any other object " //$NON-NLS-1$
-                    + "can be.") //$NON-NLS-1$
+                "object_mode: the object to report on, named as this server names it - " //$NON-NLS-1$
+                    + "Catalog.Name, Catalog.Name.Attribute.Other, or Configuration for the " //$NON-NLS-1$
+                    + "root, which takes CHANGES_ALLOWED before any other object can.") //$NON-NLS-1$
             .stringProperty("userMode", //$NON-NLS-1$
                 "list_objects: report only objects in this mode - CHANGES_NOT_ALLOWED, " //$NON-NLS-1$
                     + "CHANGES_ALLOWED or CANCELLED, spelled either that way or " //$NON-NLS-1$
@@ -120,9 +119,9 @@ public class SupportRegistryTool
                     + "by name. Required when the configuration descends from more than one, " //$NON-NLS-1$
                     + "because a mode belongs to a vendor rather than to the object outright.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
-                "list_objects: how many matching objects to skip. Default 0.") //$NON-NLS-1$
+                "list_objects and object_mode: how many to skip. Default 0.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
-                "list_objects: how many to return. Default and maximum 500.") //$NON-NLS-1$
+                "list_objects and object_mode: how many to return. Default and maximum 500.") //$NON-NLS-1$
             .stringProperty("snapshotPath", //$NON-NLS-1$
                 "snapshot_modes: absolute path to write the snapshot to. restore_modes: the " //$NON-NLS-1$
                     + "snapshot to restore from - required. compare_three_way writes one into " //$NON-NLS-1$
