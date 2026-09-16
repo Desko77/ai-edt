@@ -831,6 +831,8 @@ public final class BmDcsHelper
 
         final String[] declared = new String[1];
         int attempts = 0;
+        // What the collection held after the previous attempt, so a retry that appends is seen.
+        int countBefore = -1;
         try
         {
             while (true)
@@ -928,6 +930,25 @@ public final class BmDcsHelper
             {
                 break;
             }
+            // A retry is worth running only while it replaces what was lost. An operation that
+            // APPENDS and has no already-there guard adds another element every time instead:
+            // measured, one add_template_cell whose value could not be serialized left five cells
+            // in the template and answered that the change did not survive. The collection growing
+            // between two attempts is what says so, and the answer carries what was left.
+            Object counted = r.tags.get("modelCountAfterWrite"); //$NON-NLS-1$
+            int countNow = counted instanceof Integer ? ((Integer)counted).intValue() : -1;
+            if (countNow >= 0 && countBefore >= 0 && countNow > countBefore)
+            {
+                r.tags.put("attemptsAppended", Integer.valueOf(attempts + 1)); //$NON-NLS-1$
+                r.error = (r.error == null ? "" : r.error + " ") //$NON-NLS-1$ //$NON-NLS-2$
+                    + "Running it again added another one rather than replacing it, so this stopped " //$NON-NLS-1$
+                    + "after " + (attempts + 1) + " attempt(s); " + countNow + " are now in " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + (r.tags.get("modelCountScope") == null ? "the collection" //$NON-NLS-1$ //$NON-NLS-2$
+                        : r.tags.get("modelCountScope").toString()) //$NON-NLS-1$
+                    + ". Read the schema back and remove what this left."; //$NON-NLS-1$
+                break;
+            }
+            countBefore = countNow;
             // The write was applied to a state that predates the previous commit, and committing
             // it dropped what that commit added. Nothing here can make the model settle, but the
             // next transaction gets a fresh snapshot - and a pause is what decides whether that
