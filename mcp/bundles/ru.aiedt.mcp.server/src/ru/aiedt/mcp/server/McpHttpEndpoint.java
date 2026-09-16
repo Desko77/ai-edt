@@ -1036,6 +1036,14 @@ public class McpHttpEndpoint
                 // be spent on the next call to take this id.
                 return null;
             }
+            // Work that outlived the call that started it: the request is closed and the run goes
+            // on under a runKey, so there is no call to find and the flag is on the entry.
+            String stoppedRun = ru.aiedt.mcp.server.support.PendingWorkRegistry
+                .withdrawOwnedRun(sessionId, requestId, reason);
+            if (stoppedRun != null)
+            {
+                return stoppedRun;
+            }
             String key = withdrawalKey(requestId, sessionId);
             if (key != null && !recentlyFinished(key))
             {

@@ -265,9 +265,20 @@ public final class PendingWorkRegistry
         // a change to this registry, not to the tools.
         ToolCallScope current = ToolCallScope.current();
         ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
+        ru.aiedt.mcp.server.RunningToolCall starter = current != null ? current.runningCall() : null;
         return entries.computeIfAbsent(runKey, k ->
         {
             PendingEntry entry = new PendingEntry(k);
+            // The flag the work reads, kept where it outlives the request that made it. A run that
+            // answers Pending goes on after its exchange is closed, and until the entry held this
+            // there was nothing left for a withdrawal to raise.
+            entry.cancellation = dispatchCancellation;
+            if (starter != null)
+            {
+                entry.ownerSession = starter.getSessionId();
+                Object requested = starter.getRequestId();
+                entry.ownerRequest = requested == null ? null : String.valueOf(requested);
+            }
             entry.future = CompletableFuture.supplyAsync(() ->
             {
                 ToolCallScope previous = ToolCallScope.current();
@@ -312,6 +323,45 @@ public final class PendingWorkRegistry
             });
             return entry;
         });
+    }
+
+    /**
+     * Raises the flag of a run started by this session and this request, wherever it is running.
+     * <p>
+     * The one path that reaches work which outlived the call that started it. A run belongs to
+     * whoever started it: a withdrawal naming another session's request raises nothing, because a
+     * second caller waiting on the same key wants the result rather than the end of it. There is
+     * nowhere in the protocol to say so - a cancellation is a notification, answered with 202 and no
+     * body - so what happened is said in the log.
+     * </p>
+     *
+     * @param sessionId the session the withdrawal came from; a null one owns nothing
+     * @param requestId the request it names
+     * @param reason what to record as the cause
+     * @return the runKey whose flag was raised, or <code>null</code> when nothing matched
+     */
+    public static String withdrawOwnedRun(String sessionId, Object requestId, String reason)
+    {
+        if (sessionId == null || requestId == null)
+        {
+            return null;
+        }
+        String named = String.valueOf(requestId);
+        for (PendingWorkRegistry domain : domains())
+        {
+            for (Map.Entry<String, PendingEntry> each : domain.entries.entrySet())
+            {
+                PendingEntry entry = each.getValue();
+                if (entry == null || entry.cancellation == null
+                    || !sessionId.equals(entry.ownerSession) || !named.equals(entry.ownerRequest))
+                {
+                    continue;
+                }
+                entry.cancellation.cancel(reason);
+                return each.getKey();
+            }
+        }
+        return null;
     }
 
     /**
@@ -790,6 +840,22 @@ public final class PendingWorkRegistry
          * </p>
          */
         public volatile String progressNote;
+
+        /**
+         * The flag the work watches, held where it outlives the request that started the run.
+         * <p>
+         * A run that answers Pending continues after its exchange is closed, and the flag belonged
+         * to that exchange's call: a withdrawal arriving afterwards found nothing to raise. Null
+         * when the work was started outside a tool call.
+         * </p>
+         */
+        public volatile ru.aiedt.mcp.server.support.ToolCallScope.Cancellation cancellation;
+
+        /** The session that started the run; only a withdrawal from it stops the work. */
+        public volatile String ownerSession;
+
+        /** The request that started the run, as a withdrawal names it. */
+        public volatile String ownerRequest;
 
         /**
          * What the run is about, for a caller that has no runKey.
