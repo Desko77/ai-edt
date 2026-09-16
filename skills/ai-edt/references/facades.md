@@ -14,7 +14,7 @@ parameters of one. When this file and the server disagree, the server is right.
 | `code_search` | `text_search`, `object_references`, `method_references`, `resolve_symbol`, `call_hierarchy`, `symbol_info`, `content_assist`, `outgoing_structures`, `help` |
 | `insights` | `project_metrics`, `dependency_graph`, `compare_configurations`, `compare_three_way`, `detect_query_anti_patterns`, `generate_health_snapshot`, `impact_analysis`, `object_summary`, `describe_db_tables`, `semantic_metadata_search`, `help` |
 | `security_audit` | `audit_role_rights`, `find_rls_violations`, `sensitive_data_scan`, `help` |
-| `support_registry` | `status`, `list_objects`, `object_mode`, `help` |
+| `support_registry` | `status`, `list_objects`, `object_mode`, `snapshot_modes`, `restore_modes`, `help` |
 
 `support_registry` reads the vendor support state of a configuration: which vendor configurations it
 descends from with their releases, the object count per support mode, the rules the environment
@@ -53,7 +53,10 @@ listing here - call `operation=help` for the catalogue by group, and
 Two things worth knowing before the first call:
 
 - `batch=true` with an `operations` array does many creations in one call. Thirty-eight roles are
-  one call, not thirty-eight. Validation is not interleaved between operations and the batch is
+  one call, not thirty-eight. The whole array is read before the first write: an unknown
+  operation, an entry naming none, an argument name no schema declares, or a nested `batch` is
+  refused by its number in `refusedBeforeRunning` and nothing runs, so a typo leaves the project
+  untouched. Past that point validation is not interleaved between operations and the batch is
   not atomic, so read `batchResults[]` afterwards, redo the failed entries individually, then
   revalidate. Do not use a batch where each step must be checked before the next one.
 - `dryRun=true` previews a change without writing it.
