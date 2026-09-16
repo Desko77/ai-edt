@@ -1343,7 +1343,7 @@ public final class BmDcsHelper
             if (!dryRun)
             {
                 r.directSave = DcsExtensionExportHelper.exportSchemaToDisk(mm, project, r.schemaFqn);
-                noteDiskSave(r);
+                noteDiskSave(r, true);
                 // Persist the owner .mdo too: trySetMainDataCompositionSchema mutated
                 // the Report's mainDataCompositionSchema reference, but
                 // exportSchemaToDisk only writes the .dcs. Without exporting the owner
@@ -1904,6 +1904,25 @@ public final class BmDcsHelper
      */
     static void noteDiskSave(Result r)
     {
+        noteDiskSave(r, false);
+    }
+
+    /**
+     * Judges the disk-save, knowing whether the call created the schema or changed one.
+     * <p>
+     * The unchanged-file refusal belongs to a CHANGE: a call that asked for one and left the file
+     * byte for byte as it was either asked for what was already set or lost its write. A CREATION
+     * is the other way round. The environment exports the new template itself, and what it writes
+     * is the same empty schema this would write, so the file matching is what success looks like -
+     * measured on a workspace: create_schema on a fresh report produced a usable schema, 927 bytes,
+     * and refused itself because those bytes were already there.
+     * </p>
+     *
+     * @param r the result to annotate, whose {@code ok} this may clear
+     * @param creating whether the schema is being created rather than changed
+     */
+    static void noteDiskSave(Result r, boolean creating)
+    {
         DcsExtensionExportHelper.Result ds = r.directSave;
         if (ds != null && !ds.ok)
         {
@@ -1960,6 +1979,13 @@ public final class BmDcsHelper
             Map<String, Object> info = new LinkedHashMap<>();
             info.put("filePath", ds.filePath); //$NON-NLS-1$
             info.put("bytes", ds.bytesWritten); //$NON-NLS-1$
+            if (creating)
+            {
+                // A new schema matching the file the environment just exported for it. Said, so
+                // the answer still carries what reached disk, but not refused.
+                r.tags.put("schemaAlreadyOnDisk", info); //$NON-NLS-1$
+                return;
+            }
             r.tags.put("schemaUnchanged", info); //$NON-NLS-1$
             r.ok = false;
             r.error = "the schema on disk is byte-identical to what it held before this call, " //$NON-NLS-1$

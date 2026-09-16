@@ -2096,7 +2096,17 @@ public class DcsWorkshopTool implements IMcpTool
         Object body = invokeGetter(description, "getTemplate"); //$NON-NLS-1$
         if (body == null)
         {
-            throw new RuntimeException("'" + templateName + "' has no body to put rows in."); //$NON-NLS-1$ //$NON-NLS-2$
+            // An empty body does not survive the file: add_schema_template creates one and the
+            // serializer writes <template xsi:nil="true"/>, so the template comes back bodiless and
+            // every operation on it was refused. It is created here, where something is about to go
+            // into it and it will therefore have content to serialize.
+            body = BmDcsHelper.createElement("createDataCompositionAreaTemplate"); //$NON-NLS-1$
+            if (body == null)
+            {
+                throw new RuntimeException(
+                    "DcsFactory.createDataCompositionAreaTemplate not available"); //$NON-NLS-1$
+            }
+            mustSet(description, "template", body); //$NON-NLS-1$
         }
         EList<EObject> rows = BmDcsHelper.getEObjectList(body, "getItems"); //$NON-NLS-1$
         if (rows == null)

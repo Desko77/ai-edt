@@ -523,7 +523,9 @@ public class EditMetadataTool implements IMcpTool
                 "The RLS condition body: a restriction template for set_restriction_template, a row-level " //$NON-NLS-1$
                 + "condition on the right for set_role_restriction. Other role content is preserved.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
-                "Alias of targetFqn for adopt_* operations.") //$NON-NLS-1$
+                "delete_metadata_object: the object to remove, whole (Catalog.Products) or one child " //$NON-NLS-1$
+                    + "(Document.SalesOrder.Attribute.Amount). Alias of targetFqn for adopt_* " //$NON-NLS-1$
+                    + "operations.") //$NON-NLS-1$
             .stringProperty("childKind", //$NON-NLS-1$
                 "Child kind for adopt_child: Form / Attribute / TabularSection / Template " //$NON-NLS-1$
                     + "/ Command / Dimension / Resource.") //$NON-NLS-1$

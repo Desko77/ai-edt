@@ -298,6 +298,58 @@ public class MetadataObjectDeleter implements IMcpTool
         return references;
     }
 
+    /** How long a leftover is given to clear before it counts as one. */
+    private static final long SETTLE_MS = 3000L;
+
+    /** How long to wait between two readings of the disk while a delete settles. */
+    private static final long SETTLE_STEP_MS = 50L;
+
+    /**
+     * What the delete left on disk, once the environment has finished writing.
+     * <p>
+     * The refactoring returns before its own exporter has removed the object's directory. Measured
+     * on a workspace: the call came back in 0.05 s and the directory went 0.10 s later, so a single
+     * reading taken the moment the call returns finds a leftover that is about to disappear and
+     * turns a completed delete into a refusal.
+     * </p>
+     * <p>
+     * The wait runs on the SWT thread, so it dispatches events rather than sleeping through them:
+     * the exporter's own work is what has to make progress, and a frozen workbench is the one thing
+     * that would stop it.
+     * </p>
+     *
+     * @param project the project.
+     * @param objectFqn the object that was deleted.
+     * @return what is still there once it has settled, or <code>null</code>
+     */
+    private static String whatIsLeftOnDiskOnceSettled(IProject project, String objectFqn)
+    {
+        String leftOver = whatIsLeftOnDisk(project, objectFqn);
+        if (leftOver == null)
+        {
+            return null;
+        }
+        Display display = Display.getCurrent();
+        long deadline = System.currentTimeMillis() + SETTLE_MS;
+        while (leftOver != null && System.currentTimeMillis() < deadline)
+        {
+            if (display == null || !display.readAndDispatch())
+            {
+                try
+                {
+                    Thread.sleep(SETTLE_STEP_MS);
+                }
+                catch (InterruptedException stop)
+                {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            leftOver = whatIsLeftOnDisk(project, objectFqn);
+        }
+        return leftOver;
+    }
+
     /**
      * The object's directory when the delete left it behind, or <code>null</code> when it is gone.
      * <p>
@@ -337,9 +389,35 @@ public class MetadataObjectDeleter implements IMcpTool
             return null;
         }
         String directory = type.getEnglishPlural();
+        org.eclipse.core.resources.IFolder folder =
+            project.getFolder(new Path("src").append(directory).append(parts[1])); //$NON-NLS-1$
+        refreshAround(folder);
+        return folder.exists() ? folder.getFullPath().toString() : null;
+    }
+
+    /**
+     * Re-reads the disk around one resource, so what the workspace believes about it is current.
+     * <p>
+     * The parent is refreshed one level deep rather than the project to its full depth: the question
+     * is whether this one child is on disk, the answer is polled while a delete settles, and a
+     * full-depth refresh of a configuration this size would cost more per poll than the wait itself.
+     * </p>
+     *
+     * @param resource the file or folder being asked about
+     */
+    private static void refreshAround(IResource resource)
+    {
+        IResource parent = resource.getParent();
         try
         {
-            project.refreshLocal(IResource.DEPTH_INFINITE, null);
+            if (parent != null && parent.exists())
+            {
+                parent.refreshLocal(IResource.DEPTH_ONE, null);
+            }
+            else if (resource.exists())
+            {
+                resource.refreshLocal(IResource.DEPTH_ZERO, null);
+            }
         }
         catch (CoreException stale)
         {
@@ -347,9 +425,6 @@ public class MetadataObjectDeleter implements IMcpTool
             // there is to go on. Said out loud rather than treated as "gone".
             Activator.logDebug("refresh before the leftover check failed: " + stale); //$NON-NLS-1$
         }
-        org.eclipse.core.resources.IFolder folder =
-            project.getFolder(new Path("src").append(directory).append(parts[1])); //$NON-NLS-1$
-        return folder.exists() ? folder.getFullPath().toString() : null;
     }
 
     /**
@@ -402,20 +477,13 @@ public class MetadataObjectDeleter implements IMcpTool
         {
             return null;
         }
-        try
-        {
-            project.refreshLocal(IResource.DEPTH_INFINITE, null);
-        }
-        catch (CoreException stale)
-        {
-            Activator.logDebug("refresh before the child leftover check failed: " + stale); //$NON-NLS-1$
-        }
         String kindFolder = englishKindFolder(parts[2]);
         org.eclipse.core.resources.IFolder folder = project.getFolder(new Path("src") //$NON-NLS-1$
             .append(type.getEnglishPlural())
             .append(parts[1])
             .append(kindFolder)
             .append(parts[3]));
+        refreshAround(folder);
         if (folder.exists())
         {
             return folder.getFullPath().toString();
@@ -425,6 +493,7 @@ public class MetadataObjectDeleter implements IMcpTool
             .append(parts[1])
             .append(kindFolder)
             .append(parts[3] + ".mdo")); //$NON-NLS-1$
+        refreshAround(file);
         return file.exists() ? file.getFullPath().toString() : null;
     }
 
@@ -468,7 +537,7 @@ public class MetadataObjectDeleter implements IMcpTool
             // Asked of the disk and of the model, not of the call that returned. The refactoring
             // reported success while the object's directory stayed where it was, so the answer said
             // the object was gone and its files were still there for the next export to pick up.
-            String leftOver = whatIsLeftOnDisk(project, objectFqn);
+            String leftOver = whatIsLeftOnDiskOnceSettled(project, objectFqn);
             String stillHeld = whatTheOwnerStillHolds(project, objectFqn);
             String removed = null;
             if (leftOver != null && stillHeld == null && hasItsOwnResource(objectFqn))

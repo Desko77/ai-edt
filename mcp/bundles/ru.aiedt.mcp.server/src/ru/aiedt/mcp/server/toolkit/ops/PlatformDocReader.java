@@ -129,6 +129,15 @@ public final class PlatformDocReader implements IMcpTool
             return "Error: the 'typeName' parameter is required"; //$NON-NLS-1$
         }
 
+        // A project was named to pick the platform version. One that resolves to no version is
+        // refused rather than answered from the newest platform installed: the caller asked what
+        // one configuration's platform offers, and help for another version reads the same.
+        if (projectName != null && !projectName.isEmpty() && getProjectVersion(projectName) == null)
+        {
+            return "Error: project '" + projectName + "' is not in this workspace, or carries no " //$NON-NLS-1$ //$NON-NLS-2$
+                + "platform version. Omit projectName to read the newest platform installed."; //$NON-NLS-1$
+        }
+
         if (category == null || category.isEmpty())
         {
             category = CATEGORY_TYPE;

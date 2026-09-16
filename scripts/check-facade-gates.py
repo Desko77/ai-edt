@@ -34,6 +34,55 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OPS = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server/toolkit/ops"
 
+
+def without_comments(source: str) -> str:
+    """The source with its comments blanked out, line numbering and offsets preserved.
+
+    Every structural scan below looks for Java, and a comment that quotes Java reads the same to a
+    regular expression. DiagnosticsFacadeTool documents its own dispatch with the words
+    `switch (operation)` inside a javadoc block; that block sat 150 lines above the real switch, the
+    search took the first match, brace-matching then ran off into prose and returned 38 characters
+    of comment. The reach check had nothing to read and passed every facade in silence.
+
+    String literals are left alone - the catalog is read out of them - so the scanner has to know
+    when it is inside one, or a "http://" would start a comment.
+    """
+    out = []
+    i = 0
+    n = len(source)
+    while i < n:
+        c = source[i]
+        if c == '"' or c == "'":
+            quote = c
+            out.append(c)
+            i += 1
+            while i < n:
+                out.append(source[i])
+                if source[i] == "\\" and i + 1 < n:
+                    out.append(source[i + 1])
+                    i += 2
+                    continue
+                if source[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and source[i + 1] == "/":
+            while i < n and source[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and source[i + 1] == "*":
+            while i < n and not (source[i] == "*" and i + 1 < n and source[i + 1] == "/"):
+                out.append("\n" if source[i] == "\n" else " ")
+                i += 1
+            out.append("  ")
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
 DELEGATION = re.compile(r"new\s+\w+\(\)\.execute\(params\)")
 # Work a facade does before dispatching - installing an engine, updating a database. Anything here
 # has already happened by the time a late gate refuses the call.
@@ -89,8 +138,16 @@ def unreachable_operations(source: str) -> list[str]:
     # The catalog is built from a list of names somewhere in the file. Take every quoted name that
     # appears in the method building it, which is the widest reading and therefore the one that
     # will not accuse a facade wrongly.
-    building = re.search(r"(?:Map<String,\s*String>|Set<String>)\s+build\w*\(\)\s*\{",
-                         source)
+    #
+    # The method is the one the guarded field is initialized from, not the first build-shaped
+    # method in the file: DcsWorkshopTool gained a second one (buildParameterRules), it sits
+    # earlier, and reading its literals as the vocabulary accused four registered operations of
+    # being unreachable.
+    initializer = re.search(r"\b" + re.escape(catalog) + r"\s*=\s*(\w+)\s*\(\s*\)\s*;", source)
+    if initializer:
+        building = re.search(r"\s+" + re.escape(initializer.group(1)) + r"\s*\(\s*\)\s*\{", source)
+    else:
+        building = re.search(r"(?:Map<String,\s*String>|Set<String>)\s+build\w*\(\)\s*\{", source)
     if not building:
         return []
     tail = source[building.end():]
@@ -117,6 +174,7 @@ def dispatch_body(source: str) -> str:
     also switches on a help TOPIC, and those labels are not operations - counting them reported two
     of them as unreachable operations the first time this ran.
     """
+    source = without_comments(source)
     m = DISPATCH.search(source)
     if not m:
         return ""

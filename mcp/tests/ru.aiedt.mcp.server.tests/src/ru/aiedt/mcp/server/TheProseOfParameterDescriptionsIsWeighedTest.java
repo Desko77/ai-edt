@@ -233,6 +233,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * reachable. And by 68, for the dryRun of update_database, which is how a caller asks what an
      * update would face without starting one.
      * </p>
+     * <p>
+     * Raised a fourth time, by 124, for objectFqn. delete_metadata_object refuses without it and
+     * names it in the refusal, while the schema described the argument for adopt_* alone - so the
+     * one instruction the refusal gives could not be followed from what the schema said.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 81304;
+    private static final int DOCUMENT_PROSE = 81428;
 }

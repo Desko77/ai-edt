@@ -441,7 +441,7 @@ public class DatabaseUpdater implements IMcpTool
         {
             org.eclipse.core.runtime.IStatus readiness = appManager.check(application,
                 com.e1c.g5.dt.applications.ApplicationCheckUnknownStateTreatment.TREAT_AS_NOT_READY,
-                new com.e1c.g5.dt.applications.ExecutionContext(),
+                contextWithActiveShell(),
                 new org.eclipse.core.runtime.NullProgressMonitor());
             if (readiness != null)
             {
@@ -471,6 +471,44 @@ public class DatabaseUpdater implements IMcpTool
                 + "reports the state and the readiness, not the objects an update would carry. " //$NON-NLS-1$
                 + "Nothing was claimed, started or recorded by this call.") //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * An execution context carrying the active shell.
+     * <p>
+     * Both the update and its readiness check are given one. The environment refuses the readiness
+     * check outright without a shell - {@code ApplicationException: Shell is not provided in
+     * execution context} - and the update wants one for any modal it raises.
+     * </p>
+     *
+     * @return the context, carrying a shell when the workbench has one
+     */
+    private static ExecutionContext contextWithActiveShell()
+    {
+        ExecutionContext context = new ExecutionContext();
+        Display display = Display.getDefault();
+        if (display == null || display.isDisposed())
+        {
+            return context;
+        }
+        final Shell[] shellHolder = new Shell[1];
+        display.syncExec(() ->
+        {
+            shellHolder[0] = display.getActiveShell();
+            if (shellHolder[0] == null)
+            {
+                Shell[] shells = display.getShells();
+                if (shells.length > 0)
+                {
+                    shellHolder[0] = shells[0];
+                }
+            }
+        });
+        if (shellHolder[0] != null)
+        {
+            context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shellHolder[0]);
+        }
+        return context;
     }
 
     /**
@@ -667,29 +705,7 @@ public class DatabaseUpdater implements IMcpTool
             ApplicationUpdateType updateType =
                 fullUpdate ? ApplicationUpdateType.FULL : ApplicationUpdateType.INCREMENTAL;
 
-            // The shell is wanted for any modal EDT pops; grab the active one off the UI thread.
-            ExecutionContext context = new ExecutionContext();
-            Display display = Display.getDefault();
-            if (display != null && !display.isDisposed())
-            {
-                final Shell[] shellHolder = new Shell[1];
-                display.syncExec(() ->
-                {
-                    shellHolder[0] = display.getActiveShell();
-                    if (shellHolder[0] == null)
-                    {
-                        Shell[] shells = display.getShells();
-                        if (shells.length > 0)
-                        {
-                            shellHolder[0] = shells[0];
-                        }
-                    }
-                });
-                if (shellHolder[0] != null)
-                {
-                    context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shellHolder[0]);
-                }
-            }
+            ExecutionContext context = contextWithActiveShell();
 
             Activator.logInfo("Applying database update - project=" + projectName //$NON-NLS-1$
                 + ", app=" + applicationId //$NON-NLS-1$
