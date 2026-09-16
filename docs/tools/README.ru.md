@@ -117,7 +117,7 @@
 | `get_applications` | Чтение | Показывает приложения и информационные базы проекта. |
 | `read_event_log` | Чтение | Читает журнал регистрации файловой информационной базы: кто входил, что проводилось, что платформа отвергла. |
 | `list_configurations` | Чтение | Возвращает клиентские и Attach-конфигурации запуска EDT. |
-| `update_database` | Опасно | Обновляет конфигурацию информационной базы. |
+| `update_database` | Опасно | Обновляет конфигурацию информационной базы. С `dryRun=true` не запускает ничего: отвечает состоянием обновления (`updateState`), признаком `wouldUpdate`, готовностью базы (`readiness`) и списком ее проблем (`readinessProblems`). Прогон не записывается, база не занимается, состояние обновления не меняется. Состав изменений по объектам так недостижим, и ответ говорит это прямо в поле `composition`. |
 | `debug_launch` | Выполнение | Запускает клиент или подключается к серверу отладки 1С. |
 | `run_yaxunit_tests` | Выполнение | Запускает YAxUnit и читает JUnit-отчет. |
 | [`yaxunit_tests`](#yaxunit_tests) | Фасад · Выполнение | Единая точка запуска и отладки тестов YAxUnit. |
@@ -354,6 +354,8 @@
 <summary><code>infobase_admin</code> - жизненный цикл информационной базы</summary>
 
 Объединяет `get_applications`, `read_event_log`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `branch_infobase`, `update_database`, `sync_control` и встроенную справку.
+
+`dryRun` объявлен и здесь: через фасад он доходит до `update_database` тем же доводом.
 </details>
 
 <a id="config_io"></a>

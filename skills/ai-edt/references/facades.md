@@ -78,7 +78,7 @@ form edits are chained with other metadata edits.
 | `set_infobase_credentials` | Stored credentials for a launch configuration. |
 | `create_launch_config` | A new launch configuration. |
 | `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
-| `update_database` | Writes the configuration into the infobase. Validate for export first. |
+| `update_database` | Writes the configuration into the infobase. Validate for export first. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`), the readiness of the infobase (`readiness`) and its problems (`readinessProblems`). No run is recorded and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. |
 | `branch_infobase` | Binds a git branch to a launch configuration, so `update_database` refuses to write into an infobase that belongs to another branch. For a project that is an extension the binding lives in the extension itself, not in the configuration it extends. |
 | `sync_control` | Inspects and controls EDT-to-infobase synchronization. See the safety rule in `expected-behavior.md`. |
 
