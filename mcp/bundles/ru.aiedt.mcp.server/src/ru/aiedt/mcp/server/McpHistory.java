@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.settings.HistorySettings;
+import ru.aiedt.mcp.server.support.HistoryFullText;
 import ru.aiedt.mcp.server.support.HistoryJournal;
 
 /**
@@ -177,6 +178,10 @@ public final class McpHistory
 
         final boolean success;
 
+        final String fullArgs;
+
+        final boolean binaryResult;
+
         /**
          * @param toolName the tool that ran
          * @param argSummary its arguments, flattened and with credentials masked
@@ -188,12 +193,30 @@ public final class McpHistory
         public Completion(String toolName, String argSummary, boolean argsCut, String resultSummary,
             long durationMs, boolean success)
         {
+            this(toolName, argSummary, argsCut, resultSummary, durationMs, success, argSummary, false);
+        }
+
+        /**
+         * @param toolName the tool that ran
+         * @param argSummary its arguments, flattened, masked and shortened for the buffer
+         * @param argsCut whether flattening shortened any argument
+         * @param resultSummary what it answered, in full
+         * @param durationMs how long it took
+         * @param success whether it worked
+         * @param fullArgs the same arguments masked but NOT shortened, for the on-disk store
+         * @param binaryResult whether the answer is inline binary data, which is not stored
+         */
+        public Completion(String toolName, String argSummary, boolean argsCut, String resultSummary,
+            long durationMs, boolean success, String fullArgs, boolean binaryResult)
+        {
             this.toolName = toolName;
             this.argSummary = argSummary;
             this.argsCut = argsCut;
             this.resultSummary = resultSummary;
             this.durationMs = durationMs;
             this.success = success;
+            this.fullArgs = fullArgs;
+            this.binaryResult = binaryResult;
         }
     }
 
@@ -277,12 +300,19 @@ public final class McpHistory
         }
         String argSummary = completion.argSummary;
         String resultSummary = completion.resultSummary;
+        String entryId = HistoryFullText.newEntryId();
+        long generation = HistoryFullText.generation();
         Record entry = new Record(completion.toolName, truncate(argSummary, settings.argChars()),
             truncate(resultSummary, settings.resultChars()), System.currentTimeMillis(), completion.durationMs,
             completion.success,
             completion.argsCut || (argSummary != null && argSummary.length() > settings.argChars()),
             resultSummary == null ? 0 : resultSummary.length(), answer);
+        entry.entryId = entryId;
         add(entry, settings.depth());
+        // Outside the lock, like the journal: writing a file must not hold up the next tool call.
+        HistoryFullText.write(entryId, completion.toolName,
+            completion.fullArgs != null ? completion.fullArgs : argSummary, resultSummary,
+            completion.binaryResult, settings, generation);
         if (settings.isFileEnabled())
         {
             // Outside the lock: the journal touches the disk, and holding the buffer while it does
@@ -420,6 +450,9 @@ public final class McpHistory
     public static synchronized void clear()
     {
         RING.clear();
+        // The on-disk copy goes with it: a caller who cleared the history and still found the full
+        // text of a call on disk would have been told something untrue.
+        HistoryFullText.clear(HistorySettings.current());
     }
 
     /**
@@ -515,6 +548,9 @@ public final class McpHistory
         final int resultFullChars;
         final Answer answer;
 
+        /** The id the on-disk store keeps this call's full text under. */
+        String entryId;
+
         Record(String toolName, String argSummary, String resultSummary, long timestamp, long durationMs,
             boolean success, boolean argsCut, int resultFullChars, Answer answer)
         {
@@ -532,6 +568,7 @@ public final class McpHistory
         Map<String, Object> toMap()
         {
             Map<String, Object> m = new LinkedHashMap<>();
+            m.put("entryId", entryId); //$NON-NLS-1$
             m.put("tool", toolName); //$NON-NLS-1$
             m.put("args", argSummary); //$NON-NLS-1$
             m.put("result", resultSummary); //$NON-NLS-1$

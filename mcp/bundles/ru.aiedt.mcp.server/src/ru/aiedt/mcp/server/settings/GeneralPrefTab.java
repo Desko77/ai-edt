@@ -122,6 +122,12 @@ public class GeneralPrefTab
 
     private Button historyRedactCheck;
 
+    private Button historyDiskCheck;
+
+    private Spinner historyDiskDaysSpinner;
+
+    private Text historyDiskPathField;
+
     private Button upkeepEnabledCheck;
 
     private Text upkeepSiteText;
@@ -262,6 +268,9 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_HISTORY_RESULT_CHARS, historyResultSpinner.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_FILE_ENABLED, historyFileCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_FILE_REDACT, historyRedactCheck.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_DISK_ENABLED, historyDiskCheck.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_DISK_DAYS, historyDiskDaysSpinner.getSelection());
+        store.setValue(PrefKeys.PREF_HISTORY_DISK_PATH, historyDiskPathField.getText().trim());
         writeUpkeep();
         store.setValue(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR, showMarkersCheck.getSelection());
         MarkerSettingsMigration.mirrorToLegacyKey(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
@@ -338,6 +347,9 @@ public class GeneralPrefTab
         historyResultSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_HISTORY_RESULT_CHARS));
         historyFileCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_HISTORY_FILE_ENABLED));
         historyRedactCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_HISTORY_FILE_REDACT));
+        historyDiskCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_HISTORY_DISK_ENABLED));
+        historyDiskDaysSpinner.setSelection(store.getDefaultInt(PrefKeys.PREF_HISTORY_DISK_DAYS));
+        historyDiskPathField.setText(store.getDefaultString(PrefKeys.PREF_HISTORY_DISK_PATH));
         showMarkersCheck.setSelection(
             store.getDefaultBoolean(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR));
         selectMarkerStyle(store.getDefaultString(PrefKeys.PREF_MARKERS_DECORATION_STYLE));
@@ -431,15 +443,63 @@ public class GeneralPrefTab
             + "in the Call history window."); //$NON-NLS-1$
         budgetNote.setLayoutData(span(section, 3));
 
+        createHistoryOnDiskGroup();
+    }
+
+    /**
+     * What the history keeps on disk, in one group of its own.
+     * <p>
+     * Read top to bottom the page now says how much is held in memory and then what is held on disk
+     * and for how long, which is the order the two questions are actually asked in. The masking
+     * switch belongs here rather than among the buffer settings: it is about what reaches a file.
+     * </p>
+     */
+    private void createHistoryOnDiskGroup()
+    {
+        Composite section = section("Call history on disk"); //$NON-NLS-1$
+
+        historyDiskCheck = new Button(section, SWT.CHECK);
+        historyDiskCheck.setText("Keep the full text of each call, so the window can show it whole"); //$NON-NLS-1$
+        historyDiskCheck.setLayoutData(span(section, 3));
+        historyDiskCheck.setSelection(store.getBoolean(PrefKeys.PREF_HISTORY_DISK_ENABLED));
+
+        historyDiskDaysSpinner = historyRow(section, "Days to keep (0: until the size limit):", //$NON-NLS-1$
+            PrefKeys.PREF_HISTORY_DISK_DAYS, 0, PrefKeys.MAX_HISTORY_DISK_DAYS);
+
+        Label pathLabel = new Label(section, SWT.NONE);
+        pathLabel.setText("Folder:"); //$NON-NLS-1$
+        historyDiskPathField = new Text(section, SWT.BORDER);
+        historyDiskPathField.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        historyDiskPathField.setText(store.getString(PrefKeys.PREF_HISTORY_DISK_PATH));
+        historyDiskPathField.setToolTipText("An absolute path. Empty: the plugin's own folder. " //$NON-NLS-1$
+            + "A folder that cannot be written to is refused and the previous one keeps being used."); //$NON-NLS-1$
+        Button browse = new Button(section, SWT.PUSH);
+        browse.setText("Browse..."); //$NON-NLS-1$
+        browse.addListener(SWT.Selection, event -> {
+            DirectoryDialog chooser = new DirectoryDialog(historyDiskPathField.getShell());
+            chooser.setText("Call history folder"); //$NON-NLS-1$
+            String chosen = chooser.open();
+            if (chosen != null)
+            {
+                historyDiskPathField.setText(chosen);
+            }
+        });
+
         historyFileCheck = new Button(section, SWT.CHECK);
-        historyFileCheck.setText("Also append every call to a file, so it survives a restart"); //$NON-NLS-1$
+        historyFileCheck.setText("Also append every call to a journal file"); //$NON-NLS-1$
         historyFileCheck.setLayoutData(span(section, 3));
         historyFileCheck.setSelection(store.getBoolean(PrefKeys.PREF_HISTORY_FILE_ENABLED));
 
         historyRedactCheck = new Button(section, SWT.CHECK);
-        historyRedactCheck.setText("Mask personal data in that file"); //$NON-NLS-1$
+        historyRedactCheck.setText("Mask personal data in what is written to disk"); //$NON-NLS-1$
         historyRedactCheck.setLayoutData(span(section, 3));
         historyRedactCheck.setSelection(store.getBoolean(PrefKeys.PREF_HISTORY_FILE_REDACT));
+
+        Label note = new Label(section, SWT.WRAP);
+        note.setText("Nothing is written here while \"Record tool calls\" is off. Changing the " //$NON-NLS-1$
+            + "folder does not move what was already written: calls recorded before the change keep " //$NON-NLS-1$
+            + "only their shortened copy in the window."); //$NON-NLS-1$
+        note.setLayoutData(span(section, 3));
     }
 
     /**

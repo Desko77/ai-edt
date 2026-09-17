@@ -176,6 +176,15 @@ public final class PrefKeys
      */
     public static final String PREF_HISTORY_FILE_REDACT = "mcpHistoryFileRedact"; //$NON-NLS-1$
 
+    /** Whether the full text of each call is kept on disk beside the shortened buffer record. */
+    public static final String PREF_HISTORY_DISK_ENABLED = "mcpHistoryDiskEnabled"; //$NON-NLS-1$
+
+    /** How many days the on-disk history is kept; zero keeps it until the size limit says otherwise. */
+    public static final String PREF_HISTORY_DISK_DAYS = "mcpHistoryDiskDays"; //$NON-NLS-1$
+
+    /** Where the on-disk history is written; empty means the plugin's own state location. */
+    public static final String PREF_HISTORY_DISK_PATH = "mcpHistoryDiskPath"; //$NON-NLS-1$
+
     /** Whether markers are painted onto metadata objects in the Navigator. */
     public static final String PREF_MARKERS_SHOW_IN_NAVIGATOR = "markers.showInNavigator"; //$NON-NLS-1$
 
@@ -396,6 +405,24 @@ public final class PrefKeys
 
     /** Shipped masking of the file journal: on. */
     public static final boolean DEFAULT_HISTORY_FILE_REDACT = true;
+
+    /**
+     * Shipped full-text storage: on.
+     * <p>
+     * The window that shows a call exists to show what the call answered, and the buffer alone
+     * cannot: it keeps a few hundred characters by design, because it lives in the heap the IDE runs
+     * on. Shipping this off would mean the window answers "cut" out of the box, which is the defect
+     * it was built to remove. It follows the master recording flag, so turning the history off still
+     * writes nothing anywhere.
+     * </p>
+     */
+    public static final boolean DEFAULT_HISTORY_DISK_ENABLED = true;
+
+    /** Shipped retention of the on-disk history, in days. */
+    public static final int DEFAULT_HISTORY_DISK_DAYS = 14;
+
+    /** Largest retention that can be set, in days. */
+    public static final int MAX_HISTORY_DISK_DAYS = 3650;
 
     /** Shipped marker decoration: on. */
     public static final boolean DEFAULT_MARKERS_SHOW_IN_NAVIGATOR = true;

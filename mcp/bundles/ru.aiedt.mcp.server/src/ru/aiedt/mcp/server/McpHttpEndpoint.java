@@ -644,6 +644,15 @@ public class McpHttpEndpoint
             {
                 throw new IOException("MCP server could not bind any address on port " + serverPort); //$NON-NLS-1$
             }
+            // Retention is applied when the server comes up and when the store rotates, not on every
+            // call: a record's age changes once a day, and reading the file to answer that on each
+            // call would cost more than the sweep saves.
+            int sweptOut = ru.aiedt.mcp.server.support.HistoryFullText.sweepOld(
+                ru.aiedt.mcp.server.settings.HistorySettings.current());
+            if (sweptOut > 0)
+            {
+                Activator.logInfo("history: " + sweptOut + " stored calls past their retention removed"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
         catch (RuntimeException | IOException e)
         {

@@ -55,7 +55,7 @@ get_content_assist	required=[column,filePath,line,projectName] type="object" col
 get_edt_version	required=[] type="object"
 get_form_screenshot	required=[] type="object" activePage{type="string"} formPath{type="string"} projectName{type="string"} refresh{type="boolean"} savePath{type="string"}
 get_form_structure	required=[formPath,projectName] type="object" depth{type="integer"} formPath{type="string"} includeCommandInterface{type="boolean"} maxElements{type="integer"} projectName{type="string"} subtree{type="string"}
-get_mcp_history	required=[] type="object" clear{type="boolean"} includeStats{type="boolean"} limit{type="integer"}
+get_mcp_history	required=[] type="object" clear{type="boolean"} entryId{type="string"} includeStats{type="boolean"} limit{type="integer"}
 get_metadata_details	required=[objectFqns,projectName] type="object" full{type="boolean"} language{type="string"} objectFqns{items={"type":"string"};type="array"} outline{type="boolean"} projectName{type="string"} sections{items={"type":"string"};type="array"}
 get_metadata_objects	required=[] type="object" language{type="string"} limit{type="integer"} metadataType{type="string"} nameFilter{type="string"} projectName{type="string"}
 get_method_call_hierarchy	required=[methodName,modulePath,projectName] type="object" depth{type="integer"} direction{type="string"} limit{type="integer"} methodName{type="string"} modulePath{type="string"} projectName{type="string"}

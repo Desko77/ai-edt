@@ -251,6 +251,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * port 1550 held by a neighbouring workspace, and the launch unreachable for the rest of the
      * session.
      * </p>
+     * <p>
+     * And a seventh, by 240, for entryId. The buffer keeps a few hundred characters of each call
+     * because it lives in the IDE's own heap; the window that shows a call is opened to read what
+     * the tool answered, and until this argument there was nowhere to read it from. Measured from a
+     * screenshot 16.09: "Response (303 of 1557 characters)".
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 81995;
+    private static final int DOCUMENT_PROSE = 82235;
 }

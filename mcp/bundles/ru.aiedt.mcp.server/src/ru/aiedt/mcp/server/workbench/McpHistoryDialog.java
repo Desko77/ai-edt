@@ -22,6 +22,7 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
@@ -31,6 +32,8 @@ import org.eclipse.swt.widgets.TableItem;
 import org.eclipse.swt.widgets.Text;
 
 import ru.aiedt.mcp.server.McpHistory;
+import ru.aiedt.mcp.server.settings.HistorySettings;
+import ru.aiedt.mcp.server.support.HistoryFullText;
 import ru.aiedt.mcp.server.settings.HistorySettings;
 import ru.aiedt.mcp.server.support.HistoryJournal;
 
@@ -364,6 +367,64 @@ public class McpHistoryDialog
         requestText.setText(args);
         responseText.setText(result);
         requestLabel.getParent().layout();
+        showStoredText(call);
+    }
+
+    /**
+     * Replaces the shortened copy with the stored full text, once it has been read.
+     * <p>
+     * The read goes to a background thread: the store holds up to 32 MB, and reading it on the
+     * display thread would freeze the window being opened to look at something. The selection is
+     * checked again when the text arrives, because a person can click the next row while a file is
+     * being read.
+     * </p>
+     *
+     * @param call the record the table row stands for.
+     */
+    private void showStoredText(Map<String, Object> call)
+    {
+        Object idValue = call.get("entryId"); //$NON-NLS-1$
+        String entryId = idValue == null ? null : idValue.toString();
+        if (entryId == null || entryId.isEmpty())
+        {
+            return;
+        }
+        Display display = requestText.getDisplay();
+        Thread reader = new Thread(() -> {
+            Map<String, Object> stored =
+                HistoryFullText.read(entryId, HistorySettings.current());
+            display.asyncExec(() -> {
+                if (requestText.isDisposed() || stored == null)
+                {
+                    return;
+                }
+                int index = table.getSelectionIndex();
+                if (index < 0 || index >= shown.size() || shown.get(index) != call)
+                {
+                    // The selection moved on while the file was being read.
+                    return;
+                }
+                Object storedArgs = stored.get("args"); //$NON-NLS-1$
+                if (storedArgs != null)
+                {
+                    requestText.setText(storedArgs.toString());
+                    requestLabel.setText("Request (full)"); //$NON-NLS-1$
+                }
+                Object storedResult = stored.get("result"); //$NON-NLS-1$
+                if (storedResult != null)
+                {
+                    responseText.setText(storedResult.toString());
+                    responseLabel.setText("Response (full)"); //$NON-NLS-1$
+                }
+                else if (stored.get("resultBinary") != null) //$NON-NLS-1$
+                {
+                    responseLabel.setText("Response (binary, not stored)"); //$NON-NLS-1$
+                }
+                requestLabel.getParent().layout();
+            });
+        }, "ai-edt-history-full-text"); //$NON-NLS-1$
+        reader.setDaemon(true);
+        reader.start();
     }
 
     /**

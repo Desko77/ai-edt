@@ -37,8 +37,14 @@ public final class HistorySettings
 
     private final boolean fileRedact;
 
+    private final boolean diskEnabled;
+
+    private final int diskDays;
+
+    private final String diskPath;
+
     private HistorySettings(boolean enabled, int depth, int argChars, int resultChars, boolean fileEnabled,
-        boolean fileRedact)
+        boolean fileRedact, boolean diskEnabled, int diskDays, String diskPath)
     {
         this.enabled = enabled;
         this.depth = depth;
@@ -46,6 +52,9 @@ public final class HistorySettings
         this.resultChars = resultChars;
         this.fileEnabled = fileEnabled;
         this.fileRedact = fileRedact;
+        this.diskEnabled = diskEnabled;
+        this.diskDays = diskDays;
+        this.diskPath = diskPath;
     }
 
     /**
@@ -78,7 +87,8 @@ public final class HistorySettings
         {
             return new HistorySettings(PrefKeys.DEFAULT_HISTORY_ENABLED, PrefKeys.DEFAULT_HISTORY_DEPTH,
                 PrefKeys.DEFAULT_HISTORY_ARG_CHARS, PrefKeys.DEFAULT_HISTORY_RESULT_CHARS,
-                PrefKeys.DEFAULT_HISTORY_FILE_ENABLED, PrefKeys.DEFAULT_HISTORY_FILE_REDACT);
+                PrefKeys.DEFAULT_HISTORY_FILE_ENABLED, PrefKeys.DEFAULT_HISTORY_FILE_REDACT,
+                PrefKeys.DEFAULT_HISTORY_DISK_ENABLED, PrefKeys.DEFAULT_HISTORY_DISK_DAYS, "");
         }
         int depth = count(store, PrefKeys.PREF_HISTORY_DEPTH, PrefKeys.DEFAULT_HISTORY_DEPTH, 1,
             PrefKeys.MAX_HISTORY_DEPTH);
@@ -91,7 +101,11 @@ public final class HistorySettings
             flag(store, PrefKeys.PREF_HISTORY_ENABLED, PrefKeys.DEFAULT_HISTORY_ENABLED), depth,
             fit(argChars, share), fit(resultChars, share),
             flag(store, PrefKeys.PREF_HISTORY_FILE_ENABLED, PrefKeys.DEFAULT_HISTORY_FILE_ENABLED),
-            flag(store, PrefKeys.PREF_HISTORY_FILE_REDACT, PrefKeys.DEFAULT_HISTORY_FILE_REDACT));
+            flag(store, PrefKeys.PREF_HISTORY_FILE_REDACT, PrefKeys.DEFAULT_HISTORY_FILE_REDACT),
+            flag(store, PrefKeys.PREF_HISTORY_DISK_ENABLED, PrefKeys.DEFAULT_HISTORY_DISK_ENABLED),
+            count(store, PrefKeys.PREF_HISTORY_DISK_DAYS, PrefKeys.DEFAULT_HISTORY_DISK_DAYS, 0,
+                PrefKeys.MAX_HISTORY_DISK_DAYS),
+            store.getString(PrefKeys.PREF_HISTORY_DISK_PATH));
     }
 
     /**
@@ -207,6 +221,32 @@ public final class HistorySettings
     public boolean isFileEnabled()
     {
         return fileEnabled;
+    }
+
+    /**
+     * Whether the full text of each call is kept on disk.
+     * <p>
+     * Answers false whenever recording itself is off: one switch turns everything off, and a reader
+     * of the settings should not have to know the order they combine in.
+     * </p>
+     *
+     * @return whether to keep full text on disk
+     */
+    public boolean isDiskEnabled()
+    {
+        return this.enabled && this.diskEnabled;
+    }
+
+    /** @return how many days the on-disk history is kept; zero means until the size limit */
+    public int diskDays()
+    {
+        return this.diskDays;
+    }
+
+    /** @return where the on-disk history is written; empty means the plugin's state location */
+    public String diskPath()
+    {
+        return this.diskPath;
     }
 
     /**

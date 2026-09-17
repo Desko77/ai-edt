@@ -69,6 +69,11 @@ public class DefaultPreferences
             PrefKeys.DEFAULT_HISTORY_FILE_ENABLED);
         store.setDefault(PrefKeys.PREF_HISTORY_FILE_REDACT,
             PrefKeys.DEFAULT_HISTORY_FILE_REDACT);
+        store.setDefault(PrefKeys.PREF_HISTORY_DISK_ENABLED,
+            PrefKeys.DEFAULT_HISTORY_DISK_ENABLED);
+        store.setDefault(PrefKeys.PREF_HISTORY_DISK_DAYS,
+            PrefKeys.DEFAULT_HISTORY_DISK_DAYS);
+        store.setDefault(PrefKeys.PREF_HISTORY_DISK_PATH, ""); //$NON-NLS-1$
         store.setDefault(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
             PrefKeys.DEFAULT_MARKERS_SHOW_IN_NAVIGATOR);
         store.setDefault(PrefKeys.PREF_MARKERS_DECORATION_STYLE,

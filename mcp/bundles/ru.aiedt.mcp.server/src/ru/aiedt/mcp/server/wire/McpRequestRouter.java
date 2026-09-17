@@ -967,8 +967,14 @@ public class McpRequestRouter
                 // though it did not throw (tools report failure via the result, not an exception).
                 boolean logicalSuccess = success && !FailureShape.looksFailed(result);
                 ArgSummary args = summarizeArgs(arguments, history.argChars());
+                // Masking and shortening are two different things done in one place, and the store
+                // needs the first without the second: a credential must never reach the disk, while
+                // a long ordinary argument is exactly what the reader opened the window for.
+                ArgSummary whole = summarizeArgs(arguments, Integer.MAX_VALUE);
                 McpHistory.Completion completion = new McpHistory.Completion(tool.getName(), args.text,
-                    args.cut, resultSummary, System.currentTimeMillis() - start, logicalSuccess);
+                    args.cut, resultSummary, System.currentTimeMillis() - start, logicalSuccess,
+                    whole.text, tool.getResponseType() == IMcpTool.ResponseType.IMAGE
+                        && !FailureShape.looksFailed(result) && !result.trim().startsWith("{")); //$NON-NLS-1$
                 // The record is left by the call, once it is also known who answered the agent -
                 // the tool or an operator signal - and whether the answer got through. A tool run
                 // with no connection behind it (a test) is recorded here, as unobserved.
