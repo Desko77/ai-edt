@@ -79,12 +79,22 @@ public final class DebugValueSerializer
         throws Exception
     {
         List<Map<String, Object>> variables = new ArrayList<>();
-        if (frame == null || !frame.hasVariables())
+        // NOT frame.hasVariables() first: measured 17.09 against EDT 2026.2, BslStackFrame.hasVariables
+        // reads the length of a field that getVariables is the one to fill, so asking whether there
+        // are variables before asking for them throws "Cannot read the array length because
+        // this.variables is null". getVariables fills the field and returns an empty array when
+        // there is nothing, which is the same answer without the exception.
+        if (frame == null)
+        {
+            return new ArrayList<>();
+        }
+        IVariable[] frameVariables = frame.getVariables();
+        if (frameVariables.length == 0)
         {
             return variables;
         }
 
-        for (IVariable variable : frame.getVariables())
+        for (IVariable variable : frameVariables)
         {
             variables.add(serializeVariable(variable, registry));
         }
