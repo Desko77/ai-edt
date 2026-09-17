@@ -18,6 +18,8 @@ import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
 import com._1c.g5.v8.dt.validation.marker.IMarkerManager;
 import com._1c.g5.v8.dt.validation.marker.Marker;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.swt.widgets.Display;
 import com.e1c.g5.v8.dt.check.qfix.FixProcessHandle;
 import com.e1c.g5.v8.dt.check.qfix.FixVariantDescriptor;
 import com.e1c.g5.v8.dt.check.qfix.IFixManager;
@@ -30,6 +32,7 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
+import ru.aiedt.mcp.server.support.EditorBuffer;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
@@ -302,13 +305,42 @@ public class MarkerCorrectionTool implements IMcpTool
                     .toJson();
             }
             fixManager.selectFixVariant(chosen, handle);
-            fixManager.executeFix(handle, new NullProgressMonitor());
+            boolean editsModuleText = editsTheModuleDocument(fixManager, handle);
+            if (editsModuleText)
+            {
+                List<String> unsaved = unsavedModulesIn(marker.getProject());
+                if (!unsaved.isEmpty())
+                {
+                    // Which file the correction will touch is not knowable before it runs, so the
+                    // question is asked of the project: unsaved module work anywhere in it, and the
+                    // correction waits. Writing over somebody's editor is not ours to risk.
+                    return ToolResult.error("Modules in this project are open with unsaved changes, " //$NON-NLS-1$
+                        + "so the correction was not applied: applying it would save work that is " //$NON-NLS-1$
+                        + "not ours to save. Save or revert those editors and call again.") //$NON-NLS-1$
+                        .put("unsavedModules", unsaved) //$NON-NLS-1$
+                        .put("correction", chosen.getDescription()) //$NON-NLS-1$
+                        .toJson();
+                }
+                String failure = executeOnDisplayThread(fixManager, handle);
+                if (failure != null)
+                {
+                    return ToolResult.error("The correction did not run: " + failure) //$NON-NLS-1$
+                        .put("correction", chosen.getDescription()) //$NON-NLS-1$
+                        .put("object", marker.getObjectPresentation()) //$NON-NLS-1$
+                        .toJson();
+                }
+            }
+            else
+            {
+                fixManager.executeFix(handle, new NullProgressMonitor());
+            }
             return ToolResult.success()
                 .put("operation", "apply") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("checkId", checkId) //$NON-NLS-1$
                 .put("object", marker.getObjectPresentation()) //$NON-NLS-1$
                 .put("corrected", marker.getMessage()) //$NON-NLS-1$
                 .put("correction", chosen.getDescription()) //$NON-NLS-1$
+                .put("editedModuleText", Boolean.valueOf(editsModuleText)) //$NON-NLS-1$
                 .put("message", "Applied. The marker is cleared by the next validation, not by this " //$NON-NLS-1$ //$NON-NLS-2$
                     + "call - run diagnostics revalidate_objects to see the current state.") //$NON-NLS-1$
                 .toJson();
@@ -365,6 +397,128 @@ public class MarkerCorrectionTool implements IMcpTool
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the selected correction edits the text of a BSL module.
+     * <p>
+     * Asked of the variant OBJECT rather than of its description: the description is localised and
+     * says nothing about how the change is made, while the class does. The Xtext module fixes go
+     * through the module's document, which can only be touched on the display thread; everything
+     * else changes the model and is better off the display thread, where it does not block the IDE.
+     * </p>
+     *
+     * @param fixManager the correction service.
+     * @param handle the prepared correction, with its variant already selected.
+     * @return whether this correction writes module text
+     */
+    private static boolean editsTheModuleDocument(IFixManager fixManager, FixProcessHandle handle)
+    {
+        try
+        {
+            Object variant = fixManager.getSelectedFixVariant(handle);
+            return variant != null && namesAnXtextModuleFix(variant.getClass());
+        }
+        catch (Exception e)
+        {
+            // Unknown kind: the old path, which refuses rather than opening anything.
+            Activator.logDebug("fix variant kind not readable: " + e.getMessage()); //$NON-NLS-1$
+            return false;
+        }
+    }
+
+    /**
+     * Whether a class (or a class it is declared in) belongs to the Xtext BSL module fixes.
+     *
+     * @param type the variant's class.
+     * @return whether it is one of the module-text fixes
+     */
+    static boolean namesAnXtextModuleFix(Class<?> type)
+    {
+        for (Class<?> current = type; current != null; current = current.getEnclosingClass())
+        {
+            if (isXtextModuleFixName(current.getName()))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a class name belongs to the Xtext BSL module fixes.
+     * <p>
+     * The family is named by its package: a fix that edits module text is declared in
+     * {@code com.e1c.g5.v8.dt.bsl.check.qfix}, and the model fixes live elsewhere. Kept as a
+     * question about the NAME so it can be put to the test without the environment.
+     * </p>
+     *
+     * @param className the fully qualified class name; may be <code>null</code>.
+     * @return whether the name belongs to that family
+     */
+    static boolean isXtextModuleFixName(String className)
+    {
+        return className != null && className.startsWith("com.e1c.g5.v8.dt.bsl.check.qfix."); //$NON-NLS-1$
+    }
+
+    /**
+     * Runs the correction where a document edit is allowed to happen.
+     *
+     * @param fixManager the correction service.
+     * @param handle the prepared correction.
+     * @return what went wrong, or <code>null</code> when it ran
+     */
+    private static String executeOnDisplayThread(IFixManager fixManager, FixProcessHandle handle)
+    {
+        Display display = Display.getDefault();
+        if (display == null || display.isDisposed())
+        {
+            return "there is no workbench here to edit a module document in"; //$NON-NLS-1$
+        }
+        final String[] failure = {null};
+        display.syncExec(() -> {
+            try
+            {
+                fixManager.executeFix(handle, new NullProgressMonitor());
+            }
+            catch (Exception e)
+            {
+                Activator.logError("Correction failed on the display thread", e); //$NON-NLS-1$
+                failure[0] = e.getClass().getSimpleName() + ": " + e.getMessage(); //$NON-NLS-1$
+            }
+        });
+        return failure[0];
+    }
+
+    /**
+     * The BSL modules of a project that are open with unsaved changes.
+     *
+     * @param project the project the finding belongs to; may be <code>null</code>.
+     * @return their workspace paths; empty when nothing is unsaved
+     */
+    private static List<String> unsavedModulesIn(org.eclipse.core.resources.IProject project)
+    {
+        List<String> unsaved = new ArrayList<>();
+        if (project == null)
+        {
+            return unsaved;
+        }
+        try
+        {
+            project.accept(resource -> {
+                if (resource instanceof IFile && resource.getName().endsWith(".bsl") //$NON-NLS-1$
+                    && EditorBuffer.hasUnsavedChanges((IFile)resource))
+                {
+                    unsaved.add(resource.getFullPath().toString());
+                }
+                return true;
+            });
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("unsaved modules not listed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return unsaved;
     }
 
     /**
