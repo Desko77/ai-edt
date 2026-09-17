@@ -822,11 +822,27 @@ public class DatabaseUpdater implements IMcpTool
             }
             else
             {
-                result.put("message", "Update finished; final state: " + stateAfter.name()); //$NON-NLS-1$ //$NON-NLS-2$
-                result.put("updateIncomplete", "The update did NOT reach UPDATED (stateAfter=" //$NON-NLS-1$ //$NON-NLS-2$
-                    + stateAfter.name() + "). success:true here only means the update call returned " //$NON-NLS-1$
-                    + "without throwing, NOT that the infobase is fully updated. Double-check via " //$NON-NLS-1$
-                    + "get_applications and re-run update_database if that matters."); //$NON-NLS-1$
+                // An update that was required and did not reach UPDATED is a failed update, not a
+                // successful call with a footnote. The platform refuses inside the run without
+                // throwing - the state is the only programmatic sign it leaves, and its own text
+                // goes to the workspace log. Measured 15.09 on a real configuration: the caller was
+                // left polling a run that had already been refused.
+                ToolResult refusal = ToolResult.error("The database was not updated: the update " //$NON-NLS-1$
+                    + "ended in state " + stateAfter.name() + " rather than UPDATED. The platform " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "refuses inside the run without raising an error, and its own wording is in " //$NON-NLS-1$
+                    + "the workspace log (.metadata/.log) - read it there for the reason.")
+                    .put("project", projectName) //$NON-NLS-1$
+                    .put("applicationId", applicationId) //$NON-NLS-1$
+                    .put("applicationName", application.getName()) //$NON-NLS-1$
+                    .put("updateType", updateType.name()) //$NON-NLS-1$
+                    .put("stateBefore", stateBefore.name()) //$NON-NLS-1$
+                    .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
+                    .put("updateComplete", Boolean.FALSE); //$NON-NLS-1$
+                if (stillUpdating != null)
+                {
+                    refusal.put("claimReleased", stillUpdating); //$NON-NLS-1$
+                }
+                return refusal.toJson();
             }
 
             if (autoFreeClients)

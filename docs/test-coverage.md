@@ -6,18 +6,18 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 116 | a test class named after it |
-| exercised | 102 | reached by some other test |
-| tool-sweep | 78 | declaration checked by the registry-wide contract sweep |
+| exercised | 105 | reached by some other test |
+| tool-sweep | 76 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
-| workspace-bound | 52 | drives a live EDT project or debug session |
+| workspace-bound | 51 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **396** | across 302 test classes |
+| **total** | **396** | across 306 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (52)
+## workspace-bound (51)
 
 **folders**
 - IClusterChangeObserver
@@ -63,7 +63,6 @@ _none_
 - BslCallGraphHelper
 - BslSignatureReader
 - BuildTaskHelper
-- DebugValueSerializer
 - ExternalProjectResolver
 - FileMarkers
 - InfobaseIdentity
@@ -161,7 +160,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (78)
+## tool-sweep (76)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -172,14 +171,12 @@ _none_
 - BreakpointSetter
 - BreakpointsLister
 - CallHierarchyReader
-- CodeSearchTool
 - CodeTemplateTool
 - CommonPictureExporter
 - CompareConfigurationsTool
 - ConfigurationInfoReader
 - ConfigurationXmlExporter
 - ConfigurationXmlImporter
-- DatabaseUpdater
 - DcsSearchTool
 - DebugResumer
 - DebugStateReader
@@ -243,7 +240,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (102)
+## exercised (105)
 
 **(root)**
 - Activator
@@ -290,6 +287,7 @@ _none_
 - DcsExtensionExportHelper
 - DcsSchemaRestorer
 - DebugSessionBook
+- DebugValueSerializer
 - DefaultLanguage
 - EditorBuffer
 - ErrorTags
@@ -323,9 +321,11 @@ _none_
 **toolkit/ops**
 - BslCodeReviewTool
 - CheckDocReader
+- CodeSearchTool
 - CodeTextSearcher
 - ConfigIoFacadeTool
 - ContentAssistReader
+- DatabaseUpdater
 - DcsWorkshopTool
 - DebugSessionStarter
 - DetectQueryAntiPatternsTool
@@ -529,9 +529,9 @@ closes.
 | 9-16 | 48 |
 | 17+ | 15 |
 
-2705 test methods across 302 test classes; 116 classes have a test of their own, median 9 methods each.
+2717 test methods across 306 test classes; 116 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 396 classes have one: 78 are covered by the registry-wide contract sweep and 52 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 396 classes have one: 76 are covered by the registry-wide contract sweep and 51 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 
