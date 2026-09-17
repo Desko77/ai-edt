@@ -140,8 +140,8 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "step_over / step_into / step_out also work as top-level actions and " //$NON-NLS-1$
                 + "set this internally.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "wait_for_break / step timeout in seconds (min 1). Legacy aliases timeoutMs " //$NON-NLS-1$
-                    + "(milliseconds) and timeout (seconds) are still accepted.") //$NON-NLS-1$
+                "wait_for_break / step timeout in seconds, 1..50; a longer ask is cut to 50 " //$NON-NLS-1$
+                    + "and said so. Aliases: timeoutMs, waitSeconds, timeout.") //$NON-NLS-1$
             .stringProperty("moduleFilter", "Module substring filter for get_profiling_results.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("minFrequency", "Minimum hit count for get_profiling_results.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("module", "BSL module path for run_to_line (module-relative or absolute).") //$NON-NLS-1$ //$NON-NLS-2$

@@ -19,6 +19,7 @@ import org.eclipse.debug.core.DebugEvent;
 import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.IDebugEventSetListener;
 import org.eclipse.debug.core.ILaunch;
+import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.ILaunchManager;
 import org.eclipse.debug.core.model.IDebugTarget;
 import org.eclipse.debug.core.model.IStackFrame;
@@ -55,6 +56,9 @@ public final class DebugSessionBook
     private final Map<String, SuspendSnapshot> snapshots = new ConcurrentHashMap<>();
     private final Map<Long, IThread> threadsById = new ConcurrentHashMap<>();
     private final Map<Long, IStackFrame> framesById = new ConcurrentHashMap<>();
+
+    /** Frame reference to the address it names, which is what survives a re-suspend. */
+    private final Map<Long, FramePlace> framePlaces = new ConcurrentHashMap<>();
     private final Map<Long, String> threadOwners = new ConcurrentHashMap<>();
     private final Map<Long, String> frameOwners = new ConcurrentHashMap<>();
 
@@ -138,6 +142,7 @@ public final class DebugSessionBook
             snapshots.clear();
             threadsById.clear();
             framesById.clear();
+            framePlaces.clear();
             threadOwners.clear();
             frameOwners.clear();
             notifyAll();
@@ -204,7 +209,9 @@ public final class DebugSessionBook
 
         try
         {
-            String applicationId = findApplicationIdFor(frame.getThread());
+            IThread owner = frame.getThread();
+            framePlaces.put(Long.valueOf(frameRef), new FramePlace(owner, positionOf(owner, frame)));
+            String applicationId = findApplicationIdFor(owner);
             if (applicationId != null)
             {
                 frameOwners.put(Long.valueOf(frameRef), applicationId);
@@ -215,6 +222,33 @@ public final class DebugSessionBook
             // Best effort. A frame whose application cannot be named is still usable while it lives.
         }
         return frameRef;
+    }
+
+    /**
+     * Where a frame sits in its own thread's stack.
+     *
+     * @param thread the thread the frame belongs to.
+     * @param frame the frame.
+     * @return the index, or -1 when the stack does not carry it
+     */
+    private static int positionOf(IThread thread, IStackFrame frame)
+    {
+        try
+        {
+            IStackFrame[] stack = thread.getStackFrames();
+            for (int i = 0; i < stack.length; i++)
+            {
+                if (stack[i] == frame)
+                {
+                    return i;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            // The stack is only readable while the thread is suspended; -1 says so.
+        }
+        return -1;
     }
 
     /**
@@ -285,7 +319,52 @@ public final class DebugSessionBook
      */
     public IStackFrame getFrame(long frameRef)
     {
+        FramePlace place = framePlaces.get(Long.valueOf(frameRef));
+        if (place != null && place.index >= 0)
+        {
+            try
+            {
+                IStackFrame[] stack = place.thread.getStackFrames();
+                int live = pickIndex(stack.length, place.index);
+                if (live >= 0)
+                {
+                    // The object the model holds NOW. The one captured at suspend time is a shell
+                    // once the session has moved on, and reading its variables throws.
+                    return stack[live];
+                }
+            }
+            catch (Exception e)
+            {
+                // Thread gone or running: the reference is stale, and the caller is told so.
+            }
+            return null;
+        }
         return framesById.get(Long.valueOf(frameRef));
+    }
+
+    /**
+     * Whether a remembered position still exists in a stack of this size.
+     *
+     * @param liveCount how many frames the thread has now.
+     * @param index the remembered position.
+     * @return the index to read, or -1 when the stack no longer reaches it
+     */
+    static int pickIndex(int liveCount, int index)
+    {
+        return index >= 0 && index < liveCount ? index : -1;
+    }
+
+    /** A frame's address: the thread it belongs to and where it sits in that thread's stack. */
+    private static final class FramePlace
+    {
+        private final IThread thread;
+        private final int index;
+
+        FramePlace(IThread thread, int index)
+        {
+            this.thread = thread;
+            this.index = index;
+        }
     }
 
     /**
@@ -398,8 +477,55 @@ public final class DebugSessionBook
      */
     public static String findLoneActiveApplicationId()
     {
-        List<String> applicationIds = activeApplicationIds();
-        return applicationIds.size() == 1 ? applicationIds.get(0) : null;
+        return loneOf(activeApplicationIds());
+    }
+
+    /**
+     * The one id, when there is exactly one.
+     *
+     * @param applicationIds the ids seen, already free of repeats.
+     * @return the single id, or <code>null</code> when there is none or more than one
+     */
+    static String loneOf(List<String> applicationIds)
+    {
+        return applicationIds != null && applicationIds.size() == 1 ? applicationIds.get(0) : null;
+    }
+
+    /**
+     * Every launch the auto-resolve looked at, as the refusal should describe them.
+     * <p>
+     * Without this a caller is told that the application could not be resolved and nothing else -
+     * not how many launches there are, not which ids they carry, not whether two entries of one
+     * launch are being counted as two applications. That is the material the next reading of this
+     * defect needs.
+     * </p>
+     *
+     * @return one entry per launch that has not terminated; empty, never <code>null</code>
+     */
+    public static List<Map<String, Object>> describeActiveLaunches()
+    {
+        List<Map<String, Object>> seen = new ArrayList<>();
+        ILaunchManager launchManager = LaunchConfigAccess.getLaunchManager();
+        if (launchManager == null)
+        {
+            return seen;
+        }
+        for (ILaunch launch : launchManager.getLaunches())
+        {
+            if (launch.isTerminated())
+            {
+                continue;
+            }
+            Map<String, Object> entry = new LinkedHashMap<>();
+            ILaunchConfiguration config = launch.getLaunchConfiguration();
+            entry.put("launchConfiguration", config == null ? null : config.getName()); //$NON-NLS-1$
+            entry.put("configurationType", config == null ? null //$NON-NLS-1$
+                : LaunchConfigAccess.getConfigTypeId(config));
+            entry.put("applicationId", LaunchConfigAccess.getApplicationIdFor(launch)); //$NON-NLS-1$
+            entry.put("debugTargets", Integer.valueOf(launch.getDebugTargets().length)); //$NON-NLS-1$
+            seen.add(entry);
+        }
+        return seen;
     }
 
     /**

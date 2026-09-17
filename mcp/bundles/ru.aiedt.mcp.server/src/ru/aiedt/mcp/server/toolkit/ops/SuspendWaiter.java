@@ -40,7 +40,18 @@ public final class SuspendWaiter implements IMcpTool
             + "Left unspecified with only one EDT debug launch running, that launch is picked automatically. " //$NON-NLS-1$
             + "A timeout does not terminate the launch; invoke this tool again to keep waiting."; //$NON-NLS-1$
 
-    private static final int DEFAULT_TIMEOUT = 60;
+    /**
+     * The longest this tool waits, in seconds, whatever was asked for.
+     * <p>
+     * A client gives one request about a minute before giving up on it, and an answer that arrives
+     * after that is no answer: the caller sees a transport error and cannot tell a breakpoint that
+     * did not fire from a server that did not reply. Fifty leaves room for the answer to travel.
+     * Breakpoints stay where they are, so a longer wait is a second call, not a longer request.
+     * </p>
+     */
+    static final int MAX_TIMEOUT = 50;
+
+    private static final int DEFAULT_TIMEOUT = MAX_TIMEOUT;
 
     @Override
     public String getName()
@@ -62,8 +73,10 @@ public final class SuspendWaiter implements IMcpTool
                 "Id of the running debug session (a real id, or 'attach:<configName>' for attach launches). " //$NON-NLS-1$
                     + "Can be left out when there is only one active debug launch.")
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "How long to wait, in seconds (defaults to 60). Canonical name; the legacy aliases " //$NON-NLS-1$
-                    + "timeout (seconds) and timeoutMs (milliseconds) are still accepted.") //$NON-NLS-1$
+                "How long to wait, in seconds: 50 at most, and 50 by default. A longer request " //$NON-NLS-1$
+                    + "is cut to 50 and the answer says so - one request does not outlive that. " //$NON-NLS-1$
+                    + "Breakpoints stay set, so call again to keep waiting. Aliases: timeout, " //$NON-NLS-1$
+                    + "waitSeconds, timeoutMs.") //$NON-NLS-1$
             .integerProperty("timeoutMs", //$NON-NLS-1$
                 "Legacy alias for the wait window, in milliseconds (rounded to seconds, minimum 1). " //$NON-NLS-1$
                     + "Precedence: timeoutSeconds wins; otherwise timeoutMs beats the legacy timeout.")
@@ -82,7 +95,9 @@ public final class SuspendWaiter implements IMcpTool
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         // Canonical timeoutSeconds wins; the legacy timeoutMs (ms) still beats the legacy timeout
         // (seconds) when timeoutSeconds is absent, as it did before.
-        int timeout = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT, 1, 0);
+        Integer requested = TimeoutArgs.requestedSeconds(params);
+        int timeout = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT, 1, MAX_TIMEOUT);
+        boolean capped = requested != null && requested.intValue() > MAX_TIMEOUT;
 
         DebugSessionBook registry = DebugSessionBook.get();
         registry.ensureListenerRegistered();
@@ -95,7 +110,12 @@ public final class SuspendWaiter implements IMcpTool
             {
                 return ToolResult.error(
                     "applicationId must be provided: there is no single active debug launch to resolve it from automatically. " //$NON-NLS-1$
-                        + "Call debug_status to see the active launches.").toJson();
+                        + "Call debug_status to see the active launches.")
+                    .put("activeLaunches", DebugSessionBook.describeActiveLaunches()) //$NON-NLS-1$
+                    .put("listingNote", "What the auto-resolve looked at. Two entries carrying the " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "SAME applicationId resolve fine; it refuses when the ids differ, and these " //$NON-NLS-1$
+                        + "are the ids it saw.") //$NON-NLS-1$
+                    .toJson();
             }
             autoResolved = true;
         }
@@ -110,7 +130,16 @@ public final class SuspendWaiter implements IMcpTool
             {
                 ToolResult result = ToolResult.success().put("hit", false) //$NON-NLS-1$
                     .put("reason", "timeout") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("waitedSeconds", Integer.valueOf(timeout)) //$NON-NLS-1$
                     .put("applicationId", applicationId); //$NON-NLS-1$
+                if (capped)
+                {
+                    result.put("timeoutCapped", Boolean.TRUE) //$NON-NLS-1$
+                        .put("requestedSeconds", requested) //$NON-NLS-1$
+                        .put("capNote", "A single request does not live long enough for the wait " //$NON-NLS-1$ //$NON-NLS-2$
+                            + "you asked for, so it was cut to " + MAX_TIMEOUT //$NON-NLS-1$
+                            + " seconds. The breakpoints are still set: call again to keep waiting.");
+                }
                 if (autoResolved)
                 {
                     result.put("autoResolved", true); //$NON-NLS-1$

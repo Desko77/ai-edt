@@ -56,6 +56,21 @@ public final class TimeoutArgs
     }
 
     /**
+     * What the caller asked for, before any bound is applied.
+     * <p>
+     * A tool that caps the wait needs this to tell the caller the wait was shortened; the capped
+     * value alone cannot say whether anything was asked for at all.
+     * </p>
+     *
+     * @param params the tool arguments.
+     * @return the requested seconds under any accepted name, or <code>null</code> when none was given
+     */
+    public static Integer requestedSeconds(Map<String, String> params)
+    {
+        return rawSeconds(params);
+    }
+
+    /**
      * The requested seconds from whichever accepted name is present, or {@code null}
      * when none is given (or none parses as an integer).
      */
