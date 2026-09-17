@@ -102,12 +102,14 @@ public class LaunchDebuggerTool implements IMcpTool
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "launch: update the database before launching (default true; ignored for Attach).") //$NON-NLS-1$
             .integerProperty("debugServerPort", //$NON-NLS-1$
-                "launch: debug server port, 1..65535. Use when another 1C:EDT holds the " //$NON-NLS-1$
-                    + "default. Zero: the environment decides.") //$NON-NLS-1$
+                "launch: debug server port, 1..65535, when another 1C:EDT holds the default.") //$NON-NLS-1$
+            .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
+                "launch: build the external object when its project has dumps off; without " //$NON-NLS-1$
+                    + "it the client starts empty.", false) //$NON-NLS-1$
             .stringProperty("externalObjectName", //$NON-NLS-1$
-                "launch: open this external data processor or report in the client that starts, so " //$NON-NLS-1$
-                    + "its code runs under the debugger. A ready .epf / .erf from elsewhere goes in " //$NON-NLS-1$
-                    + "first through config_io operation=import_external_object.") //$NON-NLS-1$
+                "launch: open this data processor or report in the client, so its code runs " //$NON-NLS-1$
+                    + "under the debugger. A ready .epf goes in through " //$NON-NLS-1$
+                    + "external_object_workshop operation=import_external_object.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
                 "launch: the external-object project holding externalObjectName.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$

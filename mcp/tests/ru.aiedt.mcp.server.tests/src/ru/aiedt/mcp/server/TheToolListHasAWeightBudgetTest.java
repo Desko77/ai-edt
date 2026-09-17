@@ -198,7 +198,9 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
         BUDGETS.put("vanessa", Integer.valueOf(5405)); //$NON-NLS-1$
         BUDGETS.put("extension_workshop", Integer.valueOf(5402)); //$NON-NLS-1$
-        BUDGETS.put("launch_debugger", Integer.valueOf(5154)); //$NON-NLS-1$
+        // Raised from 5154 by the same three arguments of 0.2.49 - see the sibling budget in
+        // TheProseOfParameterDescriptionsIsWeighedTest for what each of them buys.
+        BUDGETS.put("launch_debugger", Integer.valueOf(5400)); //$NON-NLS-1$
         BUDGETS.put("mxl_workshop", Integer.valueOf(4636)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$

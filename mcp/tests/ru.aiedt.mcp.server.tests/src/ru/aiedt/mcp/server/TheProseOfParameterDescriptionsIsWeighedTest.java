@@ -184,7 +184,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
-        PROSE.put("launch_debugger", Integer.valueOf(2710));
+        // Raised from 2710 for three arguments the debugger gained in 0.2.49, each of which a
+        // caller cannot reach without being told it exists: the debug server port (on a
+        // machine with several environments the default one is taken and the launch is
+        // refused by a dialog), building the external object (without it the client starts
+        // empty, measured 17.09), and the ceiling on the wait for a breakpoint.
+        PROSE.put("launch_debugger", Integer.valueOf(3000));
         PROSE.put("mxl_workshop", Integer.valueOf(2164));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
@@ -263,6 +268,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * named an item of its form, because a form item has no address of its own. Naming the form is
      * how the call stops borrowing the owner by accident.
      * </p>
+     * <p>
+     * And a ninth, by 120, for enableExternalObjectDump. Measured on the stand 17.09: the client
+     * started and the external object was not in it, because the environment builds such an object
+     * before opening it and the project had that switched off. Without the argument the only way out
+     * of that state is the project's properties page.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 82400;
+    private static final int DOCUMENT_PROSE = 82520;
 }

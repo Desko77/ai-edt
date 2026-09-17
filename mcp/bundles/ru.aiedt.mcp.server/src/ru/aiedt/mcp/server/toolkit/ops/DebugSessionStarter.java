@@ -13,6 +13,7 @@ import java.util.Optional;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunchConfiguration;
@@ -23,6 +24,8 @@ import org.eclipse.debug.core.model.IDebugTarget;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 
+import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumpSupport;
+import com._1c.g5.wiring.ServiceAccess;
 import com.e1c.g5.dt.applications.ApplicationException;
 import com.e1c.g5.dt.applications.ApplicationUpdateState;
 import com.e1c.g5.dt.applications.ApplicationUpdateType;
@@ -107,6 +110,12 @@ public final class DebugSessionStarter implements IMcpTool
                     + "not changed. Use when another 1C:EDT holds the default port, which the " //$NON-NLS-1$
                     + "environment refuses in a dialog. Zero: the environment decides. Attach " //$NON-NLS-1$
                     + "ignores it.") //$NON-NLS-1$
+            .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
+                "Turn on dump generation for the external-object project when it is off. The " //$NON-NLS-1$
+                    + "environment opens such an object by building it, and with the setting off " //$NON-NLS-1$
+                    + "the client starts empty. Default false: the launch is refused instead, " //$NON-NLS-1$
+                    + "because this changes the project.", //$NON-NLS-1$
+                false)
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
                     + "runs under the debugger. The object is one this workspace holds as an " //$NON-NLS-1$
@@ -140,6 +149,8 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                 .toJson();
         }
+        boolean enableDump =
+            JsonUtils.extractBooleanArgument(params, "enableExternalObjectDump", false); //$NON-NLS-1$
         String externalObjectName = JsonUtils.extractStringArgument(params, "externalObjectName"); //$NON-NLS-1$
         String externalObjectProject = JsonUtils.extractStringArgument(params, "externalObjectProject"); //$NON-NLS-1$
 
@@ -167,7 +178,7 @@ public final class DebugSessionStarter implements IMcpTool
         }
 
         return launchDebug(projectName, applicationId, updateBeforeLaunch,
-            externalObjectProject, externalObjectName, debugServerPort);
+            externalObjectProject, externalObjectName, debugServerPort, enableDump);
     }
 
     private String launchByConfigName(String configName, boolean updateBeforeLaunch,
@@ -283,7 +294,7 @@ public final class DebugSessionStarter implements IMcpTool
 
     private String launchDebug(String projectName, String applicationId,
         boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName,
-        int debugServerPort)
+        int debugServerPort, boolean enableDump)
     {
         LAUNCH_LOCK.lock();
         try
@@ -336,6 +347,15 @@ public final class DebugSessionStarter implements IMcpTool
                 if (found.error != null)
                 {
                     return ToolResult.error(found.error)
+                        .put("externalObjectName", externalObjectName) //$NON-NLS-1$
+                        .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                String dumpProblem = dumpReadiness(objectProject, enableDump);
+                if (dumpProblem != null)
+                {
+                    return ToolResult.error(dumpProblem)
                         .put("externalObjectName", externalObjectName) //$NON-NLS-1$
                         .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
                         .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
@@ -638,6 +658,57 @@ public final class DebugSessionStarter implements IMcpTool
                     "interrupted", null); //$NON-NLS-1$
             }
         }
+    }
+
+    /**
+     * Whether the environment can build the .epf the client needs, and what to say when it cannot.
+     * <p>
+     * The launch delegate reads the external-object attributes, then asks the dump service whether
+     * generation is enabled FOR THAT PROJECT, and only then looks the object up. With generation off
+     * it skips the whole branch without a word, and the client starts with nothing open. So the
+     * question is asked here, where there is still someone to tell.
+     * </p>
+     *
+     * @param objectProject the external-object project.
+     * @param enableDump whether the caller allowed turning generation on.
+     * @return what is wrong, or <code>null</code> when the environment is ready to build the dump
+     */
+    private static String dumpReadiness(IProject objectProject, boolean enableDump)
+    {
+        IExternalObjectDumpSupport dumps;
+        try
+        {
+            dumps = ServiceAccess.get(IExternalObjectDumpSupport.class);
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("external object dump service not reachable: " + e.getMessage()); //$NON-NLS-1$
+            return null;
+        }
+        if (dumps == null)
+        {
+            return null;
+        }
+        if (!dumps.isEnabled(objectProject))
+        {
+            if (!enableDump)
+            {
+                return "The project '" + objectProject.getName() + "' has external object dump " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "generation switched off, and the environment opens an external object in a " //$NON-NLS-1$
+                    + "launched client by building that dump. With the setting off the client starts " //$NON-NLS-1$
+                    + "with nothing open. Pass enableExternalObjectDump=true to turn it on for this " //$NON-NLS-1$
+                    + "project, or turn it on in the project's properties. Nothing was launched."; //$NON-NLS-1$
+            }
+            dumps.setEnabled(objectProject, true);
+        }
+        IStatus ready = dumps.validateDumpGeneration(objectProject);
+        if (ready != null && !ready.isOK())
+        {
+            return "The environment cannot build the external object's dump for project '" //$NON-NLS-1$
+                + objectProject.getName() + "': " + ready.getMessage() //$NON-NLS-1$ //$NON-NLS-2$
+                + ". The client would start with nothing open, so nothing was launched."; //$NON-NLS-1$
+        }
+        return null;
     }
 
     /**
