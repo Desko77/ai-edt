@@ -11,6 +11,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -139,7 +140,7 @@ public class FindRlsViolationsTool implements IMcpTool
         // object has a rule, and a walk stopped half way would answer "none" when it
         // merely stopped looking. Skipped entirely when the operator has already cancelled,
         // which leaves noRlsConfigured absent from the answer rather than false.
-        boolean noRlsConfigured = !watch.raised() && checkNoRls(project, roleName);
+        Boolean noRlsConfigured = watch.raised() ? null : checkNoRls(project, roleName);
         List<Map<String, Object>> findings = new ArrayList<>();
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
             if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
@@ -178,9 +179,17 @@ public class FindRlsViolationsTool implements IMcpTool
         stats.put("findings", filtered.size()); //$NON-NLS-1$
         ToolResult tr = ToolResult.success();
         tr.put("cancelled", watch.note("files")); //$NON-NLS-1$
-        if (noRlsConfigured)
+        if (Boolean.TRUE.equals(noRlsConfigured))
         {
             tr.put("noRlsConfigured", true); //$NON-NLS-1$
+        }
+        else if (noRlsConfigured == null)
+        {
+            // Absent, not false: the rights files could not be read, and "no restrictions" would be
+            // a claim about a configuration nobody looked at.
+            tr.put("rlsNotDetermined", true) //$NON-NLS-1$
+                .put("rlsNote", "Whether row-level security is configured could not be determined: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "no role's Rights.rights could be read."); //$NON-NLS-1$
         }
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
@@ -193,49 +202,65 @@ public class FindRlsViolationsTool implements IMcpTool
             .toJson();
     }
 
-    private boolean checkNoRls(IProject project, String roleName)
+    private Boolean checkNoRls(IProject project, String roleName)
     {
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
         if (provider == null)
         {
-            return false;
+            return null;
         }
         Configuration config = provider.getConfiguration(project);
         if (config == null)
         {
-            return false;
+            return null;
         }
+        List<com._1c.g5.v8.dt.metadata.mdclass.MdObject> objects = collectAllObjects(config);
+        Collection<Role> roles;
         if (roleName != null && !roleName.isEmpty())
         {
             Role role = RoleRightsAnalyzer.findRole(config, roleName);
             if (role == null)
             {
-                return false;
+                return null;
             }
-            // Check at least one object has RLS
-            for (com._1c.g5.v8.dt.metadata.mdclass.MdObject obj : collectAllObjects(config))
-            {
-                String fqn = obj.eClass().getName() + "." + obj.getName(); //$NON-NLS-1$
-                if (RoleRightsAnalyzer.hasRlsFor(role, fqn))
-                {
-                    return false;
-                }
-            }
-            return true;
+            roles = java.util.Collections.singletonList(role);
         }
-        // Project-wide check: no role has any RLS restriction
-        for (Role role : RoleRightsAnalyzer.listRoles(config))
+        else
         {
-            for (com._1c.g5.v8.dt.metadata.mdclass.MdObject obj : collectAllObjects(config))
+            roles = RoleRightsAnalyzer.listRoles(config);
+        }
+        boolean anythingRead = false;
+        for (Role role : roles)
+        {
+            RoleRightsAnalyzer.RightsTable table;
+            try
             {
-                String fqn = obj.eClass().getName() + "." + obj.getName(); //$NON-NLS-1$
-                if (RoleRightsAnalyzer.hasRlsFor(role, fqn))
+                // The rights FILE, not the role model: the model answers empty on EDT 2026, and an
+                // empty answer read as "no restrictions" is how this flag came to contradict 56
+                // roles that carry them.
+                table = RoleRightsAnalyzer.analyze(project, role, objects);
+            }
+            catch (RuntimeException e)
+            {
+                Activator.logDebug("rights of " + role.getName() + " not read: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+                continue;
+            }
+            if (table.hasRls.isEmpty())
+            {
+                // Nothing was read for this role - its file is missing or unreadable.
+                continue;
+            }
+            anythingRead = true;
+            for (Boolean restricted : table.hasRls.values())
+            {
+                if (Boolean.TRUE.equals(restricted))
                 {
-                    return false;
+                    return Boolean.FALSE;
                 }
             }
         }
-        return true;
+        // Not a single rights file could be read: the answer says nothing rather than "none".
+        return anythingRead ? Boolean.TRUE : null;
     }
 
     private List<com._1c.g5.v8.dt.metadata.mdclass.MdObject> collectAllObjects(Configuration cfg)

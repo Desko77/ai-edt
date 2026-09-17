@@ -339,10 +339,24 @@ public class CodeSearchTool implements IMcpTool
      * which speaks {@code callers}/{@code callees}. Accepts the facade's
      * {@code incoming}/{@code outgoing} vocabulary as aliases so both work; every
      * other param (projectName / modulePath / methodName / limit) passes through
-     * unchanged. {@code depth} and {@code moduleType} are intentionally NOT forwarded
-     * - the delegate has no multi-hop recursion and does not disambiguate by module
-     * type, so advertising them would be a false promise.
+     * unchanged, {@code depth} among them: the delegate DOES walk callers of callers,
+     * up to its own limit. The sentence that used to stand here - that it has no
+     * multi-hop recursion - was left behind when the delegate grew one, and the help
+     * repeated it while printing the delegate's own depth argument two lines below.
+     * What the delegate still does not do is disambiguate by module type.
      */
+    /**
+     * What one operation hands to its delegate, so the routing can be put to the test.
+     *
+     * @param operation the facade operation.
+     * @param params what the caller passed.
+     * @return the arguments the delegate receives
+     */
+    static Map<String, String> prepareForDelegate(String operation, Map<String, String> params)
+    {
+        return "call_hierarchy".equals(operation) ? rewriteForCallHierarchy(params) : params; //$NON-NLS-1$
+    }
+
     private static Map<String, String> rewriteForCallHierarchy(Map<String, String> params)
     {
         Map<String, String> rewritten = new LinkedHashMap<>(params);
@@ -546,7 +560,7 @@ public class CodeSearchTool implements IMcpTool
                     + "get_method_call_hierarchy. Pass projectName, modulePath (the module " //$NON-NLS-1$
                     + "the method lives in - src/ path or module FQN), methodName, and " //$NON-NLS-1$
                     + "direction=incoming|callers (default) or outgoing|callees. Returns the " //$NON-NLS-1$
-                    + "direct callers/callees (single level - no recursion depth).\n"); //$NON-NLS-1$
+                    + "the direct callers or callees; depth walks callers of callers, 1 to 5.\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             case "symbol_info": //$NON-NLS-1$
                 sb.append("# code_search operation=symbol_info\n\nDelegates to get_symbol_info. " //$NON-NLS-1$
