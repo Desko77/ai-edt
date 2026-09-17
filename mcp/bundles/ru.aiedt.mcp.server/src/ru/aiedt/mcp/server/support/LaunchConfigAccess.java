@@ -100,6 +100,18 @@ public final class LaunchConfigAccess
     public static final String ATTR_USE_LOCAL_DEBUG_SERVER =
         "com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER"; //$NON-NLS-1$
 
+    /**
+     * Launch attribute: the port the local debug server listens on.
+     * <p>
+     * Read as an integer, and only when it is above zero; the environment then falls back to the
+     * application's own {@code port} attribute, and finally picks a free port itself. Naming it
+     * matters on a machine running several environments: the first one to debug takes the default
+     * port, and the rest are told it is busy in a dialog of their own.
+     * </p>
+     */
+    public static final String ATTR_DEBUG_SERVER_PORT =
+        "com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_PORT"; //$NON-NLS-1$
+
     /** Launch attribute: the external-object project whose object the client opens at startup. */
     public static final String ATTR_EXTERNAL_OBJECT_PROJECT_NAME =
         "com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_PROJECT_NAME"; //$NON-NLS-1$
@@ -362,11 +374,46 @@ public final class LaunchConfigAccess
     public static ILaunchConfiguration openingExternalObject(ILaunchConfiguration config,
         String objectProjectName, String objectName, String objectClassName) throws CoreException
     {
-        ILaunchConfigurationWorkingCopy copy = config.getWorkingCopy();
+        ILaunchConfigurationWorkingCopy copy = asWorkingCopy(config);
         copy.setAttribute(ATTR_EXTERNAL_OBJECT_PROJECT_NAME, objectProjectName);
         copy.setAttribute(ATTR_EXTERNAL_OBJECT_NAME, objectName);
         copy.setAttribute(ATTR_EXTERNAL_OBJECT_TYPE, objectClassName);
         return copy;
+    }
+
+    /**
+     * A copy of a launch configuration whose local debug server listens on a named port.
+     * <p>
+     * Not saved, for the same reason the external-object copy is not: the port belongs to this one
+     * launch. Called after {@link #openingExternalObject} it reuses that copy rather than nesting a
+     * second one, so one launch carries one configuration.
+     * </p>
+     *
+     * @param config the configuration to base it on.
+     * @param port the port, already checked to be in range.
+     * @return the working copy, ready to launch
+     * @throws CoreException if the copy cannot be made
+     */
+    public static ILaunchConfiguration listeningOnDebugPort(ILaunchConfiguration config, int port)
+        throws CoreException
+    {
+        ILaunchConfigurationWorkingCopy copy = asWorkingCopy(config);
+        copy.setAttribute(ATTR_DEBUG_SERVER_PORT, port);
+        return copy;
+    }
+
+    /**
+     * The configuration as something writable, without making a second copy of a copy.
+     *
+     * @param config a saved configuration or a working copy.
+     * @return a working copy
+     * @throws CoreException if the copy cannot be made
+     */
+    private static ILaunchConfigurationWorkingCopy asWorkingCopy(ILaunchConfiguration config)
+        throws CoreException
+    {
+        return config instanceof ILaunchConfigurationWorkingCopy
+            ? (ILaunchConfigurationWorkingCopy)config : config.getWorkingCopy();
     }
 
     /**

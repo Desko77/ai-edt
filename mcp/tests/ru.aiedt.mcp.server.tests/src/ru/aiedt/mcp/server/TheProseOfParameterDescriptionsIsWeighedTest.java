@@ -244,6 +244,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * breakpoint gets run at all, and the button of the modal dialog EDT is waiting on, which is
      * how a call blocked behind a question goes on without a person at the keyboard.
      * </p>
+     * <p>
+     * And a sixth, by 160, for the debug server port. A machine running several environments has one
+     * default port between them, and the second environment to debug is refused by a dialog of its
+     * own - a state no argument could get out of until this one. Measured 16.09 on this machine:
+     * port 1550 held by a neighbouring workspace, and the launch unreachable for the rest of the
+     * session.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 81835;
+    private static final int DOCUMENT_PROSE = 81995;
 }

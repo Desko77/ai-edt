@@ -328,14 +328,14 @@ InsightsFacadeTool	object_summary	includeErrors:boolean,includeReferences:boolea
 InsightsFacadeTool	project_metrics	format:string,includeDebtList:boolean,projectName:string,scope:string,timeoutSeconds:integer	delegate ProjectMetricsTool	
 InsightsFacadeTool	semantic_metadata_search	limit:integer,metadataType:string,projectName:string,query:string	delegate SemanticMetadataSearchTool	
 LaunchDebuggerTool	add_breakpoint	action:string,topic:string	read in place	
-LaunchDebuggerTool	debug_launch	applicationId:string,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,updateBeforeLaunch:boolean	delegate DebugSessionStarter	action:string
+LaunchDebuggerTool	debug_launch	applicationId:string,debugServerPort:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,updateBeforeLaunch:boolean	delegate DebugSessionStarter	action:string
 LaunchDebuggerTool	debug_status	applicationId:string	delegate DebugStateReader	action:string
 LaunchDebuggerTool	evaluate	expression:string,frameRef:string	delegate ExpressionEvaluator	action:string
 LaunchDebuggerTool	get_profiling_results	minFrequency:integer,moduleFilter:string	delegate ProfilingResultsReader	action:string
 LaunchDebuggerTool	get_state	applicationId:string	delegate DebugStateReader	action:string
 LaunchDebuggerTool	get_variables	expandPath:string,frameIndex:integer,frameRef:string,scope:string,threadId:integer	delegate DebugVariablesReader	action:string
 LaunchDebuggerTool	help	topic:string	read in place	action:string
-LaunchDebuggerTool	launch	applicationId:string,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,updateBeforeLaunch:boolean	delegate DebugSessionStarter	action:string
+LaunchDebuggerTool	launch	applicationId:string,debugServerPort:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,updateBeforeLaunch:boolean	delegate DebugSessionStarter	action:string
 LaunchDebuggerTool	list_breakpoints	action:string,topic:string	read in place	
 LaunchDebuggerTool	remove_breakpoint	action:string,topic:string	read in place	
 LaunchDebuggerTool	resume	applicationId:string,threadId:integer	delegate DebugResumer	action:string

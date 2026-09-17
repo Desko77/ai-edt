@@ -327,14 +327,14 @@
 | `InsightsFacadeTool` | `project_metrics` | `format:string`, `includeDebtList:boolean`, `projectName:string`, `scope:string`, `timeoutSeconds:integer` | delegate ProjectMetricsTool |
 | `InsightsFacadeTool` | `semantic_metadata_search` | `limit:integer`, `metadataType:string`, `projectName:string`, `query:string` | delegate SemanticMetadataSearchTool |
 | `LaunchDebuggerTool` | `add_breakpoint` | `action:string`, `topic:string` | read in place |
-| `LaunchDebuggerTool` | `debug_launch` | `action:string`, `applicationId:string`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `updateBeforeLaunch:boolean` | delegate DebugSessionStarter |
+| `LaunchDebuggerTool` | `debug_launch` | `action:string`, `applicationId:string`, `debugServerPort:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `updateBeforeLaunch:boolean` | delegate DebugSessionStarter |
 | `LaunchDebuggerTool` | `debug_status` | `action:string`, `applicationId:string` | delegate DebugStateReader |
 | `LaunchDebuggerTool` | `evaluate` | `action:string`, `expression:string`, `frameRef:string` | delegate ExpressionEvaluator |
 | `LaunchDebuggerTool` | `get_profiling_results` | `action:string`, `minFrequency:integer`, `moduleFilter:string` | delegate ProfilingResultsReader |
 | `LaunchDebuggerTool` | `get_state` | `action:string`, `applicationId:string` | delegate DebugStateReader |
 | `LaunchDebuggerTool` | `get_variables` | `action:string`, `expandPath:string`, `frameIndex:integer`, `frameRef:string`, `scope:string`, `threadId:integer` | delegate DebugVariablesReader |
 | `LaunchDebuggerTool` | `help` | `action:string`, `topic:string` | read in place |
-| `LaunchDebuggerTool` | `launch` | `action:string`, `applicationId:string`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `updateBeforeLaunch:boolean` | delegate DebugSessionStarter |
+| `LaunchDebuggerTool` | `launch` | `action:string`, `applicationId:string`, `debugServerPort:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `updateBeforeLaunch:boolean` | delegate DebugSessionStarter |
 | `LaunchDebuggerTool` | `list_breakpoints` | `action:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `remove_breakpoint` | `action:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `resume` | `action:string`, `applicationId:string`, `threadId:integer` | delegate DebugResumer |

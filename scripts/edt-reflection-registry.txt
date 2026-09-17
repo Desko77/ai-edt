@@ -58,6 +58,7 @@ probe com._1c.g5.v8.dt.debug.bsl.model.BslLineBreakpoint
 id com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID
 id com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_INFOBASE_ALIAS
 id com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_URL
+id com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_PORT
 id com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_NAME
 id com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_PROJECT_NAME
 id com._1c.g5.v8.dt.debug.core.ATTR_EXTERNAL_OBJECT_TYPE

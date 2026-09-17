@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -17,6 +18,8 @@ import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.ILaunchConfigurationType;
 import org.eclipse.debug.core.ILaunchManager;
+import org.eclipse.debug.core.ILaunch;
+import org.eclipse.debug.core.model.IDebugTarget;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 
@@ -30,6 +33,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.support.ModalDialogWatch;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -98,6 +102,11 @@ public final class DebugSessionStarter implements IMcpTool
                     + "Use this for Attach configurations or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "true updates the database before launching (default: true; ignored for Attach)") //$NON-NLS-1$
+            .integerProperty("debugServerPort", //$NON-NLS-1$
+                "Debug server port for this launch only, 1..65535; the saved configuration is " //$NON-NLS-1$
+                    + "not changed. Use when another 1C:EDT holds the default port, which the " //$NON-NLS-1$
+                    + "environment refuses in a dialog. Zero: the environment decides. Attach " //$NON-NLS-1$
+                    + "ignores it.") //$NON-NLS-1$
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
                     + "runs under the debugger. The object is one this workspace holds as an " //$NON-NLS-1$
@@ -122,12 +131,21 @@ public final class DebugSessionStarter implements IMcpTool
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
         boolean updateBeforeLaunch = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
+        int debugServerPort = JsonUtils.extractIntArgument(params, "debugServerPort", 0); //$NON-NLS-1$
+        if (debugServerPort != 0 && (debugServerPort < 1 || debugServerPort > 65535))
+        {
+            return ToolResult.error("debugServerPort must be between 1 and 65535, or omitted to let " //$NON-NLS-1$
+                + "the environment choose. Nothing was launched.") //$NON-NLS-1$
+                .put("debugServerPort", Integer.valueOf(debugServerPort)) //$NON-NLS-1$
+                .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                .toJson();
+        }
         String externalObjectName = JsonUtils.extractStringArgument(params, "externalObjectName"); //$NON-NLS-1$
         String externalObjectProject = JsonUtils.extractStringArgument(params, "externalObjectProject"); //$NON-NLS-1$
 
         if (configName != null && !configName.isEmpty())
         {
-            return launchByConfigName(configName, updateBeforeLaunch);
+            return launchByConfigName(configName, updateBeforeLaunch, debugServerPort);
         }
 
         if (projectName == null || projectName.isEmpty())
@@ -149,10 +167,11 @@ public final class DebugSessionStarter implements IMcpTool
         }
 
         return launchDebug(projectName, applicationId, updateBeforeLaunch,
-            externalObjectProject, externalObjectName);
+            externalObjectProject, externalObjectName, debugServerPort);
     }
 
-    private String launchByConfigName(String configName, boolean updateBeforeLaunch)
+    private String launchByConfigName(String configName, boolean updateBeforeLaunch,
+        int debugServerPort)
     {
         LAUNCH_LOCK.lock();
         try
@@ -210,10 +229,16 @@ public final class DebugSessionStarter implements IMcpTool
                 }
             }
 
-            String launchError = performLaunch(config);
-            if (launchError != null)
+            ILaunchConfiguration toLaunch = config;
+            if (debugServerPort > 0 && !isAttach)
             {
-                return ToolResult.error("Could not launch the debug session: " + launchError).toJson();
+                toLaunch = LaunchConfigAccess.listeningOnDebugPort(config, debugServerPort);
+            }
+
+            LaunchOutcome outcome = performLaunch(toLaunch, isAttach);
+            if (!outcome.started)
+            {
+                return refusalFor(outcome, "Could not launch the debug session").toJson(); //$NON-NLS-1$
             }
 
             ToolResult result = ToolResult.success()
@@ -221,6 +246,16 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("configurationType", typeId) //$NON-NLS-1$
                 .put("attach", isAttach) //$NON-NLS-1$
                 .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (debugServerPort > 0)
+            {
+                result.put("debugServerPort", isAttach ? null : Integer.valueOf(debugServerPort)); //$NON-NLS-1$
+                if (isAttach)
+                {
+                    result.put("debugServerPortNote", //$NON-NLS-1$
+                        "An Attach configuration starts no debug server, so debugServerPort was not " //$NON-NLS-1$
+                            + "applied. It connects to the debug server named by the configuration."); //$NON-NLS-1$
+                }
+            }
             result.put("message", isAttach //$NON-NLS-1$
                 ? "Attach debug session started - use debug_status to check on it, "
                     + "or wait_for_break to block until a breakpoint fires."
@@ -247,7 +282,8 @@ public final class DebugSessionStarter implements IMcpTool
     }
 
     private String launchDebug(String projectName, String applicationId,
-        boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName)
+        boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName,
+        int debugServerPort)
     {
         LAUNCH_LOCK.lock();
         try
@@ -395,10 +431,20 @@ public final class DebugSessionStarter implements IMcpTool
                     objectProjectName, openedObject, openedObjectClassName);
             }
 
-            String launchError = performLaunch(matchingConfig);
-            if (launchError != null)
+            if (debugServerPort > 0)
             {
-                return ToolResult.error("Debug session launch failed: " + launchError).toJson();
+                // The same working copy the external object went onto, not a second one.
+                matchingConfig = LaunchConfigAccess.listeningOnDebugPort(matchingConfig, debugServerPort);
+            }
+
+            LaunchOutcome outcome = performLaunch(matchingConfig, false);
+            if (!outcome.started)
+            {
+                return refusalFor(outcome, "Debug session launch failed") //$NON-NLS-1$
+                    .put("project", projectName) //$NON-NLS-1$
+                    .put("applicationId", applicationId) //$NON-NLS-1$
+                    .put("launchConfiguration", configName) //$NON-NLS-1$
+                    .toJson();
             }
 
             return ToolResult.success()
@@ -410,6 +456,7 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("attach", false) //$NON-NLS-1$
                 .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("externalObjectOpened", openedObject) //$NON-NLS-1$
+                .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
                 .put("message", autoCreatedConfig //$NON-NLS-1$
                     ? "Debug session is now running (a launch configuration was auto-created for it)"
                     : "Debug session is now running")
@@ -507,18 +554,158 @@ public final class DebugSessionStarter implements IMcpTool
         }
     }
 
-    private String performLaunch(ILaunchConfiguration config)
+    /** How long a runtime client is given to register a debug target, in milliseconds. */
+    static final long TARGET_WAIT_MS = 10_000L;
+
+    /** How often the launch is re-read while waiting, in milliseconds. */
+    static final long TARGET_STEP_MS = 250L;
+
+    /**
+     * What watching a launch found.
+     * <p>
+     * A launch is a success only when it is OBSERVED to be alive; the environment reports a failed
+     * debug-server start by opening a dialog of its own and returning from the launch call normally,
+     * so the absence of an exception says nothing.
+     * </p>
+     */
+    static final class LaunchOutcome
     {
+        final boolean started;
+        final String refusal;
+        final String observed;
+        final List<Map<String, Object>> dialogsSeen;
+
+        LaunchOutcome(boolean started, String refusal, String observed,
+            List<Map<String, Object>> dialogsSeen)
+        {
+            this.started = started;
+            this.refusal = refusal;
+            this.observed = observed;
+            this.dialogsSeen = dialogsSeen;
+        }
+
+        static LaunchOutcome ok()
+        {
+            return new LaunchOutcome(true, null, "running", java.util.Collections.emptyList()); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Decides whether a launch is alive, by reading it rather than by trusting the call that made it.
+     * <p>
+     * The criterion differs by configuration kind, and mixing them produces both false answers. A
+     * runtime client registers its debug target as part of starting, so no target within the window
+     * means the start did not happen. An Attach configuration registers its target only once the
+     * debugger connects to something that may not be there yet, so demanding a target inside ten
+     * seconds would refuse a healthy launch.
+     * </p>
+     *
+     * @param launch the launch the environment returned, never <code>null</code>.
+     * @param isAttach whether the configuration attaches rather than starts a client.
+     * @return what was observed
+     */
+    private static LaunchOutcome watchLaunch(ILaunch launch, boolean isAttach)
+    {
+        long deadline = System.currentTimeMillis() + TARGET_WAIT_MS;
+        boolean everHadTargets = false;
+        while (true)
+        {
+            IDebugTarget[] targets = launch.getDebugTargets();
+            boolean live = false;
+            for (IDebugTarget target : targets)
+            {
+                if (target != null && !target.isTerminated())
+                {
+                    live = true;
+                    break;
+                }
+            }
+            everHadTargets = everHadTargets || targets.length > 0;
+            LaunchOutcome decided = decide(launch.isTerminated(), live, isAttach,
+                System.currentTimeMillis() >= deadline, everHadTargets);
+            if (decided != null)
+            {
+                return decided;
+            }
+            try
+            {
+                Thread.sleep(TARGET_STEP_MS);
+            }
+            catch (InterruptedException stop)
+            {
+                Thread.currentThread().interrupt();
+                return new LaunchOutcome(false, "the wait for a debug target was interrupted", //$NON-NLS-1$
+                    "interrupted", null); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /**
+     * Decides from what one reading of the launch showed.
+     * <p>
+     * Kept free of the launch object itself so that every outcome can be put to it directly: the
+     * defect this replaces was not in the reading but in the judgement, which called any call that
+     * did not throw a success.
+     * </p>
+     *
+     * @param terminated whether the launch has already terminated.
+     * @param anyLiveTarget whether it carries a debug target that is not terminated.
+     * @param isAttach whether the configuration attaches rather than starts a client.
+     * @param deadlineReached whether the waiting window is over.
+     * @param everHadTargets whether a debug target was seen at any point of the wait.
+     * @return the outcome, or <code>null</code> when the answer is "keep waiting"
+     */
+    static LaunchOutcome decide(boolean terminated, boolean anyLiveTarget, boolean isAttach,
+        boolean deadlineReached, boolean everHadTargets)
+    {
+        if (terminated)
+        {
+            return new LaunchOutcome(false, "the launch was created and terminated straight away", //$NON-NLS-1$
+                "terminated", null); //$NON-NLS-1$
+        }
+        if (anyLiveTarget)
+        {
+            return LaunchOutcome.ok();
+        }
+        if (isAttach)
+        {
+            // An attach registers its target when the debugger connects, which may be later than any
+            // window this call can hold. Created and alive is all it can promise here.
+            return LaunchOutcome.ok();
+        }
+        if (!deadlineReached)
+        {
+            return null;
+        }
+        return everHadTargets
+            ? new LaunchOutcome(false,
+                "the launch registered debug targets and all of them are already terminated", //$NON-NLS-1$
+                "allTargetsTerminated", null) //$NON-NLS-1$
+            : new LaunchOutcome(false,
+                "no debug target appeared within " + (TARGET_WAIT_MS / 1000) //$NON-NLS-1$
+                    + " seconds, so the debug session did not start", //$NON-NLS-1$
+                "noTargets", null); //$NON-NLS-1$
+    }
+
+    /**
+     * Starts the configuration and reports what was observed afterwards.
+     *
+     * @param config the configuration to launch.
+     * @param isAttach whether it attaches rather than starts a client.
+     * @return the outcome; {@link LaunchOutcome#started} false carries the refusal
+     */
+    private LaunchOutcome performLaunch(ILaunchConfiguration config, boolean isAttach)
+    {
+        List<Map<String, Object>> dialogsBefore = ModalDialogWatch.current().getDialogs();
         final String[] launchError = {null};
-        final boolean[] launchSuccess = {false};
+        final ILaunch[] launched = {null};
         Display display = Display.getDefault();
         if (display != null && !display.isDisposed())
         {
             display.syncExec(() -> {
                 try
                 {
-                    config.launch(ILaunchManager.DEBUG_MODE, null);
-                    launchSuccess[0] = true;
+                    launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
                 }
                 catch (Exception e)
                 {
@@ -531,8 +718,7 @@ public final class DebugSessionStarter implements IMcpTool
         {
             try
             {
-                config.launch(ILaunchManager.DEBUG_MODE, null);
-                launchSuccess[0] = true;
+                launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
             }
             catch (CoreException e)
             {
@@ -540,7 +726,92 @@ public final class DebugSessionStarter implements IMcpTool
                 launchError[0] = e.getMessage();
             }
         }
-        return launchSuccess[0] ? null : (launchError[0] != null ? launchError[0] : "unknown failure"); //$NON-NLS-1$
+
+        LaunchOutcome outcome;
+        if (launchError[0] != null)
+        {
+            outcome = new LaunchOutcome(false, launchError[0], "threw", null); //$NON-NLS-1$
+        }
+        else if (launched[0] == null)
+        {
+            outcome = new LaunchOutcome(false, "the environment created no launch", //$NON-NLS-1$
+                "notCreated", null); //$NON-NLS-1$
+        }
+        else
+        {
+            outcome = watchLaunch(launched[0], isAttach);
+        }
+        if (outcome.started)
+        {
+            return outcome;
+        }
+        // Dialogs are reported as what was seen, not as the cause: the watch sees every modal in the
+        // workbench, and one of them may belong to whatever the person at the keyboard was doing.
+        return new LaunchOutcome(false, outcome.refusal, outcome.observed,
+            dialogsOpenedDuring(dialogsBefore));
+    }
+
+    /**
+     * The modal dialogs that were not up before the launch and are up now.
+     *
+     * @param before what was open before the call.
+     * @return the ones that appeared since, possibly empty
+     */
+    private static List<Map<String, Object>> dialogsOpenedDuring(List<Map<String, Object>> before)
+    {
+        return newDialogs(before, ModalDialogWatch.current().getDialogs());
+    }
+
+    /**
+     * The dialogs of the second reading that the first reading did not have.
+     *
+     * @param before what was open before the launch.
+     * @param now what is open now.
+     * @return the ones that appeared since, in the order the later reading lists them
+     */
+    static List<Map<String, Object>> newDialogs(List<Map<String, Object>> before,
+        List<Map<String, Object>> now)
+    {
+        List<Map<String, Object>> appeared = new java.util.ArrayList<>();
+        for (Map<String, Object> dialog : now)
+        {
+            boolean wasThere = false;
+            for (Map<String, Object> old : before)
+            {
+                if (java.util.Objects.equals(old.get("title"), dialog.get("title")) //$NON-NLS-1$ //$NON-NLS-2$
+                    && java.util.Objects.equals(old.get("message"), dialog.get("message"))) //$NON-NLS-1$ //$NON-NLS-2$
+                {
+                    wasThere = true;
+                    break;
+                }
+            }
+            if (!wasThere)
+            {
+                appeared.add(dialog);
+            }
+        }
+        return appeared;
+    }
+
+    /**
+     * Puts what was observed into a refusal.
+     *
+     * @param outcome the failed outcome.
+     * @param lead the sentence the caller wants in front.
+     * @return the refusal, ready to return
+     */
+    private static ToolResult refusalFor(LaunchOutcome outcome, String lead)
+    {
+        ToolResult result = ToolResult.error(lead + ": " + outcome.refusal) //$NON-NLS-1$
+            .put("observed", outcome.observed); //$NON-NLS-1$
+        if (outcome.dialogsSeen != null && !outcome.dialogsSeen.isEmpty())
+        {
+            result.put("dialogsOpenedDuringLaunch", outcome.dialogsSeen) //$NON-NLS-1$
+                .put("dialogNote", "These dialogs were not open before the launch and are open now. " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "Read them, and answer one with project_admin operation=answer_dialog when it " //$NON-NLS-1$
+                    + "is the environment asking something.");
+        }
+        return result;
     }
 
     private static JsonArray listAvailableConfigs(ILaunchManager launchManager)
