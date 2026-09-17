@@ -73,6 +73,69 @@ public final class ExpressionEvaluator implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * Evaluates one name or expression in a frame and returns its type and value.
+     * <p>
+     * The same path the tool takes, reachable to whoever needs a value the variables API does not
+     * carry - module properties come from that API without a value, and the environment answers for
+     * them by evaluation. Measured 17.09 on a live suspension.
+     * </p>
+     *
+     * @param frame the suspended frame.
+     * @param expression the name to evaluate.
+     * @return a map with name, type and value, or <code>null</code> when nothing came back
+     */
+    static Map<String, Object> evaluateValue(IStackFrame frame, String expression)
+    {
+        if (frame == null || expression == null || expression.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            DebugPlugin debugPlugin = DebugPlugin.getDefault();
+            IExpressionManager expressionManager =
+                debugPlugin == null ? null : debugPlugin.getExpressionManager();
+            if (expressionManager == null)
+            {
+                return null;
+            }
+            IWatchExpressionDelegate delegate =
+                expressionManager.newWatchExpressionDelegate(((IDebugElement)frame).getModelIdentifier());
+            if (delegate == null)
+            {
+                return null;
+            }
+            final AtomicReference<IWatchExpressionResult> resultRef = new AtomicReference<>();
+            final CountDownLatch latch = new CountDownLatch(1);
+            delegate.evaluateExpression(expression, frame, result -> {
+                resultRef.set(result);
+                latch.countDown();
+            });
+            if (!latch.await(EVAL_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+            {
+                return null;
+            }
+            IWatchExpressionResult result = resultRef.get();
+            if (result == null || result.hasErrors() || result.getValue() == null)
+            {
+                return null;
+            }
+            IValue value = result.getValue();
+            Map<String, Object> answer = new java.util.LinkedHashMap<>();
+            answer.put("name", expression); //$NON-NLS-1$
+            answer.put("type", value.getReferenceTypeName()); //$NON-NLS-1$
+            answer.put("value", value.getValueString()); //$NON-NLS-1$
+            answer.put("readBy", "evaluate"); //$NON-NLS-1$ //$NON-NLS-2$
+            return answer;
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("evaluating " + expression + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

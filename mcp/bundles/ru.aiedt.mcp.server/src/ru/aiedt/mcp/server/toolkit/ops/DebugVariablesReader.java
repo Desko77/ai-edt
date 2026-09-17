@@ -125,12 +125,27 @@ public final class DebugVariablesReader implements IMcpTool
             }
 
             List<Map<String, Object>> vars;
+            int withoutValue = 0;
             if (expandPath != null && !expandPath.isEmpty())
             {
                 IVariable resolved = DebugValueSerializer.resolvePath(frame, expandPath);
                 if (resolved == null)
                 {
-                    return ToolResult.error("expandPath did not resolve: " + expandPath).toJson(); //$NON-NLS-1$
+                    // Not every name the listing prints is in the variables API: module properties
+                    // come from it with no value at all, and evaluating the name is how the
+                    // environment itself answers for them. Measured 17.09 on a live suspension.
+                    Map<String, Object> evaluated = evaluateByName(frame, expandPath);
+                    if (evaluated != null)
+                    {
+                        return ToolResult.success()
+                            .put("expandPath", expandPath) //$NON-NLS-1$
+                            .put("resolvedBy", "evaluate") //$NON-NLS-1$ //$NON-NLS-2$
+                            .put("variable", evaluated) //$NON-NLS-1$
+                            .toJson();
+                    }
+                    return ToolResult.error("expandPath did not resolve: " + expandPath //$NON-NLS-1$
+                        + ". The name is not among the frame's variables and evaluating it answered " //$NON-NLS-1$
+                        + "nothing either.").toJson(); //$NON-NLS-1$
                 }
                 vars = DebugValueSerializer.serializeChildren(resolved, registry);
             }
@@ -156,9 +171,29 @@ public final class DebugVariablesReader implements IMcpTool
                 {
                     vars.addAll(serializeModuleScope(frame, "getModuleProperties", registry)); //$NON-NLS-1$
                 }
+                for (Map<String, Object> record : vars)
+                {
+                    if (DebugValueSerializer.carriesNoValue(record))
+                    {
+                        // Said rather than hidden: the value exists, this API just does not carry
+                        // it, and dropping the name would hide a variable that can be read.
+                        record.put("valueNotReturnedByVariables", Boolean.TRUE); //$NON-NLS-1$
+                        withoutValue++;
+                    }
+                }
             }
 
-            return ToolResult.success().put("variables", vars).put("count", vars.size()).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            ToolResult answer = ToolResult.success()
+                .put("variables", vars) //$NON-NLS-1$
+                .put("count", Integer.valueOf(vars.size())); //$NON-NLS-1$
+            if (withoutValue > 0)
+            {
+                answer.put("valuesNotReturnedByVariables", Integer.valueOf(withoutValue)) //$NON-NLS-1$
+                    .put("valuesNote", "The variables API returned no value for " + withoutValue //$NON-NLS-1$ //$NON-NLS-2$
+                        + " of these names. Their values are readable one at a time: expandPath=<name> " //$NON-NLS-1$
+                        + "or evaluate expression=<name>."); //$NON-NLS-1$
+            }
+            return answer.toJson();
         }
         catch (Exception e)
         {
@@ -177,6 +212,26 @@ public final class DebugVariablesReader implements IMcpTool
      * @param registry passed through to the serializer
      * @return one DTO per variable the method returned; empty when the frame does not expose the method
      */
+    /**
+     * Reads a name by evaluating it in the frame, for names the variables API does not carry.
+     *
+     * @param frame the suspended frame.
+     * @param name the name the caller asked to expand.
+     * @return its type and value, or <code>null</code> when evaluation answers nothing
+     */
+    private static Map<String, Object> evaluateByName(IStackFrame frame, String name)
+    {
+        try
+        {
+            return ExpressionEvaluator.evaluateValue(frame, name);
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("evaluating " + name + " answered nothing: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+    }
+
     private static List<Map<String, Object>> serializeModuleScope(IStackFrame frame, String method,
         DebugSessionBook registry)
     {
