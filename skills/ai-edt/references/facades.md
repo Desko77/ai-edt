@@ -121,6 +121,33 @@ Names differ from the former standalone tools: `set_breakpoint` is `action=add_b
 is not the project being launched. A name that resolves to nothing stops the launch before the
 infobase is updated, and the answer says `nothingWasLaunchedOrUpdated`.
 
+The environment opens such an object by BUILDING it, so the object's project must have dump
+generation switched on. It is off by default on a freshly made project, and then the client starts
+with nothing open. The launch refuses and names the project; `enableExternalObjectDump=true` turns
+it on for that project and goes ahead.
+
+`debugServerPort` gives this launch its own debug server port (1..65535). One machine has one
+default port between all the environments running on it, and the second one to start debugging is
+refused by a dialog of the environment's own - this is how to step around that. The saved
+configuration is not changed.
+
+A launch is reported as running only when a live debug target is observed. The refusal says what was
+seen instead - the launch was not created, terminated at once, has only terminated targets, or
+registered no target within ten seconds - and lists the modal dialogs that opened during the launch.
+
+`action=wait_for_break` waits **50 seconds at most**, and 50 by default, under every name it accepts
+(`timeoutSeconds`, `timeoutMs`, `waitSeconds`, `timeout`): one request does not outlive that, and a
+longer ask used to come back as a transport error rather than an answer. A cut wait says so with
+`timeoutCapped` and `waitedSeconds`; breakpoints stay set, so waiting longer is another call.
+
+`action=get_variables` marks a record the variables API returned no value for with
+`valueNotReturnedByVariables` and counts them: their values are read one at a time, by
+`expandPath=<name>` - which falls back to evaluating the name - or by `action=evaluate`. A variable
+whose value is an empty string is not marked: an empty value is an answer.
+
+When the application cannot be resolved on its own, the refusal lists every launch it saw with its
+configuration, type, application id and number of debug targets.
+
 ## When the workbench is waiting on a dialog
 
 A modal dialog stops the workbench, and from outside it is indistinguishable from a hang: the call
@@ -142,6 +169,18 @@ before launching by default, and `infobase_admin operation=start_client` does so
 infobase update - which is why `validate_for_export` matters here too.
 
 `vanessa` drives scenario UI tests from the outside and photographs a form of a running 1C. The scenario comes as a file (`featurePath`), as text (`scenarioText`), or is composed from `formToOpen` - and then `openStep` carries the wording, which differs for a list form, an object form and an extension's form. That step needs the UI-testing types, which exist only in a client started as a test manager (`testManager`); without it the step answers Тип не определен. `testClient` names the client the start step launches, `testClientPort` its port, `infobaseUser` the user to sign in as - a password is refused. The verdict is read from the `<uuid>-result.json` files Vanessa names itself.
+
+## What a call left behind
+
+`get_mcp_history` lists the recent calls, shortened to a few hundred characters each because the
+buffer lives in the IDE's own heap. The full text is kept on disk beside it: pass `entryId` from a
+listed record to read that one call whole - full arguments and full answer, masked the same way the
+journal is. An entry the store no longer has is refused by name rather than answered with the
+shortened copy, and `entryId` cannot be combined with `clear`.
+
+What is kept on disk is set on the preference page under **Call history on disk**: whether to keep
+the full text, how many days to keep it (14 by default, zero for until the size limit), and the
+folder to keep it in. Nothing is written there while recording is off.
 
 ## Tools that stand on their own
 
