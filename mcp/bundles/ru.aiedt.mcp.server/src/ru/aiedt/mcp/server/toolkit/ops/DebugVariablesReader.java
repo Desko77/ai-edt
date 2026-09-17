@@ -212,26 +212,6 @@ public final class DebugVariablesReader implements IMcpTool
      * @param registry passed through to the serializer
      * @return one DTO per variable the method returned; empty when the frame does not expose the method
      */
-    /**
-     * Reads a name by evaluating it in the frame, for names the variables API does not carry.
-     *
-     * @param frame the suspended frame.
-     * @param name the name the caller asked to expand.
-     * @return its type and value, or <code>null</code> when evaluation answers nothing
-     */
-    private static Map<String, Object> evaluateByName(IStackFrame frame, String name)
-    {
-        try
-        {
-            return ExpressionEvaluator.evaluateValue(frame, name);
-        }
-        catch (Exception e)
-        {
-            Activator.logDebug("evaluating " + name + " answered nothing: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-            return null;
-        }
-    }
-
     private static List<Map<String, Object>> serializeModuleScope(IStackFrame frame, String method,
         DebugSessionBook registry)
     {
@@ -257,5 +237,25 @@ public final class DebugVariablesReader implements IMcpTool
             Activator.logWarning("get_variables " + method + " raised: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return out;
+    }
+
+    /**
+     * Reads a name by evaluating it in the frame, for names the variables API does not carry.
+     *
+     * @param frame the suspended frame.
+     * @param name the name the caller asked to expand.
+     * @return its type and value, or <code>null</code> when evaluation answers nothing
+     */
+    private static Map<String, Object> evaluateByName(IStackFrame frame, String name)
+    {
+        try
+        {
+            return ExpressionEvaluator.evaluateValue(frame, name);
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("evaluating " + name + " answered nothing: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
     }
 }

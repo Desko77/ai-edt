@@ -75,28 +75,6 @@ public final class DebugValueSerializer
      *         the caller may add to
      * @throws Exception if the debug model refuses to hand over the frame's variables
      */
-    /** What the environment prints for a value it has not delivered. */
-    public static final String UNKNOWN_TYPE = "<?>"; //$NON-NLS-1$
-
-    /**
-     * Whether a serialized record carries neither a type nor a value.
-     * <p>
-     * Measured 17.09 on a live suspension: module properties come back from the variables API with
-     * the type {@code <?>} and no value field at all, while evaluating the same name answers with
-     * both. The record is not empty because the value is missing - it is empty because this API does
-     * not carry it.
-     * </p>
-     *
-     * @param record one serialized variable.
-     * @return whether the variables API returned nothing about its value
-     */
-    public static boolean carriesNoValue(Map<String, Object> record)
-    {
-        Object type = record.get("type"); //$NON-NLS-1$
-        boolean typeUnknown = type == null || UNKNOWN_TYPE.equals(type) || "".equals(type); //$NON-NLS-1$
-        return typeUnknown && record.get("value") == null; //$NON-NLS-1$
-    }
-
     public static List<Map<String, Object>> serializeFrame(IStackFrame frame, DebugSessionBook registry)
         throws Exception
     {
@@ -121,6 +99,28 @@ public final class DebugValueSerializer
             variables.add(serializeVariable(variable, registry));
         }
         return variables;
+    }
+
+    /** What the environment prints for a value it has not delivered. */
+    public static final String UNKNOWN_TYPE = "<?>"; //$NON-NLS-1$
+
+    /**
+     * Whether a serialized record carries neither a type nor a value.
+     * <p>
+     * Measured 17.09 on a live suspension: module properties come back from the variables API with
+     * the type {@code <?>} and no value field at all, while evaluating the same name answers with
+     * both. The record is not empty because the value is missing - it is empty because this API does
+     * not carry it.
+     * </p>
+     *
+     * @param record one serialized variable.
+     * @return whether the variables API returned nothing about its value
+     */
+    public static boolean carriesNoValue(Map<String, Object> record)
+    {
+        Object type = record.get("type"); //$NON-NLS-1$
+        boolean typeUnknown = type == null || UNKNOWN_TYPE.equals(type) || "".equals(type); //$NON-NLS-1$
+        return typeUnknown && record.get("value") == null; //$NON-NLS-1$
     }
 
     /**
