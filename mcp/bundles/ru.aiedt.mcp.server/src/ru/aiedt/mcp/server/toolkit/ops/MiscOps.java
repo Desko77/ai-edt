@@ -382,33 +382,6 @@ final class MiscOps
      * @param params the call, which may carry the kind and the name separately.
      * @return the child's FQN, or the one given when there is nothing to compose
      */
-    /**
-     * The form to borrow when the caller asked for a form item.
-     * <p>
-     * A form item has no address of its own: the adopt path works on metadata objects and forms, and
-     * an item lives inside a form's content rather than beside it. Borrowing the form is therefore
-     * the whole of what can be done, and it is what the caller needs - the item is then the
-     * extension's to change.
-     * </p>
-     *
-     * @param fqn what the caller addressed.
-     * @param params the call arguments.
-     * @return the form's full name, or <code>null</code> when no form was named
-     */
-    static String formToBorrowFor(String fqn, Map<String, String> params)
-    {
-        if (fqn != null && fqn.contains(".Form.")) //$NON-NLS-1$
-        {
-            return fqn;
-        }
-        String formName = JsonUtils.extractStringArgument(params, "formName"); //$NON-NLS-1$
-        if (formName == null || formName.isEmpty())
-        {
-            return null;
-        }
-        return fqn + ".Form." + formName; //$NON-NLS-1$
-    }
-
     static String composeChildFqn(String op, String fqn, Map<String, String> params)
     {
         // Both spellings. The facade calls it borrow_child and edit_metadata calls it adopt_child,
@@ -436,6 +409,33 @@ final class MiscOps
             return fqn;
         }
         return fqn + "." + kind.trim() + "." + name.trim(); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The form to borrow when the caller asked for a form item.
+     * <p>
+     * A form item has no address of its own: the adopt path works on metadata objects and forms, and
+     * an item lives inside a form's content rather than beside it. Borrowing the form is therefore
+     * the whole of what can be done, and it is what the caller needs - the item is then the
+     * extension's to change.
+     * </p>
+     *
+     * @param fqn what the caller addressed.
+     * @param params the call arguments.
+     * @return the form's full name, or <code>null</code> when no form was named
+     */
+    static String formToBorrowFor(String fqn, Map<String, String> params)
+    {
+        if (fqn != null && fqn.contains(".Form.")) //$NON-NLS-1$
+        {
+            return fqn;
+        }
+        String formName = JsonUtils.extractStringArgument(params, "formName"); //$NON-NLS-1$
+        if (formName == null || formName.isEmpty())
+        {
+            return null;
+        }
+        return fqn + ".Form." + formName; //$NON-NLS-1$
     }
 
     /**

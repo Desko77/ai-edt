@@ -345,18 +345,6 @@ public class CodeSearchTool implements IMcpTool
      * repeated it while printing the delegate's own depth argument two lines below.
      * What the delegate still does not do is disambiguate by module type.
      */
-    /**
-     * What one operation hands to its delegate, so the routing can be put to the test.
-     *
-     * @param operation the facade operation.
-     * @param params what the caller passed.
-     * @return the arguments the delegate receives
-     */
-    static Map<String, String> prepareForDelegate(String operation, Map<String, String> params)
-    {
-        return "call_hierarchy".equals(operation) ? rewriteForCallHierarchy(params) : params; //$NON-NLS-1$
-    }
-
     private static Map<String, String> rewriteForCallHierarchy(Map<String, String> params)
     {
         Map<String, String> rewritten = new LinkedHashMap<>(params);
@@ -374,6 +362,18 @@ public class CodeSearchTool implements IMcpTool
             }
         }
         return rewritten;
+    }
+
+    /**
+     * What one operation hands to its delegate, so the routing can be put to the test.
+     *
+     * @param operation the facade operation.
+     * @param params what the caller passed.
+     * @return the arguments the delegate receives
+     */
+    static Map<String, String> prepareForDelegate(String operation, Map<String, String> params)
+    {
+        return "call_hierarchy".equals(operation) ? rewriteForCallHierarchy(params) : params; //$NON-NLS-1$
     }
 
     /**
