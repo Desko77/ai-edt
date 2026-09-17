@@ -257,6 +257,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * the tool answered, and until this argument there was nowhere to read it from. Measured from a
      * screenshot 16.09: "Response (303 of 1557 characters)".
      * </p>
+     * <p>
+     * And an eighth, by 165, for formName and for saying what itemName does. Measured on the stand
+     * 17.09: borrow_form_item answered "already borrowed" about the CATALOG while the caller had
+     * named an item of its form, because a form item has no address of its own. Naming the form is
+     * how the call stops borrowing the owner by accident.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 82235;
+    private static final int DOCUMENT_PROSE = 82400;
 }

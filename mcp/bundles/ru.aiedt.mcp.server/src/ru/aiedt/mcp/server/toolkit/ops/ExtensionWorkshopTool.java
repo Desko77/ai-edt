@@ -116,7 +116,11 @@ public class ExtensionWorkshopTool implements IMcpTool
             .stringProperty("childKind", //$NON-NLS-1$
                 "borrow_child: Attribute / TabularSection / Form / Template") //$NON-NLS-1$
             .stringProperty("itemName", //$NON-NLS-1$
-                "borrow_form_item: name of the form item to borrow") //$NON-NLS-1$
+                "borrow_form_item: the item you mean to change. The item itself is not " //$NON-NLS-1$
+                    + "borrowed - the form is, and the item is then yours to change.") //$NON-NLS-1$
+            .stringProperty("formName", //$NON-NLS-1$
+                "borrow_form_item: which form, when objectFqn names the owner rather than " //$NON-NLS-1$
+                    + "the form.") //$NON-NLS-1$
             .stringProperty("moduleType", //$NON-NLS-1$
                 "borrow_module: ObjectModule / ManagerModule / RecordSetModule / " //$NON-NLS-1$
                     + "CommandModule / ValueModule") //$NON-NLS-1$
