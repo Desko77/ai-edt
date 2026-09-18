@@ -3350,13 +3350,10 @@ public class BmFormHelper
      *   <li>{@code representation} - {@code DefaultRepresentation} enum
      *       (Auto / Text / Picture / TextPicture): how the bound button renders
      *       the command;</li>
-     *   <li>{@code picture} - best-effort. {@code FormCommand.setPicture} takes
-     *       a typed {@code mcore.Picture} on current EDT builds, and building a
-     *       named StdPicture / CommonPicture reference through EMF needs EDT's
-     *       build-unstable picture resolution. When no String overload is
-     *       exposed the property is REFUSED (not silently dropped) so the agent
-     *       applies the picture in the EDT UI instead of emitting an invalid
-     *       {@code <picture>} that loads in EDT but breaks in the infobase.</li>
+     *   <li>{@code picture} - a typed {@code PictureRef} whose own element carries the picture's
+     *       name as a string, the form the model itself writes (measured in a dialog-produced
+     *       .form). The name is validated against the platform registry or the project's
+     *       configuration first - a reference nothing resolves is refused, not written.</li>
      * </ul>
      *
      * @param command the FormCommand (found via {@link #findFormCommandByName})
@@ -3398,25 +3395,107 @@ public class BmFormHelper
         }
         if ("picture".equals(prop)) //$NON-NLS-1$
         {
-            // Probe a String-parameter setPicture (mirrors the decoration helper).
-            // Current builds expose only setPicture(mcore.Picture), so this refuses
-            // honestly rather than emit an empty/invalid <picture>.
-            for (Method mth : command.getClass().getMethods())
+            // A typed PictureRef: the reference's own element is the picture's NAME as a string,
+            // which is exactly the form the model writes - measured in a .form the dialog
+            // produced: <picture xsi:type="core:PictureRef"><picture>CommonPicture.X</picture>
+            // </picture>. The name has to exist before it is written, or a command carries a
+            // reference nothing resolves. The project's configuration is read through the command
+            // itself: it lives in that project's form.
+            String pictureError = namedPictureRefProblem(command, propertyValue);
+            if (pictureError != null)
             {
-                if ("setPicture".equals(mth.getName()) && mth.getParameterCount() == 1 //$NON-NLS-1$
-                    && mth.getParameterTypes()[0] == String.class)
-                {
-                    mth.invoke(command, propertyValue);
-                    return "set picture=" + propertyValue; //$NON-NLS-1$
-                }
+                return pictureError;
             }
-            return "Error: picture is not settable via MCP on this EDT build - " //$NON-NLS-1$
-                + "FormCommand.setPicture expects a typed mcore.Picture and named-picture " //$NON-NLS-1$
-                + "resolution is build-unstable. Apply the picture in the EDT UI " //$NON-NLS-1$
-                + "(command property sheet: Picture), or use representation=Text."; //$NON-NLS-1$
+            Object factory = BmDcsHelper.getMcoreFactory();
+            if (factory == null)
+            {
+                return "Error: the mcore factory is unavailable on this runtime - the picture " //$NON-NLS-1$
+                    + "cannot be built. Apply it in the EDT UI."; //$NON-NLS-1$
+            }
+            try
+            {
+                Object pictureRef = factory.getClass().getMethod("createPictureRef") //$NON-NLS-1$
+                    .invoke(factory);
+                pictureRef.getClass().getMethod("setPicture", String.class)
+                    .invoke(pictureRef, propertyValue);
+                for (Method mth : command.getClass().getMethods())
+                {
+                    if ("setPicture".equals(mth.getName()) && mth.getParameterCount() == 1 //$NON-NLS-1$
+                        && mth.getParameterTypes()[0].isInstance(pictureRef))
+                    {
+                        mth.invoke(command, pictureRef);
+                        return "set picture=" + propertyValue; //$NON-NLS-1$
+                    }
+                }
+                return "Error: FormCommand accepts no Picture this runtime can offer - the typed " //$NON-NLS-1$
+                    + "reference was built but has nowhere to go. Apply the picture in the EDT UI."; //$NON-NLS-1$
+            }
+            catch (NoSuchMethodException e)
+            {
+                return "Error: the mcore factory on this runtime cannot create a picture " //$NON-NLS-1$
+                    + "reference (" + e.getMessage() + "). Apply the picture in the EDT UI."; //$NON-NLS-1$
+            }
         }
         return "Error: unknown propertyName '" + propertyName //$NON-NLS-1$
             + "'. Allowed: title, representation, picture."; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether the picture name resolves to anything, through the command's own project.
+     *
+     * @param command the FormCommand - it lives in the form of the project whose configuration
+     *            has to carry a CommonPicture.
+     * @param name the picture name as the caller gave it ({@code StdPicture.X},
+     *            {@code StdExtPicture.X} or {@code CommonPicture.X}).
+     * @return what is wrong, or <code>null</code> when the name resolves
+     */
+    private static String namedPictureRefProblem(Object command, String name)
+    {
+        if (name == null || name.isEmpty())
+        {
+            return "Error: picture requires a non-empty propertyValue " //$NON-NLS-1$
+                + "(StdPicture.X, StdExtPicture.X or CommonPicture.X)."; //$NON-NLS-1$
+        }
+        String projectName = projectNameOf(command);
+        if (projectName != null)
+        {
+            String invalid = PictureValidator.validate(projectName, name);
+            if (invalid != null)
+            {
+                return "Error: " + invalid; //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The project the command belongs to, read through the command's resource rather than asked
+     * for separately - the command lives in its project's form, and asking the caller would let
+     * the two disagree.
+     *
+     * @param command the FormCommand.
+     * @return the project name, or <code>null</code> when it cannot be told
+     */
+    private static String projectNameOf(Object command)
+    {
+        try
+        {
+            if (command instanceof org.eclipse.emf.ecore.EObject)
+            {
+                org.eclipse.emf.ecore.resource.Resource resource =
+                    ((org.eclipse.emf.ecore.EObject) command).eResource();
+                if (resource != null && resource.getURI() != null)
+                {
+                    String[] segments = resource.getURI().segments();
+                    return segments.length > 0 ? segments[0] : null;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("BmFormHelper.projectNameOf failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return null;
     }
 
     /**
