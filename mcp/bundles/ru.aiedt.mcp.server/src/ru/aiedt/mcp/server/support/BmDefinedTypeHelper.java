@@ -2668,10 +2668,12 @@ public final class BmDefinedTypeHelper
         {
             return null;
         }
-        // Attach via setType / setTypeDescription. The target setter expects
-        // the TypeDescription interface, not its impl; resolving it through
-        // the factory return type matches that contract.
-        for (String setterName : new String[] { "setType", "setTypeDescription" }) //$NON-NLS-1$ //$NON-NLS-2$
+        // Attach via setType / setTypeDescription, or the command's own
+        // setCommandParameterType - the one attach point this does not ask for, and the only one
+        // a CatalogCommand has. The target setter expects the TypeDescription interface, not its
+        // impl; resolving it through the factory return type matches that contract.
+        for (String setterName : new String[] { "setType", "setTypeDescription", //$NON-NLS-1$ //$NON-NLS-2$
+            "setCommandParameterType" }) //$NON-NLS-1$
         {
             try
             {
