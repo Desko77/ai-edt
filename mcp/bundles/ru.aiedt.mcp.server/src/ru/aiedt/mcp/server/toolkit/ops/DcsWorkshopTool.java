@@ -5464,7 +5464,16 @@ public class DcsWorkshopTool implements IMcpTool
         }
         if (pv == null)
         {
-            Object created = BmDcsHelper.createElement("createDataCompositionParameterValue"); //$NON-NLS-1$
+            // A SettingsParameterValue, not the plain carrier: round-tripped through the
+            // environment on 18.09, the plain carrier survives the first write and loses its
+            // appearance when the schema is read back and serialized - the typed one is what
+            // the environment itself writes and keeps. The settings parameter above this one is
+            // typed the same way.
+            Object created = BmDcsHelper.createElement("createSettingsParameterValue"); //$NON-NLS-1$
+            if (created == null)
+            {
+                created = BmDcsHelper.createElement("createDataCompositionParameterValue"); //$NON-NLS-1$
+            }
             Object param = BmDcsHelper.createElement("createDataCompositionParameter"); //$NON-NLS-1$
             if (created == null || param == null)
             {
