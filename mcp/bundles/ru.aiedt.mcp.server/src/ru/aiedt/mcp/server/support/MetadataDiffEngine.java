@@ -287,6 +287,25 @@ public final class MetadataDiffEngine
      */
     public static boolean structurallyEqual(EObject a, EObject b)
     {
+        return structurallyEqual(a, b, false);
+    }
+
+    /**
+     * The comparison itself, with the name taken out of the evidence when the caller says so.
+     * <p>
+     * A rename hunt compares two objects that are SUPPOSED to differ by name - excluded from the
+     * evidence, a pure rename reads equal, and everything else that changed still reads as a
+     * change. Left in, every candidate would read modified, and {@code renamed} would never hold
+     * anything.
+     * </p>
+     *
+     * @param a one side.
+     * @param b the other.
+     * @param ignoreName <code>true</code> when the name is not evidence of change.
+     * @return whether they carry the same content
+     */
+    public static boolean structurallyEqual(EObject a, EObject b, boolean ignoreName)
+    {
         if (a == null || b == null)
         {
             return a == b;
@@ -299,6 +318,10 @@ public final class MetadataDiffEngine
         for (EStructuralFeature feature : ec.getEAllStructuralFeatures())
         {
             if (feature.isTransient() || feature.isDerived())
+            {
+                continue;
+            }
+            if (ignoreName && "name".equals(feature.getName())) //$NON-NLS-1$
             {
                 continue;
             }
@@ -326,13 +349,20 @@ public final class MetadataDiffEngine
                         {
                             return false;
                         }
-                        // For containment many lists, we keep comparison shallow-by-name to avoid
-                        // deep recursion that EMF would explode. Caller's diffAttributes does a
-                        // detailed pass for the named children.
+                        // By name to MATCH the elements, then by content to compare them. A name
+                        // alone proved nothing about the content: an attribute whose type changed
+                        // compared equal under the same name, and the change was invisible at
+                        // every level of the comparison. When the name is not evidence (a rename
+                        // hunt), it is not asked of the children either.
                         for (int i = 0; i < aList.size(); i++)
                         {
-                            if (!java.util.Objects.equals(nameOf(aList.get(i)),
-                                nameOf(bList.get(i))))
+                            if (!ignoreName
+                                && !java.util.Objects.equals(nameOf(aList.get(i)),
+                                    nameOf(bList.get(i))))
+                            {
+                                return false;
+                            }
+                            if (!structurallyEqual(aList.get(i), bList.get(i), ignoreName))
                             {
                                 return false;
                             }
@@ -340,7 +370,12 @@ public final class MetadataDiffEngine
                     }
                     else
                     {
-                        if (!java.util.Objects.equals(nameOf((EObject) av), nameOf((EObject) bv)))
+                        if (!ignoreName
+                            && !java.util.Objects.equals(nameOf((EObject) av), nameOf((EObject) bv)))
+                        {
+                            return false;
+                        }
+                        if (!structurallyEqual((EObject) av, (EObject) bv, ignoreName))
                         {
                             return false;
                         }
@@ -500,6 +535,11 @@ public final class MetadataDiffEngine
      * Heuristic rename detection: a removed object and an added object with
      * identical structure suggest a rename. Returns the FQN of the removed
      * candidate or {@code null}.
+     * <p>
+     * The name is taken out of the evidence - a candidate pair differs by name
+     * by definition, and compared WITH it no pair ever reads equal, which is
+     * why {@code renamed} came back empty on every comparison.
+     * </p>
      */
     private static String findRenameCandidate(MdObject added, Map<String, MdObject> aObjects,
         Map<String, MdObject> bObjects)
@@ -510,7 +550,7 @@ public final class MetadataDiffEngine
             {
                 continue; // not removed
             }
-            if (structurallyEqual(entry.getValue(), added))
+            if (structurallyEqual(entry.getValue(), added, true))
             {
                 return entry.getKey();
             }
