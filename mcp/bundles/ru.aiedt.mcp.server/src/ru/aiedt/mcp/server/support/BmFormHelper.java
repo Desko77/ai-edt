@@ -3414,10 +3414,21 @@ public class BmFormHelper
             }
             try
             {
+                // The reference points at a picture PROXY carrying the name: the form the model
+                // itself writes, measured in a dialog-produced .form - <picture
+                // xsi:type="core:PictureRef"><picture>CommonPicture.X</picture></picture>. Built
+                // through the same proxy machinery every reference in this codebase uses.
+                Object pictureProxy = buildNamedPictureProxy(command, propertyValue);
+                if (pictureProxy == null)
+                {
+                    return "Error: a named picture reference could not be built on this runtime " //$NON-NLS-1$
+                        + "(the provider that resolves such names is not here). Apply the picture " //$NON-NLS-1$
+                        + "in the EDT UI."; //$NON-NLS-1$
+                }
                 Object pictureRef = factory.getClass().getMethod("createPictureRef") //$NON-NLS-1$
                     .invoke(factory);
-                pictureRef.getClass().getMethod("setPicture", String.class)
-                    .invoke(pictureRef, propertyValue);
+                pictureRef.getClass().getMethod("setPicture",
+                    com._1c.g5.v8.dt.mcore.Picture.class).invoke(pictureRef, pictureProxy);
                 for (Method mth : command.getClass().getMethods())
                 {
                     if ("setPicture".equals(mth.getName()) && mth.getParameterCount() == 1 //$NON-NLS-1$
@@ -3449,6 +3460,69 @@ public class BmFormHelper
      *            {@code StdExtPicture.X} or {@code CommonPicture.X}).
      * @return what is wrong, or <code>null</code> when the name resolves
      */
+    /**
+     * The proxy a named picture reference points at.
+     * <p>
+     * A platform picture (StdPicture / StdExtPicture) is resolved by the same provider that
+     * resolves any platform type; a CommonPicture is resolved by the project's configuration.
+     * Either way the reference carries the name, and the environment resolves it at render time -
+     * which is why a name that resolves to nothing is refused before this is built.
+     * </p>
+     *
+     * @param command the FormCommand, whose project resolves the name.
+     * @param name the picture name as the caller gave it.
+     * @return the proxy, or <code>null</code> when no provider on this runtime builds one
+     */
+    private static Object buildNamedPictureProxy(Object command, String name)
+    {
+        try
+        {
+            Class<?> registryClass =
+                Class.forName("com._1c.g5.v8.dt.core.platform.IEObjectProvider$Registry"); //$NON-NLS-1$
+            Object registry = registryClass.getField("INSTANCE").get(null); //$NON-NLS-1$
+            Class<?> mcorePackage = Class.forName("com._1c.g5.v8.dt.mcore.McorePackage"); //$NON-NLS-1$
+            Object pictureClass = mcorePackage.getField("PICTURE").get(null); //$NON-NLS-1$
+            for (Method m : registryClass.getMethods())
+            {
+                if (!"get".equals(m.getName()) || m.getParameterCount() != 2) //$NON-NLS-1$
+                {
+                    continue;
+                }
+                Object provider;
+                try
+                {
+                    provider = m.invoke(registry, pictureClass, null);
+                }
+                catch (Exception e)
+                {
+                    continue;
+                }
+                if (provider == null)
+                {
+                    continue;
+                }
+                try
+                {
+                    Method getProxy = provider.getClass().getMethod("getProxy", String.class); //$NON-NLS-1$
+                    Object proxy = getProxy.invoke(provider, name);
+                    if (proxy != null)
+                    {
+                        return proxy;
+                    }
+                }
+                catch (NoSuchMethodException nsf)
+                {
+                    // another provider shape - keep looking
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("BmFormHelper.buildNamedPictureProxy failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return null;
+    }
+
     private static String namedPictureRefProblem(Object command, String name)
     {
         if (name == null || name.isEmpty())
