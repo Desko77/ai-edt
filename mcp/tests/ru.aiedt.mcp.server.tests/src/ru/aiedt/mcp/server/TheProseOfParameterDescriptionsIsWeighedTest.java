@@ -196,6 +196,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 202 for naming the update_database read in the standalone schema too - the two
      * surfaces describe the same tool, and a client that can see one must see the other.
      * </p>
+     * <p>
+     * And by 606 for waitForEndpoint across the four launch surfaces: a process that exists is
+     * not an opened processor that answers, and the wait is the only way to tell them apart - the
+     * measure the release itself runs with an MCP Toolkit.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
@@ -215,7 +220,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // machine with several environments the default one is taken and the launch is
         // refused by a dialog), building the external object (without it the client starts
         // empty, measured 17.09), and the ceiling on the wait for a breakpoint.
-        PROSE.put("launch_debugger", Integer.valueOf(3000));
+        // Raised by 654 for startupOption (the /C string is how an opened object receives its
+        // parameters - the test runners already pass theirs the same way) and for waitForEndpoint:
+        // a process that exists is not an opened processor that answers, and the wait is the only
+        // way to tell them apart.
+        PROSE.put("launch_debugger", Integer.valueOf(3654));
         PROSE.put("mxl_workshop", Integer.valueOf(2164));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
@@ -314,5 +323,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * in the code and missing from one of them is a contract the strict client cannot call.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 84093;
+    private static final int DOCUMENT_PROSE = 84699;
 }

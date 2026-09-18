@@ -93,6 +93,13 @@ public class ClientSessionStarter
                     + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
                     + "external processor or report receives its parameters. Refused while the " //$NON-NLS-1$
                     + "configuration's client is already running - that one was not started with it.") //$NON-NLS-1$
+            .stringProperty("waitForEndpoint", //$NON-NLS-1$
+                "Wait for this URL to answer before reporting the client started - ready is any " //$NON-NLS-1$
+                    + "final status below 500, at most five redirects. A client whose endpoint " //$NON-NLS-1$
+                    + "never answers is NOT stopped; the refusal says so.") //$NON-NLS-1$
+            .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
+                "How long to wait for waitForEndpoint, in seconds. Default 20, limit 50. Refused " //$NON-NLS-1$
+                    + "without waitForEndpoint.") //$NON-NLS-1$
             .build();
     }
 
@@ -116,6 +123,23 @@ public class ClientSessionStarter
             if (startupOption != null && startupOption.trim().isEmpty())
             {
                 startupOption = null;
+            }
+            String waitForEndpoint = JsonUtils.extractStringArgument(params, "waitForEndpoint"); //$NON-NLS-1$
+            if (waitForEndpoint != null && waitForEndpoint.trim().isEmpty())
+            {
+                waitForEndpoint = null;
+            }
+            Integer endpointTimeout = JsonUtils.extractIntegerArgument(params, "endpointTimeoutSeconds"); //$NON-NLS-1$
+            if (endpointTimeout != null && (endpointTimeout.intValue() <= 0 || endpointTimeout.intValue() > 50))
+            {
+                return ToolResult.error("endpointTimeoutSeconds must be in (0, 50]. Nothing was started.") //$NON-NLS-1$
+                    .put("endpointTimeoutSeconds", endpointTimeout) //$NON-NLS-1$
+                    .toJson();
+            }
+            if (endpointTimeout != null && waitForEndpoint == null)
+            {
+                return ToolResult.error("endpointTimeoutSeconds without waitForEndpoint names a " //$NON-NLS-1$
+                    + "wait that never happens. Nothing was started.").toJson(); //$NON-NLS-1$
             }
 
             ILaunchManager launchManager = LaunchConfigAccess.getLaunchManager();
@@ -148,7 +172,7 @@ public class ClientSessionStarter
             try
             {
                 return decideAndLaunch(launchManager, config, projectName, updateFirst, allowSecond,
-                    startupOption);
+                    startupOption, waitForEndpoint, endpointTimeout);
             }
             finally
             {
@@ -174,7 +198,8 @@ public class ClientSessionStarter
      * @return the JSON reply
      */
     private static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
-        String projectName, boolean updateFirst, boolean allowSecond, String startupOption)
+        String projectName, boolean updateFirst, boolean allowSecond, String startupOption,
+        String waitForEndpoint, Integer endpointTimeout)
     {
         try
         {
@@ -182,7 +207,7 @@ public class ClientSessionStarter
             ILaunch running = findRunning(launchManager, resolvedAppId);
             if (running != null && !allowSecond)
             {
-                if (startupOption != null)
+                if (startupOption != null || waitForEndpoint != null)
                 {
                     // The running client was not started with this string, and success here would
                     // lose it. Stop the client or allow a second one - the string is not dropped.
@@ -256,11 +281,11 @@ public class ClientSessionStarter
                 return ToolResult.error("Could not start the client: " + failure).toJson(); //$NON-NLS-1$
             }
 
-            return result.put("started", true) //$NON-NLS-1$
+            ToolResult success = result.put("started", true) //$NON-NLS-1$
                 .put("mode", ILaunchManager.RUN_MODE) //$NON-NLS-1$
                 .put("secondSession", running != null) //$NON-NLS-1$
-                .put("startupOption", startupOption) //$NON-NLS-1$
-                .toJson();
+                .put("startupOption", startupOption); //$NON-NLS-1$
+            return waitForEndpoint(waitForEndpoint, endpointTimeout, success);
         }
         catch (Exception e)
         {
@@ -305,6 +330,39 @@ public class ClientSessionStarter
      * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
      * @return <code>null</code> on success, otherwise the failure to report
      */
+    /**
+     * Waits for the endpoint the client is supposed to open, when the caller asked for one. The
+     * client stays whatever it is - a refusal here reports the wait, it does not kill the client.
+     *
+     * @param waitForEndpoint the URL to poll, or <code>null</code> to answer at once.
+     * @param endpointTimeout the budget in seconds, or <code>null</code> for 20.
+     * @param success the answer being built.
+     * @return the JSON answer
+     */
+    private static String waitForEndpoint(String waitForEndpoint, Integer endpointTimeout,
+        ToolResult success)
+    {
+        if (waitForEndpoint == null)
+        {
+            return success.toJson();
+        }
+        int seconds = endpointTimeout == null ? 20 : endpointTimeout.intValue();
+        ru.aiedt.mcp.server.support.EndpointWaiter.Outcome outcome =
+            ru.aiedt.mcp.server.support.EndpointWaiter.waitFor(waitForEndpoint, seconds * 1000L);
+        success.put("endpointReady", outcome.ready); //$NON-NLS-1$
+        success.put("endpointWaitedSeconds", Long.valueOf(outcome.waitedMs / 1000L)); //$NON-NLS-1$
+        if (outcome.ready)
+        {
+            success.put("endpointHttpStatus", Integer.valueOf(outcome.httpStatus)); //$NON-NLS-1$
+            return success.toJson();
+        }
+        return ToolResult.error("The endpoint " + waitForEndpoint + " never answered within " //$NON-NLS-1$
+            + seconds + "s" + (outcome.lastProblem != null ? " (" + outcome.lastProblem + ")" : "") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + ". The client is NOT stopped - watch it with debug_status.") //$NON-NLS-1$
+            .put("endpointReady", false) //$NON-NLS-1$
+            .toJson();
+    }
+
     private static String launch(ILaunchConfiguration config, String startupOption)
     {
         final String[] error = {null};

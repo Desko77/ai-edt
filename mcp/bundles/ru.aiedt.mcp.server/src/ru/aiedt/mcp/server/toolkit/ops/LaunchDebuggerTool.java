@@ -116,6 +116,13 @@ public class LaunchDebuggerTool implements IMcpTool
                 "launch: the /C startup string for the client that starts; the saved configuration " //$NON-NLS-1$
                     + "is not changed. An Attach configuration starts no client, so it is refused " //$NON-NLS-1$
                     + "there, and so is a session already running - it was not started with it.") //$NON-NLS-1$
+            .stringProperty("waitForEndpoint", //$NON-NLS-1$
+                "launch: wait for this URL to answer before reporting ready - ready is any final " //$NON-NLS-1$
+                    + "status below 500, at most five redirects. A launch whose endpoint never " //$NON-NLS-1$
+                    + "answers is NOT stopped; the refusal says so.") //$NON-NLS-1$
+            .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
+                "launch: how long to wait for waitForEndpoint, default 20, limit 50. Refused " //$NON-NLS-1$
+                    + "without waitForEndpoint.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$
                 "terminate: stop every active EDT launch (default false).") //$NON-NLS-1$
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$

@@ -130,6 +130,15 @@ public final class DebugSessionStarter implements IMcpTool
                     + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
                     + "opened external object receives its parameters. An Attach configuration " //$NON-NLS-1$
                     + "starts no client, so the argument is refused there.") //$NON-NLS-1$
+            .stringProperty("waitForEndpoint", //$NON-NLS-1$
+                "Wait for this URL to answer before reporting the launch ready - how you know the " //$NON-NLS-1$
+                    + "opened external object is up, not merely the process. A GET; ready is any " //$NON-NLS-1$
+                    + "final status below 500, redirects followed (at most five). The launch is " //$NON-NLS-1$
+                    + "NOT stopped when the endpoint never answers: the refusal says so and the " //$NON-NLS-1$
+                    + "client is watched with debug_status.") //$NON-NLS-1$
+            .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
+                "How long to wait for waitForEndpoint, in seconds. Default 20, limit 50 - one " //$NON-NLS-1$
+                    + "request does not outlive that. Refused without waitForEndpoint.") //$NON-NLS-1$
             .build();
     }
 
@@ -164,11 +173,34 @@ public final class DebugSessionStarter implements IMcpTool
         {
             startupOption = null;
         }
+        String waitForEndpoint = JsonUtils.extractStringArgument(params, "waitForEndpoint"); //$NON-NLS-1$
+        if (waitForEndpoint != null && waitForEndpoint.trim().isEmpty())
+        {
+            waitForEndpoint = null;
+        }
+        Integer endpointTimeout = JsonUtils.extractIntegerArgument(params, "endpointTimeoutSeconds"); //$NON-NLS-1$
+        if (endpointTimeout != null && (endpointTimeout.intValue() <= 0 || endpointTimeout.intValue() > 50))
+        {
+            return ToolResult.error("endpointTimeoutSeconds must be in (0, 50] - the same limit a " //$NON-NLS-1$
+                + "single request may not outlive. Nothing was launched.") //$NON-NLS-1$
+                .put("endpointTimeoutSeconds", endpointTimeout) //$NON-NLS-1$
+                .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                .toJson();
+        }
+        if (endpointTimeout != null && waitForEndpoint == null)
+        {
+            return ToolResult.error("endpointTimeoutSeconds without waitForEndpoint names a wait " //$NON-NLS-1$
+                + "that never happens - pass waitForEndpoint with it, or drop it. Nothing was " //$NON-NLS-1$
+                + "launched.") //$NON-NLS-1$
+                .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                .toJson();
+        }
 
         if (configName != null && !configName.isEmpty())
         {
             return launchByConfigName(configName, updateBeforeLaunch, debugServerPort,
-                externalObjectProject, externalObjectName, enableDump, startupOption);
+                externalObjectProject, externalObjectName, enableDump, startupOption,
+                waitForEndpoint, endpointTimeout);
         }
 
         if (projectName == null || projectName.isEmpty())
@@ -190,12 +222,13 @@ public final class DebugSessionStarter implements IMcpTool
         }
 
         return launchDebug(projectName, applicationId, updateBeforeLaunch,
-            externalObjectProject, externalObjectName, debugServerPort, enableDump, startupOption);
+            externalObjectProject, externalObjectName, debugServerPort, enableDump, startupOption,
+            waitForEndpoint, endpointTimeout);
     }
 
     private String launchByConfigName(String configName, boolean updateBeforeLaunch,
         int debugServerPort, String externalObjectProject, String externalObjectName,
-        boolean enableDump, String startupOption)
+        boolean enableDump, String startupOption, String waitForEndpoint, Integer endpointTimeout)
     {
         LAUNCH_LOCK.lock();
         try
@@ -237,7 +270,8 @@ public final class DebugSessionStarter implements IMcpTool
             // was started without these arguments, and answering success would lose them.
             if (effectiveAppId != null && DebugSessionBook.findActiveTarget(effectiveAppId) != null)
             {
-                if (startupOption != null || externalObjectName != null && !externalObjectName.isEmpty())
+                if (startupOption != null || externalObjectName != null && !externalObjectName.isEmpty()
+                    || waitForEndpoint != null)
                 {
                     return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
                         + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
@@ -367,6 +401,11 @@ public final class DebugSessionStarter implements IMcpTool
             {
                 result.put("startupOption", startupOption); //$NON-NLS-1$
             }
+            String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, result);
+            if (endpointNote != null)
+            {
+                return endpointNote;
+            }
             result.put("message", isAttach //$NON-NLS-1$
                 ? "Attach debug session started - use debug_status to check on it, "
                     + "or wait_for_break to block until a breakpoint fires."
@@ -394,7 +433,8 @@ public final class DebugSessionStarter implements IMcpTool
 
     private String launchDebug(String projectName, String applicationId,
         boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName,
-        int debugServerPort, boolean enableDump, String startupOption)
+        int debugServerPort, boolean enableDump, String startupOption, String waitForEndpoint,
+        Integer endpointTimeout)
     {
         LAUNCH_LOCK.lock();
         try
@@ -534,7 +574,7 @@ public final class DebugSessionStarter implements IMcpTool
             {
                 // A running session was started without these arguments; answering success would
                 // lose them. The fix is to stop the session, not to drop the arguments.
-                if (startupOption != null || openedObject != null)
+                if (startupOption != null || openedObject != null || waitForEndpoint != null)
                 {
                     return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
                         + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
@@ -587,7 +627,7 @@ public final class DebugSessionStarter implements IMcpTool
                     .toJson();
             }
 
-            return ToolResult.success()
+            ToolResult successResult = ToolResult.success()
                 .put("project", projectName) //$NON-NLS-1$
                 .put("applicationId", applicationId) //$NON-NLS-1$
                 .put("launchConfiguration", configName) //$NON-NLS-1$
@@ -600,8 +640,13 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
                 .put("message", autoCreatedConfig //$NON-NLS-1$
                     ? "Debug session is now running (a launch configuration was auto-created for it)"
-                    : "Debug session is now running")
-                .toJson();
+                    : "Debug session is now running");
+            String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
+            if (endpointNote != null)
+            {
+                return endpointNote;
+            }
+            return successResult.toJson();
         }
         catch (Exception e)
         {
@@ -612,6 +657,48 @@ public final class DebugSessionStarter implements IMcpTool
         {
             LAUNCH_LOCK.unlock();
         }
+    }
+
+    /**
+     * Waits for the endpoint a launched client is supposed to open, when the caller asked for one.
+     * <p>
+     * The launch stays whatever it is: a client that never gets there is reported, not killed -
+     * the caller watches it through debug_status. The answer carries what the wait saw:
+     * {@code endpointReady}, {@code endpointWaitedSeconds}, {@code endpointHttpStatus} on success,
+     * or the last problem when nothing answered in the budget.
+     * </p>
+     *
+     * @param waitForEndpoint the URL to poll, or <code>null</code> to skip the wait.
+     * @param endpointTimeout the budget in seconds, or <code>null</code> for the default of 20.
+     * @param result the answer being built.
+     * @return a refusal JSON when the endpoint never answered, or <code>null</code>
+     */
+    private static String waitForEndpoint(String waitForEndpoint, Integer endpointTimeout,
+        ToolResult result)
+    {
+        if (waitForEndpoint == null)
+        {
+            return null;
+        }
+        int seconds = endpointTimeout == null ? 20 : endpointTimeout.intValue();
+        ru.aiedt.mcp.server.support.EndpointWaiter.Outcome outcome =
+            ru.aiedt.mcp.server.support.EndpointWaiter.waitFor(waitForEndpoint, seconds * 1000L);
+        result.put("endpointReady", outcome.ready); //$NON-NLS-1$
+        result.put("endpointWaitedSeconds", Long.valueOf(outcome.waitedMs / 1000L)); //$NON-NLS-1$
+        result.put("endpointAsked", outcome.asked); //$NON-NLS-1$
+        if (outcome.ready)
+        {
+            result.put("endpointHttpStatus", Integer.valueOf(outcome.httpStatus)); //$NON-NLS-1$
+            return null;
+        }
+        ToolResult refusal = ToolResult.error("The endpoint " + waitForEndpoint //$NON-NLS-1$
+            + " never answered within " + seconds + "s" //$NON-NLS-1$
+            + (outcome.lastProblem != null ? " (" + outcome.lastProblem + ")" : "") //$NON-NLS-1$ //$NON-NLS-2$
+            + ". The client itself is NOT stopped - it may still come up; watch it with " //$NON-NLS-1$
+            + "debug_status.") //$NON-NLS-1$
+            .put("endpointReady", false) //$NON-NLS-1$
+            .put("endpointWaitedSeconds", Long.valueOf(outcome.waitedMs / 1000L)); //$NON-NLS-1$
+        return refusal.toJson();
     }
 
     private String updateDatabaseIfNeeded(String projectName, String applicationId)

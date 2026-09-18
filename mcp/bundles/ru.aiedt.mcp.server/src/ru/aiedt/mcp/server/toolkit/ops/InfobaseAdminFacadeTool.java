@@ -253,6 +253,13 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "start_client: the /C startup string for the client that starts; the saved " //$NON-NLS-1$
                     + "configuration is not changed. Refused while its client is already running - " //$NON-NLS-1$
                     + "that one was not started with it.") //$NON-NLS-1$
+            .stringProperty("waitForEndpoint", //$NON-NLS-1$
+                "start_client: wait for this URL to answer before reporting started - ready is " //$NON-NLS-1$
+                    + "any final status below 500, at most five redirects. A client whose " //$NON-NLS-1$
+                    + "endpoint never answers is NOT stopped; the refusal says so.") //$NON-NLS-1$
+            .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
+                "start_client: how long to wait for waitForEndpoint, default 20, limit 50. " //$NON-NLS-1$
+                    + "Refused without waitForEndpoint.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", //$NON-NLS-1$
                 "update_database: true triggers a full reload; false runs an incremental " //$NON-NLS-1$
                     + "update instead (default false).") //$NON-NLS-1$
