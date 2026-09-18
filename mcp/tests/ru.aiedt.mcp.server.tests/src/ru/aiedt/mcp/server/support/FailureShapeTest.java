@@ -6,7 +6,9 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -78,6 +80,43 @@ public class FailureShapeTest
         assertFalse(FailureShape.looksFailed("{\"success\":true,\"count\":3}")); //$NON-NLS-1$
         assertFalse(FailureShape.looksFailed("# Metadata objects across 8 open projects")); //$NON-NLS-1$
         assertFalse(FailureShape.looksFailed("")); //$NON-NLS-1$
+    }
+
+    /**
+     * An answer that carries other answers is judged by its own verdict, not by theirs.
+     *
+     * <p>Measured: <code>get_mcp_history</code> lists recorded calls with the result of each, so a
+     * listing holding one failed call was handed to the client with <code>isError</code> and
+     * recorded as a failure itself. The same reading evicts an idempotency entry for a call that
+     * succeeded, and an evicted entry is what lets a retry mutate twice.
+     */
+    @Test
+    public void anAnswerIsJudgedByItsOwnVerdictAndNotAQuotedOne()
+    {
+        String listing = "{\"success\":true,\"operation\":\"get_mcp_history\",\"history\":[" //$NON-NLS-1$
+            + "{\"tool\":\"launch_debugger\",\"result\":\"{\\\"success\\\":false,\\\"error\\\":\\\"no\\\"}\"}" //$NON-NLS-1$
+            + "]}"; //$NON-NLS-1$
+        assertFalse(listing, FailureShape.looksFailed(listing));
+
+        String batch = "{\"success\":true,\"batchResults\":[{\"success\":false,\"index\":2}]}"; //$NON-NLS-1$
+        assertFalse(batch, FailureShape.looksFailed(batch));
+
+        // The other direction still holds: the answer's own false is the verdict, whatever the
+        // rows below it say.
+        String refused = "{\"success\":false,\"results\":[{\"success\":true}]}"; //$NON-NLS-1$
+        assertTrue(refused, FailureShape.looksFailed(refused));
+    }
+
+    @Test
+    public void theTopLevelVerdictIsReadFromDepthOneOnly()
+    {
+        assertEquals(Boolean.TRUE, FailureShape.topLevelSuccess("{\"success\":true}")); //$NON-NLS-1$
+        assertEquals(Boolean.FALSE, FailureShape.topLevelSuccess("{ \"success\" : false }")); //$NON-NLS-1$
+        // A key of that name deeper in the answer is not the answer's verdict.
+        assertNull(FailureShape.topLevelSuccess("{\"rows\":[{\"success\":false}]}")); //$NON-NLS-1$
+        // And neither is a value that merely spells it.
+        assertNull(FailureShape.topLevelSuccess("{\"note\":\"success\"}")); //$NON-NLS-1$
+        assertNull(FailureShape.topLevelSuccess("not json at all")); //$NON-NLS-1$
     }
 
     @Test
