@@ -272,6 +272,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .booleanProperty("cancel", //$NON-NLS-1$
                 "update_database: combined with runKey, detach and stop tracking that update " //$NON-NLS-1$
                     + "(best-effort only).") //$NON-NLS-1$
+            .booleanProperty("statusOnly", //$NON-NLS-1$
+                "update_database: read what updates are being tracked and start nothing - " //$NON-NLS-1$
+                    + "runKeys, state, elapsed time. projectName filters by project; any other " //$NON-NLS-1$
+                    + "run-shaping parameter beside runKey or cancel is refused.") //$NON-NLS-1$
             .stringProperty("syncOperation", //$NON-NLS-1$
                 "sync_control's OWN action - status / diagnose / diagnose_delta / suppress " //$NON-NLS-1$
                     + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$

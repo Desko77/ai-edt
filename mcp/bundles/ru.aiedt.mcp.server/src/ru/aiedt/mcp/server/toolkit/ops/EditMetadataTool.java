@@ -416,6 +416,24 @@ public class EditMetadataTool implements IMcpTool
                 "create_http_service: reuse HTTP sessions across requests.") //$NON-NLS-1$
             .integerProperty("sessionMaxAge", //$NON-NLS-1$
                 "create_http_service: session max age in seconds (optional).") //$NON-NLS-1$
+            .stringProperty("commandParameterType", //$NON-NLS-1$
+                "create_object_command: the type of the command's parameter (e.g. " //$NON-NLS-1$
+                    + "CatalogRef.X). Written as a type description, and a name that resolves to " //$NON-NLS-1$
+                    + "nothing fails the call instead of landing silently as nothing.") //$NON-NLS-1$
+            .stringProperty("dataObjectName", //$NON-NLS-1$
+                "add_data_set with dataSetType=Object: the object that dataset reads. Required " //$NON-NLS-1$
+                    + "there, refused on any other dataset type.") //$NON-NLS-1$
+            .stringProperty("conditionType", //$NON-NLS-1$
+                "add_conditional_appearance / add_appearance: the comparison of the filter - " //$NON-NLS-1$
+                    + "Equal by default. A partial condition is refused: conditionValue without " //$NON-NLS-1$
+                    + "field and field without conditionValue land nowhere.") //$NON-NLS-1$
+            .stringProperty("conditionValue", //$NON-NLS-1$
+                "add_conditional_appearance / add_appearance: the value the condition compares " //$NON-NLS-1$
+                    + "the field against.") //$NON-NLS-1$
+            .stringProperty("appearance", //$NON-NLS-1$
+                "add_conditional_appearance / add_appearance / set_data_set_field_appearance: " //$NON-NLS-1$
+                    + "'Name=Value;Name=Value' - TextColor, BackColor, BorderColor, Font, Format " //$NON-NLS-1$
+                    + "or their Russian equivalents.") //$NON-NLS-1$
             .stringProperty("urlTemplateName", //$NON-NLS-1$
                 "create_http_service: name of the initial URLTemplate. Default 'Template1'.") //$NON-NLS-1$
             .stringProperty("urlTemplate", //$NON-NLS-1$
@@ -749,6 +767,14 @@ public class EditMetadataTool implements IMcpTool
                     + "result was already retrieved, or it expired. Re-issue it without runKey.") //$NON-NLS-1$
                     .toJson();
             }
+            if (entry.workKind != null && !"edit_metadata".equals(entry.workKind)) //$NON-NLS-1$
+            {
+                // The registry is shared, and a key that names an update must not resume one as a
+                // metadata call - resuming the wrong work is worse than not finding the key.
+                return ToolResult.error("runKey belongs to " + entry.workKind //$NON-NLS-1$
+                    + ", not to edit_metadata. Poll it with that tool - resuming it here would " //$NON-NLS-1$
+                    + "answer for work this call never started.").toJson(); //$NON-NLS-1$
+            }
         }
         else
         {
@@ -761,6 +787,10 @@ public class EditMetadataTool implements IMcpTool
                 reg.remove(runKey);
             }
             entry = reg.getOrStart(runKey, job -> applyOne(op, params));
+            // The registry is shared with update_database: stamped, a status read of either kind
+            // cannot name this entry as the other, and a key handed back resumes work of its own
+            // kind rather than any entry the key happens to resolve.
+            entry.workKind = "edit_metadata"; //$NON-NLS-1$
         }
 
         String result = entry.await(softTimeoutMs);

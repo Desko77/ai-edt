@@ -170,17 +170,43 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     /**
      * What each advertised tool's parameter descriptions weighed when this was written, in UTF-8
      * bytes. Filled from the failure of the first run rather than estimated.
+     * <p>
+     * Raised for edit_metadata from 12715 by 538 for two arguments whose values were already read
+     * but never advertised: commandParameterType, which the string setter accepted and the .mdo
+     * never received (measured on the stand 12.09), and dataObjectName, which the root dataset
+     * accepted and dropped the same way. An argument a strict client cannot see is a promise the
+     * tool cannot keep.
+     * </p>
+     * <p>
+     * Raised again by 477 for the three arguments of a conditional appearance the alias read
+     * without advertising: conditionType, conditionValue and appearance. The alias and the workshop
+     * read the same call, and a client building from the facade's schema could name none of them.
+     * </p>
+     * <p>
+     * And by 543 for naming the appearance's field in the workshop's own schema - the one argument
+     * the workshop read from the very beginning without telling the strict client it existed.
+     * </p>
+     * <p>
+     * Raised for infobase_admin by 527 for statusOnly: a caller asking whether an update is still
+     * going had no way to ask - a call without a runKey starts one (measured on the stand 15.09).
+     * The read is advertised on both surfaces the update is launched through, or the run is
+     * visible and the way to look at it is not.
+     * </p>
+     * <p>
+     * And by 202 for naming the update_database read in the standalone schema too - the two
+     * surfaces describe the same tool, and a client that can see one must see the other.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
     {
-        PROSE.put("edit_metadata", Integer.valueOf(12715));
+        PROSE.put("edit_metadata", Integer.valueOf(13730));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
         PROSE.put("insights", Integer.valueOf(5393));
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(3343));
+        PROSE.put("infobase_admin", Integer.valueOf(3870));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -275,6 +301,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * of that state is the project's properties page.
      * </p>
      * <p>
+     * And an eleventh, by 506, for the three DCS arguments whose values were already read and
+     * dropped on one of their routes: dataObjectName on the root dataset, dataPath on a total, and
+     * the field of a conditional appearance. Each is named in the schema of both surfaces that
+     * build such a call - the value a strict client can see is the only value it can give.
+     * </p>
+     * <p>
      * And a tenth, by 322, for startupOption across the four launch schemas. The startup string is
      * how an external processor or report opened at startup receives its parameters - the test
      * runners already pass theirs the same way, and a client that must not be restarted just to
@@ -282,5 +314,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * in the code and missing from one of them is a contract the strict client cannot call.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 82842;
+    private static final int DOCUMENT_PROSE = 84093;
 }

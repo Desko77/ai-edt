@@ -1090,7 +1090,16 @@ final class ServiceOps
                     }
                     if (fSessionMaxAge != null)
                     {
-                        applyOptionalInteger(service, "setSessionMaxAge", fSessionMaxAge); //$NON-NLS-1$
+                        // The integer setter reports nothing when the class does not have it, and
+                        // measured on the stand 12.09 the value then lands nowhere: the answer says
+                        // success, the .mdo has no sessionMaxAge. A promised number that did not
+                        // land fails the call.
+                        String ageProblem = requireOptionalInteger(service, "setSessionMaxAge", //$NON-NLS-1$
+                            fSessionMaxAge);
+                        if (ageProblem != null)
+                        {
+                            throw new RuntimeException(ageProblem);
+                        }
                     }
                     if (!BmObjectHelper.addToConfiguration(config, service))
                     {
@@ -1572,6 +1581,46 @@ final class ServiceOps
                 }
             }
         }
+    }
+
+    /**
+     * The integer counterpart of {@link #applyOptionalInteger} that answers when it could not
+     * apply.
+     *
+     * @param target what to write to.
+     * @param setterName the setter to call.
+     * @param value the value; <code>null</code> applies nothing and is not an error.
+     * @return what went wrong, or <code>null</code> when the value landed or none was given
+     */
+    private static String requireOptionalInteger(MdObject target, String setterName, Integer value)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+        for (java.lang.reflect.Method m : target.getClass().getMethods())
+        {
+            if (!setterName.equals(m.getName()) || m.getParameterCount() != 1)
+            {
+                continue;
+            }
+            Class<?> p = m.getParameterTypes()[0];
+            if (p == int.class || p == Integer.class)
+            {
+                try
+                {
+                    m.invoke(target, value);
+                    return null;
+                }
+                catch (Exception e)
+                {
+                    return setterName + " on " + target.eClass().getName() + " failed: " //$NON-NLS-1$ //$NON-NLS-2$
+                        + e.getMessage();
+                }
+            }
+        }
+        return "the model class " + target.eClass().getName() + " has no " + setterName //$NON-NLS-1$ //$NON-NLS-2$
+            + "(int) - the value cannot land on this EDT runtime. Nothing was written."; //$NON-NLS-1$
     }
 
     private static String buildHttpServiceModuleStub(String handler)

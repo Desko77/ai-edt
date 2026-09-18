@@ -440,6 +440,36 @@ public final class PendingWorkRegistry
     }
 
     /**
+     * Every entry still tracked, running or completed-not-yet-collected, of one kind of work.
+     * <p>
+     * One registry may carry more than one tool - UPDATE also carries pending
+     * {@code edit_metadata} calls - and a read that cannot tell them apart answers questions about
+     * one tool with work belonging to another. An entry whose kind was never set counts for every
+     * kind, the way an entry without a subject counts for every subject: it cannot be told apart,
+     * and hiding it would say less than is known.
+     * </p>
+     * <p>
+     * A snapshot over a live map: an entry may complete or be evicted after the read. That is what
+     * a status read reports, not an error.
+     * </p>
+     *
+     * @param kind the kind of work; <code>null</code> or empty lists everything still tracked.
+     * @return the entries, never <code>null</code>
+     */
+    public java.util.List<PendingEntry> trackedOf(String kind)
+    {
+        java.util.List<PendingEntry> tracked = new java.util.ArrayList<>();
+        for (PendingEntry entry : entries.values())
+        {
+            if (kind == null || kind.isEmpty() || entry.workKind == null || kind.equals(entry.workKind))
+            {
+                tracked.add(entry);
+            }
+        }
+        return tracked;
+    }
+
+    /**
      * Number of entries whose work is still running (not yet completed), for
      * diagnostics. Weakly consistent - a snapshot over a live map, which is fine
      * for a status read. Distinct from {@link #size()}, which also counts
@@ -866,6 +896,18 @@ public final class PendingWorkRegistry
          * </p>
          */
         public volatile String subject;
+
+        /**
+         * The kind of work, when two tools share one registry.
+         * <p>
+         * The UPDATE registry also carries pending {@code edit_metadata} calls, and a key answers
+         * the wrong question when it can belong to either: the status read of an update would name
+         * a metadata write as an update, and a key handed back would resume work the caller never
+         * started. Set by whoever starts the work; null counts as a match for a kind-filtered
+         * query, the same way a null subject leaves an entry unaddressable by subject.
+         * </p>
+         */
+        public volatile String workKind;
 
         PendingEntry(String runKey)
         {

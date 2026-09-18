@@ -148,7 +148,25 @@ final class SpecializedOps
                 {
                     BmObjectHelper.setProperty(command, "toolTip", tooltipFinal); //$NON-NLS-1$
                 }
-                EditMetadataTool.applyOptionalString(command, "setCommandParameterType", paramTypeFinal); //$NON-NLS-1$
+                // The command parameter is typed the same way an attribute is: a reference type
+                // resolves through the configuration, a primitive through the project, and a name
+                // that resolves to nothing fails the call rather than vanishing. Measured on the
+                // stand 12.09: the string setter accepted the value and the .mdo got no
+                // commandParameterType at all - a promised type that never landed.
+                if (paramTypeFinal != null && !paramTypeFinal.isEmpty())
+                {
+                    Configuration config = Activator.getDefault().getConfigurationProvider()
+                        .getConfiguration(project);
+                    ru.aiedt.mcp.server.support.BmDefinedTypeHelper.TypesResult tr =
+                        ru.aiedt.mcp.server.support.BmDefinedTypeHelper.setTypes(
+                            command, project, config,
+                            java.util.List.of(paramTypeFinal), null);
+                    if (!tr.ok)
+                    {
+                        throw new RuntimeException(tr.error != null ? tr.error
+                            : "commandParameterType could not be resolved"); //$NON-NLS-1$
+                    }
+                }
                 // Note: Command.picture is an EMF Picture object, not a String
                 // setter. Applying it requires MdClassFactory.createPicture()
                 // and a typed setter that is not stable across EDT versions.

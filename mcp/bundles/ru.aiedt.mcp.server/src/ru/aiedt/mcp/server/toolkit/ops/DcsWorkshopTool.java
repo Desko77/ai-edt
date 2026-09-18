@@ -190,6 +190,9 @@ public class DcsWorkshopTool implements IMcpTool
                 + "(replaces the whole query of an existing Query dataset; multi-statement / UNION OK)") //$NON-NLS-1$
             .stringProperty("dataSetType", "Query / Object / Union (default: Query)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("expression", "DCS expression for calculated field / total") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("dataPath", //$NON-NLS-1$
+                "add_total: the path to the data the total runs over. Default the expression as " //$NON-NLS-1$
+                    + "given, not the aggregate wrapped around it.") //$NON-NLS-1$
             .stringProperty("aggregateFunction", //$NON-NLS-1$
                 "Aggregate for add_total: Sum / Count / Min / Max / Avg") //$NON-NLS-1$
             .stringProperty("type", "Parameter type (Date, Number, String, etc.)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -221,9 +224,10 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("container", //$NON-NLS-1$
                 "selection / filter / order (set_settings_item_user_mode)") //$NON-NLS-1$
             .stringProperty("field", //$NON-NLS-1$
-                "Field path for grouping / order / selected-field / filter ops and the " //$NON-NLS-1$
-                    + "field-match branch of remove_settings_filter / remove_settings_order " //$NON-NLS-1$
-                    + "(alternative to index).") //$NON-NLS-1$
+                "Field path for grouping / order / selected-field / filter ops, the field of a " //$NON-NLS-1$
+                    + "conditional appearance's filter (add_appearance), and the field-match " //$NON-NLS-1$
+                    + "branch of remove_settings_filter / remove_settings_order (alternative to " //$NON-NLS-1$
+                    + "index).") //$NON-NLS-1$
             .stringProperty("condition", //$NON-NLS-1$
                 "Query condition expression for add_query_condition / remove_query_condition " //$NON-NLS-1$
                 + "(e.g. 'T.Sum > &MinSum'). add splices it into WHERE/ГДЕ; remove matches it " //$NON-NLS-1$
@@ -272,7 +276,8 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("url", //$NON-NLS-1$
                 "add_nested_schema: where the nested schema reads its data from.") //$NON-NLS-1$
             .stringProperty("dataObjectName", //$NON-NLS-1$
-                "add_union_item dataSetType=Object: the object that child dataset reads.") //$NON-NLS-1$
+                "add_dataset / add_union_item with dataSetType=Object: the object that dataset " //$NON-NLS-1$
+                    + "reads. Required there, refused on any other dataset type.") //$NON-NLS-1$
             .stringProperty("groupName", //$NON-NLS-1$
                 "add_group_template / remove_group_template: the grouping being drawn.") //$NON-NLS-1$
             .stringProperty("groupName2", //$NON-NLS-1$
@@ -1350,7 +1355,49 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("Schema.getDataSets() not available"); //$NON-NLS-1$
         }
         dataSets.add((EObject) dataSet);
+        requireDataObjectName(params, dataSet, dataSetType);
         return name;
+    }
+
+    /**
+     * The object an Object dataset reads, on every route that makes one.
+     * <p>
+     * Two routes create datasets - the schema's own {@code add_dataset} and a union's
+     * {@code add_union_item} - and only the union's wrote the name: measured 12.09 on the stand,
+     * the root dataset came back with no {@code objectName} in the file at all. A decision held
+     * beside one of the two would have left the other exactly as broken, which is why this sits
+     * where both call it.
+     * </p>
+     * <p>
+     * The argument is refused on a non-Object dataset: a value that cannot land is not dropped in
+     * silence.
+     * </p>
+     *
+     * @param params the call, which may carry {@code dataObjectName}.
+     * @param dataSet the dataset just created.
+     * @param dataSetType its type, defaulted by the caller already.
+     */
+    private static void requireDataObjectName(Map<String, String> params, Object dataSet,
+        String dataSetType)
+    {
+        String dataObjectName = JsonUtils.extractStringArgument(params, "dataObjectName"); //$NON-NLS-1$
+        if (dataObjectName != null && !dataObjectName.isEmpty())
+        {
+            if (!"Object".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+            {
+                throw new RuntimeException("dataObjectName names the object an Object dataset " //$NON-NLS-1$
+                    + "reads - a " + dataSetType + " dataset has none. Remove it, or set " //$NON-NLS-1$
+                    + "dataSetType=Object."); //$NON-NLS-1$
+            }
+            mustSet(dataSet, "objectName", dataObjectName); //$NON-NLS-1$
+        }
+        else if ("Object".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
+        {
+            // An Object dataset reads a named object, and nothing else names it. Created without
+            // one it is a child that can never be finished.
+            throw new RuntimeException(
+                "an Object dataset reads a named object - pass dataObjectName"); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -2231,19 +2278,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         // Its own argument, because objectName already names the report or data processor whose
         // schema is being edited - reusing it would write that FQN into the child.
-        String dataObjectName = JsonUtils.extractStringArgument(params, "dataObjectName"); //$NON-NLS-1$
-        if (dataObjectName != null && !dataObjectName.isEmpty())
-        {
-            mustSet(child, "objectName", dataObjectName); //$NON-NLS-1$
-        }
-        else if ("Object".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
-        {
-            // An Object dataset reads a named object, and nothing else names it. Created without
-            // one it is a child that can never be finished, because a dataset inside a union is
-            // not among the datasets the other operations reach.
-            throw new RuntimeException(
-                "an Object dataset reads a named object - pass dataObjectName"); //$NON-NLS-1$
-        }
+        requireDataObjectName(params, child, dataSetType);
         String dataSourceName = ensureDefaultDataSource(schema);
         if (dataSourceName != null && !"Union".equalsIgnoreCase(dataSetType)) //$NON-NLS-1$
         {
@@ -2741,7 +2776,16 @@ public class DcsWorkshopTool implements IMcpTool
         }
         String expression = totalExpressionOf(rawExpression, aggregateFunction);
         BmDcsHelper.setProperty(field, "expression", expression); //$NON-NLS-1$
-        applyOptionalProperty(field, "dataPath", params, "name"); //$NON-NLS-1$ //$NON-NLS-2$
+        // The path to the data the total runs over: the expression as given, not the aggregate
+        // wrapped around it. Measured 12.09 on the stand: taken from `name`, which the caller never
+        // passes, so the totalField in the file carried no dataPath at all. An explicit dataPath
+        // overrides the default - the caller knows better when the expression is not the path.
+        String dataPath = JsonUtils.extractStringArgument(params, "dataPath"); //$NON-NLS-1$
+        if (dataPath == null || dataPath.isEmpty())
+        {
+            dataPath = rawExpression;
+        }
+        mustSet(field, "dataPath", dataPath); //$NON-NLS-1$
         EList<EObject> totals = BmDcsHelper.getEObjectList(schema, "getTotalFields"); //$NON-NLS-1$
         if (totals == null)
         {
@@ -2753,8 +2797,12 @@ public class DcsWorkshopTool implements IMcpTool
 
     private Object doAddAppearance(Map<String, String> params, EObject schema)
     {
-        String conditionType = orDefault(
-            JsonUtils.extractStringArgument(params, "conditionType"), "Equal"); //$NON-NLS-1$ //$NON-NLS-2$
+        String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
+        if (field != null && field.trim().isEmpty())
+        {
+            field = null;
+        }
+        String conditionType = JsonUtils.extractStringArgument(params, "conditionType"); //$NON-NLS-1$
         String conditionValue = JsonUtils.extractStringArgument(params, "conditionValue"); //$NON-NLS-1$
         // Appearance properties are received as a string in 1.37: "Font=Arial,12,bold;TextColor=#FF0000".
         // The font/color guard rejects values that look like JSON objects/arrays
@@ -2766,6 +2814,39 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw fontColorGuard(appearanceSpec);
         }
+
+        // The contract of the parts, enforced before anything is made: measured on the stand
+        // 12.09, a call with all four parts got an item whose filter had a right side and no left,
+        // because the handler never read `field`. A partial condition is refused, because half a
+        // condition writes exactly that filter.
+        boolean hasAppearance = appearanceTrim != null && !appearanceTrim.isEmpty();
+        if (field == null && conditionValue != null)
+        {
+            throw new RuntimeException("conditionValue without field writes a filter with a right " //$NON-NLS-1$
+                + "side and no left - name the field the condition reads."); //$NON-NLS-1$
+        }
+        if (field != null && conditionValue == null)
+        {
+            throw new RuntimeException("field without conditionValue writes a filter with a left " //$NON-NLS-1$
+                + "side and no right - give the value it compares against."); //$NON-NLS-1$
+        }
+        if (conditionType != null && !conditionType.isEmpty() && field == null && !hasAppearance)
+        {
+            throw new RuntimeException("conditionType alone lands nowhere: pass field and " //$NON-NLS-1$
+                + "conditionValue with it, or appearance without a condition."); //$NON-NLS-1$
+        }
+        if (hasAppearance && conditionType != null && !conditionType.isEmpty() && field == null)
+        {
+            throw new RuntimeException("appearance plus conditionType without field leaves the " //$NON-NLS-1$
+                + "comparison type nowhere - name the field, or drop conditionType."); //$NON-NLS-1$
+        }
+        if (field == null && !hasAppearance)
+        {
+            throw new RuntimeException("nothing to write: pass field and conditionValue for a " //$NON-NLS-1$
+                + "condition, appearance for the styling, or both."); //$NON-NLS-1$
+        }
+        String effectiveConditionType = orDefault(conditionType, "Equal"); //$NON-NLS-1$
+
         Object apSettings = ensureDefaultSettings(schema);
         if (apSettings == null)
         {
@@ -2785,34 +2866,35 @@ public class DcsWorkshopTool implements IMcpTool
         BmDcsHelper.setProperty(item, "useInGrouping", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         BmDcsHelper.setProperty(item, "useInTable", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         BmDcsHelper.setProperty(item, "useInChart", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-        if (conditionValue != null)
+        if (field != null)
         {
-            // Attach a single filter item to .condition - best-effort via reflection.
             Object condition = invokeGetter(item, "getFilter"); //$NON-NLS-1$
-            if (condition != null)
+            if (condition == null)
             {
-                Object filterItem = BmDcsHelper.createElement("createDataCompositionFilterItem"); //$NON-NLS-1$
-                if (filterItem != null)
-                {
-                    // 1.43.x batch 4a: comparisonType is an enum (works). The right
-                    // value is an EList<Value> (no setter) - the legacy rightValue
-                    // setter does not exist and was a silent no-op. Append an mcore
-                    // StringValue literal. No LEFT field is wired here: this handler
-                    // exposes only conditionValue, not a condition field.
-                    BmDcsHelper.setProperty(filterItem, "comparisonType", conditionType); //$NON-NLS-1$
-                    Object rv = BmDcsHelper.createLiteralValue(conditionValue);
-                    EList<EObject> rightList = BmDcsHelper.getEObjectList(filterItem, "getRight"); //$NON-NLS-1$
-                    if (rv != null && rightList != null)
-                    {
-                        rightList.add((EObject) rv);
-                    }
-                    EList<EObject> items = BmDcsHelper.getEObjectList(condition, "getItems"); //$NON-NLS-1$
-                    if (items != null)
-                    {
-                        items.add((EObject) filterItem);
-                    }
-                }
+                throw new RuntimeException("the appearance item has no filter to write into"); //$NON-NLS-1$
             }
+            Object filterItem = BmDcsHelper.createElement("createDataCompositionFilterItem"); //$NON-NLS-1$
+            if (filterItem == null)
+            {
+                throw new RuntimeException("DcsFactory.createDataCompositionFilterItem not available"); //$NON-NLS-1$
+            }
+            // Both sides of the comparison, or it is the filter from the measurement: right only.
+            mustSet(filterItem, "left", field); //$NON-NLS-1$
+            BmDcsHelper.setProperty(filterItem, "comparisonType", effectiveConditionType); //$NON-NLS-1$
+            Object rv = BmDcsHelper.createLiteralValue(conditionValue);
+            EList<EObject> rightList = BmDcsHelper.getEObjectList(filterItem, "getRight"); //$NON-NLS-1$
+            if (rv == null || rightList == null)
+            {
+                throw new RuntimeException("a literal for the right side could not be built - " //$NON-NLS-1$
+                    + "the filter would carry a left with no right"); //$NON-NLS-1$
+            }
+            rightList.add((EObject) rv);
+            EList<EObject> items = BmDcsHelper.getEObjectList(condition, "getItems"); //$NON-NLS-1$
+            if (items == null)
+            {
+                throw new RuntimeException("the filter has no items collection to add to"); //$NON-NLS-1$
+            }
+            items.add((EObject) filterItem);
         }
         // 1.43.x batch 4b: apply the font/color/format spec to the item's
         // appearance container (DataCompositionAppearance), routing each entry
@@ -2833,7 +2915,9 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("ConditionalAppearance.getItems() not available"); //$NON-NLS-1$
         }
         items.add((EObject) item);
-        String result = "appearance added (cond=" + conditionType + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        String result = "appearance added" + (field != null //$NON-NLS-1$
+            ? " (filter: " + field + " " + effectiveConditionType + " " + conditionValue + ")" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            : " (no condition)"); //$NON-NLS-1$
         if (!skippedAppearance.isEmpty())
         {
             result = result + " [styleRefNotSupported: " + skippedAppearance + "]"; //$NON-NLS-1$ //$NON-NLS-2$

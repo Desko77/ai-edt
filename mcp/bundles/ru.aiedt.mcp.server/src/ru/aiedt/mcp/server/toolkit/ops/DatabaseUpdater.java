@@ -64,6 +64,16 @@ public class DatabaseUpdater implements IMcpTool
 {
     public static final String NAME = "update_database"; //$NON-NLS-1$
 
+    /**
+     * The kind this tool stamps its pending entries with.
+     * <p>
+     * The UPDATE registry also carries pending {@code edit_metadata} calls (stamped
+     * {@code edit_metadata}). A status read that cannot tell them apart would name a metadata
+     * write as an update, and a key handed back would resume work the caller never started.
+     * </p>
+     */
+    public static final String WORK_KIND = "update_database"; //$NON-NLS-1$
+
     private static final int MIN_TIMEOUT_SECONDS = 5;
     private static final int MAX_TIMEOUT_SECONDS = 120;
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
@@ -152,6 +162,12 @@ public class DatabaseUpdater implements IMcpTool
                     + "returned a runKey. BEST-EFFORT only: it makes the server stop waiting on and caching the result, " //$NON-NLS-1$
                     + "but does NOT abort an update already in progress (it can keep running, still commit, and it holds " //$NON-NLS-1$
                     + "the infobase until it returns). A finished result nobody has collected is left in place.") //$NON-NLS-1$
+            .booleanProperty("statusOnly", //$NON-NLS-1$
+                "Read what updates are being tracked and start nothing: runKeys, state " //$NON-NLS-1$
+                    + "(running / finished-with-result-waiting), elapsed time, progress. " //$NON-NLS-1$
+                    + "projectName filters by project. Any other run-shaping parameter beside " //$NON-NLS-1$
+                    + "runKey or cancel is refused, not ignored. A finished result is NOT " //$NON-NLS-1$
+                    + "consumed by this read - its receiver collects it with the runKey.") //$NON-NLS-1$
             .build();
     }
 
@@ -198,10 +214,103 @@ public class DatabaseUpdater implements IMcpTool
         return result.toJson();
     }
 
+    /** The parameters a status read accepts beside itself and the timeout of the poll it is not. */
+    private static final java.util.Set<String> STATUS_ONLY_COMPANIONS =
+        java.util.Set.of("statusOnly", "projectName", "runKey", "cancel", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "timeoutSeconds", "timeoutMs", "waitSeconds", "timeout"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+    /**
+     * Answers with what is being tracked, launching nothing.
+     * <p>
+     * Measured on the stand 15.09: a caller that asked "is an update still going" started a second
+     * update to find out. The answer must cost no work of its own, and the registry this tool
+     * shares with {@code edit_metadata} must not lend it a metadata write to report: entries carry
+     * a kind for exactly that question.
+     * </p>
+     * <p>
+     * Completed-but-not-collected entries are part of the answer - the registry holds them until
+     * their receiver collects or TTL evicts them, and "finished, result waiting" is a state a
+     * caller has to know, not an absence to hide.
+     * </p>
+     *
+     * @param params the call, which may carry projectName to filter by.
+     * @return the JSON answer
+     */
+    private String readStatus(Map<String, String> params)
+    {
+        for (String key : params.keySet())
+        {
+            if (!STATUS_ONLY_COMPANIONS.contains(key))
+            {
+                return ToolResult.error("statusOnly reads state and starts nothing; '" + key //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' shapes a run that is not started. Drop it, or drop statusOnly.").toJson();
+            }
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        PendingWorkRegistry registry = PendingWorkRegistry.UPDATE;
+        registry.pruneExpired();
+        java.util.List<PendingWorkRegistry.PendingEntry> tracked = registry.trackedOf(WORK_KIND);
+        java.util.List<Map<String, Object>> updates = new java.util.ArrayList<>();
+        for (PendingWorkRegistry.PendingEntry entry : tracked)
+        {
+            if (projectName != null && !projectName.isEmpty()
+                && (entry.subject == null || !projectName.equals(entry.subject)))
+            {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("runKey", entry.runKey); //$NON-NLS-1$
+            row.put("subject", entry.subject); //$NON-NLS-1$
+            row.put("state", entry.isDone() ? "finished" : "running"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            row.put("elapsedMs", entry.elapsedMs()); //$NON-NLS-1$
+            if (entry.progressNote != null)
+            {
+                row.put("progressNote", entry.progressNote); //$NON-NLS-1$
+            }
+            updates.add(row);
+        }
+        return ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("statusOnly", true) //$NON-NLS-1$
+            .put("trackedUpdates", updates.size()) //$NON-NLS-1$
+            .put("updates", updates) //$NON-NLS-1$
+            .put("nothingStarted", true) //$NON-NLS-1$
+            .put("note", updates.isEmpty() //$NON-NLS-1$
+                ? "No update is tracked" + (projectName != null && !projectName.isEmpty() //$NON-NLS-1$
+                    ? " for this project" : "") //$NON-NLS-1$ //$NON-NLS-2$
+                    + ". Finished entries are reported while their receiver can still collect "
+                    + "them; an entry evicted by TTL is gone, not hidden." //$NON-NLS-1$
+                : "This is a read: nothing was started or updated. 'finished' means the result is " //$NON-NLS-1$
+                    + "waiting to be collected with its runKey.") //$NON-NLS-1$
+            .toJson();
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
         String runKeyParam = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        boolean statusOnly = JsonUtils.extractBooleanArgument(params, "statusOnly", false); //$NON-NLS-1$
+
+        // Precedence, one answer per call. {runKey, cancel} and {runKey, cancel, statusOnly} is a
+        // cancellation - the existing contract decides that. {runKey} and {runKey, statusOnly} is
+        // a poll. {cancel, statusOnly} is a cancellation too, because cancel outranks the read.
+        // statusOnly never launches a run, and it rejects any parameter that would shape one:
+        // a value that cannot apply must not ride along in silence.
+        if (runKeyParam != null && !runKeyParam.isEmpty()
+            && JsonUtils.extractBooleanArgument(params, "cancel", false)) //$NON-NLS-1$
+        {
+            boolean removed = PendingWorkRegistry.UPDATE.cancel(runKeyParam);
+            return ToolResult.success()
+                .put("operation", NAME) //$NON-NLS-1$
+                .put("runKey", runKeyParam) //$NON-NLS-1$
+                .put("cancelled", removed) //$NON-NLS-1$
+                .put("note", removed //$NON-NLS-1$
+                    ? "Stopped tracking this update. Best-effort: an update already running against the " //$NON-NLS-1$
+                        + "infobase may still finish and commit its changes." //$NON-NLS-1$
+                    : "runKey was not found (the update already finished and was already " //$NON-NLS-1$
+                        + "retrieved, or it was evicted by TTL).") //$NON-NLS-1$
+                .toJson();
+        }
         if ((runKeyParam == null || runKeyParam.isEmpty())
             && JsonUtils.extractBooleanArgument(params, "cancel", false)) //$NON-NLS-1$
         {
@@ -209,22 +318,11 @@ public class DatabaseUpdater implements IMcpTool
         }
         if (runKeyParam != null && !runKeyParam.isEmpty())
         {
-            boolean cancel = JsonUtils.extractBooleanArgument(params, "cancel", false); //$NON-NLS-1$ //$NON-NLS-2$
-            if (cancel)
-            {
-                boolean removed = PendingWorkRegistry.UPDATE.cancel(runKeyParam);
-                return ToolResult.success()
-                    .put("operation", NAME) //$NON-NLS-1$
-                    .put("runKey", runKeyParam) //$NON-NLS-1$
-                    .put("cancelled", removed) //$NON-NLS-1$
-                    .put("note", removed //$NON-NLS-1$
-                        ? "Stopped tracking this update. Best-effort: an update already running against the " //$NON-NLS-1$
-                            + "infobase may still finish and commit its changes." //$NON-NLS-1$
-                        : "runKey was not found (the update already finished and was already " //$NON-NLS-1$
-                            + "retrieved, or it was evicted by TTL).") //$NON-NLS-1$
-                    .toJson();
-            }
             return resumePending(runKeyParam, params);
+        }
+        if (statusOnly)
+        {
+            return readStatus(params);
         }
 
         String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
@@ -325,8 +423,11 @@ public class DatabaseUpdater implements IMcpTool
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
                 fSkipValidation, fCheckOnly));
-        // So a caller who never got the runKey can still address this run.
+        // So a caller who never got the runKey can still address this run - and so the shared
+        // registry answers questions about updates with updates: edit_metadata starts its pending
+        // work in this same registry, and a kind-less entry cannot be told apart from either.
         entry.subject = fProjectName;
+        entry.workKind = WORK_KIND;
 
         String result = entry.await(timeoutMs);
         if (result != null)
@@ -359,6 +460,14 @@ public class DatabaseUpdater implements IMcpTool
                 .put("operation", NAME) //$NON-NLS-1$
                 .put("runKey", runKey) //$NON-NLS-1$
                 .toJson();
+        }
+        if (entry.workKind != null && !WORK_KIND.equals(entry.workKind))
+        {
+            // A key that names a pending edit_metadata call must not resume it as an update - the
+            // registry is shared, and resuming the wrong work is worse than not finding the key.
+            return ToolResult.error("runKey belongs to " + entry.workKind + ", not to " //$NON-NLS-1$ //$NON-NLS-2$
+                + NAME + ". Poll it with that tool - resuming it here would answer for work this " //$NON-NLS-1$
+                + "call never started.").put("operation", NAME).put("runKey", runKey).toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
