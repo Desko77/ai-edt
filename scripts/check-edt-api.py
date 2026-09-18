@@ -159,6 +159,43 @@ def package_index(release, cache_dir):
     return index, bundles
 
 
+def served_versions(release, cache_dir):
+    """What the ARTIFACT index says is downloadable, per bundle name.
+
+    Two indexes describe one release and they drift apart. The metadata (content.jar) says which
+    bundle exports a package; the artifact index (artifacts.jar) says which files exist. Measured
+    18.09: 2026.2 served metadata naming qualifier v202608031219 while the artifact index and the
+    files carried v202609171902, so every download built from the metadata answered 404.
+
+    Read fresh for the same reason the metadata is: a cached copy names what a republish removed.
+    """
+    artifacts = fetch(SITE % release + "artifacts.jar",
+                      os.path.join(cache_dir, release, "artifacts.jar"), refresh=True)
+    with zipfile.ZipFile(artifacts) as archive:
+        xml = archive.read("artifacts.xml").decode("utf-8", "replace")
+
+    served = {}
+    for entry in re.finditer(
+            r"<artifact classifier='osgi\.bundle' id='([\w.\-]+)' version='([\w.\-]+)'", xml):
+        served.setdefault(entry.group(1), set()).add(entry.group(2))
+    return served
+
+
+def downloadable(bundle, served):
+    """The bundle as the site can actually serve it.
+
+    Only the qualifier is allowed to move: a bundle whose numeric version changed is a different
+    bundle, and silently downloading it would answer a question about a release nobody asked about.
+    """
+    name, version = bundle
+    options = served.get(name)
+    if not options or version in options:
+        return bundle
+    numbers = version.rsplit(".", 1)[0]
+    same = sorted(v for v in options if v.rsplit(".", 1)[0] == numbers)
+    return (name, same[-1]) if same else bundle
+
+
 def candidate_bundles(fqn, index, bundles):
     """Every bundle that might hold a type, best guess first.
 
@@ -213,6 +250,7 @@ class Release:
         self.name = name
         self.cache_dir = cache_dir
         self.index, self.bundles = package_index(name, cache_dir)
+        self.served = served_versions(name, cache_dir)
         self.jars = {}
         self.located = {}
         self.declared = {}
@@ -222,7 +260,8 @@ class Release:
 
     def download(self, bundle):
         if bundle not in self.jars:
-            self.jars[bundle] = bundle_jar(self.name, bundle, self.cache_dir, self.refusals)
+            self.jars[bundle] = bundle_jar(self.name, downloadable(bundle, self.served),
+                                           self.cache_dir, self.refusals)
             if self.jars[bundle] is None:
                 self.missing_bundles.add(bundle)
         return self.jars[bundle]
