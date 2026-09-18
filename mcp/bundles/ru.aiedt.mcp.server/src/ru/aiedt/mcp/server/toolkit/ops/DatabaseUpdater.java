@@ -220,6 +220,14 @@ public class DatabaseUpdater implements IMcpTool
             "timeoutSeconds", "timeoutMs", "waitSeconds", "timeout"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
     /**
+     * The parameter names a facade hands down for its own routing. They belong to the facade, not
+     * to the call: a status read that rejected them would refuse every call that arrives through
+     * infobase_admin, which always carries them.
+     */
+    private static final java.util.Set<String> ROUTING_PARAMETER_NAMES =
+        java.util.Set.of("operation"); //$NON-NLS-1$
+
+    /**
      * Answers with what is being tracked, launching nothing.
      * <p>
      * Measured on the stand 15.09: a caller that asked "is an update still going" started a second
@@ -240,7 +248,7 @@ public class DatabaseUpdater implements IMcpTool
     {
         for (String key : params.keySet())
         {
-            if (!STATUS_ONLY_COMPANIONS.contains(key))
+            if (!STATUS_ONLY_COMPANIONS.contains(key) && !ROUTING_PARAMETER_NAMES.contains(key))
             {
                 return ToolResult.error("statusOnly reads state and starts nothing; '" + key //$NON-NLS-1$ //$NON-NLS-2$
                     + "' shapes a run that is not started. Drop it, or drop statusOnly.").toJson();

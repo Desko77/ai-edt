@@ -1605,7 +1605,9 @@ final class ServiceOps
                 continue;
             }
             Class<?> p = m.getParameterTypes()[0];
-            if (p == int.class || p == Integer.class)
+            // long too, and the model spells the session's lifetime in it: an int-only scan left
+            // the number nowhere to land and read as "the class has no such setter".
+            if (p == int.class || p == Integer.class || p == long.class || p == Long.class)
             {
                 try
                 {

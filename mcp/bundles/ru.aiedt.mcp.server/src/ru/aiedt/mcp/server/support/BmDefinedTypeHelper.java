@@ -173,24 +173,52 @@ public final class BmDefinedTypeHelper
         Object typeDesc = readTypeDescription(definedType);
         if (typeDesc == null)
         {
-            // Brand-new attributes default the type feature to null.
-            // Fabricate an empty TypeDescription via McoreFactory and
-            // attach it through setType/setTypeDescription so we can
-            // populate getTypes() below. setDefinedTypeTypes (the original
-            // caller) does not hit this path since DefinedType objects
-            // are constructed with a non-null TypeDescription.
-            typeDesc = ensureTypeDescription(definedType);
+            // A command names its parameter type at getCommandParameterType - the one getter
+            // the read below does not ask for, which is why a CatalogCommand answered "no type
+            // description on the object" until now.
+            typeDesc = readTypeDescriptionByGetter(definedType, "getCommandParameterType"); //$NON-NLS-1$
             if (typeDesc == null)
             {
-                r.error = "Cannot resolve or create TypeDescription on " //$NON-NLS-1$
-                    + definedType.eClass().getName()
-                    + " (no getType/getTypes/getTypeDescription on the object, " //$NON-NLS-1$
-                    + "and McoreFactory.createTypeDescription is unavailable)."; //$NON-NLS-1$
-                return r;
+                // Brand-new attributes default the type feature to null.
+                // Fabricate an empty TypeDescription via McoreFactory and
+                // attach it through setType/setTypeDescription so we can
+                // populate getTypes() below. setDefinedTypeTypes (the original
+                // caller) does not hit this path since DefinedType objects
+                // are constructed with a non-null TypeDescription.
+                typeDesc = ensureTypeDescription(definedType);
+                if (typeDesc == null)
+                {
+                    r.error = "Cannot resolve or create TypeDescription on " //$NON-NLS-1$
+                        + definedType.eClass().getName()
+                        + " (no getType/getTypes/getTypeDescription on the object, " //$NON-NLS-1$
+                        + "and McoreFactory.createTypeDescription is unavailable)."; //$NON-NLS-1$
+                    return r;
+                }
             }
         }
         return setTypesOnDescription(typeDesc, project, config, typeFqns,
             qualifierOptions, definedType);
+    }
+
+    /**
+     * Reads the description through one named getter, answering <code>null</code> rather than
+     * failing when the class has none.
+     *
+     * @param target the object to ask.
+     * @param getter the getter's name.
+     * @return what it answered, or <code>null</code>
+     */
+    private static Object readTypeDescriptionByGetter(MdObject target, String getter)
+    {
+        try
+        {
+            Method m = target.getClass().getMethod(getter);
+            return m.invoke(target);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
     }
 
     /**
