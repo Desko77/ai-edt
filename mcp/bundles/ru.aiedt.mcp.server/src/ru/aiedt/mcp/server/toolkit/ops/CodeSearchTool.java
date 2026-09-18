@@ -560,7 +560,7 @@ public class CodeSearchTool implements IMcpTool
                     + "get_method_call_hierarchy. Pass projectName, modulePath (the module " //$NON-NLS-1$
                     + "the method lives in - src/ path or module FQN), methodName, and " //$NON-NLS-1$
                     + "direction=incoming|callers (default) or outgoing|callees. Returns the " //$NON-NLS-1$
-                    + "the direct callers or callees; depth walks callers of callers, 1 to 5.\n"); //$NON-NLS-1$
+                    + "direct callers or callees; depth walks callers of callers, 1 to 5.\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             case "symbol_info": //$NON-NLS-1$
                 sb.append("# code_search operation=symbol_info\n\nDelegates to get_symbol_info. " //$NON-NLS-1$
