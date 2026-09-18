@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -67,5 +68,79 @@ public class AFormItemBorrowsItsFormTest
         params.put("formName", ""); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertNull(MiscOps.formToBorrowFor("Catalog.Валюты", params)); //$NON-NLS-1$
+    }
+
+    /**
+     * The arguments edit_metadata documents for this operation - ownerFqn, childKind and name -
+     * address the form as surely as formName does.
+     */
+    @Test
+    public void theChildArgumentsNameTheFormToo()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("childKind", "Form"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("name", "ФормаЭлемента"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("itemName", "Наименование"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals("Catalog.Валюты.Form.ФормаЭлемента", //$NON-NLS-1$
+            MiscOps.formToBorrowFor("Catalog.Валюты", params)); //$NON-NLS-1$
+    }
+
+    /**
+     * Both dispatchers reach the borrow through this one function, so the decision cannot hold on
+     * one route and be missing on the other.
+     *
+     * <p>Measured: with the refusal held beside the metadata dispatcher alone,
+     * <code>extension_workshop operation=borrow_form_item</code> borrowed the owner and answered
+     * "already borrowed".
+     */
+    @Test
+    public void bothSpellingsOfTheOperationAskTheSameQuestion()
+    {
+        Map<String, String> owner = new HashMap<>();
+        owner.put("itemName", "Наименование"); //$NON-NLS-1$ //$NON-NLS-2$
+        Map<String, String> named = new HashMap<>();
+        named.put("formName", "ФормаЭлемента"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        for (String op : new String[] { "borrow_form_item", "adopt_form_item" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            assertTrue(op, MiscOps.borrowsAFormItem(op));
+            assertNull(op + " must not compose the owner", //$NON-NLS-1$
+                MiscOps.composeChildFqn(op, "Catalog.Валюты", owner)); //$NON-NLS-1$
+            assertEquals(op, "Catalog.Валюты.Form.ФормаЭлемента", //$NON-NLS-1$
+                MiscOps.composeChildFqn(op, "Catalog.Валюты", named)); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The refusal names what was asked for, so the caller can see their own call in it.
+     */
+    @Test
+    public void theRefusalCarriesWhatWasAsked()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("itemName", "Наименование"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = MiscOps.noFormNamed("Catalog.Валюты", params); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("Catalog.Валюты")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("Наименование")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("formName")); //$NON-NLS-1$
+    }
+
+    /**
+     * A borrow that is not about a form item keeps composing the way it did.
+     */
+    @Test
+    public void aChildBorrowIsUntouched()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("childKind", "Template"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("name", "Печать"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals("Catalog.Валюты.Template.Печать", //$NON-NLS-1$
+            MiscOps.composeChildFqn("borrow_child", "Catalog.Валюты", params)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Catalog.Валюты", //$NON-NLS-1$
+            MiscOps.composeChildFqn("borrow_object", "Catalog.Валюты", params)); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

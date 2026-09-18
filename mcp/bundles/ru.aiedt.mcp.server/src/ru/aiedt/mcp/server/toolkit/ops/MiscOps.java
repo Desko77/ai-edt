@@ -380,15 +380,23 @@ final class MiscOps
      * @param op the adopt operation.
      * @param fqn the FQN resolved from the caller's arguments.
      * @param params the call, which may carry the kind and the name separately.
-     * @return the child's FQN, or the one given when there is nothing to compose
+     * @return the child's FQN, the one given when there is nothing to compose, or
+     *         <code>null</code> when a form item was asked for without naming its form
      */
     static String composeChildFqn(String op, String fqn, Map<String, String> params)
     {
+        // A form item has no address of its own, so this one resolves to the form that carries it,
+        // and to nothing at all when no form was named. Decided here, in the function both
+        // dispatchers call, rather than beside either of them: a decision held by one dispatcher
+        // leaves the other borrowing the owner and answering success.
+        if (borrowsAFormItem(op))
+        {
+            return formToBorrowFor(fqn, params);
+        }
         // Both spellings. The facade calls it borrow_child and edit_metadata calls it adopt_child,
         // and the composition is about the shape of the call rather than the word for it - which is
         // how the first fix landed on one route and left the other exactly as broken.
-        if (!"adopt_child".equals(op) && !"adopt_form_item".equals(op) //$NON-NLS-1$ //$NON-NLS-2$
-            && !"borrow_child".equals(op) && !"borrow_form_item".equals(op)) //$NON-NLS-1$ //$NON-NLS-2$
+        if (!"adopt_child".equals(op) && !"borrow_child".equals(op)) //$NON-NLS-1$ //$NON-NLS-2$
         {
             return fqn;
         }
@@ -426,16 +434,69 @@ final class MiscOps
      */
     static String formToBorrowFor(String fqn, Map<String, String> params)
     {
-        if (fqn != null && fqn.contains(".Form.")) //$NON-NLS-1$
-        {
-            return fqn;
-        }
-        String formName = JsonUtils.extractStringArgument(params, "formName"); //$NON-NLS-1$
-        if (formName == null || formName.isEmpty())
+        if (fqn == null || fqn.trim().isEmpty())
         {
             return null;
         }
-        return fqn + ".Form." + formName; //$NON-NLS-1$
+        if (fqn.contains(".Form.")) //$NON-NLS-1$
+        {
+            return fqn;
+        }
+        if (countSegments(fqn) != 2)
+        {
+            return null;
+        }
+        String formName = JsonUtils.extractStringArgument(params, "formName"); //$NON-NLS-1$
+        // The other spelling of the same argument: edit_metadata documents this operation as
+        // ownerFqn plus childKind and name, and the item is named by itemName, so name here is the
+        // form's. Reading only formName would refuse the arguments that tool's own help prescribes.
+        if (formName == null || formName.trim().isEmpty())
+        {
+            formName = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
+        }
+        if (formName == null || formName.trim().isEmpty())
+        {
+            formName = JsonUtils.extractStringArgument(params, "childName"); //$NON-NLS-1$
+        }
+        if (formName == null || formName.trim().isEmpty())
+        {
+            return null;
+        }
+        return fqn + ".Form." + formName.trim(); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether the operation addresses an item inside a form, under either spelling.
+     *
+     * @param op the operation name.
+     * @return <code>true</code> for the form-item borrow
+     */
+    static boolean borrowsAFormItem(String op)
+    {
+        return "borrow_form_item".equals(op) || "adopt_form_item".equals(op); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The answer to a form-item borrow that named no form.
+     * <p>
+     * Both routes into the borrow return this same refusal. The facade and the metadata dispatcher
+     * each compose the name they borrow, and a refusal held by only one of them leaves the other
+     * borrowing the owner and answering success.
+     * </p>
+     *
+     * @param fqn what the caller addressed.
+     * @param params the call arguments.
+     * @return the refusal, as JSON
+     */
+    static String noFormNamed(String fqn, Map<String, String> params)
+    {
+        return ToolResult.error("Name the form: a form ITEM is not borrowed on its own - the model " //$NON-NLS-1$
+            + "has no address below a form, and the form is what carries its items. Pass formName " //$NON-NLS-1$
+            + "together with the owner, or name the form in objectFqn " //$NON-NLS-1$
+            + "(Catalog.X.Form.ФормаЭлемента). Nothing was borrowed.") //$NON-NLS-1$
+            .put("objectFqn", fqn) //$NON-NLS-1$
+            .put("itemName", JsonUtils.extractStringArgument(params, "itemName")) //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
     }
 
     /**
@@ -482,25 +543,12 @@ final class MiscOps
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
         }
-        if ("borrow_form_item".equals(op) || "adopt_form_item".equals(op)) //$NON-NLS-1$ //$NON-NLS-2$
+        String childAddress = composeChildFqn(op, targetFqn, params);
+        if (childAddress == null)
         {
-            String formAddress = formToBorrowFor(targetFqn, params);
-            if (formAddress == null)
-            {
-                return ToolResult.error("Name the form: a form ITEM is not borrowed on its own - the " //$NON-NLS-1$
-                    + "model has no address below a form, and the form is what carries its items. " //$NON-NLS-1$
-                    + "Pass formName together with the owner, or name the form in objectFqn " //$NON-NLS-1$
-                    + "(Catalog.X.Form.ФормаЭлемента). Nothing was borrowed.") //$NON-NLS-1$
-                    .put("objectFqn", targetFqn) //$NON-NLS-1$
-                    .put("itemName", JsonUtils.extractStringArgument(params, "itemName")) //$NON-NLS-1$ //$NON-NLS-2$
-                    .toJson();
-            }
-            targetFqn = formAddress;
+            return noFormNamed(targetFqn, params);
         }
-        else
-        {
-            targetFqn = composeChildFqn(op, targetFqn, params);
-        }
+        targetFqn = childAddress;
         // adoptObjects accepts comma-separated FQN list; rest take a single FQN
         if ("adopt_objects".equals(op))
         {

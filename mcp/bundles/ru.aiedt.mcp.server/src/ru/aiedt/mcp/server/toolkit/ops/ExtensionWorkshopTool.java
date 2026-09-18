@@ -467,6 +467,10 @@ public class ExtensionWorkshopTool implements IMcpTool
         // owner and a kind adopted the owner and reported success - measured, and the template it
         // was asked for appeared nowhere.
         String borrowFqn = MiscOps.composeChildFqn(op, objectFqn, params);
+        if (borrowFqn == null)
+        {
+            return MiscOps.noFormNamed(objectFqn, params);
+        }
         BmExtensionHelper.BorrowResult r = BmExtensionHelper.attemptBorrow(project,
             baseProjectName, borrowFqn, childKind);
         return formatResult(r, op, borrowFqn);
