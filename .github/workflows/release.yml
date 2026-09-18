@@ -99,6 +99,12 @@ jobs:
           cp "$GITHUB_WORKSPACE/AI-EDT-${{ steps.version.outputs.version }}.zip" \
              "$GITHUB_WORKSPACE/AI-EDT-update-site.zip"
 
+      - name: Checksum manifest
+        run: |
+          # One manifest per release rather than a sidecar per asset: one file names every
+          # archive the release carries, so a downloader verifies the whole set at once.
+          (cd "$GITHUB_WORKSPACE" && sha256sum AI-EDT-*.zip > SHA256SUMS)
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -106,5 +112,7 @@ jobs:
           # branch, and the release has to land on the tag all the same.
           tag_name: ${{ steps.version.outputs.tag }}
           name: AI-EDT v${{ steps.version.outputs.version }}
-          files: AI-EDT-*.zip
+          files: |
+            AI-EDT-*.zip
+            SHA256SUMS
           generate_release_notes: true
