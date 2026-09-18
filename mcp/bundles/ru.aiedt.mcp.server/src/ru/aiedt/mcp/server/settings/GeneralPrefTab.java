@@ -72,7 +72,14 @@ public class GeneralPrefTab
 
     private final IPreferenceStore store;
 
-    private final Composite control;
+    /** Server, tools, network and control sections. */
+    private final Composite controlServer;
+
+    /** Call history in memory and on disk. */
+    private final Composite controlData;
+
+    /** Navigator markers and updates. */
+    private final Composite controlWorkbench;
 
     private final List<Image> images = new ArrayList<>();
 
@@ -150,6 +157,12 @@ public class GeneralPrefTab
 
     /**
      * Builds the tab.
+     * <p>
+     * Seven sections stacked to a page the dialog had to scroll, and the page grew past the point
+     * where scrolling finds anything. The tab folder above this page now names them in three
+     * groups, so this builds its sections into the parent it is given - one of three composites
+     * the page hands it, each its own section of the folder.
+     * </p>
      *
      * @param parent the tab folder to build into
      */
@@ -157,25 +170,31 @@ public class GeneralPrefTab
     {
         this.store = Activator.getDefault().getPreferenceStore();
 
-        control = new Composite(parent, SWT.NONE);
         GridLayout layout = new GridLayout(1, false);
         layout.marginWidth = 5;
         layout.marginHeight = 5;
         layout.verticalSpacing = 8;
-        control.setLayout(layout);
 
-        headerGrey = new Color(control.getDisplay(), 230, 230, 230);
-        FontData baseFont = control.getFont().getFontData()[0];
-        sectionFont = new Font(control.getDisplay(),
+        headerGrey = new Color(parent.getDisplay(), 230, 230, 230);
+        FontData baseFont = parent.getFont().getFontData()[0];
+        sectionFont = new Font(parent.getDisplay(),
             new FontData(baseFont.getName(), baseFont.getHeight(), SWT.BOLD));
 
-        createConnectionSection();
-        createExternalToolsSection();
-        createNetworkAndSecuritySection();
-        createNavigatorMarkersSection();
-        createCallHistorySection();
-        createUpdatesSection();
-        createServerControlSection();
+        controlServer = new Composite(parent, SWT.NONE);
+        controlServer.setLayout(layout);
+        createConnectionSection(controlServer);
+        createExternalToolsSection(controlServer);
+        createNetworkAndSecuritySection(controlServer);
+        createServerControlSection(controlServer);
+
+        controlData = new Composite(parent, SWT.NONE);
+        controlData.setLayout(layout);
+        createCallHistorySection(controlData);
+
+        controlWorkbench = new Composite(parent, SWT.NONE);
+        controlWorkbench.setLayout(layout);
+        createNavigatorMarkersSection(controlWorkbench);
+        createUpdatesSection(controlWorkbench);
 
         refreshServerStatus();
     }
@@ -187,7 +206,27 @@ public class GeneralPrefTab
      */
     public Composite getControl()
     {
-        return control;
+        return controlServer;
+    }
+
+    /**
+     * The data section - call history in memory and on disk.
+     *
+     * @return the composite
+     */
+    public Composite getDataControl()
+    {
+        return controlData;
+    }
+
+    /**
+     * The workbench section - markers and updates.
+     *
+     * @return the composite
+     */
+    public Composite getWorkbenchControl()
+    {
+        return controlWorkbench;
     }
 
     /**
@@ -379,9 +418,9 @@ public class GeneralPrefTab
         }
     }
 
-    private void createConnectionSection()
+    private void createConnectionSection(Composite parent)
     {
-        Composite section = section("Connection"); //$NON-NLS-1$
+        Composite section = section(parent, "Connection"); //$NON-NLS-1$
 
         Label portLabel = new Label(section, SWT.NONE);
         portLabel.setText("MCP port:"); //$NON-NLS-1$
@@ -419,9 +458,9 @@ public class GeneralPrefTab
      * they answered, and the shipped values are set for the first of those.
      * </p>
      */
-    private void createCallHistorySection()
+    private void createCallHistorySection(Composite parent)
     {
-        Composite section = section("Call history"); //$NON-NLS-1$
+        Composite section = section(parent, "Call history"); //$NON-NLS-1$
 
         historyEnabledCheck = new Button(section, SWT.CHECK);
         historyEnabledCheck.setText("Record tool calls"); //$NON-NLS-1$
@@ -443,7 +482,7 @@ public class GeneralPrefTab
             + "in the Call history window."); //$NON-NLS-1$
         budgetNote.setLayoutData(span(section, 3));
 
-        createHistoryOnDiskGroup();
+        createHistoryOnDiskGroup(parent);
     }
 
     /**
@@ -454,9 +493,9 @@ public class GeneralPrefTab
      * switch belongs here rather than among the buffer settings: it is about what reaches a file.
      * </p>
      */
-    private void createHistoryOnDiskGroup()
+    private void createHistoryOnDiskGroup(Composite parent)
     {
-        Composite section = section("Call history on disk"); //$NON-NLS-1$
+        Composite section = section(parent, "Call history on disk"); //$NON-NLS-1$
 
         historyDiskCheck = new Button(section, SWT.CHECK);
         historyDiskCheck.setText("Keep the full text of each call, so the window can show it whole"); //$NON-NLS-1$
@@ -525,9 +564,9 @@ public class GeneralPrefTab
         return spinner;
     }
 
-    private void createExternalToolsSection()
+    private void createExternalToolsSection(Composite parent)
     {
-        Composite section = section("External tools"); //$NON-NLS-1$
+        Composite section = section(parent, "External tools"); //$NON-NLS-1$
 
         checksFolderText = pathRow(section, "Check docs folder:", null, PrefKeys.PREF_CHECKS_FOLDER); //$NON-NLS-1$
         addFolderBrowse(section, checksFolderText, "Select check descriptions folder"); //$NON-NLS-1$
@@ -558,9 +597,9 @@ public class GeneralPrefTab
         addFileBrowse(section, vanessa1cExeText, "Select 1cv8.exe (thick client)", new String[]{"*.exe"}); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    private void createUpdatesSection()
+    private void createUpdatesSection(Composite parent)
     {
-        Composite section = section("Updates"); //$NON-NLS-1$
+        Composite section = section(parent, "Updates"); //$NON-NLS-1$
 
         upkeepEnabledCheck = new Button(section, SWT.CHECK);
         upkeepEnabledCheck.setText("Look for a newer AI-EDT on the update site"); //$NON-NLS-1$
@@ -614,9 +653,9 @@ public class GeneralPrefTab
         }
     }
 
-    private void createNetworkAndSecuritySection()
+    private void createNetworkAndSecuritySection(Composite parent)
     {
-        Composite section = section("Network & security"); //$NON-NLS-1$
+        Composite section = section(parent, "Network & security"); //$NON-NLS-1$
 
         plainTextCheck = new Button(section, SWT.CHECK);
         plainTextCheck.setText("Plain-text responses (for Cursor)"); //$NON-NLS-1$
@@ -690,9 +729,9 @@ public class GeneralPrefTab
         return refusal;
     }
 
-    private void createNavigatorMarkersSection()
+    private void createNavigatorMarkersSection(Composite parent)
     {
-        Composite section = section("Navigator markers"); //$NON-NLS-1$
+        Composite section = section(parent, "Navigator markers"); //$NON-NLS-1$
 
         showMarkersCheck = new Button(section, SWT.CHECK);
         showMarkersCheck.setText("Decorate Navigator items with markers"); //$NON-NLS-1$
@@ -708,9 +747,9 @@ public class GeneralPrefTab
         spacer(section);
     }
 
-    private void createServerControlSection()
+    private void createServerControlSection(Composite parent)
     {
-        Composite section = section("Server control"); //$NON-NLS-1$
+        Composite section = section(parent, "Server control"); //$NON-NLS-1$
 
         Composite panel = new Composite(section, SWT.NONE);
         GridLayout panelLayout = new GridLayout(4, false);
@@ -753,7 +792,7 @@ public class GeneralPrefTab
         {
             // The token in the field is not the one in force; starting now would let the user
             // believe it is.
-            MessageDialog.openError(control.getShell(), "Start Failed", notSaved); //$NON-NLS-1$
+            MessageDialog.openError(controlServer.getShell(), "Start Failed", notSaved); //$NON-NLS-1$
             return;
         }
         try
@@ -763,7 +802,7 @@ public class GeneralPrefTab
         catch (IOException e)
         {
             Activator.logError("The endpoint could not be started", e); //$NON-NLS-1$
-            MessageDialog.openError(control.getShell(), "Start Failed", //$NON-NLS-1$
+            MessageDialog.openError(controlServer.getShell(), "Start Failed", //$NON-NLS-1$
                 "Failed to start MCP Server: " + e.getMessage()); //$NON-NLS-1$
         }
         refreshServerStatus();
@@ -790,7 +829,7 @@ public class GeneralPrefTab
         String notSaved = performOk();
         if (notSaved != null)
         {
-            MessageDialog.openError(control.getShell(), "Restart Failed", notSaved); //$NON-NLS-1$
+            MessageDialog.openError(controlServer.getShell(), "Restart Failed", notSaved); //$NON-NLS-1$
             return;
         }
         try
@@ -800,7 +839,7 @@ public class GeneralPrefTab
         catch (IOException e)
         {
             Activator.logError("The endpoint could not be restarted", e); //$NON-NLS-1$
-            MessageDialog.openError(control.getShell(), "Restart Failed", //$NON-NLS-1$
+            MessageDialog.openError(controlServer.getShell(), "Restart Failed", //$NON-NLS-1$
                 "Failed to restart MCP Server: " + e.getMessage()); //$NON-NLS-1$
         }
         refreshServerStatus();
@@ -819,12 +858,12 @@ public class GeneralPrefTab
         if (running)
         {
             statusLabel.setText("Listening on :" + server.getPort()); //$NON-NLS-1$
-            statusLabel.setForeground(control.getDisplay().getSystemColor(SWT.COLOR_DARK_GREEN));
+            statusLabel.setForeground(controlServer.getDisplay().getSystemColor(SWT.COLOR_DARK_GREEN));
         }
         else
         {
             statusLabel.setText("Not running"); //$NON-NLS-1$
-            statusLabel.setForeground(control.getDisplay().getSystemColor(SWT.COLOR_DARK_RED));
+            statusLabel.setForeground(controlServer.getDisplay().getSystemColor(SWT.COLOR_DARK_RED));
         }
 
         startButton.setEnabled(!running);
@@ -840,9 +879,9 @@ public class GeneralPrefTab
      * @param title the section label
      * @return the section body, a 3-column grid
      */
-    private Composite section(String title)
+    private Composite section(Composite parent, String title)
     {
-        Composite card = new Composite(control, SWT.BORDER);
+        Composite card = new Composite(parent, SWT.BORDER);
         GridLayout cardLayout = new GridLayout(1, false);
         cardLayout.marginWidth = 0;
         cardLayout.marginHeight = 0;
@@ -888,7 +927,7 @@ public class GeneralPrefTab
         Button browse = new Button(parent, SWT.PUSH);
         browse.setText("Browse..."); //$NON-NLS-1$
         browse.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> {
-            DirectoryDialog dialog = new DirectoryDialog(control.getShell());
+            DirectoryDialog dialog = new DirectoryDialog(controlServer.getShell());
             dialog.setMessage(message);
             String result = dialog.open();
             if (result != null)
@@ -903,7 +942,7 @@ public class GeneralPrefTab
         Button browse = new Button(parent, SWT.PUSH);
         browse.setText("Browse..."); //$NON-NLS-1$
         browse.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> {
-            FileDialog dialog = new FileDialog(control.getShell(), SWT.OPEN);
+            FileDialog dialog = new FileDialog(controlServer.getShell(), SWT.OPEN);
             dialog.setText(title);
             if (filter != null)
             {

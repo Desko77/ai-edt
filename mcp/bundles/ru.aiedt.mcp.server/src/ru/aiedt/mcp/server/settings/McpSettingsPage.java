@@ -71,9 +71,20 @@ public class McpSettingsPage
 
         generalTab = new GeneralPrefTab(tabFolder);
         generalTab.setValidationListener(this::revalidate);
+        // The general tab had grown past the dialog - the user reads a name and goes straight to
+        // it rather than scrolls a page. The workbench section goes last, where its side of the
+        // work belongs.
         CTabItem generalItem = new CTabItem(tabFolder, SWT.NONE);
         generalItem.setText("General"); //$NON-NLS-1$
         generalItem.setControl(generalTab.getControl());
+
+        CTabItem dataItem = new CTabItem(tabFolder, SWT.NONE);
+        dataItem.setText("History"); //$NON-NLS-1$
+        dataItem.setControl(generalTab.getDataControl());
+
+        CTabItem workbenchItem = new CTabItem(tabFolder, SWT.NONE);
+        workbenchItem.setText("Workbench"); //$NON-NLS-1$
+        workbenchItem.setControl(generalTab.getWorkbenchControl());
 
         toolsTab = new ToolsPrefTab(tabFolder);
         CTabItem toolsItem = new CTabItem(tabFolder, SWT.NONE);
