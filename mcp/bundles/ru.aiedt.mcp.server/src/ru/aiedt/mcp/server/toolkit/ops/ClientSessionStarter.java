@@ -88,6 +88,11 @@ public class ClientSessionStarter
                 "Update the infobase before starting (default false).") //$NON-NLS-1$
             .booleanProperty("allowSecondSession", //$NON-NLS-1$
                 "Start even when this configuration already has a client running (default false).") //$NON-NLS-1$
+            .stringProperty("startupOption", //$NON-NLS-1$
+                "The /C startup string for the client that starts, written to this launch's own " //$NON-NLS-1$
+                    + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
+                    + "external processor or report receives its parameters. Refused while the " //$NON-NLS-1$
+                    + "configuration's client is already running - that one was not started with it.") //$NON-NLS-1$
             .build();
     }
 
@@ -107,6 +112,11 @@ public class ClientSessionStarter
             String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
             boolean updateFirst = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", false); //$NON-NLS-1$
             boolean allowSecond = JsonUtils.extractBooleanArgument(params, "allowSecondSession", false); //$NON-NLS-1$
+            String startupOption = JsonUtils.extractStringArgument(params, "startupOption"); //$NON-NLS-1$
+            if (startupOption != null && startupOption.trim().isEmpty())
+            {
+                startupOption = null;
+            }
 
             ILaunchManager launchManager = LaunchConfigAccess.getLaunchManager();
             if (launchManager == null)
@@ -137,7 +147,8 @@ public class ClientSessionStarter
             LAUNCH_LOCK.lock();
             try
             {
-                return decideAndLaunch(launchManager, config, projectName, updateFirst, allowSecond);
+                return decideAndLaunch(launchManager, config, projectName, updateFirst, allowSecond,
+                    startupOption);
             }
             finally
             {
@@ -163,7 +174,7 @@ public class ClientSessionStarter
      * @return the JSON reply
      */
     private static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
-        String projectName, boolean updateFirst, boolean allowSecond)
+        String projectName, boolean updateFirst, boolean allowSecond, String startupOption)
     {
         try
         {
@@ -171,6 +182,19 @@ public class ClientSessionStarter
             ILaunch running = findRunning(launchManager, resolvedAppId);
             if (running != null && !allowSecond)
             {
+                if (startupOption != null)
+                {
+                    // The running client was not started with this string, and success here would
+                    // lose it. Stop the client or allow a second one - the string is not dropped.
+                    return ToolResult.error("A client for this configuration is already running, " //$NON-NLS-1$
+                        + "and it was not started with this startupOption. Stop it with " //$NON-NLS-1$
+                        + "launch_debugger action=terminate, or pass allowSecondSession=true to " //$NON-NLS-1$
+                        + "start another with it. Nothing was started.") //$NON-NLS-1$
+                        .put("configuration", config.getName()) //$NON-NLS-1$
+                        .put("applicationId", resolvedAppId) //$NON-NLS-1$
+                        .put("alreadyRunning", true) //$NON-NLS-1$
+                        .toJson();
+                }
                 return ToolResult.success()
                     .put("started", false) //$NON-NLS-1$
                     .put("configuration", config.getName()) //$NON-NLS-1$
@@ -226,7 +250,7 @@ public class ClientSessionStarter
                 }
             }
 
-            String failure = launch(config);
+            String failure = launch(config, startupOption);
             if (failure != null)
             {
                 return ToolResult.error("Could not start the client: " + failure).toJson(); //$NON-NLS-1$
@@ -235,6 +259,7 @@ public class ClientSessionStarter
             return result.put("started", true) //$NON-NLS-1$
                 .put("mode", ILaunchManager.RUN_MODE) //$NON-NLS-1$
                 .put("secondSession", running != null) //$NON-NLS-1$
+                .put("startupOption", startupOption) //$NON-NLS-1$
                 .toJson();
         }
         catch (Exception e)
@@ -277,32 +302,36 @@ public class ClientSessionStarter
      * </p>
      *
      * @param config the configuration to launch
+     * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
      * @return <code>null</code> on success, otherwise the failure to report
      */
-    private static String launch(ILaunchConfiguration config)
+    private static String launch(ILaunchConfiguration config, String startupOption)
     {
         final String[] error = {null};
         Display display = Display.getDefault();
         if (display != null && !display.isDisposed())
         {
-            display.syncExec(() -> error[0] = launchDirectly(config));
+            display.syncExec(() -> error[0] = launchDirectly(config, startupOption));
         }
         else
         {
-            error[0] = launchDirectly(config);
+            error[0] = launchDirectly(config, startupOption);
         }
         return error[0];
     }
 
     /**
      * @param config the configuration to launch
+     * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
      * @return <code>null</code> on success, otherwise the message to report
      */
-    private static String launchDirectly(ILaunchConfiguration config)
+    private static String launchDirectly(ILaunchConfiguration config, String startupOption)
     {
         try
         {
-            config.launch(ILaunchManager.RUN_MODE, null);
+            ILaunchConfiguration toLaunch = startupOption == null ? config
+                : LaunchConfigAccess.withStartupOption(config, startupOption);
+            toLaunch.launch(ILaunchManager.RUN_MODE, null);
             return null;
         }
         catch (CoreException e)

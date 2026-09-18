@@ -119,7 +119,7 @@ Names differ from the former standalone tools: `set_breakpoint` is `action=add_b
 `action=launch` can open an external data processor or report in the client it starts:
 `externalObjectName` names the object, `externalObjectProject` the project that holds it when that
 is not the project being launched. A name that resolves to nothing stops the launch before the
-infobase is updated, and the answer says `nothingWasLaunchedOrUpdated`.
+infobase is updated, and the answer says `nothingWasLaunchedOrUpdated`. There is no path to an .epf anywhere in the launch - the environment resolves the object from an external-object project only, so a ready binary goes in through `external_object_workshop operation=import_external_object` first; that route is the only one.
 
 The environment opens such an object by BUILDING it, so the object's project must have dump
 generation switched on. It is off by default on a freshly made project, and then the client starts

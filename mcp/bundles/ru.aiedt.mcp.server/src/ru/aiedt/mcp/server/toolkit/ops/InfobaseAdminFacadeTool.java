@@ -249,6 +249,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .booleanProperty("allowSecondSession", //$NON-NLS-1$
                 "start_client: start even when this configuration already has a client running " //$NON-NLS-1$
                     + "(default false - the running one is reported instead).") //$NON-NLS-1$
+            .stringProperty("startupOption", //$NON-NLS-1$
+                "start_client: the /C startup string for the client that starts; the saved " //$NON-NLS-1$
+                    + "configuration is not changed. Refused while its client is already running - " //$NON-NLS-1$
+                    + "that one was not started with it.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", //$NON-NLS-1$
                 "update_database: true triggers a full reload; false runs an incremental " //$NON-NLS-1$
                     + "update instead (default false).") //$NON-NLS-1$

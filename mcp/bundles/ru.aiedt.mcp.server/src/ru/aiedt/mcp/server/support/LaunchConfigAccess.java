@@ -403,6 +403,27 @@ public final class LaunchConfigAccess
     }
 
     /**
+     * A copy of a launch configuration carrying the {@code /C} startup string for this launch.
+     * <p>
+     * Not saved, for the same reason the other copies are not: the startup string belongs to this
+     * one launch. The environment hands the attribute to the client it starts - the test runners
+     * already pass their run parameters the same way.
+     * </p>
+     *
+     * @param config the configuration to base it on.
+     * @param startupOption the startup string; a caller with none leaves the attribute alone.
+     * @return the working copy, ready to launch
+     * @throws CoreException if the copy cannot be made
+     */
+    public static ILaunchConfiguration withStartupOption(ILaunchConfiguration config,
+        String startupOption) throws CoreException
+    {
+        ILaunchConfigurationWorkingCopy copy = asWorkingCopy(config);
+        copy.setAttribute(ATTR_STARTUP_OPTION, startupOption);
+        return copy;
+    }
+
+    /**
      * The configuration as something writable, without making a second copy of a copy.
      *
      * @param config a saved configuration or a working copy.

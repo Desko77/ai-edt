@@ -274,6 +274,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * before opening it and the project had that switched off. Without the argument the only way out
      * of that state is the project's properties page.
      * </p>
+     * <p>
+     * And a tenth, by 322, for startupOption across the four launch schemas. The startup string is
+     * how an external processor or report opened at startup receives its parameters - the test
+     * runners already pass theirs the same way, and a client that must not be restarted just to
+     * change one string has no other way in. Four schemas advertise it because an argument present
+     * in the code and missing from one of them is a contract the strict client cannot call.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 82520;
+    private static final int DOCUMENT_PROSE = 82842;
 }

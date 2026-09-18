@@ -112,6 +112,10 @@ public class LaunchDebuggerTool implements IMcpTool
                     + "external_object_workshop operation=import_external_object.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
                 "launch: the external-object project holding externalObjectName.") //$NON-NLS-1$
+            .stringProperty("startupOption", //$NON-NLS-1$
+                "launch: the /C startup string for the client that starts; the saved configuration " //$NON-NLS-1$
+                    + "is not changed. An Attach configuration starts no client, so it is refused " //$NON-NLS-1$
+                    + "there, and so is a session already running - it was not started with it.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$
                 "terminate: stop every active EDT launch (default false).") //$NON-NLS-1$
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$

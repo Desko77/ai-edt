@@ -120,10 +120,16 @@ public final class DebugSessionStarter implements IMcpTool
                 "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
                     + "runs under the debugger. The object is one this workspace holds as an " //$NON-NLS-1$
                     + "external-object project; a ready .epf / .erf from elsewhere goes in first " //$NON-NLS-1$
-                    + "through config_io operation=import_external_object. Omit to open nothing.") //$NON-NLS-1$
+                    + "through external_object_workshop operation=import_external_object. Omit to " //$NON-NLS-1$
+                    + "open nothing.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
                 "The external-object project holding externalObjectName. Omit when the project has " //$NON-NLS-1$
                     + "one object and its name is unambiguous in the workspace.") //$NON-NLS-1$
+            .stringProperty("startupOption", //$NON-NLS-1$
+                "The /C startup string for the client that starts, written to this launch's own " //$NON-NLS-1$
+                    + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
+                    + "opened external object receives its parameters. An Attach configuration " //$NON-NLS-1$
+                    + "starts no client, so the argument is refused there.") //$NON-NLS-1$
             .build();
     }
 
@@ -153,10 +159,16 @@ public final class DebugSessionStarter implements IMcpTool
             JsonUtils.extractBooleanArgument(params, "enableExternalObjectDump", false); //$NON-NLS-1$
         String externalObjectName = JsonUtils.extractStringArgument(params, "externalObjectName"); //$NON-NLS-1$
         String externalObjectProject = JsonUtils.extractStringArgument(params, "externalObjectProject"); //$NON-NLS-1$
+        String startupOption = JsonUtils.extractStringArgument(params, "startupOption"); //$NON-NLS-1$
+        if (startupOption != null && startupOption.trim().isEmpty())
+        {
+            startupOption = null;
+        }
 
         if (configName != null && !configName.isEmpty())
         {
-            return launchByConfigName(configName, updateBeforeLaunch, debugServerPort);
+            return launchByConfigName(configName, updateBeforeLaunch, debugServerPort,
+                externalObjectProject, externalObjectName, enableDump, startupOption);
         }
 
         if (projectName == null || projectName.isEmpty())
@@ -178,11 +190,12 @@ public final class DebugSessionStarter implements IMcpTool
         }
 
         return launchDebug(projectName, applicationId, updateBeforeLaunch,
-            externalObjectProject, externalObjectName, debugServerPort, enableDump);
+            externalObjectProject, externalObjectName, debugServerPort, enableDump, startupOption);
     }
 
     private String launchByConfigName(String configName, boolean updateBeforeLaunch,
-        int debugServerPort)
+        int debugServerPort, String externalObjectProject, String externalObjectName,
+        boolean enableDump, String startupOption)
     {
         LAUNCH_LOCK.lock();
         try
@@ -208,8 +221,34 @@ public final class DebugSessionStarter implements IMcpTool
                 LaunchConfigAccess.readAttribute(config, LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
             String effectiveAppId = LaunchConfigAccess.getApplicationIdFor(config);
 
+            // An Attach configuration starts no client, so there is nobody to hand the startup
+            // string to: accepting it here would lose it in silence.
+            if (isAttach && startupOption != null)
+            {
+                return ToolResult.error("An Attach configuration starts no client, and " //$NON-NLS-1$
+                    + "startupOption goes to the client that starts. Nothing was launched.") //$NON-NLS-1$
+                    .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                    .put("attach", true) //$NON-NLS-1$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
+
+            // The external object is resolved BEFORE the already-running check: a running session
+            // was started without these arguments, and answering success would lose them.
             if (effectiveAppId != null && DebugSessionBook.findActiveTarget(effectiveAppId) != null)
             {
+                if (startupOption != null || externalObjectName != null && !externalObjectName.isEmpty())
+                {
+                    return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
+                        + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
+                        + "launch_debugger action=terminate, then launch again. Nothing was " //$NON-NLS-1$
+                        + "launched or updated.") //$NON-NLS-1$
+                        .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                        .put("applicationId", effectiveAppId) //$NON-NLS-1$
+                        .put("alreadyRunning", true) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
                 ToolResult already = ToolResult.success()
                     .put("launchConfiguration", config.getName()) //$NON-NLS-1$
                     .put("configurationType", typeId) //$NON-NLS-1$
@@ -224,6 +263,47 @@ public final class DebugSessionStarter implements IMcpTool
                     already.put("project", configProject); //$NON-NLS-1$
                 }
                 return already.toJson();
+            }
+
+            String openedObject = null;
+            String objectProjectName = null;
+            String openedObjectClassName = null;
+            if (!isAttach && externalObjectName != null && !externalObjectName.isEmpty())
+            {
+                IProject objectProject = externalObjectProject == null || externalObjectProject.isEmpty()
+                    ? (configProject == null || configProject.isEmpty() ? null
+                        : ProjectResolver.resolve(configProject))
+                    : ProjectResolver.resolve(externalObjectProject);
+                if (objectProject == null)
+                {
+                    return ToolResult.error(externalObjectProject == null || externalObjectProject.isEmpty()
+                        ? ProjectResolver.describeNotFound(configProject)
+                        : ProjectResolver.describeNotFound(externalObjectProject))
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                BmExternalObjectDumpHelper.RootResolution found =
+                    BmExternalObjectDumpHelper.resolveRoot(objectProject, externalObjectName);
+                if (found.error != null)
+                {
+                    return ToolResult.error(found.error)
+                        .put("externalObjectName", externalObjectName) //$NON-NLS-1$
+                        .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                String dumpProblem = dumpReadiness(objectProject, enableDump);
+                if (dumpProblem != null)
+                {
+                    return ToolResult.error(dumpProblem)
+                        .put("externalObjectName", externalObjectName) //$NON-NLS-1$
+                        .put("externalObjectProject", objectProject.getName()) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                openedObject = found.objectName;
+                objectProjectName = objectProject.getName();
+                openedObjectClassName = found.object.getClass().getName();
             }
 
             if (!isAttach && updateBeforeLaunch && configProject != null && !configProject.isEmpty())
@@ -241,9 +321,21 @@ public final class DebugSessionStarter implements IMcpTool
             }
 
             ILaunchConfiguration toLaunch = config;
-            if (debugServerPort > 0 && !isAttach)
+            if (!isAttach)
             {
-                toLaunch = LaunchConfigAccess.listeningOnDebugPort(config, debugServerPort);
+                if (openedObject != null)
+                {
+                    toLaunch = LaunchConfigAccess.openingExternalObject(toLaunch,
+                        objectProjectName, openedObject, openedObjectClassName);
+                }
+                if (debugServerPort > 0)
+                {
+                    toLaunch = LaunchConfigAccess.listeningOnDebugPort(toLaunch, debugServerPort);
+                }
+                if (startupOption != null)
+                {
+                    toLaunch = LaunchConfigAccess.withStartupOption(toLaunch, startupOption);
+                }
             }
 
             LaunchOutcome outcome = performLaunch(toLaunch, isAttach);
@@ -266,6 +358,14 @@ public final class DebugSessionStarter implements IMcpTool
                         "An Attach configuration starts no debug server, so debugServerPort was not " //$NON-NLS-1$
                             + "applied. It connects to the debug server named by the configuration."); //$NON-NLS-1$
                 }
+            }
+            if (openedObject != null)
+            {
+                result.put("externalObjectOpened", openedObject); //$NON-NLS-1$
+            }
+            if (startupOption != null)
+            {
+                result.put("startupOption", startupOption); //$NON-NLS-1$
             }
             result.put("message", isAttach //$NON-NLS-1$
                 ? "Attach debug session started - use debug_status to check on it, "
@@ -294,7 +394,7 @@ public final class DebugSessionStarter implements IMcpTool
 
     private String launchDebug(String projectName, String applicationId,
         boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName,
-        int debugServerPort, boolean enableDump)
+        int debugServerPort, boolean enableDump, String startupOption)
     {
         LAUNCH_LOCK.lock();
         try
@@ -432,6 +532,21 @@ public final class DebugSessionStarter implements IMcpTool
             // catches the common already-registered case.
             if (applicationId != null && DebugSessionBook.findActiveTarget(applicationId) != null)
             {
+                // A running session was started without these arguments; answering success would
+                // lose them. The fix is to stop the session, not to drop the arguments.
+                if (startupOption != null || openedObject != null)
+                {
+                    return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
+                        + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
+                        + "launch_debugger action=terminate, then launch again. Nothing was " //$NON-NLS-1$
+                        + "launched or updated.") //$NON-NLS-1$
+                        .put("project", projectName) //$NON-NLS-1$
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("launchConfiguration", configName) //$NON-NLS-1$
+                        .put("alreadyRunning", true) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
                 return ToolResult.success()
                     .put("project", projectName) //$NON-NLS-1$
                     .put("applicationId", applicationId) //$NON-NLS-1$
@@ -457,6 +572,11 @@ public final class DebugSessionStarter implements IMcpTool
                 matchingConfig = LaunchConfigAccess.listeningOnDebugPort(matchingConfig, debugServerPort);
             }
 
+            if (startupOption != null)
+            {
+                matchingConfig = LaunchConfigAccess.withStartupOption(matchingConfig, startupOption);
+            }
+
             LaunchOutcome outcome = performLaunch(matchingConfig, false);
             if (!outcome.started)
             {
@@ -476,6 +596,7 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("attach", false) //$NON-NLS-1$
                 .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("externalObjectOpened", openedObject) //$NON-NLS-1$
+                .put("startupOption", startupOption) //$NON-NLS-1$
                 .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
                 .put("message", autoCreatedConfig //$NON-NLS-1$
                     ? "Debug session is now running (a launch configuration was auto-created for it)"
