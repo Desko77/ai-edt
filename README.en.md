@@ -527,6 +527,8 @@ Settings live in **Window -> Preferences -> AI-EDT**, section **Call history**: 
 
 Depth and extent are bounded together: the buffer as a whole stays inside a memory budget, and character counts that do not fit alongside the chosen depth are scaled down proportionally. The counts actually in force are shown in the history window header, so a reduction is visible rather than silent. The shipped values come nowhere near the budget.
 
+The whole text of a call is kept on disk beside the buffer: `get_mcp_history` with the `entryId` of a listed record returns that one call whole - full arguments and full answer, masked the same way the journal is - and the history window opens the same text when you select a record. An entry the store no longer has is refused by name rather than answered with the shortened copy. What is kept is set in the **Call history on disk** group on the preference page: whether to keep the full text (on by default), how many days to keep it (14, zero meaning until the size limit) and which folder to keep it in (empty means the plugin state location). Nothing is written there while recording is off.
+
 A separate setting appends every call to a file in the plugin state location, so the record survives an EDT restart. Off by default. The file is size-bounded and rotates. Infobase passwords never reach it: argument values under a `password`, `token` or `secret` style key are replaced with `***` before anything is recorded. Personal data in the file is masked - that can be switched off, but it is on by default, because the file outlives the session and travels attached to a bug report.
 
 ### Other measures
@@ -542,6 +544,8 @@ A separate setting appends every call to a file in the plugin state location, so
 The debugger facade supports ordinary client launches and **Attach to 1C:Enterprise Debug Server** configurations. Attach is required for HTTP services, server calls, background jobs, scheduled jobs and code running in `rphost`.
 
 The agent discovers an EDT launch configuration, attaches to the 1C debug server, sets a breakpoint and waits for a suspend event. AI-EDT then returns stable references to the thread, stack and frame so the agent can inspect variables, evaluate expressions, step through the code and resume execution.
+
+A launch counts as running only once a live debug target is seen; otherwise the answer says what happened instead and lists the modal dialogs that opened during the launch. The `debugServerPort` argument gives a launch its own debug server port when the default one is already taken by another environment on the machine. The client that starts can open an external data processor or report right away: the environment builds an external object dump for that, so the launch checks whether dump generation is on for the external-object project and turns it on when `enableExternalObjectDump` says so.
 
 ## 🔌 Optional integrations
 
