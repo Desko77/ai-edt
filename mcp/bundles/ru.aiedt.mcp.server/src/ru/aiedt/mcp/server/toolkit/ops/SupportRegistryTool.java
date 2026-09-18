@@ -457,6 +457,10 @@ public class SupportRegistryTool
             // A restore is itself a write. This is where the modes it replaced were recorded, so
             // a restore that turns out to have been the wrong one has somewhere to go back to.
             .put("undoSnapshotFile", restore.undoSnapshotFile); //$NON-NLS-1$
+        if (restore.appliedNote != null)
+        {
+            result.put("appliedNote", restore.appliedNote); //$NON-NLS-1$
+        }
         if (restore.drift != null)
         {
             // Three groups, because only one of them is damage. Objects that survived and lost

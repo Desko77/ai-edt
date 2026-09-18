@@ -82,37 +82,50 @@ public final class MetadataDiffEngine
         }
         Map<String, MdObject> aObjects = collectMdObjects(a);
         Map<String, MdObject> bObjects = collectMdObjects(b);
+        // Renames are paired BEFORE the walk: it visits the union in sorted order, and a removed
+        // name sorted before its added one would be emitted as removed long before its pair is
+        // seen - an object reporting itself both removed and renamed.
+        Map<String, String> renamePairs = new java.util.LinkedHashMap<>();
+        if (detectRenames)
+        {
+            for (Map.Entry<String, MdObject> added : bObjects.entrySet())
+            {
+                if (aObjects.containsKey(added.getKey()))
+                {
+                    continue;
+                }
+                String from = findRenameCandidate(added.getValue(), aObjects, bObjects);
+                if (from != null && !renamePairs.containsKey(from))
+                {
+                    renamePairs.put(from, added.getKey());
+                }
+            }
+        }
         Set<String> all = new TreeSet<>();
         all.addAll(aObjects.keySet());
         all.addAll(bObjects.keySet());
-        Set<String> consumedAdded = new TreeSet<>();
         for (String fqn : all)
         {
             MdObject inA = aObjects.get(fqn);
             MdObject inB = bObjects.get(fqn);
+            if (renamePairs.containsKey(fqn))
+            {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("from", fqn); //$NON-NLS-1$
+                r.put("to", renamePairs.get(fqn)); //$NON-NLS-1$
+                result.renamed.add(r);
+                continue;
+            }
+            if (renamePairs.containsValue(fqn))
+            {
+                continue; // the added half of a pair, already reported
+            }
             if (inA == null && inB != null)
             {
-                if (detectRenames)
-                {
-                    String renamedFrom = findRenameCandidate(inB, aObjects, bObjects);
-                    if (renamedFrom != null && !consumedAdded.contains(renamedFrom))
-                    {
-                        Map<String, Object> r = new LinkedHashMap<>();
-                        r.put("from", renamedFrom); //$NON-NLS-1$
-                        r.put("to", fqn); //$NON-NLS-1$
-                        result.renamed.add(r);
-                        consumedAdded.add(renamedFrom);
-                        continue;
-                    }
-                }
                 result.added.add(fqn);
             }
             else if (inA != null && inB == null)
             {
-                if (consumedAdded.contains(fqn))
-                {
-                    continue; // already accounted for as rename
-                }
                 result.removed.add(fqn);
             }
             else if (inA != null && inB != null)

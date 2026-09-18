@@ -325,6 +325,13 @@ public final class BmSupportRegistryHelper
         public String writeRoute;
 
         /**
+         * What the caller has to know about an applied restore: the modes live in the model, not
+         * in the project's file, and a full export is what carries them there. Null when a restore
+         * has nothing more to say.
+         */
+        public String appliedNote;
+
+        /**
          * Where the modes as they stood BEFORE this restore were written down.
          * <p>
          * A restore is itself a write, and a restore from the wrong file is a way to lose the
@@ -501,6 +508,16 @@ public final class BmSupportRegistryHelper
                 + IDistributionSupportManager.class.getName();
             return;
         }
+        // Measured against the bytecode 18.09: the manager writes the model and nothing else - no
+        // persistence member exists on IDistributionSupportManager (get/is/can/init/stop and
+        // deleteConfigurationFile, which deletes). The dialog exports through the general model
+        // export, and no direct route writes DistributionSupport to the project's file, so after
+        // this write the model holds the mode and Configuration.distr does not - and the restore
+        // has to say so rather than leave that as a surprise the next import finds.
+        restore.appliedNote = "the modes are set in the environment's model; they do NOT reach " //$NON-NLS-1$
+            + "Configuration.distr - a full export of the configuration carries them (the same " //$NON-NLS-1$
+            + "way any other change is carried), and nothing shorter exists in the API, measured " //$NON-NLS-1$
+            + "18.09 against the environment's bytecode."; //$NON-NLS-1$
         restore.writeRoute = setter.getParameterCount() + "-argument setObjectSupportModeForUser"; //$NON-NLS-1$
         model.execute(new AbstractBmTask<Void>("BmSupportRegistryHelper.restore") //$NON-NLS-1$
         {

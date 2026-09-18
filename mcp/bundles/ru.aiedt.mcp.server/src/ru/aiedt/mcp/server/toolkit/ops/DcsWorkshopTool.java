@@ -2879,7 +2879,15 @@ public class DcsWorkshopTool implements IMcpTool
                 throw new RuntimeException("DcsFactory.createDataCompositionFilterItem not available"); //$NON-NLS-1$
             }
             // Both sides of the comparison, or it is the filter from the measurement: right only.
-            mustSet(filterItem, "left", field); //$NON-NLS-1$
+            // The left side is a TYPED field, not a string: setLeft takes an mcore.Value, and a
+            // string lands as an argument mismatch that reads as "could not write the filter".
+            Object left = BmDcsHelper.createDataCompositionField(field);
+            if (left == null)
+            {
+                throw new RuntimeException("the field '" + field + "' could not be built as a " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "typed value - the filter would carry a right with no left"); //$NON-NLS-1$
+            }
+            mustSet(filterItem, "left", left); //$NON-NLS-1$
             BmDcsHelper.setProperty(filterItem, "comparisonType", effectiveConditionType); //$NON-NLS-1$
             Object rv = BmDcsHelper.createLiteralValue(conditionValue);
             EList<EObject> rightList = BmDcsHelper.getEObjectList(filterItem, "getRight"); //$NON-NLS-1$

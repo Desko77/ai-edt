@@ -160,23 +160,46 @@ public class RestartEdtTool implements IMcpTool
                         }
                         if (!shutdown && command != null)
                         {
-                            // Started BEFORE the close: the watcher must outlive this process, and
-                            // a process started from within a closing JVM dies with it - measured.
-                            // It waits for the workspace to free and then launches the same
-                            // executable with the same arguments.
-                            startWatcher(command);
+                            // The watcher owns the relaunch, so the workbench is CLOSED, not
+                            // restarted through the launcher: a launcher that honours the restart
+                            // exit code would start its own replacement, and two would race for
+                            // the same workspace. The watcher starts BEFORE the close because a
+                            // process started from within a closing JVM dies with it - measured.
+                            // A veto is caught below and the watcher taken down again, so nothing
+                            // is left waiting for a PID whose owner stayed alive.
+                            Process watcher = startWatcher(command);
+                            boolean ok = shutdown
+                                ? PlatformUI.getWorkbench().close()
+                                : PlatformUI.getWorkbench().restart();
+                            if (!ok && watcher != null && watcher.isAlive())
+                            {
+                                // The workbench vetoed the close (an unsaved editor, a listener).
+                                // EDT stays up, and the watcher must not stay behind waiting for
+                                // a PID whose owner never left - or every later ordinary exit
+                                // would bring EDT back on its own.
+                                watcher.destroy();
+                            }
+                            if (!ok)
+                            {
+                                // A part/listener vetoed it (e.g. an unsaved editor
+                                // cancelled the close). EDT stays up; the caller was
+                                // already told it would go down, so surface it in the log.
+                                Activator.logError("restart_edt: " + (shutdown ? "close" : "restart") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                                    + "() returned false - a listener vetoed it; EDT is still running.", //$NON-NLS-1$
+                                    null);
+                            }
                         }
-                        boolean ok = shutdown
-                            ? PlatformUI.getWorkbench().close()
-                            : PlatformUI.getWorkbench().restart();
-                        if (!ok)
+                        else
                         {
-                            // A part/listener vetoed it (e.g. an unsaved editor
-                            // cancelled the close). EDT stays up; the caller was
-                            // already told it would go down, so surface it in the log.
-                            Activator.logError("restart_edt: " + (shutdown ? "close" : "restart") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                                + "() returned false - a listener vetoed it; EDT is still running.", //$NON-NLS-1$
-                                null);
+                            boolean ok = shutdown
+                                ? PlatformUI.getWorkbench().close()
+                                : PlatformUI.getWorkbench().restart();
+                            if (!ok)
+                            {
+                                Activator.logError("restart_edt: " + (shutdown ? "close" : "restart") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                                    + "() returned false - a listener vetoed it; EDT is still running.", //$NON-NLS-1$
+                                    null);
+                            }
                         }
                     }
                     catch (Exception e)
@@ -287,7 +310,7 @@ public class RestartEdtTool implements IMcpTool
      *
      * @param command the command line to run once this process is gone.
      */
-    private static void startWatcher(java.util.List<String> command)
+    private static Process startWatcher(java.util.List<String> command)
     {
         try
         {
@@ -308,11 +331,13 @@ public class RestartEdtTool implements IMcpTool
             // Nothing reads its output; close stdin so nothing blocks on it.
             watcher.getOutputStream().close();
             Activator.logInfo("restart_edt: relaunch watcher started, pid=" + watcher.pid()); //$NON-NLS-1$
+            return watcher;
         }
         catch (Exception e)
         {
             Activator.logError("restart_edt: the relaunch watcher could not be started - " //$NON-NLS-1$
                 + "EDT will close with nothing to bring it back", e); //$NON-NLS-1$
+            return null;
         }
     }
 

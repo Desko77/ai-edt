@@ -3486,8 +3486,19 @@ public class BmFormHelper
                     ((org.eclipse.emf.ecore.EObject) command).eResource();
                 if (resource != null && resource.getURI() != null)
                 {
-                    String[] segments = resource.getURI().segments();
-                    return segments.length > 0 ? segments[0] : null;
+                    org.eclipse.emf.common.util.URI uri = resource.getURI();
+                    // A platform resource URI addresses the project in its second segment; a BM
+                    // URI addresses it in the authority. Segment zero answers "resource" for the
+                    // first and nothing sensible for the second - and the configuration is read
+                    // from nowhere the picture can be in.
+                    if (uri.isPlatformResource() && uri.segmentCount() > 1)
+                    {
+                        return uri.segment(1);
+                    }
+                    if (uri.authority() != null && !uri.authority().isEmpty())
+                    {
+                        return uri.authority();
+                    }
                 }
             }
         }
