@@ -3452,15 +3452,6 @@ public class BmFormHelper
     }
 
     /**
-     * Whether the picture name resolves to anything, through the command's own project.
-     *
-     * @param command the FormCommand - it lives in the form of the project whose configuration
-     *            has to carry a CommonPicture.
-     * @param name the picture name as the caller gave it ({@code StdPicture.X},
-     *            {@code StdExtPicture.X} or {@code CommonPicture.X}).
-     * @return what is wrong, or <code>null</code> when the name resolves
-     */
-    /**
      * The proxy a named picture reference points at.
      * <p>
      * A platform picture (StdPicture / StdExtPicture) is resolved by the same provider that
@@ -3537,6 +3528,15 @@ public class BmFormHelper
         return project != null && project.exists() ? project : null;
     }
 
+    /**
+     * Whether the picture name resolves to anything, through the command's own project.
+     *
+     * @param command the FormCommand - it lives in the form of the project whose configuration
+     *            has to carry a CommonPicture.
+     * @param name the picture name as the caller gave it ({@code StdPicture.X},
+     *            {@code StdExtPicture.X} or {@code CommonPicture.X}).
+     * @return what is wrong, or <code>null</code> when the name resolves
+     */
     private static String namedPictureRefProblem(Object command, String name)
     {
         if (name == null || name.isEmpty())

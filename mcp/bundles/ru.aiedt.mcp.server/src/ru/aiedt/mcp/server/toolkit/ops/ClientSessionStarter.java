@@ -319,18 +319,6 @@ public class ClientSessionStarter
     }
 
     /**
-     * Runs the configuration, on the UI thread when there is one.
-     * <p>
-     * EDT's launch delegate can raise dialogs - a missing runtime, credentials it wants confirmed -
-     * and doing that off the display thread throws instead of asking. The headless branch is for the
-     * test runtime, where no display exists.
-     * </p>
-     *
-     * @param config the configuration to launch
-     * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
-     * @return <code>null</code> on success, otherwise the failure to report
-     */
-    /**
      * Waits for the endpoint the client is supposed to open, when the caller asked for one. The
      * client stays whatever it is - a refusal here reports the wait, it does not kill the client.
      *
@@ -363,6 +351,18 @@ public class ClientSessionStarter
             .toJson();
     }
 
+    /**
+     * Runs the configuration, on the UI thread when there is one.
+     * <p>
+     * EDT's launch delegate can raise dialogs - a missing runtime, credentials it wants confirmed -
+     * and doing that off the display thread throws instead of asking. The headless branch is for the
+     * test runtime, where no display exists.
+     * </p>
+     *
+     * @param config the configuration to launch
+     * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
+     * @return <code>null</code> on success, otherwise the failure to report
+     */
     private static String launch(ILaunchConfiguration config, String startupOption)
     {
         final String[] error = {null};
