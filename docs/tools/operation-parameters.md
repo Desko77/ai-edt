@@ -11,7 +11,7 @@
 | `BranchInfobaseTool` | `list` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string` | passed in as locals |
 | `BranchInfobaseTool` | `unbind` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string` | passed in as locals |
 | `CodeSearchTool` | `call_hierarchy` | `depth:?`, `direction:string`, `limit:integer`, `methodName:string`, `modulePath:string`, `projectName:string` | delegate CallHierarchyReader through rewriteForCallHierarchy |
-| `CodeSearchTool` | `content_assist` | `column:integer`, `contains:string`, `extendedDocumentation:boolean`, `filePath:string`, `limit:integer`, `line:integer`, `offset:integer`, `projectName:string` | delegate ContentAssistReader |
+| `CodeSearchTool` | `content_assist` | `column:integer`, `contains:string`, `extendedDocumentation:boolean`, `filePath:string`, `limit:integer`, `line:integer`, `offset:integer`, `positions:array`, `projectName:string` | delegate ContentAssistReader |
 | `CodeSearchTool` | `help` | `topic:string` | read in place |
 | `CodeSearchTool` | `method_references` | `caseSensitive:boolean`, `compact:boolean`, `contextLines:integer`, `fileMask:string`, `isRegex:boolean`, `linesAfter:integer`, `linesBefore:integer`, `maxResults:integer`, `metadataType:string`, `outputMode:string`, `projectName:string`, `query:string`, `timeoutSeconds:integer`, `wholeWord:boolean` | delegate CodeTextSearcher through rewriteForMethodReferences |
 | `CodeSearchTool` | `object_references` | `bslOnly:boolean`, `categories:string`, `deep:boolean`, `limit:integer`, `objectFqn:string`, `projectName:string`, `runKey:string`, `skipBsl:boolean`, `timeoutSeconds:integer` | delegate ReferenceLocator through rewriteForObjectReferences |
