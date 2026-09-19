@@ -65,3 +65,10 @@ CLAUDE.local.md
 
 # Python bytecode, wherever it lands
 __pycache__/
+
+
+# JVM crash dumps and run logs - never committed (incident 20.08: hs_err files carried
+# customer workspace names into a public repository)
+hs_err_pid*
+replay_pid*
+*.log
