@@ -123,18 +123,6 @@ public final class MetadataDiffEngine
                 r.put("from", fqn); //$NON-NLS-1$
                 r.put("to", renamePairs.get(fqn)); //$NON-NLS-1$
                 result.renamed.add(r);
-                // The pairing matched on content with the name and its mirrors out of the
-                // evidence; whatever still differs is content, and a renamed object that also
-                // changed is reported as modified on its old name.
-                MdObject pairA = inA;
-                MdObject pairB = bObjects.get(renamePairs.get(fqn));
-                if (pairA != null && pairB != null && !structurallyEqual(pairA, pairB, true))
-                {
-                    Map<String, Object> mod = new LinkedHashMap<>();
-                    mod.put("fqn", fqn); //$NON-NLS-1$
-                    mod.put("changes", listChanges(pairA, pairB, true)); //$NON-NLS-1$
-                    result.modified.add(mod);
-                }
                 continue;
             }
             if (renamePairs.containsValue(fqn))
@@ -329,15 +317,15 @@ public final class MetadataDiffEngine
      * caller says so.
      * <p>
      * A rename hunt compares two objects that are SUPPOSED to differ by name - excluded from the
-     * evidence, a pure rename reads equal, and everything else that changed still reads as a
-     * change. Left in, every candidate would read modified, and {@code renamed} would never hold
-     * anything. Three features travel with the name and leave the evidence with it: {@code uuid},
-     * the object's own identity, which a copy mints anew while a rename keeps; {@code synonym},
-     * the name's presentation, which the rename rewrites when it mirrored the name; and
-     * {@code producedTypes}, the type ids generated from that identity. Measured on a stand pair
-     * (a catalog copied between projects, then renamed): with the mirrors compared,
-     * {@code renamed} came back empty and the object read as removed on one side and added on
-     * the other.
+     * evidence, a pure rename reads equal, and the equality IS the evidence of the rename: an
+     * object that changed beyond the mirrors does not pair and reads as removed on one side and
+     * added on the other. Left compared, every candidate would differ, and {@code renamed} would
+     * never hold anything. Three features travel with the name and leave the evidence with it:
+     * {@code uuid}, the object's own identity, which a copy mints anew while a rename keeps;
+     * {@code synonym}, the name's presentation, which the rename rewrites when it mirrored the
+     * name; and {@code producedTypes}, the type ids generated from that identity. Measured on a
+     * stand pair (a catalog copied between projects, then renamed): with the mirrors compared,
+     * {@code renamed} came back empty and the object read as removed and added.
      * </p>
      *
      * @param a one side.
@@ -455,30 +443,11 @@ public final class MetadataDiffEngine
 
     private static List<String> listChanges(EObject a, EObject b)
     {
-        return listChanges(a, b, false);
-    }
-
-    /**
-     * The feature-level change list, with the name and its mirrors left out when the caller says
-     * so - the listing that backs the modified report of a rename pair, where the name and what
-     * travels with it are the rename itself, not a change.
-     *
-     * @param a one side.
-     * @param b the other.
-     * @param ignoreMirrors <code>true</code> when the name and its mirrors are not changes.
-     * @return the names of the features that differ.
-     */
-    private static List<String> listChanges(EObject a, EObject b, boolean ignoreMirrors)
-    {
         List<String> changes = new ArrayList<>();
         EClass ec = a.eClass();
         for (EStructuralFeature feature : ec.getEAllStructuralFeatures())
         {
             if (feature.isTransient() || feature.isDerived())
-            {
-                continue;
-            }
-            if (ignoreMirrors && NAME_MIRRORS.contains(feature.getName()))
             {
                 continue;
             }
