@@ -76,6 +76,24 @@ public final class ProjectResolver
     }
 
     /**
+     * The names of the open projects in the workspace, in workspace order.
+     *
+     * @return the names; never <code>null</code>
+     */
+    public static List<String> openProjectNames()
+    {
+        List<String> names = new ArrayList<>();
+        for (IProject p : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+        {
+            if (p.isAccessible())
+            {
+                names.add(p.getName());
+            }
+        }
+        return names;
+    }
+
+    /**
      * Builds a human- and agent-friendly "project not found" message for the
      * case where {@link #resolve(String)} returned {@code null}. The message
      * names the closest open project (extension suffix match first, then a

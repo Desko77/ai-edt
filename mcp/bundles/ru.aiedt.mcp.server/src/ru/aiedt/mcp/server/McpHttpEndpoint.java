@@ -35,6 +35,7 @@ import org.eclipse.jface.preference.IPreferenceStore;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonPrimitive;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -734,6 +735,15 @@ public class McpHttpEndpoint
         // Which EDT this is. With several running, a port number alone does not say, and an agent
         // that was handed one earlier has no way to notice it now belongs to a different workspace.
         payload.addProperty("instance", InstanceRegistry.selfTitle()); //$NON-NLS-1$
+        // The open projects, for the same reason: at two stands on one machine the port answers the
+        // question "which project will these calls touch", and an agent asking it never reads a
+        // refusal as "the server is down" when the port simply belongs to the other instance.
+        JsonArray projects = new JsonArray();
+        for (String name : ru.aiedt.mcp.server.support.ProjectResolver.openProjectNames())
+        {
+            projects.add(name);
+        }
+        payload.add("projects", projects); //$NON-NLS-1$
         RunningToolCall active = getActiveToolCall();
         if (active != null)
         {
