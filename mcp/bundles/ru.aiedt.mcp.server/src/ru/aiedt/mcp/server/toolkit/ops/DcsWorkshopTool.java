@@ -2871,7 +2871,15 @@ public class DcsWorkshopTool implements IMcpTool
             Object condition = invokeGetter(item, "getFilter"); //$NON-NLS-1$
             if (condition == null)
             {
-                throw new RuntimeException("the appearance item has no filter to write into"); //$NON-NLS-1$
+                // A fresh item carries none; the setter takes the DataCompositionFilter the
+                // factory makes, or the filter the caller named has nowhere to live.
+                condition = BmDcsHelper.createElement("createDataCompositionFilter"); //$NON-NLS-1$
+                if (condition == null)
+                {
+                    throw new RuntimeException("a filter could not be created for the appearance " //$NON-NLS-1$
+                        + "item - the condition would have nowhere to live"); //$NON-NLS-1$
+                }
+                mustSet(item, "filter", condition); //$NON-NLS-1$
             }
             Object filterItem = BmDcsHelper.createElement("createDataCompositionFilterItem"); //$NON-NLS-1$
             if (filterItem == null)

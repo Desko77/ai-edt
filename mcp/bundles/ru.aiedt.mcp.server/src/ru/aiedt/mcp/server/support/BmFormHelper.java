@@ -3477,50 +3477,64 @@ public class BmFormHelper
     {
         try
         {
-            Class<?> registryClass =
-                Class.forName("com._1c.g5.v8.dt.core.platform.IEObjectProvider$Registry"); //$NON-NLS-1$
-            Object registry = registryClass.getField("INSTANCE").get(null); //$NON-NLS-1$
-            Class<?> mcorePackage = Class.forName("com._1c.g5.v8.dt.mcore.McorePackage"); //$NON-NLS-1$
-            Object pictureClass = mcorePackage.getField("PICTURE").get(null); //$NON-NLS-1$
-            for (Method m : registryClass.getMethods())
+            Activator activator = Activator.getDefault();
+            if (activator == null)
             {
-                if (!"get".equals(m.getName()) || m.getParameterCount() != 2) //$NON-NLS-1$
-                {
-                    continue;
-                }
-                Object provider;
-                try
-                {
-                    provider = m.invoke(registry, pictureClass, null);
-                }
-                catch (Exception e)
-                {
-                    continue;
-                }
-                if (provider == null)
-                {
-                    continue;
-                }
-                try
-                {
-                    Method getProxy = provider.getClass().getMethod("getProxy", String.class); //$NON-NLS-1$
-                    Object proxy = getProxy.invoke(provider, name);
-                    if (proxy != null)
-                    {
-                        return proxy;
-                    }
-                }
-                catch (NoSuchMethodException nsf)
-                {
-                    // another provider shape - keep looking
-                }
+                return null;
             }
+            Object versionSupport = activator.getRuntimeVersionSupport();
+            IProject project = projectOf(command);
+            if (versionSupport == null || project == null)
+            {
+                return null;
+            }
+            Method getRuntimeVersion = versionSupport.getClass()
+                .getMethod("getRuntimeVersion", IProject.class); //$NON-NLS-1$
+            Object version = getRuntimeVersion.invoke(versionSupport, project);
+            if (version == null)
+            {
+                return null;
+            }
+            Class<?> registryClass =
+                Class.forName("com._1c.g5.v8.dt.platform.IEObjectProvider$Registry"); //$NON-NLS-1$
+            Object registry = registryClass.getField("INSTANCE").get(null); //$NON-NLS-1$
+            Class<?> mcorePackageLiterals =
+                Class.forName("com._1c.g5.v8.dt.mcore.McorePackage$Literals"); //$NON-NLS-1$
+            Object pictureEClass = mcorePackageLiterals.getField("PICTURE").get(null); //$NON-NLS-1$
+            Method getMethod = registryClass.getMethod("get", //$NON-NLS-1$
+                org.eclipse.emf.ecore.EClass.class, version.getClass());
+            Object provider = getMethod.invoke(registry, pictureEClass, version);
+            if (provider == null)
+            {
+                return null;
+            }
+            Method getProxy = provider.getClass().getMethod("getProxy", String.class); //$NON-NLS-1$
+            return getProxy.invoke(provider, name);
         }
         catch (Exception e)
         {
             Activator.logWarning("BmFormHelper.buildNamedPictureProxy failed: " + e.getMessage()); //$NON-NLS-1$
+            return null;
         }
-        return null;
+    }
+
+    /**
+     * The project the command lives in, as an IProject rather than a name - the version that
+     * resolves a platform picture comes from it.
+     *
+     * @param command the FormCommand.
+     * @return the project, or <code>null</code>
+     */
+    private static IProject projectOf(Object command)
+    {
+        String name = projectNameOf(command);
+        if (name == null)
+        {
+            return null;
+        }
+        IProject project =
+            org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getProject(name);
+        return project != null && project.exists() ? project : null;
     }
 
     private static String namedPictureRefProblem(Object command, String name)
