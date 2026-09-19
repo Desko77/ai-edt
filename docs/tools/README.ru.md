@@ -330,6 +330,8 @@
 Объединяет запуск/Attach, line и exception breakpoints, `run_to_line`, ожидание suspend, чтение и изменение переменных, stepping, resume, terminate, evaluation и profiling.
 
 Большинство операций требует действующей конфигурации запуска EDT; операции с кадрами требуют приостановленного потока.
+
+`launch` принимает `startupOption` - строку аргументов `/C` для клиента, записываемую в копию конфигурации запуска, - и `waitForEndpoint` с `endpointTimeoutSeconds`: запуск считается готовым, когда открытый им адрес отвечает (GET, итоговый статус ниже 500), а не когда процесс существует. То же у `start_client` фасада `infobase_admin`.
 </details>
 
 <a id="diagnostics"></a>
@@ -356,7 +358,7 @@
 
 Объединяет `get_applications`, `read_event_log`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `branch_infobase`, `update_database`, `sync_control` и встроенную справку.
 
-`dryRun` объявлен и здесь: через фасад он доходит до `update_database` тем же доводом.
+`dryRun` объявлен и здесь: через фасад он доходит до `update_database` тем же доводом. `update_database` принимает и `statusOnly`: чтение отслеживаемых обновлений (`runKey`, состояние, прогресс) без порождения прогона.
 </details>
 
 <a id="config_io"></a>
