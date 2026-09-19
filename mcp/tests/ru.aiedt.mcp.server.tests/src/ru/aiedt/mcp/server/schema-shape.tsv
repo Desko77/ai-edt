@@ -51,7 +51,7 @@ get_bookmarks	required=[] type="object" filePath{type="string"} limit{type="inte
 get_check_description	required=[checkId] type="object" checkId{type="string"}
 get_command_interface	required=[projectName] type="object" ownerFqn{type="string"} projectName{type="string"}
 get_configuration_properties	required=[] type="object" projectName{type="string"}
-get_content_assist	required=[column,filePath,line,projectName] type="object" column{type="integer"} contains{type="string"} extendedDocumentation{type="boolean"} filePath{type="string"} limit{type="integer"} line{type="integer"} offset{type="integer"} projectName{type="string"}
+get_content_assist	required=[column,filePath,line,projectName] type="object" column{type="integer"} contains{type="string"} extendedDocumentation{type="boolean"} filePath{type="string"} limit{type="integer"} line{type="integer"} offset{type="integer"} positions{type="string"} projectName{type="string"}
 get_edt_version	required=[] type="object"
 get_form_screenshot	required=[] type="object" activePage{type="string"} formPath{type="string"} projectName{type="string"} refresh{type="boolean"} savePath{type="string"}
 get_form_structure	required=[formPath,projectName] type="object" depth{type="integer"} formPath{type="string"} includeCommandInterface{type="boolean"} maxElements{type="integer"} projectName{type="string"} subtree{type="string"}
