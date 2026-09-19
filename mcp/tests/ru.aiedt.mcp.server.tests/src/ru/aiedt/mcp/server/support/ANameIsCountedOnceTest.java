@@ -6,13 +6,15 @@
 
 package ru.aiedt.mcp.server.support;
 
-import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.lang.reflect.Method;
+import java.util.UUID;
 
-import org.eclipse.emf.ecore.EObject;
 import org.junit.Test;
+
+import com._1c.g5.v8.dt.metadata.mdclass.Catalog;
+import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 
 /**
  * A pure rename counts as renamed and nothing else.
@@ -22,22 +24,38 @@ import org.junit.Test;
  * removed name sorted before its added one was emitted as removed before its pair was seen, so
  * one object reported itself both removed and renamed. Pairs are formed before the walk now, the
  * name is out of the evidence only where it is not evidence, and the walk skips both halves of a
- * pair it has already reported.
+ * pair it has already reported.</p>
+ *
+ * <p>A third defect had the same empty answer: the name travels with mirrors - the uuid, minted
+ * anew by a copy and kept by a rename; the synonym, which the rename rewrites when it mirrored
+ * the name; the produced type ids, generated from the identity. Compared, a renamed copy read as
+ * removed on one side and added on the other. They leave the evidence with the name.</p>
  */
 public class ANameIsCountedOnceTest
 {
     /**
-     * The comparison takes the name out of the evidence on demand.
-     *
-     * @throws Exception when the overload is gone
+     * Two catalogs that differ by name, identity and synonym, and by nothing else, are a pure
+     * rename: unequal when the name is evidence, equal when it is not. A content difference is
+     * still a difference through the same lens.
      */
     @Test
-    public void theNameLeavesTheEvidenceOnlyWhenAsked()
-        throws Exception
+    public void theMirrorsOfTheNameLeaveTheEvidenceWithIt()
     {
-        Method comparison = MetadataDiffEngine.class.getDeclaredMethod("structurallyEqual", //$NON-NLS-1$
-            EObject.class, EObject.class, boolean.class);
-        assertNotNull(comparison);
-        assertTrue(java.lang.reflect.Modifier.isPublic(comparison.getModifiers()));
+        Catalog one = MdClassFactory.eINSTANCE.createCatalog();
+        Catalog two = MdClassFactory.eINSTANCE.createCatalog();
+        one.setName("Thing"); //$NON-NLS-1$
+        two.setName("Renamed"); //$NON-NLS-1$
+        one.setUuid(UUID.nameUUIDFromBytes(new byte[]{1}));
+        two.setUuid(UUID.nameUUIDFromBytes(new byte[]{2}));
+        one.getSynonym().put("ru", "Thing"); //$NON-NLS-1$ //$NON-NLS-2$
+        two.getSynonym().put("ru", "Renamed"); //$NON-NLS-1$ //$NON-NLS-2$
+        one.setComment("same"); //$NON-NLS-1$
+        two.setComment("same"); //$NON-NLS-1$
+
+        assertFalse(MetadataDiffEngine.structurallyEqual(one, two));
+        assertTrue(MetadataDiffEngine.structurallyEqual(one, two, true));
+
+        two.setComment("other"); //$NON-NLS-1$
+        assertFalse(MetadataDiffEngine.structurallyEqual(one, two, true));
     }
 }
