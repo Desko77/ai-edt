@@ -46,6 +46,20 @@ assistants can work against the live EDT model instead of scraping project files
   Rationale: every name-level parity pass regrows structural similarity with the upstream this
   project separated from. Design new mechanisms from our own architecture.
 
+## Branching
+
+Nothing lands on `main` directly. Adopted 2026-09-19; before that, commits went straight to `main`.
+
+- A sprint opens an integration branch `sprint/<version>` off `main` and lives until the release.
+- Every feature and every fix gets its own branch off the sprint branch - `feature/<short-name>`,
+  `fix/<short-name>` - and merges back into it with a merge commit, so the task boundary stays
+  visible.
+- A hotfix after a release branches off `main` and merges back into `main` (and into an open
+  sprint branch when one exists).
+- The sprint branch reaches `main` through a pull request; CI runs on every pull request to
+  `main`, and the merge waits for a green run. The release tag is set on the merge commit.
+- The tree version bump to the next snapshot goes on `main` after the tag, as before.
+
 ## Build System
 
 Maven + Tycho 4.0.5. Modules under `mcp/`:

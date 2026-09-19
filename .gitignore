@@ -65,3 +65,9 @@ CLAUDE.local.md
 
 # Python bytecode, wherever it lands
 __pycache__/
+
+
+# JVM crash dumps and run logs
+hs_err_pid*
+replay_pid*
+*.log
