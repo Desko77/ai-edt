@@ -32,6 +32,13 @@ to a pair of object and vendor: `object_mode` reports per vendor, and `list_obje
 | `docs_lookup` | `get_platform_documentation`, `get_object_help`, `help` |
 | `workspace_marks` | `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks`, `help` |
 
+`compare_configurations` with `mode=projects` pairs renames before classifying: an object whose
+content is equal once the name and its mirrors (the uuid, the synonym, the type ids) are set aside
+reads as `renamed`, not as removed on one side and added on the other. Equality is the whole
+evidence - an object that changed beyond the mirrors does not pair. Contained children are
+compared by content, so a change invisible to a name-only walk (an attribute whose type moved)
+shows at `level=attribute`.
+
 ## Diagnostics
 
 | Operation | Notes |
@@ -80,8 +87,8 @@ form edits are chained with other metadata edits.
 | `create_infobase`, `delete_infobase` | Infobase lifecycle. |
 | `set_infobase_credentials` | Stored credentials for a launch configuration. |
 | `create_launch_config` | A new launch configuration. |
-| `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
-| `update_database` | Writes the configuration into the infobase. Validate for export first. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`), the readiness of the infobase (`readiness`) and its problems (`readinessProblems`). No run is recorded and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. |
+| `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. Takes `startupOption` for a `/C` string and `waitForEndpoint` / `endpointTimeoutSeconds` to wait for what the client opens. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
+| `update_database` | Writes the configuration into the infobase. Validate for export first. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`), the readiness of the infobase (`readiness`) and its problems (`readinessProblems`). No run is recorded and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. With `statusOnly=true` it reads the tracked updates instead - `updates[]` with `runKey`, state and progress per run, filtered by `projectName`; it starts nothing and does not claim a finished result, and a `runKey` of another kind of work is refused. |
 | `branch_infobase` | Binds a git branch to a launch configuration, so `update_database` refuses to write into an infobase that belongs to another branch. For a project that is an extension the binding lives in the extension itself, not in the configuration it extends. |
 | `sync_control` | Inspects and controls EDT-to-infobase synchronization. See the safety rule in `expected-behavior.md`. |
 
@@ -130,6 +137,15 @@ it on for that project and goes ahead.
 default port between all the environments running on it, and the second one to start debugging is
 refused by a dialog of the environment's own - this is how to step around that. The saved
 configuration is not changed.
+
+`startupOption` is a `/C` string for the client - `autostart;anything`, an `/Execute` target, a
+debugger URL - written into the working copy of the launch configuration, never the saved one.
+An Attach configuration refuses it, and so does a client already running without these arguments.
+`waitForEndpoint` with `endpointTimeoutSeconds` (1..50, 20 by default) turns the answer into a
+readiness report: a GET on the URL, ready when the final status is below 500, at most five
+redirects, one read never longer than five seconds. `endpointReady`, `endpointWaitedSeconds` and
+`endpointHttpStatus` say what was seen; a URL that never answers is reported, the client is not
+killed. The same arguments are on `infobase_admin operation=start_client`.
 
 A launch is reported as running only when a live debug target is observed. The refusal says what was
 seen instead - the launch was not created, terminated at once, has only terminated targets, or
@@ -234,7 +250,7 @@ separate question the platform only answers when asked.
 
 | Tool | Builds |
 |---|---|
-| `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. `repair_schema` (through the facade: `edit_metadata operation=repair_report_schema`) puts the schema a `.dcs` holds back into a model that lost it - the template opens in EDT with the schema unavailable while the file is intact. Arguments `projectName`, `objectName`, `templateName` (by default the owner's main schema, named in the language of the configuration), `overwriteModel`, `dryRun`. The file is never written. `outcome`: `restored` (the model held none), `matched` (the model already serializes to the file, nothing changed), `refused_model_differs` (the model holds another schema - replaced only with `overwriteModel=true`, and then its serialization is written to `backupPath` beside the `.dcs`), `replaced`, `file_changed` (the file changed between the read and the attach - repeat), `no_template`, `no_file`. `success` is true only with `confirmed=true` - the model read back after the commit serializes to the file; otherwise `confirmation` says why. `dryRun=true` decides and answers without changing anything. |
+| `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. `repair_schema` (through the facade: `edit_metadata operation=repair_report_schema`) puts the schema a `.dcs` holds back into a model that lost it - the template opens in EDT with the schema unavailable while the file is intact. Arguments `projectName`, `objectName`, `templateName` (by default the owner's main schema, named in the language of the configuration), `overwriteModel`, `dryRun`. The file is never written. `outcome`: `restored` (the model held none), `matched` (the model already serializes to the file, nothing changed), `refused_model_differs` (the model holds another schema - replaced only with `overwriteModel=true`, and then its serialization is written to `backupPath` beside the `.dcs`), `replaced`, `file_changed` (the file changed between the read and the attach - repeat), `no_template`, `no_file`. `success` is true only with `confirmed=true` - the model read back after the commit serializes to the file; otherwise `confirmation` says why. `dryRun=true` decides and answers without changing anything. An Object dataset requires `dataObjectName` on `add_dataset` and on `add_union_item` alike - a non-Object dataset refuses the argument. `add_total` writes `dataPath` from the expression unless `dataPath` is given. `add_appearance` builds a filter from `field` with `conditionValue` (a partial condition is refused with the argument named) and takes `appearance` as `Name=Value;Name=Value` - a JSON object or array is refused, it corrupts the file. The same arguments are on the `edit_metadata operation=add_conditional_appearance` alias. |
 | `mxl_workshop` | Spreadsheet templates. Coordinates are 1-based. |
 | `xdto_workshop` | XDTO package schemas. Create the package with `edit_metadata` first. |
 | `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison, and what a new delivery does to an extension. Borrowing writes the link that makes the extension actually extend, and a borrow that cannot write it fails rather than reporting success; calling borrow again repairs an object left unlinked by an older build. `borrow_module` needs `moduleType` wherever an object has more than one module. `borrow_child` composes the child's FQN from `objectFqn` plus `childKind` and `name` - before that it borrowed the OWNER and answered "borrowed". `borrow_form_item` borrows the FORM that carries the item: a form item has no address of its own, so name the form with `formName` beside the owner or spell it in `objectFqn` (`Catalog.X.Form.ФормаЭлемента`); without a form named the call is refused and nothing is borrowed. |
