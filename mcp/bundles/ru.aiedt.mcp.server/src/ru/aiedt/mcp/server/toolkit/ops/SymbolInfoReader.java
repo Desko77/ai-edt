@@ -609,9 +609,56 @@ public class SymbolInfoReader
         BslModuleAccess.TypeState typeState = BslModuleAccess.TypeState.READY;
         if (computeTypes)
         {
-            typeState = BslModuleAccess.resolveCrossReferences(xtextResource);
+            typeState = computeTypesWatchingModel(project, xtextResource);
         }
         return new ModuleUnderQuestion(this, document, xtextResource, typeState);
+    }
+
+    /**
+     * Resolves the module's cross-references while the model is watched, and says whether the
+     * answer can be trusted.
+     * <p>
+     * Measured on a stand: the same position answered with a type on one run and with
+     * Неопределено on another, four runs apart, and the difference was how far the model had got -
+     * not chance. Reading readiness twice would not do: a model can go ready, building, ready again
+     * while one resolution runs, and both readings say ready. What separates the two is a record of
+     * every transition, which the derived-data manager publishes to a listener. A moved model costs
+     * one retry; a model that kept moving is reported rather than trusted, because a position that
+     * has no type and a position whose type was not computed must not read alike.
+     * </p>
+     *
+     * @param project the project the module belongs to
+     * @param resource the module's resource
+     * @return what the resolution can be held to
+     */
+    private static BslModuleAccess.TypeState computeTypesWatchingModel(IProject project,
+        XtextResource resource)
+    {
+        ru.aiedt.mcp.server.support.ProjectStateGuard.ModelWatch watch =
+            ru.aiedt.mcp.server.support.ProjectStateGuard.watchModel(project);
+        if (watch == null)
+        {
+            // A model that cannot be watched cannot be trusted either, but it also cannot be
+            // reported as moving - resolve once and let the answer's own state note speak.
+            return BslModuleAccess.resolveCrossReferences(resource);
+        }
+        try (ru.aiedt.mcp.server.support.ProjectStateGuard.ModelWatch ignored = watch)
+        {
+            for (int pass = 0; pass < 2; pass++)
+            {
+                watch.reset();
+                BslModuleAccess.TypeState state = BslModuleAccess.resolveCrossReferences(resource);
+                if (state != BslModuleAccess.TypeState.READY)
+                {
+                    return state;
+                }
+                if (!watch.moved())
+                {
+                    return BslModuleAccess.TypeState.READY;
+                }
+            }
+            return BslModuleAccess.TypeState.MODEL_MOVED;
+        }
     }
 
     /**
