@@ -133,7 +133,7 @@ com._1c.g5.v8.dt.mcore.DateFractions
 probe com._1c.g5.v8.dt.mcore.LocalString
 probe com._1c.g5.v8.dt.mcore.MCoreFactory
 com._1c.g5.v8.dt.mcore.McoreFactory eINSTANCE
-com._1c.g5.v8.dt.mcore.McorePackage$Literals TYPE_ITEM
+com._1c.g5.v8.dt.mcore.McorePackage$Literals PICTURE,TYPE_ITEM
 com._1c.g5.v8.dt.mcore.NamedElement getName,setName
 com._1c.g5.v8.dt.mcore.TypeItem
 com._1c.g5.v8.dt.mcore.util.McoreUtil

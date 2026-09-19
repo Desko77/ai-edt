@@ -313,7 +313,7 @@
 | `InfobaseAdminFacadeTool` | `get_applications` | `projectName:string`, `syncOperation:string` | delegate ApplicationsReader |
 | `InfobaseAdminFacadeTool` | `read_event_log` | `applicationId:string`, `event:string`, `from:string`, `limit:integer`, `projectName:string`, `severity:string`, `syncOperation:string`, `to:string`, `user:string` | delegate EventLogTool |
 | `InfobaseAdminFacadeTool` | `set_infobase_credentials` | `accessMode:string`, `applicationId:string`, `password:string`, `projectName:string`, `syncOperation:string`, `userName:string` | delegate InfobaseCredentialsWriter |
-| `InfobaseAdminFacadeTool` | `start_client` | `allowSecondSession:boolean`, `applicationId:string`, `launchConfigurationName:string`, `projectName:string`, `startupOption:string`, `syncOperation:string`, `updateBeforeLaunch:boolean` | delegate ClientSessionStarter |
+| `InfobaseAdminFacadeTool` | `start_client` | `allowSecondSession:boolean`, `applicationId:string`, `endpointTimeoutSeconds:integer`, `launchConfigurationName:string`, `projectName:string`, `startupOption:string`, `syncOperation:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate ClientSessionStarter |
 | `InfobaseAdminFacadeTool` | `sync_control` | `syncOperation:string` | read in place |
 | `InfobaseAdminFacadeTool` | `update_database` | `applicationId:string`, `autoFreeClients:boolean`, `autoRestructure:boolean`, `cancel:boolean`, `dryRun:boolean`, `fullUpdate:boolean`, `ignoreBranchBinding:boolean`, `launchConfigurationName:string`, `projectName:string`, `runKey:string`, `statusOnly:boolean`, `syncOperation:string`, `timeoutSeconds:string` | delegate DatabaseUpdater |
 | `InsightsFacadeTool` | `compare_configurations` | `format:string`, `level:string`, `mode:string`, `objectFqn:string`, `projectName:string`, `scope:string`, `showRenames:boolean`, `target:string` | delegate CompareConfigurationsTool |
@@ -327,14 +327,14 @@
 | `InsightsFacadeTool` | `project_metrics` | `format:string`, `includeDebtList:boolean`, `projectName:string`, `scope:string`, `timeoutSeconds:integer` | delegate ProjectMetricsTool |
 | `InsightsFacadeTool` | `semantic_metadata_search` | `limit:integer`, `metadataType:string`, `projectName:string`, `query:string` | delegate SemanticMetadataSearchTool |
 | `LaunchDebuggerTool` | `add_breakpoint` | `action:string`, `topic:string` | read in place |
-| `LaunchDebuggerTool` | `debug_launch` | `action:string`, `applicationId:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `startupOption:string`, `updateBeforeLaunch:boolean` | delegate DebugSessionStarter |
+| `LaunchDebuggerTool` | `debug_launch` | `action:string`, `applicationId:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `endpointTimeoutSeconds:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `startupOption:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate DebugSessionStarter |
 | `LaunchDebuggerTool` | `debug_status` | `action:string`, `applicationId:string` | delegate DebugStateReader |
 | `LaunchDebuggerTool` | `evaluate` | `action:string`, `expression:string`, `frameRef:string` | delegate ExpressionEvaluator |
 | `LaunchDebuggerTool` | `get_profiling_results` | `action:string`, `minFrequency:integer`, `moduleFilter:string` | delegate ProfilingResultsReader |
 | `LaunchDebuggerTool` | `get_state` | `action:string`, `applicationId:string` | delegate DebugStateReader |
 | `LaunchDebuggerTool` | `get_variables` | `action:string`, `expandPath:string`, `frameIndex:integer`, `frameRef:string`, `scope:string`, `threadId:integer` | delegate DebugVariablesReader |
 | `LaunchDebuggerTool` | `help` | `action:string`, `topic:string` | read in place |
-| `LaunchDebuggerTool` | `launch` | `action:string`, `applicationId:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `startupOption:string`, `updateBeforeLaunch:boolean` | delegate DebugSessionStarter |
+| `LaunchDebuggerTool` | `launch` | `action:string`, `applicationId:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `endpointTimeoutSeconds:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `startupOption:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate DebugSessionStarter |
 | `LaunchDebuggerTool` | `list_breakpoints` | `action:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `remove_breakpoint` | `action:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `resume` | `action:string`, `applicationId:string`, `threadId:integer` | delegate DebugResumer |
