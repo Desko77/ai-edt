@@ -22,6 +22,8 @@ name: EDT API census
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     # Weekly, so a release of EDT is noticed within days even when nothing is being committed.
     - cron: "17 5 * * 1"
