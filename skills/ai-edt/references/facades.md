@@ -39,6 +39,16 @@ evidence - an object that changed beyond the mirrors does not pair. Contained ch
 compared by content, so a change invisible to a name-only walk (an attribute whose type moved)
 shows at `level=attribute`.
 
+`content_assist` answers a batch in one call: `positions` is a JSON array of objects, each with
+its own `filePath` (falls back to the top-level one), `line` and `column`. One position's failure
+answers in place and does not stop the rest - a survey over hundreds of positions is one call.
+The same on `symbol_info`: its `computeTypes` resolution runs under the model watch, so a type
+read off a model that was rebuilding is named rather than trusted.
+
+`GET /health` names the open projects of the workspace (`projects`): at two stands on one machine
+the port that answers is read from the projects it serves, and a `project_not_found` is never
+read as the server being down when the port belongs to the other instance.
+
 ## Diagnostics
 
 | Operation | Notes |
@@ -88,7 +98,7 @@ form edits are chained with other metadata edits.
 | `set_infobase_credentials` | Stored credentials for a launch configuration. |
 | `create_launch_config` | A new launch configuration. |
 | `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. Takes `startupOption` for a `/C` string and `waitForEndpoint` / `endpointTimeoutSeconds` to wait for what the client opens. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
-| `update_database` | Writes the configuration into the infobase. Validate for export first. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`), the readiness of the infobase (`readiness`) and its problems (`readinessProblems`). No run is recorded and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. With `statusOnly=true` it reads the tracked updates instead - `updates[]` with `runKey`, state and progress per run, filtered by `projectName`; it starts nothing and does not claim a finished result, and a `runKey` of another kind of work is refused. |
+| `update_database` | Writes the configuration into the infobase. Validate for export first. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`), the readiness of the infobase (`readiness`) and its problems (`readinessProblems`). No run is recorded and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. With `statusOnly=true` it reads the tracked updates instead - `updates[]` with `runKey`, state and progress per run, filtered by `projectName`; it starts nothing and does not claim a finished result, and a `runKey` of another kind of work is refused. Before the state is read it refreshes the project and, for an extension, its parent from disk (`refreshWorkspace`, default true): files written outside this server (a file tool, git checkout, a pull) are invisible to the model until then, and the answer reports `workspaceRefresh.changedResources` - 0 means the model already matched. Pass `refreshWorkspace=false` only when every change went through this server. |
 | `branch_infobase` | Binds a git branch to a launch configuration, so `update_database` refuses to write into an infobase that belongs to another branch. For a project that is an extension the binding lives in the extension itself, not in the configuration it extends. |
 | `sync_control` | Inspects and controls EDT-to-infobase synchronization. See the safety rule in `expected-behavior.md`. |
 
@@ -145,7 +155,8 @@ An Attach configuration refuses it, and so does a client already running without
 readiness report: a GET on the URL, ready when the final status is below 500, at most five
 redirects, one read never longer than five seconds. `endpointReady`, `endpointWaitedSeconds` and
 `endpointHttpStatus` say what was seen; a URL that never answers is reported, the client is not
-killed. The same arguments are on `infobase_admin operation=start_client`.
+killed. An Attach configuration refuses `waitForEndpoint` too - it starts no client and opens no
+endpoint. The same arguments are on `infobase_admin operation=start_client`.
 
 A launch is reported as running only when a live debug target is observed. The refusal says what was
 seen instead - the launch was not created, terminated at once, has only terminated targets, or
