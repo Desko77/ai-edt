@@ -189,6 +189,10 @@ public class TheToolListHasAWeightBudgetTest
     static
     {
         BUDGETS.put("edit_metadata", Integer.valueOf(24778)); //$NON-NLS-1$
+        // git: the repository answers inside the IDE through the JGit that EDT ships - status,
+        // branches and log carry the work tree, the index and the recent history, so a caller
+        // never rebuilds what git already knows from the disk state.
+        BUDGETS.put("git", Integer.valueOf(670)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         BUDGETS.put("dcs_workshop", Integer.valueOf(8523)); //$NON-NLS-1$

@@ -71,6 +71,7 @@ get_symbol_info	required=[filePath,projectName] type="object" column{type="integ
 get_tags	required=[projectName] type="object" projectName{type="string"}
 get_tasks	required=[] type="object" filePath{type="string"} limit{type="integer"} priority{type="string"} projectName{type="string"}
 get_variables	required=[] type="object" expandPath{type="string"} frameIndex{type="integer"} frameRef{type="integer"} scope{type="string"} threadId{type="integer"}
+git	required=[] type="object" limit{type="integer"} operation{type="string"} projectName{type="string"}
 go_to_definition	required=[projectName,symbol] type="object" includeSource{type="boolean"} modulePath{type="string"} projectName{type="string"} symbol{type="string"}
 impact_analysis	required=[objectFqn,projectName] type="object" action{type="string"} limit{type="integer"} objectFqn{type="string"} projectName{type="string"} skipBsl{type="boolean"}
 import_configuration_from_binary	required=[binaryPath,projectName] type="object" baseConfigurationPath{type="string"} binaryPath{type="string"} extensionName{type="string"} keepXmlPath{type="string"} platform{type="string"} projectName{type="string"} runKey{type="string"} timeoutSeconds{type="integer"}
