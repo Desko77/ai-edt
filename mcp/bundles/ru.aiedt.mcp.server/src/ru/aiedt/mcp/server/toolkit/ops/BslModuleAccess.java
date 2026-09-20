@@ -244,6 +244,8 @@ public final class BslModuleAccess
         INTERRUPTED,
         /** Resolution threw; types are unavailable for this module. */
         FAILED,
+        /** The model changed while the references were being resolved, so they cannot be trusted. */
+        MODEL_MOVED,
         /** The module has no resolvable model at all. */
         NO_MODEL;
 
@@ -260,6 +262,10 @@ public final class BslModuleAccess
             case FAILED:
                 return "type computation failed for this module, so no position carries a type " //$NON-NLS-1$
                     + "in this answer"; //$NON-NLS-1$
+            case MODEL_MOVED:
+                return "the model changed while the module's types were being computed, so a " //$NON-NLS-1$
+                    + "position without a type here may answer with one after the build settles - " //$NON-NLS-1$
+                    + "ask again"; //$NON-NLS-1$
             case NO_MODEL:
                 return "this module has no resolvable model, so no position carries a type"; //$NON-NLS-1$
             default:

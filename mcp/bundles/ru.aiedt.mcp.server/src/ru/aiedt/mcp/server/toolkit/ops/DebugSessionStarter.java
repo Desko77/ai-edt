@@ -265,6 +265,19 @@ public final class DebugSessionStarter implements IMcpTool
                     .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                     .toJson();
             }
+            // The same for the endpoint: attach waits on a server that is already up, and a URL
+            // the caller names would be polled while nothing the call started opened it. Answering
+            // endpointReady would promise a readiness this launch never produced.
+            if (isAttach && waitForEndpoint != null)
+            {
+                return ToolResult.error("An Attach configuration starts no client and opens no " //$NON-NLS-1$
+                    + "endpoint, and waitForEndpoint waits on what the launch opens. Nothing was " //$NON-NLS-1$
+                    + "launched.") //$NON-NLS-1$
+                    .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                    .put("attach", true) //$NON-NLS-1$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
 
             // The external object is resolved BEFORE the already-running check: a running session
             // was started without these arguments, and answering success would lose them.

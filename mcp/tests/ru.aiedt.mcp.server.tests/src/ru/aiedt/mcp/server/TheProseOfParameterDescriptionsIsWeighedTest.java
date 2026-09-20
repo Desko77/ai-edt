@@ -201,6 +201,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * not an opened processor that answers, and the wait is the only way to tell them apart - the
      * measure the release itself runs with an MCP Toolkit.
      * </p>
+     * <p>
+     * And by 86 for refreshWorkspace on the facade: a file written outside this server - a file
+     * tool, git checkout, a pull - is invisible to the model the update state is read from, and
+     * without the argument a caller who knows every change went through this server has no way to
+     * skip the walk.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
@@ -211,7 +217,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(3870));
+        PROSE.put("infobase_admin", Integer.valueOf(4356));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -322,6 +328,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * change one string has no other way in. Four schemas advertise it because an argument present
      * in the code and missing from one of them is a contract the strict client cannot call.
      * </p>
+     * <p>
+     * And a twelfth, by 176, for positions on content_assist: a survey over hundreds of positions is
+     * one call rather than hundreds, and the batch form is the argument that carries it - a client
+     * that cannot see it builds the survey call by call.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 84699;
+    private static final int DOCUMENT_PROSE = 84875;
 }

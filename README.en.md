@@ -414,7 +414,7 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 
 | Facade | Scope |
 |---|---|
-| `code_search` | Text search, references, symbol resolution, call hierarchy, symbol information and content assist. |
+| `code_search` | Text search, references, symbol resolution, call hierarchy, symbol information and content assist (including a batch of positions in one call through `positions`). |
 | `edit_metadata` | Metadata, forms, commands, roles, services, templates and other model mutations. |
 | `launch_debugger` | Launch/attach, breakpoints, stepping, variables, expression evaluation and profiling. |
 | `diagnostics` | Project problems, check documentation, cleanup and targeted revalidation. |

@@ -283,6 +283,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "update_database: read what updates are being tracked and start nothing - " //$NON-NLS-1$
                     + "runKeys, state, elapsed time. projectName filters by project; any other " //$NON-NLS-1$
                     + "run-shaping parameter beside runKey or cancel is refused.") //$NON-NLS-1$
+            .booleanProperty("refreshWorkspace", //$NON-NLS-1$
+                "update_database: refresh the project (and an extension's parent) from disk " //$NON-NLS-1$
+                    + "before the update state is read (default true); the answer carries " //$NON-NLS-1$
+                    + "workspaceRefresh.changedResources.") //$NON-NLS-1$
             .stringProperty("syncOperation", //$NON-NLS-1$
                 "sync_control's OWN action - status / diagnose / diagnose_delta / suppress " //$NON-NLS-1$
                     + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$

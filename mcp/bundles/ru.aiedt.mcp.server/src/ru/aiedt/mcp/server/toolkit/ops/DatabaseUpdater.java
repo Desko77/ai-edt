@@ -30,6 +30,8 @@ import com.e1c.g5.dt.applications.ApplicationUpdateType;
 import com.e1c.g5.dt.applications.ExecutionContext;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -168,6 +170,14 @@ public class DatabaseUpdater implements IMcpTool
                     + "projectName filters by project. Any other run-shaping parameter beside " //$NON-NLS-1$
                     + "runKey or cancel is refused, not ignored. A finished result is NOT " //$NON-NLS-1$
                     + "consumed by this read - its receiver collects it with the runKey.") //$NON-NLS-1$
+            .booleanProperty("refreshWorkspace", //$NON-NLS-1$
+                "Refresh the project (and its parent's, for an extension) from disk before the " //$NON-NLS-1$
+                    + "update state is read and the update runs (default: true). Files written outside " //$NON-NLS-1$
+                    + "this server - a file tool, git checkout, a pull - are otherwise invisible to " //$NON-NLS-1$
+                    + "the model, and the update decision would be made against what the disk held " //$NON-NLS-1$
+                    + "before them, answering Done or UPDATED over an update that never carried them. " //$NON-NLS-1$
+                    + "The answer reports workspaceRefresh.changedResources: 0 means the model already " //$NON-NLS-1$
+                    + "matched the disk. Pass false only when every change went through this server.") //$NON-NLS-1$
             .build();
     }
 
@@ -430,7 +440,7 @@ public class DatabaseUpdater implements IMcpTool
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, fCheckOnly));
+                fSkipValidation, fCheckOnly, params));
         // So a caller who never got the runKey can still address this run - and so the shared
         // registry answers questions about updates with updates: edit_metadata starts its pending
         // work in this same registry, and a kind-less entry cannot be told apart from either.
@@ -674,11 +684,12 @@ public class DatabaseUpdater implements IMcpTool
      * @param ignoreBranchBinding whether to go ahead when the branch names another application
      * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
      * @param checkOnly whether to answer what an update would face and start nothing
+     * @param params the full call, for the refreshWorkspace flag
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean skipValidation, boolean checkOnly)
+        boolean skipValidation, boolean checkOnly, Map<String, String> params)
     {
         String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
         if (blocked != null)
@@ -765,11 +776,33 @@ public class DatabaseUpdater implements IMcpTool
 
             IApplication application = appOpt.get();
 
+            boolean refreshWorkspace =
+                JsonUtils.extractBooleanArgument(params, "refreshWorkspace", true); //$NON-NLS-1$
+            JsonObject workspaceRefresh = null;
+            if (refreshWorkspace)
+            {
+                // Files written outside this server - a file tool, git checkout, a pull - are
+                // invisible to the model until the workspace hears about them, and the update
+                // decision right below is made against the model. Reported, never silent: 0 means
+                // the model already matched the disk, a number names how much this call picked up.
+                workspaceRefresh = refreshFromDisk(project, infobaseProject);
+            }
+
             ApplicationUpdateState stateBefore = appManager.getUpdateState(application);
             if (checkOnly)
             {
-                return whatAnUpdateWouldFace(appManager, application, applicationId, projectName,
-                    infobaseProject, viaParent, stateBefore);
+                String dryAnswer = whatAnUpdateWouldFace(appManager, application, applicationId,
+                    projectName, infobaseProject, viaParent, stateBefore);
+                if (workspaceRefresh != null)
+                {
+                    // The dry answer asserts what the model holds, so it asserts the refresh too:
+                    // its stateBefore is only as current as the workspace this call just read.
+                    com.google.gson.JsonObject parsed =
+                        com.google.gson.JsonParser.parseString(dryAnswer).getAsJsonObject();
+                    parsed.add("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
+                    dryAnswer = parsed.toString();
+                }
+                return dryAnswer;
             }
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
@@ -967,6 +1000,10 @@ public class DatabaseUpdater implements IMcpTool
                 result.put("autoFreeClients", true); //$NON-NLS-1$
                 result.put("freedClients", freedClients); //$NON-NLS-1$
             }
+            if (workspaceRefresh != null)
+            {
+                result.put("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
+            }
 
             return result.toJson();
         }
@@ -1143,6 +1180,57 @@ public class DatabaseUpdater implements IMcpTool
             refusal = bindingConflict(infobaseProject, applicationId, ignoreBranchBinding);
         }
         return refusal;
+    }
+
+    /**
+     * Makes the workspace hear about what the disk holds, before an update decision is read from
+     * the model. A file written outside this server - a file tool, git checkout, a pull - is
+     * invisible to the model until then, and the update decision below answers against the model:
+     * Done or UPDATED over an update that never carried the change. This is the refresh a caller
+     * would have had to know to ask for; done here, it cannot be forgotten. The count it reports
+     * is what this call picked up, so 0 means the model already matched the disk.
+     *
+     * @param project the project being updated
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension,
+     *            which is where the change usually is
+     * @return the report: projects touched, resources changed, any failure noted rather than thrown
+     */
+    private static JsonObject refreshFromDisk(IProject project, IProject infobaseProject)
+    {
+        JsonObject report = new JsonObject();
+        java.util.LinkedHashSet<String> touched = new java.util.LinkedHashSet<>();
+        int changed = 0;
+        String failure = null;
+        for (IProject each : new IProject[] { project, infobaseProject })
+        {
+            if (each == null || !each.isAccessible() || touched.contains(each.getName()))
+            {
+                continue;
+            }
+            touched.add(each.getName());
+            try
+            {
+                each.refreshLocal(org.eclipse.core.resources.IResource.DEPTH_INFINITE,
+                    new NullProgressMonitor());
+            }
+            catch (Exception e)
+            {
+                failure = (failure == null ? "" : failure + "; ") //$NON-NLS-1$ //$NON-NLS-2$
+                    + each.getName() + ": " + e.getMessage();
+            }
+        }
+        JsonArray names = new JsonArray();
+        for (String name : touched)
+        {
+            names.add(name);
+        }
+        report.add("projects", names); //$NON-NLS-1$
+        report.addProperty("changedResources", Integer.valueOf(changed)); //$NON-NLS-1$
+        if (failure != null)
+        {
+            report.addProperty("refreshError", failure); //$NON-NLS-1$
+        }
+        return report;
     }
 
     /**

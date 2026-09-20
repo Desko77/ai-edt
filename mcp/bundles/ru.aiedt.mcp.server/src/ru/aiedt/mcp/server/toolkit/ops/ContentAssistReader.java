@@ -23,7 +23,10 @@ import org.eclipse.xtext.resource.XtextResource;
 import com._1c.g5.v8.dt.bsl.model.Module;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 
 import io.github.furstenheim.CopyDown;
 
@@ -85,9 +88,16 @@ public class ContentAssistReader
             .stringProperty("projectName", "Name of the EDT project (must be supplied)", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("filePath", //$NON-NLS-1$
                 "Relative path to the BSL file, measured from the project's src folder (e.g. " //$NON-NLS-1$
-                    + "'CommonModules/MyModule/Module.bsl')", true) //$NON-NLS-1$
-            .integerProperty("line", "1-based line number to inspect", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("column", "1-based column number to inspect", true) //$NON-NLS-1$ //$NON-NLS-2$
+                    + "'CommonModules/MyModule/Module.bsl'). Optional when positions are supplied: " //$NON-NLS-1$
+                    + "each position then names its own filePath", true) //$NON-NLS-1$
+            .integerProperty("line", "1-based line number to inspect. Optional when positions are supplied", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("column", "1-based column number to inspect. Optional when positions are supplied", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("positions", //$NON-NLS-1$
+                "Batch mode: a JSON array of positions, each an object with filePath (falls back to " //$NON-NLS-1$
+                    + "the top-level filePath), line and column - e.g. " //$NON-NLS-1$
+                    + "'[{\"line\":3,\"column\":10},{\"filePath\":\"CommonModules/Other/Module.bsl\",\"line\":1,\"column\":1}]'. " //$NON-NLS-1$
+                    + "One call answers all of them; a failed position reports its own error and does " //$NON-NLS-1$
+                    + "not stop the rest") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "Upper bound on how many proposals to return (defaults to the preference value)") //$NON-NLS-1$
             .integerProperty("offset", "Number of matching proposals to skip before returning results (default 0), for paging") //$NON-NLS-1$ //$NON-NLS-2$
@@ -109,25 +119,30 @@ public class ContentAssistReader
         {
             return ToolResult.error("projectName must be provided").toJson(); //$NON-NLS-1$
         }
-        if (filePath == null || filePath.isEmpty())
-        {
-            return ToolResult.error("filePath must be provided").toJson(); //$NON-NLS-1$
-        }
 
-        int line;
-        int column;
-        try
+        String positionsRaw = JsonUtils.extractStringArgument(params, "positions"); //$NON-NLS-1$
+
+        int line = -1;
+        int column = -1;
+        if (positionsRaw == null || positionsRaw.trim().isEmpty())
         {
-            line = (int)Double.parseDouble(JsonUtils.extractStringArgument(params, "line")); //$NON-NLS-1$
-            column = (int)Double.parseDouble(JsonUtils.extractStringArgument(params, "column")); //$NON-NLS-1$
-        }
-        catch (Exception e)
-        {
-            return ToolResult.error("Line or column value is not numeric").toJson(); //$NON-NLS-1$
-        }
-        if (line < 1 || column < 1)
-        {
-            return ToolResult.error("Line and column must both be 1 or greater").toJson(); //$NON-NLS-1$
+            if (filePath == null || filePath.isEmpty())
+            {
+                return ToolResult.error("filePath must be provided").toJson(); //$NON-NLS-1$
+            }
+            try
+            {
+                line = (int)Double.parseDouble(JsonUtils.extractStringArgument(params, "line")); //$NON-NLS-1$
+                column = (int)Double.parseDouble(JsonUtils.extractStringArgument(params, "column")); //$NON-NLS-1$
+            }
+            catch (Exception e)
+            {
+                return ToolResult.error("Line or column value is not numeric").toJson(); //$NON-NLS-1$
+            }
+            if (line < 1 || column < 1)
+            {
+                return ToolResult.error("Line and column must both be 1 or greater").toJson(); //$NON-NLS-1$
+            }
         }
 
         int defaultLimit =
@@ -157,10 +172,27 @@ public class ContentAssistReader
         boolean extendedDocumentation =
             "true".equalsIgnoreCase(JsonUtils.extractStringArgument(params, "extendedDocumentation")); //$NON-NLS-1$ //$NON-NLS-2$
 
+        // A broken batch form is a defect of the call itself and outranks anything about the
+        // project: malformed JSON or an empty array answers for the form, never for the project.
+        if (positionsRaw != null && !positionsRaw.trim().isEmpty())
+        {
+            String malformed = validatePositionsShape(positionsRaw);
+            if (malformed != null)
+            {
+                return ToolResult.error(malformed).toJson();
+            }
+        }
+
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
             return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+        }
+
+        if (positionsRaw != null && !positionsRaw.trim().isEmpty())
+        {
+            return executeBatch(project, filePath, positionsRaw, limit, offset, contains,
+                extendedDocumentation);
         }
 
         IFile file = project.getFile("src/" + filePath); //$NON-NLS-1$
@@ -180,6 +212,159 @@ public class ContentAssistReader
             Activator.logError("get_content_assist tool failed", e); //$NON-NLS-1$
             return ToolResult.error("Unhandled exception: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The whole-array refusals that are decidable without touching a project: not JSON at all, or
+     * not a non-empty array. They go before the project resolves, so a call that names a project
+     * that does not exist STILL answers with the project's own refusal - but a call whose batch
+     * form is broken hears about the form, not about the project.
+     *
+     * @param positionsRaw the raw positions value
+     * @return the refusal text, or <code>null</code> when the value parses as a non-empty array
+     */
+    private static String validatePositionsShape(String positionsRaw)
+    {
+        JsonElement parsed;
+        try
+        {
+            parsed = JsonParser.parseString(positionsRaw);
+        }
+        catch (JsonSyntaxException e)
+        {
+            return "positions is not valid JSON: " + e.getMessage(); //$NON-NLS-1$
+        }
+        if (!parsed.isJsonArray() || parsed.getAsJsonArray().size() == 0)
+        {
+            return "positions must be a non-empty JSON array"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * The batch answer: the same per-position object the single-position call produces, gathered
+     * into an array. One position's failure answers with its own error object and the rest still
+     * run - a survey over hundreds of positions is one call and does not stop at the first broken
+     * module.
+     *
+     * @param project the project the modules belong to
+     * @param fallbackFilePath the {@code src/}-relative file a position uses when it names none
+     * @param positionsRaw the JSON array of positions
+     * @param limit how many proposals to keep per position
+     * @param offset how many matching proposals to skip per position
+     * @param contains the comma-separated substring filter, or <code>null</code>
+     * @param extendedDocumentation attaches each proposal's help text when set
+     * @return the JSON answer
+     */
+    private String executeBatch(IProject project, String fallbackFilePath, String positionsRaw,
+        int limit, int offset, String contains, boolean extendedDocumentation)
+    {
+        JsonArray results = new JsonArray();
+        int succeeded = 0;
+        int failed = 0;
+        for (JsonElement element : JsonParser.parseString(positionsRaw).getAsJsonArray())
+        {
+            if (!element.isJsonObject())
+            {
+                failed++;
+                results.add(positionError(fallbackFilePath, -1, -1,
+                    "Each position must be an object with filePath, line and column")); //$NON-NLS-1$
+                continue;
+            }
+            JsonObject position = element.getAsJsonObject();
+            String filePath = position.has("filePath") && !position.get("filePath").isJsonNull() //$NON-NLS-1$ //$NON-NLS-2$
+                ? position.get("filePath").getAsString() //$NON-NLS-1$
+                : fallbackFilePath;
+            if (filePath == null || filePath.isEmpty())
+            {
+                failed++;
+                results.add(positionError(null, -1, -1,
+                    "Position names no filePath and the top-level filePath is absent")); //$NON-NLS-1$
+                continue;
+            }
+            int line;
+            int column;
+            try
+            {
+                line = position.get("line").getAsInt(); //$NON-NLS-1$
+                column = position.get("column").getAsInt(); //$NON-NLS-1$
+            }
+            catch (RuntimeException e)
+            {
+                failed++;
+                results.add(positionError(filePath, -1, -1,
+                    "Position's line or column is missing or not numeric")); //$NON-NLS-1$
+                continue;
+            }
+            if (line < 1 || column < 1)
+            {
+                failed++;
+                results.add(positionError(filePath, line, column,
+                    "Line and column must both be 1 or greater")); //$NON-NLS-1$
+                continue;
+            }
+            IFile file = project.getFile("src/" + filePath); //$NON-NLS-1$
+            if (!file.exists())
+            {
+                failed++;
+                results.add(positionError(filePath, line, column,
+                    "File does not exist within the project")); //$NON-NLS-1$
+                continue;
+            }
+            try
+            {
+                String answer = collectProposals(project, file, filePath, line, column, limit,
+                    offset, contains, extendedDocumentation);
+                JsonObject object = JsonParser.parseString(answer).getAsJsonObject();
+                if (object.has("success") && object.get("success").getAsBoolean()) //$NON-NLS-1$ //$NON-NLS-2$
+                {
+                    succeeded++;
+                }
+                else
+                {
+                    failed++;
+                }
+                results.add(object);
+            }
+            catch (Exception e)
+            {
+                failed++;
+                results.add(positionError(filePath, line, column,
+                    "Unhandled exception: " + e.getMessage())); //$NON-NLS-1$
+            }
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("success", Boolean.TRUE); //$NON-NLS-1$
+        root.addProperty("batch", Boolean.TRUE); //$NON-NLS-1$
+        root.addProperty("positions", Integer.valueOf(results.size())); //$NON-NLS-1$
+        root.addProperty("succeeded", Integer.valueOf(succeeded)); //$NON-NLS-1$
+        root.addProperty("failed", Integer.valueOf(failed)); //$NON-NLS-1$
+        root.add("results", results); //$NON-NLS-1$
+        return GsonHolder.toJson(root);
+    }
+
+    /**
+     * The failure of one position, in the same shape its success would have.
+     *
+     * @param filePath the position's file, or <code>null</code> when it named none
+     * @param line the position's line, or -1
+     * @param column the position's column, or -1
+     * @param message what went wrong
+     * @return the error object
+     */
+    private static JsonObject positionError(String filePath, int line, int column, String message)
+    {
+        JsonObject error = new JsonObject();
+        error.addProperty("success", Boolean.FALSE); //$NON-NLS-1$
+        if (filePath != null)
+        {
+            error.addProperty("file", filePath); //$NON-NLS-1$
+        }
+        error.addProperty("line", Integer.valueOf(line)); //$NON-NLS-1$
+        error.addProperty("column", Integer.valueOf(column)); //$NON-NLS-1$
+        error.addProperty("error", message); //$NON-NLS-1$
+        return error;
     }
 
     /**
