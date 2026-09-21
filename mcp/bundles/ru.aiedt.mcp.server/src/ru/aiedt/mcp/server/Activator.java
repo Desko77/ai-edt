@@ -181,8 +181,9 @@ public class Activator
 
         // Plain OSGi, safe under any runtime: a tool or a module source another bundle publishes
         // reaches the catalogue and the module registry whether or not the UI comes up, and the
-        // catalogue re-registers the tools it has been given at every clear.
-        whiteboard.open(context);
+        // catalogue re-registers the tools it has been given at every clear. Off this thread,
+        // because the activation may be the one a component of that bundle triggered.
+        whiteboard.openInBackground(context);
 
         if (isHeadless())
         {
