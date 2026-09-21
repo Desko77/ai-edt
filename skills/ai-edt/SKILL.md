@@ -124,7 +124,11 @@ hit under the same address. `get_metadata_details` shows `Ordinary` in the Form 
 The layout binds events to procedures by name, and EDT resolves none of it. A write that removes
 or renames such a procedure is caught by the writer: `handlerChanges=warn` (default) writes and
 lists the names under `unboundProcedures`, `handlerChanges=refuse` leaves the container unchanged;
-`dryRun=true` shows the names before anything is written. Tools that answer from the BSL index -
+`dryRun=true` shows the names before anything is written. A container write alone would never
+reach the infobase - EDT's incremental update does not map a changed `Form.oform` to its owner - so
+the writer marks the owner as changed in the project's infobase baselines; the answer's `delivery`
+line names the owner, and the next `infobase_admin operation=update_database` loads the object with
+the form. Tools that answer from the BSL index -
 `call_hierarchy`, `object_references`, `get_project_errors` - end with a `Coverage` line naming
 how many ordinary form modules the index does not see; read a bare "nothing calls it" over such a
 project as a statement about part of the code.

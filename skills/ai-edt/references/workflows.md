@@ -76,8 +76,10 @@ broke.
 3. `write_module_source` by the same address with a targeted mode. Run it with `dryRun=true` first
    when the change removes or renames a procedure: `unboundProcedures` names the ones the layout
    still binds an event to. Pass `handlerChanges=refuse` to make such a write fail instead of warn.
-4. `infobase_admin operation=update_database`: the platform reads the container from disk and
-   checks the module there; `read_event_log` shows the `DBConfigUpdate`.
+4. `infobase_admin operation=update_database`: the write marked the form's owner as changed (the
+   `delivery` line of the answer), so the update loads the object with the form; the platform reads
+   the container from the export and checks the module there. `read_event_log` shows the
+   `DBConfigUpdate`.
 
 `code_search operation=text_search` finds text inside these modules; the BSL index does not hold
 them, and `call_hierarchy`, `object_references` and `get_project_errors` say so in a `Coverage`

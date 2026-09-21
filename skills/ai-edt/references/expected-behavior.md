@@ -68,7 +68,10 @@ answers from the index over a project with such forms ends with a `Coverage` lin
 them. The module tools read and write the container by the module address; an answer that came
 from a container says `source: oform`. A write there is checked by the platform at
 `update_database`, not by EDT, and the writer's own guard (`handlerChanges`) is the only thing that
-notices a bound handler going away before the client does.
+notices a bound handler going away before the client does. The update itself does not see a
+changed container: EDT maps changed paths to objects and knows `form`, not `oform`. The writer
+therefore marks the form's owner as changed in every infobase baseline of the project (the
+`delivery` line), and the update exports the owner with the container as `Ext/Form.bin`.
 
 ## Things that fail early by design
 

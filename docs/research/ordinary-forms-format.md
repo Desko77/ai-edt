@@ -70,9 +70,25 @@ The four lists of a record, over every record of the eight most frequent types:
 
 Event handlers are bound by procedure name, not by reference: a record `{3,"<Procedure>",{1,"<Handler>"...}` names the procedure of the module (13 940 records in the corpus, 12 301 distinct per form - see the module entry above).
 
+### The common properties `[3]`, version 27
+
+Measured over every record of the eight most frequent types (12 823 records, none failing the
+reading):
+
+- A fixed head of twelve items: `{8, left, top, right, bottom, 1, A, A, A, A, A, A}`. The first
+  number is 8 in every record but the five Label records whose type-specific list is also odd;
+  then the four coordinates of the element's box (the toolkit scripts read them the same way:
+  left, top, right, bottom, not width and height); then 1; then six lists of three:
+  `{n, {2, <element>, <edge>, <offset>}, {2, -1, 6, 0}}` - the anchor slots, `{2,-1,6,0}` meaning
+  no anchor, a bound one naming the element id it is anchored to.
+- A run of slots, each a number followed by that many lists of three: `1 {..}`, `3 {..} {..} {..}`,
+  `0`. Every record reads as such a run: the count is the number of lists that follow, and a
+  count of 0 stands alone. Which slot means what (font, colours, text alignment) is not known yet.
+- A plain tail of numbers, 7, 8, 9 or 10 long; the same shape across types.
+
 ## What is not known yet
 
-The meaning of the six numbers and the three-item lists of `[3]`, the type-specific items of
+The meaning of the slot lists and the plain tail of `[3]`, the type-specific items of
 `[2]` beyond the data binding, the root's two lists (attributes of the form, pages, the id
 allocator and the binding registry found empirically in the toolkit scripts), and every version
 other than 27. The plan: controlled experiments on the stand - a minimal form, one property
