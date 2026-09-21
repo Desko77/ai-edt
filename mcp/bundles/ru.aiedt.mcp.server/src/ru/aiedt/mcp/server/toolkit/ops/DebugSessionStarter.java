@@ -44,6 +44,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.BmExternalObjectDumpHelper;
+import ru.aiedt.mcp.server.support.ClientLaunchMode;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -64,7 +65,10 @@ public final class DebugSessionStarter implements IMcpTool
         + "server-side code such as HTTP services, background jobs, and scheduled jobs). " //$NON-NLS-1$
         + "Otherwise supply projectName + applicationId to launch the matching runtime-client configuration; " //$NON-NLS-1$
         + "if none exists yet, a minimal runtime-client configuration is auto-created and saved " //$NON-NLS-1$
-        + "for that project/application pair (reported back as autoCreatedConfiguration)."; //$NON-NLS-1$
+        + "for that project/application pair (reported back as autoCreatedConfiguration). " //$NON-NLS-1$
+        + "A configuration whose default run mode is the ordinary application starts in the thick " //$NON-NLS-1$
+        + "client with /RunModeOrdinaryApplication among the infobase's additional launch " //$NON-NLS-1$
+        + "parameters for this EDT session; clientType and runMode override the choice."; //$NON-NLS-1$
 
     /**
      * Coarse guard closing the launch TOCTOU windows (inbox row 45): the
@@ -75,10 +79,11 @@ public final class DebugSessionStarter implements IMcpTool
      * normally sequential, so this lock is uncontended in practice - it is a
      * safety net that serializes the whole check-and-launch unit. Debug launches
      * are inherently exclusive (one live session per target), so a global lock is
-     * preferable to a per-key map (simpler, no leak surface).
+     * preferable to a per-key map (simpler, no leak surface). The lock is the one
+     * the plain client start takes too, because both put the run-mode flag on the
+     * infobase reference before launching.
      */
-    private static final java.util.concurrent.locks.ReentrantLock LAUNCH_LOCK =
-        new java.util.concurrent.locks.ReentrantLock();
+    private static final java.util.concurrent.locks.ReentrantLock LAUNCH_LOCK = LaunchConfigAccess.LAUNCH_LOCK;
 
     @Override
     public String getName()
@@ -130,6 +135,17 @@ public final class DebugSessionStarter implements IMcpTool
                     + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
                     + "opened external object receives its parameters. An Attach configuration " //$NON-NLS-1$
                     + "starts no client, so the argument is refused there.") //$NON-NLS-1$
+            .stringProperty("clientType", //$NON-NLS-1$
+                "The client to start: thin, thick or web. Omitted: the launch configuration's " //$NON-NLS-1$
+                    + "own, thin for a configuration created here - and thick whenever the run " //$NON-NLS-1$
+                    + "mode is ordinary, because the ordinary application opens in the thick " //$NON-NLS-1$
+                    + "client only. Applied to this launch's own configuration copy; a " //$NON-NLS-1$
+                    + "configuration created here is saved with it.") //$NON-NLS-1$
+            .stringProperty("runMode", //$NON-NLS-1$
+                "ordinary or managed. Omitted: the configuration's default run mode. Ordinary " //$NON-NLS-1$
+                    + "puts /RunModeOrdinaryApplication among the infobase's additional launch " //$NON-NLS-1$
+                    + "parameters on the reference EDT holds for this session, managed takes it " //$NON-NLS-1$
+                    + "out; the infobase list on disk is not written. The answer says what changed.") //$NON-NLS-1$
             .stringProperty("waitForEndpoint", //$NON-NLS-1$
                 "Wait for this URL to answer before reporting the launch ready - how you know the " //$NON-NLS-1$
                     + "opened external object is up, not merely the process. A GET; ready is any " //$NON-NLS-1$
@@ -173,6 +189,8 @@ public final class DebugSessionStarter implements IMcpTool
         {
             startupOption = null;
         }
+        String clientType = JsonUtils.extractStringArgument(params, "clientType"); //$NON-NLS-1$
+        String runMode = JsonUtils.extractStringArgument(params, "runMode"); //$NON-NLS-1$
         String waitForEndpoint = JsonUtils.extractStringArgument(params, "waitForEndpoint"); //$NON-NLS-1$
         if (waitForEndpoint != null && waitForEndpoint.trim().isEmpty())
         {
@@ -200,7 +218,7 @@ public final class DebugSessionStarter implements IMcpTool
         {
             return launchByConfigName(configName, updateBeforeLaunch, debugServerPort,
                 externalObjectProject, externalObjectName, enableDump, startupOption,
-                waitForEndpoint, endpointTimeout);
+                new ClientChoice(clientType, runMode), waitForEndpoint, endpointTimeout);
         }
 
         if (projectName == null || projectName.isEmpty())
@@ -223,12 +241,57 @@ public final class DebugSessionStarter implements IMcpTool
 
         return launchDebug(projectName, applicationId, updateBeforeLaunch,
             externalObjectProject, externalObjectName, debugServerPort, enableDump, startupOption,
-            waitForEndpoint, endpointTimeout);
+            new ClientChoice(clientType, runMode), waitForEndpoint, endpointTimeout);
+    }
+
+    /** The caller's clientType and runMode, as given. */
+    private static final class ClientChoice
+    {
+        final String clientType;
+
+        final String runMode;
+
+        ClientChoice(String clientType, String runMode)
+        {
+            this.clientType = clientType == null || clientType.trim().isEmpty() ? null : clientType;
+            this.runMode = runMode == null || runMode.trim().isEmpty() ? null : runMode;
+        }
+
+        boolean given()
+        {
+            return clientType != null || runMode != null;
+        }
+    }
+
+    /**
+     * Puts the decided client and run mode on the answer.
+     *
+     * @param result the answer
+     * @param mode the decision
+     * @param flagState what {@link ClientLaunchMode#reconcileFlag} did, or {@code null}
+     * @param application the application, for its infobase's parameters; may be {@code null}
+     */
+    private static void describeClient(ToolResult result, ClientLaunchMode mode, String flagState,
+        IApplication application)
+    {
+        result.put("clientType", mode.clientType) //$NON-NLS-1$
+            .put("clientTypeSource", mode.clientTypeSource) //$NON-NLS-1$
+            .put("runMode", mode.runMode) //$NON-NLS-1$
+            .put("runModeSource", mode.runModeSource); //$NON-NLS-1$
+        if (flagState != null)
+        {
+            result.put("runModeFlag", ClientLaunchMode.ORDINARY_FLAG) //$NON-NLS-1$
+                .put("runModeFlagState", flagState) //$NON-NLS-1$
+                .put("runModeFlagScope", ClientLaunchMode.FLAG_SCOPE) //$NON-NLS-1$
+                .put("infobaseAdditionalParameters", //$NON-NLS-1$
+                    application == null ? null : ClientLaunchMode.additionalParametersOf(application));
+        }
     }
 
     private String launchByConfigName(String configName, boolean updateBeforeLaunch,
         int debugServerPort, String externalObjectProject, String externalObjectName,
-        boolean enableDump, String startupOption, String waitForEndpoint, Integer endpointTimeout)
+        boolean enableDump, String startupOption, ClientChoice choice, String waitForEndpoint,
+        Integer endpointTimeout)
     {
         LAUNCH_LOCK.lock();
         try
@@ -265,6 +328,15 @@ public final class DebugSessionStarter implements IMcpTool
                     .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                     .toJson();
             }
+            if (isAttach && choice.given())
+            {
+                return ToolResult.error("An Attach configuration starts no client, and clientType " //$NON-NLS-1$
+                    + "and runMode describe the client that starts. Nothing was launched.") //$NON-NLS-1$
+                    .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                    .put("attach", true) //$NON-NLS-1$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
             // The same for the endpoint: attach waits on a server that is already up, and a URL
             // the caller names would be polled while nothing the call started opened it. Answering
             // endpointReady would promise a readiness this launch never produced.
@@ -284,7 +356,7 @@ public final class DebugSessionStarter implements IMcpTool
             if (effectiveAppId != null && DebugSessionBook.findActiveTarget(effectiveAppId) != null)
             {
                 if (startupOption != null || externalObjectName != null && !externalObjectName.isEmpty()
-                    || waitForEndpoint != null)
+                    || waitForEndpoint != null || choice.given())
                 {
                     return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
                         + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
@@ -353,6 +425,27 @@ public final class DebugSessionStarter implements IMcpTool
                 openedObjectClassName = found.object.getClass().getName();
             }
 
+            // The client is decided before anything is written: a contradiction in the arguments
+            // must not cost an infobase update.
+            ClientLaunchMode mode = null;
+            IProject configuredProject = configProject == null || configProject.isEmpty() ? null
+                : ProjectResolver.resolve(configProject);
+            IApplication application = null;
+            if (!isAttach)
+            {
+                mode = ClientLaunchMode.decide(choice.clientType, choice.runMode,
+                    configuredProject == null ? null : ClientLaunchMode.projectRunMode(configuredProject),
+                    true, LaunchConfigAccess.getClientTypeIdFor(config));
+                if (mode.refusal != null)
+                {
+                    return ToolResult.error(mode.refusal)
+                        .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                application = findApplication(configuredProject, effectiveAppId);
+            }
+
             if (!isAttach && updateBeforeLaunch && configProject != null && !configProject.isEmpty())
             {
                 String notReady = ProjectStateGuard.checkReadyOrError(configProject);
@@ -368,6 +461,7 @@ public final class DebugSessionStarter implements IMcpTool
             }
 
             ILaunchConfiguration toLaunch = config;
+            String flagState = null;
             if (!isAttach)
             {
                 if (openedObject != null)
@@ -383,6 +477,12 @@ public final class DebugSessionStarter implements IMcpTool
                 {
                     toLaunch = LaunchConfigAccess.withStartupOption(toLaunch, startupOption);
                 }
+                if (mode.clientTypeId != null)
+                {
+                    toLaunch = LaunchConfigAccess.withClientType(toLaunch, mode.clientTypeId);
+                }
+                flagState = application == null ? "not applied: the application was not resolved" //$NON-NLS-1$
+                    : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
             }
 
             LaunchOutcome outcome = performLaunch(toLaunch, isAttach);
@@ -396,6 +496,10 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("configurationType", typeId) //$NON-NLS-1$
                 .put("attach", isAttach) //$NON-NLS-1$
                 .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (mode != null)
+            {
+                describeClient(result, mode, flagState, application);
+            }
             if (debugServerPort > 0)
             {
                 result.put("debugServerPort", isAttach ? null : Integer.valueOf(debugServerPort)); //$NON-NLS-1$
@@ -444,10 +548,36 @@ public final class DebugSessionStarter implements IMcpTool
         }
     }
 
+    /**
+     * The application of a project by id, or {@code null} when it cannot be resolved.
+     *
+     * @param project the project; {@code null} yields {@code null}
+     * @param applicationId the application id; {@code null} yields {@code null}
+     * @return the application, or {@code null}
+     */
+    private static IApplication findApplication(IProject project, String applicationId)
+    {
+        IApplicationManager appManager = Activator.getDefault().getApplicationManager();
+        if (appManager == null || project == null || applicationId == null)
+        {
+            return null;
+        }
+        try
+        {
+            return appManager.getApplication(project, applicationId).orElse(null);
+        }
+        catch (ApplicationException e)
+        {
+            Activator.logWarning("Application " + applicationId + " of " + project.getName() //$NON-NLS-1$ //$NON-NLS-2$
+                + " was not resolved: " + e.getMessage()); //$NON-NLS-1$
+            return null;
+        }
+    }
+
     private String launchDebug(String projectName, String applicationId,
         boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName,
-        int debugServerPort, boolean enableDump, String startupOption, String waitForEndpoint,
-        Integer endpointTimeout)
+        int debugServerPort, boolean enableDump, String startupOption, ClientChoice choice,
+        String waitForEndpoint, Integer endpointTimeout)
     {
         LAUNCH_LOCK.lock();
         try
@@ -519,6 +649,35 @@ public final class DebugSessionStarter implements IMcpTool
                 openedObjectClassName = found.object.getClass().getName();
             }
 
+            // The launch configuration is looked up before the update so the client can be
+            // decided first: a contradiction in the arguments must not cost an infobase update.
+            ILaunchManager launchManager = DebugPlugin.getDefault().getLaunchManager();
+            if (launchManager == null)
+            {
+                return ToolResult.error("The Eclipse launch manager is unavailable").toJson(); //$NON-NLS-1$
+            }
+            ILaunchConfigurationType configType =
+                launchManager.getLaunchConfigurationType(LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID);
+            if (configType == null)
+            {
+                return ToolResult
+                    .error("No such launch configuration type: " + LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID)
+                    .toJson();
+            }
+            ILaunchConfiguration existingConfig =
+                LaunchConfigAccess.findLaunchConfig(launchManager, configType, projectName, applicationId);
+            ClientLaunchMode mode = ClientLaunchMode.decide(choice.clientType, choice.runMode,
+                ClientLaunchMode.projectRunMode(project), existingConfig != null,
+                existingConfig == null ? null : LaunchConfigAccess.getClientTypeIdFor(existingConfig));
+            if (mode.refusal != null)
+            {
+                return ToolResult.error(mode.refusal)
+                    .put("project", projectName) //$NON-NLS-1$
+                    .put("applicationId", applicationId) //$NON-NLS-1$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
+
             if (updateBeforeLaunch && appManager != null && application != null)
             {
                 String updateError = updateDatabase(appManager, application);
@@ -528,30 +687,14 @@ public final class DebugSessionStarter implements IMcpTool
                 }
             }
 
-            ILaunchManager launchManager = DebugPlugin.getDefault().getLaunchManager();
-            if (launchManager == null)
-            {
-                return ToolResult.error("The Eclipse launch manager is unavailable").toJson(); //$NON-NLS-1$
-            }
-
-            ILaunchConfigurationType configType =
-                launchManager.getLaunchConfigurationType(LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID);
-            if (configType == null)
-            {
-                return ToolResult
-                    .error("No such launch configuration type: " + LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID)
-                    .toJson();
-            }
-
-            ILaunchConfiguration matchingConfig =
-                LaunchConfigAccess.findLaunchConfig(launchManager, configType, projectName, applicationId);
+            ILaunchConfiguration matchingConfig = existingConfig;
             boolean autoCreatedConfig = false;
             if (matchingConfig == null)
             {
                 try
                 {
                     matchingConfig = LaunchConfigAccess.createRuntimeClientConfig(launchManager, configType,
-                        projectName, applicationId, applicationName);
+                        projectName, applicationId, applicationName, mode.clientTypeId);
                     autoCreatedConfig = true;
                     Activator.logInfo("Created a new runtime-client launch configuration '" //$NON-NLS-1$
                         + matchingConfig.getName()
@@ -587,7 +730,7 @@ public final class DebugSessionStarter implements IMcpTool
             {
                 // A running session was started without these arguments; answering success would
                 // lose them. The fix is to stop the session, not to drop the arguments.
-                if (startupOption != null || openedObject != null || waitForEndpoint != null)
+                if (startupOption != null || openedObject != null || waitForEndpoint != null || choice.given())
                 {
                     return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
                         + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
@@ -629,6 +772,14 @@ public final class DebugSessionStarter implements IMcpTool
             {
                 matchingConfig = LaunchConfigAccess.withStartupOption(matchingConfig, startupOption);
             }
+            // A configuration created here already carries the client; an existing one keeps its
+            // own on disk and starts this launch with the decided one.
+            if (!autoCreatedConfig && mode.clientTypeId != null)
+            {
+                matchingConfig = LaunchConfigAccess.withClientType(matchingConfig, mode.clientTypeId);
+            }
+            String flagState = application == null ? "not applied: the application was not resolved" //$NON-NLS-1$
+                : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
 
             LaunchOutcome outcome = performLaunch(matchingConfig, false);
             if (!outcome.started)
@@ -654,6 +805,7 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("message", autoCreatedConfig //$NON-NLS-1$
                     ? "Debug session is now running (a launch configuration was auto-created for it)"
                     : "Debug session is now running");
+            describeClient(successResult, mode, flagState, application);
             String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
             if (endpointNote != null)
             {

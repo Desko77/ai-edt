@@ -30,6 +30,8 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.modules.IModuleSource;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.UiSync;
 
 /**
@@ -133,7 +135,9 @@ public class ModulesLister
     }
 
     /**
-     * Resolves the project and gathers its modules. Runs on the UI thread.
+     * Resolves the project and gathers its modules. {@link #execute} runs it on the UI thread,
+     * which the configuration lookup of a specific type needs; a caller without a UI thread - a
+     * test, another bundle's runtime - calls it directly with {@code all}, which walks the tree.
      *
      * @param projectName the project
      * @param metadataType the type argument, original case
@@ -142,7 +146,7 @@ public class ModulesLister
      * @param limit the most rows to show
      * @return the markdown, or an {@code Error:} line
      */
-    private static String listModules(String projectName, String metadataType, String objectName,
+    public static String listModules(String projectName, String metadataType, String objectName,
         String nameFilter, int limit)
     {
         try
@@ -209,9 +213,25 @@ public class ModulesLister
         List<IFile> files = new ArrayList<>();
         collectBslFiles(sourceFolder, 0, files);
 
+        List<ModuleEntry> entries = new ArrayList<>(files.size());
         for (IFile file : files)
         {
-            IPath relative = file.getProjectRelativePath().removeFirstSegments(1);
+            entries.add(new ModuleEntry(file.getProjectRelativePath().removeFirstSegments(1), null));
+        }
+        // The modules a provider holds are placed under the object their address names, as a
+        // file at that address would be - they have none for the walk above to find.
+        for (IModuleSource module : ModuleSources.list(project))
+        {
+            String address = module.modulePath();
+            if (address != null && !project.getFile(new Path(SRC).append(address)).exists())
+            {
+                entries.add(new ModuleEntry(new Path(address), module.kind()));
+            }
+        }
+
+        for (ModuleEntry entry : entries)
+        {
+            IPath relative = entry.relative;
             if (relative.segmentCount() < 2)
             {
                 continue;
@@ -242,10 +262,24 @@ public class ModulesLister
             }
 
             String basePath = relative.segment(0) + "/" + relative.segment(1); //$NON-NLS-1$
-            result.add(new ModuleInfo(modulePath, determineModuleType(modulePath, basePath), parentType,
-                parentName));
+            String kind = entry.kind != null ? entry.kind : determineModuleType(modulePath, basePath);
+            result.add(new ModuleInfo(modulePath, kind, parentType, parentName));
         }
         return result;
+    }
+
+    /** A module the whole-tree walk places: its {@code src}-relative path and, for a provided one, its kind. */
+    private static final class ModuleEntry
+    {
+        final IPath relative;
+
+        final String kind;
+
+        ModuleEntry(IPath relative, String kind)
+        {
+            this.relative = relative;
+            this.kind = kind;
+        }
     }
 
     /**
@@ -273,6 +307,7 @@ public class ModulesLister
         {
             return result;
         }
+        List<IModuleSource> provided = ModuleSources.list(project);
 
         for (MdObject object : objects)
         {
@@ -284,6 +319,19 @@ public class ModulesLister
             if (objectName != null && !objectName.isEmpty() && !name.equalsIgnoreCase(objectName))
             {
                 continue;
+            }
+
+            // The modules a provider holds for this object, listed by the address the module
+            // tools take - they have no file of their own to be found by the walk below.
+            String prefix = folder + "/" + name + "/"; //$NON-NLS-1$ //$NON-NLS-2$
+            for (IModuleSource module : provided)
+            {
+                String modulePath = module.modulePath();
+                if (modulePath != null && modulePath.startsWith(prefix) && matchesNameFilter(modulePath, nameFilter)
+                    && !fileExists(project, modulePath))
+                {
+                    result.add(new ModuleInfo(modulePath, module.kind(), type.typeName, name));
+                }
             }
 
             if (type.singleFile != null)
@@ -495,14 +543,40 @@ public class ModulesLister
 
         builder.append("| Path | Kind | Owner Type | Owner Name |\n"); //$NON-NLS-1$
         builder.append("|-------------|-------------|-------------|-------------|\n"); //$NON-NLS-1$
+        java.util.Map<String, Integer> providedKinds = new java.util.LinkedHashMap<>();
+        java.util.Set<String> fileKinds = new java.util.HashSet<>();
+        for (ru.aiedt.mcp.server.support.modules.IModuleSourceProvider provider : ModuleSources.providers())
+        {
+            providedKinds.putIfAbsent(provider.kind(), Integer.valueOf(0));
+        }
         for (int i = 0; i < shown; i++)
         {
             ModuleInfo module = modules.get(i);
+            if (providedKinds.containsKey(module.moduleType))
+            {
+                providedKinds.merge(module.moduleType, Integer.valueOf(1), Integer::sum);
+            }
+            else
+            {
+                fileKinds.add(module.moduleType);
+            }
             builder.append("| ").append(module.modulePath) //$NON-NLS-1$
                 .append(" | ").append(module.moduleType) //$NON-NLS-1$
                 .append(" | ").append(module.parentType) //$NON-NLS-1$
                 .append(" | ").append(module.parentName) //$NON-NLS-1$
                 .append(" |\n"); //$NON-NLS-1$
+        }
+        for (java.util.Map.Entry<String, Integer> kind : providedKinds.entrySet())
+        {
+            if (kind.getValue().intValue() > 0 && !fileKinds.contains(kind.getKey()))
+            {
+                boolean one = kind.getValue().intValue() == 1;
+                builder.append("\n").append(kind.getValue()).append(one ? " module of kind " : " modules of kind ") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    .append(kind.getKey())
+                    .append(one ? " has no file of its own: EDT builds no model of it, and " //$NON-NLS-1$
+                        : " have no file of their own: EDT builds no model of them, and ") //$NON-NLS-1$
+                    .append("read_module_source / write_module_source take the path shown as the address.\n"); //$NON-NLS-1$
+            }
         }
         return builder.toString();
     }

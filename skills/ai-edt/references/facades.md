@@ -97,8 +97,8 @@ form edits are chained with other metadata edits.
 | `get_applications` | Launch configurations known to the project. |
 | `create_infobase`, `delete_infobase` | Infobase lifecycle. |
 | `set_infobase_credentials` | Stored credentials for a launch configuration. |
-| `create_launch_config` | A new launch configuration. |
-| `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. Takes `startupOption` for a `/C` string and `waitForEndpoint` / `endpointTimeoutSeconds` to wait for what the client opens. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
+| `create_launch_config` | Binds an infobase to a project in the project's current association context - the branch, for a project under version control - and answers with `associationContext` and the `applicationId` the binding created. |
+| `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. A `projectName` + `applicationId` pair with no launch configuration gets one created and saved (`autoCreatedConfiguration`). Takes `startupOption` for a `/C` string, `clientType` / `runMode` for the client and its run mode (see `launch_debugger`), and `waitForEndpoint` / `endpointTimeoutSeconds` to wait for what the client opens. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. |
 | `update_database` | Writes the configuration into the infobase. Validate for export first. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`), the readiness of the infobase (`readiness`) and its problems (`readinessProblems`). No run is recorded and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. With `statusOnly=true` it reads the tracked updates instead - `updates[]` with `runKey`, state and progress per run, filtered by `projectName`; it starts nothing and does not claim a finished result, and a `runKey` of another kind of work is refused. Before the state is read it refreshes the project and, for an extension, its parent from disk (`refreshWorkspace`, default true): files written outside this server (a file tool, git checkout, a pull) are invisible to the model until then, and the answer reports `workspaceRefresh.changedResources` - 0 means the model already matched. Pass `refreshWorkspace=false` only when every change went through this server. |
 | `branch_infobase` | Binds a git branch to a launch configuration, so `update_database` refuses to write into an infobase that belongs to another branch. For a project that is an extension the binding lives in the extension itself, not in the configuration it extends. |
 | `sync_control` | Inspects and controls EDT-to-infobase synchronization. See the safety rule in `expected-behavior.md`. |
@@ -158,6 +158,23 @@ redirects, one read never longer than five seconds. `endpointReady`, `endpointWa
 `endpointHttpStatus` say what was seen; a URL that never answers is reported, the client is not
 killed. An Attach configuration refuses `waitForEndpoint` too - it starts no client and opens no
 endpoint. The same arguments are on `infobase_admin operation=start_client`.
+
+The client follows the run mode. A configuration whose default run mode is the ordinary
+application starts in the thick client: a launch configuration created by the launch is saved
+with `thick`, an existing one starts this launch with the thick client while keeping its own on
+disk, and `/RunModeOrdinaryApplication` is put among the infobase's additional launch parameters
+on the reference EDT holds for this session - the infobase list on disk, the one the platform
+launcher shares, is not written: writing it makes EDT reload the list and take the application
+off every launch configuration. EDT starts the thick client with `/RunModeManagedApplication`;
+the platform takes the last run-mode flag on the command line, and the infobase's parameters
+come last. A managed launch takes the flag out again.
+`clientType` (`thin`, `thick`, `web`) and `runMode` (`ordinary`, `managed`) name the choice
+outright; `clientType=thin` on an ordinary-application configuration is refused unless
+`runMode=managed` comes with it, because the thin client has no ordinary mode. The answer says
+what was decided (`clientType`, `clientTypeSource`, `runMode`, `runModeSource`) and what was
+changed (`runModeFlagState`: `added`, `removed`, `present`, `absent` or `not applied: ...`;
+`runModeFlagScope`; `infobaseAdditionalParameters`). Both launch tools decide before updating the infobase, so a
+contradiction costs no update.
 
 A launch is reported as running only when a live debug target is observed. The refusal says what was
 seen instead - the launch was not created, terminated at once, has only terminated targets, or

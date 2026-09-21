@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
 import org.osgi.util.tracker.ServiceTracker;
@@ -109,6 +110,12 @@ public class Activator
 
     private ServiceTracker<IConfigurationProvider, IConfigurationProvider> configurationProviderTracker;
 
+    /** The services other bundles publish for this server: tools and module source providers. */
+    private volatile boolean uiPending;
+
+    private final ru.aiedt.mcp.server.toolkit.ToolWhiteboard whiteboard =
+        new ru.aiedt.mcp.server.toolkit.ToolWhiteboard();
+
     private ServiceTracker<IMarkerManager, IMarkerManager> markerManagerTracker;
 
     private ServiceTracker<ICheckScheduler, ICheckScheduler> checkSchedulerTracker;
@@ -175,6 +182,12 @@ public class Activator
 
         mcpServer = new McpHttpEndpoint();
 
+        // Plain OSGi, safe under any runtime: a tool or a module source another bundle publishes
+        // reaches the catalogue and the module registry whether or not the UI comes up, and the
+        // catalogue re-registers the tools it has been given at every clear. Off this thread,
+        // because the activation may be the one a component of that bundle triggered.
+        whiteboard.openInBackground(context);
+
         if (isHeadless())
         {
             // Nothing below is safe here. A headless test runtime brings the workspace, the UI and the
@@ -196,9 +209,34 @@ public class Activator
         openServiceTrackers(context);
         SessionChangeTracker.initialize();
         startClusterService();
-        initializeUi();
+        // Measured: a bundle whose component names a class of this one activates it from SCR at
+        // framework start, before the IDE application has run. Display.getDefault() on that
+        // thread creates the display there, and the workbench, arriving on the main thread, dies
+        // on it with "Invalid thread access". The workbench's own early-startup hook finishes
+        // what the activator could not.
+        if (PlatformUI.isWorkbenchRunning())
+        {
+            initializeUi();
+        }
+        else
+        {
+            uiPending = true;
+        }
 
         logInfo("AI-EDT plugin started"); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts the plugin's contributions to the workbench in place when the activator ran before
+     * the workbench did. Called from the workbench's early-startup hook; a no-op otherwise.
+     */
+    public void completeUiInitialization()
+    {
+        if (uiPending && PlatformUI.isWorkbenchRunning())
+        {
+            uiPending = false;
+            initializeUi();
+        }
     }
 
     @Override
@@ -209,6 +247,7 @@ public class Activator
             mcpServer.stop();
         }
 
+        whiteboard.close();
         closeServiceTrackers();
         disposeUi();
         SessionChangeTracker.shutdown();
@@ -878,7 +917,7 @@ public class Activator
      */
     private static void disposeUi()
     {
-        if (isHeadless())
+        if (isHeadless() || !PlatformUI.isWorkbenchRunning())
         {
             return;
         }

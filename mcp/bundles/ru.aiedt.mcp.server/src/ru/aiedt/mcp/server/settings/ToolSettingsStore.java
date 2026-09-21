@@ -78,6 +78,21 @@ public final class ToolSettingsStore
     }
 
     /**
+     * Whether the preset in force blocks writes: Read-only, Code Review and Debug &amp; Test name
+     * every writer of this server, and a tool from another bundle that writes is switched off with
+     * them.
+     *
+     * @return {@code true} under a write-blocking preset
+     */
+    public boolean presetBlocksWrites()
+    {
+        IPreferenceStore store = store();
+        ToolProfile preset = store == null ? null : activePreset(store);
+        return preset == ToolProfile.READ_ONLY || preset == ToolProfile.CODE_REVIEW
+            || preset == ToolProfile.DEBUG_AND_TEST;
+    }
+
+    /**
      * Returns the preset in force, or <code>null</code> when the selection is hand-picked.
      * <p>
      * Worked out on every read rather than cached, for the same reason the name sets are: the

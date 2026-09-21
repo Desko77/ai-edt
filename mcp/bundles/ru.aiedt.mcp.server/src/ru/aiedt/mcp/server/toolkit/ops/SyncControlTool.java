@@ -6,25 +6,17 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -46,6 +38,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.SyncBaseline;
 import ru.aiedt.mcp.server.support.SupportSnapshotStore;
 import ru.aiedt.mcp.server.support.TextSuggest;
 
@@ -53,9 +46,12 @@ import ru.aiedt.mcp.server.support.TextSuggest;
  * Inspect and control EDT&lt;-&gt;infobase synchronization (the engine that decides
  * full-config-reload vs incremental on "Update infobase").
  *
- * <p>EDT keeps a per-infobase baseline at
- * {@code %APPDATA%\.1cedt\ib-sync\ss\<infobaseUuid>\index.idx} holding the configuration
- * UUID recorded at the last successful sync. {@code UpdateInfobaseFlow.start()} compares
+ * <p>EDT keeps a per-infobase baseline at {@code ib-sync\ss\<infobaseUuid>\index.idx} holding
+ * the configuration UUID recorded at the last successful sync. EDT 2026 keeps that store in the
+ * project's private working location inside the workspace
+ * ({@code .metadata\.plugins\org.eclipse.core.resources\.projects\<project>\com._1c.g5.v8.dt.platform.services.core\ib-sync\ss},
+ * beside the {@code ConfigDumpInfo.xml} of the infobase); older EDT kept it under
+ * {@code %APPDATA%\.1cedt\ib-sync\ss}. Both are read, the workspace store first. {@code UpdateInfobaseFlow.start()} compares
  * the project's live {@code Configuration} UUID to that baseline UUID; a mismatch (or a
  * missing/empty baseline) forces a FULL reload of the whole configuration - slow on large
  * configs (ERP). See {@code operation=status}.
@@ -74,19 +70,7 @@ public class SyncControlTool implements IMcpTool
 {
     public static final String NAME = "sync_control"; //$NON-NLS-1$
 
-    private static final Pattern UUID_ATTR =
-        Pattern.compile("uuid=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\""); //$NON-NLS-1$
-
     private static final int MAX_LISTED_BASELINES = 25;
-
-    /** Bytes read from the head of Configuration.mdo to find the root uuid attribute. */
-    private static final int MDO_HEAD_BYTES = 8192;
-
-    /** Sanity cap on a per-signature byte length read from a (possibly corrupt) index.idx. */
-    private static final int MAX_SIGNATURE_BYTES = 10_000_000;
-
-    /** Sanity cap on the signature COUNT (real configs seen up to ~100k; this only rejects corruption). */
-    private static final int MAX_SIGNATURE_COUNT = 5_000_000;
 
     @Override
     public String getName()
@@ -102,7 +86,8 @@ public class SyncControlTool implements IMcpTool
             + "Inspect and control EDT<->infobase synchronization (full-reload vs incremental). " //$NON-NLS-1$
             + "operation=status (read-only): predicts whether the next 'Update infobase' will be a FULL " //$NON-NLS-1$
             + "configuration reload or incremental, by comparing the project's Configuration UUID with the " //$NON-NLS-1$
-            + "EDT sync baseline (%APPDATA%\\.1cedt\\ib-sync\\ss) - diagnoses 'indexes diverged / will be full'. " //$NON-NLS-1$
+            + "EDT sync baseline (ib-sync/ss in the project's working location inside the workspace, or " //$NON-NLS-1$
+            + "%APPDATA%/.1cedt/ib-sync/ss on older EDT) - diagnoses 'indexes diverged / will be full'. " //$NON-NLS-1$
             + "operation=diagnose (read-only): for each baseline matching the project, reports the live " //$NON-NLS-1$
             + "getEqualityState + isConnected and the resulting application update state - explains exactly why the " //$NON-NLS-1$
             + "pre-launch 'load changed objects' dialog appears (UPDATED = no dialog). " //$NON-NLS-1$
@@ -218,12 +203,17 @@ public class SyncControlTool implements IMcpTool
     private String doStatus(IProject project)
     {
         String liveUuid = readConfigurationUuid(project);
-        Path ssRoot = syncStoreSsPath();
+        List<Path> ssRoots = SyncBaseline.stores(project);
 
         ToolResult res = ToolResult.success()
             .put("operation", "status") //$NON-NLS-1$ //$NON-NLS-2$
             .put("projectName", project.getName()) //$NON-NLS-1$
-            .put("syncStorePath", ssRoot.toString()); //$NON-NLS-1$
+            .put("syncStorePath", ssRoots.isEmpty() ? SyncBaseline.workspaceStore(project).toString() //$NON-NLS-1$
+                : ssRoots.get(0).toString());
+        if (ssRoots.size() > 1)
+        {
+            res.put("syncStorePaths", ssRoots.stream().map(Path::toString).collect(Collectors.toList())); //$NON-NLS-1$
+        }
 
         if (liveUuid == null)
         {
@@ -235,19 +225,28 @@ public class SyncControlTool implements IMcpTool
         }
         res.put("liveConfigurationUuid", liveUuid); //$NON-NLS-1$
 
-        if (!ssRoot.toFile().isDirectory())
+        if (ssRoots.isEmpty())
         {
             res.put("prediction", "FULL"); //$NON-NLS-1$ //$NON-NLS-2$
             res.put("willTriggerFullReload", true); //$NON-NLS-1$
-            res.put("summary", "No EDT sync store found at " + ssRoot //$NON-NLS-1$
+            res.put("summary", "No EDT sync store found at " + SyncBaseline.workspaceStore(project) + " nor at " //$NON-NLS-1$ //$NON-NLS-2$
+                + SyncBaseline.roamingStore()
                 + " - there is no baseline, so the next update will be a FULL configuration reload."); //$NON-NLS-1$
             return res.toJson();
         }
 
         List<Map<String, Object>> all = new ArrayList<>();
         Map<String, Object> matched = null;
-        File[] ibDirs = ssRoot.toFile().listFiles(File::isDirectory);
-        if (ibDirs != null)
+        List<File> ibDirs = new ArrayList<>();
+        for (Path root : ssRoots)
+        {
+            File[] dirs = root.toFile().listFiles(File::isDirectory);
+            if (dirs != null)
+            {
+                ibDirs.addAll(Arrays.asList(dirs));
+            }
+        }
+        if (!ibDirs.isEmpty())
         {
             for (File ibDir : ibDirs)
             {
@@ -266,6 +265,8 @@ public class SyncControlTool implements IMcpTool
                 boolean isMatch = liveUuid.equals(info.configurationUuid);
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("infobaseUuid", ibDir.getName()); //$NON-NLS-1$
+                entry.put("store", ibDir.getParentFile().getParentFile().getParentFile().getName() //$NON-NLS-1$
+                    .equals(SyncBaseline.STORE_PLUGIN) ? "workspace" : "roaming"); //$NON-NLS-1$ //$NON-NLS-2$
                 entry.put("configurationUuid", info.configurationUuid); //$NON-NLS-1$
                 entry.put("signatureCount", info.signatureCount); //$NON-NLS-1$
                 entry.put("matchesProject", isMatch); //$NON-NLS-1$
@@ -370,9 +371,16 @@ public class SyncControlTool implements IMcpTool
         }
 
         List<Map<String, Object>> matching = new ArrayList<>();
-        Path ssRoot = syncStoreSsPath();
-        File[] ibDirs = ssRoot.toFile().isDirectory() ? ssRoot.toFile().listFiles(File::isDirectory) : null;
-        if (ibDirs != null)
+        List<File> ibDirs = new ArrayList<>();
+        for (Path root : SyncBaseline.stores(project))
+        {
+            File[] dirs = root.toFile().listFiles(File::isDirectory);
+            if (dirs != null)
+            {
+                ibDirs.addAll(Arrays.asList(dirs));
+            }
+        }
+        if (!ibDirs.isEmpty())
         {
             for (File ibDir : ibDirs)
             {
@@ -397,6 +405,8 @@ public class SyncControlTool implements IMcpTool
                 }
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("infobaseUuid", ibDir.getName()); //$NON-NLS-1$
+                entry.put("store", ibDir.getParentFile().getParentFile().getParentFile().getName() //$NON-NLS-1$
+                    .equals(SyncBaseline.STORE_PLUGIN) ? "workspace" : "roaming"); //$NON-NLS-1$ //$NON-NLS-2$
                 entry.put("signatureCount", info.signatureCount); //$NON-NLS-1$
                 try
                 {
@@ -467,7 +477,7 @@ public class SyncControlTool implements IMcpTool
         {
             return ToolResult.error("Could not obtain EDT effective signatures (run inside EDT, project loaded).").toJson(); //$NON-NLS-1$
         }
-        Path idx = syncStoreSsPath().resolve(infobaseUuid.trim()).resolve("index.idx"); //$NON-NLS-1$
+        Path idx = SyncBaseline.indexOf(project, infobaseUuid.trim());
         Map<String, byte[]> baseline;
         try
         {
@@ -558,36 +568,13 @@ public class SyncControlTool implements IMcpTool
         {
             return null;
         }
-        byte[] all = java.nio.file.Files.readAllBytes(file);
-        boolean versioned = all.length >= 5 && all[0] == 0 && all[1] == 3
-            && all[2] == '1' && all[3] == '.' && all[4] == '0';
-        try (java.io.DataInputStream dis = new java.io.DataInputStream(new java.io.ByteArrayInputStream(all)))
+        SyncBaseline.Index index = SyncBaseline.read(file);
+        Map<String, byte[]> result = new LinkedHashMap<>();
+        for (int i = 0; i < index.keys.size(); i++)
         {
-            if (versioned)
-            {
-                dis.readUTF(); // version "1.0"
-            }
-            dis.readLong(); // timestamp
-            int count = dis.readInt();
-            Map<String, byte[]> result = new LinkedHashMap<>();
-            for (int i = 0; i < count; i++)
-            {
-                String key = dis.readUTF();
-                int len = dis.readInt();
-                if (len < 0 || len > 100000)
-                {
-                    throw new IOException("Unexpected signature length " + len + " - format mismatch."); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                byte[] sig = new byte[len];
-                dis.readFully(sig);
-                if (versioned && dis.readBoolean())
-                {
-                    dis.readUTF(); // per-resource UUID
-                }
-                result.put(key, sig);
-            }
-            return result;
+            result.put(index.keys.get(i), index.signatures.get(i));
         }
+        return result;
     }
 
     /** First up to 8 bytes of a signature as lowercase hex (for mismatch examples). */
@@ -718,7 +705,7 @@ public class SyncControlTool implements IMcpTool
 
         // The baseline must already hold this project's resource signatures; reseeding an empty/missing
         // baseline only flips the UUID and the first update would still push everything.
-        Path idx = syncStoreSsPath().resolve(infobaseUuid.trim()).resolve("index.idx"); //$NON-NLS-1$
+        Path idx = SyncBaseline.indexOf(project, infobaseUuid.trim());
         IndexInfo before = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
         if (before == null || before.signatureCount <= 0)
         {
@@ -748,7 +735,7 @@ public class SyncControlTool implements IMcpTool
             //    The delegate reloads its holder from disk (getState) when touched, so this picks up step 1
             //    regardless of whether the reflective call itself persists anything. If unavailable, the
             //    on-disk baseline is still correct and EDT will read it on the next session / first sync.
-            String holderRefresh = refreshHolder(ibUuid);
+            String holderRefresh = SyncBaseline.dropCachedHolder(ibUuid);
 
             IndexInfo after = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
             boolean ok = after != null && liveUuid.equals(after.configurationUuid);
@@ -785,160 +772,9 @@ public class SyncControlTool implements IMcpTool
      */
     private static void rewriteIndexIdxConfigUuid(Path file, String newUuid) throws IOException
     {
-        long timestamp;
-        String generationId;
-        List<String> keys = new ArrayList<>();
-        List<byte[]> sigs = new ArrayList<>();
-        try (DataInputStream dis = new DataInputStream(new FileInputStream(file.toFile())))
-        {
-            timestamp = dis.readLong();
-            int count = dis.readInt();
-            if (count < 0 || count > MAX_SIGNATURE_COUNT)
-            {
-                throw new IOException("index.idx signature count out of range: " + count); //$NON-NLS-1$
-            }
-            for (int i = 0; i < count; i++)
-            {
-                keys.add(dis.readUTF());
-                int len = dis.readInt();
-                if (len < 0 || len > MAX_SIGNATURE_BYTES)
-                {
-                    throw new IOException("index.idx signature length out of range: " + len); //$NON-NLS-1$
-                }
-                byte[] b = new byte[len];
-                dis.readFully(b);
-                sigs.add(b);
-            }
-            generationId = dis.readUTF();
-            dis.readUTF(); // old configuration UUID (replaced below)
-        }
-        File tmp = new File(file.toFile().getAbsolutePath() + ".tmp"); //$NON-NLS-1$
-        try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(tmp)))
-        {
-            dos.writeLong(timestamp);
-            dos.writeInt(keys.size());
-            for (int i = 0; i < keys.size(); i++)
-            {
-                dos.writeUTF(keys.get(i));
-                dos.writeInt(sigs.get(i).length);
-                dos.write(sigs.get(i));
-            }
-            dos.writeUTF(generationId);
-            dos.writeUTF(newUuid);
-        }
-        Files.move(tmp.toPath(), file, StandardCopyOption.REPLACE_EXISTING);
-    }
-
-    /**
-     * Drops EDT's cached in-memory synchronization holder for the infobase so the next equality check
-     * reloads the (corrected) baseline from disk. EDT only (re)loads the holder when it is ABSENT
-     * (updateInternalSyncStateIfNecessary), so removing it is what triggers the reload - a restart would
-     * reload it too; this avoids the restart. 2026.1 keys the holders in a NESTED map
-     * {@code projectInfobaseSyncStates: Map<projectName, Map<infobaseUuid, holder>>}; older EDT used a flat
-     * {@code synchronizationStates: Map<infobaseUuid, holder>}. Both are handled. Never throws.
-     */
-    private static String refreshHolder(UUID ibUuid)
-    {
-        try
-        {
-            IInfobaseSynchronizationStateManager mgr = ServiceAccess.get(IInfobaseSynchronizationStateManager.class);
-            if (mgr == null)
-            {
-                return "skipped (state manager unavailable)"; //$NON-NLS-1$
-            }
-            Object delegate = mgr.getClass().getMethod("getDelegate").invoke(mgr); //$NON-NLS-1$
-            if (delegate == null)
-            {
-                return "skipped (delegate null)"; //$NON-NLS-1$
-            }
-            int dropped = dropNestedHolder(delegate, "projectInfobaseSyncStates", ibUuid) //$NON-NLS-1$
-                + dropFlatHolder(delegate, "synchronizationStates", ibUuid); //$NON-NLS-1$
-            return dropped > 0 ? "ok (dropped " + dropped + " cached holder(s), reloads from disk)" //$NON-NLS-1$ //$NON-NLS-2$
-                : "ok (no cached holder for this infobase; disk baseline is authoritative)"; //$NON-NLS-1$
-        }
-        catch (Exception e)
-        {
-            return "skipped (" + TextSuggest.safeMessage(e) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-    }
-
-    /** Removes the infobase holder from a 2026.1 nested {@code Map<projectName, Map<uuid, holder>>}. */
-    private static int dropNestedHolder(Object delegate, String fieldName, UUID ibUuid)
-    {
-        Field field = findField(delegate.getClass(), fieldName);
-        if (field == null)
-        {
-            return 0;
-        }
-        try
-        {
-            field.setAccessible(true);
-            Object value = field.get(delegate);
-            if (!(value instanceof Map))
-            {
-                return 0;
-            }
-            int dropped = 0;
-            for (Object inner : ((Map<?, ?>)value).values())
-            {
-                if (inner instanceof Map && ((Map<?, ?>)inner).keySet().removeIf(k -> matchesUuid(ibUuid, k)))
-                {
-                    dropped++;
-                }
-            }
-            return dropped;
-        }
-        catch (Exception e)
-        {
-            return 0;
-        }
-    }
-
-    /** Removes the infobase holder from an older flat {@code Map<uuid, holder>}. */
-    private static int dropFlatHolder(Object delegate, String fieldName, UUID ibUuid)
-    {
-        Field field = findField(delegate.getClass(), fieldName);
-        if (field == null)
-        {
-            return 0;
-        }
-        try
-        {
-            field.setAccessible(true);
-            Object value = field.get(delegate);
-            if (!(value instanceof Map))
-            {
-                return 0;
-            }
-            return ((Map<?, ?>)value).keySet().removeIf(k -> matchesUuid(ibUuid, k)) ? 1 : 0;
-        }
-        catch (Exception e)
-        {
-            return 0;
-        }
-    }
-
-    /** True if {@code key} is the infobase UUID, as a java.util.UUID or its string form. */
-    private static boolean matchesUuid(UUID ibUuid, Object key)
-    {
-        return ibUuid.equals(key) || ibUuid.toString().equalsIgnoreCase(String.valueOf(key));
-    }
-
-    /** Finds a declared field by name, walking up the class hierarchy (it may live on a superclass). */
-    private static Field findField(Class<?> type, String name)
-    {
-        for (Class<?> c = type; c != null; c = c.getSuperclass())
-        {
-            try
-            {
-                return c.getDeclaredField(name);
-            }
-            catch (NoSuchFieldException ignored)
-            {
-                // try the superclass
-            }
-        }
-        return null;
+        SyncBaseline.Index index = SyncBaseline.read(file);
+        index.configurationUuid = newUuid;
+        SyncBaseline.write(index, file);
     }
 
     // ---- stuck-merge recovery (clear a "flow active" flag left by an interrupted update) ----
@@ -1098,7 +934,7 @@ public class SyncControlTool implements IMcpTool
             {
                 return ToolResult.error("Synchronization state delegate unavailable.").toJson(); //$NON-NLS-1$
             }
-            Field lockStatesField = findField(delegate.getClass(), "infobaseLockStates"); //$NON-NLS-1$
+            Field lockStatesField = SyncBaseline.findField(delegate.getClass(), "infobaseLockStates"); //$NON-NLS-1$
             if (lockStatesField == null)
             {
                 return ToolResult.error("infobaseLockStates field not found - the stuck-merge mechanism differs " //$NON-NLS-1$
@@ -1145,7 +981,7 @@ public class SyncControlTool implements IMcpTool
         }
         try
         {
-            Field pf = findField(holder.getClass(), "project"); //$NON-NLS-1$
+            Field pf = SyncBaseline.findField(holder.getClass(), "project"); //$NON-NLS-1$
             if (pf == null)
             {
                 return null;
@@ -1205,7 +1041,7 @@ public class SyncControlTool implements IMcpTool
             {
                 return ToolResult.error("Synchronization state delegate unavailable.").toJson(); //$NON-NLS-1$
             }
-            Field lockStatesField = findField(delegate.getClass(), "infobaseLockStates"); //$NON-NLS-1$
+            Field lockStatesField = SyncBaseline.findField(delegate.getClass(), "infobaseLockStates"); //$NON-NLS-1$
             if (lockStatesField == null)
             {
                 return ToolResult.error("infobaseLockStates field not found on this EDT build.").toJson(); //$NON-NLS-1$
@@ -1220,7 +1056,7 @@ public class SyncControlTool implements IMcpTool
             Object holder = null;
             for (Map.Entry<?, ?> e : ((Map<?, ?>)value).entrySet())
             {
-                if (matchesUuid(ibUuid, e.getKey()))
+                if (SyncBaseline.matchesUuid(ibUuid, e.getKey()))
                 {
                     holder = e.getValue();
                     break;
@@ -1237,7 +1073,7 @@ public class SyncControlTool implements IMcpTool
                         + "stuck (the holder only exists after a flow touched the infobase this session).") //$NON-NLS-1$
                     .toJson();
             }
-            Field projectField = findField(holder.getClass(), "project"); //$NON-NLS-1$
+            Field projectField = SyncBaseline.findField(holder.getClass(), "project"); //$NON-NLS-1$
             if (projectField == null)
             {
                 return ToolResult.error("The lock holder has no 'project' field - EDT internal shape differs here.").toJson(); //$NON-NLS-1$
@@ -1306,7 +1142,7 @@ public class SyncControlTool implements IMcpTool
     {
         try
         {
-            Field f = findField(target.getClass(), fieldName);
+            Field f = SyncBaseline.findField(target.getClass(), fieldName);
             if (f == null)
             {
                 return null;
@@ -1398,7 +1234,7 @@ public class SyncControlTool implements IMcpTool
             return ToolResult.error("The project's Configuration UUID is not a parseable UUID: '" //$NON-NLS-1$
                 + liveUuid + "'.").toJson(); //$NON-NLS-1$
         }
-        Path idx = syncStoreSsPath().resolve(infobaseUuid.trim()).resolve("index.idx"); //$NON-NLS-1$
+        Path idx = SyncBaseline.indexOf(project, infobaseUuid.trim());
         IndexInfo before = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
         if (before == null)
         {
@@ -1581,90 +1417,27 @@ public class SyncControlTool implements IMcpTool
      */
     private String readConfigurationUuid(IProject project)
     {
-        if (project.getLocation() == null)
-        {
-            return null;
-        }
-        Path mdo = Paths.get(project.getLocation().toOSString(), "src", "Configuration", "Configuration.mdo"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        if (!mdo.toFile().isFile())
-        {
-            return null;
-        }
-        try
-        {
-            byte[] head = readHead(mdo, MDO_HEAD_BYTES);
-            String text = new String(head, StandardCharsets.UTF_8);
-            Matcher m = UUID_ATTR.matcher(text);
-            if (m.find())
-            {
-                return m.group(1);
-            }
-        }
-        catch (Exception e)
-        {
-            Activator.logError("sync_control: failed to read Configuration.mdo UUID", e); //$NON-NLS-1$
-        }
-        return null;
-    }
-
-    private static byte[] readHead(Path file, int max) throws java.io.IOException
-    {
-        try (java.io.InputStream in = Files.newInputStream(file))
-        {
-            byte[] buf = new byte[max];
-            int total = 0;
-            int n;
-            while (total < max && (n = in.read(buf, total, max - total)) > 0)
-            {
-                total += n;
-            }
-            return total == max ? buf : java.util.Arrays.copyOf(buf, total);
-        }
+        return SyncBaseline.configurationUuid(project);
     }
 
     /**
      * Parses an {@code index.idx} baseline file. Binary format (big-endian, Java DataOutput):
      * long timestamp, int signatureCount, then per signature (UTF key, int length, length
-     * bytes), then UTF generationId, UTF configurationUUID. Returns {@code null} if unreadable.
+     * bytes), then UTF generationId, UTF configurationUUID. EDT 2026 writes a versioned layout:
+     * UTF version {@code "1.0"} first, and after each signature a boolean that says whether a
+     * per-resource UUID (UTF) follows. Returns {@code null} if unreadable.
      */
     private IndexInfo parseIndexIdx(Path file)
     {
-        try (DataInputStream dis = new DataInputStream(new FileInputStream(file.toFile())))
+        try
         {
-            long timestamp = dis.readLong();
-            int count = dis.readInt();
-            if (count < 0 || count > MAX_SIGNATURE_COUNT)
-            {
-                return null;
-            }
-            for (int i = 0; i < count; i++)
-            {
-                dis.readUTF();
-                int len = dis.readInt();
-                if (len < 0 || len > MAX_SIGNATURE_BYTES)
-                {
-                    return null;
-                }
-                byte[] buf = new byte[len];
-                dis.readFully(buf);
-            }
-            String generationId = dis.readUTF();
-            String configurationUuid = dis.readUTF();
-            return new IndexInfo(timestamp, count, generationId, configurationUuid);
+            SyncBaseline.Index index = SyncBaseline.read(file);
+            return new IndexInfo(index.timestamp, index.keys.size(), index.generationId, index.configurationUuid);
         }
         catch (Exception e)
         {
             return null;
         }
-    }
-
-    private static Path syncStoreSsPath()
-    {
-        String appData = System.getenv("APPDATA"); //$NON-NLS-1$
-        Path base = (appData != null && !appData.isEmpty())
-            ? Paths.get(appData)
-            : Paths.get(System.getProperty("user.home")); //$NON-NLS-1$
-        return base.resolve(".1cedt").resolve("ib-sync").resolve("ss"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
     private static final class IndexInfo

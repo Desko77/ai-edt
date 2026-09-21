@@ -126,6 +126,8 @@ flowchart TD
 
 The endpoint defaults to `http://localhost:12250/mcp`. The plugin is not a standalone headless server: EDT must be running and the target project must be loaded. This is what gives tools access to resolved references, inferred types, current validation markers and live debug state.
 
+Another EDT bundle can add tools and modules to the plugin: an `IMcpTool` service becomes a callable tool (the service property `ru.aiedt.mcp.tool.writes` says whether it writes; the Read-only, Code Review and Debug & Test presets switch a writing one off together with the plugin's own writers, and a tool without the property counts as a writer), and an `IModuleSourceProvider` service supplies modules that have an address but no file - `read_module_source`, `write_module_source`, `get_module_structure`, `read_method_source`, `list_modules` and `text_search` work with them by address, and the answers built from the BSL index end with such a provider's coverage line. The plugin exports the packages `ru.aiedt.mcp.server.support.modules`, `toolkit` and `wire` for this.
+
 ## 🚀 Quick start
 
 ### 📋 1. Requirements
@@ -547,6 +549,8 @@ The debugger facade supports ordinary client launches and **Attach to 1C:Enterpr
 The agent discovers an EDT launch configuration, attaches to the 1C debug server, sets a breakpoint and waits for a suspend event. AI-EDT then returns stable references to the thread, stack and frame so the agent can inspect variables, evaluate expressions, step through the code and resume execution.
 
 A launch counts as running only once a live debug target is seen; otherwise the answer says what happened instead and lists the modal dialogs that opened during the launch. The `debugServerPort` argument gives a launch its own debug server port when the default one is already taken by another environment on the machine. The client that starts can open an external data processor or report right away: the environment builds an external object dump for that, so the launch checks whether dump generation is on for the external-object project and turns it on when `enableExternalObjectDump` says so. The object receives its parameters through the `/C` startup string named by `startupOption` - written to the launch's own configuration copy, the saved one untouched; an Attach configuration and a session already running refuse it.
+
+The client follows the configuration's run mode. A configuration whose default run mode is the ordinary application starts in the thick client: a launch configuration the launch creates is saved with the thick client, an existing one starts this launch with it, and `/RunModeOrdinaryApplication` is put among the infobase's additional launch parameters on the reference EDT holds for the session - the infobase list on disk is not written. The arguments `clientType` (`thin`, `thick`, `web`) and `runMode` (`ordinary`, `managed`) of `launch_debugger action=launch` and `infobase_admin operation=start_client` name the choice outright; `clientType=thin` on an ordinary-application configuration is refused unless `runMode=managed` comes with it. The answer says what was decided (`clientType`, `clientTypeSource`, `runMode`, `runModeSource`) and what was changed (`runModeFlagState`, `runModeFlagScope`, `infobaseAdditionalParameters`).
 
 ## 🔌 Optional integrations
 

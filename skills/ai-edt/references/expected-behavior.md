@@ -44,7 +44,11 @@ is left.
 ## Synchronization between EDT and the infobase
 
 EDT decides between an incremental and a full upload by comparing the project configuration
-against a stored baseline. If they do not match, or no baseline exists, the upload is full.
+against a stored baseline. If they do not match, or no baseline exists, the upload is full. EDT
+2026 keeps the baseline inside the workspace, in the project's private working location
+(`.metadata/.plugins/org.eclipse.core.resources/.projects/<project>/com._1c.g5.v8.dt.platform.services.core/ib-sync/ss/<infobase>/`);
+older EDT kept it under `%APPDATA%/.1cedt/ib-sync/ss`. `sync_control` reads both, the workspace
+store first, and each baseline in `status` names its `store`.
 
 `sync_control` operations `status` and `diagnose` are read-only and safe. `suppress` gates only the
 background automatic synchronization, and is reversible; explicit actions such as a manual database

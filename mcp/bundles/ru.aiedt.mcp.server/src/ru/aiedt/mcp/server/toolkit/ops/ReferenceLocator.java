@@ -69,6 +69,7 @@ import ru.aiedt.mcp.server.support.ExternalProjectResolver;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.ProjectScopeResolver;
 
 /**
@@ -689,7 +690,19 @@ public class ReferenceLocator implements IMcpTool
             sink.stopped = watch.stopped() || !master.phasesCutShort.isEmpty();
             sink.phasesNotRun = master.phasesCutShort;
         }
-        return formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
+        String report = formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
+        if (!filter.bsl)
+        {
+            return report;
+        }
+        // The BSL phase reads the index of every project searched, and no index holds the modules
+        // a provider keeps outside it: the count covers the sister projects the scope added.
+        List<IProject> searched = new ArrayList<>();
+        for (String name : searchedProjectNames)
+        {
+            searched.add(ResourcesPlugin.getWorkspace().getRoot().getProject(name));
+        }
+        return ModuleSources.appendCoverage(searched, "references", report); //$NON-NLS-1$
     }
 
     /**
