@@ -84,6 +84,18 @@ public final class LaunchConfigAccess
     public static final String CLIENT_TYPE_THIN =
         "com._1c.g5.v8.dt.platform.services.core.componentTypes.ThinClient"; //$NON-NLS-1$
 
+    /**
+     * Value for {@link #ATTR_CLIENT_TYPE}: the thick client - the one that opens the ordinary
+     * application, given {@code /RunModeOrdinaryApplication} among the infobase's additional
+     * launch parameters (see {@link ClientLaunchMode}).
+     */
+    public static final String CLIENT_TYPE_THICK =
+        "com._1c.g5.v8.dt.platform.services.core.componentTypes.ThickClient"; //$NON-NLS-1$
+
+    /** Value for {@link #ATTR_CLIENT_TYPE}: the web client. */
+    public static final String CLIENT_TYPE_WEB =
+        "com._1c.g5.v8.dt.platform.services.core.componentTypes.WebClient"; //$NON-NLS-1$
+
     /** Launch attribute: whether to auto-select the client type (false = use the explicit one). */
     public static final String ATTR_CLIENT_AUTO_SELECT =
         "com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_AUTO_SELECT"; //$NON-NLS-1$
@@ -424,6 +436,49 @@ public final class LaunchConfigAccess
     }
 
     /**
+     * A working copy of a configuration that starts the given client, the saved configuration
+     * untouched.
+     *
+     * @param config the configuration, or a working copy of it
+     * @param clientTypeId the client: {@link #CLIENT_TYPE_THIN}, {@link #CLIENT_TYPE_THICK} or
+     *        {@link #CLIENT_TYPE_WEB}
+     * @return the working copy
+     * @throws CoreException when the configuration cannot be copied
+     */
+    public static ILaunchConfiguration withClientType(ILaunchConfiguration config, String clientTypeId)
+        throws CoreException
+    {
+        ILaunchConfigurationWorkingCopy copy = asWorkingCopy(config);
+        copy.setAttribute(ATTR_CLIENT_TYPE, clientTypeId);
+        copy.setAttribute(ATTR_CLIENT_AUTO_SELECT, false);
+        return copy;
+    }
+
+    /**
+     * The client a configuration starts.
+     *
+     * @param config the configuration
+     * @return the client type attribute, or {@code null} when the configuration lets EDT choose
+     *         or names none
+     */
+    public static String getClientTypeIdFor(ILaunchConfiguration config)
+    {
+        try
+        {
+            if (config.getAttribute(ATTR_CLIENT_AUTO_SELECT, false))
+            {
+                return null;
+            }
+            String id = config.getAttribute(ATTR_CLIENT_TYPE, (String)null);
+            return id == null || id.isEmpty() ? null : id;
+        }
+        catch (CoreException e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * The configuration as something writable, without making a second copy of a copy.
      *
      * @param config a saved configuration or a working copy.
@@ -462,13 +517,35 @@ public final class LaunchConfigAccess
         ILaunchConfigurationType configType, String projectName, String applicationId, String applicationName)
         throws CoreException
     {
+        return createRuntimeClientConfig(launchManager, configType, projectName, applicationId, applicationName,
+            CLIENT_TYPE_THIN);
+    }
+
+    /**
+     * Creates and saves a runtime-client launch configuration with the given client.
+     *
+     * @param launchManager the launch manager
+     * @param configType the runtime-client configuration type
+     * @param projectName the project
+     * @param applicationId the application
+     * @param applicationName the application's name, the base of the configuration's name; the
+     *        project's name when empty
+     * @param clientTypeId the client: {@link #CLIENT_TYPE_THIN}, {@link #CLIENT_TYPE_THICK} or
+     *        {@link #CLIENT_TYPE_WEB}
+     * @return the saved configuration
+     * @throws CoreException when the configuration cannot be saved
+     */
+    public static ILaunchConfiguration createRuntimeClientConfig(ILaunchManager launchManager,
+        ILaunchConfigurationType configType, String projectName, String applicationId, String applicationName,
+        String clientTypeId) throws CoreException
+    {
         String baseName = applicationName == null || applicationName.isEmpty() ? projectName : applicationName;
         String name = launchManager.generateLaunchConfigurationName(baseName);
 
         ILaunchConfigurationWorkingCopy workingCopy = configType.newInstance(null, name);
         workingCopy.setAttribute(ATTR_PROJECT_NAME, projectName);
         workingCopy.setAttribute(ATTR_APPLICATION_ID, applicationId);
-        workingCopy.setAttribute(ATTR_CLIENT_TYPE, CLIENT_TYPE_THIN);
+        workingCopy.setAttribute(ATTR_CLIENT_TYPE, clientTypeId);
         workingCopy.setAttribute(ATTR_CLIENT_AUTO_SELECT, false);
         workingCopy.setAttribute(ATTR_LAUNCH_USER_USE_INFOBASE_ACCESS, true);
         workingCopy.setAttribute(ATTR_RUNTIME_INSTALLATION_USE_AUTO, true);

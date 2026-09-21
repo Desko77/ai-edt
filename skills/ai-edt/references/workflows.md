@@ -80,6 +80,11 @@ broke.
    `delivery` line of the answer), so the update loads the object with the form; the platform reads
    the container from the export and checks the module there. `read_event_log` shows the
    `DBConfigUpdate`.
+5. `launch_debugger action=launch` with the project and application: a configuration whose default
+   run mode is the ordinary application starts in the thick client with
+   `/RunModeOrdinaryApplication` among the infobase's additional launch parameters for the EDT
+   session, and the form opens there. The answer's `clientType`, `runMode` and `runModeFlagState`
+   say so; `runMode=managed` starts the managed application instead and takes the flag out.
 
 `code_search operation=text_search` finds text inside these modules; the BSL index does not hold
 them, and `call_hierarchy`, `object_references` and `get_project_errors` say so in a `Coverage`

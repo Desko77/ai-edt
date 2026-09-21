@@ -253,6 +253,16 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "start_client: the /C startup string for the client that starts; the saved " //$NON-NLS-1$
                     + "configuration is not changed. Refused while its client is already running - " //$NON-NLS-1$
                     + "that one was not started with it.") //$NON-NLS-1$
+            .stringProperty("clientType", //$NON-NLS-1$
+                "start_client: the client to start - thin, thick or web. Omitted: the launch " //$NON-NLS-1$
+                    + "configuration's own, thin for one created here, and thick whenever the run " //$NON-NLS-1$
+                    + "mode is ordinary. Applied to this launch's own configuration copy; a " //$NON-NLS-1$
+                    + "configuration created here is saved with it.") //$NON-NLS-1$
+            .stringProperty("runMode", //$NON-NLS-1$
+                "start_client: ordinary or managed; omitted, the configuration's default run " //$NON-NLS-1$
+                    + "mode. Ordinary puts /RunModeOrdinaryApplication among the infobase's " //$NON-NLS-1$
+                    + "additional launch parameters for this EDT session, managed takes it out; " //$NON-NLS-1$
+                    + "the list on disk is not written. The answer says what changed.") //$NON-NLS-1$
             .stringProperty("waitForEndpoint", //$NON-NLS-1$
                 "start_client: wait for this URL to answer before reporting started - ready is " //$NON-NLS-1$
                     + "any final status below 500, at most five redirects. A client whose " //$NON-NLS-1$

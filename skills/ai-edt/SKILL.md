@@ -57,7 +57,10 @@ For BSL and 1C metadata this server beats grep-style search: it answers from the
 ## When not to use it
 
 - **1C 7.7** sources (`.1s`, `.ert`, `1Cv7.MD`). The EDT model does not cover them.
-- **Ordinary (non-managed) forms.** The form operations assume managed forms.
+- **Ordinary (non-managed) forms.** The form operations assume managed forms. Their modules and
+  their launch are covered: see below, and `launch_debugger action=launch` starts the thick
+  client in the ordinary mode for a configuration whose default run mode is the ordinary
+  application.
 - **Data in a running infobase, outside a suspended debug session.** Use an HTTP route into the
   running 1C application instead.
 - **EDT is not running.** The tools are unavailable. Say so instead of falling back to editing

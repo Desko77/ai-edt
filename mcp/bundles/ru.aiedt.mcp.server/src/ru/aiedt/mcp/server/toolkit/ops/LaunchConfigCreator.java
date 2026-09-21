@@ -39,7 +39,10 @@ public class LaunchConfigCreator implements IMcpTool
             + "and become a target for update_database / launch. Pass projectName and " //$NON-NLS-1$
             + "infobaseName (the infobase must already exist in EDT's list - see " //$NON-NLS-1$
             + "create_infobase). The infobase is bound as not-synchronized, so " //$NON-NLS-1$
-            + "get_applications will report that an update is required."; //$NON-NLS-1$
+            + "get_applications will report that an update is required. The binding goes to " //$NON-NLS-1$
+            + "the project's current association context - the branch, for a project under " //$NON-NLS-1$
+            + "version control - which the answer names, and the application it creates is " //$NON-NLS-1$
+            + "reported by id."; //$NON-NLS-1$
     }
 
     @Override
@@ -97,6 +100,13 @@ public class LaunchConfigCreator implements IMcpTool
         {
             ok.put("applicationId", r.applicationId); //$NON-NLS-1$
         }
+        else
+        {
+            ok.put("applicationId", (String)null); //$NON-NLS-1$
+            ok.put("note", "The binding was written, but get_applications does not list it yet; " //$NON-NLS-1$ //$NON-NLS-2$
+                + "read the project's applications again before launching."); //$NON-NLS-1$
+        }
+        ok.put("associationContext", r.associationContext); //$NON-NLS-1$
         return ok.toJson();
     }
 }
