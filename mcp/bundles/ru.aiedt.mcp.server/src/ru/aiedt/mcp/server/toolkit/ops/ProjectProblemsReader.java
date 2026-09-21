@@ -42,6 +42,7 @@ import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormCoverage;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
 
 /**
@@ -198,8 +199,16 @@ public class ProjectProblemsReader
         int limit = JsonUtils.extractIntArgument(params, "limit", configured); //$NON-NLS-1$
         limit = Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, limit));
 
-        return getProjectErrors(projectName, severity, checkId, objects, limit, resolvedScope, fileFilter,
+        String answer = getProjectErrors(projectName, severity, checkId, objects, limit, resolvedScope, fileFilter,
             waitForRefresh, compact, extraInfo);
+        if (projectName == null || projectName.isEmpty() || answer.startsWith("# Request Failed")) //$NON-NLS-1$
+        {
+            return answer;
+        }
+        // Markers come from the validation of the model, and the model holds no ordinary form
+        // module: a clean answer over such a project is clean about part of the code.
+        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        return OrdinaryFormCoverage.appendTo(project.exists() ? project : null, "markers", answer); //$NON-NLS-1$
     }
 
     /**

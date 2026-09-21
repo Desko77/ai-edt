@@ -28,6 +28,7 @@ import ru.aiedt.mcp.server.support.BslCommentParseHelper;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.UiSync;
 
@@ -120,6 +121,24 @@ public class MethodSourceReader
             return resolution.getHint();
         }
         String resolvedPath = resolution.getPath();
+
+        OrdinaryFormModule ordinaryForm = OrdinaryFormModule.locate(project, resolvedPath);
+        if (ordinaryForm != null)
+        {
+            // EDT builds no model of an ordinary form's module: straight to the text reader.
+            List<String> lines;
+            try
+            {
+                lines = ordinaryForm.lines();
+            }
+            catch (Exception e)
+            {
+                return "Error: could not read the ordinary form's container src/" + ordinaryForm.containerPath() //$NON-NLS-1$
+                    + ": " + e.getMessage(); //$NON-NLS-1$
+            }
+            return readMethodFromLines(lines, resolvedPath, methodName, includeDoc, projectName,
+                ordinaryForm.containerPath());
+        }
 
         String result;
         try
@@ -279,7 +298,23 @@ public class MethodSourceReader
         {
             return "Error: could not read the file: " + e.getMessage(); //$NON-NLS-1$
         }
+        return readMethodFromLines(lines, modulePath, methodName, includeDoc, projectName, null);
+    }
 
+    /**
+     * Finds the method in module lines and renders it.
+     *
+     * @param lines the module lines
+     * @param modulePath the module path, for the header
+     * @param methodName the method name
+     * @param includeDoc whether to append the parsed doc-comment
+     * @param projectName the project name for the header
+     * @param containerPath the container the lines came from, or <code>null</code> for a file
+     * @return the answer
+     */
+    private String readMethodFromLines(List<String> lines, String modulePath, String methodName,
+        boolean includeDoc, String projectName, String containerPath)
+    {
         int methodStart = -1;
         boolean isFunction = false;
         List<String> available = new ArrayList<>();
@@ -339,6 +374,11 @@ public class MethodSourceReader
         if (region != null)
         {
             frontMatter.put("region", region); //$NON-NLS-1$
+        }
+        if (containerPath != null)
+        {
+            frontMatter.put("source", OrdinaryFormModule.SOURCE); //$NON-NLS-1$
+            frontMatter.put("container", containerPath); //$NON-NLS-1$
         }
 
         StringBuilder body = new StringBuilder();

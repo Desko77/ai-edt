@@ -224,7 +224,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("compare_three_way", Integer.valueOf(3558));
         PROSE.put("insights", Integer.valueOf(5393));
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
-        PROSE.put("write_module_source", Integer.valueOf(4985));
+        PROSE.put("write_module_source", Integer.valueOf(5390));
         PROSE.put("code_search", Integer.valueOf(3357));
         PROSE.put("infobase_admin", Integer.valueOf(4356));
         PROSE.put("config_io", Integer.valueOf(3064));
@@ -354,5 +354,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * author pair, the branch and its creation flag are what a caller has to name to get there.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 85978;
+    private static final int DOCUMENT_PROSE = 86383;
 }

@@ -95,7 +95,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
 | `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch. |
-| `ordinary_forms` | Ordinary (non-managed) forms read from their `Form.oform` containers: `audit` measures versions and byte-for-byte round trips. |
+| `ordinary_forms` | Ordinary (non-managed) forms read from their `Form.oform` containers: `audit` measures versions and byte-for-byte round trips. Their modules are read and written by the everyday module tools - see below. |
 | `yaxunit_tests` | YAxUnit unit tests. |
 
 Constructors are called directly, not through a facade: `dcs_workshop` (data composition schemas),
@@ -108,6 +108,26 @@ So are the everyday reading and writing tools: `write_module_source`, `read_modu
 `diff_module`, `get_form_structure`, `get_form_screenshot`, `code_review`, `get_edt_version`.
 
 `code_search` never writes. It only reads.
+
+### Ordinary forms have a module but no module file
+
+EDT keeps an ordinary (non-managed) form as one container, `Form.oform`, with the layout and the
+module inside, builds no model of it and opens no editor on it. The module tools take the address
+every form module has - `<type>/<object>/Forms/<form>/Module.bsl`, or the FQN
+`Type.Object.Form.Name` - and read and write the container behind it: `read_module_source`,
+`get_module_structure`, `read_method_source` answer from the container and mark the answer
+`source: oform` with the `container` path; `write_module_source` writes the module back and leaves
+the layout entry byte for byte; `list_modules` lists such a module under that address with the
+kind `OrdinaryFormModule`; `code_search operation=text_search` scans the containers and reports a
+hit under the same address. `get_metadata_details` shows `Ordinary` in the Form Type column.
+
+The layout binds events to procedures by name, and EDT resolves none of it. A write that removes
+or renames such a procedure is caught by the writer: `handlerChanges=warn` (default) writes and
+lists the names under `unboundProcedures`, `handlerChanges=refuse` leaves the container unchanged;
+`dryRun=true` shows the names before anything is written. Tools that answer from the BSL index -
+`call_hierarchy`, `object_references`, `get_project_errors` - end with a `Coverage` line naming
+how many ordinary form modules the index does not see; read a bare "nothing calls it" over such a
+project as a statement about part of the code.
 
 ### The Canonical preset hides aliases
 

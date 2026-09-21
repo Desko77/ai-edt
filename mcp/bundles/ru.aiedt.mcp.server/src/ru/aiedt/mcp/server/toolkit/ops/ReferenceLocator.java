@@ -69,6 +69,7 @@ import ru.aiedt.mcp.server.support.ExternalProjectResolver;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormCoverage;
 import ru.aiedt.mcp.server.support.ProjectScopeResolver;
 
 /**
@@ -689,7 +690,9 @@ public class ReferenceLocator implements IMcpTool
             sink.stopped = watch.stopped() || !master.phasesCutShort.isEmpty();
             sink.phasesNotRun = master.phasesCutShort;
         }
-        return formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
+        String report = formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
+        // The BSL phase reads the index, and the index holds no ordinary form module.
+        return filter.bsl ? OrdinaryFormCoverage.appendTo(project, "references", report) : report; //$NON-NLS-1$
     }
 
     /**

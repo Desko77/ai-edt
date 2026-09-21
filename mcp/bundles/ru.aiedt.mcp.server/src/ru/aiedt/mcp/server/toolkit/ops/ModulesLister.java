@@ -30,6 +30,8 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormLocator;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 import ru.aiedt.mcp.server.support.UiSync;
 
 /**
@@ -142,7 +144,7 @@ public class ModulesLister
      * @param limit the most rows to show
      * @return the markdown, or an {@code Error:} line
      */
-    private static String listModules(String projectName, String metadataType, String objectName,
+    static String listModules(String projectName, String metadataType, String objectName,
         String nameFilter, int limit)
     {
         try
@@ -216,7 +218,7 @@ public class ModulesLister
             {
                 continue;
             }
-            String modulePath = relative.toString();
+            String modulePath = moduleAddress(file, relative);
             String first = relative.segment(0);
             String parentName;
             String parentType;
@@ -242,10 +244,41 @@ public class ModulesLister
             }
 
             String basePath = relative.segment(0) + "/" + relative.segment(1); //$NON-NLS-1$
-            result.add(new ModuleInfo(modulePath, determineModuleType(modulePath, basePath), parentType,
-                parentName));
+            result.add(new ModuleInfo(modulePath, kindOf(file, modulePath, basePath), parentType, parentName));
         }
         return result;
+    }
+
+    /**
+     * The address a module is read and written by: the file's own path, or for an ordinary
+     * form's container the {@code Module.bsl} beside it, which the module tools resolve to the
+     * container.
+     *
+     * @param file the file
+     * @param relative its {@code src}-relative path
+     * @return the address
+     */
+    private static String moduleAddress(IFile file, IPath relative)
+    {
+        return OrdinaryFormLocator.FILE_NAME.equals(file.getName())
+            ? OrdinaryFormModule.moduleAddressOf(relative.toString())
+            : relative.toString();
+    }
+
+    /**
+     * The kind of a module: read off its file name, or {@link OrdinaryFormModule#KIND} for one
+     * that lives in a container.
+     *
+     * @param file the file
+     * @param modulePath the module address
+     * @param basePath the object's folder
+     * @return the kind
+     */
+    private static String kindOf(IFile file, String modulePath, String basePath)
+    {
+        return OrdinaryFormLocator.FILE_NAME.equals(file.getName())
+            ? OrdinaryFormModule.KIND
+            : determineModuleType(modulePath, basePath);
     }
 
     /**
@@ -293,6 +326,10 @@ public class ModulesLister
                 {
                     result.add(new ModuleInfo(modulePath, type.singleModuleType, type.typeName, name));
                 }
+                else if (OrdinaryFormModule.isOne(project, modulePath) && matchesNameFilter(modulePath, nameFilter))
+                {
+                    result.add(new ModuleInfo(modulePath, OrdinaryFormModule.KIND, type.typeName, name));
+                }
                 continue;
             }
 
@@ -306,13 +343,13 @@ public class ModulesLister
             String basePath = folder + "/" + name; //$NON-NLS-1$
             for (IFile file : files)
             {
-                String modulePath = file.getProjectRelativePath().removeFirstSegments(1).toString();
+                IPath relative = file.getProjectRelativePath().removeFirstSegments(1);
+                String modulePath = moduleAddress(file, relative);
                 if (!matchesNameFilter(modulePath, nameFilter))
                 {
                     continue;
                 }
-                result.add(new ModuleInfo(modulePath, determineModuleType(modulePath, basePath),
-                    type.typeName, name));
+                result.add(new ModuleInfo(modulePath, kindOf(file, modulePath, basePath), type.typeName, name));
             }
         }
         return result;
@@ -339,6 +376,11 @@ public class ModulesLister
             {
                 String extension = member.getFileExtension();
                 if (extension != null && extension.equalsIgnoreCase(BSL_EXTENSION))
+                {
+                    out.add((IFile)member);
+                }
+                else if (OrdinaryFormLocator.FILE_NAME.equals(member.getName())
+                    && !container.getFile(new Path("Module.bsl")).exists()) //$NON-NLS-1$
                 {
                     out.add((IFile)member);
                 }
@@ -495,14 +537,27 @@ public class ModulesLister
 
         builder.append("| Path | Kind | Owner Type | Owner Name |\n"); //$NON-NLS-1$
         builder.append("|-------------|-------------|-------------|-------------|\n"); //$NON-NLS-1$
+        int ordinary = 0;
         for (int i = 0; i < shown; i++)
         {
             ModuleInfo module = modules.get(i);
+            if (OrdinaryFormModule.KIND.equals(module.moduleType))
+            {
+                ordinary++;
+            }
             builder.append("| ").append(module.modulePath) //$NON-NLS-1$
                 .append(" | ").append(module.moduleType) //$NON-NLS-1$
                 .append(" | ").append(module.parentType) //$NON-NLS-1$
                 .append(" | ").append(module.parentName) //$NON-NLS-1$
                 .append(" |\n"); //$NON-NLS-1$
+        }
+        if (ordinary > 0)
+        {
+            builder.append("\n").append(ordinary).append(" module") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(ordinary == 1 ? "" : "s").append(" of kind ").append(OrdinaryFormModule.KIND) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                .append(" belong to ordinary forms: the module lives in the Form.oform container beside " //$NON-NLS-1$
+                    + "the path shown, EDT builds no model of it, and read_module_source / " //$NON-NLS-1$
+                    + "write_module_source take the path shown as the address.\n"); //$NON-NLS-1$
         }
         return builder.toString();
     }

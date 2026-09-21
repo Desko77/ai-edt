@@ -19,6 +19,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess.ModulePathResolution;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 
 /**
  * Serves a BSL module's text back to the agent, either whole or a chosen line span, with each line
@@ -107,7 +108,8 @@ public class ModuleSourceReader
         modulePath = resolution.getPath();
 
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
-        if (!file.exists())
+        OrdinaryFormModule ordinaryForm = file.exists() ? null : OrdinaryFormModule.locate(project, modulePath);
+        if (!file.exists() && ordinaryForm == null)
         {
             return "Error: no such file: src/" + modulePath //$NON-NLS-1$
                 + ". Expected a path like 'CommonModules/ModuleName/Module.bsl' or " //$NON-NLS-1$
@@ -117,13 +119,13 @@ public class ModuleSourceReader
         // What an open editor holds, when it holds something the file does not. A read that
         // answered from the file would describe a state the user is no longer looking at, and the
         // next write would be made against it.
-        List<String> lines = ru.aiedt.mcp.server.support.EditorBuffer.unsavedLines(file);
+        List<String> lines = ordinaryForm != null ? null : ru.aiedt.mcp.server.support.EditorBuffer.unsavedLines(file);
         boolean fromEditor = lines != null;
         if (!fromEditor)
         {
             try
             {
-                lines = BslModuleAccess.readFileLines(file);
+                lines = ordinaryForm != null ? ordinaryForm.lines() : BslModuleAccess.readFileLines(file);
             }
             catch (Exception e)
             {
@@ -135,6 +137,14 @@ public class ModuleSourceReader
             ? "\n\n**Unsaved:** this is what the open editor holds; the file on disk still has the "
                 + "previous text." //$NON-NLS-1$
             : ""; //$NON-NLS-1$
+        if (ordinaryForm != null)
+        {
+            // The address is a file that does not exist; what was read is said, so a caller
+            // that goes on to write knows the write lands in the container as well.
+            unsavedNote = "\n\n**Source:** " + OrdinaryFormModule.SOURCE + " - the module entry of the ordinary form's " //$NON-NLS-1$ //$NON-NLS-2$
+                + "container src/" + ordinaryForm.containerPath() + "; EDT builds no model of it. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "write_module_source by this address writes into the same container."; //$NON-NLS-1$
+        }
         int total = lines.size();
         if (total == 0)
         {
