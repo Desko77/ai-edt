@@ -43,6 +43,7 @@ import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.oform.HandlerBindings;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormDelivery;
 import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 
 /**
@@ -632,14 +633,19 @@ public class ModuleSourceWriter implements IMcpTool
             // --- step 13: write file ---
             PersistenceResult persistence;
             FileMarkers.Grouped validation = null;
+            String delivery = null;
             if (ordinaryForm != null)
             {
-                ordinaryForm.write(newLines);
+                boolean written = ordinaryForm.write(newLines);
                 // Nothing in the BM holds this module, so there is no index to flush and no
                 // marker to wait for; saying so beats a "skipped" that reads as a failure.
                 persistence = PersistenceResult.notApplicable(
                     "not applicable: the module lives in the Form.oform container, which EDT reads " //$NON-NLS-1$
                         + "from disk at update_database and builds no model of"); //$NON-NLS-1$
+                // EDT's incremental update does not map a changed Form.oform to its owner, so
+                // the owner is marked as changed where the update reads what changed.
+                delivery = written ? OrdinaryFormDelivery.mark(project, ordinaryForm).statement()
+                    : "nothing changed, nothing to deliver"; //$NON-NLS-1$
             }
             else
             {
@@ -682,6 +688,7 @@ public class ModuleSourceWriter implements IMcpTool
                 fm.put("handlerChanges", handlerChanges); //$NON-NLS-1$
                 fm.put("validation", "not available: EDT builds no model of an ordinary form's module; " //$NON-NLS-1$ //$NON-NLS-2$
                     + "the platform checks it at update_database"); //$NON-NLS-1$
+                fm.put("delivery", delivery); //$NON-NLS-1$
             }
             if (!unboundProcedures.isEmpty())
                 fm.put("unboundProcedures", String.join(", ", unboundProcedures)); //$NON-NLS-1$ //$NON-NLS-2$
