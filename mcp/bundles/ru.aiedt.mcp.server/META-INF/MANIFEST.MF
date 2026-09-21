@@ -148,4 +148,5 @@ Export-Package: ru.aiedt.mcp.server;x-internal:=true,
  ru.aiedt.mcp.server.support;x-internal:=true,
  ru.aiedt.mcp.server.support.modules,
  ru.aiedt.mcp.server.toolkit,
+ ru.aiedt.mcp.server.toolkit.ops;x-internal:=true,
  ru.aiedt.mcp.server.wire
