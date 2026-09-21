@@ -9,7 +9,6 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -589,36 +588,13 @@ public class SyncControlTool implements IMcpTool
         {
             return null;
         }
-        byte[] all = java.nio.file.Files.readAllBytes(file);
-        boolean versioned = all.length >= 5 && all[0] == 0 && all[1] == 3
-            && all[2] == '1' && all[3] == '.' && all[4] == '0';
-        try (java.io.DataInputStream dis = new java.io.DataInputStream(new java.io.ByteArrayInputStream(all)))
+        IndexFile index = readIndexFile(file);
+        Map<String, byte[]> result = new LinkedHashMap<>();
+        for (int i = 0; i < index.keys.size(); i++)
         {
-            if (versioned)
-            {
-                dis.readUTF(); // version "1.0"
-            }
-            dis.readLong(); // timestamp
-            int count = dis.readInt();
-            Map<String, byte[]> result = new LinkedHashMap<>();
-            for (int i = 0; i < count; i++)
-            {
-                String key = dis.readUTF();
-                int len = dis.readInt();
-                if (len < 0 || len > 100000)
-                {
-                    throw new IOException("Unexpected signature length " + len + " - format mismatch."); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                byte[] sig = new byte[len];
-                dis.readFully(sig);
-                if (versioned && dis.readBoolean())
-                {
-                    dis.readUTF(); // per-resource UUID
-                }
-                result.put(key, sig);
-            }
-            return result;
+            result.put(index.keys.get(i), index.signatures.get(i));
         }
+        return result;
     }
 
     /** First up to 8 bytes of a signature as lowercase hex (for mismatch examples). */
@@ -816,46 +792,12 @@ public class SyncControlTool implements IMcpTool
      */
     private static void rewriteIndexIdxConfigUuid(Path file, String newUuid) throws IOException
     {
-        long timestamp;
-        String generationId;
-        List<String> keys = new ArrayList<>();
-        List<byte[]> sigs = new ArrayList<>();
-        try (DataInputStream dis = new DataInputStream(new FileInputStream(file.toFile())))
-        {
-            timestamp = dis.readLong();
-            int count = dis.readInt();
-            if (count < 0 || count > MAX_SIGNATURE_COUNT)
-            {
-                throw new IOException("index.idx signature count out of range: " + count); //$NON-NLS-1$
-            }
-            for (int i = 0; i < count; i++)
-            {
-                keys.add(dis.readUTF());
-                int len = dis.readInt();
-                if (len < 0 || len > MAX_SIGNATURE_BYTES)
-                {
-                    throw new IOException("index.idx signature length out of range: " + len); //$NON-NLS-1$
-                }
-                byte[] b = new byte[len];
-                dis.readFully(b);
-                sigs.add(b);
-            }
-            generationId = dis.readUTF();
-            dis.readUTF(); // old configuration UUID (replaced below)
-        }
+        IndexFile index = readIndexFile(file);
+        index.configurationUuid = newUuid;
         File tmp = new File(file.toFile().getAbsolutePath() + ".tmp"); //$NON-NLS-1$
         try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(tmp)))
         {
-            dos.writeLong(timestamp);
-            dos.writeInt(keys.size());
-            for (int i = 0; i < keys.size(); i++)
-            {
-                dos.writeUTF(keys.get(i));
-                dos.writeInt(sigs.get(i).length);
-                dos.write(sigs.get(i));
-            }
-            dos.writeUTF(generationId);
-            dos.writeUTF(newUuid);
+            writeIndexFile(index, dos);
         }
         Files.move(tmp.toPath(), file, StandardCopyOption.REPLACE_EXISTING);
     }
@@ -1656,37 +1598,127 @@ public class SyncControlTool implements IMcpTool
     /**
      * Parses an {@code index.idx} baseline file. Binary format (big-endian, Java DataOutput):
      * long timestamp, int signatureCount, then per signature (UTF key, int length, length
-     * bytes), then UTF generationId, UTF configurationUUID. Returns {@code null} if unreadable.
+     * bytes), then UTF generationId, UTF configurationUUID. EDT 2026 writes a versioned layout:
+     * UTF version {@code "1.0"} first, and after each signature a boolean that says whether a
+     * per-resource UUID (UTF) follows. Returns {@code null} if unreadable.
      */
     private IndexInfo parseIndexIdx(Path file)
     {
-        try (DataInputStream dis = new DataInputStream(new FileInputStream(file.toFile())))
+        try
         {
-            long timestamp = dis.readLong();
-            int count = dis.readInt();
-            if (count < 0 || count > MAX_SIGNATURE_COUNT)
-            {
-                return null;
-            }
-            for (int i = 0; i < count; i++)
-            {
-                dis.readUTF();
-                int len = dis.readInt();
-                if (len < 0 || len > MAX_SIGNATURE_BYTES)
-                {
-                    return null;
-                }
-                byte[] buf = new byte[len];
-                dis.readFully(buf);
-            }
-            String generationId = dis.readUTF();
-            String configurationUuid = dis.readUTF();
-            return new IndexInfo(timestamp, count, generationId, configurationUuid);
+            IndexFile index = readIndexFile(file);
+            return new IndexInfo(index.timestamp, index.keys.size(), index.generationId, index.configurationUuid);
         }
         catch (Exception e)
         {
             return null;
         }
+    }
+
+    /**
+     * Whether an {@code index.idx} starts with the version prefix EDT 2026 writes.
+     *
+     * @param all the file's bytes
+     * @return {@code true} for the versioned layout
+     */
+    private static boolean isVersionedIndex(byte[] all)
+    {
+        return all.length >= 5 && all[0] == 0 && all[1] == 3 && all[2] == '1' && all[3] == '.' && all[4] == '0';
+    }
+
+    /**
+     * Reads a whole {@code index.idx}, either layout.
+     *
+     * @param file the index
+     * @return its content
+     * @throws IOException when the bytes do not read as an index
+     */
+    private static IndexFile readIndexFile(Path file) throws IOException
+    {
+        byte[] all = Files.readAllBytes(file);
+        IndexFile index = new IndexFile();
+        index.versioned = isVersionedIndex(all);
+        try (DataInputStream dis = new DataInputStream(new java.io.ByteArrayInputStream(all)))
+        {
+            if (index.versioned)
+            {
+                index.version = dis.readUTF();
+            }
+            index.timestamp = dis.readLong();
+            int count = dis.readInt();
+            if (count < 0 || count > MAX_SIGNATURE_COUNT)
+            {
+                throw new IOException("index.idx signature count out of range: " + count); //$NON-NLS-1$
+            }
+            for (int i = 0; i < count; i++)
+            {
+                index.keys.add(dis.readUTF());
+                int len = dis.readInt();
+                if (len < 0 || len > MAX_SIGNATURE_BYTES)
+                {
+                    throw new IOException("index.idx signature length out of range: " + len); //$NON-NLS-1$
+                }
+                byte[] b = new byte[len];
+                dis.readFully(b);
+                index.signatures.add(b);
+                String uuid = null;
+                if (index.versioned && dis.readBoolean())
+                {
+                    uuid = dis.readUTF();
+                }
+                index.resourceUuids.add(uuid);
+            }
+            index.generationId = dis.readUTF();
+            index.configurationUuid = dis.readUTF();
+        }
+        return index;
+    }
+
+    /**
+     * Writes an index in the layout it was read in.
+     *
+     * @param index the content
+     * @param dos where to write
+     * @throws IOException when the write fails
+     */
+    private static void writeIndexFile(IndexFile index, DataOutputStream dos) throws IOException
+    {
+        if (index.versioned)
+        {
+            dos.writeUTF(index.version);
+        }
+        dos.writeLong(index.timestamp);
+        dos.writeInt(index.keys.size());
+        for (int i = 0; i < index.keys.size(); i++)
+        {
+            dos.writeUTF(index.keys.get(i));
+            dos.writeInt(index.signatures.get(i).length);
+            dos.write(index.signatures.get(i));
+            if (index.versioned)
+            {
+                String uuid = index.resourceUuids.get(i);
+                dos.writeBoolean(uuid != null);
+                if (uuid != null)
+                {
+                    dos.writeUTF(uuid);
+                }
+            }
+        }
+        dos.writeUTF(index.generationId);
+        dos.writeUTF(index.configurationUuid);
+    }
+
+    /** The content of an {@code index.idx}, in either layout. */
+    private static final class IndexFile
+    {
+        boolean versioned;
+        String version;
+        long timestamp;
+        final List<String> keys = new ArrayList<>();
+        final List<byte[]> signatures = new ArrayList<>();
+        final List<String> resourceUuids = new ArrayList<>();
+        String generationId;
+        String configurationUuid;
     }
 
     /**
