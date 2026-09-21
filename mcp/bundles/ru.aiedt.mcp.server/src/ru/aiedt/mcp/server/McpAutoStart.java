@@ -56,6 +56,8 @@ public class McpAutoStart
             // The plugin is not checked for null. The workbench had to activate this bundle to reach
             // this class at all, so the activator has run and the server it builds is already there.
             Activator activator = Activator.getDefault();
+            // An activator that ran before the workbench left the toolbar and the filter for here.
+            activator.completeUiInitialization();
             IPreferenceStore preferences = activator.getPreferenceStore();
 
             // Ahead of the auto-start check, and that placement is the whole point: watching for a
