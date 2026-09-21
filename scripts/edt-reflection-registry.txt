@@ -161,6 +161,8 @@ com._1c.g5.v8.dt.platform.IEObjectProvider$Registry INSTANCE,get
 probe com._1c.g5.v8.dt.platform.pictures.PlatformPictures
 probe com._1c.g5.v8.dt.platform.pictures.StandardPictures
 id com._1c.g5.v8.dt.platform.services.core.componentTypes.ThinClient
+id com._1c.g5.v8.dt.platform.services.core.componentTypes.ThickClient
+id com._1c.g5.v8.dt.platform.services.core.componentTypes.WebClient
 com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumper dump
 id com._1c.g5.v8.dt.platform.services.core.runtimeType.EnterprisePlatform
 com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport
