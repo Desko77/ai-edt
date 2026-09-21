@@ -19,12 +19,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -53,9 +55,12 @@ import ru.aiedt.mcp.server.support.TextSuggest;
  * Inspect and control EDT&lt;-&gt;infobase synchronization (the engine that decides
  * full-config-reload vs incremental on "Update infobase").
  *
- * <p>EDT keeps a per-infobase baseline at
- * {@code %APPDATA%\.1cedt\ib-sync\ss\<infobaseUuid>\index.idx} holding the configuration
- * UUID recorded at the last successful sync. {@code UpdateInfobaseFlow.start()} compares
+ * <p>EDT keeps a per-infobase baseline at {@code ib-sync\ss\<infobaseUuid>\index.idx} holding
+ * the configuration UUID recorded at the last successful sync. EDT 2026 keeps that store in the
+ * project's private working location inside the workspace
+ * ({@code .metadata\.plugins\org.eclipse.core.resources\.projects\<project>\com._1c.g5.v8.dt.platform.services.core\ib-sync\ss},
+ * beside the {@code ConfigDumpInfo.xml} of the infobase); older EDT kept it under
+ * {@code %APPDATA%\.1cedt\ib-sync\ss}. Both are read, the workspace store first. {@code UpdateInfobaseFlow.start()} compares
  * the project's live {@code Configuration} UUID to that baseline UUID; a mismatch (or a
  * missing/empty baseline) forces a FULL reload of the whole configuration - slow on large
  * configs (ERP). See {@code operation=status}.
@@ -102,7 +107,8 @@ public class SyncControlTool implements IMcpTool
             + "Inspect and control EDT<->infobase synchronization (full-reload vs incremental). " //$NON-NLS-1$
             + "operation=status (read-only): predicts whether the next 'Update infobase' will be a FULL " //$NON-NLS-1$
             + "configuration reload or incremental, by comparing the project's Configuration UUID with the " //$NON-NLS-1$
-            + "EDT sync baseline (%APPDATA%\\.1cedt\\ib-sync\\ss) - diagnoses 'indexes diverged / will be full'. " //$NON-NLS-1$
+            + "EDT sync baseline (ib-sync/ss in the project's working location inside the workspace, or " //$NON-NLS-1$
+            + "%APPDATA%/.1cedt/ib-sync/ss on older EDT) - diagnoses 'indexes diverged / will be full'. " //$NON-NLS-1$
             + "operation=diagnose (read-only): for each baseline matching the project, reports the live " //$NON-NLS-1$
             + "getEqualityState + isConnected and the resulting application update state - explains exactly why the " //$NON-NLS-1$
             + "pre-launch 'load changed objects' dialog appears (UPDATED = no dialog). " //$NON-NLS-1$
@@ -218,12 +224,17 @@ public class SyncControlTool implements IMcpTool
     private String doStatus(IProject project)
     {
         String liveUuid = readConfigurationUuid(project);
-        Path ssRoot = syncStoreSsPath();
+        List<Path> ssRoots = syncStoreSsRoots(project);
 
         ToolResult res = ToolResult.success()
             .put("operation", "status") //$NON-NLS-1$ //$NON-NLS-2$
             .put("projectName", project.getName()) //$NON-NLS-1$
-            .put("syncStorePath", ssRoot.toString()); //$NON-NLS-1$
+            .put("syncStorePath", ssRoots.isEmpty() ? syncStoreSsPath(project).toString() //$NON-NLS-1$
+                : ssRoots.get(0).toString());
+        if (ssRoots.size() > 1)
+        {
+            res.put("syncStorePaths", ssRoots.stream().map(Path::toString).collect(Collectors.toList())); //$NON-NLS-1$
+        }
 
         if (liveUuid == null)
         {
@@ -235,19 +246,28 @@ public class SyncControlTool implements IMcpTool
         }
         res.put("liveConfigurationUuid", liveUuid); //$NON-NLS-1$
 
-        if (!ssRoot.toFile().isDirectory())
+        if (ssRoots.isEmpty())
         {
             res.put("prediction", "FULL"); //$NON-NLS-1$ //$NON-NLS-2$
             res.put("willTriggerFullReload", true); //$NON-NLS-1$
-            res.put("summary", "No EDT sync store found at " + ssRoot //$NON-NLS-1$
+            res.put("summary", "No EDT sync store found at " + syncStoreSsPath(project) + " nor at " //$NON-NLS-1$ //$NON-NLS-2$
+                + roamingSyncStoreSsPath()
                 + " - there is no baseline, so the next update will be a FULL configuration reload."); //$NON-NLS-1$
             return res.toJson();
         }
 
         List<Map<String, Object>> all = new ArrayList<>();
         Map<String, Object> matched = null;
-        File[] ibDirs = ssRoot.toFile().listFiles(File::isDirectory);
-        if (ibDirs != null)
+        List<File> ibDirs = new ArrayList<>();
+        for (Path root : ssRoots)
+        {
+            File[] dirs = root.toFile().listFiles(File::isDirectory);
+            if (dirs != null)
+            {
+                ibDirs.addAll(Arrays.asList(dirs));
+            }
+        }
+        if (!ibDirs.isEmpty())
         {
             for (File ibDir : ibDirs)
             {
@@ -266,6 +286,8 @@ public class SyncControlTool implements IMcpTool
                 boolean isMatch = liveUuid.equals(info.configurationUuid);
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("infobaseUuid", ibDir.getName()); //$NON-NLS-1$
+                entry.put("store", ibDir.getParentFile().getParentFile().getParentFile().getName() //$NON-NLS-1$
+                    .equals("com._1c.g5.v8.dt.platform.services.core") ? "workspace" : "roaming"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 entry.put("configurationUuid", info.configurationUuid); //$NON-NLS-1$
                 entry.put("signatureCount", info.signatureCount); //$NON-NLS-1$
                 entry.put("matchesProject", isMatch); //$NON-NLS-1$
@@ -370,9 +392,16 @@ public class SyncControlTool implements IMcpTool
         }
 
         List<Map<String, Object>> matching = new ArrayList<>();
-        Path ssRoot = syncStoreSsPath();
-        File[] ibDirs = ssRoot.toFile().isDirectory() ? ssRoot.toFile().listFiles(File::isDirectory) : null;
-        if (ibDirs != null)
+        List<File> ibDirs = new ArrayList<>();
+        for (Path root : syncStoreSsRoots(project))
+        {
+            File[] dirs = root.toFile().listFiles(File::isDirectory);
+            if (dirs != null)
+            {
+                ibDirs.addAll(Arrays.asList(dirs));
+            }
+        }
+        if (!ibDirs.isEmpty())
         {
             for (File ibDir : ibDirs)
             {
@@ -397,6 +426,8 @@ public class SyncControlTool implements IMcpTool
                 }
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("infobaseUuid", ibDir.getName()); //$NON-NLS-1$
+                entry.put("store", ibDir.getParentFile().getParentFile().getParentFile().getName() //$NON-NLS-1$
+                    .equals("com._1c.g5.v8.dt.platform.services.core") ? "workspace" : "roaming"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 entry.put("signatureCount", info.signatureCount); //$NON-NLS-1$
                 try
                 {
@@ -467,7 +498,7 @@ public class SyncControlTool implements IMcpTool
         {
             return ToolResult.error("Could not obtain EDT effective signatures (run inside EDT, project loaded).").toJson(); //$NON-NLS-1$
         }
-        Path idx = syncStoreSsPath().resolve(infobaseUuid.trim()).resolve("index.idx"); //$NON-NLS-1$
+        Path idx = indexOf(project, infobaseUuid.trim());
         Map<String, byte[]> baseline;
         try
         {
@@ -718,7 +749,7 @@ public class SyncControlTool implements IMcpTool
 
         // The baseline must already hold this project's resource signatures; reseeding an empty/missing
         // baseline only flips the UUID and the first update would still push everything.
-        Path idx = syncStoreSsPath().resolve(infobaseUuid.trim()).resolve("index.idx"); //$NON-NLS-1$
+        Path idx = indexOf(project, infobaseUuid.trim());
         IndexInfo before = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
         if (before == null || before.signatureCount <= 0)
         {
@@ -1398,7 +1429,7 @@ public class SyncControlTool implements IMcpTool
             return ToolResult.error("The project's Configuration UUID is not a parseable UUID: '" //$NON-NLS-1$
                 + liveUuid + "'.").toJson(); //$NON-NLS-1$
         }
-        Path idx = syncStoreSsPath().resolve(infobaseUuid.trim()).resolve("index.idx"); //$NON-NLS-1$
+        Path idx = indexOf(project, infobaseUuid.trim());
         IndexInfo before = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
         if (before == null)
         {
@@ -1658,13 +1689,76 @@ public class SyncControlTool implements IMcpTool
         }
     }
 
-    private static Path syncStoreSsPath()
+    /**
+     * The sync store EDT 2026 keeps for a project: {@code ib-sync/ss} under the project's private
+     * working location of the platform services plug-in, inside the workspace.
+     *
+     * @param project the project
+     * @return the store path; it need not exist
+     */
+    private static Path syncStoreSsPath(IProject project)
+    {
+        return project.getWorkingLocation("com._1c.g5.v8.dt.platform.services.core").toFile().toPath() //$NON-NLS-1$
+            .resolve("ib-sync").resolve("ss"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The sync store older EDT kept per user, outside any workspace.
+     *
+     * @return the store path; it need not exist
+     */
+    private static Path roamingSyncStoreSsPath()
     {
         String appData = System.getenv("APPDATA"); //$NON-NLS-1$
         Path base = (appData != null && !appData.isEmpty())
             ? Paths.get(appData)
             : Paths.get(System.getProperty("user.home")); //$NON-NLS-1$
         return base.resolve(".1cedt").resolve("ib-sync").resolve("ss"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * The sync stores that exist for a project, the workspace one first.
+     *
+     * @param project the project
+     * @return the existing store directories, possibly none
+     */
+    private static List<Path> syncStoreSsRoots(IProject project)
+    {
+        List<Path> roots = new ArrayList<>();
+        for (Path candidate : new Path[] { syncStoreSsPath(project), roamingSyncStoreSsPath() })
+        {
+            if (candidate.toFile().isDirectory())
+            {
+                roots.add(candidate);
+            }
+        }
+        return roots;
+    }
+
+    /**
+     * The baseline index of an infobase: the first store that holds one, the workspace store's
+     * candidate when none does, so a refusal names the place EDT 2026 would write.
+     *
+     * @param project the project
+     * @param infobaseUuid the infobase
+     * @return the index path; it need not exist
+     */
+    private static Path indexOf(IProject project, String infobaseUuid)
+    {
+        Path first = null;
+        for (Path root : new Path[] { syncStoreSsPath(project), roamingSyncStoreSsPath() })
+        {
+            Path idx = root.resolve(infobaseUuid).resolve("index.idx"); //$NON-NLS-1$
+            if (first == null)
+            {
+                first = idx;
+            }
+            if (idx.toFile().isFile())
+            {
+                return idx;
+            }
+        }
+        return first;
     }
 
     private static final class IndexInfo
