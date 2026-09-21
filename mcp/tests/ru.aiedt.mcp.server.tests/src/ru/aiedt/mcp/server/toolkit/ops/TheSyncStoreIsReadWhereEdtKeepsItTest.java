@@ -115,6 +115,7 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
         JsonObject ours = baselineOf(status.getAsJsonArray("baselines")); //$NON-NLS-1$
         assertEquals("workspace", ours.get("store").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(DRIFTED, ours.get("configurationUuid").getAsString()); //$NON-NLS-1$
+        assertEquals(2, ours.get("signatureCount").getAsInt()); //$NON-NLS-1$
 
         JsonObject reseeded = JsonParser.parseString(tool.execute(Map.of("operation", "reseed_baseline", //$NON-NLS-1$ //$NON-NLS-2$
             "projectName", PROJECT, "infobaseUuid", INFOBASE, "confirm", "true"))).getAsJsonObject(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
@@ -126,6 +127,11 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
         assertEquals("INCREMENTAL", after.get("prediction").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(INFOBASE, after.getAsJsonObject("matchedBaseline").get("infobaseUuid").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("workspace", after.getAsJsonObject("matchedBaseline").get("store").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        // The rewrite kept the layout: the version prefix, both signatures and the resource id.
+        byte[] rewritten = Files.readAllBytes(index);
+        assertEquals(2, after.getAsJsonObject("matchedBaseline").get("signatureCount").getAsInt()); //$NON-NLS-1$
+        assertTrue(new String(rewritten, 0, 5, StandardCharsets.ISO_8859_1).endsWith("1.0")); //$NON-NLS-1$
+        assertTrue(new String(rewritten, StandardCharsets.ISO_8859_1).contains("0f7a0c5e-1c1d-4f3e-9a1e-4b2c8d9e0f11")); //$NON-NLS-1$
     }
 
     private static JsonObject baselineOf(JsonArray baselines)
@@ -141,15 +147,26 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
         throw new AssertionError("the workspace baseline is not listed: " + baselines); //$NON-NLS-1$
     }
 
+    /**
+     * Writes the index in the layout EDT 2026 writes: a version, then per signature a flag that
+     * says whether a resource id follows.
+     */
     private static void writeIndex(Path file, String configurationUuid) throws Exception
     {
         try (DataOutputStream out = new DataOutputStream(new FileOutputStream(file.toFile())))
         {
+            out.writeUTF("1.0"); //$NON-NLS-1$
             out.writeLong(System.currentTimeMillis());
-            out.writeInt(1);
+            out.writeInt(2);
             out.writeUTF("src/CommonModules/Probe/Module.bsl"); //$NON-NLS-1$
             out.writeInt(2);
             out.write(new byte[] { 1, 2 });
+            out.writeBoolean(false);
+            out.writeUTF("src/Catalogs/Products/Forms/ItemForm/Form.oform"); //$NON-NLS-1$
+            out.writeInt(2);
+            out.write(new byte[] { 3, 4 });
+            out.writeBoolean(true);
+            out.writeUTF("0f7a0c5e-1c1d-4f3e-9a1e-4b2c8d9e0f11"); //$NON-NLS-1$
             out.writeUTF("generation-1"); //$NON-NLS-1$
             out.writeUTF(configurationUuid);
         }
