@@ -31,6 +31,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess.ModulePathResolution;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.modules.IModuleSource;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.UiSync;
 
 /**
@@ -121,6 +123,25 @@ public class ModuleOutlineReader
             return resolution.getHint();
         }
         String resolvedPath = resolution.getPath();
+
+        IModuleSource provided = ModuleSources.locate(project, resolvedPath);
+        if (provided != null)
+        {
+            // EDT builds no model of a provided module, so the model path has nothing to give
+            // and its failure would be logged as an error on every read.
+            try
+            {
+                return structureFromLines(resolvedPath, provided.lines(), includeComments,
+                    "_(source: " + provided.source() + " - parsed from the text" //$NON-NLS-1$ //$NON-NLS-2$
+                        + (provided.containerPath() == null ? "" : " held in src/" + provided.containerPath()) //$NON-NLS-1$ //$NON-NLS-2$
+                        + "; EDT builds no model of it, so execution context and variable declarations " //$NON-NLS-1$
+                        + "are unavailable, and a method's line is its declaration keyword)_\n\n"); //$NON-NLS-1$
+            }
+            catch (Exception e)
+            {
+                return "Error: could not read the module from " + provided.source() + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
 
         String result;
         try
@@ -237,7 +258,24 @@ public class ModuleOutlineReader
         {
             return null;
         }
+        return structureFromLines(modulePath, lines, includeComments,
+            "_(fallback: parsed from raw text because the BSL model is not indexed; " //$NON-NLS-1$
+                + "execution context and variable declarations are unavailable this way, and a " //$NON-NLS-1$
+                + "method's line is its declaration keyword, which may omit a leading doc-comment)_\n\n"); //$NON-NLS-1$
+    }
 
+    /**
+     * Builds the structure report from module lines.
+     *
+     * @param modulePath the module path, for the heading
+     * @param lines the module lines
+     * @param includeComments whether to parse doc-comments
+     * @param provenance the italic line under the heading that says where the text came from
+     * @return the report
+     */
+    private String structureFromLines(String modulePath, List<String> lines, boolean includeComments,
+        String provenance)
+    {
         List<RegionRange> regions = new ArrayList<>();
         List<MethodInfo> methods = parseTextStructure(lines, regions, includeComments);
 
@@ -257,9 +295,7 @@ public class ModuleOutlineReader
 
         StringBuilder builder = new StringBuilder();
         builder.append("## Module Layout: ").append(modulePath).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        builder.append("_(fallback: parsed from raw text because the BSL model is not indexed; " //$NON-NLS-1$
-            + "execution context and variable declarations are unavailable this way, and a " //$NON-NLS-1$
-            + "method's line is its declaration keyword, which may omit a leading doc-comment)_\n\n"); //$NON-NLS-1$
+        builder.append(provenance);
         builder.append("**Total:** ").append(procedures).append(" procedures, ").append(functions) //$NON-NLS-1$ //$NON-NLS-2$
             .append(" functions | **Line span:** ").append(lines.size()).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
 
