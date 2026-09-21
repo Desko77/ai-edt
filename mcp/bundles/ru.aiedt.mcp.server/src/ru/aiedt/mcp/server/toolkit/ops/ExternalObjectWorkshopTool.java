@@ -224,8 +224,10 @@ public class ExternalObjectWorkshopTool implements IMcpTool
             }
             if (parent == null || !parent.isAccessible())
             {
-                return ToolResult.error(ProjectResolver.describeNotFound(parentProjectName)
-                    + " (the parent project must be open).").toJson(); //$NON-NLS-1$
+                return ProjectResolver.notFound(parentProjectName)
+                    .put("error", ProjectResolver.describeNotFound(parentProjectName) //$NON-NLS-1$
+                        + " (the parent project must be open).") //$NON-NLS-1$
+                    .toJson();
             }
         }
 

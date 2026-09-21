@@ -102,11 +102,11 @@ public class ExtensionDiffTool implements IMcpTool
         IProject base = ProjectResolver.resolve(baseProjectName);
         if (ext == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         if (base == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(baseProjectName)).toJson();
+            return ProjectResolver.notFound(baseProjectName).toJson();
         }
 
         IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();

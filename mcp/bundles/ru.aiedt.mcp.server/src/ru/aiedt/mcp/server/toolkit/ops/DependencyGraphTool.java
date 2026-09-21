@@ -110,7 +110,7 @@ public class DependencyGraphTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         String levelStr = orDefault(JsonUtils.extractStringArgument(params, "level"), //$NON-NLS-1$

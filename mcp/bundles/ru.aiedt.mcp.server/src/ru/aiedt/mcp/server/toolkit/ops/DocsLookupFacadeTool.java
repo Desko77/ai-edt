@@ -256,7 +256,7 @@ public class DocsLookupFacadeTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         SystemEnumValues.Lookup lookup = SystemEnumValues.of(typeName, project);
         if (lookup.cannotTell != null)

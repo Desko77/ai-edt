@@ -85,7 +85,7 @@ final class RouteMapOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmRouteMapHelper.WriteResult wr =
             BmRouteMapHelper.writeRouteMap(project, bpFqn, points, transitions, overwrite, dryRun);
@@ -143,7 +143,7 @@ final class RouteMapOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmRouteMapHelper.RouteMap rm = BmRouteMapHelper.readRouteMap(project, bpFqn);
         if (rm.error != null)
@@ -196,7 +196,7 @@ final class RouteMapOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmRouteMapHelper.RouteMap rm = BmRouteMapHelper.readRouteMap(project, bpFqn);
         if (rm.error != null)

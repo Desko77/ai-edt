@@ -33,6 +33,8 @@ public class ToolResult
 
     private static final String KEY_ERROR = "error"; //$NON-NLS-1$
 
+    private static final String KEY_HELP_HINT = "helpHint"; //$NON-NLS-1$
+
     private final Map<String, Object> data = new LinkedHashMap<>();
 
     private ToolResult()
@@ -65,6 +67,67 @@ public class ToolResult
         result.data.put(KEY_SUCCESS, Boolean.FALSE);
         result.data.put(KEY_ERROR, message);
         return result;
+    }
+
+    /**
+     * Attaches the call that answers the refusal - the tool and the arguments a caller can send
+     * as they stand, without composing them from the prose of the error.
+     * <p>
+     * A refusal that only describes what went wrong leaves the next step to be reconstructed from
+     * its wording; when the next step is known - the project is not found, so list the projects;
+     * the object is not found, so search the metadata - it is handed over as a call. The member is
+     * {@code helpHint}: {@code {"tool": ..., "arguments": {...}}}, plus whatever the refusing
+     * code adds beside it.
+     * </p>
+     *
+     * @param tool the tool to call next
+     * @param arguments the arguments for that call, in the order given; may be empty
+     * @return this result
+     */
+    public ToolResult hint(String tool, Map<String, ?> arguments)
+    {
+        data.put(KEY_HELP_HINT, nextCall(tool, arguments));
+        return this;
+    }
+
+    /**
+     * The shape of a hint on its own - for a helper that reports through a tag map rather than
+     * through this builder and still owes the caller the same {@code helpHint}.
+     *
+     * @param tool the tool to call next
+     * @param arguments the arguments for that call, in the order given; may be empty
+     * @return {@code {"tool": ..., "arguments": {...}}}, mutable so a detail can be added beside
+     */
+    public static Map<String, Object> nextCall(String tool, Map<String, ?> arguments)
+    {
+        Map<String, Object> call = new LinkedHashMap<>();
+        call.put("tool", tool); //$NON-NLS-1$
+        call.put("arguments", arguments == null ? new LinkedHashMap<>() : new LinkedHashMap<>(arguments)); //$NON-NLS-1$
+        return call;
+    }
+
+    /**
+     * The member name a hint is published under, for a helper that writes one into a tag map.
+     */
+    public static final String HELP_HINT = KEY_HELP_HINT;
+
+    /**
+     * Adds a member to the hint attached by {@link #hint} - a suggested value the caller may
+     * prefer to the listing, say - and is a no-op when no hint has been attached.
+     *
+     * @param key the member name
+     * @param value the value; <code>null</code> drops nothing and adds nothing
+     * @return this result
+     */
+    @SuppressWarnings("unchecked")
+    public ToolResult hintDetail(String key, Object value)
+    {
+        Object call = data.get(KEY_HELP_HINT);
+        if (call instanceof Map && value != null)
+        {
+            ((Map<String, Object>)call).put(key, value);
+        }
+        return this;
     }
 
     /**

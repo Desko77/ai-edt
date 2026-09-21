@@ -37,6 +37,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
  * Helper for BM-transaction operations on metadata objects (Catalog, Document,
@@ -411,6 +412,14 @@ public final class BmObjectHelper
             Map<String, Object> notFoundData = new LinkedHashMap<>();
             notFoundData.put("ownerFqn", normalized); //$NON-NLS-1$
             r.tags.put(ErrorTags.NOT_FOUND.wire(), notFoundData);
+            // The call that finds the object by the part of the name a caller is surest of:
+            // the semantic search reads name, synonym and comment, case-insensitively.
+            int dot = normalized.indexOf('.');
+            Map<String, Object> search = new LinkedHashMap<>();
+            search.put("operation", "semantic_metadata_search"); //$NON-NLS-1$ //$NON-NLS-2$
+            search.put("projectName", project.getName()); //$NON-NLS-1$
+            search.put("query", dot > 0 ? normalized.substring(dot + 1) : normalized); //$NON-NLS-1$
+            r.tags.put(ToolResult.HELP_HINT, ToolResult.nextCall("insights", search)); //$NON-NLS-1$
             return r;
         }
         if (!(owner instanceof IBmObject))

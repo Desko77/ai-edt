@@ -395,7 +395,7 @@ public class DcsWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // The default template name follows the script variant of the configuration; the
         // English constant would miss a Russian one and answer "no file".
@@ -516,7 +516,7 @@ public class DcsWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmDcsHelper.Result r = BmDcsHelper.createSchemaOnObject(project, objectName, templateName, dryRun);
         return formatResult(r, "create_schema"); //$NON-NLS-1$
@@ -760,7 +760,7 @@ public class DcsWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // Pre-flight: validate queryText / expression BEFORE the BM transaction opens. Cheaper
         // than rolling back the model on a parse error, and it avoids running Xtext validation
