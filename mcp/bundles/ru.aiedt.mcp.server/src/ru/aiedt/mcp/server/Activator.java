@@ -179,6 +179,11 @@ public class Activator
 
         mcpServer = new McpHttpEndpoint();
 
+        // Plain OSGi, safe under any runtime: a tool or a module source another bundle publishes
+        // reaches the catalogue and the module registry whether or not the UI comes up, and the
+        // catalogue re-registers the tools it has been given at every clear.
+        whiteboard.open(context);
+
         if (isHeadless())
         {
             // Nothing below is safe here. A headless test runtime brings the workspace, the UI and the
@@ -198,9 +203,6 @@ public class Activator
         mcpServer.registerTools();
 
         openServiceTrackers(context);
-        // After the built-in tools, so a tool another bundle publishes joins a catalogue that
-        // already holds its own; before the UI, so the preference page lists it too.
-        whiteboard.open(context);
         SessionChangeTracker.initialize();
         startClusterService();
         initializeUi();
