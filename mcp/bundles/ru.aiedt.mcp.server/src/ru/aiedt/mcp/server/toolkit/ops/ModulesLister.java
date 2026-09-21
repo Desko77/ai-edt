@@ -135,7 +135,9 @@ public class ModulesLister
     }
 
     /**
-     * Resolves the project and gathers its modules. Runs on the UI thread.
+     * Resolves the project and gathers its modules. {@link #execute} runs it on the UI thread,
+     * which the configuration lookup of a specific type needs; a caller without a UI thread - a
+     * test, another bundle's runtime - calls it directly with {@code all}, which walks the tree.
      *
      * @param projectName the project
      * @param metadataType the type argument, original case
@@ -144,7 +146,7 @@ public class ModulesLister
      * @param limit the most rows to show
      * @return the markdown, or an {@code Error:} line
      */
-    static String listModules(String projectName, String metadataType, String objectName,
+    public static String listModules(String projectName, String metadataType, String objectName,
         String nameFilter, int limit)
     {
         try
