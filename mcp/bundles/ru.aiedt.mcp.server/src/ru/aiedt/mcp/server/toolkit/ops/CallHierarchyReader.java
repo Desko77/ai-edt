@@ -38,6 +38,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormCoverage;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.UiSync;
 
@@ -195,7 +196,7 @@ public class CallHierarchyReader
         final int levels = depth;
         try
         {
-            return UiSync.call(() -> {
+            String answer = UiSync.call(() -> {
                 if (!DIRECTION_CALLERS.equals(dir))
                 {
                     return findCallees(projectName, resolvedModulePath, methodName, maxResults);
@@ -204,6 +205,10 @@ public class CallHierarchyReader
                     ? findCallersTransitively(projectName, resolvedModulePath, methodName, maxResults, levels)
                     : findCallers(projectName, resolvedModulePath, methodName, maxResults);
             });
+            // The index this walks holds no ordinary form module, and a caller reading "nothing
+            // calls it" decides whether the method is safe to change on that.
+            return OrdinaryFormCoverage.appendTo(project,
+                DIRECTION_CALLERS.equals(dir) ? "callers" : "callees", answer); //$NON-NLS-1$ //$NON-NLS-2$
         }
         catch (Exception e)
         {

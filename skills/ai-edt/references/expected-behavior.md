@@ -55,6 +55,17 @@ your own initiative.** Both make EDT believe the infobase already matches the pr
 difference exists, EDT will silently skip genuine changes. Only the user knows what has not
 changed.
 
+## Ordinary forms are outside the model
+
+EDT holds no model of an ordinary form: the container `Form.oform` is a file it carries to the
+infobase and back. So the model-built answers about such a form's module are absent rather than
+wrong - no markers, no callers, no references, no execution context - and every tool that
+answers from the index over a project with such forms ends with a `Coverage` line that counts
+them. The module tools read and write the container by the module address; an answer that came
+from a container says `source: oform`. A write there is checked by the platform at
+`update_database`, not by EDT, and the writer's own guard (`handlerChanges`) is the only thing that
+notices a bound handler going away before the client does.
+
 ## Things that fail early by design
 
 - In an extension project, a common module created with `privileged=true`, or with `global=true`

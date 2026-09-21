@@ -39,6 +39,7 @@ import com._1c.g5.v8.dt.bsl.model.Module;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 
 /**
@@ -436,7 +437,8 @@ public final class BslModuleAccess
     }
 
     /**
-     * Tells whether a {@code src/}-relative path names an existing file in a project.
+     * Tells whether a {@code src/}-relative path names an existing file in a project, or the module
+     * of an ordinary form, which has no file of its own and is addressed as if it had.
      *
      * @param project the project; may be <code>null</code>
      * @param relativePath the path under {@code src/}
@@ -451,7 +453,8 @@ public final class BslModuleAccess
         }
         try
         {
-            return project.getFile(new Path("src").append(relativePath)).exists(); //$NON-NLS-1$
+            return project.getFile(new Path("src").append(relativePath)).exists() //$NON-NLS-1$
+                || OrdinaryFormModule.isOne(project, relativePath);
         }
         catch (Exception e)
         {

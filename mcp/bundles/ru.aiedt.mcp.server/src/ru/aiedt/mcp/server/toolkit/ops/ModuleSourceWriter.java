@@ -42,6 +42,8 @@ import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.oform.HandlerBindings;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 
 /**
  * Writes BSL source into an EDT module file.
@@ -202,6 +204,12 @@ public class ModuleSourceWriter implements IMcpTool
                     + "(default: true). Adds a 'validation' section with errors / warnings / " //$NON-NLS-1$
                     + "codeStyle counts, plus a short hint. Pass false while writing in a batch and call " //$NON-NLS-1$
                     + "get_project_errors once at the very end instead.") //$NON-NLS-1$
+            .stringProperty("handlerChanges", //$NON-NLS-1$
+                "Ordinary forms only (a module read from Form.oform): what to do when the write removes a " //$NON-NLS-1$
+                    + "procedure the form's layout binds an event to, or one the module names in a string " //$NON-NLS-1$
+                    + "literal. 'warn' (default) writes and lists the names under unboundProcedures; 'refuse' " //$NON-NLS-1$
+                    + "leaves the container unchanged and names them. EDT resolves neither reference, so " //$NON-NLS-1$
+                    + "nothing else reports the loss before the client fires the event.") //$NON-NLS-1$
             .booleanProperty("confirmFullReplace", //$NON-NLS-1$
                 "Has to be true when a write would strip away more than 50% of an existing module's lines. " //$NON-NLS-1$
                     + "Prevents accidentally wiping out hundreds of lines when the goal was only to touch " //$NON-NLS-1$
@@ -247,6 +255,7 @@ public class ModuleSourceWriter implements IMcpTool
         boolean skipSyntaxCheck = JsonUtils.extractBooleanArgument(params, "skipSyntaxCheck", false); //$NON-NLS-1$
         boolean validateAfterWrite = JsonUtils.extractBooleanArgument(params, "validateAfterWrite", true); //$NON-NLS-1$
         boolean confirmFullReplace = JsonUtils.extractBooleanArgument(params, "confirmFullReplace", false); //$NON-NLS-1$
+        String handlerChanges = JsonUtils.extractStringArgument(params, "handlerChanges"); //$NON-NLS-1$
 
         // --- step 2: validate required parameters ---
         if (projectName == null || projectName.isEmpty())
@@ -271,6 +280,14 @@ public class ModuleSourceWriter implements IMcpTool
         }
         if (MODE_SEARCH_REPLACE.equals(mode) && (oldSource == null || oldSource.isEmpty()))
             return "Error: oldSource must be supplied for searchReplace mode"; //$NON-NLS-1$
+        if (handlerChanges == null || handlerChanges.isEmpty())
+            handlerChanges = HandlerBindings.WARN;
+        handlerChanges = handlerChanges.toLowerCase(Locale.ROOT);
+        if (!HandlerBindings.WARN.equals(handlerChanges) && !HandlerBindings.REFUSE.equals(handlerChanges))
+        {
+            return "Error: " + TextSuggest.invalidValue("handlerChanges", handlerChanges, //$NON-NLS-1$ //$NON-NLS-2$
+                Arrays.asList(HandlerBindings.WARN, HandlerBindings.REFUSE));
+        }
 
         // --- step 4: resolve modulePath ---
         if (modulePath == null || modulePath.isEmpty())
@@ -311,6 +328,9 @@ public class ModuleSourceWriter implements IMcpTool
         // --- step 6: resolve file + existence rules ---
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
         boolean fileExists = file.exists();
+        // An ordinary form keeps its module inside Form.oform and has no Module.bsl; the address
+        // is the one every form module has, and the write goes into the container beside it.
+        OrdinaryFormModule ordinaryForm = fileExists ? null : OrdinaryFormModule.locate(project, modulePath);
         // Refused before anything is written: setContents replaces the file while an editor still
         // holds a different text, and whichever side saves last destroys the other in silence. The
         // caller is told which file and what to do, rather than being given a success that costs
@@ -322,7 +342,7 @@ public class ModuleSourceWriter implements IMcpTool
                 + "overwrite this write. Save or revert the editor first. What the editor holds " //$NON-NLS-1$
                 + "is what read_module_source returns."; //$NON-NLS-1$
         }
-        if (!fileExists && !MODE_REPLACE.equals(mode) && !MODE_APPEND.equals(mode))
+        if (!fileExists && ordinaryForm == null && !MODE_REPLACE.equals(mode) && !MODE_APPEND.equals(mode))
         {
             return "Error: no module file exists at src/" + modulePath + ". Only the 'replace' and 'append' " //$NON-NLS-1$ //$NON-NLS-2$
                 + "modes may create a new module file (appending to a module that does not exist yet writes " //$NON-NLS-1$
@@ -339,7 +359,14 @@ public class ModuleSourceWriter implements IMcpTool
             // --- step 8: read current content + BOM ---
             List<String> originalLines;
             boolean hasBom;
-            if (fileExists)
+            String layoutText = null;
+            if (ordinaryForm != null)
+            {
+                originalLines = ordinaryForm.lines();
+                layoutText = ordinaryForm.layoutText();
+                hasBom = true;
+            }
+            else if (fileExists)
             {
                 originalLines = BslModuleAccess.readFileLines(file);
                 hasBom = detectBom(file);
@@ -531,6 +558,19 @@ public class ModuleSourceWriter implements IMcpTool
                 }
             }
 
+            // --- step 10a: bound handlers an ordinary form would lose ---
+            List<String> unboundProcedures = ordinaryForm == null ? new ArrayList<>()
+                : HandlerBindings.endangered(layoutText, originalLines, newLines);
+            String handlerWarning = null;
+            if (!unboundProcedures.isEmpty())
+            {
+                handlerWarning = "WARNING: the write removes " + unboundProcedures.size() //$NON-NLS-1$
+                    + " procedure(s) the form still names - in an event binding of its layout or in a " //$NON-NLS-1$
+                    + "string literal of the module: " + String.join(", ", unboundProcedures) //$NON-NLS-1$ //$NON-NLS-2$
+                    + ". EDT resolves neither reference; the client reports the missing procedure when " //$NON-NLS-1$
+                    + "the event fires."; //$NON-NLS-1$
+            }
+
             // --- step 11: dryRun preview ---
             if (dryRun)
             {
@@ -546,10 +586,20 @@ public class ModuleSourceWriter implements IMcpTool
                     .put("lineDelta", newLines.size() - totalOriginal); //$NON-NLS-1$
                 if (protectionWarning != null)
                     dryFm.put("protection", protectionWarning); //$NON-NLS-1$
+                if (ordinaryForm != null)
+                {
+                    dryFm.put("source", OrdinaryFormModule.SOURCE); //$NON-NLS-1$
+                    dryFm.put("container", ordinaryForm.containerPath()); //$NON-NLS-1$
+                    dryFm.put("handlerChanges", handlerChanges); //$NON-NLS-1$
+                }
+                if (!unboundProcedures.isEmpty())
+                    dryFm.put("unboundProcedures", String.join(", ", unboundProcedures)); //$NON-NLS-1$ //$NON-NLS-2$
                 StringBuilder preview = new StringBuilder();
                 preview.append("## Preview (Dry Run)\n\n"); //$NON-NLS-1$
                 if (protectionWarning != null)
                     preview.append("**").append(protectionWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (handlerWarning != null)
+                    preview.append("**").append(handlerWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
                 preview.append("Lines: ").append(totalOriginal).append(" -> ") //$NON-NLS-1$ //$NON-NLS-2$
                     .append(newLines.size()).append("\n\n"); //$NON-NLS-1$
                 return dryFm.wrapContent(preview.toString());
@@ -571,17 +621,38 @@ public class ModuleSourceWriter implements IMcpTool
                 }
             }
 
+            // --- step 12a: a bound handler goes only when the caller said so ---
+            if (handlerWarning != null && HandlerBindings.REFUSE.equals(handlerChanges))
+            {
+                return "Error: the write was refused, the container is unchanged. " + handlerWarning //$NON-NLS-1$
+                    + " Keep the procedures, rebind the events in the layout first, or pass " //$NON-NLS-1$
+                    + "handlerChanges=warn to write regardless."; //$NON-NLS-1$
+            }
+
             // --- step 13: write file ---
-            writeFile(file, newLines, hasBom, fileExists);
-
-            // --- step 14: persistence sync (BM flush) ---
-            String moduleFqn = resolveFqnForValidation(objectName, modulePath);
-            PersistenceResult persistence = forceExportModule(project, moduleFqn);
-
-            // --- step 15: optional EDT validation ---
+            PersistenceResult persistence;
             FileMarkers.Grouped validation = null;
-            if (validateAfterWrite)
-                validation = collectValidation(project, objectName, modulePath);
+            if (ordinaryForm != null)
+            {
+                ordinaryForm.write(newLines);
+                // Nothing in the BM holds this module, so there is no index to flush and no
+                // marker to wait for; saying so beats a "skipped" that reads as a failure.
+                persistence = PersistenceResult.notApplicable(
+                    "not applicable: the module lives in the Form.oform container, which EDT reads " //$NON-NLS-1$
+                        + "from disk at update_database and builds no model of"); //$NON-NLS-1$
+            }
+            else
+            {
+                writeFile(file, newLines, hasBom, fileExists);
+
+                // --- step 14: persistence sync (BM flush) ---
+                String moduleFqn = resolveFqnForValidation(objectName, modulePath);
+                persistence = forceExportModule(project, moduleFqn);
+
+                // --- step 15: optional EDT validation ---
+                if (validateAfterWrite)
+                    validation = collectValidation(project, objectName, modulePath);
+            }
 
             // --- step 16: duplicate-method detection ---
             List<String> duplicateMethods = findDuplicateMethods(newLines);
@@ -596,13 +667,24 @@ public class ModuleSourceWriter implements IMcpTool
                 .put("linesAfter", newLines.size()) //$NON-NLS-1$
                 .put("syntaxCheck", skipSyntaxCheck ? "skipped" : "passed"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-            if (fileExists)
+            if (fileExists || ordinaryForm != null)
                 fm.put("linesBefore", totalOriginal); //$NON-NLS-1$
             else
                 fm.put("newFile", true); //$NON-NLS-1$
 
             if (protectionWarning != null)
                 fm.put("protection", protectionWarning); //$NON-NLS-1$
+
+            if (ordinaryForm != null)
+            {
+                fm.put("source", OrdinaryFormModule.SOURCE); //$NON-NLS-1$
+                fm.put("container", ordinaryForm.containerPath()); //$NON-NLS-1$
+                fm.put("handlerChanges", handlerChanges); //$NON-NLS-1$
+                fm.put("validation", "not available: EDT builds no model of an ordinary form's module; " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "the platform checks it at update_database"); //$NON-NLS-1$
+            }
+            if (!unboundProcedures.isEmpty())
+                fm.put("unboundProcedures", String.join(", ", unboundProcedures)); //$NON-NLS-1$ //$NON-NLS-2$
 
             if (validation != null)
             {
@@ -621,8 +703,13 @@ public class ModuleSourceWriter implements IMcpTool
                 fm.put("persistenceSyncDetail", persistence.detail); //$NON-NLS-1$
 
             StringBuilder body = new StringBuilder("Write finished successfully"); //$NON-NLS-1$
+            if (ordinaryForm != null)
+                body.append(" into the ordinary form's container src/").append(ordinaryForm.containerPath()) //$NON-NLS-1$
+                    .append("; the layout entry is unchanged"); //$NON-NLS-1$
             if (protectionWarning != null)
                 body.append("\n\n**").append(protectionWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (handlerWarning != null)
+                body.append("\n\n**").append(handlerWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
 
             if (!duplicateMethods.isEmpty())
             {
@@ -1430,5 +1517,20 @@ public class ModuleSourceWriter implements IMcpTool
         boolean ok;
         long elapsedMs;
         String detail;
+
+        /**
+         * The outcome of a write that has no index to flush.
+         *
+         * @param detail why there is none
+         * @return an ok result carrying the reason
+         */
+        static PersistenceResult notApplicable(String detail)
+        {
+            PersistenceResult result = new PersistenceResult();
+            result.ok = true;
+            result.elapsedMs = 0;
+            result.detail = detail;
+            return result;
+        }
     }
 }

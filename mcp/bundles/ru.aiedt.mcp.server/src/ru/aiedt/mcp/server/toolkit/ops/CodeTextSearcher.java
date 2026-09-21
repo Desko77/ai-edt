@@ -29,6 +29,8 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormLocator;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 
 /**
@@ -803,13 +805,20 @@ public class CodeTextSearcher
                 return true;
             }
             IFile file = (IFile)resource;
-            if (!"bsl".equalsIgnoreCase(file.getFileExtension())) //$NON-NLS-1$
+            boolean container = OrdinaryFormLocator.FILE_NAME.equals(file.getName());
+            if (!container && !"bsl".equalsIgnoreCase(file.getFileExtension())) //$NON-NLS-1$
             {
                 return true;
             }
 
             String relative = resource.getProjectRelativePath().toString();
             String displayPath = relative.startsWith("src/") ? relative.substring(4) : relative; //$NON-NLS-1$
+            if (container)
+            {
+                // The module of an ordinary form is reported by the address the module tools
+                // take for it, so a hit here is readable and writable by the path shown.
+                displayPath = OrdinaryFormModule.moduleAddressOf(displayPath);
+            }
 
             if (fileMask != null && !fileMask.isEmpty()
                 && !displayPath.toLowerCase(Locale.ROOT).contains(fileMask.toLowerCase(Locale.ROOT)))
@@ -824,7 +833,21 @@ public class CodeTextSearcher
             scannedFiles++;
             try
             {
-                searchInFile(file, displayPath);
+                if (container)
+                {
+                    OrdinaryFormModule module = OrdinaryFormModule.locate(file.getProject(), displayPath);
+                    if (module == null)
+                    {
+                        // A Module.bsl beside the container is the module; the container is not.
+                        scannedFiles--;
+                        return true;
+                    }
+                    searchInText(module.text(), displayPath);
+                }
+                else
+                {
+                    searchInFile(file, displayPath);
+                }
             }
             catch (Exception e)
             {
@@ -844,7 +867,17 @@ public class CodeTextSearcher
          */
         private void searchInFile(IFile file, String displayPath) throws Exception
         {
-            String content = BslModuleAccess.readFileText(file);
+            searchInText(BslModuleAccess.readFileText(file), displayPath);
+        }
+
+        /**
+         * Scans module text, first skipping it whole when nothing can match, then line by line.
+         *
+         * @param content the module text
+         * @param displayPath the address the hits are reported under
+         */
+        private void searchInText(String content, String displayPath)
+        {
             if (!pattern.matcher(content).find())
             {
                 return;

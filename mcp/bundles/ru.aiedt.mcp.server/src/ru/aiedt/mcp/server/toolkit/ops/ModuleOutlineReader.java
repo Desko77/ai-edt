@@ -31,6 +31,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess.ModulePathResolution;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.oform.OrdinaryFormModule;
 import ru.aiedt.mcp.server.support.UiSync;
 
 /**
@@ -121,6 +122,26 @@ public class ModuleOutlineReader
             return resolution.getHint();
         }
         String resolvedPath = resolution.getPath();
+
+        OrdinaryFormModule ordinaryForm = OrdinaryFormModule.locate(project, resolvedPath);
+        if (ordinaryForm != null)
+        {
+            // EDT builds no model of an ordinary form's module, so the model path has nothing to
+            // give and its failure would be logged as an error on every read.
+            try
+            {
+                return structureFromLines(resolvedPath, ordinaryForm.lines(), includeComments,
+                    "_(source: " + OrdinaryFormModule.SOURCE + " - parsed from the module entry of the ordinary form's " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "container src/" + ordinaryForm.containerPath() + "; EDT builds no model of it, so " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "execution context and variable declarations are unavailable, and a method's line " //$NON-NLS-1$
+                        + "is its declaration keyword)_\n\n"); //$NON-NLS-1$
+            }
+            catch (Exception e)
+            {
+                return "Error: could not read the ordinary form's container src/" + ordinaryForm.containerPath() //$NON-NLS-1$
+                    + ": " + e.getMessage(); //$NON-NLS-1$
+            }
+        }
 
         String result;
         try
@@ -237,7 +258,24 @@ public class ModuleOutlineReader
         {
             return null;
         }
+        return structureFromLines(modulePath, lines, includeComments,
+            "_(fallback: parsed from raw text because the BSL model is not indexed; " //$NON-NLS-1$
+                + "execution context and variable declarations are unavailable this way, and a " //$NON-NLS-1$
+                + "method's line is its declaration keyword, which may omit a leading doc-comment)_\n\n"); //$NON-NLS-1$
+    }
 
+    /**
+     * Builds the structure report from module lines.
+     *
+     * @param modulePath the module path, for the heading
+     * @param lines the module lines
+     * @param includeComments whether to parse doc-comments
+     * @param provenance the italic line under the heading that says where the text came from
+     * @return the report
+     */
+    private String structureFromLines(String modulePath, List<String> lines, boolean includeComments,
+        String provenance)
+    {
         List<RegionRange> regions = new ArrayList<>();
         List<MethodInfo> methods = parseTextStructure(lines, regions, includeComments);
 
@@ -257,9 +295,7 @@ public class ModuleOutlineReader
 
         StringBuilder builder = new StringBuilder();
         builder.append("## Module Layout: ").append(modulePath).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        builder.append("_(fallback: parsed from raw text because the BSL model is not indexed; " //$NON-NLS-1$
-            + "execution context and variable declarations are unavailable this way, and a " //$NON-NLS-1$
-            + "method's line is its declaration keyword, which may omit a leading doc-comment)_\n\n"); //$NON-NLS-1$
+        builder.append(provenance);
         builder.append("**Total:** ").append(procedures).append(" procedures, ").append(functions) //$NON-NLS-1$ //$NON-NLS-2$
             .append(" functions | **Line span:** ").append(lines.size()).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
 

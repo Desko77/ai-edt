@@ -65,6 +65,24 @@ stale derived state rather than real type errors. Revalidation does not clear th
 Do not batch several queries and validate at the end - a failure then costs a hunt for which one
 broke.
 
+## Change the module of an ordinary form
+
+1. `list_modules` with the object, or `get_metadata_details` with the `Forms` section: an ordinary
+   form shows `Ordinary` as its type and its module is listed as `OrdinaryFormModule` at
+   `<type>/<object>/Forms/<form>/Module.bsl`. That address is the one to use though no such file
+   exists - the module lives in `Form.oform`.
+2. `get_module_structure`, then `read_method_source` by that address. The answer says
+   `source: oform`; execution context and variables are not known, EDT builds no model.
+3. `write_module_source` by the same address with a targeted mode. Run it with `dryRun=true` first
+   when the change removes or renames a procedure: `unboundProcedures` names the ones the layout
+   still binds an event to. Pass `handlerChanges=refuse` to make such a write fail instead of warn.
+4. `infobase_admin operation=update_database`: the platform reads the container from disk and
+   checks the module there; `read_event_log` shows the `DBConfigUpdate`.
+
+`code_search operation=text_search` finds text inside these modules; the BSL index does not hold
+them, and `call_hierarchy`, `object_references` and `get_project_errors` say so in a `Coverage`
+line. The layout itself is not edited here.
+
 ## Edit a managed form
 
 1. `get_form_structure` to see the element tree, with `depth` or `subtree` for a large form.
