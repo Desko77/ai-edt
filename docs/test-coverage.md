@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 116 | a test class named after it |
-| exercised | 117 | reached by some other test |
+| exercised | 122 | reached by some other test |
 | tool-sweep | 74 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
 | workspace-bound | 47 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **402** | across 327 test classes |
+| **total** | **407** | across 329 test classes |
 
 ## untested (0)
 
@@ -234,7 +234,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (117)
+## exercised (122)
 
 **(root)**
 - Activator
@@ -310,6 +310,12 @@ _none_
 - UnreadArguments
 - WatchForCancel
 
+**support/oform**
+- BraceTree
+- OrdinaryFormFile
+- OrdinaryFormLocator
+- V8Container
+
 **toolkit**
 - IMcpTool
 
@@ -352,6 +358,7 @@ _none_
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
+- OrdinaryFormsTool
 - ProjectAdminFacadeTool
 - ProjectProblemsReader
 - RestartEdtTool
@@ -537,9 +544,9 @@ closes.
 | 9-16 | 49 |
 | 17+ | 15 |
 
-2782 test methods across 327 test classes; 116 classes have a test of their own, median 9 methods each.
+2791 test methods across 329 test classes; 116 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 402 classes have one: 74 are covered by the registry-wide contract sweep and 47 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 407 classes have one: 74 are covered by the registry-wide contract sweep and 47 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 

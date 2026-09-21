@@ -196,6 +196,9 @@ public class TheToolListHasAWeightBudgetTest
         // add is the whole point of having git inside the IDE, and the schema is where a client
         // learns that.
         BUDGETS.put("git", Integer.valueOf(1330)); //$NON-NLS-1$
+        // ordinary_forms: the forms EDT does not open, read from their containers; the audit
+        // is the measured ground every later edit of those files stands on.
+        BUDGETS.put("ordinary_forms", Integer.valueOf(920)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         BUDGETS.put("dcs_workshop", Integer.valueOf(8523)); //$NON-NLS-1$

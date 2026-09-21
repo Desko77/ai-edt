@@ -263,6 +263,7 @@ Not every tool belongs to a facade. These are called by name.
 | `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. A record carries `arbitratedBy` (`tool` / `signal` - whether the operator answered the agent from the status bar instead of the tool), `deliveryStatus` (`delivered` / `failed`) and, for a signal, `signalType` and `signalNote`; `stats` carries `interrupted` and `undelivered` on top of `success` and `failure`. |
 | `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
 | `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |
+| `ordinary_forms` | The ordinary (non-managed) forms EDT does not open, read from their `Form.oform` containers. `operation=audit projectName` walks every ordinary form: the layout version each was last saved with, the container entries, the module size and whether the layout text round-trips byte for byte through this server (mismatches named, `limit`; `details=true` lists forms). A form that round-trips is one this server may later edit without touching what it does not edit. |
 
 Three more are reached through a facade rather than by name, because the Canonical preset hides
 them: `extension_workshop operation=list_interceptors`, `project_admin operation=self_upkeep` and
