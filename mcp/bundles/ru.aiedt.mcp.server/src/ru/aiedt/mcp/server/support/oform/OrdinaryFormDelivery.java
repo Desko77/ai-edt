@@ -32,7 +32,12 @@ import ru.aiedt.mcp.server.support.SyncBaseline;
  * match the current one reads as changed. Blanking the signature of the owner's {@code .mdo} in
  * every baseline of the project's infobases says exactly what is true - the infobase's copy of
  * the object is behind - and EDT's cached copy of the baseline is dropped so the next update
- * reads the file.</p>
+ * reads the file. The baselines are the project's own: the ones in its workspace store and,
+ * from the per-user store of older EDT, the ones recorded for its configuration.</p>
+ *
+ * <p>The project is a configuration. An extension holds no ordinary form - the platform admits
+ * only managed forms there - so the baseline an extension keeps under its parent's is never the
+ * one to mark.</p>
  */
 public final class OrdinaryFormDelivery
 {
@@ -72,7 +77,7 @@ public final class OrdinaryFormDelivery
             return alreadyMarked;
         }
 
-        /** @return how many baselines the project has in its workspace store */
+        /** @return how many baselines the project has */
         public int baselines()
         {
             return baselines;
@@ -149,11 +154,16 @@ public final class OrdinaryFormDelivery
             marked.notes.add("the container's path is not an ordinary form's; nothing marked"); //$NON-NLS-1$
             return marked;
         }
-        List<Path> indexes = SyncBaseline.workspaceIndexes(project);
+        List<Path> indexes = SyncBaseline.indexes(project);
         marked.baselines = indexes.size();
+        Path workspaceStore = SyncBaseline.workspaceStore(project);
         for (Path index : indexes)
         {
             String infobase = index.getParent().getFileName().toString();
+            if (!index.startsWith(workspaceStore))
+            {
+                marked.notes.add(infobase + ": baseline in the per-user store " + index.getParent().getParent()); //$NON-NLS-1$
+            }
             try
             {
                 if (SyncBaseline.blankSignature(index, ownerKey))

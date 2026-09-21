@@ -182,6 +182,109 @@ public class AContainerWriteMarksItsOwnerForTheUpdateTest
         assertTrue(answer, answer.contains("reads as changed in 1 of 1 infobase baseline")); //$NON-NLS-1$
     }
 
+    /**
+     * A baseline in a store shared between projects belongs to the project whose configuration
+     * id it recorded: the id is read from the project's {@code Configuration.mdo}, and only the
+     * baseline that recorded it is matched.
+     */
+    @Test
+    public void aSharedStoreBaselineBelongsToTheProjectWhoseIdItRecorded() throws Exception
+    {
+        String ours = UUID.randomUUID().toString();
+        Path mdo = root.resolve(PROJECT).resolve("src/Configuration/Configuration.mdo"); //$NON-NLS-1$
+        Files.createDirectories(mdo.getParent());
+        Files.writeString(mdo, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" + CRLF //$NON-NLS-1$
+            + "<mdclass:Configuration xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" uuid=\"" + ours //$NON-NLS-1$
+            + "\">" + CRLF + "  <name>Probe</name>" + CRLF + "</mdclass:Configuration>" + CRLF); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Path shared = root.resolve("shared-store"); //$NON-NLS-1$
+        Path oursIndex = writeIndex(shared.resolve(UUID.randomUUID().toString()), ours);
+        writeIndex(shared.resolve(UUID.randomUUID().toString()), UUID.randomUUID().toString());
+        Files.createDirectories(shared.resolve("no-index-here")); //$NON-NLS-1$
+
+        assertEquals(ours, SyncBaseline.configurationUuid(project));
+        assertEquals(List.of(oursIndex), SyncBaseline.matchingIndexes(shared, ours));
+        assertTrue(SyncBaseline.matchingIndexes(shared, null).isEmpty());
+        assertTrue(SyncBaseline.matchingIndexes(root.resolve("no-such-store"), ours).isEmpty()); //$NON-NLS-1$
+    }
+
+    /**
+     * Two callers blanking two resources of one index at the same time both land: neither
+     * write is lost to the other's, and the file reads afterwards.
+     */
+    @Test
+    public void twoBlankingsOfOneIndexBothLand() throws Exception
+    {
+        Path store = root.resolve("racing-store").resolve(UUID.randomUUID().toString()); //$NON-NLS-1$
+        Path racing = writeIndex(store, UUID.randomUUID().toString());
+        for (int round = 0; round < 40; round++)
+        {
+            SyncBaseline.Index fresh = SyncBaseline.read(racing);
+            fresh.signatures.set(0, new byte[] { 1, 2, 3, 4 });
+            fresh.signatures.set(1, new byte[] { 5, 6, 7, 8 });
+            SyncBaseline.write(fresh, racing);
+            java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+            Thread a = blanker(racing, OWNER_KEY, failure);
+            Thread b = blanker(racing, FORM_KEY, failure);
+            a.start();
+            b.start();
+            a.join();
+            b.join();
+            if (failure.get() != null)
+            {
+                throw new AssertionError("round " + round + ": " + failure.get(), failure.get()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            SyncBaseline.Index after = SyncBaseline.read(racing);
+            assertArrayEquals("round " + round + ", owner", new byte[4], after.signatures.get(0)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertArrayEquals("round " + round + ", form", new byte[4], after.signatures.get(1)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        try (var files = Files.list(store))
+        {
+            assertEquals(List.of(racing), files.toList());
+        }
+    }
+
+    private static Thread blanker(Path index, String key, java.util.concurrent.atomic.AtomicReference<Throwable> failure)
+    {
+        return new Thread(() -> {
+            try
+            {
+                SyncBaseline.blankSignature(index, key);
+            }
+            catch (Throwable t)
+            {
+                failure.compareAndSet(null, t);
+            }
+        });
+    }
+
+    /** Writes a versioned index with the two form keys and one more, recording a configuration id. */
+    private static Path writeIndex(Path infobaseDir, String configurationUuid) throws Exception
+    {
+        Files.createDirectories(infobaseDir);
+        Path file = infobaseDir.resolve(SyncBaseline.INDEX_FILE);
+        try (DataOutputStream out = new DataOutputStream(new FileOutputStream(file.toFile())))
+        {
+            out.writeUTF("1.0"); //$NON-NLS-1$
+            out.writeLong(1_700_000_000_000L);
+            out.writeInt(3);
+            out.writeUTF(OWNER_KEY);
+            out.writeInt(4);
+            out.write(new byte[] { 1, 2, 3, 4 });
+            out.writeBoolean(false);
+            out.writeUTF(FORM_KEY);
+            out.writeInt(4);
+            out.write(new byte[] { 5, 6, 7, 8 });
+            out.writeBoolean(false);
+            out.writeUTF("src/CommonModules/Other/Module.bsl"); //$NON-NLS-1$
+            out.writeInt(2);
+            out.write(new byte[] { 9, 9 });
+            out.writeBoolean(false);
+            out.writeUTF("generation-7"); //$NON-NLS-1$
+            out.writeUTF(configurationUuid);
+        }
+        return file;
+    }
+
     private static byte[] withBom(String text)
     {
         byte[] body = text.getBytes(StandardCharsets.UTF_8);

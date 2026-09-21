@@ -12,20 +12,27 @@ import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.v2.IInfobaseSynchronizationStateManager;
 import com._1c.g5.wiring.ServiceAccess;
+
+import ru.aiedt.mcp.server.Activator;
 
 /**
  * The synchronization baseline EDT keeps per infobase - {@code ib-sync/ss/<infobase>/index.idx}
@@ -56,6 +63,20 @@ public final class SyncBaseline
 
     /** Sanity cap on a per-signature byte length. */
     private static final int MAX_SIGNATURE_BYTES = 10_000_000;
+
+    /** The root {@code uuid} attribute of a {@code Configuration.mdo}. */
+    private static final Pattern UUID_ATTR =
+        Pattern.compile("uuid=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\""); //$NON-NLS-1$
+
+    /** Bytes read from the head of {@code Configuration.mdo} to find the root uuid attribute. */
+    private static final int MDO_HEAD_BYTES = 8192;
+
+    /**
+     * Serializes every read-modify-write of an index: two writers reading the same file before
+     * either writes it would each keep only its own change, and a shared temporary file could
+     * be moved by the writer that did not fill it.
+     */
+    private static final Object WRITE_LOCK = new Object();
 
     /** The content of an {@code index.idx}, in either layout. */
     public static final class Index
@@ -161,7 +182,8 @@ public final class SyncBaseline
     }
 
     /**
-     * Writes an index in the layout it was read in, through a temporary file beside it.
+     * Writes an index in the layout it was read in, through a temporary file of its own beside
+     * it. Writes are serialized within this server.
      *
      * @param index the content
      * @param file the index to replace
@@ -169,8 +191,24 @@ public final class SyncBaseline
      */
     public static void write(Index index, Path file) throws IOException
     {
-        File tmp = new File(file.toFile().getAbsolutePath() + ".tmp"); //$NON-NLS-1$
-        try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(tmp)))
+        synchronized (WRITE_LOCK)
+        {
+            Path tmp = Files.createTempFile(file.toAbsolutePath().getParent(), INDEX_FILE, ".tmp"); //$NON-NLS-1$
+            try
+            {
+                writeTo(index, tmp);
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+            finally
+            {
+                Files.deleteIfExists(tmp);
+            }
+        }
+    }
+
+    private static void writeTo(Index index, Path tmp) throws IOException
+    {
+        try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(tmp.toFile())))
         {
             if (index.versioned)
             {
@@ -196,12 +234,13 @@ public final class SyncBaseline
             dos.writeUTF(index.generationId);
             dos.writeUTF(index.configurationUuid);
         }
-        Files.move(tmp.toPath(), file, StandardCopyOption.REPLACE_EXISTING);
     }
 
     /**
      * Blanks the signature of one resource in an index, so the next update reads the resource as
-     * changed. A signature that is already blank is left alone.
+     * changed. A signature that is already blank is left alone. The read and the write are one
+     * step under the lock every write takes, so two callers blanking two resources of one index
+     * both land.
      *
      * @param file the index
      * @param key the resource path, {@code src/...}
@@ -210,29 +249,70 @@ public final class SyncBaseline
      */
     public static boolean blankSignature(Path file, String key) throws IOException
     {
-        Index index = read(file);
-        int at = index.indexOf(key);
-        if (at < 0)
+        synchronized (WRITE_LOCK)
         {
-            return false;
-        }
-        byte[] signature = index.signatures.get(at);
-        boolean blank = true;
-        for (byte b : signature)
-        {
-            if (b != 0)
+            Index index = read(file);
+            int at = index.indexOf(key);
+            if (at < 0)
             {
-                blank = false;
-                break;
+                return false;
             }
+            byte[] signature = index.signatures.get(at);
+            boolean blank = true;
+            for (byte b : signature)
+            {
+                if (b != 0)
+                {
+                    blank = false;
+                    break;
+                }
+            }
+            if (blank)
+            {
+                return false;
+            }
+            index.signatures.set(at, new byte[signature.length]);
+            write(index, file);
+            return true;
         }
-        if (blank)
+    }
+
+    /**
+     * The root {@code uuid} of {@code src/Configuration/Configuration.mdo} - the id EDT's update
+     * flow compares with the one a baseline recorded, and so the id that ties a baseline in the
+     * per-user store to a project.
+     *
+     * @param project the project
+     * @return the id, or {@code null} when the file is missing or carries none
+     */
+    public static String configurationUuid(IProject project)
+    {
+        if (project.getLocation() == null)
         {
-            return false;
+            return null;
         }
-        index.signatures.set(at, new byte[signature.length]);
-        write(index, file);
-        return true;
+        Path mdo = Paths.get(project.getLocation().toOSString(), "src", "Configuration", "Configuration.mdo"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (!mdo.toFile().isFile())
+        {
+            return null;
+        }
+        try (InputStream in = Files.newInputStream(mdo))
+        {
+            byte[] buf = new byte[MDO_HEAD_BYTES];
+            int total = 0;
+            int n;
+            while (total < MDO_HEAD_BYTES && (n = in.read(buf, total, MDO_HEAD_BYTES - total)) > 0)
+            {
+                total += n;
+            }
+            Matcher m = UUID_ATTR.matcher(new String(Arrays.copyOf(buf, total), StandardCharsets.UTF_8));
+            return m.find() ? m.group(1) : null;
+        }
+        catch (IOException e)
+        {
+            Activator.logError("Configuration.mdo of " + project.getName() + " was not read", e); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
     }
 
     /**
@@ -307,11 +387,26 @@ public final class SyncBaseline
     }
 
     /**
-     * The indexes of the project's own infobases - every one in the workspace store.
+     * The indexes of the project's own infobases: every one in the workspace store, which is
+     * the project's alone, and the ones in the per-user store of older EDT whose recorded
+     * configuration id is the project's.
      *
      * @param project the project
-     * @return the existing index files, keyed by nothing: the infobase id is the parent
-     *         directory's name
+     * @return the existing index files; the infobase id is the parent directory's name
+     */
+    public static List<Path> indexes(IProject project)
+    {
+        List<Path> indexes = workspaceIndexes(project);
+        indexes.addAll(matchingIndexes(roamingStore(), configurationUuid(project)));
+        return indexes;
+    }
+
+    /**
+     * The indexes in the workspace store of a project - every one, since that store holds the
+     * baselines of this project's infobases and no other's.
+     *
+     * @param project the project
+     * @return the existing index files; the infobase id is the parent directory's name
      */
     public static List<Path> workspaceIndexes(IProject project)
     {
@@ -326,6 +421,44 @@ public final class SyncBaseline
                 if (idx.isFile())
                 {
                     indexes.add(idx.toPath());
+                }
+            }
+        }
+        return indexes;
+    }
+
+    /**
+     * The indexes of a store shared between projects whose recorded configuration id is the
+     * given one. An index that does not read is left out.
+     *
+     * @param store the store, {@code ib-sync/ss}; it need not exist
+     * @param configurationUuid the id to match; {@code null} matches nothing
+     * @return the matching index files; the infobase id is the parent directory's name
+     */
+    public static List<Path> matchingIndexes(Path store, String configurationUuid)
+    {
+        List<Path> indexes = new ArrayList<>();
+        File[] dirs = configurationUuid != null && store.toFile().isDirectory()
+            ? store.toFile().listFiles(File::isDirectory) : null;
+        if (dirs != null)
+        {
+            for (File dir : dirs)
+            {
+                File idx = new File(dir, INDEX_FILE);
+                if (!idx.isFile())
+                {
+                    continue;
+                }
+                try
+                {
+                    if (configurationUuid.equals(read(idx.toPath()).configurationUuid))
+                    {
+                        indexes.add(idx.toPath());
+                    }
+                }
+                catch (IOException e)
+                {
+                    Activator.logWarning("Baseline " + idx + " was not read: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
                 }
             }
         }

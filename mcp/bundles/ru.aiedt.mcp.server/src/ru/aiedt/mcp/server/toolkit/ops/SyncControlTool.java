@@ -9,18 +9,13 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IProject;
@@ -75,13 +70,7 @@ public class SyncControlTool implements IMcpTool
 {
     public static final String NAME = "sync_control"; //$NON-NLS-1$
 
-    private static final Pattern UUID_ATTR =
-        Pattern.compile("uuid=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\""); //$NON-NLS-1$
-
     private static final int MAX_LISTED_BASELINES = 25;
-
-    /** Bytes read from the head of Configuration.mdo to find the root uuid attribute. */
-    private static final int MDO_HEAD_BYTES = 8192;
 
     @Override
     public String getName()
@@ -1428,45 +1417,7 @@ public class SyncControlTool implements IMcpTool
      */
     private String readConfigurationUuid(IProject project)
     {
-        if (project.getLocation() == null)
-        {
-            return null;
-        }
-        Path mdo = Paths.get(project.getLocation().toOSString(), "src", "Configuration", "Configuration.mdo"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        if (!mdo.toFile().isFile())
-        {
-            return null;
-        }
-        try
-        {
-            byte[] head = readHead(mdo, MDO_HEAD_BYTES);
-            String text = new String(head, StandardCharsets.UTF_8);
-            Matcher m = UUID_ATTR.matcher(text);
-            if (m.find())
-            {
-                return m.group(1);
-            }
-        }
-        catch (Exception e)
-        {
-            Activator.logError("sync_control: failed to read Configuration.mdo UUID", e); //$NON-NLS-1$
-        }
-        return null;
-    }
-
-    private static byte[] readHead(Path file, int max) throws java.io.IOException
-    {
-        try (java.io.InputStream in = Files.newInputStream(file))
-        {
-            byte[] buf = new byte[max];
-            int total = 0;
-            int n;
-            while (total < max && (n = in.read(buf, total, max - total)) > 0)
-            {
-                total += n;
-            }
-            return total == max ? buf : java.util.Arrays.copyOf(buf, total);
-        }
+        return SyncBaseline.configurationUuid(project);
     }
 
     /**
