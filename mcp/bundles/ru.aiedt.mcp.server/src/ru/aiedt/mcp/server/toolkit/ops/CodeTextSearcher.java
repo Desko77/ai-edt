@@ -29,6 +29,8 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.modules.IModuleSource;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 
 /**
@@ -274,6 +276,7 @@ public class CodeTextSearcher
             for (IResource src : roots)
             {
                 src.accept(collector);
+                collector.scanProvided(src.getProject());
             }
         }
         catch (OperationCanceledException e)
@@ -305,6 +308,7 @@ public class CodeTextSearcher
                     for (IResource src : roots)
                     {
                         src.accept(retry);
+                        retry.scanProvided(src.getProject());
                     }
                 }
                 catch (OperationCanceledException | CoreException e)
@@ -810,13 +814,7 @@ public class CodeTextSearcher
 
             String relative = resource.getProjectRelativePath().toString();
             String displayPath = relative.startsWith("src/") ? relative.substring(4) : relative; //$NON-NLS-1$
-
-            if (fileMask != null && !fileMask.isEmpty()
-                && !displayPath.toLowerCase(Locale.ROOT).contains(fileMask.toLowerCase(Locale.ROOT)))
-            {
-                return true;
-            }
-            if (metadataFolderPrefix != null && !displayPath.startsWith(metadataFolderPrefix))
+            if (!passesFilters(displayPath))
             {
                 return true;
             }
@@ -835,6 +833,57 @@ public class CodeTextSearcher
             return true;
         }
 
+        private boolean passesFilters(String displayPath)
+        {
+            if (fileMask != null && !fileMask.isEmpty()
+                && !displayPath.toLowerCase(Locale.ROOT).contains(fileMask.toLowerCase(Locale.ROOT)))
+            {
+                return false;
+            }
+            return metadataFolderPrefix == null || displayPath.startsWith(metadataFolderPrefix);
+        }
+
+        /**
+         * Scans the modules the providers hold for a project - the ones with an address but no
+         * file the walk could visit - under the same filters, budget and counters as the files.
+         * A hit is reported under the module's address, so it is readable and writable by the
+         * path shown.
+         *
+         * @param project the project whose files were just walked
+         */
+        void scanProvided(IProject project)
+        {
+            for (IModuleSource module : ModuleSources.list(project))
+            {
+                if (cancellation != null && cancellation.isCancelled())
+                {
+                    cancelled = true;
+                    throw new OperationCanceledException();
+                }
+                if (System.nanoTime() - deadline > 0)
+                {
+                    timedOut = true;
+                    throw new OperationCanceledException();
+                }
+                String displayPath = module.modulePath();
+                if (displayPath == null || !passesFilters(displayPath))
+                {
+                    continue;
+                }
+                scannedFiles++;
+                try
+                {
+                    searchInText(String.join("\n", module.lines()), displayPath); //$NON-NLS-1$
+                }
+                catch (Exception e)
+                {
+                    skippedFiles++;
+                    Activator.logWarning("search_in_code could not read " + displayPath + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                        + e.getMessage());
+                }
+            }
+        }
+
         /**
          * Scans one file, first skipping it whole when nothing can match, then line by line.
          *
@@ -844,7 +893,17 @@ public class CodeTextSearcher
          */
         private void searchInFile(IFile file, String displayPath) throws Exception
         {
-            String content = BslModuleAccess.readFileText(file);
+            searchInText(BslModuleAccess.readFileText(file), displayPath);
+        }
+
+        /**
+         * Scans module text, first skipping it whole when nothing can match, then line by line.
+         *
+         * @param content the module text
+         * @param displayPath the address the hits are reported under
+         */
+        private void searchInText(String content, String displayPath)
+        {
             if (!pattern.matcher(content).find())
             {
                 return;

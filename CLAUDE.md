@@ -175,6 +175,16 @@ Supporting scripts:
   `extension_workshop`, `yaxunit_tests` and others expose many operations behind one tool name.
 - **Naming convention**: MCP tool names and operation names are `snake_case`; JSON parameter keys
   stay `camelCase`; Java methods stay `camelCase`.
+- **Whiteboard** (`toolkit/ToolWhiteboard.java`) - what another bundle can plug in, as OSGi services
+  the Activator tracks. An `IMcpTool` service becomes a callable tool; its service property
+  `ru.aiedt.mcp.tool.writes` says whether it writes, and a write-blocking preset switches a
+  writing one off with this server's own writers (absent, it counts as a writer). An
+  `IModuleSourceProvider` service (`support/modules/`) supplies modules that have an address but
+  no file: the module tools (`read_module_source`, `write_module_source`, `get_module_structure`,
+  `read_method_source`, `list_modules`, `text_search`) resolve the address through
+  `ModuleSources`, and the index-built answers (`call_hierarchy`, `object_references`,
+  `get_project_errors`) end with the provider's coverage line. `Export-Package` in the manifest
+  names what such a bundle may reach.
 
 ### Features
 

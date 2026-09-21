@@ -48,9 +48,77 @@ public class McpToolCatalog
 
     private final Map<String, String> callableToCapability = new ConcurrentHashMap<>();
 
+    /**
+     * The tools other bundles published, by capability, with whether each one writes. They are
+     * registered again after every {@link #clear()}, which the server runs at each start.
+     */
+    private final Map<String, IMcpTool> externalTools = new ConcurrentHashMap<>();
+
+    private final Map<String, Boolean> externalWrites = new ConcurrentHashMap<>();
+
     private McpToolCatalog()
     {
         // Singleton
+    }
+
+    /**
+     * Registers a tool another bundle published.
+     *
+     * <p>The presets name this server's own tools; a tool from outside is classified by the one
+     * fact its bundle declares - whether it writes - and a preset that blocks writes switches it
+     * off with the writers it names. It stays registered across {@link #clear()}.</p>
+     *
+     * @param tool the tool
+     * @param writes whether the tool changes anything
+     */
+    public void registerExternal(IMcpTool tool, boolean writes)
+    {
+        if (tool == null || tool.getName() == null)
+        {
+            return;
+        }
+        String capabilityId = capabilityOf(tool);
+        externalTools.put(capabilityId, tool);
+        externalWrites.put(capabilityId, Boolean.valueOf(writes));
+        register(tool);
+    }
+
+    /**
+     * Forgets a tool another bundle published.
+     *
+     * @param tool the tool
+     */
+    public void unregisterExternal(IMcpTool tool)
+    {
+        if (tool == null || tool.getName() == null)
+        {
+            return;
+        }
+        String capabilityId = capabilityOf(tool);
+        externalTools.remove(capabilityId);
+        externalWrites.remove(capabilityId);
+        unregister(tool.getName());
+    }
+
+    /**
+     * Whether a capability came from another bundle and writes, so a write-blocking preset
+     * switches it off.
+     *
+     * @param capabilityId the capability
+     * @return {@code true} when the preset in force blocks writes and this tool writes
+     */
+    private boolean blockedAsExternalWriter(String capabilityId)
+    {
+        Boolean writes = externalWrites.get(capabilityId);
+        return writes != null && writes.booleanValue() && ToolSettingsStore.getInstance().presetBlocksWrites();
+    }
+
+    /**
+     * @return the tools other bundles published, by capability
+     */
+    public Map<String, IMcpTool> getExternalTools()
+    {
+        return Collections.unmodifiableMap(externalTools);
     }
 
     /**
@@ -191,7 +259,7 @@ public class McpToolCatalog
     {
         Set<String> disabled = disabledTools();
         Set<String> unlisted = unlistedTools();
-        if (disabled.isEmpty() && unlisted.isEmpty())
+        if (disabled.isEmpty() && unlisted.isEmpty() && externalWrites.isEmpty())
         {
             return Collections.unmodifiableCollection(toolsByCapability.values());
         }
@@ -199,7 +267,8 @@ public class McpToolCatalog
         for (IMcpTool tool : toolsByCapability.values())
         {
             String capabilityId = capabilityOf(tool);
-            if (!disabled.contains(capabilityId) && !unlisted.contains(capabilityId))
+            if (!disabled.contains(capabilityId) && !unlisted.contains(capabilityId)
+                && !blockedAsExternalWriter(capabilityId))
             {
                 listed.add(tool);
             }
@@ -233,7 +302,7 @@ public class McpToolCatalog
         {
             return false;
         }
-        return !disabledTools().contains(capabilityId);
+        return !disabledTools().contains(capabilityId) && !blockedAsExternalWriter(capabilityId);
     }
 
     /**
@@ -252,7 +321,8 @@ public class McpToolCatalog
      */
     public boolean isDisabledByPreset(String capabilityName)
     {
-        return capabilityName != null && disabledTools().contains(capabilityName);
+        return capabilityName != null
+            && (disabledTools().contains(capabilityName) || blockedAsExternalWriter(capabilityName));
     }
 
     /**
@@ -274,6 +344,12 @@ public class McpToolCatalog
     {
         toolsByCapability.clear();
         callableToCapability.clear();
+        // The tools of other bundles are not this server's to forget: they came in through the
+        // whiteboard and leave the same way.
+        for (IMcpTool tool : externalTools.values())
+        {
+            register(tool);
+        }
     }
 
     /**

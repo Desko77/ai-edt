@@ -42,6 +42,8 @@ import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.modules.IModuleSource;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 
 /**
  * Writes BSL source into an EDT module file.
@@ -271,7 +273,6 @@ public class ModuleSourceWriter implements IMcpTool
         }
         if (MODE_SEARCH_REPLACE.equals(mode) && (oldSource == null || oldSource.isEmpty()))
             return "Error: oldSource must be supplied for searchReplace mode"; //$NON-NLS-1$
-
         // --- step 4: resolve modulePath ---
         if (modulePath == null || modulePath.isEmpty())
         {
@@ -311,6 +312,14 @@ public class ModuleSourceWriter implements IMcpTool
         // --- step 6: resolve file + existence rules ---
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
         boolean fileExists = file.exists();
+        // A module a provider holds has an address but no file; the write goes wherever the
+        // provider keeps it.
+        IModuleSource provided = fileExists ? null : ModuleSources.locate(project, modulePath);
+        if (provided != null && provided.readOnly())
+        {
+            return "Error: src/" + modulePath + " is read from " + provided.source() //$NON-NLS-1$ //$NON-NLS-2$
+                + ", which does not take writes. Nothing was written."; //$NON-NLS-1$
+        }
         // Refused before anything is written: setContents replaces the file while an editor still
         // holds a different text, and whichever side saves last destroys the other in silence. The
         // caller is told which file and what to do, rather than being given a success that costs
@@ -322,7 +331,7 @@ public class ModuleSourceWriter implements IMcpTool
                 + "overwrite this write. Save or revert the editor first. What the editor holds " //$NON-NLS-1$
                 + "is what read_module_source returns."; //$NON-NLS-1$
         }
-        if (!fileExists && !MODE_REPLACE.equals(mode) && !MODE_APPEND.equals(mode))
+        if (!fileExists && provided == null && !MODE_REPLACE.equals(mode) && !MODE_APPEND.equals(mode))
         {
             return "Error: no module file exists at src/" + modulePath + ". Only the 'replace' and 'append' " //$NON-NLS-1$ //$NON-NLS-2$
                 + "modes may create a new module file (appending to a module that does not exist yet writes " //$NON-NLS-1$
@@ -339,7 +348,12 @@ public class ModuleSourceWriter implements IMcpTool
             // --- step 8: read current content + BOM ---
             List<String> originalLines;
             boolean hasBom;
-            if (fileExists)
+            if (provided != null)
+            {
+                originalLines = provided.lines();
+                hasBom = true;
+            }
+            else if (fileExists)
             {
                 originalLines = BslModuleAccess.readFileLines(file);
                 hasBom = detectBom(file);
@@ -531,6 +545,11 @@ public class ModuleSourceWriter implements IMcpTool
                 }
             }
 
+            // --- step 10a: what the provider has to say about the write ---
+            IModuleSource.WriteCheck check = provided == null ? IModuleSource.WriteCheck.clear()
+                : provided.check(originalLines, newLines, params);
+            String handlerWarning = check.warning;
+
             // --- step 11: dryRun preview ---
             if (dryRun)
             {
@@ -546,10 +565,18 @@ public class ModuleSourceWriter implements IMcpTool
                     .put("lineDelta", newLines.size() - totalOriginal); //$NON-NLS-1$
                 if (protectionWarning != null)
                     dryFm.put("protection", protectionWarning); //$NON-NLS-1$
+                if (provided != null)
+                {
+                    describeProvided(dryFm, provided);
+                    for (Map.Entry<String, String> note : check.notes.entrySet())
+                        dryFm.put(note.getKey(), note.getValue());
+                }
                 StringBuilder preview = new StringBuilder();
                 preview.append("## Preview (Dry Run)\n\n"); //$NON-NLS-1$
                 if (protectionWarning != null)
                     preview.append("**").append(protectionWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (handlerWarning != null)
+                    preview.append("**").append(handlerWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
                 preview.append("Lines: ").append(totalOriginal).append(" -> ") //$NON-NLS-1$ //$NON-NLS-2$
                     .append(newLines.size()).append("\n\n"); //$NON-NLS-1$
                 return dryFm.wrapContent(preview.toString());
@@ -571,17 +598,38 @@ public class ModuleSourceWriter implements IMcpTool
                 }
             }
 
+            // --- step 12a: the provider refuses what the caller did not allow ---
+            if (check.refusal != null)
+            {
+                return "Error: the write was refused, nothing was written. " + check.refusal; //$NON-NLS-1$
+            }
+
             // --- step 13: write file ---
-            writeFile(file, newLines, hasBom, fileExists);
-
-            // --- step 14: persistence sync (BM flush) ---
-            String moduleFqn = resolveFqnForValidation(objectName, modulePath);
-            PersistenceResult persistence = forceExportModule(project, moduleFqn);
-
-            // --- step 15: optional EDT validation ---
+            PersistenceResult persistence;
             FileMarkers.Grouped validation = null;
-            if (validateAfterWrite)
-                validation = collectValidation(project, objectName, modulePath);
+            String delivery = null;
+            if (provided != null)
+            {
+                boolean written = provided.write(newLines);
+                // Nothing in the BM holds this module, so there is no index to flush and no
+                // marker to wait for; saying so beats a "skipped" that reads as a failure.
+                persistence = PersistenceResult.notApplicable(
+                    "not applicable: the module is held by " + provided.source() //$NON-NLS-1$
+                        + ", of which EDT builds no model"); //$NON-NLS-1$
+                delivery = provided.afterWrite(written);
+            }
+            else
+            {
+                writeFile(file, newLines, hasBom, fileExists);
+
+                // --- step 14: persistence sync (BM flush) ---
+                String moduleFqn = resolveFqnForValidation(objectName, modulePath);
+                persistence = forceExportModule(project, moduleFqn);
+
+                // --- step 15: optional EDT validation ---
+                if (validateAfterWrite)
+                    validation = collectValidation(project, objectName, modulePath);
+            }
 
             // --- step 16: duplicate-method detection ---
             List<String> duplicateMethods = findDuplicateMethods(newLines);
@@ -596,13 +644,24 @@ public class ModuleSourceWriter implements IMcpTool
                 .put("linesAfter", newLines.size()) //$NON-NLS-1$
                 .put("syntaxCheck", skipSyntaxCheck ? "skipped" : "passed"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-            if (fileExists)
+            if (fileExists || provided != null)
                 fm.put("linesBefore", totalOriginal); //$NON-NLS-1$
             else
                 fm.put("newFile", true); //$NON-NLS-1$
 
             if (protectionWarning != null)
                 fm.put("protection", protectionWarning); //$NON-NLS-1$
+
+            if (provided != null)
+            {
+                describeProvided(fm, provided);
+                for (Map.Entry<String, String> note : check.notes.entrySet())
+                    fm.put(note.getKey(), note.getValue());
+                if (provided.validationNote() != null)
+                    fm.put("validation", provided.validationNote()); //$NON-NLS-1$
+                if (delivery != null)
+                    fm.put("delivery", delivery); //$NON-NLS-1$
+            }
 
             if (validation != null)
             {
@@ -621,8 +680,13 @@ public class ModuleSourceWriter implements IMcpTool
                 fm.put("persistenceSyncDetail", persistence.detail); //$NON-NLS-1$
 
             StringBuilder body = new StringBuilder("Write finished successfully"); //$NON-NLS-1$
+            if (provided != null)
+                body.append(" through ").append(provided.source()) //$NON-NLS-1$
+                    .append(provided.containerPath() == null ? "" : " into src/" + provided.containerPath()); //$NON-NLS-1$ //$NON-NLS-2$
             if (protectionWarning != null)
                 body.append("\n\n**").append(protectionWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (handlerWarning != null)
+                body.append("\n\n**").append(handlerWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
 
             if (!duplicateMethods.isEmpty())
             {
@@ -1422,6 +1486,21 @@ public class ModuleSourceWriter implements IMcpTool
     }
 
     /**
+     * Puts on an answer where a provided module lives and what else its source says of it.
+     *
+     * @param fm the front matter
+     * @param provided the module
+     */
+    private static void describeProvided(YamlFrontMatter fm, IModuleSource provided)
+    {
+        fm.put("source", provided.source()); //$NON-NLS-1$
+        if (provided.containerPath() != null)
+            fm.put("container", provided.containerPath()); //$NON-NLS-1$
+        for (Map.Entry<String, String> field : provided.answerFields().entrySet())
+            fm.put(field.getKey(), field.getValue());
+    }
+
+    /**
      * Outcome of {@link #forceExportModule(IProject, String)}: ok flag, elapsed time, optional
      * detail.
      */
@@ -1430,5 +1509,20 @@ public class ModuleSourceWriter implements IMcpTool
         boolean ok;
         long elapsedMs;
         String detail;
+
+        /**
+         * The outcome of a write that has no index to flush.
+         *
+         * @param detail why there is none
+         * @return an ok result carrying the reason
+         */
+        static PersistenceResult notApplicable(String detail)
+        {
+            PersistenceResult result = new PersistenceResult();
+            result.ok = true;
+            result.elapsedMs = 0;
+            result.detail = detail;
+            return result;
+        }
     }
 }

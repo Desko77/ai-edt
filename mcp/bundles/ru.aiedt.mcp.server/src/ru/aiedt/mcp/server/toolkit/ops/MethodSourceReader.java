@@ -28,6 +28,8 @@ import ru.aiedt.mcp.server.support.BslCommentParseHelper;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.modules.IModuleSource;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.UiSync;
 
@@ -120,6 +122,22 @@ public class MethodSourceReader
             return resolution.getHint();
         }
         String resolvedPath = resolution.getPath();
+
+        IModuleSource provided = ModuleSources.locate(project, resolvedPath);
+        if (provided != null)
+        {
+            // EDT builds no model of a provided module: straight to the text reader.
+            List<String> lines;
+            try
+            {
+                lines = provided.lines();
+            }
+            catch (Exception e)
+            {
+                return "Error: could not read the module from " + provided.source() + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return readMethodFromLines(lines, resolvedPath, methodName, includeDoc, projectName, provided);
+        }
 
         String result;
         try
@@ -279,7 +297,23 @@ public class MethodSourceReader
         {
             return "Error: could not read the file: " + e.getMessage(); //$NON-NLS-1$
         }
+        return readMethodFromLines(lines, modulePath, methodName, includeDoc, projectName, null);
+    }
 
+    /**
+     * Finds the method in module lines and renders it.
+     *
+     * @param lines the module lines
+     * @param modulePath the module path, for the header
+     * @param methodName the method name
+     * @param includeDoc whether to append the parsed doc-comment
+     * @param projectName the project name for the header
+     * @param provided the module source the lines came from, or <code>null</code> for a file
+     * @return the answer
+     */
+    private String readMethodFromLines(List<String> lines, String modulePath, String methodName,
+        boolean includeDoc, String projectName, IModuleSource provided)
+    {
         int methodStart = -1;
         boolean isFunction = false;
         List<String> available = new ArrayList<>();
@@ -339,6 +373,14 @@ public class MethodSourceReader
         if (region != null)
         {
             frontMatter.put("region", region); //$NON-NLS-1$
+        }
+        if (provided != null)
+        {
+            frontMatter.put("source", provided.source()); //$NON-NLS-1$
+            if (provided.containerPath() != null)
+            {
+                frontMatter.put("container", provided.containerPath()); //$NON-NLS-1$
+            }
         }
 
         StringBuilder body = new StringBuilder();

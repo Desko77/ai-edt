@@ -109,6 +109,10 @@ public class Activator
 
     private ServiceTracker<IConfigurationProvider, IConfigurationProvider> configurationProviderTracker;
 
+    /** The services other bundles publish for this server: tools and module source providers. */
+    private final ru.aiedt.mcp.server.toolkit.ToolWhiteboard whiteboard =
+        new ru.aiedt.mcp.server.toolkit.ToolWhiteboard();
+
     private ServiceTracker<IMarkerManager, IMarkerManager> markerManagerTracker;
 
     private ServiceTracker<ICheckScheduler, ICheckScheduler> checkSchedulerTracker;
@@ -194,6 +198,9 @@ public class Activator
         mcpServer.registerTools();
 
         openServiceTrackers(context);
+        // After the built-in tools, so a tool another bundle publishes joins a catalogue that
+        // already holds its own; before the UI, so the preference page lists it too.
+        whiteboard.open(context);
         SessionChangeTracker.initialize();
         startClusterService();
         initializeUi();
@@ -209,6 +216,7 @@ public class Activator
             mcpServer.stop();
         }
 
+        whiteboard.close();
         closeServiceTrackers();
         disposeUi();
         SessionChangeTracker.shutdown();
