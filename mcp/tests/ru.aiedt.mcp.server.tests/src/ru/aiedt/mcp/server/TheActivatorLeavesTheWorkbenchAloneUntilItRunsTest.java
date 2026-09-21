@@ -7,15 +7,16 @@
 package ru.aiedt.mcp.server;
 
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 
 import org.eclipse.swt.widgets.Display;
 import org.junit.Test;
 
 /**
  * The activator creates no display of its own: without a running workbench the UI contributions
- * stay pending, and the call that would place them is a no-op that leaves the thread without a
- * display. A display created here would be the one the workbench later finds on the wrong thread.
+ * stay pending, and the call that would place them is a no-op that leaves the thread's display
+ * as it was - none, or the one another test made. A display created here would be the one the
+ * workbench later finds on the wrong thread.
  */
 public class TheActivatorLeavesTheWorkbenchAloneUntilItRunsTest
 {
@@ -24,8 +25,9 @@ public class TheActivatorLeavesTheWorkbenchAloneUntilItRunsTest
     {
         Activator activator = Activator.getDefault();
         assertNotNull(activator);
+        Display before = Display.findDisplay(Thread.currentThread());
         activator.completeUiInitialization();
-        assertNull("the activator must not create a display on this thread", Display.findDisplay(Thread.currentThread())); //$NON-NLS-1$
-        assertNull(Display.getCurrent());
+        assertSame("the activator must not create a display on this thread", before, //$NON-NLS-1$
+            Display.findDisplay(Thread.currentThread()));
     }
 }
