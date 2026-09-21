@@ -192,7 +192,10 @@ public class TheToolListHasAWeightBudgetTest
         // git: the repository answers inside the IDE through the JGit that EDT ships - status,
         // branches and log carry the work tree, the index and the recent history, so a caller
         // never rebuilds what git already knows from the disk state.
-        BUDGETS.put("git", Integer.valueOf(670)); //$NON-NLS-1$
+        // Grown to 1330 for the commit operation: staging by name and a refusal for a blanket
+        // add is the whole point of having git inside the IDE, and the schema is where a client
+        // learns that.
+        BUDGETS.put("git", Integer.valueOf(1330)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         BUDGETS.put("dcs_workshop", Integer.valueOf(8523)); //$NON-NLS-1$

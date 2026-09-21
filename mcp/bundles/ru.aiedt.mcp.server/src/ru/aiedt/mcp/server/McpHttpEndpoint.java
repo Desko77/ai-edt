@@ -139,6 +139,8 @@ import ru.aiedt.mcp.server.toolkit.ops.ListExtensionsTool;
 import ru.aiedt.mcp.server.toolkit.ops.ListInterceptorsTool;
 import ru.aiedt.mcp.server.toolkit.ops.ModulesLister;
 import ru.aiedt.mcp.server.toolkit.ops.GitTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitCommitTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitCheckoutTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectsLister;
 import ru.aiedt.mcp.server.toolkit.ops.MxlWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.ObjectSummaryTool;
@@ -1465,6 +1467,8 @@ public class McpHttpEndpoint
             new ModuleOutlineReader(),
             new ModulesLister(),
             new GitTool(),
+            new GitCommitTool(),
+            new GitCheckoutTool(),
             new CodeTextSearcher(),
             new DcsSearchTool(),
             new MethodSourceReader(),
