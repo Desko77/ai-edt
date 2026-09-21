@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support.oform;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -77,6 +78,25 @@ public final class OrdinaryFormCoverage
     }
 
     /**
+     * How many ordinary forms a set of projects has between them.
+     *
+     * @param projects the projects; {@code null} entries count as none
+     * @return the sum
+     */
+    public static int count(Collection<IProject> projects)
+    {
+        int total = 0;
+        if (projects != null)
+        {
+            for (IProject project : projects)
+            {
+                total += count(project);
+            }
+        }
+        return total;
+    }
+
+    /**
      * The coverage statement for an index-built answer, or {@code null} when the project has no
      * ordinary forms and the answer covers everything.
      *
@@ -86,13 +106,31 @@ public final class OrdinaryFormCoverage
      */
     public static String statement(IProject project, String what)
     {
-        int count = count(project);
+        return statement(count(project), "this project", what); //$NON-NLS-1$
+    }
+
+    /**
+     * The coverage statement for an answer built over several projects - an extension and the
+     * configuration it extends, or the whole workspace.
+     *
+     * @param projects the projects the answer is about
+     * @param what what the answer lists
+     * @return one sentence with the summed count, or {@code null} when there is nothing to say
+     */
+    public static String statement(Collection<IProject> projects, String what)
+    {
+        return statement(count(projects), projects != null && projects.size() == 1 ? "this project" //$NON-NLS-1$
+            : "the projects searched", what); //$NON-NLS-1$
+    }
+
+    private static String statement(int count, String where, String what)
+    {
         if (count == 0)
         {
             return null;
         }
         return "Coverage: " + count + " ordinary form module" + (count == 1 ? "" : "s") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            + " of this project " + (count == 1 ? "is" : "are") + " outside the BSL index, so no " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            + " of " + where + " " + (count == 1 ? "is" : "are") + " outside the BSL index, so no " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
             + what + " from them " + (what.endsWith("s") ? "are" : "is") + " counted here. " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             + "Their code lives in Form.oform containers; code_search text_search scans it, " //$NON-NLS-1$
             + "and read_module_source reads a module by its <object>/Forms/<form>/Module.bsl address."; //$NON-NLS-1$
@@ -108,12 +146,25 @@ public final class OrdinaryFormCoverage
      */
     public static String appendTo(IProject project, String what, String markdown)
     {
-        if (markdown == null || markdown.startsWith("Error:")) //$NON-NLS-1$
-        {
-            return markdown;
-        }
-        String statement = statement(project, what);
-        if (statement == null)
+        return appendStatement(statement(project, what), markdown);
+    }
+
+    /**
+     * Appends the coverage statement over several projects to a markdown answer.
+     *
+     * @param projects the projects the answer is about
+     * @param what what the answer lists
+     * @param markdown the answer; an error line is returned unchanged
+     * @return the answer with the statement as a closing paragraph, when there is one
+     */
+    public static String appendTo(Collection<IProject> projects, String what, String markdown)
+    {
+        return appendStatement(statement(projects, what), markdown);
+    }
+
+    private static String appendStatement(String statement, String markdown)
+    {
+        if (markdown == null || markdown.startsWith("Error:") || statement == null) //$NON-NLS-1$
         {
             return markdown;
         }

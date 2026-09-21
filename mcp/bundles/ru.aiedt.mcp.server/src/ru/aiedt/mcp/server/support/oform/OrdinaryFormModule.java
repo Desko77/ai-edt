@@ -219,13 +219,15 @@ public final class OrdinaryFormModule
     /**
      * Writes the module into the container. The layout entry keeps its bytes; the line ending
      * is the one the module already uses, CRLF for a module that has none; the text ends with a
-     * line break as every module the writer produces does.
+     * line break as every module the writer produces does. A module that comes out as the text
+     * already there is not written: the container keeps its bytes and its timestamp.
      *
      * @param lines the new module, line separators dropped
+     * @return whether the container was written
      * @throws IOException when the container cannot be read
      * @throws CoreException when the workspace refuses the write
      */
-    public void write(List<String> lines) throws IOException, CoreException
+    public boolean write(List<String> lines) throws IOException, CoreException
     {
         OrdinaryFormFile file = read();
         String current = file.moduleText();
@@ -235,7 +237,12 @@ public final class OrdinaryFormModule
         {
             content = content + LineDelimiters.LF;
         }
-        file.setModuleText(LineDelimiters.rewrite(content, delimiter));
+        String rewritten = LineDelimiters.rewrite(content, delimiter);
+        if (rewritten.equals(current))
+        {
+            return false;
+        }
+        file.setModuleText(rewritten);
         byte[] bytes = file.toBytes();
         if (!container.exists())
         {
@@ -245,6 +252,7 @@ public final class OrdinaryFormModule
         {
             container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
         }
+        return true;
     }
 
     /**

@@ -229,6 +229,14 @@ public class AnOrdinaryFormModuleAnswersByItsAddressTest
 
             String again = new ModuleSourceReader().execute(args("projectName", PROJECT, "modulePath", ITEM_FORM)); //$NON-NLS-1$ //$NON-NLS-2$
             assertTrue(again, again.contains("Возврат 2;")); //$NON-NLS-1$
+
+            // A write that changes nothing leaves the container's bytes and timestamp alone.
+            byte[] bytes = Files.readAllBytes(itemContainer);
+            long stamp = Files.getLastModifiedTime(itemContainer).toMillis();
+            OrdinaryFormModule module = OrdinaryFormModule.locate(project, ITEM_FORM);
+            assertFalse(module.write(module.lines()));
+            assertArrayEquals(bytes, Files.readAllBytes(itemContainer));
+            assertEquals(stamp, Files.getLastModifiedTime(itemContainer).toMillis());
         }
         finally
         {
@@ -335,8 +343,16 @@ public class AnOrdinaryFormModuleAnswersByItsAddressTest
         String decorated = OrdinaryFormCoverage.appendTo(project, "references", "| a | b |\n"); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(decorated, decorated.startsWith("| a | b |\n\n**Coverage: 2 ordinary form modules")); //$NON-NLS-1$
         assertEquals("Error: x", OrdinaryFormCoverage.appendTo(project, "markers", "Error: x")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        assertNull(OrdinaryFormCoverage.statement(null, "markers")); //$NON-NLS-1$
-        assertEquals("plain", OrdinaryFormCoverage.appendTo(null, "markers", "plain")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertNull(OrdinaryFormCoverage.statement((IProject)null, "markers")); //$NON-NLS-1$
+        assertEquals("plain", OrdinaryFormCoverage.appendTo((IProject)null, "markers", "plain")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        // Several projects are counted together, as a reference search over an extension and
+        // its configuration, or a workspace-wide problems listing, searches them together.
+        String several = OrdinaryFormCoverage.statement(List.of(project, project), "references"); //$NON-NLS-1$
+        assertTrue(several, several.startsWith("Coverage: 4 ordinary form modules of the projects searched")); //$NON-NLS-1$
+        assertNull(OrdinaryFormCoverage.statement(List.of(), "references")); //$NON-NLS-1$
+        assertTrue(OrdinaryFormCoverage.appendTo(List.of(project), "markers", "| x |\n") //$NON-NLS-1$ //$NON-NLS-2$
+            .contains("2 ordinary form modules of this project")); //$NON-NLS-1$
     }
 
     /**

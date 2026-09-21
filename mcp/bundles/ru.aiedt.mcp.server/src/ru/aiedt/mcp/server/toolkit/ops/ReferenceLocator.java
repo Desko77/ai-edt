@@ -691,8 +691,18 @@ public class ReferenceLocator implements IMcpTool
             sink.phasesNotRun = master.phasesCutShort;
         }
         String report = formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
-        // The BSL phase reads the index, and the index holds no ordinary form module.
-        return filter.bsl ? OrdinaryFormCoverage.appendTo(project, "references", report) : report; //$NON-NLS-1$
+        if (!filter.bsl)
+        {
+            return report;
+        }
+        // The BSL phase reads the index of every project searched, and no index holds an
+        // ordinary form module: the count covers the sister projects the scope added.
+        List<IProject> searched = new ArrayList<>();
+        for (String name : searchedProjectNames)
+        {
+            searched.add(ResourcesPlugin.getWorkspace().getRoot().getProject(name));
+        }
+        return OrdinaryFormCoverage.appendTo(searched, "references", report); //$NON-NLS-1$
     }
 
     /**

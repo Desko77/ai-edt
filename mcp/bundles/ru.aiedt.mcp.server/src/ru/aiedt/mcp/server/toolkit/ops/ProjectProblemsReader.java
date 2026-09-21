@@ -201,14 +201,33 @@ public class ProjectProblemsReader
 
         String answer = getProjectErrors(projectName, severity, checkId, objects, limit, resolvedScope, fileFilter,
             waitForRefresh, compact, extraInfo);
-        if (projectName == null || projectName.isEmpty() || answer.startsWith("# Request Failed")) //$NON-NLS-1$
+        if (answer.startsWith("# Request Failed")) //$NON-NLS-1$
         {
             return answer;
         }
         // Markers come from the validation of the model, and the model holds no ordinary form
-        // module: a clean answer over such a project is clean about part of the code.
-        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
-        return OrdinaryFormCoverage.appendTo(project.exists() ? project : null, "markers", answer); //$NON-NLS-1$
+        // module: a clean answer over such a project is clean about part of the code. Without a
+        // project named the answer spans the workspace, and so does the count.
+        List<IProject> covered = new ArrayList<>();
+        if (projectName == null || projectName.isEmpty())
+        {
+            for (IProject candidate : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+            {
+                if (candidate.isAccessible())
+                {
+                    covered.add(candidate);
+                }
+            }
+        }
+        else
+        {
+            IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+            if (project.exists())
+            {
+                covered.add(project);
+            }
+        }
+        return OrdinaryFormCoverage.appendTo(covered, "markers", answer); //$NON-NLS-1$
     }
 
     /**
