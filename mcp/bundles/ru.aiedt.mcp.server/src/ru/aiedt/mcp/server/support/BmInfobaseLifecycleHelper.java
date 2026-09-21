@@ -277,19 +277,46 @@ public final class BmInfobaseLifecycleHelper
                 ? Activator.getDefault().getInfobaseAssociationManager() : null;
             if (project != null && am != null)
             {
+                // Every context the project has, the default one included: a binding made by an
+                // earlier build went to the default context whatever the branch, and one left
+                // behind keeps an application on a deleted infobase.
+                java.util.LinkedHashSet<InfobaseAssociationContext> contexts = new java.util.LinkedHashSet<>();
+                contexts.add(associationContextOf(project));
+                contexts.add(InfobaseAssociationContext.empty());
                 try
                 {
-                    am.dissociate(project, ref.get(), associationContextOf(project));
-                    r.dissociated = true;
+                    contexts.addAll(am.getAssociationContexts(project));
                 }
                 catch (Throwable e)
                 {
-                    // Non-fatal: the infobase may simply not have been associated.
-                    // Surface a warning (deletion still proceeds) so a genuine
-                    // dissociate failure that leaves a dangling launch config is
-                    // visible to the caller.
+                    Activator.logWarning("delete_infobase: the association contexts of '" + projectName //$NON-NLS-1$
+                        + "' were not listed: " + msg(e)); //$NON-NLS-1$
+                }
+                Throwable failure = null;
+                for (InfobaseAssociationContext context : contexts)
+                {
+                    try
+                    {
+                        Optional<?> association = am.getAssociation(project, context);
+                        if (association.isEmpty())
+                        {
+                            continue;
+                        }
+                        am.dissociate(project, ref.get(), context);
+                        r.dissociated = true;
+                    }
+                    catch (Throwable e)
+                    {
+                        // Non-fatal: the infobase may simply not be bound in this context.
+                        failure = e;
+                    }
+                }
+                if (!r.dissociated && failure != null)
+                {
+                    // Surface a warning (deletion still proceeds) so a genuine dissociate failure
+                    // that leaves a dangling launch config is visible to the caller.
                     r.dissociateWarning = "could not dissociate from '" + projectName //$NON-NLS-1$
-                        + "': " + msg(e) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "': " + msg(failure) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
                         + "config may still reference the removed infobase)"; //$NON-NLS-1$
                     Activator.logWarning("delete_infobase " + r.dissociateWarning); //$NON-NLS-1$
                 }

@@ -79,10 +79,11 @@ public final class DebugSessionStarter implements IMcpTool
      * normally sequential, so this lock is uncontended in practice - it is a
      * safety net that serializes the whole check-and-launch unit. Debug launches
      * are inherently exclusive (one live session per target), so a global lock is
-     * preferable to a per-key map (simpler, no leak surface).
+     * preferable to a per-key map (simpler, no leak surface). The lock is the one
+     * the plain client start takes too, because both put the run-mode flag on the
+     * infobase reference before launching.
      */
-    private static final java.util.concurrent.locks.ReentrantLock LAUNCH_LOCK =
-        new java.util.concurrent.locks.ReentrantLock();
+    private static final java.util.concurrent.locks.ReentrantLock LAUNCH_LOCK = LaunchConfigAccess.LAUNCH_LOCK;
 
     @Override
     public String getName()
@@ -434,7 +435,7 @@ public final class DebugSessionStarter implements IMcpTool
             {
                 mode = ClientLaunchMode.decide(choice.clientType, choice.runMode,
                     configuredProject == null ? null : ClientLaunchMode.projectRunMode(configuredProject),
-                    LaunchConfigAccess.getClientTypeIdFor(config));
+                    true, LaunchConfigAccess.getClientTypeIdFor(config));
                 if (mode.refusal != null)
                 {
                     return ToolResult.error(mode.refusal)
@@ -666,7 +667,7 @@ public final class DebugSessionStarter implements IMcpTool
             ILaunchConfiguration existingConfig =
                 LaunchConfigAccess.findLaunchConfig(launchManager, configType, projectName, applicationId);
             ClientLaunchMode mode = ClientLaunchMode.decide(choice.clientType, choice.runMode,
-                ClientLaunchMode.projectRunMode(project),
+                ClientLaunchMode.projectRunMode(project), existingConfig != null,
                 existingConfig == null ? null : LaunchConfigAccess.getClientTypeIdFor(existingConfig));
             if (mode.refusal != null)
             {

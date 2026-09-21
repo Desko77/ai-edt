@@ -113,13 +113,15 @@ public final class ClientLaunchMode
      * @param runModeArg the caller's {@code runMode}, or {@code null}
      * @param projectRunMode the configuration's default run mode as {@link #projectRunMode}
      *        reports it, or {@code null} when it is not known
-     * @param configuredClientTypeId the client type of an existing launch configuration, or
-     *        {@code null} when the launch configuration is being created or lets EDT choose
+     * @param existingConfiguration whether a launch configuration exists for the launch; a new
+     *        one is created with the decided client
+     * @param configuredClientTypeId the client type of the existing launch configuration, or
+     *        {@code null} when it lets EDT choose or there is none
      * @return the decision; {@link #refusal} is set when the arguments contradict each other or
      *         name nothing known
      */
     public static ClientLaunchMode decide(String clientTypeArg, String runModeArg, String projectRunMode,
-        String configuredClientTypeId)
+        boolean existingConfiguration, String configuredClientTypeId)
     {
         String clientArg = normalize(clientTypeArg);
         String modeArg = normalize(runModeArg);
@@ -167,9 +169,12 @@ public final class ClientLaunchMode
                 already ? "the launch configuration" : "the ordinary application runs in the thick client", //$NON-NLS-1$ //$NON-NLS-2$
                 runMode, runModeSource, null);
         }
-        if (configuredClientTypeId != null)
+        if (existingConfiguration)
         {
-            return new ClientLaunchMode(nameOf(configuredClientTypeId), null, "the launch configuration", //$NON-NLS-1$
+            // The configuration's own client stands, including a choice left to EDT: nothing is
+            // put on the launch, so EDT's selection runs as it would from the IDE.
+            return new ClientLaunchMode(nameOf(configuredClientTypeId), null, configuredClientTypeId == null
+                ? "the launch configuration, which leaves the client to EDT" : "the launch configuration", //$NON-NLS-1$ //$NON-NLS-2$
                 runMode, runModeSource, null);
         }
         return new ClientLaunchMode(THIN, LaunchConfigAccess.CLIENT_TYPE_THIN, "thin, the client of a new launch " //$NON-NLS-1$
@@ -227,21 +232,14 @@ public final class ClientLaunchMode
     {
         List<String> tokens = new ArrayList<>();
         boolean present = false;
-        if (parameters != null)
+        for (String token : tokensOf(parameters))
         {
-            for (String token : parameters.trim().split("\\s+")) //$NON-NLS-1$
+            if (token.equalsIgnoreCase(ORDINARY_FLAG))
             {
-                if (token.isEmpty())
-                {
-                    continue;
-                }
-                if (token.equalsIgnoreCase(ORDINARY_FLAG))
-                {
-                    present = true;
-                    continue;
-                }
-                tokens.add(token);
+                present = true;
+                continue;
             }
+            tokens.add(token);
         }
         if (wanted)
         {
@@ -257,6 +255,50 @@ public final class ClientLaunchMode
     /** Where a change of the flag lives, for the answer. */
     public static final String FLAG_SCOPE = "the infobase reference EDT holds for this session; the infobase list " //$NON-NLS-1$
         + "on disk is untouched"; //$NON-NLS-1$
+
+    /**
+     * The parameters as the platform reads them: split on whitespace outside double quotes, a
+     * quoted value kept whole with its quotes and its inner spacing.
+     *
+     * @param parameters the parameters, {@code null} for none
+     * @return the tokens, in order
+     */
+    static List<String> tokensOf(String parameters)
+    {
+        List<String> tokens = new ArrayList<>();
+        if (parameters == null)
+        {
+            return tokens;
+        }
+        StringBuilder token = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < parameters.length(); i++)
+        {
+            char c = parameters.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                token.append(c);
+            }
+            else if (Character.isWhitespace(c) && !quoted)
+            {
+                if (token.length() > 0)
+                {
+                    tokens.add(token.toString());
+                    token.setLength(0);
+                }
+            }
+            else
+            {
+                token.append(c);
+            }
+        }
+        if (token.length() > 0)
+        {
+            tokens.add(token.toString());
+        }
+        return tokens;
+    }
 
     /**
      * Puts the infobase's additional launch parameters in step with a launch: the flag present

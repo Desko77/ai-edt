@@ -60,7 +60,7 @@ public class ClientSessionStarter
      * tool promises not to create. {@code DebugSessionStarter} guards the same window the same way.
      * </p>
      */
-    private static final ReentrantLock LAUNCH_LOCK = new ReentrantLock();
+    private static final ReentrantLock LAUNCH_LOCK = LaunchConfigAccess.LAUNCH_LOCK;
 
     @Override
     public String getName()
@@ -175,51 +175,56 @@ public class ClientSessionStarter
                     .toJson();
             }
 
-            ILaunchConfiguration config =
-                LaunchConfigAccess.resolveLaunchConfig(launchManager, configName, projectName,
-                    applicationId);
-            boolean pairNamed = (configName == null || configName.isEmpty()) && projectName != null
-                && !projectName.isEmpty() && applicationId != null && !applicationId.isEmpty();
-            if (config == null && !pairNamed)
-            {
-                return ToolResult.error("No launch configuration matched. Give " //$NON-NLS-1$
-                    + "launchConfigurationName, or projectName together with applicationId. " //$NON-NLS-1$
-                    + "list_configurations shows what exists.").toJson(); //$NON-NLS-1$
-            }
+            boolean choiceGiven = clientType != null && !clientType.trim().isEmpty()
+                || runMode != null && !runMode.trim().isEmpty();
 
-            // An attach configuration has no client to start - it joins a debug server somebody else
-            // is running. Launching it here would produce a session with no process behind it.
-            if (config != null && LaunchConfigAccess.isAttachConfig(config))
-            {
-                return ToolResult.error("'" + config.getName() //$NON-NLS-1$
-                    + "' attaches to a running debug server rather than starting a client. " //$NON-NLS-1$
-                    + "Use launch_debugger action=launch for it.").toJson(); //$NON-NLS-1$
-            }
-
-            // The client is decided before anything is created or written: a contradiction in the
-            // arguments must not leave a saved configuration behind.
-            String configProject = config == null ? projectName
-                : LaunchConfigAccess.readAttribute(config, LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
-            if (configProject.isEmpty() && projectName != null)
-            {
-                configProject = projectName;
-            }
-            IProject project = configProject == null || configProject.isEmpty() ? null
-                : ProjectResolver.resolve(configProject);
-            ClientLaunchMode mode = ClientLaunchMode.decide(clientType, runMode,
-                project == null ? null : ClientLaunchMode.projectRunMode(project),
-                config == null ? null : LaunchConfigAccess.getClientTypeIdFor(config));
-            if (mode.refusal != null)
-            {
-                return ToolResult.error(mode.refusal)
-                    .put("configuration", config == null ? null : config.getName()) //$NON-NLS-1$
-                    .put("nothingWasStarted", Boolean.TRUE) //$NON-NLS-1$
-                    .toJson();
-            }
-
+            // The configuration is resolved under the lock: a second call for the same pair
+            // waiting on the first must see the configuration the first one saved.
             LAUNCH_LOCK.lock();
             try
             {
+                ILaunchConfiguration config =
+                    LaunchConfigAccess.resolveLaunchConfig(launchManager, configName, projectName,
+                        applicationId);
+                boolean pairNamed = (configName == null || configName.isEmpty()) && projectName != null
+                    && !projectName.isEmpty() && applicationId != null && !applicationId.isEmpty();
+                if (config == null && !pairNamed)
+                {
+                    return ToolResult.error("No launch configuration matched. Give " //$NON-NLS-1$
+                        + "launchConfigurationName, or projectName together with applicationId. " //$NON-NLS-1$
+                        + "list_configurations shows what exists.").toJson(); //$NON-NLS-1$
+                }
+
+                // An attach configuration has no client to start - it joins a debug server somebody
+                // else is running. Launching it here would produce a session with no process behind it.
+                if (config != null && LaunchConfigAccess.isAttachConfig(config))
+                {
+                    return ToolResult.error("'" + config.getName() //$NON-NLS-1$
+                        + "' attaches to a running debug server rather than starting a client. " //$NON-NLS-1$
+                        + "Use launch_debugger action=launch for it.").toJson(); //$NON-NLS-1$
+                }
+
+                // The client is decided before anything is created or written: a contradiction in
+                // the arguments must not leave a saved configuration behind.
+                String configProject = config == null ? projectName
+                    : LaunchConfigAccess.readAttribute(config, LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
+                if (configProject.isEmpty() && projectName != null)
+                {
+                    configProject = projectName;
+                }
+                IProject project = configProject == null || configProject.isEmpty() ? null
+                    : ProjectResolver.resolve(configProject);
+                ClientLaunchMode mode = ClientLaunchMode.decide(clientType, runMode,
+                    project == null ? null : ClientLaunchMode.projectRunMode(project), config != null,
+                    config == null ? null : LaunchConfigAccess.getClientTypeIdFor(config));
+                if (mode.refusal != null)
+                {
+                    return ToolResult.error(mode.refusal)
+                        .put("configuration", config == null ? null : config.getName()) //$NON-NLS-1$
+                        .put("nothingWasStarted", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+
                 boolean created = false;
                 if (config == null)
                 {
@@ -249,7 +254,7 @@ public class ClientSessionStarter
                         + "'."); //$NON-NLS-1$
                 }
                 return decideAndLaunch(launchManager, config, projectName, updateFirst, allowSecond,
-                    startupOption, waitForEndpoint, endpointTimeout, mode, created, project);
+                    startupOption, waitForEndpoint, endpointTimeout, mode, choiceGiven, created, project);
             }
             finally
             {
@@ -276,8 +281,8 @@ public class ClientSessionStarter
      */
     private static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
         String projectName, boolean updateFirst, boolean allowSecond, String startupOption,
-        String waitForEndpoint, Integer endpointTimeout, ClientLaunchMode mode, boolean created,
-        IProject project)
+        String waitForEndpoint, Integer endpointTimeout, ClientLaunchMode mode, boolean choiceGiven,
+        boolean created, IProject project)
     {
         try
         {
@@ -285,7 +290,9 @@ public class ClientSessionStarter
             ILaunch running = findRunning(launchManager, resolvedAppId);
             if (running != null && !allowSecond)
             {
-                if (startupOption != null || waitForEndpoint != null || mode.clientTypeId != null)
+                // The client the caller named is an argument; a client decided from the
+                // configuration's run mode is not - the running one was decided the same way.
+                if (startupOption != null || waitForEndpoint != null || choiceGiven)
                 {
                     // The running client was not started with this string, and success here would
                     // lose it. Stop the client or allow a second one - the string is not dropped.

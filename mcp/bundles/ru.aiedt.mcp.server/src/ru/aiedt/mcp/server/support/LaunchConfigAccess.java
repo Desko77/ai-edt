@@ -56,6 +56,16 @@ public final class LaunchConfigAccess
     public static final List<String> ALL_DEBUG_CONFIG_TYPE_IDS =
         List.of(LAUNCH_CONFIG_TYPE_ID, TYPE_REMOTE_RUNTIME, TYPE_LOCAL_RUNTIME);
 
+    /**
+     * The one lock every launch runs under - the check for a running client, the decision, the
+     * run-mode flag on the infobase reference and the launch itself. Shared between the debug
+     * launch and the plain client start: the flag is state on a reference both read, and two
+     * launches of one infobase in different modes must not interleave between the flag and the
+     * launch that reads it.
+     */
+    public static final java.util.concurrent.locks.ReentrantLock LAUNCH_LOCK =
+        new java.util.concurrent.locks.ReentrantLock();
+
     /** Launch attribute: the EDT project the launch belongs to. */
     public static final String ATTR_PROJECT_NAME = "com._1c.g5.v8.dt.debug.core.ATTR_PROJECT_NAME"; //$NON-NLS-1$
 
