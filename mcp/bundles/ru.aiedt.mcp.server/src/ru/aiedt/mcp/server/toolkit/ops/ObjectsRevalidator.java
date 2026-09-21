@@ -152,7 +152,7 @@ public class ObjectsRevalidator
             IProject project = ProjectResolver.resolve(projectName);
             if (project == null)
             {
-                return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+                return ProjectResolver.notFound(projectName).toJson();
             }
 
             project.refreshLocal(IResource.DEPTH_INFINITE, monitor);

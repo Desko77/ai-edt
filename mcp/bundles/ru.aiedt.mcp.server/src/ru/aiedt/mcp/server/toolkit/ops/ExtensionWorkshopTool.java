@@ -460,7 +460,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // The child's name has to reach the borrow as part of the name being borrowed. The helper
         // resolves one object from one FQN and ignores childKind entirely, so a call that named an
@@ -500,7 +500,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         List<String> fqns = parseFqnsArray(fqnsRaw);
         if (fqns.isEmpty())
@@ -662,7 +662,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         IProject baseProject = ProjectResolver.resolve(baseProjectName);
         if (baseProject == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(baseProjectName)).toJson();
+            return ProjectResolver.notFound(baseProjectName).toJson();
         }
         BmExtensionProjectHelper.CreateResult r =
             BmExtensionProjectHelper.createExtensionProject(projectName, baseProject, namePrefix);

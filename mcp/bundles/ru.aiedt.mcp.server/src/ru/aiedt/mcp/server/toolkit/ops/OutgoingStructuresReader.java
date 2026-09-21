@@ -92,7 +92,7 @@ public class OutgoingStructuresReader
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         final Configuration config = configProvider != null ? configProvider.getConfiguration(project) : null;

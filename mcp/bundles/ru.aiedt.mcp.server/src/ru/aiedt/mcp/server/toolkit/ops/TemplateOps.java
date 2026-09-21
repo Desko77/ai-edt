@@ -84,7 +84,7 @@ final class TemplateOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         String canonicalType = BmTemplateHelper.canonicalTemplateType(templateTypeAlias);
         String schemaRefusal = refusalForSchemaTemplate(canonicalType);
@@ -211,7 +211,7 @@ final class TemplateOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // Resolve the target text-template kind. An explicit templateType wins;
         // otherwise detect it from the on-disk content file so we never write a
@@ -311,7 +311,7 @@ final class TemplateOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmTemplateHelper.TemplateContent tc =
             BmTemplateHelper.readTextTemplateContent(project, ownerFqn, templateName);

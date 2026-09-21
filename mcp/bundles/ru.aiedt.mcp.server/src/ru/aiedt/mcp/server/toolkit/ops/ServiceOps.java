@@ -91,7 +91,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
@@ -174,7 +174,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
@@ -286,7 +286,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
@@ -335,7 +335,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
@@ -397,7 +397,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         Configuration config = configProvider != null ? configProvider.getConfiguration(project) : null;
@@ -614,7 +614,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
@@ -743,7 +743,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
@@ -796,7 +796,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         final String[] qn = parseQNameArg(valueType, valueTypeNs);
@@ -928,7 +928,7 @@ final class ServiceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         Configuration config = configProvider != null ? configProvider.getConfiguration(project) : null;

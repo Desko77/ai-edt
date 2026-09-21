@@ -120,12 +120,12 @@ public class ExtensionLifecycleTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         if (baseProjectName != null && !baseProjectName.isEmpty()
             && ProjectResolver.resolve(baseProjectName) == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(baseProjectName)).toJson();
+            return ProjectResolver.notFound(baseProjectName).toJson();
         }
 
         long start = System.currentTimeMillis();

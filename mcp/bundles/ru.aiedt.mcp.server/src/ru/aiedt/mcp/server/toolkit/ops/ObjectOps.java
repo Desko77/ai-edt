@@ -309,7 +309,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         Configuration config = configProvider != null ? configProvider.getConfiguration(project) : null;
@@ -701,7 +701,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         // Child-FQN support: when ownerFqn addresses a child element
@@ -922,7 +922,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         final String opLabel = add ? "add_object_reference" : "remove_object_reference"; //$NON-NLS-1$ //$NON-NLS-2$
@@ -1053,7 +1053,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         final String opLabel = set ? "set_object_reference" : "clear_object_reference"; //$NON-NLS-1$ //$NON-NLS-2$
@@ -1208,7 +1208,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         // Child-FQN support: when ownerFqn addresses a child element (e.g.
@@ -1332,7 +1332,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         final String[] segs = MetadataTypeCatalog.normalizeFqn(ownerFqn).split("\\."); //$NON-NLS-1$
@@ -1455,7 +1455,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         // Phase 6.6: auto-borrow referenced metadata objects when the attribute
@@ -1886,7 +1886,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
@@ -1929,7 +1929,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
@@ -1978,7 +1978,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
@@ -2042,7 +2042,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         // Auto-borrow the referenced metadata object when a tabular-section
@@ -2275,7 +2275,7 @@ final class ObjectOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,

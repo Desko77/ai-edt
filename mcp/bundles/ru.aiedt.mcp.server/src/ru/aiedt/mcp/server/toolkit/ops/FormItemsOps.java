@@ -78,7 +78,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         // Qualifier wiring mirrors add_object_attribute so a String form
@@ -287,7 +287,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -384,7 +384,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmDefinedTypeHelper.QualifierOptions q = new BmDefinedTypeHelper.QualifierOptions();
@@ -533,7 +533,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmFormHelper helper = new BmFormHelper();
@@ -620,7 +620,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         IConfigurationProvider colConfigProvider = Activator.getDefault().getConfigurationProvider();
         final Configuration colConfig = colConfigProvider != null
@@ -662,7 +662,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -760,7 +760,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -827,7 +827,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -891,7 +891,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -959,7 +959,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -1052,7 +1052,7 @@ final class FormItemsOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // 1.42 (B4): when the property is `picture`, validate the value
         // up-front (StdPicture.X / CommonPicture.X) so a typo fails before

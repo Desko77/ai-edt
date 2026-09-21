@@ -107,7 +107,7 @@ final class MiscOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -247,7 +247,7 @@ final class MiscOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -541,7 +541,7 @@ final class MiscOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         String childAddress = composeChildFqn(op, targetFqn, params);
         if (childAddress == null)

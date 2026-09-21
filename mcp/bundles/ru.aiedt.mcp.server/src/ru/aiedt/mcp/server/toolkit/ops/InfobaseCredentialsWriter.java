@@ -106,7 +106,7 @@ public class InfobaseCredentialsWriter implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         BmInfobaseCredentialsHelper.CredentialResult r =
