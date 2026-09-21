@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.wire.jsonrpc;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The result of a {@code tools/list}: the catalogue a client uses to decide what it can call.
@@ -40,7 +41,22 @@ public class ToolsListResult implements ru.aiedt.mcp.server.wire.CacheableResult
      */
     public void addTool(String name, String description, Object inputSchema)
     {
-        tools.add(new ToolInfo(name, description, inputSchema));
+        tools.add(new ToolInfo(name, description, inputSchema, null));
+    }
+
+    /**
+     * Adds a tool with its annotations - the hints that say what class of tool it is.
+     *
+     * @param name the tool name, as it will be called
+     * @param description what the tool does
+     * @param inputSchema the parameter schema as a parsed JSON tree
+     * @param annotations the non-default hints ({@code readOnlyHint} and the rest); an empty map
+     *            publishes no member at all, so a tool whose class is the default carries nothing
+     */
+    public void addTool(String name, String description, Object inputSchema, Map<String, Object> annotations)
+    {
+        tools.add(new ToolInfo(name, description, inputSchema,
+            annotations == null || annotations.isEmpty() ? null : annotations));
     }
 
     /**
@@ -87,6 +103,8 @@ public class ToolsListResult implements ru.aiedt.mcp.server.wire.CacheableResult
 
         private final Object inputSchema;
 
+        private final Map<String, Object> annotations;
+
         /**
          * Creates a catalogue entry.
          *
@@ -96,9 +114,34 @@ public class ToolsListResult implements ru.aiedt.mcp.server.wire.CacheableResult
          */
         public ToolInfo(String name, String description, Object inputSchema)
         {
+            this(name, description, inputSchema, null);
+        }
+
+        /**
+         * Creates a catalogue entry with its annotations.
+         *
+         * @param name the tool name
+         * @param description what the tool does
+         * @param inputSchema the parameter schema as a parsed JSON tree
+         * @param annotations the non-default hints, or <code>null</code> for none - the member is
+         *            then left out of the wire document rather than sent empty
+         */
+        public ToolInfo(String name, String description, Object inputSchema, Map<String, Object> annotations)
+        {
             this.name = name;
             this.description = description;
             this.inputSchema = inputSchema;
+            this.annotations = annotations;
+        }
+
+        /**
+         * Returns the annotations.
+         *
+         * @return the non-default hints, or <code>null</code> when every hint is the default
+         */
+        public Map<String, Object> getAnnotations()
+        {
+            return annotations;
         }
 
         /**
