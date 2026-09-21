@@ -278,7 +278,7 @@ public class AProvidedModuleAnswersByItsAddressTest
         String listed = ModulesLister.listModules(PROJECT, "all", "Products", null, 100); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(listed, listed.contains("| " + ADDRESS + " | ProbeModule | Catalog | Products |")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(listed, listed.contains("Catalogs/Products/Forms/Managed/Module.bsl")); //$NON-NLS-1$
-        assertTrue(listed, listed.contains("of kind ProbeModule have no file of their own")); //$NON-NLS-1$
+        assertTrue(listed, listed.contains("of kind ProbeModule has no file of its own")); //$NON-NLS-1$
 
         String found = new CodeTextSearcher().execute(args("projectName", PROJECT, "query", "Служебная")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertTrue(found, found.contains(ADDRESS));

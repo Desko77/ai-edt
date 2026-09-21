@@ -570,10 +570,12 @@ public class ModulesLister
         {
             if (kind.getValue().intValue() > 0 && !fileKinds.contains(kind.getKey()))
             {
-                builder.append("\n").append(kind.getValue()).append(" module") //$NON-NLS-1$ //$NON-NLS-2$
-                    .append(kind.getValue().intValue() == 1 ? "" : "s").append(" of kind ").append(kind.getKey()) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                    .append(" have no file of their own: EDT builds no model of them, and " //$NON-NLS-1$
-                        + "read_module_source / write_module_source take the path shown as the address.\n"); //$NON-NLS-1$
+                boolean one = kind.getValue().intValue() == 1;
+                builder.append("\n").append(kind.getValue()).append(one ? " module of kind " : " modules of kind ") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    .append(kind.getKey())
+                    .append(one ? " has no file of its own: EDT builds no model of it, and " //$NON-NLS-1$
+                        : " have no file of their own: EDT builds no model of them, and ") //$NON-NLS-1$
+                    .append("read_module_source / write_module_source take the path shown as the address.\n"); //$NON-NLS-1$
             }
         }
         return builder.toString();
