@@ -200,14 +200,18 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         BUDGETS.put("dcs_workshop", Integer.valueOf(8523)); //$NON-NLS-1$
         BUDGETS.put("code_search", Integer.valueOf(7248)); //$NON-NLS-1$
-        BUDGETS.put("infobase_admin", Integer.valueOf(7155)); //$NON-NLS-1$
+        // Raised by 787 for runMode and clientType on start_client: a configuration on ordinary
+        // forms starts under the thick client in the ordinary run mode, and the caller names both.
+        BUDGETS.put("infobase_admin", Integer.valueOf(7942)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
         BUDGETS.put("vanessa", Integer.valueOf(5405)); //$NON-NLS-1$
         BUDGETS.put("extension_workshop", Integer.valueOf(5402)); //$NON-NLS-1$
         // Raised from 5400 for startupOption: the startup string is how an object opened at
         // startup receives its parameters, and the test runners already pass theirs the same way.
-        BUDGETS.put("launch_debugger", Integer.valueOf(6085)); //$NON-NLS-1$
+        // Raised by 1073 for runMode and clientType on launch, the same two arguments start_client
+        // takes, so a debug launch of a configuration on ordinary forms opens the same client.
+        BUDGETS.put("launch_debugger", Integer.valueOf(7158)); //$NON-NLS-1$
         BUDGETS.put("mxl_workshop", Integer.valueOf(4636)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$

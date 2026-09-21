@@ -9,15 +9,23 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
+import org.eclipse.debug.core.ILaunchConfigurationType;
 import org.eclipse.debug.core.ILaunchManager;
 import org.eclipse.swt.widgets.Display;
 
+import com.e1c.g5.dt.applications.ApplicationException;
+import com.e1c.g5.dt.applications.IApplication;
+import com.e1c.g5.dt.applications.IApplicationManager;
+
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.ApplicationUpdater;
+import ru.aiedt.mcp.server.support.ClientLaunchMode;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
+import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -52,7 +60,7 @@ public class ClientSessionStarter
      * tool promises not to create. {@code DebugSessionStarter} guards the same window the same way.
      * </p>
      */
-    private static final ReentrantLock LAUNCH_LOCK = new ReentrantLock();
+    private static final ReentrantLock LAUNCH_LOCK = LaunchConfigAccess.LAUNCH_LOCK;
 
     @Override
     public String getName()
@@ -67,7 +75,12 @@ public class ClientSessionStarter
             + "Use this instead of building a 1cv8.exe command line: the client comes up with the " //$NON-NLS-1$
             + "runtime version, infobase, client type and user the IDE is configured for. Identify " //$NON-NLS-1$
             + "the configuration by launchConfigurationName (as returned by list_configurations), or " //$NON-NLS-1$
-            + "let it be resolved from projectName plus applicationId. Set updateBeforeLaunch=true to " //$NON-NLS-1$
+            + "let it be resolved from projectName plus applicationId - when that pair has no " //$NON-NLS-1$
+            + "configuration yet, one is created and saved. A configuration whose default run mode " //$NON-NLS-1$
+            + "is the ordinary application starts in the thick client with " //$NON-NLS-1$
+            + "/RunModeOrdinaryApplication among the infobase's additional launch parameters " //$NON-NLS-1$
+            + "for this EDT session; " //$NON-NLS-1$
+            + "clientType and runMode override the choice. Set updateBeforeLaunch=true to " //$NON-NLS-1$
             + "bring the infobase up to date first. A configuration whose client is already running " //$NON-NLS-1$
             + "is reported rather than started twice; pass allowSecondSession=true to start another " //$NON-NLS-1$
             + "anyway. To debug instead, use launch_debugger action=launch; to stop a client, " //$NON-NLS-1$
@@ -93,6 +106,17 @@ public class ClientSessionStarter
                     + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
                     + "external processor or report receives its parameters. Refused while the " //$NON-NLS-1$
                     + "configuration's client is already running - that one was not started with it.") //$NON-NLS-1$
+            .stringProperty("clientType", //$NON-NLS-1$
+                "The client to start: thin, thick or web. Omitted: the launch configuration's " //$NON-NLS-1$
+                    + "own, thin for a configuration created here - and thick whenever the run " //$NON-NLS-1$
+                    + "mode is ordinary, because the ordinary application opens in the thick " //$NON-NLS-1$
+                    + "client only. Applied to this launch's own configuration copy; a " //$NON-NLS-1$
+                    + "configuration created here is saved with it.") //$NON-NLS-1$
+            .stringProperty("runMode", //$NON-NLS-1$
+                "ordinary or managed. Omitted: the configuration's default run mode. Ordinary " //$NON-NLS-1$
+                    + "puts /RunModeOrdinaryApplication among the infobase's additional launch " //$NON-NLS-1$
+                    + "parameters on the reference EDT holds for this session, managed takes it " //$NON-NLS-1$
+                    + "out; the infobase list on disk is not written. The answer says what changed.") //$NON-NLS-1$
             .stringProperty("waitForEndpoint", //$NON-NLS-1$
                 "Wait for this URL to answer before reporting the client started - ready is any " //$NON-NLS-1$
                     + "final status below 500, at most five redirects. A client whose endpoint " //$NON-NLS-1$
@@ -124,6 +148,8 @@ public class ClientSessionStarter
             {
                 startupOption = null;
             }
+            String clientType = JsonUtils.extractStringArgument(params, "clientType"); //$NON-NLS-1$
+            String runMode = JsonUtils.extractStringArgument(params, "runMode"); //$NON-NLS-1$
             String waitForEndpoint = JsonUtils.extractStringArgument(params, "waitForEndpoint"); //$NON-NLS-1$
             if (waitForEndpoint != null && waitForEndpoint.trim().isEmpty())
             {
@@ -149,30 +175,86 @@ public class ClientSessionStarter
                     .toJson();
             }
 
-            ILaunchConfiguration config =
-                LaunchConfigAccess.resolveLaunchConfig(launchManager, configName, projectName,
-                    applicationId);
-            if (config == null)
-            {
-                return ToolResult.error("No launch configuration matched. Give " //$NON-NLS-1$
-                    + "launchConfigurationName, or projectName together with applicationId. " //$NON-NLS-1$
-                    + "list_configurations shows what exists.").toJson(); //$NON-NLS-1$
-            }
+            boolean choiceGiven = clientType != null && !clientType.trim().isEmpty()
+                || runMode != null && !runMode.trim().isEmpty();
 
-            // An attach configuration has no client to start - it joins a debug server somebody else
-            // is running. Launching it here would produce a session with no process behind it.
-            if (LaunchConfigAccess.isAttachConfig(config))
-            {
-                return ToolResult.error("'" + config.getName() //$NON-NLS-1$
-                    + "' attaches to a running debug server rather than starting a client. " //$NON-NLS-1$
-                    + "Use launch_debugger action=launch for it.").toJson(); //$NON-NLS-1$
-            }
-
+            // The configuration is resolved under the lock: a second call for the same pair
+            // waiting on the first must see the configuration the first one saved.
             LAUNCH_LOCK.lock();
             try
             {
+                ILaunchConfiguration config =
+                    LaunchConfigAccess.resolveLaunchConfig(launchManager, configName, projectName,
+                        applicationId);
+                boolean pairNamed = (configName == null || configName.isEmpty()) && projectName != null
+                    && !projectName.isEmpty() && applicationId != null && !applicationId.isEmpty();
+                if (config == null && !pairNamed)
+                {
+                    return ToolResult.error("No launch configuration matched. Give " //$NON-NLS-1$
+                        + "launchConfigurationName, or projectName together with applicationId. " //$NON-NLS-1$
+                        + "list_configurations shows what exists.").toJson(); //$NON-NLS-1$
+                }
+
+                // An attach configuration has no client to start - it joins a debug server somebody
+                // else is running. Launching it here would produce a session with no process behind it.
+                if (config != null && LaunchConfigAccess.isAttachConfig(config))
+                {
+                    return ToolResult.error("'" + config.getName() //$NON-NLS-1$
+                        + "' attaches to a running debug server rather than starting a client. " //$NON-NLS-1$
+                        + "Use launch_debugger action=launch for it.").toJson(); //$NON-NLS-1$
+                }
+
+                // The client is decided before anything is created or written: a contradiction in
+                // the arguments must not leave a saved configuration behind.
+                String configProject = config == null ? projectName
+                    : LaunchConfigAccess.readAttribute(config, LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
+                if (configProject.isEmpty() && projectName != null)
+                {
+                    configProject = projectName;
+                }
+                IProject project = configProject == null || configProject.isEmpty() ? null
+                    : ProjectResolver.resolve(configProject);
+                ClientLaunchMode mode = ClientLaunchMode.decide(clientType, runMode,
+                    project == null ? null : ClientLaunchMode.projectRunMode(project), config != null,
+                    config == null ? null : LaunchConfigAccess.getClientTypeIdFor(config));
+                if (mode.refusal != null)
+                {
+                    return ToolResult.error(mode.refusal)
+                        .put("configuration", config == null ? null : config.getName()) //$NON-NLS-1$
+                        .put("nothingWasStarted", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+
+                boolean created = false;
+                if (config == null)
+                {
+                    if (project == null)
+                    {
+                        return ProjectResolver.notFound(projectName).toJson();
+                    }
+                    IApplication application = findApplication(project, applicationId);
+                    if (application == null)
+                    {
+                        return ToolResult.error("No application found for: " + applicationId //$NON-NLS-1$
+                            + ". Call get_applications to see the valid application IDs. Nothing " //$NON-NLS-1$
+                            + "was created or started.").toJson(); //$NON-NLS-1$
+                    }
+                    ILaunchConfigurationType configType =
+                        launchManager.getLaunchConfigurationType(LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID);
+                    if (configType == null)
+                    {
+                        return ToolResult.error("No such launch configuration type: " //$NON-NLS-1$
+                            + LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID).toJson();
+                    }
+                    config = LaunchConfigAccess.createRuntimeClientConfig(launchManager, configType,
+                        project.getName(), applicationId, application.getName(), mode.clientTypeId);
+                    created = true;
+                    Activator.logInfo("Created a runtime-client launch configuration '" + config.getName() //$NON-NLS-1$
+                        + "' for project '" + project.getName() + "', application '" + applicationId //$NON-NLS-1$ //$NON-NLS-2$
+                        + "'."); //$NON-NLS-1$
+                }
                 return decideAndLaunch(launchManager, config, projectName, updateFirst, allowSecond,
-                    startupOption, waitForEndpoint, endpointTimeout);
+                    startupOption, waitForEndpoint, endpointTimeout, mode, choiceGiven, created, project);
             }
             finally
             {
@@ -199,7 +281,8 @@ public class ClientSessionStarter
      */
     private static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
         String projectName, boolean updateFirst, boolean allowSecond, String startupOption,
-        String waitForEndpoint, Integer endpointTimeout)
+        String waitForEndpoint, Integer endpointTimeout, ClientLaunchMode mode, boolean choiceGiven,
+        boolean created, IProject project)
     {
         try
         {
@@ -207,7 +290,9 @@ public class ClientSessionStarter
             ILaunch running = findRunning(launchManager, resolvedAppId);
             if (running != null && !allowSecond)
             {
-                if (startupOption != null || waitForEndpoint != null)
+                // The client the caller named is an argument; a client decided from the
+                // configuration's run mode is not - the running one was decided the same way.
+                if (startupOption != null || waitForEndpoint != null || choiceGiven)
                 {
                     // The running client was not started with this string, and success here would
                     // lose it. Stop the client or allow a second one - the string is not dropped.
@@ -275,7 +360,13 @@ public class ClientSessionStarter
                 }
             }
 
-            String failure = launch(config, startupOption);
+            IApplication application = findApplication(project, resolvedAppId);
+            String flagState = application == null ? "not applied: the application was not resolved" //$NON-NLS-1$
+                : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
+
+            // A configuration created here already carries the client; an existing one keeps its
+            // own on disk and starts this launch with the decided one.
+            String failure = launch(config, startupOption, created ? null : mode.clientTypeId);
             if (failure != null)
             {
                 return ToolResult.error("Could not start the client: " + failure).toJson(); //$NON-NLS-1$
@@ -284,7 +375,17 @@ public class ClientSessionStarter
             ToolResult success = result.put("started", true) //$NON-NLS-1$
                 .put("mode", ILaunchManager.RUN_MODE) //$NON-NLS-1$
                 .put("secondSession", running != null) //$NON-NLS-1$
-                .put("startupOption", startupOption); //$NON-NLS-1$
+                .put("startupOption", startupOption) //$NON-NLS-1$
+                .put("autoCreatedConfiguration", created) //$NON-NLS-1$
+                .put("clientType", mode.clientType) //$NON-NLS-1$
+                .put("clientTypeSource", mode.clientTypeSource) //$NON-NLS-1$
+                .put("runMode", mode.runMode) //$NON-NLS-1$
+                .put("runModeSource", mode.runModeSource) //$NON-NLS-1$
+                .put("runModeFlag", ClientLaunchMode.ORDINARY_FLAG) //$NON-NLS-1$
+                .put("runModeFlagState", flagState) //$NON-NLS-1$
+                .put("runModeFlagScope", ClientLaunchMode.FLAG_SCOPE) //$NON-NLS-1$
+                .put("infobaseAdditionalParameters", //$NON-NLS-1$
+                    application == null ? null : ClientLaunchMode.additionalParametersOf(application));
             return waitForEndpoint(waitForEndpoint, endpointTimeout, success);
         }
         catch (Exception e)
@@ -363,32 +464,63 @@ public class ClientSessionStarter
      * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
      * @return <code>null</code> on success, otherwise the failure to report
      */
-    private static String launch(ILaunchConfiguration config, String startupOption)
+    private static String launch(ILaunchConfiguration config, String startupOption, String clientTypeId)
     {
         final String[] error = {null};
         Display display = Display.getDefault();
         if (display != null && !display.isDisposed())
         {
-            display.syncExec(() -> error[0] = launchDirectly(config, startupOption));
+            display.syncExec(() -> error[0] = launchDirectly(config, startupOption, clientTypeId));
         }
         else
         {
-            error[0] = launchDirectly(config, startupOption);
+            error[0] = launchDirectly(config, startupOption, clientTypeId);
         }
         return error[0];
     }
 
     /**
+     * The application of a project by id, or {@code null} when it cannot be resolved.
+     *
+     * @param project the project; {@code null} yields {@code null}
+     * @param applicationId the application id; {@code null} yields {@code null}
+     * @return the application, or {@code null}
+     */
+    private static IApplication findApplication(IProject project, String applicationId)
+    {
+        IApplicationManager appManager = Activator.getDefault().getApplicationManager();
+        if (appManager == null || project == null || applicationId == null)
+        {
+            return null;
+        }
+        try
+        {
+            return appManager.getApplication(project, applicationId).orElse(null);
+        }
+        catch (ApplicationException e)
+        {
+            Activator.logWarning("Application " + applicationId + " of " + project.getName() //$NON-NLS-1$ //$NON-NLS-2$
+                + " was not resolved: " + e.getMessage()); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
      * @param config the configuration to launch
      * @param startupOption the {@code /C} startup string for this launch, or <code>null</code>
+     * @param clientTypeId the client for this launch, or <code>null</code> for the configuration's own
      * @return <code>null</code> on success, otherwise the message to report
      */
-    private static String launchDirectly(ILaunchConfiguration config, String startupOption)
+    private static String launchDirectly(ILaunchConfiguration config, String startupOption, String clientTypeId)
     {
         try
         {
             ILaunchConfiguration toLaunch = startupOption == null ? config
                 : LaunchConfigAccess.withStartupOption(config, startupOption);
+            if (clientTypeId != null)
+            {
+                toLaunch = LaunchConfigAccess.withClientType(toLaunch, clientTypeId);
+            }
             toLaunch.launch(ILaunchManager.RUN_MODE, null);
             return null;
         }
