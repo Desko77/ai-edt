@@ -95,6 +95,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
 | `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch. |
+| `ordinary_forms` | Ordinary (non-managed) forms read from their `Form.oform` containers: `audit` measures versions and byte-for-byte round trips. |
 | `yaxunit_tests` | YAxUnit unit tests. |
 
 Constructors are called directly, not through a facade: `dcs_workshop` (data composition schemas),

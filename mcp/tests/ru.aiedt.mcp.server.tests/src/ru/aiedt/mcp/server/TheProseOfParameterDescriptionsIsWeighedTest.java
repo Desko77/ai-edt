@@ -218,6 +218,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // repository without its own configuration needs) and the checkout's two (the branch,
         // and whether to create it).
         PROSE.put("git", Integer.valueOf(875));
+        // ordinary_forms: the forms EDT does not open, audited from their containers - the
+        // operation, the project, a cap and a details flag are the whole surface.
+        PROSE.put("ordinary_forms", Integer.valueOf(228));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
         PROSE.put("insights", Integer.valueOf(5393));
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
@@ -340,11 +343,16 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * that cannot see it builds the survey call by call.
      * </p>
      * <p>
+     * And a fourteenth, by 228, for ordinary_forms: the forms EDT does not open are read from their
+     * containers, and an audit that names what round-trips is the number every later edit of those
+     * files rests on.
+     * </p>
+     * <p>
      * And a thirteenth, by 875, for git: the repository answers inside the IDE what a shell would
      * answer outside it - the work tree, the index, the recent history, a commit of named paths
      * and a switch of branch - and the operation, the project, the paths, the message, the
      * author pair, the branch and its creation flag are what a caller has to name to get there.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 85750;
+    private static final int DOCUMENT_PROSE = 85978;
 }

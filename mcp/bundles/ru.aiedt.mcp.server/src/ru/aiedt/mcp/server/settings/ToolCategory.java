@@ -122,6 +122,11 @@ public enum ToolCategory
         "git_commit", //$NON-NLS-1$
         "git_checkout"), //$NON-NLS-1$
 
+    /** The forms EDT does not open: their containers read and, in later stages, written. */
+    ORDINARY_FORMS("ordinaryForms", "Ordinary Forms", //$NON-NLS-1$ //$NON-NLS-2$
+        "Ordinary (non-managed) forms read from their Form.oform containers", //$NON-NLS-1$
+        "ordinary_forms"), //$NON-NLS-1$
+
     /** Everything that drives a debug session, including the two ways of ending one. */
     DEBUG("debug", "Debug & Profiling", //$NON-NLS-1$ //$NON-NLS-2$
         "Breakpoints, stepping, variable inspection, expression evaluation, and profiling", //$NON-NLS-1$
