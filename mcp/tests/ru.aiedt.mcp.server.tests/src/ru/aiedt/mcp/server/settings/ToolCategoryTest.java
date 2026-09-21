@@ -144,7 +144,7 @@ public class ToolCategoryTest
         // On 2026-08-21 support_registry joined ANALYSIS (+1 -> 129): it reads the vendor
         // support state of a configuration and changes nothing, which is the same house as
         // the comparison tools it is read alongside.
-        assertEquals(131, ToolCategory.getTotalToolCount());
+        assertEquals(133, ToolCategory.getTotalToolCount());
     }
 
     @Test

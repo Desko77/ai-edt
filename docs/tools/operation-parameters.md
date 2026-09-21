@@ -306,6 +306,11 @@
 | `FormCommandInterfaceOps` | `add` | `commandFqn:?`, `group:string`, `index:integer`, `panel:?`, `visible:string` | passed in as locals |
 | `FormCommandInterfaceOps` | `remove` | `commandFqn:?`, `panel:?` | passed in as locals |
 | `FormCommandInterfaceOps` | `set_property` | `commandFqn:?`, `group:string`, `index:integer`, `panel:?`, `propertyName:string`, `visible:string` | passed in as locals |
+| `GitTool` | `branches` | `projectName:string` | passed in as locals |
+| `GitTool` | `checkout` | `operation:string`, `projectName:string` | passed in as locals |
+| `GitTool` | `commit` | `authorName:string`, `projectName:string` | passed in as locals |
+| `GitTool` | `log` | `projectName:string` | passed in as locals |
+| `GitTool` | `status` | `projectName:string` | passed in as locals |
 | `InfobaseAdminFacadeTool` | `branch_infobase` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string`, `syncOperation:string` | delegate BranchInfobaseTool |
 | `InfobaseAdminFacadeTool` | `create_infobase` | `name:string`, `path:string`, `platform:string`, `projectName:string`, `syncOperation:string`, `templateCf:string` | delegate InfobaseCreator |
 | `InfobaseAdminFacadeTool` | `create_launch_config` | `infobaseName:string`, `projectName:string`, `syncOperation:string` | delegate LaunchConfigCreator |

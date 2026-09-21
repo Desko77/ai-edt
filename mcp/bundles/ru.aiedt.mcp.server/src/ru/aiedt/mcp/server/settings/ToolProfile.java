@@ -250,6 +250,10 @@ public enum ToolProfile
             "get_content_assist", //$NON-NLS-1$
             "get_outgoing_structures", //$NON-NLS-1$
 
+            // git covers these
+            "git_commit", //$NON-NLS-1$
+            "git_checkout", //$NON-NLS-1$
+
             // launch_debugger covers these
             "debug_launch", //$NON-NLS-1$
             "set_breakpoint", //$NON-NLS-1$
@@ -427,6 +431,11 @@ public enum ToolProfile
         Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING,
             ToolCategory.CONSTRUCTORS);
         disabled.addAll(writersOutsideWriteGroups());
+        // The repository is as much a write target as the sources: a commit writes the index and
+        // the history, and a checkout rewrites the work tree. Reading them (status, branches,
+        // log) stays on - only the two writes are off.
+        disabled.add("git_commit"); //$NON-NLS-1$
+        disabled.add("git_checkout"); //$NON-NLS-1$
         // Returns a snippet and writes nothing, but a preset this strict is expected to hand back
         // nothing that reads like generated code either.
         disabled.add("code_template"); //$NON-NLS-1$

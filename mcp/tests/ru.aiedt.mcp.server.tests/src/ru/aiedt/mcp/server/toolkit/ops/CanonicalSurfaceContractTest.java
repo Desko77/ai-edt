@@ -226,6 +226,11 @@ public class CanonicalSurfaceContractTest
             "export_common_picture", "export_configuration_to_cf",
             "unpack_external_binary", "import_configuration_from_binary", "help"));
 
+        // git (GitTool.execute): a plain switch on "operation". The two write doors are reached
+        // as commit and checkout; their standalone names carry the git_ prefix (see
+        // RENAMED_STANDALONES).
+        m.put("git", Set.of("status", "branches", "log", "commit", "checkout"));
+
         // insights (InsightsFacadeTool.execute + its OPS catalog): nine operations, all
         // literally the standalone names they replace, plus help.
         m.put("insights", Set.of(
@@ -271,6 +276,8 @@ public class CanonicalSurfaceContractTest
         // standalone tool names.
         m.put("run_yaxunit_tests", "run"); // YaxunitTestRunner.NAME == "run_yaxunit_tests"
         m.put("debug_yaxunit_tests", "debug"); // YaxunitDebugRunner.NAME == "debug_yaxunit_tests"
+        m.put("git_commit", "commit"); // GitCommitTool.getName() == "git_commit"
+        m.put("git_checkout", "checkout"); // GitCheckoutTool.getName() == "git_checkout"
         return m;
     }
 
@@ -328,13 +335,13 @@ public class CanonicalSurfaceContractTest
         // Tripwire 1: exactly how many standalone names CANONICAL currently hides. A change here
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
-        assertEquals(84, ToolProfile.CANONICAL.getUnlistedTools().size());
+        assertEquals(86, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,
         // project_admin, infobase_admin, config_io, insights, security_audit, workspace_marks,
-        // docs_lookup.
-        assertEquals(13, FACADE_OPERATIONS.size());
+        // docs_lookup, git.
+        assertEquals(14, FACADE_OPERATIONS.size());
 
         // Tripwire 3: a floor, not an exact count - the union is far larger in practice (action
         // aliases, help, and edit_metadata's own ~150-operation registry inflate it well past 80).
