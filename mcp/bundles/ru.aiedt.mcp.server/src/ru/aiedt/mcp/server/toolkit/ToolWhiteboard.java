@@ -37,13 +37,37 @@ public final class ToolWhiteboard
 
     private ServiceTracker<IModuleSourceProvider, IModuleSourceProvider> providers;
 
+    private boolean closed;
+
     /**
-     * Starts watching the services.
+     * Starts watching the services on a thread of its own.
+     *
+     * <p>Measured: when the activation of this bundle is what a component of another bundle
+     * triggered - SCR loads the service interface to create the component, the class load starts
+     * this bundle - a tracker opened on the activating thread meets that half-created component,
+     * {@code getService} answers {@code null} with a circular-reference entry in the log, and the
+     * service is never tracked. Another thread waits for the creation to finish instead.</p>
      *
      * @param context this bundle's context
      */
-    public void open(BundleContext context)
+    public void openInBackground(BundleContext context)
     {
+        Thread opener = new Thread(() -> open(context), "AI-EDT whiteboard"); //$NON-NLS-1$
+        opener.setDaemon(true);
+        opener.start();
+    }
+
+    /**
+     * Starts watching the services on the calling thread. Does nothing after {@link #close()}.
+     *
+     * @param context this bundle's context
+     */
+    public synchronized void open(BundleContext context)
+    {
+        if (closed)
+        {
+            return;
+        }
         tools = new ServiceTracker<>(context, IMcpTool.class, new ServiceTrackerCustomizer<IMcpTool, IMcpTool>()
         {
             @Override
@@ -54,6 +78,11 @@ public final class ToolWhiteboard
                 {
                     McpToolCatalog.getInstance().registerExternal(tool, writes(reference));
                     Activator.logInfo("tool from " + reference.getBundle().getSymbolicName() + ": " + tool.getName()); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                else
+                {
+                    Activator.logWarning("tool service from " + reference.getBundle().getSymbolicName() //$NON-NLS-1$
+                        + " answered null and is not tracked"); //$NON-NLS-1$
                 }
                 return tool;
             }
@@ -79,6 +108,12 @@ public final class ToolWhiteboard
                 public IModuleSourceProvider addingService(ServiceReference<IModuleSourceProvider> reference)
                 {
                     IModuleSourceProvider provider = context.getService(reference);
+                    if (provider == null)
+                    {
+                        Activator.logWarning("module source provider from " //$NON-NLS-1$
+                            + reference.getBundle().getSymbolicName() + " answered null and is not tracked"); //$NON-NLS-1$
+                        return null;
+                    }
                     ModuleSources.register(provider);
                     return provider;
                 }
@@ -102,10 +137,12 @@ public final class ToolWhiteboard
     }
 
     /**
-     * Stops watching; the tools and providers picked up are let go.
+     * Stops watching; the tools and providers picked up are let go. An open still on its way
+     * finds the whiteboard closed and opens nothing.
      */
-    public void close()
+    public synchronized void close()
     {
+        closed = true;
         if (tools != null)
         {
             tools.close();
