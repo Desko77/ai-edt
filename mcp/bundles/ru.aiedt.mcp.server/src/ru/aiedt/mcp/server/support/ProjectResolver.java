@@ -97,18 +97,6 @@ public final class ProjectResolver
     }
 
     /**
-     * Builds a human- and agent-friendly "project not found" message for the
-     * case where {@link #resolve(String)} returned {@code null}. The message
-     * names the closest open project (extension suffix match first, then a
-     * small edit-distance), lists the open projects, and distinguishes the
-     * "exists but closed" case (the agent passed the right name, the project
-     * is just not open). Use this in place of a bare
-     * {@code "Project not found: " + projectName}.
-     *
-     * @param projectName the name the caller passed (may be null/empty)
-     * @return a single-line diagnostic message
-     */
-    /**
      * The refusal for a project that could not be resolved, with the call that answers it.
      * <p>
      * The text is {@link #describeNotFound}; the hint is {@code project_admin
@@ -135,6 +123,18 @@ public final class ProjectResolver
         return refusal;
     }
 
+    /**
+     * Builds a human- and agent-friendly "project not found" message for the
+     * case where {@link #resolve(String)} returned {@code null}. The message
+     * names the closest open project (extension suffix match first, then a
+     * small edit-distance), lists the open projects, and distinguishes the
+     * "exists but closed" case (the agent passed the right name, the project
+     * is just not open). Use this in place of a bare
+     * {@code "Project not found: " + projectName}.
+     *
+     * @param projectName the name the caller passed (may be null/empty)
+     * @return a single-line diagnostic message
+     */
     public static String describeNotFound(String projectName)
     {
         IProject[] all = ResourcesPlugin.getWorkspace().getRoot().getProjects();
