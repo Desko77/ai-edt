@@ -455,7 +455,7 @@ public final class DebugSessionStarter implements IMcpTool
             IProject project = ProjectResolver.resolve(projectName);
             if (project == null)
             {
-                return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+                return ProjectResolver.notFound(projectName).toJson();
             }
 
             IApplicationManager appManager = Activator.getDefault().getApplicationManager();
@@ -493,7 +493,7 @@ public final class DebugSessionStarter implements IMcpTool
                     ? project : ProjectResolver.resolve(externalObjectProject);
                 if (objectProject == null)
                 {
-                    return ToolResult.error(ProjectResolver.describeNotFound(externalObjectProject)).toJson();
+                    return ProjectResolver.notFound(externalObjectProject).toJson();
                 }
                 BmExternalObjectDumpHelper.RootResolution found =
                     BmExternalObjectDumpHelper.resolveRoot(objectProject, externalObjectName);

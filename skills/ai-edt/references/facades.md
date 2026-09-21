@@ -31,6 +31,7 @@ to a pair of object and vendor: `object_mode` reports per vendor, and `list_obje
 `audit_role_rights mode=orphans` is the exception to this group being read-only: it lists rights that point at objects no longer in the configuration, and with `apply=true` removes them. It removes only what it could prove is gone - what it could not decide is listed separately and left alone - and `apply=true` is refused when the active preset forbids writing.
 | `docs_lookup` | `get_platform_documentation`, `get_object_help`, `help` |
 | `workspace_marks` | `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks`, `help` |
+| `git` | `status`, `branches`, `log`, `commit`, `checkout` |
 
 `compare_configurations` with `mode=projects` pairs renames before classifying: an object whose
 content is equal once the name and its mirrors (the uuid, the synonym, the type ids) are set aside
@@ -197,6 +198,18 @@ infobase update - which is why `validate_for_export` matters here too.
 
 `vanessa` drives scenario UI tests from the outside and photographs a form of a running 1C. The scenario comes as a file (`featurePath`), as text (`scenarioText`), or is composed from `formToOpen` - and then `openStep` carries the wording, which differs for a list form, an object form and an extension's form. That step needs the UI-testing types, which exist only in a client started as a test manager (`testManager`); without it the step answers Тип не определен. `testClient` names the client the start step launches, `testClientPort` its port, `infobaseUser` the user to sign in as - a password is refused. The verdict is read from the `<uuid>-result.json` files Vanessa names itself.
 
+A refusal that knows its next step carries it as `helpHint`: `{"tool": ..., "arguments": {...}}`,
+ready to send, with a detail beside it when there is one. A project that is not found hints
+`project_admin operation=list_projects` and names `suggestedProjectName` when an open project is
+close to the name given; an owner that is not found in a metadata write hints
+`insights operation=semantic_metadata_search` with the object's name as the query.
+
+`tools/list` publishes MCP `annotations`: `readOnlyHint` and `idempotentHint` on the tools that
+change nothing, `openWorldHint=false` on everything that stays on the machine. The class is read off
+the Read-only preset, so it matches what that preset switches off; a facade that gates its writes by
+name (`git`) reads as read-only while those writes are off. Only values that differ from the
+specification's defaults are published.
+
 ## What a call left behind
 
 `get_mcp_history` lists the recent calls, shortened to a few hundred characters each because the
@@ -208,6 +221,30 @@ shortened copy, and `entryId` cannot be combined with `clear`.
 What is kept on disk is set on the preference page under **Call history on disk**: whether to keep
 the full text, how many days to keep it (14 by default, zero for until the size limit), and the
 folder to keep it in. Nothing is written there while recording is off.
+
+## The repository the project lives in
+
+`git` answers what a shell would answer about the project's repository, inside the IDE, through
+the JGit the environment ships: `operation=status` (work tree and index against HEAD, and how far
+the branch is ahead of or behind its tracking branch), `branches` (local branches, the current one
+first), `log` (recent commits, `limit` up to 100), `commit` and `checkout`. The repository is the
+nearest `.git` walking up from the project's directory, so a project anywhere inside a repository
+is answered about that repository.
+
+`commit` stages only what `paths` names - comma-separated, relative to the repository root - and
+refuses a call without them: there is no add-all, because a commit of everything lying in the work
+tree is what a review cannot be told apart from. A path that names nothing is refused before
+anything is staged. The author is the repository's `user.name` / `user.email`; a repository that
+names none needs `authorName` and `authorEmail`. When the branch is bound to an infobase
+(`branch_infobase`), the answer names it as `boundInfobase`.
+
+`checkout` takes `branch` and, with `createBranch=true`, creates it from HEAD. A switch that would
+overwrite uncommitted files is refused with those files listed in `conflicting` and changes nothing;
+unrelated uncommitted work carries over, as git itself does it.
+
+The two writes are switched by presets under the names `git_commit` and `git_checkout`: under
+Read-only the facade still reads and both writes are refused before a file is staged. Both names
+are also callable on their own as aliases of the operation.
 
 ## Tools that stand on their own
 

@@ -97,6 +97,24 @@ public interface IMcpTool
     }
 
     /**
+     * The write doors this tool gate-checks by name before it writes.
+     * <p>
+     * A facade that reads under every preset and folds in a write or two - {@code git} with its
+     * commit and checkout - gates each write by the standalone name a preset disables. The
+     * catalogue reads this list to say whether the tool can change anything right now: with
+     * every door disabled the facade is read-only, with one of them enabled it is not. A tool
+     * that is itself disabled by a write-blocking preset does not need to name anything here.
+     * </p>
+     *
+     * @return the standalone names gating this tool's writes, never <code>null</code>; empty for
+     *         a tool that reads only or is switched off as a whole
+     */
+    default List<String> getGatedWriteNames()
+    {
+        return Collections.emptyList();
+    }
+
+    /**
      * Returns what the tool does, in the words the agent will read when it decides whether to call
      * it. Surfaced both in the tool catalogue and in the plugin preference pages.
      *

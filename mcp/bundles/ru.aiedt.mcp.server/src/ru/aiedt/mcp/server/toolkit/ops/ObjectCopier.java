@@ -146,12 +146,12 @@ public class ObjectCopier
         IProject sourceProject = ProjectResolver.resolve(sourceProjectName);
         if (sourceProject == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(sourceProjectName)).toJson();
+            return ProjectResolver.notFound(sourceProjectName).toJson();
         }
         IProject targetProject = ProjectResolver.resolve(targetProjectName);
         if (targetProject == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(targetProjectName)).toJson();
+            return ProjectResolver.notFound(targetProjectName).toJson();
         }
 
         // An external-object project answers getConfiguration() with the base configuration it is

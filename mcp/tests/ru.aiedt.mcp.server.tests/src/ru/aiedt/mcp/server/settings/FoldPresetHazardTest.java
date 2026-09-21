@@ -50,6 +50,8 @@ public class FoldPresetHazardTest
         List.of("run_yaxunit_tests", "debug_yaxunit_tests"), //$NON-NLS-1$ //$NON-NLS-2$
         "config_io", //$NON-NLS-1$
         List.of("unpack_external_binary", "import_configuration_from_binary"), //$NON-NLS-1$
+        "git", //$NON-NLS-1$
+        List.of("git_commit", "git_checkout"), //$NON-NLS-1$ //$NON-NLS-2$
         "launch_debugger", //$NON-NLS-1$
         List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
             "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
@@ -67,6 +69,11 @@ public class FoldPresetHazardTest
      * reachable through a facade Code Review keeps enabled would hand back the write the preset had just
      * taken away. The composite also gates its own two internal calls, which no facade fold can see.
      * </p>
+     * <p>
+     * {@code git/git_commit} and {@code git/git_checkout}: the facade reads under every preset, and
+     * its two writes are the names a read-only preset disables, so each is gate-checked by that name
+     * before a file is staged or the work tree is touched.
+     * </p>
      */
     private static final Set<String> GATED = Set.of(
         "edit_metadata/delete_metadata_object", "edit_metadata/rename_metadata_object", //$NON-NLS-1$ //$NON-NLS-2$
@@ -76,7 +83,8 @@ public class FoldPresetHazardTest
         "extension_workshop/extension_lifecycle", //$NON-NLS-1$
         "yaxunit_tests/debug_yaxunit_tests", //$NON-NLS-1$
         "config_io/unpack_external_binary", //$NON-NLS-1$
-        "config_io/import_configuration_from_binary"); //$NON-NLS-1$
+        "config_io/import_configuration_from_binary", //$NON-NLS-1$
+        "git/git_commit", "git/git_checkout"); //$NON-NLS-1$ //$NON-NLS-2$
 
     @Test
     public void everyCrossPresetFoldHazardIsGateChecked()

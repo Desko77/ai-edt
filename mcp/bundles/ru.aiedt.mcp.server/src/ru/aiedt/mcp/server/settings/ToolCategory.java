@@ -115,6 +115,13 @@ public enum ToolCategory
         "create_project", //$NON-NLS-1$
         "infobase_admin"), //$NON-NLS-1$
 
+    /** The repository the project lives in: reading it now, writing it in later stages. */
+    VCS("vcs", "Version Control", //$NON-NLS-1$ //$NON-NLS-2$
+        "Git status, branches and history of the project's repository, inside the IDE", //$NON-NLS-1$
+        "git", //$NON-NLS-1$
+        "git_commit", //$NON-NLS-1$
+        "git_checkout"), //$NON-NLS-1$
+
     /** Everything that drives a debug session, including the two ways of ending one. */
     DEBUG("debug", "Debug & Profiling", //$NON-NLS-1$ //$NON-NLS-2$
         "Breakpoints, stepping, variable inspection, expression evaluation, and profiling", //$NON-NLS-1$

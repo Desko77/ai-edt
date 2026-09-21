@@ -30,11 +30,11 @@ public class ToolCategoryTest
     // ---- cardinality and per-group sanity -------------------------------------------------
 
     @Test
-    public void thereAreThirteenGroups()
+    public void thereAreFourteenGroups()
     {
         // 1.43 grouping: core/problems/code-intel/tags/applications/debug/bsl-code/refactoring/
         // constructors/forms-and-help/analysis/security/ai-helpers.
-        assertEquals(13, ToolCategory.values().length);
+        assertEquals(14, ToolCategory.values().length);
     }
 
     @Test
@@ -144,7 +144,7 @@ public class ToolCategoryTest
         // On 2026-08-21 support_registry joined ANALYSIS (+1 -> 129): it reads the vendor
         // support state of a configuration and changes nothing, which is the same house as
         // the comparison tools it is read alongside.
-        assertEquals(130, ToolCategory.getTotalToolCount());
+        assertEquals(133, ToolCategory.getTotalToolCount());
     }
 
     @Test

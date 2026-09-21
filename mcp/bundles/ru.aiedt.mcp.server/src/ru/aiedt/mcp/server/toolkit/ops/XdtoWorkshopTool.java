@@ -467,7 +467,7 @@ public class XdtoWorkshopTool implements IMcpTool
         c.project = ProjectResolver.resolve(projectName);
         if (c.project == null)
         {
-            c.error = ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            c.error = ProjectResolver.notFound(projectName).toJson();
             return c;
         }
         c.packageName = packageName;

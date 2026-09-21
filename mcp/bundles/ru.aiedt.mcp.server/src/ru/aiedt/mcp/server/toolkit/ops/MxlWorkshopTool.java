@@ -205,7 +205,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // 1.42.3: route the alias through canonicalTemplateType (same path
         // as edit_metadata add_template) so RU/EN aliases work and an empty
@@ -294,7 +294,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final int rowF = row;
         final int colF = col;
@@ -361,7 +361,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String kindF = kind;
         final String areaNameF = areaName;
@@ -420,7 +420,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String areaNameF = areaName;
         final boolean[] removedRef = { false };
@@ -482,7 +482,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         @SuppressWarnings("unchecked")
         final List<Map<String, Object>>[] areasRef = new List[] { null };
@@ -536,7 +536,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final int fromRowF = fromRow;
         final int fromColF = fromCol;
@@ -622,7 +622,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final int fromRowF = fromRow;
         final int fromColF = fromCol;
@@ -774,7 +774,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final DrawLayout layoutF = layout;
         final String[] persistErrorRef = { null };
@@ -877,7 +877,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String canonicalTypeF = canonicalType;
         final int beginRowF = beginRow;
@@ -949,7 +949,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final int drawingIdF = drawingId;
         final boolean[] removedRef = { false };
@@ -1009,7 +1009,7 @@ public class MxlWorkshopTool implements IMcpTool
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] dataRef = new Map[] { null };

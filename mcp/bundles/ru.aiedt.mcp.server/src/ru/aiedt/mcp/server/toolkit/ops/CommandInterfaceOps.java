@@ -67,7 +67,7 @@ final class CommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final List<String> requested = new ArrayList<>();
         for (String s : subsystems.split(",")) //$NON-NLS-1$
@@ -149,7 +149,7 @@ final class CommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String fSubsystem = subsystem;
         final BmCommandInterfaceHelper helper = new BmCommandInterfaceHelper();
@@ -225,7 +225,7 @@ final class CommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // Trim defensively so a stray leading/trailing space resolves the same as
         // the sibling subsystem path (which trims via simpleSubsystemName).
@@ -315,7 +315,7 @@ final class CommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String fCommand = command.trim();
         final String normCmdFqn = MetadataTypeCatalog.normalizeFqn(fCommand);
@@ -434,7 +434,7 @@ final class CommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String fCommand = command.trim();
         final String normCmdFqn = MetadataTypeCatalog.normalizeFqn(fCommand);
@@ -539,7 +539,7 @@ final class CommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String fOwnerFqn = ownerFqn.trim();
         final String fGroup = group.trim();

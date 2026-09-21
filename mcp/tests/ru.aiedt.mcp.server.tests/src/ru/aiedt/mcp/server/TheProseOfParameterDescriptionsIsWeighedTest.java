@@ -212,6 +212,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     static
     {
         PROSE.put("edit_metadata", Integer.valueOf(13730));
+        // git: operation, projectName and the log's limit are the whole surface a client builds
+        // the call from - the repository answers the rest. Grown to 875 for the commit's five
+        // arguments (paths by name - there is no add-all - the message, and the author pair a
+        // repository without its own configuration needs) and the checkout's two (the branch,
+        // and whether to create it).
+        PROSE.put("git", Integer.valueOf(875));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
         PROSE.put("insights", Integer.valueOf(5393));
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
@@ -333,6 +339,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * one call rather than hundreds, and the batch form is the argument that carries it - a client
      * that cannot see it builds the survey call by call.
      * </p>
+     * <p>
+     * And a thirteenth, by 875, for git: the repository answers inside the IDE what a shell would
+     * answer outside it - the work tree, the index, the recent history, a commit of named paths
+     * and a switch of branch - and the operation, the project, the paths, the message, the
+     * author pair, the branch and its creation flag are what a caller has to name to get there.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 84875;
+    private static final int DOCUMENT_PROSE = 85750;
 }

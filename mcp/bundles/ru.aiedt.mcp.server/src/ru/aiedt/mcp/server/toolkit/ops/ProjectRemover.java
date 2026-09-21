@@ -92,7 +92,7 @@ public class ProjectRemover implements IMcpTool
         }
         if (project == null || !project.exists())
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
 
         String resolvedName = project.getName();

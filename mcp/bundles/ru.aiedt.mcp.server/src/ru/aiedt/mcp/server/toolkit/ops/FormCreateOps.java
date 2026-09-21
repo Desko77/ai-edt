@@ -150,7 +150,7 @@ final class FormCreateOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         // CommonForm overload: a common form is itself a top-level form and has
         // no Forms collection, so create_form cannot attach a child form to it

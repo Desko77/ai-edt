@@ -70,7 +70,7 @@ final class FormCommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -111,7 +111,7 @@ final class FormCommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
@@ -179,7 +179,7 @@ final class FormCommandInterfaceOps
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         BmFormHelper helper = new BmFormHelper();
         if (!helper.init())

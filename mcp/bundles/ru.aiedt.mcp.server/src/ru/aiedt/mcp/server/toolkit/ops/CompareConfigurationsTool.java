@@ -145,11 +145,11 @@ public class CompareConfigurationsTool implements IMcpTool
         IProject p2 = ProjectResolver.resolve(targetProjectName);
         if (p1 == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
+            return ProjectResolver.notFound(projectName).toJson();
         }
         if (p2 == null)
         {
-            return ToolResult.error(ProjectResolver.describeNotFound(targetProjectName)).toJson();
+            return ProjectResolver.notFound(targetProjectName).toJson();
         }
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
         if (provider == null)

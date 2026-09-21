@@ -8,9 +8,12 @@ package ru.aiedt.mcp.server.support;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
+
+import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
  * Resolves an EDT project by name with a forgiving lookup, so callers accept
@@ -91,6 +94,33 @@ public final class ProjectResolver
             }
         }
         return names;
+    }
+
+    /**
+     * The refusal for a project that could not be resolved, with the call that answers it.
+     * <p>
+     * The text is {@link #describeNotFound}; the hint is {@code project_admin
+     * operation=list_projects}, which is where the names come from, and when one open project
+     * is close to the name given it is named as {@code suggestedProjectName} beside the call.
+     * </p>
+     *
+     * @param projectName the name the caller passed (may be null/empty)
+     * @return the refusal, ready for {@code .toJson()} or for more members
+     */
+    public static ToolResult notFound(String projectName)
+    {
+        ToolResult refusal = ToolResult.error(describeNotFound(projectName))
+            .hint("project_admin", Map.of("operation", "list_projects")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        List<String> open = new ArrayList<>();
+        for (IProject p : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+        {
+            if (p.isAccessible())
+            {
+                open.add(p.getName());
+            }
+        }
+        refusal.hintDetail("suggestedProjectName", closest(projectName, open)); //$NON-NLS-1$
+        return refusal;
     }
 
     /**

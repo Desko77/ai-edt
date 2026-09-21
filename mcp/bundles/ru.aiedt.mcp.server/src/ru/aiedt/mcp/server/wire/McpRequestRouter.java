@@ -795,7 +795,8 @@ public class McpRequestRouter
         for (IMcpTool tool : listed)
         {
             JsonElement schema = JsonParser.parseString(tool.getInputSchema());
-            catalogue.addTool(tool.getName(), tool.getDescription(), schema);
+            catalogue.addTool(tool.getName(), tool.getDescription(), schema,
+                ToolAnnotations.of(tool, toolRegistry));
         }
         return catalogue;
     }
