@@ -168,9 +168,10 @@ public class RestartEdtTool implements IMcpTool
                             // A veto is caught below and the watcher taken down again, so nothing
                             // is left waiting for a PID whose owner stayed alive.
                             Process watcher = startWatcher(command);
-                            boolean ok = shutdown
-                                ? PlatformUI.getWorkbench().close()
-                                : PlatformUI.getWorkbench().restart();
+                            boolean viaLauncher = restartsThroughLauncher(shutdown, watcher != null);
+                            boolean ok = viaLauncher
+                                ? PlatformUI.getWorkbench().restart()
+                                : PlatformUI.getWorkbench().close();
                             if (!ok && watcher != null && watcher.isAlive())
                             {
                                 // The workbench vetoed the close (an unsaved editor, a listener).
@@ -184,7 +185,7 @@ public class RestartEdtTool implements IMcpTool
                                 // A part/listener vetoed it (e.g. an unsaved editor
                                 // cancelled the close). EDT stays up; the caller was
                                 // already told it would go down, so surface it in the log.
-                                Activator.logError("restart_edt: " + (shutdown ? "close" : "restart") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                                Activator.logError("restart_edt: " + (viaLauncher ? "restart" : "close") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                                     + "() returned false - a listener vetoed it; EDT is still running.", //$NON-NLS-1$
                                     null);
                             }
@@ -300,6 +301,25 @@ public class RestartEdtTool implements IMcpTool
 
     /** Set by {@link #relaunchCommandOf} when the command cannot be assembled, naming why. */
     private static String relaunchProblem;
+
+    /**
+     * Whether the workbench is restarted through the launcher's restart exit code, or closed.
+     * <p>
+     * A watcher that owns the relaunch means the workbench is closed: a launcher that honours the
+     * restart exit code would start a replacement of its own beside the watcher's, and the two
+     * race for one workspace - the loser stays at the workspace-in-use dialog. Measured: 16
+     * restarts left 16 such instances. Without a watcher the launcher is the only way back, and
+     * a shutdown never restarts.
+     * </p>
+     *
+     * @param shutdown whether the action is a shutdown rather than a restart.
+     * @param watcherOwnsRelaunch whether a relaunch watcher was started for this restart.
+     * @return {@code true} to call {@code restart()}, {@code false} to call {@code close()}.
+     */
+    static boolean restartsThroughLauncher(boolean shutdown, boolean watcherOwnsRelaunch)
+    {
+        return !shutdown && !watcherOwnsRelaunch;
+    }
 
     /**
      * Starts the process that waits for this one to end and relaunches it.

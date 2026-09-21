@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -72,5 +73,20 @@ public class ARestartHandsOffBeforeItClosesTest
         // than throws, whatever the environment gives it.
         RestartEdtTool.relaunchCommandOf();
         assertTrue(true);
+    }
+
+    /**
+     * A restart the watcher owns closes the workbench: restarted through the launcher as well,
+     * two instances start into one workspace and the loser stays at the workspace-in-use dialog
+     * (measured: sixteen restarts, sixteen such instances). The launcher is used only when no
+     * watcher could be started, and a shutdown never restarts.
+     */
+    @Test
+    public void theWatcherOwnedRestartClosesTheWorkbench()
+    {
+        assertFalse(RestartEdtTool.restartsThroughLauncher(false, true));
+        assertTrue(RestartEdtTool.restartsThroughLauncher(false, false));
+        assertFalse(RestartEdtTool.restartsThroughLauncher(true, false));
+        assertFalse(RestartEdtTool.restartsThroughLauncher(true, true));
     }
 }
