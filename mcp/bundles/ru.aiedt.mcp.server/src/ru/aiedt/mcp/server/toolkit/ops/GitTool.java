@@ -65,6 +65,12 @@ public class GitTool
     }
 
     @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of("git_commit", "git_checkout"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()

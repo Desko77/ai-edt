@@ -424,6 +424,7 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `config_io` | Configuration and single-artifact import and export. |
 | `docs_lookup` | Platform documentation and built-in 1C object help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks and tasks. |
+| `git` | The project's repository inside EDT: status, branches, history, a commit of named files and a switch of branch - through the JGit the IDE ships. The writes are switched off by presets under the names `git_commit` and `git_checkout`. |
 | `dcs_workshop` / `mxl_workshop` / `xdto_workshop` / `external_data_source_workshop` | Programmatic builders for complex 1C artifacts. |
 | `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations; `import_external_object` converts an `.epf` / `.erf` through the Designer of the named infobase (`applicationId`) and hands the infobase back to EDT. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |

@@ -94,6 +94,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `security_audit` | Role rights, RLS violations, sensitive-data scan. |
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
+| `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch. |
 | `yaxunit_tests` | YAxUnit unit tests. |
 
 Constructors are called directly, not through a facade: `dcs_workshop` (data composition schemas),
