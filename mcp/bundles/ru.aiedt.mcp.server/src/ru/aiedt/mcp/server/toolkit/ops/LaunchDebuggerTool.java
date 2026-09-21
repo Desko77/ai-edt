@@ -116,6 +116,16 @@ public class LaunchDebuggerTool implements IMcpTool
                 "launch: the /C startup string for the client that starts; the saved configuration " //$NON-NLS-1$
                     + "is not changed. An Attach configuration starts no client, so it is refused " //$NON-NLS-1$
                     + "there, and so is a session already running - it was not started with it.") //$NON-NLS-1$
+            .stringProperty("clientType", //$NON-NLS-1$
+                "launch: the client to start - thin, thick or web. Omitted: the launch " //$NON-NLS-1$
+                    + "configuration's own, thin for one created here, and thick whenever the run " //$NON-NLS-1$
+                    + "mode is ordinary. Applied to this launch's own configuration copy; a " //$NON-NLS-1$
+                    + "configuration created here is saved with it.") //$NON-NLS-1$
+            .stringProperty("runMode", //$NON-NLS-1$
+                "launch: ordinary or managed; omitted, the configuration's default run mode. " //$NON-NLS-1$
+                    + "Ordinary puts /RunModeOrdinaryApplication among the infobase's additional " //$NON-NLS-1$
+                    + "launch parameters for this EDT session, managed takes it out; the list on " //$NON-NLS-1$
+                    + "disk is not written. The answer says what changed.") //$NON-NLS-1$
             .stringProperty("waitForEndpoint", //$NON-NLS-1$
                 "launch: wait for this URL to answer before reporting ready - ready is any final " //$NON-NLS-1$
                     + "status below 500, at most five redirects. A launch whose endpoint never " //$NON-NLS-1$

@@ -12,6 +12,7 @@ import java.util.Optional;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationContextProvider;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
@@ -22,6 +23,7 @@ import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
 import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
+import com._1c.g5.wiring.ServiceAccess;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -66,6 +68,8 @@ public final class BmInfobaseLifecycleHelper
         public String failureKind;   // projectNotFound / managerUnavailable / infobaseNotFound / associateFailed
         public String infobaseName;
         public String applicationId;
+        /** The association context the infobase was bound in: a branch ref, or default. */
+        public String associationContext;
     }
 
     /** Result of deleteInfobase. */
@@ -150,10 +154,49 @@ public final class BmInfobaseLifecycleHelper
     }
 
     /**
+     * The association context of a project - the one EDT reads a project's applications from.
+     *
+     * <p>A project under version control is bound per branch: its applications live in the
+     * context of the current branch ({@code refs/heads/<branch>}), and an association made in the
+     * default context is not among them. EDT's own deploy wizard binds in the context this
+     * provider names, so a binding made here goes to the same place.</p>
+     *
+     * @param project the project
+     * @return the context; the default one when the provider is unavailable or fails
+     */
+    public static InfobaseAssociationContext associationContextOf(IProject project)
+    {
+        try
+        {
+            IInfobaseAssociationContextProvider provider = ServiceAccess.get(IInfobaseAssociationContextProvider.class);
+            InfobaseAssociationContext context = provider == null ? null : provider.get(project);
+            return context == null ? InfobaseAssociationContext.empty() : context;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("The association context of " + project.getName() + " was not read: " //$NON-NLS-1$ //$NON-NLS-2$
+                + msg(e));
+            return InfobaseAssociationContext.empty();
+        }
+    }
+
+    /**
+     * The name of an association context for an answer.
+     *
+     * @param context the context
+     * @return its name, or {@code default}
+     */
+    public static String describe(InfobaseAssociationContext context)
+    {
+        return context.getContext().orElse("default"); //$NON-NLS-1$
+    }
+
+    /**
      * Associates an existing infobase (by name) to a project - the "launch
      * configuration" step that makes it appear in get_applications. New empty
      * infobases are bound as not-synchronized (so get_applications reports an
-     * update is required).
+     * update is required). The binding goes to the project's current association
+     * context, the one its applications are read from.
      */
     public static AssocResult associate(String projectName, String infobaseName)
     {
@@ -184,9 +227,11 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.INFOBASE_NOT_FOUND.wire();
             return r;
         }
+        InfobaseAssociationContext context = associationContextOf(project);
+        r.associationContext = describe(context);
         try
         {
-            am.associate(project, ref.get(), InfobaseAssociationSettings.notSynchronized());
+            am.associate(project, ref.get(), InfobaseAssociationSettings.notSynchronized(context));
         }
         catch (Throwable e)
         {
@@ -232,19 +277,46 @@ public final class BmInfobaseLifecycleHelper
                 ? Activator.getDefault().getInfobaseAssociationManager() : null;
             if (project != null && am != null)
             {
+                // Every context the project has, the default one included: a binding made by an
+                // earlier build went to the default context whatever the branch, and one left
+                // behind keeps an application on a deleted infobase.
+                java.util.LinkedHashSet<InfobaseAssociationContext> contexts = new java.util.LinkedHashSet<>();
+                contexts.add(associationContextOf(project));
+                contexts.add(InfobaseAssociationContext.empty());
                 try
                 {
-                    am.dissociate(project, ref.get(), InfobaseAssociationContext.empty());
-                    r.dissociated = true;
+                    contexts.addAll(am.getAssociationContexts(project));
                 }
                 catch (Throwable e)
                 {
-                    // Non-fatal: the infobase may simply not have been associated.
-                    // Surface a warning (deletion still proceeds) so a genuine
-                    // dissociate failure that leaves a dangling launch config is
-                    // visible to the caller.
+                    Activator.logWarning("delete_infobase: the association contexts of '" + projectName //$NON-NLS-1$
+                        + "' were not listed: " + msg(e)); //$NON-NLS-1$
+                }
+                Throwable failure = null;
+                for (InfobaseAssociationContext context : contexts)
+                {
+                    try
+                    {
+                        Optional<?> association = am.getAssociation(project, context);
+                        if (association.isEmpty())
+                        {
+                            continue;
+                        }
+                        am.dissociate(project, ref.get(), context);
+                        r.dissociated = true;
+                    }
+                    catch (Throwable e)
+                    {
+                        // Non-fatal: the infobase may simply not be bound in this context.
+                        failure = e;
+                    }
+                }
+                if (!r.dissociated && failure != null)
+                {
+                    // Surface a warning (deletion still proceeds) so a genuine dissociate failure
+                    // that leaves a dangling launch config is visible to the caller.
                     r.dissociateWarning = "could not dissociate from '" + projectName //$NON-NLS-1$
-                        + "': " + msg(e) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "': " + msg(failure) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
                         + "config may still reference the removed infobase)"; //$NON-NLS-1$
                     Activator.logWarning("delete_infobase " + r.dissociateWarning); //$NON-NLS-1$
                 }

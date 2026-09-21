@@ -72,6 +72,10 @@ notices a bound handler going away before the client does. The update itself doe
 changed container: EDT maps changed paths to objects and knows `form`, not `oform`. The writer
 therefore marks the form's owner as changed in every infobase baseline of the project (the
 `delivery` line), and the update exports the owner with the container as `Ext/Form.bin`.
+Seeing the form needs the thick client in the ordinary mode: `launch_debugger action=launch` and
+`infobase_admin operation=start_client` choose it from the configuration's default run mode and
+put `/RunModeOrdinaryApplication` among the infobase's additional launch parameters for the EDT
+session, the list on disk untouched; `runMode=managed` takes it out again.
 
 ## Things that fail early by design
 

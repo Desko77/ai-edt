@@ -226,7 +226,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(5390));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(4356));
+        PROSE.put("infobase_admin", Integer.valueOf(4873));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -239,7 +239,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // parameters - the test runners already pass theirs the same way) and for waitForEndpoint:
         // a process that exists is not an opened processor that answers, and the wait is the only
         // way to tell them apart.
-        PROSE.put("launch_debugger", Integer.valueOf(3654));
+        PROSE.put("launch_debugger", Integer.valueOf(4159));
         PROSE.put("mxl_workshop", Integer.valueOf(2164));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
@@ -354,5 +354,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * author pair, the branch and its creation flag are what a caller has to name to get there.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 86383;
+    private static final int DOCUMENT_PROSE = 87459;
 }
