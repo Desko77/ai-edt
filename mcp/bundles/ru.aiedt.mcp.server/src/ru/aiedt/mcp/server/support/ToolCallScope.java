@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -132,6 +134,18 @@ public final class ToolCallScope
     private volatile String operationId;
 
     private volatile long timeoutSeconds = UNSET;
+
+    /**
+     * Entries of background runs this call started, by runKey.
+     * <p>
+     * The registry map is where a {@code runKey} is normally resolved, but tracking can be dropped
+     * while the work still runs - a subject sweep, a cancel that cannot reach it - and the permit
+     * that work holds must then wait on something other than the map. The starter keeps a direct
+     * reference here for that case. Guarded by itself because the work re-enters this scope on
+     * the executor thread while the starting thread is still inside the call.
+     * </p>
+     */
+    private final Map<String, PendingWorkRegistry.PendingEntry> startedEntries = new LinkedHashMap<>();
 
     /**
      * The call's hold on the heavy-tool limiter, when it has one.
@@ -397,11 +411,51 @@ public final class ToolCallScope
     }
 
     /**
-     * @return whether the call this scope carries holds a permit of the heavy-tool limiter
+     * @return whether the call this scope carries still holds a permit of the heavy-tool limiter -
+     *         its own or a share another holder has not departed
      */
     public boolean holdsHeavyPermit()
     {
         ToolRoad.Ticket held = this.ticket;
         return held != null && held.holdsPermit();
+    }
+
+    /**
+     * Records a background run this call started.
+     * <p>
+     * Written by the registry when it dispatches the work, read by the road when the call's answer
+     * names the run: the registry map answers first, and this answers for the run whose tracking
+     * was dropped while its work still runs.
+     * </p>
+     *
+     * @param runKey the key the run is addressable by
+     * @param entry the entry that runs the work
+     */
+    void notePendingEntry(String runKey, PendingWorkRegistry.PendingEntry entry)
+    {
+        if (runKey == null || entry == null)
+        {
+            return;
+        }
+        synchronized (startedEntries)
+        {
+            startedEntries.put(runKey, entry);
+        }
+    }
+
+    /**
+     * @param runKey the key a {@code Pending} answer named
+     * @return the entry this call started under that key, or {@code null} when it started none
+     */
+    PendingWorkRegistry.PendingEntry pendingEntryStartedHere(String runKey)
+    {
+        if (runKey == null)
+        {
+            return null;
+        }
+        synchronized (startedEntries)
+        {
+            return startedEntries.get(runKey);
+        }
     }
 }

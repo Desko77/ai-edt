@@ -660,6 +660,9 @@ public final class McpHistory
      * <p>
      * Every caller of the history - the wire's dispatch path and the tool road's internal calls -
      * goes through here, so an argument is masked by the same keys whichever door the call took.
+     * The share is computed as a {@code long}: the unlimited budget of the full-text store is
+     * {@code Integer.MAX_VALUE}, and the product of it with the numerator overflows an {@code int}
+     * into a negative share that the minimum then replaces.
      * </p>
      *
      * @param arguments what the tool was called with
@@ -672,7 +675,8 @@ public final class McpHistory
         {
             return new ArgsSummary("", false); //$NON-NLS-1$
         }
-        int perValue = Math.max(MIN_VALUE_CHARS, budget * VALUE_SHARE_NUMERATOR / VALUE_SHARE_DENOMINATOR);
+        long share = (long)budget * VALUE_SHARE_NUMERATOR / VALUE_SHARE_DENOMINATOR;
+        int perValue = (int)Math.max(MIN_VALUE_CHARS, Math.min(Integer.MAX_VALUE, share));
         StringBuilder sb = new StringBuilder();
         boolean cut = false;
         for (Map.Entry<String, String> e : arguments.entrySet())

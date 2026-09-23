@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import com.google.gson.JsonElement;
@@ -41,12 +42,17 @@ import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
  * <p>
  * A call that answers {@code Pending} hands its ticket to the registry entry: the permit comes
  * back when the entry's work leaves the executor, and never on the tracking future's completion
- * alone - a cancel completes that future without reaching work already running. A poll of a live
- * {@code runKey} starts no new work and so takes no permit and clears no heap gate, and only the
- * tool whose resumption path the key belongs to polls it. A nested heavy call under a caller that
- * already holds a permit inherits it rather than taking a second one; a heavy child under a light
- * caller binds its own permit to the scope for the duration of its body, so a grandchild under it
- * inherits that one.
+ * alone - a cancel completes that future without reaching work already running. The entry the
+ * answer names is not only the one the registry map still holds: work whose tracking was dropped
+ * while it runs - a subject sweep, a cancel that cannot reach it - is found through the entry the
+ * call's scope kept when it started the run, so its permit waits on the work and not on the
+ * tracking. A poll of a live {@code runKey} starts no new work and so takes no permit and clears
+ * no heap gate, and only the tool whose resumption path the key belongs to polls it. A nested
+ * heavy call under a caller that already holds a permit inherits a share of it rather than taking
+ * a second one, and that share stays with the child's work after the parent returns - a parent
+ * that answers its own text frees only its own share; a heavy child under a light caller binds
+ * its own permit to the scope for the duration of its body, so a grandchild under it inherits
+ * that one.
  * </p>
  */
 public final class ToolRoad
@@ -127,13 +133,13 @@ public final class ToolRoad
         {
             // A poll waits on work that is already accounted for; charging it again would count
             // one run as many.
-            return Admission.admitted(new Ticket(null));
+            return Admission.admitted(new Ticket((Runnable)null));
         }
         boolean heavy = HeavyTools.isHeavy(toolName)
             || (routed != null && HeavyTools.isHeavy(routed));
         if (!heavy)
         {
-            return Admission.admitted(new Ticket(null));
+            return Admission.admitted(new Ticket((Runnable)null));
         }
         String refusal = heapRefusal.get();
         if (refusal != null)
@@ -145,8 +151,11 @@ public final class ToolRoad
         if (scope != null && scope.holdsHeavyPermit())
         {
             // The caller on this thread already holds a permit for the work this call is part of.
-            // The limit counts concurrent callers, not reentry into them.
-            return Admission.admitted(new Ticket(null));
+            // The limit counts concurrent callers, not reentry into them. The child takes a share
+            // of that permit rather than a permit-less ride: work the child dispatches can go on
+            // after the parent has returned, and the permit must stay held for as long as any of
+            // that work runs.
+            return Admission.admitted(scope.ticket().share());
         }
         if (!permits.tryAcquire())
         {
@@ -245,6 +254,12 @@ public final class ToolRoad
     /**
      * Spends the ticket on an answer: hands it to the entry a {@code Pending} envelope names, or
      * releases it for anything else.
+     * <p>
+     * The entry the envelope names is looked up twice. Its domain first, and - when nothing there
+     * holds the key - among the entries this call started, which its scope kept: tracking dropped
+     * while the work still runs is not work that finished, and only the entry's own exit may
+     * return the permit.
+     * </p>
      *
      * @param ticket the call's permit ticket; may be {@code null} or permit-less
      * @param result what the body produced
@@ -261,16 +276,40 @@ public final class ToolRoad
             ticket.release();
             return;
         }
-        PendingWorkRegistry domain = PendingWorkRegistry.domainOf(runKey);
-        PendingWorkRegistry.PendingEntry entry = domain == null ? null : domain.get(runKey);
+        PendingWorkRegistry.PendingEntry entry = entryOf(runKey);
         if (entry == null)
         {
-            // The entry was collected or evicted between the answer and here; nothing is left to
-            // hold the permit for, and a permit nobody releases is one the next caller lacks.
+            // The entry was collected or evicted between the answer and here, and this call
+            // started nothing that still runs under that key; a permit nobody releases is one the
+            // next caller lacks.
             ticket.release();
             return;
         }
         ticket.transferTo(entry);
+    }
+
+    /**
+     * The entry a {@code Pending} envelope names, live or detached.
+     * <p>
+     * The domain map first. An answer whose key no domain holds is not necessarily finished work:
+     * a subject sweep or a cancel that cannot reach running work takes the tracking away while
+     * the work goes on, and the scope this call ran under kept the entry it started for exactly
+     * that case.
+     * </p>
+     *
+     * @param runKey the key from the envelope
+     * @return the entry that runs the answer's work, or {@code null} when nothing does
+     */
+    private static PendingWorkRegistry.PendingEntry entryOf(String runKey)
+    {
+        PendingWorkRegistry domain = PendingWorkRegistry.domainOf(runKey);
+        PendingWorkRegistry.PendingEntry entry = domain == null ? null : domain.get(runKey);
+        if (entry != null)
+        {
+            return entry;
+        }
+        ToolCallScope scope = ToolCallScope.current();
+        return scope == null ? null : scope.pendingEntryStartedHere(runKey);
     }
 
     /**
@@ -409,7 +448,10 @@ public final class ToolRoad
         {
             success = false;
             error = re.getMessage();
-            return ToolRoadOutcome.refused("The tool '" + tool.getName() + "' threw " //$NON-NLS-1$ //$NON-NLS-2$
+            // A tool that threw already ran, and may have applied part of what it was asked for.
+            // A refusal would tell a retrying caller this never happened, and the retry would
+            // repeat the mutation.
+            return ToolRoadOutcome.failed("The tool '" + tool.getName() + "' threw " //$NON-NLS-1$ //$NON-NLS-2$
                 + re.getClass().getSimpleName() + ": " + error); //$NON-NLS-1$
         }
         finally
@@ -458,11 +500,15 @@ public final class ToolRoad
         String resultSummary = success ? result
             : "exception: " + (error != null ? error : "RuntimeException"); //$NON-NLS-1$ //$NON-NLS-2$
         boolean logicalSuccess = success && !FailureShape.looksFailed(result);
+        // The same reading the wire path makes: an image tool's non-JSON answer is binary data,
+        // and the full-text store keeps a marker and a length rather than the base64 itself.
+        boolean binaryResult = tool.getResponseType() == IMcpTool.ResponseType.IMAGE
+            && !FailureShape.looksFailed(result) && !result.trim().startsWith("{"); //$NON-NLS-1$
         McpHistory.ArgsSummary args = McpHistory.summarizeArguments(arguments, history.argChars());
         McpHistory.ArgsSummary whole = McpHistory.summarizeArguments(arguments, Integer.MAX_VALUE);
         McpHistory.Completion completion = new McpHistory.Completion(tool.getName(), args.text,
             args.cut, resultSummary, System.currentTimeMillis() - start, logicalSuccess, whole.text,
-            false, origin);
+            binaryResult, origin);
         McpHistory.record(completion, McpHistory.Answer.unobserved());
     }
 
@@ -593,32 +639,44 @@ public final class ToolRoad
     /**
      * A call's hold on the heavy-tool limiter, spent exactly once.
      * <p>
-     * A ticket either holds a permit or holds nothing - a light call, a poll of a live run, or a
-     * nested call inheriting its caller's permit all take no second permit, and spending their
-     * ticket is a no-op. A ticket that holds a permit is spent once: released when the call ends
-     * synchronously, or handed to the registry entry a {@code Pending} answer named so the permit
-     * returns when that entry's work leaves the executor - which a cancel cannot move, unlike the
-     * tracking future's completion. A second spend, and the safety release a caller makes after
-     * the ticket was already handed over, do nothing.
+     * A ticket either holds a permit or holds nothing - a light call or a poll of a live run take
+     * no second permit, and spending their ticket is a no-op. A ticket that holds a permit is
+     * spent once: released when the call ends synchronously, or handed to the registry entry a
+     * {@code Pending} answer named so the permit returns when that entry's work leaves the
+     * executor - which a cancel cannot move, unlike the tracking future's completion. A second
+     * spend, and the safety release a caller makes after the ticket was already handed over, do
+     * nothing.
+     * </p>
+     * <p>
+     * The hold may be shared. A nested heavy call inherits a share of its caller's permit rather
+     * than a permit-less ride, so background work it dispatches keeps the limiter's count for as
+     * long as that work runs - past the caller that returns first. The permit itself returns when
+     * the last holder departs, and it returns exactly once; a spent ticket still reports its
+     * permit held while a share of it lives.
      * </p>
      */
     public static final class Ticket
     {
-        private final Runnable release;
+        private final Lease lease;
 
         private final AtomicBoolean spent = new AtomicBoolean();
 
         Ticket(Runnable release)
         {
-            this.release = release;
+            this(release == null ? null : new Lease(release));
+        }
+
+        private Ticket(Lease lease)
+        {
+            this.lease = lease;
         }
 
         /**
-         * @return whether this ticket holds a permit of the heavy-tool limiter
+         * @return whether this ticket's permit is still held, by this ticket or by a share of it
          */
         public boolean holdsPermit()
         {
-            return release != null;
+            return lease != null && lease.isHeld();
         }
 
         /**
@@ -626,11 +684,11 @@ public final class ToolRoad
          */
         public void release()
         {
-            if (release == null || !spent.compareAndSet(false, true))
+            if (lease == null || !spent.compareAndSet(false, true))
             {
                 return;
             }
-            release.run();
+            lease.depart();
         }
 
         /**
@@ -646,20 +704,81 @@ public final class ToolRoad
             {
                 return false;
             }
-            if (release == null)
+            if (lease == null)
             {
                 return true;
             }
+            lease.transferTo(entry);
+            return true;
+        }
+
+        /**
+         * A ticket sharing this one's permit.
+         * <p>
+         * For a nested call that inherits its caller's hold: the share is spent like any ticket,
+         * and the permit returns only when the caller's own hold and every share of it have
+         * departed - so work dispatched by the nested call can outlive the caller and still be
+         * counted.
+         * </p>
+         *
+         * @return a ticket holding a share of this one's permit, or a permit-less ticket when
+         *         this one holds no permit
+         */
+        Ticket share()
+        {
+            return lease == null ? new Ticket((Lease)null) : lease.share();
+        }
+    }
+
+    /**
+     * One permit of the heavy-tool limiter and everyone still holding it.
+     * <p>
+     * The count starts at one - the call that took the permit - and grows by every share handed to
+     * a nested call. Each holder departs at most once (a ticket's spend is single-shot), so the
+     * count cannot pass zero, and the permit is returned at the one moment it reaches it.
+     * </p>
+     */
+    private static final class Lease
+    {
+        private final Runnable release;
+
+        private final AtomicInteger holders = new AtomicInteger(1);
+
+        Lease(Runnable release)
+        {
+            this.release = release;
+        }
+
+        boolean isHeld()
+        {
+            return holders.get() > 0;
+        }
+
+        void depart()
+        {
+            if (holders.decrementAndGet() == 0)
+            {
+                release.run();
+            }
+        }
+
+        Ticket share()
+        {
+            holders.incrementAndGet();
+            return new Ticket(this);
+        }
+
+        void transferTo(PendingWorkRegistry.PendingEntry entry)
+        {
             CompletableFuture<String> future = entry.future;
             if (future == null)
             {
-                release.run();
-                return true;
+                depart();
+                return;
             }
             // Not the future's completion, which a cancel moves while the body still runs: the
             // body's own exit is what says the session's resources are free again.
-            entry.attachWorkExit(release);
-            return true;
+            entry.attachWorkExit(this::depart);
         }
     }
 }

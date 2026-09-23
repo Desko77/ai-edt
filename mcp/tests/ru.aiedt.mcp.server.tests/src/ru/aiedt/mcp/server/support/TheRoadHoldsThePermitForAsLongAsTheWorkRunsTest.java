@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -234,6 +235,81 @@ public class TheRoadHoldsThePermitForAsLongAsTheWorkRunsTest
         ToolRoadOutcome outcome = road.resume("no-such-runkey", 10L); //$NON-NLS-1$
         assertTrue(outcome.refused());
         assertTrue(outcome.refusal(), outcome.refusal().contains("Not a registry entry")); //$NON-NLS-1$
+    }
+
+    /**
+     * A heavy parent that answers its own text while its heavy child's work still runs frees no
+     * permit: the child inherited a share of the parent's, and the share stays with the child's
+     * work until that work leaves the executor.
+     */
+    @Test
+    public void aPendingChildKeepsAShareOfItsCallersPermitPastTheParent() throws Exception
+    {
+        CountDownLatch hold = new CountDownLatch(1);
+        PendingProbe child = new PendingProbe("road_life_share_child_" + System.nanoTime(), hold);
+        PlainProbe other = new PlainProbe("road_life_share_other_" + System.nanoTime());
+        SwallowingParentProbe parent = new SwallowingParentProbe(
+            "road_life_share_parent_" + System.nanoTime(), road, child.name);
+        publish(child);
+        publish(other);
+        publish(parent);
+        waitFor(parent.name);
+
+        ToolRoadOutcome outcome = road.call(parent.name, Map.of("tag", "shared"), "permit-test"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            assertFalse(outcome.refused());
+            assertEquals("the parent answered its own text, not the child's envelope", //$NON-NLS-1$
+                "parent saw a pending child", outcome.text()); //$NON-NLS-1$
+            assertEquals("the parent's return frees no permit while the child's work runs", //$NON-NLS-1$
+                0, permits.availablePermits());
+            assertEquals("and the next heavy call is still turned away", ToolRoad.MSG_HEAVY_BUSY, //$NON-NLS-1$
+                road.admit(other.name, Map.of()).refusal());
+        }
+        finally
+        {
+            // The latch goes even when an assertion failed: the work runs on the shared domain
+            // executor, and a parked body would hold its thread for the rest of the suite.
+            hold.countDown();
+        }
+        assertTrue("the permit comes back when the child's work ends", //$NON-NLS-1$
+            eventually(() -> permits.availablePermits() == 1));
+    }
+
+    /**
+     * A run whose tracking is dropped while its work still runs holds its permit to the end: the
+     * road waits on the entry the starter kept, not on the registry map that no longer names it.
+     */
+    @Test
+    public void aDetachedRunKeepsThePermitUntilItsWorkLeaves() throws Exception
+    {
+        CountDownLatch workEntered = new CountDownLatch(1);
+        CountDownLatch hold = new CountDownLatch(1);
+        AtomicBoolean bodyLeft = new AtomicBoolean();
+        DetachingProbe probe = new DetachingProbe("road_life_detach_" + System.nanoTime(),
+            workEntered, hold, bodyLeft);
+        PlainProbe other = new PlainProbe("road_life_detach_other_" + System.nanoTime());
+        publish(probe);
+        publish(other);
+        waitFor(probe.name);
+
+        ToolRoadOutcome pending = road.call(probe.name, Map.of("tag", "detach"), "permit-test"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            assertFalse("the detached work still answers Pending", pending.finished()); //$NON-NLS-1$
+            assertEquals("the permit stays with work whose tracking was dropped", //$NON-NLS-1$
+                0, permits.availablePermits());
+            assertEquals("and the next heavy call is still turned away", ToolRoad.MSG_HEAVY_BUSY, //$NON-NLS-1$
+                road.admit(other.name, Map.of()).refusal());
+        }
+        finally
+        {
+            // The latch goes even when an assertion failed, so the detached body leaves the
+            // shared domain executor whatever this test concluded.
+            hold.countDown();
+        }
+        assertTrue("the permit comes back when the detached work ends", //$NON-NLS-1$
+            eventually(() -> permits.availablePermits() == 1 && bodyLeft.get()));
     }
 
     private void publish(IMcpTool probe)
@@ -521,6 +597,126 @@ public class TheRoadHoldsThePermitForAsLongAsTheWorkRunsTest
                         "nested-probe");
                     return "nested:" + nested.text(); //$NON-NLS-1$
                 }, null);
+        }
+    }
+
+    /**
+     * A heavy tool that calls a heavy child through the road and answers its own text rather than
+     * the child's {@code Pending} envelope, so the child's work goes on after the parent returns.
+     */
+    private static final class SwallowingParentProbe implements IMcpTool
+    {
+        final String name;
+
+        private final ToolRoad road;
+
+        private final String childName;
+
+        SwallowingParentProbe(String name, ToolRoad road, String childName)
+        {
+            this.name = name;
+            this.road = road;
+            this.childName = childName;
+        }
+
+        @Override
+        public String getName()
+        {
+            return name;
+        }
+
+        @Override
+        public String getDescription()
+        {
+            return "a probe"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String getInputSchema()
+        {
+            return "{\"type\":\"object\"}"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String execute(Map<String, String> params)
+        {
+            ToolRoadOutcome child = road.call(childName, Map.of("tag", "swallowed"), "nested-probe"); //$NON-NLS-1$ //$NON-NLS-2$
+            return child.runKey() == null ? "parent saw " + child.text() //$NON-NLS-1$
+                : "parent saw a pending child"; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A heavy tool that drops its own tracking while its work still runs, the way a subject sweep
+     * or a cancel that cannot reach running work does.
+     */
+    private static final class DetachingProbe implements IMcpTool
+    {
+        final String name;
+
+        private final CountDownLatch workEntered;
+
+        private final CountDownLatch hold;
+
+        private final AtomicBoolean bodyLeft;
+
+        DetachingProbe(String name, CountDownLatch workEntered, CountDownLatch hold,
+            AtomicBoolean bodyLeft)
+        {
+            this.name = name;
+            this.workEntered = workEntered;
+            this.hold = hold;
+            this.bodyLeft = bodyLeft;
+        }
+
+        @Override
+        public String getName()
+        {
+            return name;
+        }
+
+        @Override
+        public String getDescription()
+        {
+            return "a probe"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String getInputSchema()
+        {
+            return "{\"type\":\"object\"}"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String execute(Map<String, String> params)
+        {
+            String runKey = PendingWorkRegistry.computeRunKey(name, params.get("tag")); //$NON-NLS-1$
+            String envelope = PendingExecutor.execute(PendingWorkRegistry.REFERENCES, name, params,
+                runKey, SOFT_MS, () -> {
+                    workEntered.countDown();
+                    try
+                    {
+                        hold.await(30, TimeUnit.SECONDS);
+                    }
+                    catch (InterruptedException e)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+                    bodyLeft.set(true);
+                    return "detached-done"; //$NON-NLS-1$
+                }, null);
+            // The work is inside its latch by now; only then does the tracking go, so the
+            // detach is one of work-still-running, not of work-that-never-ran.
+            try
+            {
+                workEntered.await(10, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+            PendingWorkRegistry.REFERENCES.detach(runKey);
+            return envelope;
         }
     }
 }

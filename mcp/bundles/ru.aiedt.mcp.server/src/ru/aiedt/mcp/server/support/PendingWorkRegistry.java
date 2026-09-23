@@ -252,6 +252,10 @@ public final class PendingWorkRegistry
 
     /**
      * As {@link #getOrStart(String, Supplier)}, for work that reports its progress.
+     * <p>
+     * When a call scope is current, the entry it dispatches is also noted on that scope, so the
+     * caller's answer can find the run again after the registry's own tracking of it is dropped.
+     * </p>
      *
      * @param runKey the coalescing key, never {@code null}
      * @param work the body, handed the entry it runs under so it can set
@@ -274,7 +278,7 @@ public final class PendingWorkRegistry
         ToolCallScope current = ToolCallScope.current();
         ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
         ru.aiedt.mcp.server.RunningToolCall starter = current != null ? current.runningCall() : null;
-        return entries.computeIfAbsent(runKey, k ->
+        PendingEntry started = entries.computeIfAbsent(runKey, k ->
         {
             PendingEntry entry = new PendingEntry(k);
             // The scope the work runs under, kept where it outlives the request that made it. A
@@ -357,6 +361,14 @@ public final class PendingWorkRegistry
             });
             return entry;
         });
+        if (current != null)
+        {
+            // The starter keeps a direct reference to the run it started: a permit spent on the
+            // answer that names this key must wait on the work's own exit even when the tracking
+            // - this map's entry - is dropped while the work still runs.
+            current.notePendingEntry(runKey, started);
+        }
+        return started;
     }
 
     /**

@@ -9,9 +9,15 @@ package ru.aiedt.mcp.server.toolkit;
 /**
  * What a call through {@link IToolRoad} came back with.
  * <p>
- * Three shapes, one object: a finished call carries its text; a refused call carries why it never
- * ran; a call whose work outlived its wait carries the {@code Pending} envelope text together with
- * the {@code runKey} and the domain that hold the run, and says it is not finished.
+ * Four shapes, one object: a finished call carries its text; a refused call carries why it never
+ * ran; a failed call carries why the tool that ran ended without an answer; a call whose work
+ * outlived its wait carries the {@code Pending} envelope text together with the {@code runKey}
+ * and the domain that hold the run, and says it is not finished.
+ * </p>
+ * <p>
+ * A refusal and a failure are not two wordings of one thing. A refused call never started, so a
+ * caller that retries refusals tries the same call again; a failed call already ran, may have
+ * applied part of what it was asked for, and must not be repeated as though nothing happened.
  * </p>
  */
 public final class ToolRoadOutcome
@@ -20,16 +26,20 @@ public final class ToolRoadOutcome
 
     private final String refusal;
 
+    private final String failure;
+
     private final String runKey;
 
     private final String domain;
 
     private final boolean finished;
 
-    private ToolRoadOutcome(String text, String refusal, String runKey, String domain, boolean finished)
+    private ToolRoadOutcome(String text, String refusal, String failure, String runKey,
+        String domain, boolean finished)
     {
         this.text = text;
         this.refusal = refusal;
+        this.failure = failure;
         this.runKey = runKey;
         this.domain = domain;
         this.finished = finished;
@@ -41,7 +51,7 @@ public final class ToolRoadOutcome
      */
     public static ToolRoadOutcome done(String text)
     {
-        return new ToolRoadOutcome(text, null, null, null, true);
+        return new ToolRoadOutcome(text, null, null, null, null, true);
     }
 
     /**
@@ -50,7 +60,16 @@ public final class ToolRoadOutcome
      */
     public static ToolRoadOutcome refused(String message)
     {
-        return new ToolRoadOutcome(null, message, null, null, true);
+        return new ToolRoadOutcome(null, message, null, null, null, true);
+    }
+
+    /**
+     * @param message why the call ended without an answer
+     * @return an outcome for a call that ran and failed
+     */
+    public static ToolRoadOutcome failed(String message)
+    {
+        return new ToolRoadOutcome(null, null, message, null, null, true);
     }
 
     /**
@@ -61,12 +80,12 @@ public final class ToolRoadOutcome
      */
     public static ToolRoadOutcome pending(String envelope, String runKey, String domain)
     {
-        return new ToolRoadOutcome(envelope, null, runKey, domain, false);
+        return new ToolRoadOutcome(envelope, null, null, runKey, domain, false);
     }
 
     /**
      * @return the tool's own text, or the {@code Pending} envelope for a call still running;
-     *         {@code null} for a refused call
+     *         {@code null} for a refused or failed call
      */
     public String text()
     {
@@ -90,7 +109,24 @@ public final class ToolRoadOutcome
     }
 
     /**
-     * @return the key of the still-running work, or {@code null} for a finished or refused call
+     * @return why the call that ran ended without an answer, or {@code null} when it answered
+     */
+    public String failure()
+    {
+        return failure;
+    }
+
+    /**
+     * @return whether the call ran and failed
+     */
+    public boolean failed()
+    {
+        return failure != null;
+    }
+
+    /**
+     * @return the key of the still-running work, or {@code null} for a finished, refused or failed
+     *         call
      */
     public String runKey()
     {
