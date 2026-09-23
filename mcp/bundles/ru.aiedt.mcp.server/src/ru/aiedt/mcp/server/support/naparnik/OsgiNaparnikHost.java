@@ -6,9 +6,18 @@
 
 package ru.aiedt.mcp.server.support.naparnik;
 
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import org.eclipse.core.resources.IProject;
 
 /**
  * The 1C:Naparnik installation in this OSGi runtime, reached only by reflection.
@@ -46,6 +55,18 @@ public final class OsgiNaparnikHost
 
     /** Public Guice type. The runtime object implements it; its concrete class is not public. */
     private static final String INJECTOR_TYPE = "com.google.inject.Injector"; //$NON-NLS-1$
+
+    private static final String REQUEST_CLASS = "com.e1c.edt.ai.assistent.SendUserMessageRequest"; //$NON-NLS-1$
+
+    private static final String SESSION_CLASS = "com.e1c.edt.ai.assistent.ConversationSession"; //$NON-NLS-1$
+
+    private static final String POLICY_CLASS = "com.e1c.edt.ai.assistent.model.SkillCompletionPolicy"; //$NON-NLS-1$
+
+    private static final String TOKEN_CLASS = "com.e1c.edt.ai.CancellationTokenSource"; //$NON-NLS-1$
+
+    private static final String TOKEN_INTERFACE = "com.e1c.edt.ai.ICancellationToken"; //$NON-NLS-1$
+
+    private static final String LISTENER_INTERFACE = "com.e1c.edt.ai.IConversationProgressListener"; //$NON-NLS-1$
 
     /**
      * OSGi {@code Bundle.START_TRANSIENT}. Activates the bundle for this session and does not mark
@@ -186,6 +207,154 @@ public final class OsgiNaparnikHost
             }
         }
         return names;
+    }
+
+    @Override
+    public RunningQuestion ask(Object facade, BundleCopy source, Question question)
+        throws NaparnikAccessException
+    {
+        String link = NaparnikHost.LINK_ASK;
+        if (facade == null || source == null || question == null)
+        {
+            throw new NaparnikAccessException(link, "no facade to ask", null); //$NON-NLS-1$
+        }
+        if (!(question.project() instanceof IProject project))
+        {
+            throw new NaparnikAccessException(link, "project is not an IProject", null); //$NON-NLS-1$
+        }
+        Class<?> requestType = loadClass(source, REQUEST_CLASS);
+        Class<?> sessionType = loadClass(source, SESSION_CLASS);
+        Class<?> policyType = loadClass(source, POLICY_CLASS);
+        Class<?> tokenType = loadClass(source, TOKEN_CLASS);
+        Class<?> tokenIface = loadClass(source, TOKEN_INTERFACE);
+        Class<?> listenerType = loadClass(source, LISTENER_INTERFACE);
+        Object session = null;
+        if (!question.forceNew())
+        {
+            session = construct(sessionType, link, new Class<?>[] {String.class, String.class},
+                new Object[] {question.conversationId(), question.replyTo()});
+        }
+        // The 9-argument constructor. completionPolicy stays null: this bridge does not ask
+        // Naparnik to keep completing a skill. skillName and chat are the values the 7-argument
+        // constructor writes when a caller leaves them unset.
+        Object request = construct(requestType, link, new Class<?>[] {
+            IProject.class, String.class, sessionType, boolean.class, String.class, Boolean.class,
+            Integer.class, Set.class, policyType},
+            new Object[] {
+                project, question.text(), session, Boolean.valueOf(question.forceNew()),
+                question.skillName(), question.chat(), Integer.valueOf(question.maxToolRounds()),
+                question.allowedTools(), null});
+        Object token = construct(tokenType, link, new Class<?>[0], new Object[0]);
+        ReflectedQuestion running = new ReflectedQuestion(tokenType, token);
+        Object listener = listener(listenerType, question, running, link);
+        Object future = call(facade, "sendAsync", link, //$NON-NLS-1$
+            new Class<?>[] {requestType, tokenIface, listenerType},
+            new Object[] {request, token, listener});
+        if (!(future instanceof CompletableFuture<?> pending))
+        {
+            throw new NaparnikAccessException(link, "sendAsync returned " + future, null); //$NON-NLS-1$
+        }
+        running.future = pending;
+        return running;
+    }
+
+    private static Object construct(Class<?> type, String link, Class<?>[] parameters, Object[] args)
+        throws NaparnikAccessException
+    {
+        try
+        {
+            return type.getConstructor(parameters).newInstance(args);
+        }
+        catch (ReflectiveOperationException failure)
+        {
+            throw access(link, failure);
+        }
+    }
+
+    /**
+     * A proxy of {@code IConversationProgressListener}. {@code onToolCallStart} records the names
+     * and cancels the installation's own token when the question says to stop. Cancelling does
+     * not stop the call that already started.
+     */
+    private static Object listener(Class<?> listenerType, Question question, ReflectedQuestion running,
+        String link)
+        throws NaparnikAccessException
+    {
+        InvocationHandler handler = (proxy, method, args) -> {
+            String name = method.getName();
+            if ("onToolCallStart".equals(name)) //$NON-NLS-1$
+            {
+                List<String> names = toolNamesOf(args);
+                running.toolsCalled.addAll(names);
+                ToolStart notice = question.onToolStart();
+                if (notice != null)
+                {
+                    String veto = notice.onStart(names);
+                    if (veto != null)
+                    {
+                        running.cancel();
+                    }
+                }
+                return null;
+            }
+            if ("equals".equals(name)) //$NON-NLS-1$
+            {
+                return Boolean.valueOf(proxy == args[0]);
+            }
+            if ("hashCode".equals(name)) //$NON-NLS-1$
+            {
+                return Integer.valueOf(System.identityHashCode(proxy));
+            }
+            if ("toString".equals(name)) //$NON-NLS-1$
+            {
+                return "naparnik-progress"; //$NON-NLS-1$
+            }
+            return defaultValue(method.getReturnType());
+        };
+        try
+        {
+            return Proxy.newProxyInstance(listenerType.getClassLoader(), new Class<?>[] {listenerType},
+                handler);
+        }
+        catch (RuntimeException failure)
+        {
+            throw new NaparnikAccessException(link, "cannot proxy the progress listener: " + failure, //$NON-NLS-1$
+                failure);
+        }
+    }
+
+    private static List<String> toolNamesOf(Object[] args)
+    {
+        List<String> names = new ArrayList<>();
+        if (args == null || args.length == 0 || !(args[0] instanceof List<?> list))
+        {
+            return names;
+        }
+        for (Object item : list)
+        {
+            if (item != null)
+            {
+                names.add(item.toString());
+            }
+        }
+        return names;
+    }
+
+    private static Object defaultValue(Class<?> type)
+    {
+        if (type == boolean.class)
+        {
+            return Boolean.FALSE;
+        }
+        if (type == int.class)
+        {
+            return Integer.valueOf(0);
+        }
+        if (type == long.class)
+        {
+            return Long.valueOf(0L);
+        }
+        return null;
     }
 
     /**
@@ -421,5 +590,174 @@ public final class OsgiNaparnikHost
             detail = detail + ": " + cause.getMessage(); //$NON-NLS-1$
         }
         return new NaparnikAccessException(link, detail, cause);
+    }
+
+    /**
+     * One question backed by Naparnik's own {@code CancellationTokenSource} and the future
+     * {@code sendAsync} returned. {@code getReasoning} is not read.
+     */
+    private static final class ReflectedQuestion
+        implements RunningQuestion
+    {
+        private final Class<?> tokenType;
+
+        private final Object token;
+
+        private final List<String> toolsCalled = java.util.Collections.synchronizedList(new ArrayList<>());
+
+        private CompletableFuture<?> future;
+
+        private Throwable failure;
+
+        private String text;
+
+        private String conversationId;
+
+        private String replyTo;
+
+        private int assistantMessages;
+
+        private boolean read;
+
+        private ReflectedQuestion(Class<?> tokenType, Object token)
+        {
+            this.tokenType = tokenType;
+            this.token = token;
+        }
+
+        @Override
+        public boolean await(long timeoutMs)
+            throws NaparnikAccessException
+        {
+            if (future == null)
+            {
+                throw new NaparnikAccessException(NaparnikHost.LINK_ASK, "sendAsync returned no future", //$NON-NLS-1$
+                    null);
+            }
+            try
+            {
+                Object result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
+                read(result);
+                return true;
+            }
+            catch (TimeoutException elapsed)
+            {
+                return future.isDone() && finishQuietly();
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+                return future.isDone() && finishQuietly();
+            }
+            catch (ExecutionException failed)
+            {
+                failure = failed.getCause() == null ? failed : failed.getCause();
+                return true;
+            }
+        }
+
+        @Override
+        public void cancel()
+        {
+            try
+            {
+                tokenType.getMethod("cancel").invoke(token); //$NON-NLS-1$
+            }
+            catch (ReflectiveOperationException failure)
+            {
+                // The token is Naparnik's own CancellationTokenSource. A cancel that cannot be
+                // delivered is reported when the wait ends, not dropped as a success.
+                this.failure = failure.getCause() == null ? failure : failure.getCause();
+            }
+        }
+
+        @Override
+        public Throwable failure()
+        {
+            return failure;
+        }
+
+        @Override
+        public String text()
+        {
+            return text;
+        }
+
+        @Override
+        public String conversationId()
+        {
+            return conversationId;
+        }
+
+        @Override
+        public String replyTo()
+        {
+            return replyTo;
+        }
+
+        @Override
+        public int assistantMessages()
+        {
+            return assistantMessages;
+        }
+
+        @Override
+        public List<String> toolsCalled()
+        {
+            synchronized (toolsCalled)
+            {
+                return List.copyOf(toolsCalled);
+            }
+        }
+
+        private boolean finishQuietly()
+        {
+            if (failure != null || read)
+            {
+                return true;
+            }
+            try
+            {
+                read(future.getNow(null));
+            }
+            catch (RuntimeException | NaparnikAccessException failure)
+            {
+                // The wait already ended. A result that cannot be read is the failure of the
+                // question, not a second wait.
+                this.failure = failure;
+            }
+            return true;
+        }
+
+        private void read(Object result)
+            throws NaparnikAccessException
+        {
+            read = true;
+            if (result == null)
+            {
+                return;
+            }
+            text = string(call(result, "getText", NaparnikHost.LINK_ASK, new Class<?>[0], new Object[0])); //$NON-NLS-1$
+            Object session = call(result, "getSession", NaparnikHost.LINK_ASK, new Class<?>[0], //$NON-NLS-1$
+                new Object[0]);
+            if (session != null)
+            {
+                conversationId = string(call(session, "getConversationId", NaparnikHost.LINK_ASK, //$NON-NLS-1$
+                    new Class<?>[0], new Object[0]));
+                replyTo = string(call(session, "getReplyToMessageUuid", NaparnikHost.LINK_ASK, //$NON-NLS-1$
+                    new Class<?>[0], new Object[0]));
+            }
+            Object count = call(result, "getAssistantMessageCount", NaparnikHost.LINK_ASK, //$NON-NLS-1$
+                new Class<?>[0], new Object[0]);
+            if (count instanceof Number number)
+            {
+                assistantMessages = number.intValue();
+            }
+        }
+
+        private static String string(Object value)
+        {
+            return value == null ? null : value.toString();
+        }
     }
 }

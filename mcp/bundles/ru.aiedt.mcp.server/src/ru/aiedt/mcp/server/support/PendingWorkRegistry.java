@@ -108,6 +108,26 @@ public final class PendingWorkRegistry
         "vanessa", "vanessa-async", 1, VANESSA_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * How long a question that nobody came back for is kept.
+     * <p>
+     * The longest accepted question is {@code timeoutSeconds} of 1800. The entry has to outlive
+     * that, plus a margin, or a question still running is dropped and a later poll reports it
+     * missing.
+     * </p>
+     */
+    private static final long NAPARNIK_ABANDONED_TTL_MS = 40L * 60L * 1000L;
+
+    /**
+     * Questions sent to 1C:Naparnik.
+     * <p>
+     * One at a time, on one thread. The key is unique per question: two identical questions are
+     * two runs, and a finished answer is not replayed for a later one.
+     * </p>
+     */
+    public static final PendingWorkRegistry NAPARNIK = new PendingWorkRegistry(
+        "naparnik", "naparnik-async", 1, NAPARNIK_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * Shared async backend for the slow read-only analysis tools that are wrapped
      * generically (see {@code GenericPending}) rather than each hand-rolling their
      * own registry. The runKey embeds the tool name, so distinct tools never
@@ -383,7 +403,7 @@ public final class PendingWorkRegistry
     public static List<PendingWorkRegistry> domains()
     {
         return Collections.unmodifiableList(
-            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, VANESSA, GENERIC));
+            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, VANESSA, NAPARNIK, GENERIC));
     }
 
     /**

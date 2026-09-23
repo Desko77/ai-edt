@@ -284,8 +284,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_search", Integer.valueOf(305));
         PROSE.put("generate_event_handlers", Integer.valueOf(299));
         PROSE.put("code_template", Integer.valueOf(171));
-        // naparnik: operation and probe. probe says that the call starts the Naparnik UI bundle.
-        PROSE.put("naparnik", Integer.valueOf(216));
+        // naparnik grew from 216 to 783 when ask advertised its arguments: the question, the
+        // project, the conversation, the round limit, the timeout and the pending key.
+        PROSE.put("naparnik", Integer.valueOf(783));
         PROSE.put("get_mcp_history", Integer.valueOf(145));
         PROSE.put("get_command_interface", Integer.valueOf(98));
         PROSE.put("get_edt_version", Integer.valueOf(0));
@@ -396,6 +397,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * the capture of a window a button opened is a call a client cannot build without being told
      * its parts exist. Together with the eighteenth: 90286.
      * </p>
+     * <p>
+     * And a twentieth, by 567, for ask on naparnik (to 783): projectName, question,
+     * conversationId, replyTo, maxToolRounds, timeoutSeconds, waitSeconds, runKey and cancel, and
+     * the operation sentence that now names ask. Together with the nineteenth: 90853.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 90286;
+    private static final int DOCUMENT_PROSE = 90853;
 }
