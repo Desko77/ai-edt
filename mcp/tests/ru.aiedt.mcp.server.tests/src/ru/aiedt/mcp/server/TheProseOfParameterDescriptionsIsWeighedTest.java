@@ -381,6 +381,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
      * to keep this raise the remainder it is. Together with the sixteenth: 89129.
      * </p>
+     * <p>
+     * And an eighteenth, by 169, for {@code smallScalePercent} on mxl_workshop: the argument itself
+     * (149 bytes) and the name appended to that facade's operation list. The argument is the only
+     * place a client learns what the number means - read but unadvertised is the defect this suite
+     * exists to catch - so its wording was cut to the two facts a caller needs and no further.
+     * Together with the seventeenth: 89298.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 89129;
+    private static final int DOCUMENT_PROSE = 89298;
 }
