@@ -232,7 +232,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(4900));
+        // Raised from 4900 for the dump-info work: the syncOperation value
+        // rebuild_dump_info, the rebuild's wait budget, and the update's format override.
+        PROSE.put("infobase_admin", Integer.valueOf(5256));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -369,5 +371,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * to operation help. Measured at 87113.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 87113;
+    private static final int DOCUMENT_PROSE = 87469;
 }

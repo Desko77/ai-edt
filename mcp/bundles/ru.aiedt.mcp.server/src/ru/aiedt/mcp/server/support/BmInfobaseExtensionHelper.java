@@ -1295,13 +1295,14 @@ public final class BmInfobaseExtensionHelper
 
     /**
      * The release step that says when it failed. Same first half as {@link #disconnectForThickClient},
-     * without the second half that goes on regardless.
+     * without the second half that goes on regardless. Package-visible: the dump-info rebuild runs
+     * its Designer step under the same strict handshake as the strict conversion.
      *
      * @param ctx the resolved launcher context
      * @return <code>true</code> when the infobase was connected and is now released
      * @throws Exception when the release failed
      */
-    private static boolean releaseForThickClient(LauncherContext ctx) throws Exception
+    static boolean releaseForThickClient(LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1353,12 +1354,13 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
-     * The reconnection step that says when it failed.
+     * The reconnection step that says when it failed. Package-visible for the dump-info rebuild's
+     * strict handshake.
      *
      * @param ctx the resolved launcher context
      * @throws Exception when the reconnection failed
      */
-    private static void takeInfobaseBack(LauncherContext ctx) throws Exception
+    static void takeInfobaseBack(LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1389,7 +1391,8 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static final class LauncherContext
+    /** The resolved thick-client environment one launcher call runs in. */
+    static final class LauncherContext
     {
         IThickClientLauncher launcher;
         ILaunchableRuntimeComponent component;
@@ -1402,8 +1405,11 @@ public final class BmInfobaseExtensionHelper
         String failureKind;
     }
 
-    /** Resolves the ThickClient launcher + component + execution args for the IB. */
-    private static LauncherContext resolveLauncher(String projectName, String applicationId)
+    /**
+     * Resolves the ThickClient launcher + component + execution args for the IB. Package-visible:
+     * the dump-info rebuild in this package runs its Designer step through the same resolution.
+     */
+    static LauncherContext resolveLauncher(String projectName, String applicationId)
     {
         LauncherContext ctx = new LauncherContext();
         IProject project = ProjectResolver.resolve(projectName);
@@ -1488,6 +1494,41 @@ public final class BmInfobaseExtensionHelper
         }
         ctx.args = args;
         return ctx;
+    }
+
+    /**
+     * The platform version EDT's own update path runs against this infobase with - the version whose
+     * Designer reads and writes the stored {@code ConfigDumpInfo.xml} on every {@code dump-files}.
+     * Resolves the same runtime the update itself resolves, without reading credentials and without
+     * launching anything.
+     *
+     * @param project the project that owns the infobase
+     * @param infobase the infobase
+     * @return the version with build (for example {@code 8.3.27.2214}), or {@code null} when no
+     *         runtime resolves for it
+     */
+    public static String thickClientPlatformVersion(org.eclipse.core.resources.IProject project,
+        InfobaseReference infobase)
+    {
+        try
+        {
+            Activator a = Activator.getDefault();
+            IResolvableRuntimeInstallationManager riMgr =
+                a != null ? a.getResolvableRuntimeInstallationManager() : null;
+            if (riMgr == null)
+            {
+                return null;
+            }
+            IResolvableRuntimeInstallation resolvable = riMgr.resolveByProjectAndInfobase(
+                RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
+            RuntimeInstallation installation = resolvable.resolve(
+                Collections.singletonList(IRuntimeComponentTypes.THICK_CLIENT), infobase.getAppArch());
+            return installation.getVersionWithBuild();
+        }
+        catch (Throwable noRuntime)
+        {
+            return null;
+        }
     }
 
     private static InfobaseReference resolveInfobase(IProject project, String applicationId,

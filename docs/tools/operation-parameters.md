@@ -320,7 +320,7 @@
 | `InfobaseAdminFacadeTool` | `set_infobase_credentials` | `accessMode:string`, `applicationId:string`, `password:string`, `projectName:string`, `syncOperation:string`, `userName:string` | delegate InfobaseCredentialsWriter |
 | `InfobaseAdminFacadeTool` | `start_client` | `allowSecondSession:boolean`, `applicationId:string`, `clientType:string`, `endpointTimeoutSeconds:integer`, `launchConfigurationName:string`, `projectName:string`, `runMode:string`, `startupOption:string`, `syncOperation:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate ClientSessionStarter |
 | `InfobaseAdminFacadeTool` | `sync_control` | `syncOperation:string` | read in place |
-| `InfobaseAdminFacadeTool` | `update_database` | `applicationId:string`, `autoFreeClients:boolean`, `autoRestructure:boolean`, `cancel:boolean`, `dryRun:boolean`, `fullUpdate:boolean`, `ignoreBranchBinding:boolean`, `launchConfigurationName:string`, `projectName:string`, `refreshWorkspace:boolean`, `runKey:string`, `statusOnly:boolean`, `syncOperation:string`, `timeoutSeconds:string` | delegate DatabaseUpdater |
+| `InfobaseAdminFacadeTool` | `update_database` | `applicationId:string`, `autoFreeClients:boolean`, `autoRestructure:boolean`, `cancel:boolean`, `dryRun:boolean`, `fullUpdate:boolean`, `ignoreBranchBinding:boolean`, `ignoreDumpInfoFormat:boolean`, `launchConfigurationName:string`, `projectName:string`, `refreshWorkspace:boolean`, `runKey:string`, `statusOnly:boolean`, `syncOperation:string`, `timeoutSeconds:string` | delegate DatabaseUpdater |
 | `InsightsFacadeTool` | `compare_configurations` | `format:string`, `level:string`, `mode:string`, `objectFqn:string`, `projectName:string`, `scope:string`, `showRenames:boolean`, `target:string` | delegate CompareConfigurationsTool |
 | `InsightsFacadeTool` | `compare_three_way` | `ancestorPath:string`, `changedBy:string`, `closeSession:boolean`, `decisions:string`, `decisionsFrom:string`, `decisionsPath:string`, `help:string`, `ignoreOriginMismatch:boolean`, `intent:string`, `limit:integer`, `methodLevel:boolean`, `mustBeMergedOnly:boolean`, `offset:integer`, `oneSided:boolean`, `otherPath:string`, `parentId:string`, `projectName:string`, `report:string`, `scope:string`, `type:string` | delegate ThreeWayComparisonTool |
 | `InsightsFacadeTool` | `dependency_graph` | `depth:integer`, `direction:string`, `format:string`, `level:string`, `maxEdges:integer`, `maxNodes:integer`, `moduleFqn:string`, `objectFqn:string`, `projectName:string`, `scope:string`, `subsystemName:string` | delegate DependencyGraphTool |
@@ -384,16 +384,17 @@
 | `SupportRegistryTool` | `restore_modes` | `apply:boolean`, `limit:integer`, `objectFqn:string`, `offset:integer`, `parentId:string`, `projectName:string`, `snapshotPath:string`, `userMode:string` | read in place |
 | `SupportRegistryTool` | `snapshot_modes` | `apply:boolean`, `limit:integer`, `objectFqn:string`, `offset:integer`, `parentId:string`, `projectName:string`, `snapshotPath:string`, `userMode:string` | read in place |
 | `SupportRegistryTool` | `status` | `apply:boolean`, `limit:integer`, `objectFqn:string`, `offset:integer`, `parentId:string`, `projectName:string`, `snapshotPath:string`, `userMode:string` | passed in as locals |
-| `SyncControlTool` | `diagnose` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `diagnose_delta` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `diagnose_stuck_locks` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `list_support_snapshots` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `mark_synchronized` | `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `recover_stuck_merge` | `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `release_support_snapshot` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `reseed_baseline` | `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `status` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `suppress` | `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `diagnose` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
+| `SyncControlTool` | `diagnose_delta` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `diagnose_stuck_locks` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
+| `SyncControlTool` | `list_support_snapshots` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
+| `SyncControlTool` | `mark_synchronized` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `rebuild_dump_info` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `recover_stuck_merge` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `release_support_snapshot` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `reseed_baseline` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `status` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
+| `SyncControlTool` | `suppress` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
 | `WorkspaceMarksFacadeTool` | `get_bookmarks` | `filePath:string`, `limit:integer`, `projectName:string` | delegate BookmarksReader |
 | `WorkspaceMarksFacadeTool` | `get_objects_by_tags` | `limit:integer`, `projectName:string`, `tags:string[]` | delegate TaggedObjectsReader |
 | `WorkspaceMarksFacadeTool` | `get_tags` | `projectName:string` | delegate TagsReader |
