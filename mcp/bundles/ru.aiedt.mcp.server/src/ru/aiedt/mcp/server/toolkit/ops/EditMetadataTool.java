@@ -655,6 +655,30 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * Polls this facade's own run in the update registry.
+     * <p>
+     * A batch and every single operation both wait on an entry this facade started. The operation
+     * argument does not choose a different starter: {@code rename_metadata_object} is only where
+     * the heavy gates look, and that tool does not read the key.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; unused, a batch names none and every single
+     *            operation polls the same way
+     * @return {@code edit_metadata} when the key is in the update registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.UPDATE.domain().equals(domain))
+        {
+            return null;
+        }
+        // A batch names no operation; every single operation polls the same entry.
+        return NAME;
+    }
+
+    /**
      * Where an operation sends the call.
      * <p>
      * Renaming an object walks every reference in the configuration, so it is heavy; a batch may
@@ -790,7 +814,10 @@ public class EditMetadataTool implements IMcpTool
             // The registry is shared with update_database: stamped, a status read of either kind
             // cannot name this entry as the other, and a key handed back resumes work of its own
             // kind rather than any entry the key happens to resolve.
-            entry.workKind = "edit_metadata"; //$NON-NLS-1$
+            entry.workKind = NAME;
+            // The poll arrives as edit_metadata. Stamping the heavy operation instead would let a
+            // direct rename_metadata_object, which never reads the key, pass the heavy gates.
+            entry.startedBy = NAME;
         }
 
         String result = entry.await(softTimeoutMs);
@@ -968,6 +995,15 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * Parks the batch body before it applies anything, when a test has set it.
+     * <p>
+     * Production leaves it {@code null}. By the time it runs, the entry already carries
+     * {@code startedBy}, so a poll can be admitted while the body has not applied an operation.
+     * </p>
+     */
+    static volatile Runnable beforeBatchApply;
+
+    /**
      * Sequential batch mode: applies a list of operations one by one. Each
      * sub-operation runs in its own BM transaction; on per-op failure the
      * batch continues by default and records the failure in {@code batchResults}.
@@ -985,6 +1021,11 @@ public class EditMetadataTool implements IMcpTool
     private String executeBatch(Map<String, String> params,
         PendingWorkRegistry.PendingEntry job)
     {
+        Runnable pause = beforeBatchApply;
+        if (pause != null)
+        {
+            pause.run();
+        }
         String operationsRaw = JsonUtils.extractStringArgument(params, "operations"); //$NON-NLS-1$
         if (operationsRaw == null || operationsRaw.isEmpty())
         {
@@ -1199,6 +1240,14 @@ public class EditMetadataTool implements IMcpTool
                 return ToolResult.error("runKey not found - the batch either completed and its result " //$NON-NLS-1$
                     + "was already retrieved, or it expired. Re-issue the batch without runKey.").toJson(); //$NON-NLS-1$
             }
+            if (entry.workKind != null && !NAME.equals(entry.workKind))
+            {
+                // The registry is shared, and a key that names an update must not be waited on and
+                // then removed as a batch. Resuming the wrong work is worse than not finding the key.
+                return ToolResult.error("runKey belongs to " + entry.workKind //$NON-NLS-1$
+                    + ", not to edit_metadata. Poll it with that tool - resuming it here would " //$NON-NLS-1$
+                    + "answer for work this call never started.").toJson(); //$NON-NLS-1$
+            }
         }
         else
         {
@@ -1210,7 +1259,17 @@ public class EditMetadataTool implements IMcpTool
             {
                 reg.remove(runKey);
             }
-            entry = reg.getOrStart(runKey, job -> executeBatch(params, job));
+            entry = reg.getOrStart(runKey, job -> {
+                // Stamped before the body pauses, so a poll can see whose run this is even when
+                // the worker entered before getOrStart returned to the caller.
+                job.workKind = NAME;
+                job.startedBy = NAME;
+                return executeBatch(params, job);
+            });
+            entry.workKind = NAME;
+            // The poll arrives as edit_metadata, including a batch that routes onward only so the
+            // heavy gates know a rename may be inside. rename_metadata_object does not read the key.
+            entry.startedBy = NAME;
         }
 
         String result = entry.await(softTimeoutMs);

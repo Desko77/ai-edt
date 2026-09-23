@@ -182,6 +182,8 @@ public final class McpHistory
 
         final boolean binaryResult;
 
+        final String origin;
+
         /**
          * @param toolName the tool that ran
          * @param argSummary its arguments, flattened and with credentials masked
@@ -209,6 +211,25 @@ public final class McpHistory
         public Completion(String toolName, String argSummary, boolean argsCut, String resultSummary,
             long durationMs, boolean success, String fullArgs, boolean binaryResult)
         {
+            this(toolName, argSummary, argsCut, resultSummary, durationMs, success, fullArgs,
+                binaryResult, null);
+        }
+
+        /**
+         * @param toolName the tool that ran
+         * @param argSummary its arguments, flattened, masked and shortened for the buffer
+         * @param argsCut whether flattening shortened any argument
+         * @param resultSummary what it answered, in full
+         * @param durationMs how long it took
+         * @param success whether it worked
+         * @param fullArgs the same arguments masked but NOT shortened, for the on-disk store
+         * @param binaryResult whether the answer is inline binary data, which is not stored
+         * @param origin the symbolic name of the bundle that made the call, for a call that came
+         *            from inside rather than over the wire; {@code null} for a wire call
+         */
+        public Completion(String toolName, String argSummary, boolean argsCut, String resultSummary,
+            long durationMs, boolean success, String fullArgs, boolean binaryResult, String origin)
+        {
             this.toolName = toolName;
             this.argSummary = argSummary;
             this.argsCut = argsCut;
@@ -217,6 +238,7 @@ public final class McpHistory
             this.success = success;
             this.fullArgs = fullArgs;
             this.binaryResult = binaryResult;
+            this.origin = origin;
         }
     }
 
@@ -306,7 +328,7 @@ public final class McpHistory
             truncate(resultSummary, settings.resultChars()), System.currentTimeMillis(), completion.durationMs,
             completion.success,
             completion.argsCut || (argSummary != null && argSummary.length() > settings.argChars()),
-            resultSummary == null ? 0 : resultSummary.length(), answer);
+            resultSummary == null ? 0 : resultSummary.length(), answer, completion.origin);
         entry.entryId = entryId;
         add(entry, settings.depth());
         // Outside the lock, like the journal: writing a file must not hold up the next tool call.
@@ -547,12 +569,13 @@ public final class McpHistory
         final boolean argsCut;
         final int resultFullChars;
         final Answer answer;
+        final String origin;
 
         /** The id the on-disk store keeps this call's full text under. */
         String entryId;
 
         Record(String toolName, String argSummary, String resultSummary, long timestamp, long durationMs,
-            boolean success, boolean argsCut, int resultFullChars, Answer answer)
+            boolean success, boolean argsCut, int resultFullChars, Answer answer, String origin)
         {
             this.toolName = toolName;
             this.argSummary = argSummary;
@@ -563,6 +586,7 @@ public final class McpHistory
             this.argsCut = argsCut;
             this.resultFullChars = resultFullChars;
             this.answer = answer;
+            this.origin = origin;
         }
 
         Map<String, Object> toMap()
@@ -593,7 +617,132 @@ public final class McpHistory
             {
                 m.put("signalNote", answer.signalNote()); //$NON-NLS-1$
             }
+            if (origin != null)
+            {
+                m.put("origin", origin); //$NON-NLS-1$
+            }
             return m;
         }
+    }
+
+    /** Smallest per-argument extent in an argument summary, however small the budget. */
+    private static final int MIN_VALUE_CHARS = 80;
+
+    /** Numerator of the share of the budget one argument value may take. */
+    private static final int VALUE_SHARE_NUMERATOR = 2;
+
+    /** Denominator of that share. Two fifths: long values stay readable, short ones stay visible. */
+    private static final int VALUE_SHARE_DENOMINATOR = 5;
+
+    /** A flattened argument list and whether anything was left out of it. */
+    public static final class ArgsSummary
+    {
+        /** The flattened {@code k=v; k=v} text. */
+        public final String text;
+
+        /** Whether any argument value was shortened to fit the budget. */
+        public final boolean cut;
+
+        ArgsSummary(String text, boolean cut)
+        {
+            this.text = text;
+            this.cut = cut;
+        }
+    }
+
+    /**
+     * Flattens a tool's arguments into a {@code k=v; k=v} summary for the history buffer.
+     * <p>
+     * Both caps come from the budget the history is keeping, because both decide what a person
+     * afterwards gets to see. A single argument may take {@link #VALUE_SHARE_DENOMINATOR}ths of the
+     * budget, so that one long value still leaves room for the arguments after it to be seen.
+     * </p>
+     * <p>
+     * Every caller of the history - the wire's dispatch path and the tool road's internal calls -
+     * goes through here, so an argument is masked by the same keys whichever door the call took.
+     * The share is computed as a {@code long}: the unlimited budget of the full-text store is
+     * {@code Integer.MAX_VALUE}, and the product of it with the numerator overflows an {@code int}
+     * into a negative share that the minimum then replaces.
+     * </p>
+     *
+     * @param arguments what the tool was called with
+     * @param budget how many characters of this the history keeps
+     * @return the summary and whether anything was left out of it
+     */
+    public static ArgsSummary summarizeArguments(Map<String, String> arguments, int budget)
+    {
+        if (arguments == null || arguments.isEmpty())
+        {
+            return new ArgsSummary("", false); //$NON-NLS-1$
+        }
+        long share = (long)budget * VALUE_SHARE_NUMERATOR / VALUE_SHARE_DENOMINATOR;
+        int perValue = (int)Math.max(MIN_VALUE_CHARS, Math.min(Integer.MAX_VALUE, share));
+        StringBuilder sb = new StringBuilder();
+        boolean cut = false;
+        for (Map.Entry<String, String> e : arguments.entrySet())
+        {
+            if (sb.length() > 0)
+            {
+                sb.append("; "); //$NON-NLS-1$
+            }
+            sb.append(e.getKey()).append('=');
+            String v = e.getValue();
+            if (v != null && isSensitiveArgKey(e.getKey()))
+            {
+                // Never leak credentials (set_infobase_credentials.password, tokens, ...) into
+                // the in-memory history buffer, nor into the journal file fed from it. A masked
+                // value is not a shortened one: nothing was lost that the reader could have had.
+                sb.append("***"); //$NON-NLS-1$
+            }
+            else if (v == null)
+            {
+                sb.append("null"); //$NON-NLS-1$
+            }
+            else if (v.length() > perValue)
+            {
+                // Cap each value so a huge argument (source code, long JSON) does not build an
+                // unbounded temporary string before the whole-summary cap applies. This shortening
+                // happens INSIDE the summary, so the finished string can still come out under the
+                // budget - which is why it has to be reported rather than inferred from the length.
+                sb.append(v, 0, perValue).append("..."); //$NON-NLS-1$
+                cut = true;
+            }
+            else
+            {
+                sb.append(v);
+            }
+            if (sb.length() > budget)
+            {
+                sb.append("..."); //$NON-NLS-1$
+                cut = true;
+                break;
+            }
+        }
+        return new ArgsSummary(sb.toString(), cut);
+    }
+
+    /**
+     * Argument keys whose values must not be recorded (credentials, tokens, secrets).
+     *
+     * @param key the argument name
+     * @return whether the value is masked in every summary the history keeps
+     */
+    public static boolean isSensitiveArgKey(String key)
+    {
+        if (key == null)
+        {
+            return false;
+        }
+        String lc = key.toLowerCase();
+        // connectionstring, vanessaparams and scenariotext contain none of the words below and
+        // all three can carry a password: the platform names one Pwd, WSP or DBPwd inside a
+        // connection string, a scenario parameter can be a user password under a name Vanessa
+        // chooses, and a scenario types into fields - one of which can be a password. Deciding by
+        // the name of the ARGUMENT is why they have to be named here.
+        return lc.contains("password") || lc.contains("passwd") || lc.contains("pwd") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            || lc.contains("token") || lc.contains("secret") || lc.contains("apikey") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            || lc.contains("credential") || lc.contains("authorization") //$NON-NLS-1$ //$NON-NLS-2$
+            || lc.contains("connectionstring") || lc.contains("vanessaparams") //$NON-NLS-1$ //$NON-NLS-2$
+            || lc.contains("scenariotext"); //$NON-NLS-1$
     }
 }

@@ -115,6 +115,19 @@ public class DatabaseUpdater implements IMcpTool
         return NAME;
     }
 
+    /**
+     * Polls an update this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; a direct call names none, and the facade declares its own poll
+     * @return {@code update_database} when the key is in the update registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.UPDATE.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String getDescription()
     {
@@ -493,6 +506,9 @@ public class DatabaseUpdater implements IMcpTool
         // work in this same registry, and a kind-less entry cannot be told apart from either.
         entry.subject = projectName;
         entry.workKind = WORK_KIND;
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String result = entry.await(timeoutMs);
         if (result != null)
