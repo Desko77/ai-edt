@@ -8,12 +8,16 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,13 +115,43 @@ public class NaparnikStatusTest
         FakeHost host = installation("1.0.7.left", "RESOLVED"); //$NON-NLS-1$ //$NON-NLS-2$
         host.add(new BundleCopy("com.e1c.edt.ai", "1.0.7.right", "RESOLVED", new Object())); //$NON-NLS-1$ //$NON-NLS-2$
 
-        JsonObject doc = status(host, false);
+        JsonObject doc = status(host, true);
 
         assertFalse(doc.get("inPolicy").getAsBoolean()); //$NON-NLS-1$
         String refusal = doc.get("refusal").getAsString(); //$NON-NLS-1$
         assertTrue(refusal, refusal.contains("1.0.7.left")); //$NON-NLS-1$
         assertTrue(refusal, refusal.contains("1.0.7.right")); //$NON-NLS-1$
         assertTrue(refusal, refusal.contains("1.0.7")); //$NON-NLS-1$
+        assertFalse(doc.has("links")); //$NON-NLS-1$
+        assertEquals(0, host.injectors);
+        assertEquals(0, host.facades);
+    }
+
+    @Test
+    public void twoResolvedContextCopiesStayInPolicyAndTheProbeRuns()
+    {
+        FakeHost host = installation(SUPPORTED, "RESOLVED"); //$NON-NLS-1$
+        host.add(new BundleCopy("com.e1c.edt.ai.context", "1.0.7.second", "RESOLVED", new Object())); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        JsonObject doc = status(host, true);
+
+        assertTrue(doc.get("inPolicy").getAsBoolean()); //$NON-NLS-1$
+        assertFalse(doc.has("refusal")); //$NON-NLS-1$
+        int chosenContext = 0;
+        for (JsonElement element : doc.getAsJsonArray("bundles")) //$NON-NLS-1$
+        {
+            JsonObject bundle = element.getAsJsonObject();
+            if ("com.e1c.edt.ai.context".equals(bundle.get("name").getAsString()) //$NON-NLS-1$ //$NON-NLS-2$
+                && bundle.get("chosen").getAsBoolean()) //$NON-NLS-1$
+            {
+                chosenContext++;
+            }
+        }
+        assertEquals(2, chosenContext);
+        JsonObject facade = linkNamed(doc, "facade"); //$NON-NLS-1$
+        assertTrue(facade != null && facade.get("ok").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(1, host.injectors);
+        assertEquals(1, host.facades);
     }
 
     @Test
@@ -215,6 +249,50 @@ public class NaparnikStatusTest
         assertFalse(missing.contains("Read")); //$NON-NLS-1$
         assertFalse(missing.contains("Execute")); //$NON-NLS-1$
         assertEquals(1, host.injectors);
+    }
+
+    @Test
+    public void aPackagePrivateInjectorReachesTheFacade()
+        throws Exception
+    {
+        ProbeFacade facade = new ProbeFacade();
+        Object injector = packagePrivateInjector(facade);
+        assertFalse(Modifier.isPublic(injector.getClass().getModifiers()));
+        Method concrete = injector.getClass().getMethod("getInstance", Class.class); //$NON-NLS-1$
+        assertFalse(Modifier.isPublic(concrete.getDeclaringClass().getModifiers()));
+        try
+        {
+            concrete.invoke(injector, ProbeFacade.class);
+            fail("a package-private injector accepted invoke on its own class"); //$NON-NLS-1$
+        }
+        catch (IllegalAccessException expected)
+        {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("InjectorImpl")); //$NON-NLS-1$
+        }
+
+        NaparnikHost.FacadeDoor door = new OsgiNaparnikHost().openFacade(injector, ProbeFacade.class);
+
+        assertSame(facade, door.facade());
+        assertEquals("ru.aiedt.mcp.server", door.owner().name()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aPackagePrivateInjectorReadsToolsPastGetInstance()
+        throws Exception
+    {
+        ProbeFacade tools = new ProbeFacade();
+        Object injector = packagePrivateInjector(tools);
+        try
+        {
+            new OsgiNaparnikHost().toolNames(injector, ProbeFacade.class);
+            fail("ProbeFacade has no getSpecifications"); //$NON-NLS-1$
+        }
+        catch (NaparnikAccessException failure)
+        {
+            assertEquals(NaparnikHost.LINK_TOOLS, failure.link());
+            assertTrue(failure.getMessage(), failure.getMessage().contains("NoSuchMethodException")); //$NON-NLS-1$
+            assertFalse(failure.getMessage(), failure.getMessage().contains("IllegalAccessException")); //$NON-NLS-1$
+        }
     }
 
     @Test
@@ -556,6 +634,76 @@ public class NaparnikStatusTest
                 throw new NaparnikAccessException(NaparnikHost.LINK_TOOLS, "tools failed", null); //$NON-NLS-1$
             }
             return tools;
+        }
+    }
+
+    /**
+     * A type this bundle owns. The fake injector returns one so the probe can ask which bundle
+     * defined it. A bootstrap class such as {@code Object} has no bundle.
+     */
+    public static final class ProbeFacade
+    {
+    }
+
+    /**
+     * A package-private {@code com.google.inject.internal.InjectorImpl} that implements the public
+     * {@code com.google.inject.Injector} interface. The parent loader is the bootstrap loader, so
+     * this is not the Guice bundle's type. {@code Factory.create} returns one holding the argument.
+     */
+    private static Object packagePrivateInjector(Object facade)
+        throws Exception
+    {
+        ByteLoader loader = new ByteLoader();
+        loader.define("com.google.inject.Injector", INJECTOR_BYTES); //$NON-NLS-1$
+        loader.define("com.google.inject.internal.InjectorImpl", IMPL_BYTES); //$NON-NLS-1$
+        Class<?> factory = loader.define("com.google.inject.internal.Factory", FACTORY_BYTES); //$NON-NLS-1$
+        return factory.getMethod("create", Object.class).invoke(null, facade); //$NON-NLS-1$
+    }
+
+    /**
+     * Java 17 class files, mime-encoded. {@code Injector} is the public interface.
+     * {@code InjectorImpl} is package-private and stores the object {@code getInstance} returns.
+     * {@code Factory.create} in that same package returns one.
+     */
+    private static final String INJECTOR_BYTES = """
+        yv66vgAAAD0ACwcAAgEAGmNvbS9nb29nbGUvaW5qZWN0L0luamVjdG9yBwAEAQAQamF2YS9sYW5n
+        L09iamVjdAEAC2dldEluc3RhbmNlAQAlKExqYXZhL2xhbmcvQ2xhc3M7KUxqYXZhL2xhbmcvT2Jq
+        ZWN0OwEACVNpZ25hdHVyZQEAKChMamF2YS9sYW5nL0NsYXNzPCo+OylMamF2YS9sYW5nL09iamVj
+        dDsBAApTb3VyY2VGaWxlAQANSW5qZWN0b3IuamF2YQYBAAEAAwAAAAAAAQQBAAUABgABAAcAAAAC
+        AAgAAQAJAAAAAgAK"""; //$NON-NLS-1$
+
+    private static final String IMPL_BYTES = """
+        yv66vgAAAD0AGAoAAgADBwAEDAAFAAYBABBqYXZhL2xhbmcvT2JqZWN0AQAGPGluaXQ+AQADKClW
+        CQAIAAkHAAoMAAsADAEAJ2NvbS9nb29nbGUvaW5qZWN0L2ludGVybmFsL0luamVjdG9ySW1wbAEA
+        BXZhbHVlAQASTGphdmEvbGFuZy9PYmplY3Q7BwAOAQAaY29tL2dvb2dsZS9pbmplY3QvSW5qZWN0
+        b3IBABUoTGphdmEvbGFuZy9PYmplY3Q7KVYBAARDb2RlAQAPTGluZU51bWJlclRhYmxlAQALZ2V0
+        SW5zdGFuY2UBACUoTGphdmEvbGFuZy9DbGFzczspTGphdmEvbGFuZy9PYmplY3Q7AQAJU2lnbmF0
+        dXJlAQAoKExqYXZhL2xhbmcvQ2xhc3M8Kj47KUxqYXZhL2xhbmcvT2JqZWN0OwEAClNvdXJjZUZp
+        bGUBABFJbmplY3RvckltcGwuamF2YQAgAAgAAgABAA0AAQASAAsADAAAAAIAAAAFAA8AAQAQAAAA
+        IgACAAIAAAAKKrcAASortQAHsQAAAAEAEQAAAAYAAQAAAAUAAQASABMAAgAQAAAAHQABAAIAAAAF
+        KrQAB7AAAAABABEAAAAGAAEAAAAGABQAAAACABUAAQAWAAAAAgAX"""; //$NON-NLS-1$
+
+    private static final String FACTORY_BYTES = """
+        yv66vgAAAD0AFAoAAgADBwAEDAAFAAYBABBqYXZhL2xhbmcvT2JqZWN0AQAGPGluaXQ+AQADKClW
+        BwAIAQAnY29tL2dvb2dsZS9pbmplY3QvaW50ZXJuYWwvSW5qZWN0b3JJbXBsCgAHAAoMAAUACwEA
+        FShMamF2YS9sYW5nL09iamVjdDspVgcADQEAImNvbS9nb29nbGUvaW5qZWN0L2ludGVybmFsL0Zh
+        Y3RvcnkBAARDb2RlAQAPTGluZU51bWJlclRhYmxlAQAGY3JlYXRlAQAmKExqYXZhL2xhbmcvT2Jq
+        ZWN0OylMamF2YS9sYW5nL09iamVjdDsBAApTb3VyY2VGaWxlAQAMRmFjdG9yeS5qYXZhACEADAAC
+        AAAAAAACAAEABQAGAAEADgAAAB0AAQABAAAABSq3AAGxAAAAAQAPAAAABgABAAAAAgAJABAAEQAB
+        AA4AAAAhAAMAAQAAAAm7AAdZKrcACbAAAAABAA8AAAAGAAEAAAADAAEAEgAAAAIAEw=="""; //$NON-NLS-1$
+
+    private static final class ByteLoader
+        extends ClassLoader
+    {
+        private ByteLoader()
+        {
+            super(null);
+        }
+
+        private Class<?> define(String name, String base64)
+        {
+            byte[] bytes = Base64.getMimeDecoder().decode(base64);
+            return defineClass(name, bytes, 0, bytes.length);
         }
     }
 }

@@ -204,8 +204,9 @@ public class NaparnikTool
         {
             result.put("refusal", survey.refusal); //$NON-NLS-1$
         }
-        // An out-of-policy install is not started. probe walks links only after a single chosen
-        // copy of each bundle has passed the version check.
+        // An out-of-policy install is not started. probe walks links only after each singleton
+        // has one chosen copy and context has at least one. A second resolved context copy is
+        // not a refusal: context is not a singleton, and the bridge loads nothing from it.
         if (probe && survey.inPolicy)
         {
             walkLinks(survey, result);
@@ -256,7 +257,7 @@ public class NaparnikTool
         List<String> missing = new ArrayList<>();
         for (String name : BUNDLE_NAMES)
         {
-            BundleCopy pick = onlyChosen(byName.get(name));
+            BundleCopy pick = chosenCopy(name, byName.get(name));
             if (pick == null)
             {
                 missing.add(name);
@@ -376,6 +377,31 @@ public class NaparnikTool
                 return "resolved copies of singleton " + name + ": " //$NON-NLS-1$ //$NON-NLS-2$
                     + String.join(" and ", versions) //$NON-NLS-1$
                     + "; supported version is " + SUPPORTED_VERSION; //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The copy this bridge will call. A singleton name may have only one resolved copy.
+     * {@code context} is not a singleton, so the first resolved copy is enough.
+     */
+    private static BundleCopy chosenCopy(String name, List<BundleCopy> copies)
+    {
+        if (BUNDLE_CONTEXT.equals(name))
+        {
+            return firstChosen(copies);
+        }
+        return onlyChosen(copies);
+    }
+
+    private static BundleCopy firstChosen(List<BundleCopy> copies)
+    {
+        for (BundleCopy copy : copies)
+        {
+            if (copy.chosen())
+            {
+                return copy;
             }
         }
         return null;

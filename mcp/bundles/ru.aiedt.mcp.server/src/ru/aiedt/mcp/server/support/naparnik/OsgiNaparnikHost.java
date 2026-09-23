@@ -21,6 +21,9 @@ import java.util.List;
  * {@code getInjector} is private on {@code BaseActivator}. The running plugin is the UI activator,
  * a subclass, so the method is taken from the loaded {@code BaseActivator} class and then invoked
  * on the instance. {@code getDefault} is public and static on that same class.
+ * {@code getInstance(Class)} is invoked on the public {@code com.google.inject.Injector}
+ * interface: the concrete class is not public, and a method object taken from it throws
+ * {@code IllegalAccessException}.
  * </p>
  */
 public final class OsgiNaparnikHost
@@ -40,6 +43,9 @@ public final class OsgiNaparnikHost
 
     /** OSGi {@code Bundle.ACTIVE}. */
     private static final int ACTIVE = 32;
+
+    /** Public Guice type. The runtime object implements it; its concrete class is not public. */
+    private static final String INJECTOR_TYPE = "com.google.inject.Injector"; //$NON-NLS-1$
 
     /**
      * OSGi {@code Bundle.START_TRANSIENT}. Activates the bundle for this session and does not mark
@@ -134,8 +140,7 @@ public final class OsgiNaparnikHost
         throws NaparnikAccessException
     {
         String link = NaparnikHost.LINK_FACADE;
-        Object facade = call(injector, "getInstance", link, //$NON-NLS-1$
-            new Class<?>[] {Class.class}, new Object[] {facadeType});
+        Object facade = readInstance(injector, facadeType, link);
         if (facade == null)
         {
             throw new NaparnikAccessException(link, "getInstance returned null for " + facadeType.getName(), //$NON-NLS-1$
@@ -150,8 +155,7 @@ public final class OsgiNaparnikHost
         throws NaparnikAccessException
     {
         String link = NaparnikHost.LINK_TOOLS;
-        Object tools = call(injector, "getInstance", link, //$NON-NLS-1$
-            new Class<?>[] {Class.class}, new Object[] {mcpToolsType});
+        Object tools = readInstance(injector, mcpToolsType, link);
         if (tools == null)
         {
             throw new NaparnikAccessException(link, "getInstance returned null for " + mcpToolsType.getName(), //$NON-NLS-1$
@@ -283,6 +287,87 @@ public final class OsgiNaparnikHost
             throw new NaparnikAccessException(link,
                 failure.getClass().getSimpleName() + ": " + failure.getMessage(), failure); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Reads one binding through the public {@code com.google.inject.Injector} interface.
+     * <p>
+     * {@code getInjector()} returns {@code com.google.inject.internal.InjectorImpl}. That class is
+     * not public. {@code getMethod} on it returns a method whose declaring class is inaccessible,
+     * and {@code invoke} then throws {@code IllegalAccessException}. The interface method is
+     * already public, so {@code setAccessible} is not used. The interface is taken from the object
+     * and its superclasses, and only then loaded by the object's own class loader.
+     * </p>
+     */
+    private static Object readInstance(Object injector, Class<?> type, String link)
+        throws NaparnikAccessException
+    {
+        Class<?> iface = injectorInterface(injector, link);
+        try
+        {
+            Method method = iface.getMethod("getInstance", Class.class); //$NON-NLS-1$
+            return method.invoke(injector, type);
+        }
+        catch (ReflectiveOperationException failure)
+        {
+            throw access(link, failure);
+        }
+    }
+
+    private static Class<?> injectorInterface(Object injector, String link)
+        throws NaparnikAccessException
+    {
+        Class<?> found = findInjectorInterface(injector.getClass());
+        if (found != null)
+        {
+            return found;
+        }
+        ClassLoader loader = injector.getClass().getClassLoader();
+        try
+        {
+            return Class.forName(INJECTOR_TYPE, false, loader);
+        }
+        catch (ClassNotFoundException failure)
+        {
+            throw new NaparnikAccessException(link,
+                failure.getClass().getSimpleName() + ": " + failure.getMessage(), failure); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The {@code com.google.inject.Injector} type this object implements, walking superclasses and
+     * superinterfaces so a subclass that does not redeclare the interface still yields it.
+     */
+    private static Class<?> findInjectorInterface(Class<?> type)
+    {
+        Class<?> cursor = type;
+        while (cursor != null && cursor != Object.class)
+        {
+            Class<?> found = findInjectorInterfaceOn(cursor);
+            if (found != null)
+            {
+                return found;
+            }
+            cursor = cursor.getSuperclass();
+        }
+        return null;
+    }
+
+    private static Class<?> findInjectorInterfaceOn(Class<?> type)
+    {
+        for (Class<?> iface : type.getInterfaces())
+        {
+            if (INJECTOR_TYPE.equals(iface.getName()))
+            {
+                return iface;
+            }
+            Class<?> nested = findInjectorInterfaceOn(iface);
+            if (nested != null)
+            {
+                return nested;
+            }
+        }
+        return null;
     }
 
     private static Object call(Object target, String method, String link, Class<?>[] types, Object[] args)
