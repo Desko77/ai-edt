@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -26,9 +27,12 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectMetricsCollector;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.SubsystemMembership;
 import ru.aiedt.mcp.server.support.UiSync;
+import ru.aiedt.mcp.server.support.WalkNarrowing;
 
 /**
  * Project-wide metrics: objects / modules / methods / errors / tests / forms /
@@ -38,6 +42,8 @@ import ru.aiedt.mcp.server.support.UiSync;
 public class ProjectMetricsTool implements IMcpTool
 {
     public static final String NAME = "project_metrics"; //$NON-NLS-1$
+
+    private static final List<String> SCOPES = List.of(WalkNarrowing.PROJECT, WalkNarrowing.SUBSYSTEM);
 
     @Override
     public String getName()
@@ -60,7 +66,16 @@ public class ProjectMetricsTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("scope", "project | subsystem (default project)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("scope", //$NON-NLS-1$
+                "project | subsystem. Absent, subsystemName selects a subsystem and nothing " //$NON-NLS-1$
+                    + "selects the project. scope=project rejects subsystemName. scope=subsystem " //$NON-NLS-1$
+                    + "requires it. An unknown subsystem or scope word is refused by name and the " //$NON-NLS-1$
+                    + "project is not scanned. A subsystem includes nested subsystems; the answer " //$NON-NLS-1$
+                    + "names that and how many objects the composition holds.") //$NON-NLS-1$
+            .stringProperty("subsystemName", //$NON-NLS-1$
+                "Subsystem name when the walk is a subsystem. Required for scope=subsystem. " //$NON-NLS-1$
+                    + "Without scope it selects the subsystem on its own. Nested subsystems are " //$NON-NLS-1$
+                    + "included.") //$NON-NLS-1$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("includeDebtList", //$NON-NLS-1$
                 "Include detailed debt items list with file:line. Default false.") //$NON-NLS-1$
@@ -91,14 +106,19 @@ public class ProjectMetricsTool implements IMcpTool
             false);
         int timeoutSeconds = parseInt(params, "timeoutSeconds", 60); //$NON-NLS-1$
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
-        String scope = orDefault(JsonUtils.extractStringArgument(params, "scope"), "project"); //$NON-NLS-1$ //$NON-NLS-2$
+        WalkNarrowing.Decision decision = WalkNarrowing.decide(params, SCOPES,
+            WalkNarrowing.Selectors.SUBSYSTEM_ONLY);
+        if (decision.refused())
+        {
+            return ToolResult.error(decision.refusal()).toJson();
+        }
 
         try
         {
             return UiSync.call(() -> {
                 try
                 {
-                    return collect(project, scope, params, includeDebtList, timeoutSeconds, format);
+                    return collect(project, decision, includeDebtList, timeoutSeconds, format);
                 }
                 catch (Exception e)
                 {
@@ -113,34 +133,58 @@ public class ProjectMetricsTool implements IMcpTool
         }
     }
 
-    private String collect(IProject project, String scope, Map<String, String> params,
-        boolean includeDebtList, int timeoutSeconds, String format) throws Exception
+    /**
+     * The collection itself, without the UI-thread hop {@link #execute} wraps it in.
+     *
+     * @param project the project
+     * @param decision the accepted walk
+     * @param includeDebtList whether debt items are listed
+     * @param timeoutSeconds the deadline
+     * @param format json or markdown
+     * @return the JSON answer
+     */
+    String collect(IProject project, WalkNarrowing.Decision decision, boolean includeDebtList,
+        int timeoutSeconds, String format) throws Exception
     {
+        SubsystemMembership resolved = null;
+        if (WalkNarrowing.SUBSYSTEM.equals(decision.area()))
+        {
+            resolved = SubsystemMembership.resolve(project,
+                SubsystemMembership.configurationOf(project), decision.subsystemName());
+            if (resolved.refused())
+            {
+                return ToolResult.error(resolved.refusal()).toJson();
+            }
+        }
+        final SubsystemMembership membership = resolved;
+        Predicate<IResource> inComposition = membership == null ? null
+            : resource -> membership.coversPath(resource.getProjectRelativePath().toString());
         // One watch for the whole call. The two walks that read files - modules and
         // forms - both ask it; the reflection over the configuration between them is
         // a handful of calls and is left alone.
         WatchForCancel watch = WatchForCancel.begin();
         ProjectMetricsCollector collector = new ProjectMetricsCollector(project, timeoutSeconds,
             includeDebtList);
+        String scope = decision.area();
 
         // Four steps, each asked before it starts: a stop during the module scan must not be
         // followed by the marker, metadata and form work the operator asked to end. A step that
         // does not run is then absent from the answer rather than present as zero - toMetrics
         // reads these nulls and leaves a gap, because a zero is what a project with no errors
         // and no forms reports.
-        List<IFile> bslFiles = collectBslFiles(project);
+        List<IFile> bslFiles = limit(collectBslFiles(project), membership);
         collector.scanBsl(bslFiles, watch);
 
         boolean markersScanned = !watch.raised();
         if (markersScanned)
         {
-            collector.scanMarkers();
+            collector.scanMarkers(inComposition);
         }
-        Map<String, Integer> objectsByType = watch.raised() ? null : collectObjectsByType(project);
+        Map<String, Integer> objectsByType = watch.raised() ? null : objectsByType(project, membership);
         ProjectMetricsCollector.FormCounts forms = null;
         if (!watch.raised())
         {
-            FormStats measured = collectFormStats(project, watch);
+            FormStats measured = collectFormStats(project, watch, membership);
             forms = new ProjectMetricsCollector.FormCounts();
             forms.count = measured.formCount;
             forms.totalItems = measured.totalItems;
@@ -155,14 +199,14 @@ public class ProjectMetricsTool implements IMcpTool
 
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
-            return ToolResult.success()
+            return composition(ToolResult.success(), membership)
                 .put("scope", scope) //$NON-NLS-1$
                 .put("format", "markdown") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("text", renderMarkdown(metrics, watch.note("files"))) //$NON-NLS-1$ //$NON-NLS-2$
                 .put("cancelled", watch.note("files")) //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
         }
-        ToolResult tr = ToolResult.success().put("scope", scope) //$NON-NLS-1$
+        ToolResult tr = composition(ToolResult.success(), membership).put("scope", scope) //$NON-NLS-1$
             .put("cancelled", watch.note("files")); //$NON-NLS-1$
         for (Map.Entry<String, Object> entry : metrics.entrySet())
         {
@@ -188,6 +232,63 @@ public class ProjectMetricsTool implements IMcpTool
         };
         project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
         return files;
+    }
+
+    private List<IFile> limit(List<IFile> files, SubsystemMembership membership)
+    {
+        if (membership == null)
+        {
+            return files;
+        }
+        List<IFile> kept = new ArrayList<>();
+        for (IFile file : files)
+        {
+            if (membership.coversPath(file.getProjectRelativePath().toString()))
+            {
+                kept.add(file);
+            }
+        }
+        return kept;
+    }
+
+    private Map<String, Integer> objectsByType(IProject project, SubsystemMembership membership)
+    {
+        if (membership == null)
+        {
+            return collectObjectsByType(project);
+        }
+        Map<String, Integer> result = new LinkedHashMap<>();
+        for (String fqn : membership.objectFqns())
+        {
+            String type = typeKey(fqn);
+            if (type == null)
+            {
+                continue;
+            }
+            Integer soFar = result.get(type);
+            result.put(type, Integer.valueOf(soFar == null ? 1 : soFar.intValue() + 1));
+        }
+        return result;
+    }
+
+    private static String typeKey(String fqn)
+    {
+        int dot = fqn.indexOf('.');
+        String typeName = dot < 0 ? fqn : fqn.substring(0, dot);
+        MetadataTypeCatalog.MetadataTypeInfo type = MetadataTypeCatalog.resolve(typeName);
+        return type == null ? typeName : type.getEnglishPlural();
+    }
+
+    private static ToolResult composition(ToolResult result, SubsystemMembership membership)
+    {
+        if (membership == null)
+        {
+            return result;
+        }
+        return result.put("subsystemName", membership.subsystemName()) //$NON-NLS-1$
+            .put("nestedSubsystemsIncluded", true) //$NON-NLS-1$
+            .put("compositionSize", membership.compositionSize()) //$NON-NLS-1$
+            .put("composition", membership.compositionNote()); //$NON-NLS-1$
     }
 
     private Map<String, Integer> collectObjectsByType(IProject project)
@@ -251,8 +352,8 @@ public class ProjectMetricsTool implements IMcpTool
         return result;
     }
 
-    private FormStats collectFormStats(IProject project, WatchForCancel watch)
-        throws Exception
+    private FormStats collectFormStats(IProject project, WatchForCancel watch,
+        SubsystemMembership membership) throws Exception
     {
         FormStats stats = new FormStats();
         IResourceVisitor visitor = new IResourceVisitor()
@@ -260,7 +361,9 @@ public class ProjectMetricsTool implements IMcpTool
             @Override
             public boolean visit(IResource resource)
             {
-                if (resource instanceof IFile && resource.getName().endsWith(".form")) //$NON-NLS-1$
+                if (resource instanceof IFile && resource.getName().endsWith(".form") //$NON-NLS-1$
+                    && (membership == null || membership.coversPath(
+                        resource.getProjectRelativePath().toString())))
                 {
                     if (watch.stopHere())
                     {

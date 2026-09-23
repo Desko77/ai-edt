@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
+import org.eclipse.core.runtime.Path;
 
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
@@ -34,6 +35,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.RoleRightsAnalyzer;
 import ru.aiedt.mcp.server.support.UiSync;
+import ru.aiedt.mcp.server.support.WalkNarrowing;
 
 /**
  * Static analyzer for RLS violations and bypass patterns. 1.39 MVP detects
@@ -43,6 +45,9 @@ import ru.aiedt.mcp.server.support.UiSync;
 public class FindRlsViolationsTool implements IMcpTool
 {
     public static final String NAME = "find_rls_violations"; //$NON-NLS-1$
+
+    private static final java.util.List<String> SCOPES = java.util.List.of(
+        WalkNarrowing.PROJECT, WalkNarrowing.MODULE, WalkNarrowing.METHOD);
 
     private static final Pattern PRIVILEGED_MODE_SET = Pattern.compile(
         "УстановитьПривилегированныйРежим\\s*\\(\\s*Истина\\s*\\)|" //$NON-NLS-1$
@@ -82,7 +87,18 @@ public class FindRlsViolationsTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("scope", "project | module | method (default project)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("scope", //$NON-NLS-1$
+                "project | module | method. Absent, the selectors decide: moduleFqn is a module, " //$NON-NLS-1$
+                    + "moduleFqn with methodName is a method, and nothing is the whole project. " //$NON-NLS-1$
+                    + "scope=project rejects every selector. scope=module requires moduleFqn and " //$NON-NLS-1$
+                    + "rejects methodName. scope=method requires both. An unknown module, method " //$NON-NLS-1$
+                    + "or scope word is refused by name and the project is not scanned.") //$NON-NLS-1$
+            .stringProperty("moduleFqn", //$NON-NLS-1$
+                "Module FQN, for example CommonModule.Sales. Required for scope=module and " //$NON-NLS-1$
+                    + "scope=method. Without scope it selects the module on its own.") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "Method inside moduleFqn. Required for scope=method. Refused when moduleFqn is " //$NON-NLS-1$
+                    + "absent. Without scope, moduleFqn plus methodName selects that method.") //$NON-NLS-1$
             .stringProperty("roleName", "Limit checks to RLS of this role (default: any RLS)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -103,6 +119,12 @@ public class FindRlsViolationsTool implements IMcpTool
         {
             return ToolResult.error("projectName is required").toJson(); //$NON-NLS-1$
         }
+        WalkNarrowing.Decision decision = WalkNarrowing.decide(params, SCOPES,
+            WalkNarrowing.Selectors.MODULE_AND_METHOD);
+        if (decision.refused())
+        {
+            return ToolResult.error(decision.refusal()).toJson();
+        }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
@@ -113,7 +135,7 @@ public class FindRlsViolationsTool implements IMcpTool
             return UiSync.call(() -> {
                 try
                 {
-                    return scan(project, params);
+                    return scan(project, params, decision);
                 }
                 catch (Exception e)
                 {
@@ -128,7 +150,15 @@ public class FindRlsViolationsTool implements IMcpTool
         }
     }
 
-    private String scan(IProject project, Map<String, String> params) throws Exception
+    /**
+     * The scan itself, without the UI-thread hop {@link #execute} wraps it in.
+     *
+     * @param project the project
+     * @param params the call arguments
+     * @param decision the accepted walk
+     * @return the JSON answer
+     */
+    String scan(IProject project, Map<String, String> params, WalkNarrowing.Decision decision) throws Exception
     {
         String severity = orDefault(JsonUtils.extractStringArgument(params, "severity_filter"), //$NON-NLS-1$
             "warning"); //$NON-NLS-1$
@@ -140,29 +170,14 @@ public class FindRlsViolationsTool implements IMcpTool
         // object has a rule, and a walk stopped half way would answer "none" when it
         // merely stopped looking. Skipped entirely when the operator has already cancelled,
         // which leaves noRlsConfigured absent from the answer rather than false.
+        // A narrowed walk still asks it of the project: the flag says whether RLS is configured
+        // at all, which a single module cannot answer, and it is not a finding.
         Boolean noRlsConfigured = watch.raised() ? null : checkNoRls(project, roleName);
         List<Map<String, Object>> findings = new ArrayList<>();
-        org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
-            if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
-            {
-                if (watch.stopHere())
-                {
-                    // Thrown rather than answered false: false prunes this one resource
-                    // and leaves the rest of the project to walk.
-                    throw new org.eclipse.core.runtime.OperationCanceledException();
-                }
-                scanFile((IFile) resource, findings);
-            }
-            return true;
-        };
-        try
+        String methodMissing = walkFiles(project, decision, watch, findings);
+        if (methodMissing != null)
         {
-            project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
-        }
-        catch (org.eclipse.core.runtime.OperationCanceledException stopped)
-        {
-            // Caught here so the findings collected so far are kept; the answer says
-            // they are part of the work rather than all of it.
+            return ToolResult.error(methodMissing).toJson();
         }
 
         // Severity filter
@@ -178,6 +193,7 @@ public class FindRlsViolationsTool implements IMcpTool
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("findings", filtered.size()); //$NON-NLS-1$
         ToolResult tr = ToolResult.success();
+        tr.put("scope", decision.area()); //$NON-NLS-1$
         tr.put("cancelled", watch.note("files")); //$NON-NLS-1$
         if (Boolean.TRUE.equals(noRlsConfigured))
         {
@@ -299,7 +315,74 @@ public class FindRlsViolationsTool implements IMcpTool
         return all;
     }
 
-    private void scanFile(IFile file, List<Map<String, Object>> findings)
+    /**
+     * Walks the files the decision names.
+     *
+     * @param project the project
+     * @param decision the accepted walk
+     * @param watch the cancel flag
+     * @param findings where findings go
+     * @return a refusal when the named method is not in the module, or <code>null</code> when the
+     *         walk ran
+     */
+    private String walkFiles(IProject project, WalkNarrowing.Decision decision, WatchForCancel watch,
+        List<Map<String, Object>> findings) throws Exception
+    {
+        if (WalkNarrowing.PROJECT.equals(decision.area()))
+        {
+            org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
+                if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
+                {
+                    if (watch.stopHere())
+                    {
+                        // Thrown rather than answered false: false prunes this one resource
+                        // and leaves the rest of the project to walk.
+                        throw new org.eclipse.core.runtime.OperationCanceledException();
+                    }
+                    scanFile((IFile) resource, null, findings);
+                }
+                return true;
+            };
+            try
+            {
+                project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
+            }
+            catch (org.eclipse.core.runtime.OperationCanceledException stopped)
+            {
+                // Caught here so the findings collected so far are kept; the answer says
+                // they are part of the work rather than all of it.
+            }
+            return null;
+        }
+        BslModuleAccess.ModulePathResolution resolution =
+            BslModuleAccess.resolveModulePath(project, decision.moduleFqn());
+        if (!resolution.isResolved())
+        {
+            return resolution.getHint();
+        }
+        IFile module = project.getFile(new Path("src").append(resolution.getPath())); //$NON-NLS-1$
+        if (!module.exists())
+        {
+            return "Module '" + decision.moduleFqn() + "' was not found."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String onlyMethod = WalkNarrowing.METHOD.equals(decision.area()) ? decision.methodName() : null;
+        boolean found = scanFile(module, onlyMethod, findings);
+        if (onlyMethod != null && !found)
+        {
+            return WalkNarrowing.methodNotFound(onlyMethod, decision.moduleFqn());
+        }
+        return null;
+    }
+
+    /**
+     * Scans one module.
+     *
+     * @param file the module
+     * @param onlyMethod a method to limit the scan to, or <code>null</code> for every method
+     * @param findings where findings go
+     * @return whether {@code onlyMethod} was seen; <code>true</code> when no method was asked for
+     */
+    private boolean scanFile(IFile file, String onlyMethod, List<Map<String, Object>> findings)
     {
         try (BufferedReader reader = new BufferedReader(
             new InputStreamReader(file.getContents(), StandardCharsets.UTF_8)))
@@ -316,27 +399,41 @@ public class FindRlsViolationsTool implements IMcpTool
             int lastIndex = 0;
             String currentMethod = null;
             int currentLine = 0;
+            boolean seen = onlyMethod == null;
             while (proc.find())
             {
-                if (currentMethod != null)
+                if (currentMethod != null && wanted(onlyMethod, currentMethod))
                 {
                     String body = content.substring(lastIndex, proc.start());
                     checkPrivilegedMode(file, currentMethod, body, currentLine, findings);
                 }
                 currentMethod = methodNameFromHeader(proc.group(0));
+                if (wanted(onlyMethod, currentMethod))
+                {
+                    seen = true;
+                }
                 currentLine = lineAt(content, proc.start());
                 lastIndex = proc.end();
             }
-            if (currentMethod != null)
+            if (currentMethod != null && wanted(onlyMethod, currentMethod))
             {
                 String body = content.substring(lastIndex);
                 checkPrivilegedMode(file, currentMethod, body, currentLine, findings);
             }
+            return seen;
         }
         catch (Exception e)
         {
             Activator.logWarning("Failed to scan " + file.getFullPath() + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            // A file that could not be read did not contain the method. When no method was asked
+            // for, the walk of the other files still stands.
+            return onlyMethod == null;
         }
+    }
+
+    private static boolean wanted(String onlyMethod, String currentMethod)
+    {
+        return onlyMethod == null || onlyMethod.equalsIgnoreCase(currentMethod);
     }
 
     private static String methodNameFromHeader(String header)

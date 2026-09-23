@@ -126,6 +126,23 @@ public class SecurityAuditFacadeTool implements IMcpTool
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name. Required for all three operations.") //$NON-NLS-1$
+            .stringProperty("scope", //$NON-NLS-1$
+                "find_rls_violations: project / module / method. sensitive_data_scan: project / " //$NON-NLS-1$
+                    + "subsystem / module. Absent, the selectors decide the area. A scope word the " //$NON-NLS-1$
+                    + "operation does not support, or a selector that does not match the scope, is " //$NON-NLS-1$
+                    + "refused by name and the project is not scanned.") //$NON-NLS-1$
+            .stringProperty("moduleFqn", //$NON-NLS-1$
+                "find_rls_violations and sensitive_data_scan: module FQN. Required for " //$NON-NLS-1$
+                    + "scope=module and, on find_rls_violations, for scope=method. Refused when the " //$NON-NLS-1$
+                    + "module is unknown. On sensitive_data_scan, refused together with subsystemName.") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "find_rls_violations: method inside moduleFqn. Required for scope=method. Refused " //$NON-NLS-1$
+                    + "without moduleFqn, and refused when the method is not in the module.") //$NON-NLS-1$
+            .stringProperty("subsystemName", //$NON-NLS-1$
+                "sensitive_data_scan: subsystem name. Required for scope=subsystem. Nested " //$NON-NLS-1$
+                    + "subsystems are included; the answer names that and how many objects the " //$NON-NLS-1$
+                    + "composition holds. Refused when the subsystem is unknown, and refused " //$NON-NLS-1$
+                    + "together with moduleFqn.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
                 "audit_role_rights: rights / missing / conflicts / impact (default rights).") //$NON-NLS-1$
             .stringProperty("roleName", //$NON-NLS-1$

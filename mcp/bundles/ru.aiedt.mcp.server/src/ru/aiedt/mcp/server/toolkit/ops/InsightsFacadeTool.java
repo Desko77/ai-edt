@@ -119,10 +119,18 @@ public class InsightsFacadeTool implements IMcpTool
                     + "compare_configurations: project / objectType / objectFqn (default " //$NON-NLS-1$
                     + "project).") //$NON-NLS-1$
             .stringProperty("subsystemName", //$NON-NLS-1$
-                "Subsystem name when scope=subsystem (project_metrics, dependency_graph).") //$NON-NLS-1$
+                "Subsystem name when scope=subsystem (project_metrics, dependency_graph). " //$NON-NLS-1$
+                    + "project_metrics without scope treats it as the subsystem to measure. The " //$NON-NLS-1$
+                    + "composition includes nested subsystems; the answer names that and how many " //$NON-NLS-1$
+                    + "objects it holds. An unknown subsystem is refused by name.") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
                 "Module FQN when scope=module (dependency_graph) or scope=module/method " //$NON-NLS-1$
-                    + "(detect_query_anti_patterns).") //$NON-NLS-1$
+                    + "(detect_query_anti_patterns). Without scope, detect_query_anti_patterns " //$NON-NLS-1$
+                    + "treats it as the module to scan. Refused when that module is unknown.") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "detect_query_anti_patterns: method inside moduleFqn. Required for scope=method. " //$NON-NLS-1$
+                    + "Refused without moduleFqn, and refused when the method is not in the module. " //$NON-NLS-1$
+                    + "Without scope, moduleFqn plus methodName selects that method.") //$NON-NLS-1$
             .stringProperty("level", //$NON-NLS-1$
                 "dependency_graph: metadata / modules / mixed (default metadata) - what " //$NON-NLS-1$
                     + "the graph nodes are. compare_configurations: object / attribute / module " //$NON-NLS-1$

@@ -24,6 +24,7 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IResourceVisitor;
+import org.eclipse.core.runtime.Path;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -34,6 +35,7 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.QueryAntiPatternRules;
 import ru.aiedt.mcp.server.support.UiSync;
+import ru.aiedt.mcp.server.support.WalkNarrowing;
 
 /**
  * Static analyzer for 1C query anti-patterns. Scans BSL modules for query
@@ -48,6 +50,9 @@ import ru.aiedt.mcp.server.support.UiSync;
 public class DetectQueryAntiPatternsTool implements IMcpTool
 {
     public static final String NAME = "detect_query_anti_patterns"; //$NON-NLS-1$
+
+    private static final List<String> SCOPES = List.of(
+        WalkNarrowing.PROJECT, WalkNarrowing.MODULE, WalkNarrowing.METHOD);
 
     private static final Pattern QUERY_TEXT_ASSIGN = Pattern.compile(
         "(\\w+\\.[Тт]екст|Запрос\\.Текст|Query\\.Text)\\s*=\\s*(\"[\\s\\S]*?[^\"]\")", //$NON-NLS-1$
@@ -81,8 +86,18 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("scope", "project | module (default project)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("moduleFqn", "Module FQN when scope=module") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("scope", //$NON-NLS-1$
+                "project | module | method. Absent, the selectors decide: moduleFqn is a module, " //$NON-NLS-1$
+                    + "moduleFqn with methodName is a method, and nothing is the whole project. " //$NON-NLS-1$
+                    + "scope=project rejects every selector. scope=module requires moduleFqn and " //$NON-NLS-1$
+                    + "rejects methodName. scope=method requires both. An unknown module, method " //$NON-NLS-1$
+                    + "or scope word is refused by name and the project is not scanned.") //$NON-NLS-1$
+            .stringProperty("moduleFqn", //$NON-NLS-1$
+                "Module FQN, for example CommonModule.Sales. Required for scope=module and " //$NON-NLS-1$
+                    + "scope=method. Without scope it selects the module on its own.") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "Method inside moduleFqn. Required for scope=method. Refused when moduleFqn is " //$NON-NLS-1$
+                    + "absent. Without scope, moduleFqn plus methodName selects that method.") //$NON-NLS-1$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("rules", //$NON-NLS-1$
                 "Comma-separated rule names (default all): SELECT_STAR, NO_WHERE_ON_LARGE_TABLE, " //$NON-NLS-1$
@@ -111,7 +126,12 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
-        String scope = orDefault(JsonUtils.extractStringArgument(params, "scope"), "project"); //$NON-NLS-1$ //$NON-NLS-2$
+        WalkNarrowing.Decision decision = WalkNarrowing.decide(params, SCOPES,
+            WalkNarrowing.Selectors.MODULE_AND_METHOD);
+        if (decision.refused())
+        {
+            return ToolResult.error(decision.refusal()).toJson();
+        }
         String severityFilter = orDefault(
             JsonUtils.extractStringArgument(params, "severity_filter"), "warning"); //$NON-NLS-1$ //$NON-NLS-2$
         if (!"all".equalsIgnoreCase(severityFilter) && !"error".equalsIgnoreCase(severityFilter) //$NON-NLS-1$ //$NON-NLS-2$
@@ -128,7 +148,7 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
             return UiSync.call(() -> {
                 try
                 {
-                    return runScan(project, scope, params, severityFilter, format, enabledRules);
+                    return runScan(project, decision, severityFilter, format, enabledRules);
                 }
                 catch (Exception e)
                 {
@@ -143,10 +163,54 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         }
     }
 
-    private String runScan(IProject project, String scope, Map<String, String> params,
-        String severityFilter, String format, Set<String> enabledRules) throws Exception
+    /**
+     * The scan itself, without the UI-thread hop {@link #execute} wraps it in.
+     * <p>
+     * The test runtime does not pump an SWT loop, so the suite calls this directly. Production
+     * calls it from the UI thread. The area is the decision {@link #execute} already accepted.
+     * </p>
+     *
+     * @param project the project
+     * @param decision the accepted walk
+     * @param severityFilter the severity floor
+     * @param format json or markdown
+     * @param enabledRules the rules to run, or <code>null</code> for all of them
+     * @return the JSON answer
+     */
+    String runScan(IProject project, WalkNarrowing.Decision decision, String severityFilter,
+        String format, Set<String> enabledRules) throws Exception
     {
-        List<IFile> bslFiles = collectBslFilesByScope(project, scope, params);
+        WalkNarrowing.MethodSpan span = null;
+        List<IFile> bslFiles;
+        if (WalkNarrowing.PROJECT.equals(decision.area()))
+        {
+            bslFiles = collectAllBsl(project);
+        }
+        else
+        {
+            BslModuleAccess.ModulePathResolution resolution =
+                BslModuleAccess.resolveModulePath(project, decision.moduleFqn());
+            if (!resolution.isResolved())
+            {
+                return ToolResult.error(resolution.getHint()).toJson();
+            }
+            IFile module = project.getFile(new Path("src").append(resolution.getPath())); //$NON-NLS-1$
+            if (!module.exists())
+            {
+                return ToolResult.error("Module '" + decision.moduleFqn() + "' was not found.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (WalkNarrowing.METHOD.equals(decision.area()))
+            {
+                span = WalkNarrowing.locateMethod(readFile(module), decision.methodName());
+                if (span == null)
+                {
+                    return ToolResult.error(
+                        WalkNarrowing.methodNotFound(decision.methodName(), decision.moduleFqn())).toJson();
+                }
+            }
+            bslFiles = java.util.Collections.singletonList(module);
+        }
+        String scope = decision.area();
         List<Map<String, Object>> findings = new ArrayList<>();
         int queriesAnalyzed = 0;
         // Read at the file boundary: stopping between files leaves the findings so far
@@ -171,7 +235,7 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
             // QUERY_IN_LOOP - module-level pattern (BSL loop containing query.execute)
             if (isEnabled("QUERY_IN_LOOP", enabledRules)) //$NON-NLS-1$
             {
-                detectQueryInLoop(file, content, findings);
+                detectQueryInLoop(file, content, findings, span);
             }
             // Extract query text literals and analyze each
             Matcher m = QUERY_TEXT_ASSIGN.matcher(content);
@@ -183,8 +247,14 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
                     continue;
                 }
                 String queryText = unwrapBslString(literal);
-                queriesAnalyzed++;
                 int line = lineAt(content, m.start());
+                // A query that starts outside the named method is outside the walk, even though
+                // the file was opened to reach the method that is inside it.
+                if (span != null && !span.contains(line))
+                {
+                    continue;
+                }
+                queriesAnalyzed++;
                 List<QueryAntiPatternRules.Issue> issues = QueryAntiPatternRules.analyze(queryText,
                     enabledRules);
                 for (QueryAntiPatternRules.Issue issue : issues)
@@ -228,15 +298,20 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
             .toJson();
     }
 
-    private void detectQueryInLoop(IFile file, String content, List<Map<String, Object>> findings)
+    private void detectQueryInLoop(IFile file, String content, List<Map<String, Object>> findings,
+        WalkNarrowing.MethodSpan span)
     {
         Matcher loopMatcher = LOOP_BLOCK.matcher(content);
         while (loopMatcher.find())
         {
+            int line = lineAt(content, loopMatcher.start());
+            if (span != null && !span.contains(line))
+            {
+                continue;
+            }
             String loopBody = loopMatcher.group(3);
             if (loopBody != null && QUERY_EXEC_IN_BSL.matcher(loopBody).find())
             {
-                int line = lineAt(content, loopMatcher.start());
                 Map<String, Object> finding = new LinkedHashMap<>();
                 finding.put("file", file.getProjectRelativePath().toString()); //$NON-NLS-1$
                 finding.put("line", line); //$NON-NLS-1$
@@ -249,8 +324,7 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         }
     }
 
-    private List<IFile> collectBslFilesByScope(IProject project, String scope,
-        Map<String, String> params) throws Exception
+    private List<IFile> collectAllBsl(IProject project) throws Exception
     {
         List<IFile> all = new ArrayList<>();
         IResourceVisitor visitor = new IResourceVisitor()
@@ -266,27 +340,7 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
             }
         };
         project.accept(visitor, IResource.DEPTH_INFINITE, IResource.NONE);
-        if ("project".equalsIgnoreCase(scope)) //$NON-NLS-1$
-        {
-            return all;
-        }
-        String moduleFqn = JsonUtils.extractStringArgument(params, "moduleFqn"); //$NON-NLS-1$
-        if (moduleFqn == null || moduleFqn.isEmpty())
-        {
-            return all;
-        }
-        // Filter by module FQN — naive path mapping
-        String prefix = moduleFqn.replace(".", "/"); //$NON-NLS-1$ //$NON-NLS-2$
-        List<IFile> filtered = new ArrayList<>();
-        for (IFile file : all)
-        {
-            String path = file.getFullPath().toString();
-            if (path.contains(prefix) || path.contains("/" + moduleFqn.replace(".", "/"))) //$NON-NLS-1$ //$NON-NLS-2$
-            {
-                filtered.add(file);
-            }
-        }
-        return filtered.isEmpty() ? all : filtered;
+        return all;
     }
 
     private static String readFile(IFile file)

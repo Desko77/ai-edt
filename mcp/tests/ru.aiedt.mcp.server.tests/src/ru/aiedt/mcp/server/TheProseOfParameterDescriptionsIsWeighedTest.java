@@ -226,7 +226,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // and whether to create it).
         PROSE.put("git", Integer.valueOf(875));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
-        PROSE.put("insights", Integer.valueOf(5393));
+        // Raised from 5393: detect_query_anti_patterns names methodName, and project_metrics
+        // names subsystemName, including that a subsystem walk takes nested subsystems with it
+        // and that a selector which disagrees with scope is refused.
+        PROSE.put("insights", Integer.valueOf(5930));
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
@@ -253,7 +256,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("external_object_workshop", Integer.valueOf(1429));
         PROSE.put("validate_query", Integer.valueOf(1319));
         PROSE.put("external_data_source_workshop", Integer.valueOf(1265));
-        PROSE.put("security_audit", Integer.valueOf(1170));
+        // Raised from 1170: find_rls_violations and sensitive_data_scan advertise scope,
+        // moduleFqn, methodName and subsystemName, and the sentences that say which combination
+        // is a walk and which is a refusal.
+        PROSE.put("security_audit", Integer.valueOf(2063));
         PROSE.put("xdto_workshop", Integer.valueOf(1155));
         PROSE.put("get_form_screenshot", Integer.valueOf(1154));
         PROSE.put("code_review", Integer.valueOf(1129));
@@ -358,6 +364,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * because the platform reads the last mode flag on the command line and the launch puts the
      * caller's there.
      * </p>
+     * <p>
+     * And a fifteenth, by 1430, for the selectors a query, metrics or security scan is narrowed
+     * by: the module, the method and the subsystem, and the sentences that refuse a selector the
+     * scope does not accept. Measured at 88256.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 86826;
+    private static final int DOCUMENT_PROSE = 88256;
 }
