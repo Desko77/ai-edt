@@ -32,7 +32,9 @@ import org.junit.Test;
  * the older kind put an input-argument view into {@code -vmargs}, so an instance that had already
  * been restarted carries the block once more per restart, in that view's form. The command removes
  * the startup snapshot and every stale copy in either form, then asks the launcher to append only
- * the remainder to its current {@code .ini} block.</p>
+ * the remainder to its current {@code .ini} block. The launcher appends its own
+ * {@code -jar <startup jar>} tail to the property; the command drops it, pair and path
+ * together, so the tail does not accumulate from relaunch to relaunch.</p>
  */
 public class TheRelaunchCommandDoesNotGrowTest
 {
@@ -40,6 +42,10 @@ public class TheRelaunchCommandDoesNotGrowTest
     private static final String WORKSPACE = "C:/EDT/ws"; //$NON-NLS-1$
     private static final String VM = "C:/EDT/jdk/bin/javaw.exe"; //$NON-NLS-1$
     private static final String USER_XMX = "-Xmx8192m"; //$NON-NLS-1$
+
+    /** The startup jar path the launcher appends to {@code eclipse.vmargs} after {@code -jar}. */
+    private static final String STARTUP_JAR =
+        "C:/EDT/plugins/org.eclipse.equinox.launcher_1.6.900.v20250131-1052.jar"; //$NON-NLS-1$
 
     /**
      * The VM block of the installed {@code 1cedt.ini} as measured on EDT 2026.2: 34 lines, with
@@ -133,6 +139,25 @@ public class TheRelaunchCommandDoesNotGrowTest
         }
         property.addAll(Arrays.asList(userArguments));
         return property;
+    }
+
+    /**
+     * The property with the launcher's own {@code -jar <startup jar>} tail appended, once per
+     * relaunch that carried it over as a user argument.
+     *
+     * @param property the property without the tail.
+     * @param pairs how many {@code -jar <startup jar>} pairs the tail carries.
+     * @return the property with the tail appended.
+     */
+    private static List<String> withStartupJarTail(List<String> property, int pairs)
+    {
+        List<String> tailed = new ArrayList<>(property);
+        for (int pair = 0; pair < pairs; pair++)
+        {
+            tailed.add("-jar"); //$NON-NLS-1$
+            tailed.add(STARTUP_JAR);
+        }
+        return tailed;
     }
 
     /** Models append mode: current .ini first, then the VM arguments carried by the command. */
@@ -421,5 +446,86 @@ public class TheRelaunchCommandDoesNotGrowTest
 
         assertEquals(2, Collections.frequency(effective, STARTUP_INI.get(0)));
         assertEquals(currentBlockThen(STARTUP_INI.get(0)), effective);
+    }
+
+    /**
+     * The fresh instance of the live measurement: the block, then the user's own
+     * {@code -Xmx12288m -Djava.library.path=}, then the {@code -jar <startup jar>} tail the
+     * launcher appends. The command carries the user's arguments and no {@code -jar} pair.
+     */
+    @Test
+    public void aFreshMeasuredInstanceDropsTheLaunchersStartupJarPair()
+    {
+        List<String> property = withStartupJarTail(
+            currentBlockThen("-Xmx12288m", "-Djava.library.path="), 1); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> command = relaunchOf(STARTUP_INI, property).command();
+
+        assertFalse(command.contains("-jar")); //$NON-NLS-1$
+        assertFalse(command.contains(STARTUP_JAR));
+        assertEquals(Arrays.asList("-Xmx12288m", "-Djava.library.path="), //$NON-NLS-1$ //$NON-NLS-2$
+            command.subList(command.indexOf("-vmargs") + 1, command.size())); //$NON-NLS-1$
+    }
+
+    /**
+     * An instance restarted by the older code carries the tail once per relaunch, pairs
+     * accumulating; neither pair may reach the command.
+     */
+    @Test
+    public void startupJarPairsLeftByOlderRelaunchesAreDropped()
+    {
+        for (int pairs : new int[] {2, 3})
+        {
+            List<String> property = withStartupJarTail(grownProperty(USER_XMX), pairs);
+
+            List<String> command = relaunchOf(STARTUP_INI, property).command();
+
+            assertFalse(command.contains("-jar")); //$NON-NLS-1$
+            assertFalse(command.contains(STARTUP_JAR));
+            assertEquals(Collections.singletonList(USER_XMX),
+                command.subList(command.indexOf("-vmargs") + 1, command.size())); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The relaunched instance's launcher appends its own tail to the property again; the command
+     * built from it is the one already built - the tail no longer moves the fixed point.
+     */
+    @Test
+    public void droppingTheStartupJarPairKeepsTheCommandAFixedPoint()
+    {
+        List<String> first = relaunchOf(STARTUP_INI,
+            withStartupJarTail(grownProperty(USER_XMX), 3)).command();
+        List<String> outcome = effectiveVmArgumentsOf(first, STARTUP_INI);
+
+        List<String> second = relaunchOf(STARTUP_INI, withStartupJarTail(outcome, 1)).command();
+
+        assertEquals(first, second);
+    }
+
+    /** A user argument whose value merely mentions a jar is not the launcher's pair. */
+    @Test
+    public void aUserArgumentWhoseValueMentionsJarIsKept()
+    {
+        List<String> property = withStartupJarTail(grownProperty("-Dx=a.jar"), 1); //$NON-NLS-1$
+
+        List<String> command = relaunchOf(STARTUP_INI, property).command();
+
+        assertTrue(command.contains("-Dx=a.jar")); //$NON-NLS-1$
+        assertFalse(command.contains("-jar")); //$NON-NLS-1$
+    }
+
+    /** A dangling {@code -jar} with no path after it is dropped on its own. */
+    @Test
+    public void aDanglingStartupJarOptionIsDropped()
+    {
+        List<String> property = currentBlockThen(USER_XMX);
+        property.add("-jar"); //$NON-NLS-1$
+
+        List<String> command = relaunchOf(STARTUP_INI, property).command();
+
+        assertFalse(command.contains("-jar")); //$NON-NLS-1$
+        assertEquals(Collections.singletonList(USER_XMX),
+            command.subList(command.indexOf("-vmargs") + 1, command.size())); //$NON-NLS-1$
     }
 }
