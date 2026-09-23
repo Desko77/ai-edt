@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
 
@@ -120,6 +121,8 @@ public class DcsWorkshopTool implements IMcpTool
             + "Pass operation=<name>; call operation=help for the catalog and " //$NON-NLS-1$
             + "operation=help topic=parameters for the full rules of the parameters. " //$NON-NLS-1$
             + "Auto-validates queryText and expressions before write. " //$NON-NLS-1$
+            + "A settings write that leaves a filter comparing against nothing, or a standard " //$NON-NLS-1$
+            + "period with no dates, answers with `settingsWarnings` - a warning, not a refusal. " //$NON-NLS-1$
             + "DCS direct save to .dcs disk file is automatic for extension projects."; //$NON-NLS-1$
     }
 
@@ -776,9 +779,22 @@ public class DcsWorkshopTool implements IMcpTool
             return applyToDynamicList(op, params, project, formFqn, attributeName, dryRun);
         }
         String nestedSchemaName = JsonUtils.extractStringArgument(params, "nestedSchemaName"); //$NON-NLS-1$
-        BmDcsHelper.Result r = BmDcsHelper.executeWriteOnSchema(project, objectName, templateName,
-            dryRun, (tx, schema) -> applySchemaMutation(op, params,
-                schemaToWorkIn(schema, nestedSchemaName), project));
+        SettingsWritten written = beginSettingsScope();
+        BmDcsHelper.Result r;
+        try
+        {
+            r = BmDcsHelper.executeWriteOnSchema(project, objectName, templateName,
+                dryRun, (tx, schema) -> applySchemaMutation(op, params,
+                    schemaToWorkIn(schema, nestedSchemaName), project));
+        }
+        finally
+        {
+            endSettingsScope(written);
+        }
+        if (r.ok)
+        {
+            attachSettingsWarnings(r.tags, written.warnings);
+        }
         return formatResult(r, op);
     }
 
@@ -818,16 +834,25 @@ public class DcsWorkshopTool implements IMcpTool
         {
             return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
         }
-        String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
-            Object settings = helper.listSettingsFor(tx, form, attributeName);
-            if (settings == null)
-            {
-                return "Error: '" + attributeName + "' is not a dynamic-list attribute of " //$NON-NLS-1$ //$NON-NLS-2$
-                    + formFqn + ", or its settings could not be created."; //$NON-NLS-1$
-            }
-            Object applied = applySchemaMutation(op, params, (EObject)settings, project);
-            return applied == null ? "" : applied.toString(); //$NON-NLS-1$
-        });
+        SettingsWritten written = beginSettingsScope();
+        String outcome;
+        try
+        {
+            outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
+                Object settings = helper.listSettingsFor(tx, form, attributeName);
+                if (settings == null)
+                {
+                    return "Error: '" + attributeName + "' is not a dynamic-list attribute of " //$NON-NLS-1$ //$NON-NLS-2$
+                        + formFqn + ", or its settings could not be created."; //$NON-NLS-1$
+                }
+                Object applied = applySchemaMutation(op, params, (EObject)settings, project);
+                return applied == null ? "" : applied.toString(); //$NON-NLS-1$
+            });
+        }
+        finally
+        {
+            endSettingsScope(written);
+        }
         if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
         {
             return ToolResult.error(outcome)
@@ -836,11 +861,11 @@ public class DcsWorkshopTool implements IMcpTool
                 .put("attributeName", attributeName) //$NON-NLS-1$
                 .toJson();
         }
-        return ToolResult.success()
+        return withSettingsWarnings(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
             .put("formFqn", formFqn) //$NON-NLS-1$
             .put("attributeName", attributeName) //$NON-NLS-1$
-            .put("message", outcome == null ? "" : outcome) //$NON-NLS-1$ //$NON-NLS-2$
+            .put("message", outcome == null ? "" : outcome), written.warnings) //$NON-NLS-1$ //$NON-NLS-2$
             .toJson();
     }
 
@@ -1166,7 +1191,466 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("Internal: unhandled op '" + op + "'"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return handler.apply(params, schema, project);
+        Object applied = handler.apply(params, schema, project);
+        // What the handler left behind is read here, on the model the write just changed and
+        // before the transaction closes: the settings a call writes are named only after they
+        // exist, and a check that ran before the write would read the state it came to replace.
+        SettingsWritten written = WRITTEN_HERE.get();
+        if (written != null)
+        {
+            checkSettingsWritten(written);
+        }
+        return applied;
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings completeness - a warning on write, never a refusal
+    // -----------------------------------------------------------------------
+
+    /** The `variant` a warning carries when the call wrote the schema's own default settings. */
+    private static final String DEFAULT_SETTINGS_VARIANT = "default"; //$NON-NLS-1$
+
+    /** The response field a call carries what the check found in. */
+    private static final String SETTINGS_WARNINGS_TAG = "settingsWarnings"; //$NON-NLS-1$
+
+    /**
+     * The settings objects the current call has written into.
+     * <p>
+     * A handler is handed the schema and reaches the settings it changes through
+     * {@code ensureDefaultSettings} or through a variant it looks up by name; the operation the
+     * caller named never says which. So the write path records what it touched, and the check
+     * reads the record, rather than the check carrying a list of operation names: such a list
+     * falls behind the registry the moment an operation is added or a handler starts touching
+     * settings, and the ones it misses report nothing - a silence that reads as a clean answer.
+     * </p>
+     * <p>
+     * One collection per call, held in a {@link ThreadLocal}: the write runs inside the BM
+     * transaction, on the thread that opened it, and a call that opens a second collection inside
+     * the first keeps the first rather than losing what it already holds.
+     * </p>
+     */
+    private static final ThreadLocal<SettingsWritten> WRITTEN_HERE = new ThreadLocal<>();
+
+    /** What one call wrote into, and what the completeness check found there. */
+    private static final class SettingsWritten
+    {
+        /** The settings objects the call reached, each once, in the order it reached them. */
+        private final List<Object> settings = new ArrayList<>();
+
+        /** What to call each of them in the answer, or null to name it after the call. */
+        private final List<String> names = new ArrayList<>();
+
+        /** What the check found, replaced on each pass over the settings in hand. */
+        private final List<Map<String, Object>> warnings = new ArrayList<>();
+
+        /**
+         * Records a settings object the call is about to change.
+         *
+         * @param target the settings object.
+         * @param name what to call it in the answer, or null to name it after the call.
+         */
+        void note(Object target, String name)
+        {
+            if (target == null || settings.contains(target))
+            {
+                return;
+            }
+            settings.add(target);
+            names.add(name);
+        }
+    }
+
+    /**
+     * Opens the settings collection for a call, or returns the one already open.
+     *
+     * @return the collection this call records into
+     */
+    private static SettingsWritten beginSettingsScope()
+    {
+        SettingsWritten open = WRITTEN_HERE.get();
+        if (open != null)
+        {
+            return open;
+        }
+        SettingsWritten scope = new SettingsWritten();
+        WRITTEN_HERE.set(scope);
+        return scope;
+    }
+
+    /**
+     * Closes a settings collection, when it is still the one this call opened.
+     *
+     * @param scope what {@link #beginSettingsScope()} returned
+     */
+    private static void endSettingsScope(SettingsWritten scope)
+    {
+        if (WRITTEN_HERE.get() == scope)
+        {
+            WRITTEN_HERE.remove();
+        }
+    }
+
+    /**
+     * Records the settings an operation changes, when a call is collecting them.
+     *
+     * @param settings the settings object the handler works on.
+     */
+    private static void noteSettingsWritten(Object settings)
+    {
+        noteSettingsWritten(settings, null);
+    }
+
+    /**
+     * Records the settings an operation changes under a name of its own.
+     *
+     * @param settings the settings object the handler works on.
+     * @param name what to call it in the answer, or null to name it after the call.
+     */
+    private static void noteSettingsWritten(Object settings, String name)
+    {
+        SettingsWritten open = WRITTEN_HERE.get();
+        if (open != null)
+        {
+            open.note(settings, name);
+        }
+    }
+
+    /**
+     * Adds what a call found to the tags of a schema-route answer, when it found anything.
+     *
+     * @param tags the result tags the answer is built from.
+     * @param warnings what the call found, empty when the settings are complete.
+     */
+    static void attachSettingsWarnings(Map<String, Object> tags, List<Map<String, Object>> warnings)
+    {
+        if (tags != null && warnings != null && !warnings.isEmpty())
+        {
+            tags.put(SETTINGS_WARNINGS_TAG, warnings);
+        }
+    }
+
+    /**
+     * Adds what a call found to a list-route answer, when it found anything.
+     *
+     * @param result the answer being built.
+     * @param warnings what the call found, empty when the settings are complete.
+     * @return the same answer, so the caller can finish building it
+     */
+    static ToolResult withSettingsWarnings(ToolResult result, List<Map<String, Object>> warnings)
+    {
+        if (warnings != null && !warnings.isEmpty())
+        {
+            result.put(SETTINGS_WARNINGS_TAG, warnings);
+        }
+        return result;
+    }
+
+    /**
+     * Reads what a call wrote and collects the settings that are switched on and carry nothing to
+     * act on.
+     * <p>
+     * Recomputes the whole list rather than appending to it: the BM write may run its action more
+     * than once, and a second pass over an unchanged model has to answer the same thing.
+     * </p>
+     *
+     * @param scope what the call recorded.
+     */
+    private void checkSettingsWritten(SettingsWritten scope)
+    {
+        scope.warnings.clear();
+        for (int i = 0; i < scope.settings.size(); i++)
+        {
+            String name = scope.names.get(i);
+            // A settings object recorded without a name is the schema's own default settings, or
+            // the whole of a dynamic list's: neither is a variant, and the answer says so rather
+            // than guessing a variant name out of the call's arguments, which the operation need
+            // not have honoured.
+            scope.warnings.addAll(
+                incompleteSettings(scope.settings.get(i), name != null ? name : DEFAULT_SETTINGS_VARIANT));
+        }
+    }
+
+
+    /**
+     * Names the settings of one variant that are switched on and compare against nothing.
+     * <p>
+     * Two things are looked for. A filter item whose comparison reads a value and has none: the
+     * report is filtered by an empty value, which is not what a caller who asked for a filter
+     * meant. And a data parameter holding a standard period with no dates, the period variant left
+     * at its default: the report is restricted to a period that is empty at one end or at both.
+     * A period spelled as a pair of date parameters is out of scope.
+     * </p>
+     * <p>
+     * An element with {@code use=false} is not reported - a switched-off filter is how a quick
+     * filter is prepared for the user to switch on, and it changes nothing until then - and the
+     * items of a switched-off filter group are not looked at for the same reason.
+     * </p>
+     * <p>
+     * The whole variant is read, not the element this call wrote: an element that was already
+     * empty is exactly as empty as one written now, and the report is wrong either way.
+     * </p>
+     *
+     * @param settings the settings object to read.
+     * @param variant what to call it in the answer.
+     * @return what was found, empty when the settings are complete.
+     */
+    private List<Map<String, Object>> incompleteSettings(Object settings, String variant)
+    {
+        List<Map<String, Object>> found = new ArrayList<>();
+        if (!(settings instanceof EObject))
+        {
+            return found;
+        }
+        EObject asObject = (EObject)settings;
+        Object filter = invokeGetter(asObject, "getFilter"); //$NON-NLS-1$
+        if (filter instanceof EObject)
+        {
+            collectEmptyFilterValues((EObject)filter, "Filter", variant, found); //$NON-NLS-1$
+        }
+        collectEmptyPeriods(asObject, variant, found);
+        return found;
+    }
+
+    /**
+     * Walks a filter, or a group inside one, and reports the switched-on items that compare
+     * against nothing.
+     *
+     * @param container the filter or group to read.
+     * @param path how the container is addressed in the answer, for example {@code Filter}.
+     * @param variant the settings variant being read.
+     * @param found what to add the findings to.
+     */
+    private void collectEmptyFilterValues(EObject container, String path, String variant,
+        List<Map<String, Object>> found)
+    {
+        EList<EObject> items = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            return;
+        }
+        for (int i = 0; i < items.size(); i++)
+        {
+            EObject item = items.get(i);
+            String itemPath = path + "[" + i + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!modelFlag(item, "use")) //$NON-NLS-1$
+            {
+                continue;
+            }
+            if (item.eClass().getEStructuralFeature("right") == null) //$NON-NLS-1$
+            {
+                // A group rather than an item: it holds items of the filter's own, one level down.
+                collectEmptyFilterValues(item, itemPath + ".Items", variant, found); //$NON-NLS-1$
+                continue;
+            }
+            String comparisonType = literalOf(invokeGetter(item, "getComparisonType")); //$NON-NLS-1$
+            if ("Filled".equalsIgnoreCase(comparisonType) //$NON-NLS-1$
+                || "NotFilled".equalsIgnoreCase(comparisonType)) //$NON-NLS-1$
+            {
+                // The two comparisons that ask whether a field carries anything, and so take no
+                // right-hand value at all. Every other comparison reads one.
+                continue;
+            }
+            if (!rightSideIsEmpty(item))
+            {
+                continue;
+            }
+            Map<String, Object> warning = new LinkedHashMap<>();
+            warning.put("variant", variant); //$NON-NLS-1$
+            warning.put("path", itemPath); //$NON-NLS-1$
+            warning.put("kind", "emptyFilterValue"); //$NON-NLS-1$ //$NON-NLS-2$
+            warning.put("name", String.valueOf(fieldPathOf(invokeGetter(item, "getLeft")))); //$NON-NLS-1$ //$NON-NLS-2$
+            warning.put("comparisonType", comparisonType == null ? "" : comparisonType); //$NON-NLS-1$ //$NON-NLS-2$
+            found.add(warning);
+        }
+    }
+
+    /**
+     * Reports the data parameters of one settings object that hold an enabled standard period
+     * with no dates.
+     *
+     * @param settings the settings object to read.
+     * @param variant the settings variant being read.
+     * @param found what to add the findings to.
+     */
+    private void collectEmptyPeriods(EObject settings, String variant,
+        List<Map<String, Object>> found)
+    {
+        Object container = invokeGetter(settings, "getDataParameters"); //$NON-NLS-1$
+        EList<EObject> entries = container instanceof EObject
+            ? BmDcsHelper.getEObjectList(container, "getItems") : null; //$NON-NLS-1$
+        if (entries == null)
+        {
+            return;
+        }
+        for (int i = 0; i < entries.size(); i++)
+        {
+            EObject entry = entries.get(i);
+            if (!modelFlag(entry, "use") || !holdsAnEmptyPeriod(entry)) //$NON-NLS-1$
+            {
+                continue;
+            }
+            Object parameter = invokeGetter(entry, "getParameter"); //$NON-NLS-1$
+            Object parameterName = parameter != null ? invokeGetter(parameter, "getValue") : null; //$NON-NLS-1$
+            Map<String, Object> warning = new LinkedHashMap<>();
+            warning.put("variant", variant); //$NON-NLS-1$
+            warning.put("path", "DataParameters[" + i + "]"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            warning.put("kind", "emptyPeriod"); //$NON-NLS-1$ //$NON-NLS-2$
+            warning.put("name", parameterName == null ? "" : parameterName.toString()); //$NON-NLS-1$ //$NON-NLS-2$
+            found.add(warning);
+        }
+    }
+
+    /**
+     * Reads one value of a data parameter and answers whether it is a standard period that is
+     * restricted to nothing.
+     * <p>
+     * The period is recognised by the value it carries rather than by the parameter's declared
+     * type: a setting whose type the configuration resolves is one the model may not have been
+     * told about yet, while the carrier is there as soon as the value is.
+     * </p>
+     *
+     * @param entry a data-parameter value.
+     * @return true when one of its values is a standard period with both dates empty
+     */
+    private boolean holdsAnEmptyPeriod(EObject entry)
+    {
+        EList<EObject> values = BmDcsHelper.getEObjectList(entry, "getValues"); //$NON-NLS-1$
+        if (values == null)
+        {
+            return false;
+        }
+        for (EObject value : values)
+        {
+            if (!"StandardPeriodValue".equals(value.eClass().getName())) //$NON-NLS-1$
+            {
+                continue;
+            }
+            Object period = invokeGetter(value, "getValue"); //$NON-NLS-1$
+            if (!(period instanceof EObject))
+            {
+                return true;
+            }
+            EObject asObject = (EObject)period;
+            // The model declares "Custom" as the period variant's default, so a period nobody
+            // spelled out is read as one.
+            String periodVariant = literalOf(modelValue(asObject, "variant")); //$NON-NLS-1$
+            if (periodVariant != null && !"Custom".equalsIgnoreCase(periodVariant)) //$NON-NLS-1$
+            {
+                return false;
+            }
+            return isEmptyDate(modelValue(asObject, "startDate")) //$NON-NLS-1$
+                && isEmptyDate(modelValue(asObject, "endDate")); //$NON-NLS-1$
+        }
+        return false;
+    }
+
+    /**
+     * Reads the right-hand side of a filter item and answers whether it is nothing to compare by.
+     *
+     * @param item a filter item.
+     * @return true when the item was given no value, or every value it was given is undefined, an
+     *         empty string or an empty list
+     */
+    private boolean rightSideIsEmpty(EObject item)
+    {
+        EList<EObject> right = BmDcsHelper.getEObjectList(item, "getRight"); //$NON-NLS-1$
+        if (right == null || right.isEmpty())
+        {
+            return true;
+        }
+        for (EObject value : right)
+        {
+            if (!valueIsEmpty(value))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Answers whether one value on the right-hand side of a filter item compares by nothing.
+     *
+     * @param value one value of the right-hand side.
+     * @return true for an undefined value, an empty string or an empty list
+     */
+    private boolean valueIsEmpty(EObject value)
+    {
+        String kind = value.eClass().getName();
+        if ("UndefinedValue".equals(kind)) //$NON-NLS-1$
+        {
+            return true;
+        }
+        if ("StringValue".equals(kind)) //$NON-NLS-1$
+        {
+            Object text = invokeGetter(value, "getValue"); //$NON-NLS-1$
+            return text == null || text.toString().isEmpty();
+        }
+        if ("FixedArrayValue".equals(kind)) //$NON-NLS-1$
+        {
+            EList<EObject> items = BmDcsHelper.getEObjectList(value, "getValues"); //$NON-NLS-1$
+            return items == null || items.isEmpty();
+        }
+        return false;
+    }
+
+    /**
+     * Reads a property of the model, so a value nobody set answers with the default the model
+     * declares rather than with null.
+     *
+     * @param target the element.
+     * @param feature the property name.
+     * @return its value, or null when the element has no such property
+     */
+    private static Object modelValue(EObject target, String feature)
+    {
+        EStructuralFeature f = target.eClass().getEStructuralFeature(feature);
+        return f != null ? target.eGet(f) : null;
+    }
+
+    /**
+     * Reads a boolean property of the model.
+     *
+     * @param target the element.
+     * @param feature the property name.
+     * @return true when it is switched on; a property the element does not have counts as off
+     */
+    private static boolean modelFlag(EObject target, String feature)
+    {
+        return Boolean.TRUE.equals(modelValue(target, feature));
+    }
+
+    /**
+     * Reads the literal of an enum-valued property, the spelling the model and the tool's own
+     * arguments share.
+     *
+     * @param value the property value.
+     * @return the literal, or null when there is no such property
+     */
+    private String literalOf(Object value)
+    {
+        Object literal = value == null ? null : invokeGetter(value, "getLiteral"); //$NON-NLS-1$
+        return literal == null ? null : literal.toString();
+    }
+
+    /**
+     * Answers whether a date the model holds is empty.
+     * <p>
+     * A date that was never set is null; the platform's empty date is the first day of year one,
+     * which is what a value that was written empty comes back as.
+     * </p>
+     *
+     * @param date the property value.
+     * @return true when there is no date behind it
+     */
+    private boolean isEmptyDate(Object date)
+    {
+        if (date == null)
+        {
+            return true;
+        }
+        Object year = invokeGetter(date, "getYear"); //$NON-NLS-1$
+        return !(year instanceof Number) || ((Number)year).intValue() <= 1;
     }
 
     // -----------------------------------------------------------------------
@@ -3490,6 +3974,7 @@ public class DcsWorkshopTool implements IMcpTool
         if (variantSettings != null)
         {
             BmDcsHelper.setProperty(variant, "settings", variantSettings); //$NON-NLS-1$
+            noteSettingsWritten(variantSettings, name);
         }
         variants.add((EObject) variant);
         return "settings variant '" + name + "' added"; //$NON-NLS-1$ //$NON-NLS-2$
@@ -3651,6 +4136,7 @@ public class DcsWorkshopTool implements IMcpTool
                     + "' has no settings and they could not be created"); //$NON-NLS-1$
             }
         }
+        noteSettingsWritten(settings, variantName);
         return settings;
     }
 
@@ -4596,6 +5082,7 @@ public class DcsWorkshopTool implements IMcpTool
         if (copied != null)
         {
             BmDcsHelper.setProperty(clone, "settings", copied); //$NON-NLS-1$
+            noteSettingsWritten(copied, name);
         }
         variants.add((EObject) clone);
         return "settings variant '" + name + "' cloned from '" + sourceName + "'"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -5627,7 +6114,20 @@ public class DcsWorkshopTool implements IMcpTool
         return hasSettingsChildren && !hasVariants;
     }
 
+    /** The settings a handler is to work on, recorded as a settings object this call wrote into. */
     private Object ensureDefaultSettings(EObject schema)
+    {
+        Object settings = defaultSettingsFor(schema);
+        // Every settings handler reaches its settings through here, which is what makes this the
+        // one place a write has to be recorded in. The operation the caller named says nothing
+        // about whether it wrote the schema's own settings or a variant's, so a list of operation
+        // names that claimed to know would be wrong the first time a handler changed.
+        noteSettingsWritten(settings);
+        return settings;
+    }
+
+    /** Resolves the settings to work on. Reached only through {@link #ensureDefaultSettings}. */
+    private Object defaultSettingsFor(EObject schema)
     {
         if (alreadyASettingsContainer(schema))
         {
@@ -5964,6 +6464,14 @@ public class DcsWorkshopTool implements IMcpTool
             + "    multiple SELECT / UNION; heuristic query editing refuses to splice.\n" //$NON-NLS-1$
             + "- `heuristicTextSplice` (success flag, true) - the query edit was a\n" //$NON-NLS-1$
             + "    lexical token-splice (add_query_field / remove_query_field / add_query_condition / remove_query_condition).\n" //$NON-NLS-1$
+            + "- `settingsWarnings` (success flag, array) - the write went through, and the settings\n" //$NON-NLS-1$
+            + "    it left behind hold places a report cannot work with: a filter item that is switched\n" //$NON-NLS-1$
+            + "    on and compares against nothing, or a data parameter holding a standard period with\n" //$NON-NLS-1$
+            + "    no dates. Each entry carries `variant` (the settings variant, or `default` for the\n" //$NON-NLS-1$
+            + "    schema's own settings and for a dynamic list), `path` to the element, `kind`\n" //$NON-NLS-1$
+            + "    (`emptyFilterValue` / `emptyPeriod`), `name` (the filter field or the parameter) and,\n" //$NON-NLS-1$
+            + "    for a filter item, `comparisonType`. The check reads the whole variant written into.\n" //$NON-NLS-1$
+            + "    Absent when the settings are complete.\n" //$NON-NLS-1$
             + "- `supportLock` - schema parent is on vendor support; use an extension.\n\n" //$NON-NLS-1$
             + "Pass `validate_query=false` or `validate_expression=false` to bypass\n" //$NON-NLS-1$
             + "pre-flight validation (use only for trusted templating).\n"; //$NON-NLS-1$
@@ -6080,6 +6588,36 @@ public class DcsWorkshopTool implements IMcpTool
         return applySchemaMutation(op, params,
             schemaToWorkIn(schema, JsonUtils.extractStringArgument(params, "nestedSchemaName")), //$NON-NLS-1$
             null);
+    }
+
+    /**
+     * Runs one schema operation and answers what the completeness check found.
+     * <p>
+     * The write path is the public one, with the settings collection the public route opens around
+     * it; what this adds is the reading. A test that called {@link #applyToSchemaForTest} alone
+     * would write into settings no check was collecting, and would pass whether or not the check
+     * answered anything.
+     * </p>
+     *
+     * @param op the operation name.
+     * @param params its arguments.
+     * @param schema the schema to write into.
+     * @return what the check found, empty when the settings are complete
+     * @throws Exception if the operation refuses
+     */
+    List<Map<String, Object>> settingsWarningsForTest(String op, Map<String, String> params,
+        EObject schema) throws Exception
+    {
+        SettingsWritten written = beginSettingsScope();
+        try
+        {
+            applyToSchemaForTest(op, params, schema);
+            return new ArrayList<>(written.warnings);
+        }
+        finally
+        {
+            endSettingsScope(written);
+        }
     }
 
     /**
