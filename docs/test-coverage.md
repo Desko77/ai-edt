@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 118 | a test class named after it |
+| direct | 119 | a test class named after it |
 | exercised | 133 | reached by some other test |
 | tool-sweep | 69 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
 | workspace-bound | 48 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **416** | across 342 test classes |
+| **total** | **417** | across 344 test classes |
 
 ## untested (0)
 
@@ -395,7 +395,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (118)
+## direct (119)
 
 **(root)**
 - BrowserOrigin
@@ -430,6 +430,7 @@ _none_
 - EventLogReader
 - EventStubGenerator
 - ExtensionFitness
+- FacadeHelpSearch
 - FailureScreenshots
 - FailureShape
 - FormBaseSetup
@@ -552,12 +553,12 @@ closes.
 | 2 | 0 |
 | 3-4 | 16 |
 | 5-8 | 36 |
-| 9-16 | 50 |
+| 9-16 | 51 |
 | 17+ | 16 |
 
-2995 test methods across 342 test classes; 118 classes have a test of their own, median 9 methods each.
+3027 test methods across 344 test classes; 119 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 118 of 416 classes have one: 69 are covered by the registry-wide contract sweep and 48 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 119 of 417 classes have one: 69 are covered by the registry-wide contract sweep and 48 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 

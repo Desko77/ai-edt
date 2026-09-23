@@ -12,7 +12,7 @@
 | `BranchInfobaseTool` | `unbind` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string` | passed in as locals |
 | `CodeSearchTool` | `call_hierarchy` | `depth:?`, `direction:string`, `limit:integer`, `methodName:string`, `modulePath:string`, `projectName:string` | delegate CallHierarchyReader through rewriteForCallHierarchy |
 | `CodeSearchTool` | `content_assist` | `column:integer`, `contains:string`, `extendedDocumentation:boolean`, `filePath:string`, `limit:integer`, `line:integer`, `offset:integer`, `positions:array`, `projectName:string` | delegate ContentAssistReader |
-| `CodeSearchTool` | `help` | `topic:string` | read in place |
+| `CodeSearchTool` | `help` | `find:string`, `topic:string` | read in place |
 | `CodeSearchTool` | `method_references` | `caseSensitive:boolean`, `compact:boolean`, `contextLines:integer`, `fileMask:string`, `isRegex:boolean`, `linesAfter:integer`, `linesBefore:integer`, `maxResults:integer`, `metadataType:string`, `outputMode:string`, `projectName:string`, `query:string`, `timeoutSeconds:integer`, `wholeWord:boolean` | delegate CodeTextSearcher through rewriteForMethodReferences |
 | `CodeSearchTool` | `object_references` | `bslOnly:boolean`, `categories:string`, `deep:boolean`, `limit:integer`, `objectFqn:string`, `projectName:string`, `runKey:string`, `skipBsl:boolean`, `timeoutSeconds:integer` | delegate ReferenceLocator through rewriteForObjectReferences |
 | `CodeSearchTool` | `outgoing_structures` | `objectFqn:string`, `projectName:string` | delegate OutgoingStructuresReader through rewriteForObjectReferences |
@@ -152,7 +152,7 @@
 | `EditMetadataTool` | `add_predefined_item` | `accountType:string`, `code:string`, `description:string`, `dryRun:boolean`, `isFolder:boolean`, `name:string`, `offBalance:boolean`, `order:string`, `ownerFqn:string`, `projectName:string` | handler PredefinedOps.opAddPredefinedItem, read in place |
 | `EditMetadataTool` | `add_query_condition` | `attributeName:string`, `condition:string`, `dataSetName:string`, `dryRun:boolean`, `formFqn:string`, `nestedSchemaName:string`, `objectName:string`, `overwriteModel:boolean`, `ownerFqn:string`, `projectName:string`, `property:string`, `queryText:string`, `templateName:string`, `validate_expression:boolean`, `validate_query:boolean`, `value:boolean` | handler MiscOps.delegateToDcsWorkshop, delegate DcsWorkshopTool, renamed to add_query_condition |
 | `EditMetadataTool` | `add_query_field` | `attributeName:string`, `dataSetName:string`, `dryRun:boolean`, `field:string`, `formFqn:string`, `nestedSchemaName:string`, `objectName:string`, `overwriteModel:boolean`, `ownerFqn:string`, `projectName:string`, `property:string`, `queryText:string`, `templateName:string`, `validate_expression:boolean`, `validate_query:boolean`, `value:boolean` | handler MiscOps.delegateToDcsWorkshop, delegate DcsWorkshopTool, renamed to add_query_field |
-| `EditMetadataTool` | `add_radio_button` | `autoGenerateColumns:boolean`, `beforeName:string`, `dataPath:string`, `dryRun:boolean`, `elementType:string`, `formFqn:string`, `hyperlink:boolean`, `name:string`, `operation:string`, `ownerFqn:string`, `parentName:string`, `picture:string`, `projectName:string`, `standardCommand:string`, `title:string` | handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool, renamed to add_radio_button - target row not found, read from the handler instead |
+| `EditMetadataTool` | `add_radio_button` | `autoGenerateColumns:boolean`, `beforeName:string`, `dataPath:string`, `dryRun:boolean`, `elementType:string`, `find:string`, `formFqn:string`, `hyperlink:boolean`, `name:string`, `operation:string`, `ownerFqn:string`, `parentName:string`, `picture:string`, `projectName:string`, `standardCommand:string`, `title:string` | handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool, renamed to add_radio_button - target row not found, read from the handler instead |
 | `EditMetadataTool` | `add_recalculation` | `dryRun:boolean`, `name:string`, `ownerFqn:string`, `projectName:string`, `synonym:string` | handler SpecializedOps.opAddRecalculation, read in place |
 | `EditMetadataTool` | `add_recalculation_dimension` | `dryRun:boolean`, `name:string`, `ownerFqn:string`, `projectName:string`, `recalculationName:string`, `registerDimension:string`, `synonym:string` | handler SpecializedOps.opAddRecalculationDimension, read in place |
 | `EditMetadataTool` | `add_register_field` | `allowedLength:string`, `dateFractions:string`, `dryRun:boolean`, `fractionDigits:integer`, `kind:string`, `length:integer`, `name:string`, `nonNegative:boolean`, `ownerFqn:string`, `precision:integer`, `projectName:string`, `synonym:string`, `type:string` | handler SpecializedOps.opAddRegisterField, read in place |
@@ -212,7 +212,7 @@
 | `EditMetadataTool` | `remove_form_command` | `commandName:string`, `dryRun:boolean`, `formFqn:string`, `ownerFqn:string`, `projectName:string` | handler FormItemsOps.opRemoveFormCommand, read in place |
 | `EditMetadataTool` | `remove_form_command_interface_item` | `commandFqn:?`, `dryRun:boolean`, `formFqn:string`, `ownerFqn:string`, `panel:?`, `projectName:string` | handler FormCommandInterfaceOps.opRemoveFormCommandInterfaceItem, read in place |
 | `EditMetadataTool` | `remove_form_event_handler` | `dryRun:boolean`, `event:string`, `formFqn:string`, `handlerName:string`, `itemName:string`, `ownerFqn:string`, `projectName:string` | handler FormEventOps.opRemoveFormEventHandler, read in place |
-| `EditMetadataTool` | `remove_form_item` | `autoGenerateColumns:boolean`, `beforeName:string`, `dataPath:string`, `dryRun:boolean`, `elementType:string`, `formFqn:string`, `hyperlink:boolean`, `name:string`, `operation:string`, `ownerFqn:string`, `parentName:string`, `picture:string`, `projectName:string`, `standardCommand:string`, `title:string` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool, renamed to remove_form_item - target row not found, read from the handler instead |
+| `EditMetadataTool` | `remove_form_item` | `autoGenerateColumns:boolean`, `beforeName:string`, `dataPath:string`, `dryRun:boolean`, `elementType:string`, `find:string`, `formFqn:string`, `hyperlink:boolean`, `name:string`, `operation:string`, `ownerFqn:string`, `parentName:string`, `picture:string`, `projectName:string`, `standardCommand:string`, `title:string` | handler FormItemsOps.delegateToEditForm, delegate EditFormTool, renamed to remove_form_item - target row not found, read from the handler instead |
 | `EditMetadataTool` | `remove_form_item_functional_option` | `attributeName:string`, `commandName:string`, `dryRun:boolean`, `formFqn:string`, `ownerFqn:string`, `projectName:string`, `valueFqn:string` | handler MiscOps.opFormItemFunctionalOption, read in place |
 | `EditMetadataTool` | `remove_form_parameter` | `dryRun:boolean`, `formFqn:string`, `name:string`, `ownerFqn:string`, `projectName:string` | handler FormItemsOps.opRemoveFormParameter, read in place |
 | `EditMetadataTool` | `remove_functional_option_content` | `dryRun:boolean`, `ownerFqn:string`, `projectName:string`, `valueFqn:string` | handler ContentOps.opFunctionalOptionContent, read in place |
@@ -331,20 +331,20 @@
 | `InsightsFacadeTool` | `object_summary` | `includeErrors:boolean`, `includeReferences:boolean`, `objectFqn:string`, `projectName:string` | delegate ObjectSummaryTool |
 | `InsightsFacadeTool` | `project_metrics` | `format:string`, `includeDebtList:boolean`, `projectName:string`, `scope:string`, `subsystemName:string`, `timeoutSeconds:integer` | delegate ProjectMetricsTool |
 | `InsightsFacadeTool` | `semantic_metadata_search` | `limit:integer`, `metadataType:string`, `projectName:string`, `query:string` | delegate SemanticMetadataSearchTool |
-| `LaunchDebuggerTool` | `add_breakpoint` | `action:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `add_breakpoint` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `debug_launch` | `action:string`, `applicationId:string`, `clientType:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `endpointTimeoutSeconds:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `runMode:string`, `startupOption:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate DebugSessionStarter |
 | `LaunchDebuggerTool` | `debug_status` | `action:string`, `applicationId:string` | delegate DebugStateReader |
 | `LaunchDebuggerTool` | `evaluate` | `action:string`, `expression:string`, `frameRef:string` | delegate ExpressionEvaluator |
 | `LaunchDebuggerTool` | `get_profiling_results` | `action:string`, `minFrequency:integer`, `moduleFilter:string` | delegate ProfilingResultsReader |
 | `LaunchDebuggerTool` | `get_state` | `action:string`, `applicationId:string` | delegate DebugStateReader |
 | `LaunchDebuggerTool` | `get_variables` | `action:string`, `expandPath:string`, `frameIndex:integer`, `frameRef:string`, `scope:string`, `threadId:integer` | delegate DebugVariablesReader |
-| `LaunchDebuggerTool` | `help` | `action:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `help` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `launch` | `action:string`, `applicationId:string`, `clientType:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `endpointTimeoutSeconds:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `runMode:string`, `startupOption:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate DebugSessionStarter |
-| `LaunchDebuggerTool` | `list_breakpoints` | `action:string`, `topic:string` | read in place |
-| `LaunchDebuggerTool` | `remove_breakpoint` | `action:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `list_breakpoints` | `action:string`, `find:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `remove_breakpoint` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `resume` | `action:string`, `applicationId:string`, `threadId:integer` | delegate DebugResumer |
 | `LaunchDebuggerTool` | `run_to_line` | `action:string`, `applicationId:string`, `lineNumber:integer`, `module:string`, `projectName:string`, `threadId:integer` | delegate RunToLineTool |
-| `LaunchDebuggerTool` | `set_breakpoint` | `action:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `set_breakpoint` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `set_exception_breakpoint` | `action:string`, `catchAll:boolean`, `message:string`, `projectName:string` | delegate SetExceptionBreakpointTool |
 | `LaunchDebuggerTool` | `set_variable` | `action:string`, `frameIndex:integer`, `frameRef:string`, `path:string`, `threadId:integer`, `value:string` | delegate DebugVariableWriter |
 | `LaunchDebuggerTool` | `start_profiling` | `action:string`, `applicationId:string` | delegate ProfilingStarter |
@@ -373,7 +373,7 @@
 | `ProjectAdminFacadeTool` | `delete_project` | `deleteContent:boolean`, `projectName:string` | delegate ProjectRemover |
 | `ProjectAdminFacadeTool` | `get_configuration_properties` | `projectName:string` | delegate ConfigurationInfoReader |
 | `ProjectAdminFacadeTool` | `list_configurations` | `projectName:string`, `type:string` | delegate LaunchConfigsLister |
-| `ProjectAdminFacadeTool` | `list_projects` | `operation:string`, `topic:string` | read in place |
+| `ProjectAdminFacadeTool` | `list_projects` | `find:string`, `operation:string`, `topic:string` | read in place |
 | `ProjectAdminFacadeTool` | `list_subsystems` | `includeContent:boolean`, `language:string`, `limit:integer`, `nameFilter:string`, `projectName:string` | delegate GetSubsystemsTool |
 | `ProjectAdminFacadeTool` | `restart_edt` | `action:string`, `delayMs:integer` | delegate RestartEdtTool |
 | `ProjectAdminFacadeTool` | `resync_to_disk` | `objects:string[]`, `projectName:string`, `refresh:boolean`, `waitTimeoutMs:integer` | delegate DiskResynchronizer |

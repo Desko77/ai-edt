@@ -374,6 +374,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And a sixteenth, by 216, for naparnik: the operation, and probe, which starts the Naparnik
      * UI bundle. Together with the fifteenth: 87329.
      * </p>
+     * <p>
+     * And a seventeenth, by 1800, for find on the twelve facades whose help it searches: an agent
+     * that cannot see the argument reads the whole catalog and every topic to answer "where does
+     * this facade say X". Each copy is one shared sentence
+     * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
+     * to keep this raise the remainder it is. Together with the sixteenth: 89129.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 87329;
+    private static final int DOCUMENT_PROSE = 89129;
 }

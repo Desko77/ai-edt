@@ -35,11 +35,12 @@ public final class UnreadArguments
 {
     /**
      * Keys that belong to the call rather than to the operation, so no operation has to declare
-     * them. They steer dispatch, preview and batching; the map records only what a handler reads.
+     * them. They steer dispatch, preview, batching and the search inside help; the map records
+     * only what a handler reads.
      */
     private static final Set<String> SERVICE_KEYS = Collections.unmodifiableSet(
         new HashSet<>(Arrays.asList("operation", "dryRun", "batch", "operations", "stopOnError", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-            "runKey", "timeoutSeconds", "topic", "confirm", "projectName"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "runKey", "timeoutSeconds", "topic", "confirm", "projectName", "find"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
 
     private UnreadArguments()
     {

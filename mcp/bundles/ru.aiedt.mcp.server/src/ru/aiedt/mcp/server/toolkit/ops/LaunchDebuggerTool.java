@@ -8,8 +8,10 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -93,6 +95,7 @@ public class LaunchDebuggerTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when action=help: workflow (the typical debug sequence). " //$NON-NLS-1$
                 + "Without topic - lists actions.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", "EDT project name (most actions).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Application identifier from list_applications.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
@@ -254,17 +257,65 @@ public class LaunchDebuggerTool implements IMcpTool
                 return new ProfilingResultsReader().execute(params);
 
             case "help": //$NON-NLS-1$
-                return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+                return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                    JsonUtils.extractStringArgument(params, "find")); //$NON-NLS-1$
 
             default:
+            {
+                Map<String, String> described = describedActions();
                 return ToolResult.error(
-                    "Unknown action '" + action + "'. Allowed: launch / add_breakpoint / " //$NON-NLS-1$ //$NON-NLS-2$
+                    "Unknown action '" + action + "'." //$NON-NLS-1$ //$NON-NLS-2$
+                        + FacadeHelpSearch.closestMatches(action, described.keySet(), described)
+                        + "\n\nAllowed: launch / add_breakpoint / " //$NON-NLS-1$
                         + "set_exception_breakpoint / run_to_line / remove_breakpoint / " //$NON-NLS-1$
                         + "list_breakpoints / wait_for_break / get_state / get_variables / " //$NON-NLS-1$
                         + "set_variable / step_over / step_into / step_out / resume / terminate / " //$NON-NLS-1$
                         + "evaluate / start_profiling / get_profiling_results / debug_status / help.") //$NON-NLS-1$
                     .toJson();
+            }
         }
+    }
+
+    /**
+     * The actions this facade also answers to, against the action whose catalogue entry describes
+     * them.
+     * <p>
+     * The catalogue names one of each pair, so a caller who typed the other one is answered with
+     * that entry instead of with nothing close to what was asked for.
+     * </p>
+     */
+    private static final Map<String, String> ALIASES = aliases();
+
+    private static Map<String, String> aliases()
+    {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("debug_launch", "launch"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("set_breakpoint", "add_breakpoint"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("debug_status", "get_state"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("step", "step_over"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("terminate_launch", "terminate"); //$NON-NLS-1$ //$NON-NLS-2$
+        return Collections.unmodifiableMap(m);
+    }
+
+    /**
+     * Every action this facade accepts against what it does: the catalogue's own entries, plus each
+     * alias described by the entry of the action it stands for.
+     *
+     * @return the action names against their descriptions, never <code>null</code>
+     */
+    private static Map<String, String> describedActions()
+    {
+        Map<String, String> described =
+            new LinkedHashMap<>(FacadeHelpSearch.describe(buildHelp(null, null)));
+        for (Map.Entry<String, String> alias : ALIASES.entrySet())
+        {
+            String said = described.get(alias.getValue());
+            if (said != null)
+            {
+                described.putIfAbsent(alias.getKey(), said);
+            }
+        }
+        return described;
     }
 
     /**
@@ -315,8 +366,18 @@ public class LaunchDebuggerTool implements IMcpTool
         return copy;
     }
 
-    private static String buildHelp(String topic)
+    /** Every help topic: this facade's operations are not topics, only the named ones are. */
+    private static final List<String> HELP_TOPICS = Collections.singletonList("workflow"); //$NON-NLS-1$
+
+    private static String buildHelp(String topic, String find)
     {
+        if (find != null && !find.isBlank())
+        {
+            // No topic here names an action of its own: the actions live in the catalogue and the
+            // one named topic is a document of sections, so nothing searched is an argument list.
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+                Collections.<String> emptyList(), asked -> buildHelp(asked, null));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         StringBuilder sb = new StringBuilder();
         if (topic == null || topic.isEmpty())
@@ -359,6 +420,9 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "when done.\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        return "# Unknown topic '" + topic + "'." //$NON-NLS-1$
+            + FacadeHelpSearch.closestMatches(topic, HELP_TOPICS,
+                FacadeHelpSearch.describe(buildHelp(null, null)))
+            + "\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

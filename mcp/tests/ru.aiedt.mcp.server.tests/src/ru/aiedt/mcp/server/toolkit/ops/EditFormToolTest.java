@@ -253,4 +253,37 @@ public class EditFormToolTest
         String result = tool.execute(params);
         assertTrue(result.contains("formFqn is required")); //$NON-NLS-1$
     }
+
+    // -- Operation names before dispatch --
+
+    /**
+     * Every operation of the help document passes the check made before the form is read, in the
+     * camelCase the document uses and in snake_case alike.
+     */
+    @Test
+    public void everyEditOperationPassesInBothSpellings()
+    {
+        String[][] spellings = {
+            { "addField", "add_field" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "addGroup", "add_group" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "addButton", "add_button" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "addTable", "add_table" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "addDecoration", "add_decoration" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "removeItem", "remove_item" } }; //$NON-NLS-1$ //$NON-NLS-2$
+        for (String[] pair : spellings)
+        {
+            for (String operation : pair)
+            {
+                assertTrue(operation + " is an edit operation", EditFormTool.isEditOperation(operation)); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /** A misspelled operation and {@code help} do not pass the edit check. */
+    @Test
+    public void aTypoAndHelpAreNotEditOperations()
+    {
+        assertFalse(EditFormTool.isEditOperation("addFeild")); //$NON-NLS-1$
+        assertFalse(EditFormTool.isEditOperation("help")); //$NON-NLS-1$
+    }
 }
