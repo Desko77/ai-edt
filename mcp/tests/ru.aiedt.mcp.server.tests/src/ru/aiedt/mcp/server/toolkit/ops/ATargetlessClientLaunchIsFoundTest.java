@@ -197,30 +197,35 @@ public class ATargetlessClientLaunchIsFoundTest
         Map<String, Object> attributes = new HashMap<>();
         attributes.put(LaunchConfigAccess.ATTR_APPLICATION_ID, "app-1"); //$NON-NLS-1$
         String name = "MyApp"; //$NON-NLS-1$
+        String memento = "m-myapp"; //$NON-NLS-1$
         ILaunch client = launch(config(name, LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID, attributes), false);
         ILaunchManager mgr = manager(client);
 
         LaunchApplicationIds.Access access = new LaunchApplicationIds.Access()
         {
             @Override
-            public List<String> configurationNames()
+            public List<LaunchApplicationIds.Configuration> configurations()
             {
-                return List.of(name);
+                return List.of(new LaunchApplicationIds.Configuration(memento, name));
             }
 
             @Override
-            public String readApplicationId(String configName)
+            public String readApplicationId(String addressed)
             {
-                return (String)attributes.get(LaunchConfigAccess.ATTR_APPLICATION_ID);
+                return memento.equals(addressed)
+                    ? (String)attributes.get(LaunchConfigAccess.ATTR_APPLICATION_ID) : null;
             }
 
             @Override
-            public void writeApplicationId(String configName, String applicationId)
+            public void writeApplicationId(String addressed, String applicationId)
             {
-                attributes.put(LaunchConfigAccess.ATTR_APPLICATION_ID, applicationId);
+                if (memento.equals(addressed))
+                {
+                    attributes.put(LaunchConfigAccess.ATTR_APPLICATION_ID, applicationId);
+                }
             }
         };
-        Map<String, String> snapshot = LaunchApplicationIds.snapshot(access);
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
 
         // The save of the infobase list strips the attribute from every launch configuration.
         attributes.remove(LaunchConfigAccess.ATTR_APPLICATION_ID);

@@ -705,6 +705,12 @@ public final class LaunchConfigAccess
     /**
      * The launch configurations as {@link LaunchApplicationIds} needs them, over Eclipse's launch
      * manager.
+     * <p>
+     * Every configuration is addressed by its memento - both when it is listed and when it is read
+     * or written. A display name identifies nothing: the same name occurs in several launch
+     * configuration types at once, and the first of them in the manager's list is not necessarily
+     * the one whose application id is at stake.
+     * </p>
      *
      * @param launchManager the launch manager; <code>null</code> yields <code>null</code>
      * @return the access, or <code>null</code> when there is no launch manager
@@ -718,29 +724,47 @@ public final class LaunchConfigAccess
         return new LaunchApplicationIds.Access()
         {
             @Override
-            public List<String> configurationNames()
+            public List<LaunchApplicationIds.Configuration> configurations()
             {
-                List<String> names = new ArrayList<>();
+                List<LaunchApplicationIds.Configuration> configurations = new ArrayList<>();
+                ILaunchConfiguration[] found;
                 try
                 {
-                    for (ILaunchConfiguration config : launchManager.getLaunchConfigurations())
-                    {
-                        names.add(config.getName());
-                    }
+                    found = launchManager.getLaunchConfigurations();
                 }
                 catch (CoreException e)
                 {
                     Activator.logError("Failed to list launch configurations", e); //$NON-NLS-1$
+                    return configurations;
                 }
-                return names;
+                for (ILaunchConfiguration config : found)
+                {
+                    // One unreadable configuration must not cost the others their place in the
+                    // snapshot: its memento is what everything here is keyed by.
+                    try
+                    {
+                        String memento = config.getMemento();
+                        if (memento != null && !memento.isEmpty())
+                        {
+                            configurations.add(
+                                new LaunchApplicationIds.Configuration(memento, config.getName()));
+                        }
+                    }
+                    catch (CoreException e)
+                    {
+                        Activator.logWarning("A launch configuration could not be addressed: " //$NON-NLS-1$
+                            + e.getMessage()); //$NON-NLS-1$
+                    }
+                }
+                return configurations;
             }
 
             @Override
-            public String readApplicationId(String name)
+            public String readApplicationId(String memento)
             {
                 try
                 {
-                    ILaunchConfiguration config = findConfiguration(launchManager, name);
+                    ILaunchConfiguration config = launchManager.getLaunchConfiguration(memento);
                     if (config == null || !config.exists())
                     {
                         return null;
@@ -755,10 +779,10 @@ public final class LaunchConfigAccess
             }
 
             @Override
-            public void writeApplicationId(String name, String applicationId)
+            public void writeApplicationId(String memento, String applicationId)
                 throws CoreException
             {
-                ILaunchConfiguration config = findConfiguration(launchManager, name);
+                ILaunchConfiguration config = launchManager.getLaunchConfiguration(memento);
                 if (config == null || !config.exists())
                 {
                     return;
@@ -770,19 +794,5 @@ public final class LaunchConfigAccess
                 copy.doSave();
             }
         };
-    }
-
-    /** Finds a configuration by its display name; getLaunchConfiguration expects a memento. */
-    private static ILaunchConfiguration findConfiguration(ILaunchManager launchManager, String name)
-        throws CoreException
-    {
-        for (ILaunchConfiguration config : launchManager.getLaunchConfigurations())
-        {
-            if (name.equals(config.getName()))
-            {
-                return config;
-            }
-        }
-        return null;
     }
 }

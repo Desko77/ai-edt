@@ -113,6 +113,11 @@ public class InfobaseCredentialsWriter implements IMcpTool
             BmInfobaseCredentialsHelper.setCredentials(project, applicationId, accessMode,
                 userName, password);
 
+        return response(projectName, r);
+    }
+
+    static String response(String projectName, BmInfobaseCredentialsHelper.CredentialResult r)
+    {
         if (!r.ok)
         {
             ToolResult err = ToolResult.error(r.error)

@@ -1,5 +1,5 @@
 /**
- * AI-EDT - 1C AI tools for EDT
+ * AI-EDT - 1C AI tools for EDT - Tests
  * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
  * Licensed under AGPL-3.0-or-later
  */
@@ -7,41 +7,70 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import java.lang.reflect.Array;
-import java.lang.reflect.Proxy;
-import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.runtime.CoreException;
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
-import org.eclipse.debug.core.ILaunchConfiguration;
-import org.eclipse.debug.core.ILaunchConfigurationWorkingCopy;
 import org.eclipse.debug.core.ILaunchManager;
 import org.junit.Test;
 
-/** The application-id adapter resolves display names by enumeration, never as mementos. */
+import ru.aiedt.mcp.server.support.FakeLaunchConfigurations.Configuration;
+
+/**
+ * The application-id adapter over Eclipse's launch manager.
+ *
+ * <p>Two things it must not do. It must not write through a working copy without saving it -
+ * Eclipse's copy changes nothing until {@code doSave}, so an adapter that forgets the save
+ * reports a restore that never happened. And it must not hand the manager a display name where a
+ * memento belongs: one name occurs in several launch types at once, and Eclipse answers a name
+ * with a failure rather than with a configuration.</p>
+ */
 public class LaunchConfigApplicationIdAccessTest
 {
+    private static final String APP_ID = LaunchConfigAccess.ATTR_APPLICATION_ID;
+
     @Test
-    public void aManagerThatRejectsANameAsAMementoStillRestoresTheApplicationId()
+    public void theStoreChangesOnlyWhenTheWorkingCopyIsSaved()
+    {
+        FakeLaunchConfigurations fake = new FakeLaunchConfigurations();
+        Configuration configuration = fake.add("m-one", "Run one", "project-one", "application-one"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        configuration.stored.put("anotherAttribute", "kept"); //$NON-NLS-1$ //$NON-NLS-2$
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(fake.manager());
+
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        fake.stripApplicationIds();
+        // The strip is real in the store, which is what makes the save load-bearing: an adapter
+        // that edits the copy and walks away leaves the configuration stripped.
+        assertNull(configuration.applicationId());
+        LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+
+        assertEquals("application-one", configuration.applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("kept", configuration.stored.get("anotherAttribute")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("one save per restored configuration", 1, configuration.saves); //$NON-NLS-1$
+        assertEquals(List.of("Run one"), report.restored); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aDisplayNameIsNeverHandedToTheManagerWhereAMementoBelongs()
         throws Exception
     {
-        Map<String, Object> attributes = new LinkedHashMap<>();
-        attributes.put(LaunchConfigAccess.ATTR_APPLICATION_ID, "application-one"); //$NON-NLS-1$
-        attributes.put("anotherAttribute", "kept"); //$NON-NLS-1$ //$NON-NLS-2$
-        ILaunchConfiguration configuration = configuration("Run one", attributes); //$NON-NLS-1$
-        ILaunchManager manager = manager(configuration);
+        FakeLaunchConfigurations fake = new FakeLaunchConfigurations();
+        fake.add("m-one", "Run one", "project-one", "application-one"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        ILaunchManager manager = fake.manager();
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(manager);
 
-        Map<String, String> snapshot = LaunchApplicationIds.snapshot(access);
-        attributes.remove(LaunchConfigAccess.ATTR_APPLICATION_ID);
-        LaunchApplicationIds.restore(access, snapshot);
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        fake.stripApplicationIds();
+        LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
 
-        assertEquals("application-one", attributes.get(LaunchConfigAccess.ATTR_APPLICATION_ID)); //$NON-NLS-1$
-        assertEquals("kept", attributes.get("anotherAttribute")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the round trip went through the memento, so it restored", //$NON-NLS-1$
+            List.of("Run one"), report.restored); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("application-one", fake.byName("Run one").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
         try
         {
             manager.getLaunchConfiguration("Run one"); //$NON-NLS-1$
@@ -53,85 +82,51 @@ public class LaunchConfigApplicationIdAccessTest
         }
     }
 
-    private static ILaunchConfiguration configuration(String name, Map<String, Object> attributes)
+    @Test
+    public void twoConfigurationsOfDifferentTypesWithOneNameAreWrittenApart()
     {
-        ILaunchConfiguration[] saved = new ILaunchConfiguration[1];
-        ILaunchConfigurationWorkingCopy copy = (ILaunchConfigurationWorkingCopy)Proxy.newProxyInstance(
-            LaunchConfigApplicationIdAccessTest.class.getClassLoader(),
-            new Class<?>[] { ILaunchConfigurationWorkingCopy.class }, (proxy, method, args) -> {
-                switch (method.getName())
-                {
-                case "setAttribute": //$NON-NLS-1$
-                    attributes.put((String)args[0], args[1]);
-                    return null;
-                case "doSave": //$NON-NLS-1$
-                    return saved[0];
-                case "getName": //$NON-NLS-1$
-                    return name;
-                default:
-                    return defaultValue(method.getReturnType());
-                }
-            });
-        saved[0] = (ILaunchConfiguration)Proxy.newProxyInstance(
-            LaunchConfigApplicationIdAccessTest.class.getClassLoader(),
-            new Class<?>[] { ILaunchConfiguration.class }, (proxy, method, args) -> {
-                switch (method.getName())
-                {
-                case "getName": //$NON-NLS-1$
-                    return name;
-                case "exists": //$NON-NLS-1$
-                    return Boolean.TRUE;
-                case "getAttribute": //$NON-NLS-1$
-                    return attributes.getOrDefault(args[0], args[1]);
-                case "getWorkingCopy": //$NON-NLS-1$
-                    return copy;
-                default:
-                    return defaultValue(method.getReturnType());
-                }
-            });
-        return saved[0];
+        // The remote configuration comes first in the manager's list, so a name-addressed adapter
+        // would take it for both writes and leave the runtime client stripped.
+        FakeLaunchConfigurations fake = new FakeLaunchConfigurations();
+        Configuration remote = fake.add("m-remote", "Run one", //$NON-NLS-1$ //$NON-NLS-2$
+            LaunchConfigAccess.TYPE_REMOTE_RUNTIME);
+        remote.stored.put(APP_ID, "application-remote"); //$NON-NLS-1$
+        Configuration client = fake.add("m-client", "Run one", //$NON-NLS-1$ //$NON-NLS-2$
+            LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID);
+        client.stored.put(APP_ID, "application-client"); //$NON-NLS-1$
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(fake.manager());
+
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        fake.stripApplicationIds();
+        LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+
+        assertEquals("application-remote", remote.applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("application-client", client.applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(2, report.restored.size());
+        assertTrue(report.failed.isEmpty());
     }
 
-    private static ILaunchManager manager(ILaunchConfiguration... configurations)
+    @Test
+    public void aConfigurationThatCannotBeAddressedIsSkippedWithoutCostingTheOthers()
     {
-        return (ILaunchManager)Proxy.newProxyInstance(
-            LaunchConfigApplicationIdAccessTest.class.getClassLoader(),
-            new Class<?>[] { ILaunchManager.class }, (proxy, method, args) -> {
-                if ("getLaunchConfigurations".equals(method.getName())) //$NON-NLS-1$
-                {
-                    return configurations;
-                }
-                if ("getLaunchConfiguration".equals(method.getName())) //$NON-NLS-1$
-                {
-                    throw new CoreException(new Status(IStatus.ERROR, "test", //$NON-NLS-1$
-                        "a display name is not a memento")); //$NON-NLS-1$
-                }
-                return defaultValue(method.getReturnType());
-            });
-    }
+        FakeLaunchConfigurations fake = new FakeLaunchConfigurations();
+        Configuration broken = fake.add("m-broken", "Run broken", "project-one", "application-broken"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        broken.unreadable = true;
+        Configuration good = fake.add("m-good", "Run good", "project-one", "application-good"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(fake.manager());
 
-    private static Object defaultValue(Class<?> type)
-    {
-        if (type.isArray())
-        {
-            return Array.newInstance(type.getComponentType(), 0);
-        }
-        if (!type.isPrimitive())
-        {
-            return null;
-        }
-        if (type == boolean.class)
-        {
-            return Boolean.FALSE;
-        }
-        if (type == int.class)
-        {
-            return Integer.valueOf(0);
-        }
-        if (type == long.class)
-        {
-            return Long.valueOf(0L);
-        }
-        return null;
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        assertEquals("an unaddressed configuration is not in the snapshot at all", //$NON-NLS-1$
+            1, snapshot.size());
+        fake.stripApplicationIds();
+        LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+
+        assertEquals("application-good", good.applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull("nothing was written to the configuration that could not be addressed", //$NON-NLS-1$
+            broken.applicationId());
+        assertEquals(List.of("Run good"), report.restored); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(report.failed.isEmpty());
+        assertFalse("nothing was claimed about the configuration that could not be read", //$NON-NLS-1$
+            report.describe().contains("Run broken")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

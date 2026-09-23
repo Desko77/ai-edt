@@ -6,6 +6,7 @@ package ru.aiedt.mcp.server.support;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -120,7 +121,7 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.ALREADY_EXISTS.wire();
             return r;
         }
-        LaunchIds launchIds = snapshotLaunchApplicationIds();
+        LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
         try
         {
             IInfobaseCreationOperation.Builder b = new IInfobaseCreationOperation.Builder()
@@ -135,11 +136,13 @@ public final class BmInfobaseLifecycleHelper
         }
         catch (Throwable e)
         {
-            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, Set.of(), "create_infobase"); //$NON-NLS-1$
+            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
+                DeletedBaseConfigurations.none(), "create_infobase"); //$NON-NLS-1$
             classifyCreate(r, e);
             return r;
         }
-        r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, Set.of(), "create_infobase"); //$NON-NLS-1$
+        r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
+            DeletedBaseConfigurations.none(), "create_infobase"); //$NON-NLS-1$
         r.ok = true;
         if (mgr != null)
         {
@@ -280,9 +283,9 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.INFOBASE_NOT_FOUND.wire();
             return r;
         }
-        LaunchIds launchIds = snapshotLaunchApplicationIds();
-        Set<String> deletedConfigurations = configurationsForInfobase(launchIds.manager,
-            Activator.getDefault().getApplicationManager(), ref.get());
+        LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
+        DeletedBaseConfigurations deletedConfigurations =
+            deletedBaseConfigurations(launchIds, PRODUCT, ref.get());
         if (projectName != null && !projectName.isEmpty())
         {
             IProject project = ProjectResolver.resolve(projectName);
@@ -346,7 +349,8 @@ public final class BmInfobaseLifecycleHelper
         }
         catch (Throwable e)
         {
-            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, Set.of(), "delete_infobase"); //$NON-NLS-1$
+            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
+                DeletedBaseConfigurations.none(), "delete_infobase"); //$NON-NLS-1$
             r.error = "Failed to delete the infobase: " + msg(e); //$NON-NLS-1$
             r.failureKind = ErrorTags.DELETE_FAILED.wire();
             return r;
@@ -358,14 +362,14 @@ public final class BmInfobaseLifecycleHelper
     }
 
     /** The launch-manager state captured immediately before an infobase-list write. */
-    private static final class LaunchIds
+    static final class LaunchIds
     {
         final ILaunchManager manager;
         final LaunchApplicationIds.Access access;
-        final Map<String, String> snapshot;
+        final Map<String, LaunchApplicationIds.SnapshotEntry> snapshot;
 
         LaunchIds(ILaunchManager manager, LaunchApplicationIds.Access access,
-            Map<String, String> snapshot)
+            Map<String, LaunchApplicationIds.SnapshotEntry> snapshot)
         {
             this.manager = manager;
             this.access = access;
@@ -373,52 +377,192 @@ public final class BmInfobaseLifecycleHelper
         }
     }
 
-    private static LaunchIds snapshotLaunchApplicationIds()
+    /**
+     * The launch configurations whose application belongs to the infobase that is going away, and
+     * what the search could not establish.
+     * <p>
+     * A configuration the search could not read is not excluded: it may belong to the deleted
+     * base, but nothing proves it, and the answer says so instead of the guard guessing.
+     * </p>
+     */
+    static final class DeletedBaseConfigurations
     {
-        ILaunchManager manager = LaunchConfigAccess.getLaunchManager();
+        /** Mementos of the configurations bound to the infobase being deleted. */
+        final Set<String> mementos = new LinkedHashSet<>();
+
+        /** Configurations the search could not read; named in the answer, and not excluded. */
+        final List<String> unidentified = new ArrayList<>();
+
+        /**
+         * Why no configuration could be identified at all, or <code>null</code> when the search
+         * ran. Nothing is put back when this is set: without the deleted base's configurations
+         * the guard cannot tell which bindings must stay removed.
+         */
+        String searchFailed;
+
+        /** @return a search that excludes nothing, for the writes that delete no application */
+        static DeletedBaseConfigurations none()
+        {
+            return new DeletedBaseConfigurations();
+        }
+
+        /** @return what the answer says about the search itself, or <code>null</code> when clean */
+        String describeSearch()
+        {
+            if (searchFailed != null)
+            {
+                return searchFailed;
+            }
+            if (unidentified.isEmpty())
+            {
+                return null;
+            }
+            return "could not read these launch configurations, so they were restored as if " //$NON-NLS-1$
+                + "they did not belong to the deleted infobase: " + String.join(", ", unidentified); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Where the guard reads the launch configurations, the applications and the projects from.
+     * The product resolves them through {@link Activator}; a test substitutes its own.
+     */
+    interface LaunchEnvironment
+    {
+        /** @return Eclipse's launch manager, or <code>null</code> when the debug plugin is down */
+        ILaunchManager launchManager();
+
+        /** @return EDT's application manager, or <code>null</code> when it is unavailable */
+        IApplicationManager applicationManager();
+
+        /** @param name a project name; @return the project, or <code>null</code> when unknown */
+        IProject resolveProject(String name);
+    }
+
+    /** What the guard reads in the product. */
+    private static final LaunchEnvironment PRODUCT = new LaunchEnvironment()
+    {
+        @Override
+        public ILaunchManager launchManager()
+        {
+            return LaunchConfigAccess.getLaunchManager();
+        }
+
+        @Override
+        public IApplicationManager applicationManager()
+        {
+            Activator activator = Activator.getDefault();
+            return activator == null ? null : activator.getApplicationManager();
+        }
+
+        @Override
+        public IProject resolveProject(String name)
+        {
+            return ProjectResolver.resolve(name);
+        }
+    };
+
+    static LaunchIds snapshotLaunchApplicationIds(LaunchEnvironment environment)
+    {
+        ILaunchManager manager = environment.launchManager();
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(manager);
-        Map<String, String> snapshot = access == null ? null : LaunchApplicationIds.snapshot(access);
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot =
+            access == null ? null : LaunchApplicationIds.snapshot(access);
         return new LaunchIds(manager, access, snapshot);
     }
 
-    private static String restoreLaunchApplicationIds(LaunchIds launchIds,
-        Set<String> excludedConfigurations, String operation)
+    /**
+     * Puts the launch configurations' application ids back after the infobase-list write and
+     * composes what the operation answer says about it.
+     *
+     * @param launchIds what the guard captured before the write
+     * @param deleted what the search established about the deleted base's configurations
+     * @param operation the tool name, for the log
+     * @return the sentence for the answer, or <code>null</code> when there is nothing to say
+     */
+    static String restoreLaunchApplicationIds(LaunchIds launchIds,
+        DeletedBaseConfigurations deleted, String operation)
     {
-        if (launchIds.access == null || launchIds.snapshot == null)
+        String search = deleted.describeSearch();
+        if (deleted.searchFailed != null)
         {
-            return null;
+            Activator.logWarning(operation + ": nothing was restored - " + deleted.searchFailed); //$NON-NLS-1$
+            return search;
         }
+        if (launchIds == null || launchIds.access == null || launchIds.snapshot == null)
+        {
+            return search;
+        }
+        String report;
         try
         {
-            LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(
-                launchIds.access, launchIds.snapshot, excludedConfigurations);
-            return report.isQuiet() ? null : report.describe();
+            LaunchApplicationIds.RestoreReport restored = LaunchApplicationIds.restore(
+                launchIds.access, launchIds.snapshot, deleted.mementos);
+            report = restored.isQuiet() ? null : restored.describe();
         }
         catch (Throwable e)
         {
-            Activator.logWarning(operation + ": the launch configurations' application ids were not restored: " //$NON-NLS-1$
-                + msg(e));
-            return null;
+            // The guard itself failed: the ids are where the write left them, and the caller is
+            // told rather than handed silence.
+            Activator.logWarning(operation + ": the launch configurations' application ids were not " //$NON-NLS-1$
+                + "restored: " + msg(e)); //$NON-NLS-1$
+            report = "the launch configurations' application ids were not restored: " + msg(e); //$NON-NLS-1$
         }
+        if (report == null)
+        {
+            return search;
+        }
+        return search == null ? report : report + "; " + search; //$NON-NLS-1$
     }
 
-    /** Finds precisely the launch configurations whose application belongs to the deleted base. */
-    private static Set<String> configurationsForInfobase(ILaunchManager launchManager,
-        IApplicationManager applicationManager, InfobaseReference infobase)
+    /**
+     * Finds precisely the launch configurations whose application belongs to the deleted base.
+     * <p>
+     * Each configuration is read on its own: one unreadable {@code .launch} file names itself in
+     * the answer and leaves the search running, instead of costing every other configuration its
+     * exclusion. When nothing can be identified at all - no application manager, or no launch
+     * configuration list - the answer says so and the guard puts nothing back.
+     * </p>
+     *
+     * @param launchIds what the guard captured before the write
+     * @param environment where the applications and projects are read from
+     * @param infobase the infobase that is being deleted
+     * @return the configurations to exclude, and what the search could not establish
+     */
+    static DeletedBaseConfigurations deletedBaseConfigurations(LaunchIds launchIds,
+        LaunchEnvironment environment, InfobaseReference infobase)
     {
-        Set<String> names = new LinkedHashSet<>();
-        if (launchManager == null || applicationManager == null)
+        DeletedBaseConfigurations found = DeletedBaseConfigurations.none();
+        if (launchIds == null || launchIds.manager == null)
         {
-            return names;
+            return found;
         }
+        IApplicationManager applicationManager = environment.applicationManager();
+        if (applicationManager == null)
+        {
+            found.searchFailed = "nothing was restored: the launch configurations of the deleted " //$NON-NLS-1$
+                + "infobase could not be identified, as the application manager is unavailable"; //$NON-NLS-1$
+            return found;
+        }
+        ILaunchConfiguration[] configurations;
         try
         {
-            for (ILaunchConfiguration configuration : launchManager.getLaunchConfigurations())
+            configurations = launchIds.manager.getLaunchConfigurations();
+        }
+        catch (Throwable e)
+        {
+            found.searchFailed = "nothing was restored: the launch configurations could not be " //$NON-NLS-1$
+                + "listed (" + msg(e) + "), so the ones of the deleted infobase could not be identified"; //$NON-NLS-1$ //$NON-NLS-2$
+            return found;
+        }
+        for (ILaunchConfiguration configuration : configurations)
+        {
+            try
             {
+                String memento = configuration.getMemento();
                 String projectName = configuration.getAttribute(LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
                 String applicationId = configuration.getAttribute(
                     LaunchConfigAccess.ATTR_APPLICATION_ID, ""); //$NON-NLS-1$
-                IProject project = projectName.isEmpty() ? null : ProjectResolver.resolve(projectName);
+                IProject project = projectName.isEmpty() ? null : environment.resolveProject(projectName);
                 if (project == null || applicationId.isEmpty())
                 {
                     continue;
@@ -426,18 +570,35 @@ public final class BmInfobaseLifecycleHelper
                 IApplication application = applicationManager.getApplication(project, applicationId)
                     .orElse(null);
                 if (application instanceof IInfobaseApplication
-                    && sameInfobase(((IInfobaseApplication)application).getInfobase(), infobase))
+                    && sameInfobase(((IInfobaseApplication)application).getInfobase(), infobase)
+                    && memento != null && !memento.isEmpty())
                 {
-                    names.add(configuration.getName());
+                    found.mementos.add(memento);
                 }
             }
+            catch (Throwable e)
+            {
+                String name = nameOf(configuration);
+                found.unidentified.add(name);
+                Activator.logWarning("delete_infobase: the launch configuration '" + name //$NON-NLS-1$
+                    + "' could not be read and was not excluded from the restore: " + msg(e)); //$NON-NLS-1$
+            }
+        }
+        return found;
+    }
+
+    /** The display name of a configuration, or a placeholder when even that cannot be read. */
+    private static String nameOf(ILaunchConfiguration configuration)
+    {
+        try
+        {
+            String name = configuration.getName();
+            return name == null ? "(unnamed)" : name; //$NON-NLS-1$
         }
         catch (Throwable e)
         {
-            Activator.logWarning("delete_infobase: launch configurations of the deleted infobase " //$NON-NLS-1$
-                + "were not identified: " + msg(e)); //$NON-NLS-1$
+            return "(unnamed)"; //$NON-NLS-1$
         }
-        return names;
     }
 
     private static boolean sameInfobase(InfobaseReference left, InfobaseReference right)

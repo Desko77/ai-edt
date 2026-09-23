@@ -170,7 +170,7 @@ public final class BmInfobaseCredentialsHelper
         // Remember the ids before the write and put them back after it, failure included.
         LaunchApplicationIds.Access launches =
             LaunchConfigAccess.applicationIdAccess(LaunchConfigAccess.getLaunchManager());
-        Map<String, String> applicationIds = launches == null ? null
+        Map<String, LaunchApplicationIds.SnapshotEntry> applicationIds = launches == null ? null
             : LaunchApplicationIds.snapshot(launches);
         try
         {
@@ -334,7 +334,7 @@ public final class BmInfobaseCredentialsHelper
      * @param r the result the report lands in
      */
     private static void restoreApplicationIds(LaunchApplicationIds.Access launches,
-        Map<String, String> snapshot, CredentialResult r)
+        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot, CredentialResult r)
     {
         if (launches == null || snapshot == null)
         {
@@ -350,8 +350,12 @@ public final class BmInfobaseCredentialsHelper
         }
         catch (Throwable e)
         {
+            // The guard itself failed: the ids are where the write left them, and the caller is
+            // told rather than handed silence.
             Activator.logWarning("set_infobase_credentials: the launch configurations' application " //$NON-NLS-1$
                 + "ids were not restored: " + msg(e)); //$NON-NLS-1$
+            r.launchApplicationIds = "the launch configurations' application ids were not restored: " //$NON-NLS-1$
+                + msg(e);
         }
     }
 
