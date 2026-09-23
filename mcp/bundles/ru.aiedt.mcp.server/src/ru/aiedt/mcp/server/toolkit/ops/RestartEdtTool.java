@@ -53,6 +53,19 @@ public class RestartEdtTool implements IMcpTool
         java.util.Collections.unmodifiableList(
             java.util.Arrays.asList("-server", "-client")); //$NON-NLS-1$ //$NON-NLS-2$
 
+    /**
+     * The option the Eclipse launcher puts in front of its startup jar path in
+     * {@code eclipse.vmargs}.
+     * <p>
+     * The launcher builds the property as the VM arguments plus {@code -jar <startup jar>} at
+     * the end, so the pair stands in every instance's property. It is the launcher's own
+     * argument, not a JVM option a user passes to {@code -vmargs}: carrying the pair into the
+     * next command grows the command by one pair per relaunch, because the next launcher appends
+     * its own. The pair is therefore dropped, together with the jar path that follows it.
+     * </p>
+     */
+    private static final String LAUNCHER_STARTUP_JAR_OPTION = "-jar"; //$NON-NLS-1$
+
     /** The launcher {@code .ini} VM block that produced this process, captured at activation. */
     private static volatile java.util.List<String> startupIniVmArguments;
 
@@ -466,7 +479,9 @@ public class RestartEdtTool implements IMcpTool
      * arguments the launcher keeps for itself, because both forms are recorded by real instances.
      * An argument of the caller's own is kept - only a run that reproduces the whole block, line
      * for line, is read as another copy of it, and an argument equal to a single line of the block
-     * does not by itself reproduce one.
+     * does not by itself reproduce one. The launcher's own {@code -jar <startup jar>} tail is
+     * dropped as well, pair and path together: it is not a JVM option a user passes to
+     * {@code -vmargs}, and carrying it over would grow the command by one pair per relaunch.
      * </p>
      *
      * @param inputArguments the ordered arguments recorded in {@code eclipse.vmargs}.
@@ -492,8 +507,17 @@ public class RestartEdtTool implements IMcpTool
             }
             if (blockLength == 0)
             {
-                extras.add(inputArguments.get(i));
-                i++;
+                if (LAUNCHER_STARTUP_JAR_OPTION.equals(inputArguments.get(i)))
+                {
+                    // The pair stands where the launcher appended it; a dangling "-jar" with no
+                    // path after it is dropped on its own.
+                    i += Math.min(2, inputArguments.size() - i);
+                }
+                else
+                {
+                    extras.add(inputArguments.get(i));
+                    i++;
+                }
             }
             else
             {
