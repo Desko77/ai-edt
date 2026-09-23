@@ -7,20 +7,36 @@
 package ru.aiedt.mcp.server.support;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFileState;
 import org.eclipse.core.resources.IProject;
-import org.eclipse.core.resources.IResource;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.TreeWalk;
 
 import ru.aiedt.mcp.server.Activator;
 
 /**
- * Utility class for getting previous file version from VCS.
- * Tries EGit first via reflection, then falls back to Eclipse Local History.
+ * The previous revision of a file: git HEAD first, Eclipse's local history second.
+ *
+ * <p>Two questions, kept apart on purpose. Which repository the project lives in and where the file
+ * sits inside it is {@link GitRepositoryAccess}'s answer; reading the file out of HEAD is
+ * {@link #headRevision}, which takes a repository and a path and nothing from the workspace, so it
+ * can be exercised on a temporary repository. Both used to be one reflective walk through EGit,
+ * which answered {@code null} to every failure alike - absent classes, an unshared project, a file
+ * never committed, a read that threw - and a caller could not tell a new file from one nobody could
+ * read. {@link PreviousRevision} carries that answer instead.</p>
  */
 public final class GitDiffUtils
 {
@@ -30,8 +46,25 @@ public final class GitDiffUtils
     }
 
     /**
-     * Gets the previous version of a file from VCS.
-     * Tries EGit (JGit) first via reflection, falls back to Eclipse Local History.
+     * The previous revision of a file: HEAD of the repository that holds it, else local history.
+     *
+     * @param file the workspace file
+     * @param project the containing project
+     * @return the revision and what came of looking for it; never {@code null}
+     */
+    public static PreviousRevision previousRevision(IFile file, IProject project)
+    {
+        PreviousRevision fromGit = fromGitHead(file, project);
+        if (fromGit.isFound())
+        {
+            return fromGit;
+        }
+        return fromLocalHistory(file, fromGit);
+    }
+
+    /**
+     * Gets the previous version of a file from VCS as text.
+     * Tries git HEAD first, falls back to Eclipse Local History.
      *
      * @param file the workspace file
      * @param project the containing project
@@ -39,203 +72,157 @@ public final class GitDiffUtils
      */
     public static String getPreviousVersion(IFile file, IProject project)
     {
-        // Try EGit first
-        String result = getPreviousVersionViaEGit(file, project);
-        if (result != null)
-        {
-            return result;
-        }
-
-        // Fallback to Local History
-        return getPreviousVersionViaLocalHistory(file);
+        return previousRevision(file, project).text();
     }
 
     /**
-     * Gets previous version via EGit (JGit) using reflection.
-     * All JGit/EGit classes are loaded via reflection to avoid hard dependency.
+     * Reads a path out of HEAD. A repository and a work-tree-relative path are the whole input, so
+     * this answers for any repository, including a temporary one.
      *
-     * @param file the workspace file
-     * @param project the containing project
-     * @return previous file content, or {@code null} if EGit is not available or file has no VCS history
+     * @param repository the repository to read
+     * @param repoRelativePath the path inside the work tree, with forward slashes
+     * @return the blob as that revision holds it, or the outcome that left nothing to read
      */
-    @SuppressWarnings("resource")
-    private static String getPreviousVersionViaEGit(IFile file, IProject project)
+    public static PreviousRevision headRevision(Repository repository, String repoRelativePath)
     {
-        Object revWalk = null;
-        Object treeWalk = null;
-
-        try
+        try (RevWalk walk = new RevWalk(repository))
         {
-            // RepositoryMapping.getMapping(project)
-            Class<?> mappingClass = Class.forName("org.eclipse.egit.core.project.RepositoryMapping"); //$NON-NLS-1$
-            Object mapping = mappingClass.getMethod("getMapping", IProject.class) //$NON-NLS-1$
-                .invoke(null, project);
-            if (mapping == null)
+            ObjectId head = repository.resolve(Constants.HEAD);
+            if (head == null)
             {
-                return null;
+                return PreviousRevision.missing(PreviousRevision.Outcome.NO_HEAD,
+                    "HEAD resolves to nothing"); //$NON-NLS-1$
             }
-
-            // mapping.getRepository()
-            Object repo = mapping.getClass().getMethod("getRepository").invoke(mapping); //$NON-NLS-1$
-            if (repo == null)
+            RevTree tree = walk.parseCommit(head).getTree();
+            try (TreeWalk treeWalk = TreeWalk.forPath(repository, repoRelativePath, tree))
             {
-                return null;
+                if (treeWalk == null)
+                {
+                    return PreviousRevision.missing(PreviousRevision.Outcome.NOT_IN_HEAD,
+                        repoRelativePath + " is not in HEAD"); //$NON-NLS-1$
+                }
+                byte[] bytes = repository.open(treeWalk.getObjectId(0)).getBytes();
+                return PreviousRevision.found(bytes, PreviousRevision.Origin.GIT_HEAD,
+                    repoRelativePath + " at HEAD"); //$NON-NLS-1$
             }
-
-            // repo.resolve("HEAD")
-            Object headId = repo.getClass().getMethod("resolve", String.class) //$NON-NLS-1$
-                .invoke(repo, "HEAD"); //$NON-NLS-1$
-            if (headId == null)
-            {
-                return null;
-            }
-
-            // RevWalk revWalk = new RevWalk(repo)
-            Class<?> revWalkClass = Class.forName("org.eclipse.jgit.revwalk.RevWalk"); //$NON-NLS-1$
-            Class<?> repoClass = Class.forName("org.eclipse.jgit.lib.Repository"); //$NON-NLS-1$
-            revWalk = revWalkClass.getConstructor(repoClass).newInstance(repo);
-
-            // revWalk.parseCommit(headId)
-            Class<?> anyObjectIdClass = Class.forName("org.eclipse.jgit.lib.AnyObjectId"); //$NON-NLS-1$
-            Object commit = revWalk.getClass().getMethod("parseCommit", anyObjectIdClass) //$NON-NLS-1$
-                .invoke(revWalk, headId);
-
-            // commit.getTree()
-            Object tree = commit.getClass().getMethod("getTree").invoke(commit); //$NON-NLS-1$
-
-            // Get repo-relative path
-            String relativePath = getRepoRelativePath(file, mapping);
-            if (relativePath == null)
-            {
-                return null;
-            }
-
-            // TreeWalk.forPath(repo, relativePath, tree)
-            Class<?> treeWalkClass = Class.forName("org.eclipse.jgit.treewalk.TreeWalk"); //$NON-NLS-1$
-            Class<?> revTreeClass = Class.forName("org.eclipse.jgit.revwalk.RevTree"); //$NON-NLS-1$
-            treeWalk = treeWalkClass.getMethod("forPath", repoClass, String.class, revTreeClass) //$NON-NLS-1$
-                .invoke(null, repo, relativePath, tree);
-            if (treeWalk == null)
-            {
-                return null;
-            }
-
-            // treeWalk.getObjectId(0)
-            Object objectId = treeWalk.getClass().getMethod("getObjectId", int.class) //$NON-NLS-1$
-                .invoke(treeWalk, 0);
-
-            // repo.newObjectReader().open(objectId).getBytes()
-            Object objectReader = repo.getClass().getMethod("newObjectReader").invoke(repo); //$NON-NLS-1$
-            Object objectLoader = objectReader.getClass().getMethod("open", anyObjectIdClass) //$NON-NLS-1$
-                .invoke(objectReader, objectId);
-            byte[] bytes = (byte[])objectLoader.getClass().getMethod("getBytes").invoke(objectLoader); //$NON-NLS-1$
-
-            String content = new String(bytes, StandardCharsets.UTF_8);
-
-            // Strip BOM if present
-            if (content.length() > 0 && content.charAt(0) == '\uFEFF')
-            {
-                content = content.substring(1);
-            }
-
-            return content;
         }
-        catch (Exception e)
+        catch (IOException | RuntimeException e)
         {
-            Activator.logInfo("EGit not available or failed: " + e.getMessage()); //$NON-NLS-1$
-            return null;
-        }
-        finally
-        {
-            // Close RevWalk and TreeWalk
-            closeReflective(revWalk);
-            closeReflective(treeWalk);
+            return PreviousRevision.missing(PreviousRevision.Outcome.READ_ERROR, describe(e));
         }
     }
 
     /**
-     * Gets repo-relative path for a file via EGit mapping reflection.
+     * Reads the file out of HEAD of the repository that holds the project.
      */
-    private static String getRepoRelativePath(IFile file, Object mapping)
+    private static PreviousRevision fromGitHead(IFile file, IProject project)
     {
-        try
+        try (GitRepositoryAccess.Resolved resolved = GitRepositoryAccess.of(project))
         {
-            Object result = mapping.getClass()
-                .getMethod("getRepoRelativePath", IResource.class) //$NON-NLS-1$
-                .invoke(mapping, file);
-            return result != null ? result.toString() : null;
+            if (resolved.repository == null)
+            {
+                return PreviousRevision.missing(PreviousRevision.Outcome.NOT_UNDER_GIT,
+                    resolved.error);
+            }
+            String path = repoRelativePath(file, resolved.repository);
+            if (path == null)
+            {
+                return PreviousRevision.missing(PreviousRevision.Outcome.NOT_UNDER_GIT,
+                    "the file is outside the work tree of " //$NON-NLS-1$
+                        + resolved.repository.getWorkTree().getAbsolutePath());
+            }
+            return headRevision(resolved.repository, path);
         }
-        catch (Exception e)
+        catch (LinkageError e)
+        {
+            // The git classes are absent from this installation: nothing to read with, and the
+            // outcome says so rather than reporting a new file.
+            return PreviousRevision.missing(PreviousRevision.Outcome.NO_EGIT, describe(e));
+        }
+        catch (RuntimeException e)
+        {
+            return PreviousRevision.missing(PreviousRevision.Outcome.READ_ERROR, describe(e));
+        }
+    }
+
+    /**
+     * Where the file sits inside the repository's work tree, or {@code null} when it is not under
+     * it - a linked resource, or a project location beside the repository rather than inside it.
+     */
+    private static String repoRelativePath(IFile file, Repository repository)
+    {
+        File workTree = repository.getWorkTree();
+        if (workTree == null || file.getLocation() == null)
         {
             return null;
         }
+        Path root = workTree.toPath().toAbsolutePath().normalize();
+        Path target = file.getLocation().toPath().toAbsolutePath().normalize();
+        if (!target.startsWith(root))
+        {
+            return null;
+        }
+        return root.relativize(target).toString().replace(File.separatorChar, '/');
     }
 
     /**
-     * Gets previous version from Eclipse Local History.
-     *
-     * @param file the workspace file
-     * @return previous file content, or {@code null} if no local history
+     * The local history of the file, when git gave nothing to compare with. The reason git had
+     * nothing is carried into the answer: a comparison against local history is a weaker one, and
+     * the caller can see why it was the one made.
      */
-    private static String getPreviousVersionViaLocalHistory(IFile file)
+    private static PreviousRevision fromLocalHistory(IFile file, PreviousRevision gitOutcome)
     {
         try
         {
             IFileState[] history = file.getHistory(null);
             if (history == null || history.length == 0)
             {
-                return null;
+                return gitOutcome;
             }
-
-            try (InputStream is = history[0].getContents();
-                 BufferedReader reader = new BufferedReader(
-                     new InputStreamReader(is, StandardCharsets.UTF_8)))
-            {
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null)
-                {
-                    if (sb.length() > 0)
-                    {
-                        sb.append("\n"); //$NON-NLS-1$
-                    }
-                    sb.append(line);
-                }
-
-                String content = sb.toString();
-
-                // Strip BOM if present
-                if (content.length() > 0 && content.charAt(0) == '\uFEFF')
-                {
-                    content = content.substring(1);
-                }
-
-                return content;
-            }
+            String text = readHistoryText(history[0]);
+            return PreviousRevision.found(text.getBytes(StandardCharsets.UTF_8),
+                PreviousRevision.Origin.LOCAL_HISTORY,
+                "git gave " + gitOutcome.outcome() + ": " + gitOutcome.note()); //$NON-NLS-1$
         }
         catch (Exception e)
         {
             Activator.logInfo("Local History not available: " + e.getMessage()); //$NON-NLS-1$
-            return null;
+            return gitOutcome;
         }
     }
 
     /**
-     * Closes an object via reflection (for JGit RevWalk/TreeWalk).
+     * The text of one local-history state, line by line with no terminators - the way this path has
+     * always read it, which is why it is read as lines here rather than as bytes.
      */
-    private static void closeReflective(Object obj)
+    private static String readHistoryText(IFileState state) throws IOException, CoreException
     {
-        if (obj == null)
+        try (InputStream is = state.getContents();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is,
+                StandardCharsets.UTF_8)))
         {
-            return;
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null)
+            {
+                if (sb.length() > 0)
+                {
+                    sb.append("\n"); //$NON-NLS-1$
+                }
+                sb.append(line);
+            }
+            // A leading byte order mark is dropped here as well as in PreviousRevision.text(), so
+            // the bytes this path hands on are the module's own text.
+            return sb.length() > 0 && sb.codePointAt(0) == 0xFEFF ? sb.substring(1) : sb.toString();
         }
-        try
-        {
-            obj.getClass().getMethod("close").invoke(obj); //$NON-NLS-1$
-        }
-        catch (Exception e)
-        {
-            // Ignore close errors
-        }
+    }
+
+    /**
+     * What to say about a failure: the message when there is one, the type otherwise.
+     */
+    private static String describe(Throwable e)
+    {
+        String message = e.getMessage();
+        return message == null || message.isEmpty() ? e.getClass().getName() : message;
     }
 }
