@@ -95,22 +95,8 @@ public class LaunchTerminator implements IMcpTool
             ILaunchManager mgr = debugPlugin.getLaunchManager();
 
             // Collect active EDT launches (appId != null, not terminated).
-            List<ILaunch> active = new ArrayList<>();
             List<String> activeIds = new ArrayList<>();
-            for (ILaunch launch : mgr.getLaunches())
-            {
-                if (launch.isTerminated())
-                {
-                    continue;
-                }
-                String appId = DebugSessionBook.findApplicationIdFor(launch);
-                if (appId == null)
-                {
-                    continue; // not an EDT launch - never touch
-                }
-                active.add(launch);
-                activeIds.add(appId);
-            }
+            List<ILaunch> active = activeEdtLaunches(mgr, activeIds);
 
             if (active.isEmpty())
             {
@@ -209,5 +195,38 @@ public class LaunchTerminator implements IMcpTool
             Activator.logError("Error: the launch could not be terminated", e); //$NON-NLS-1$
             return ToolResult.error("Error: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The launches that count as active EDT launches: still running and answering to an
+     * application id. The id comes from the launch's configuration alone
+     * ({@link DebugSessionBook#findApplicationIdFor(ILaunch)}), so a {@code start_client} launch
+     * - run mode, no debug target - is found the same way a debug session is. A launch whose
+     * configuration lost the attribute answers <code>null</code> and is left out: that is what a
+     * save of the infobase list does to every launch configuration, until
+     * {@link ru.aiedt.mcp.server.support.LaunchApplicationIds} puts the attribute back.
+     *
+     * @param mgr the launch manager
+     * @param idsOut takes the application id of every returned launch, in the same order
+     * @return the active EDT launches, in the manager's order; never <code>null</code>
+     */
+    static List<ILaunch> activeEdtLaunches(ILaunchManager mgr, List<String> idsOut)
+    {
+        List<ILaunch> active = new ArrayList<>();
+        for (ILaunch launch : mgr.getLaunches())
+        {
+            if (launch.isTerminated())
+            {
+                continue;
+            }
+            String appId = DebugSessionBook.findApplicationIdFor(launch);
+            if (appId == null)
+            {
+                continue; // not an EDT launch - never touch
+            }
+            active.add(launch);
+            idsOut.add(appId);
+        }
+        return active;
     }
 }

@@ -89,6 +89,11 @@ public class InfobaseCreator implements IMcpTool
         BmInfobaseLifecycleHelper.CreateResult r =
             BmInfobaseLifecycleHelper.createInfobase(name, path, platform, templateCf, projectName);
 
+        return response(name, r);
+    }
+
+    static String response(String name, BmInfobaseLifecycleHelper.CreateResult r)
+    {
         if (!r.ok)
         {
             ToolResult err = ToolResult.error(r.error)
@@ -97,6 +102,10 @@ public class InfobaseCreator implements IMcpTool
             if (r.failureKind != null)
             {
                 err.put(r.failureKind, Boolean.TRUE);
+            }
+            if (r.launchApplicationIds != null)
+            {
+                err.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
             }
             return err.toJson();
         }
@@ -117,6 +126,10 @@ public class InfobaseCreator implements IMcpTool
         if (r.associateWarning != null)
         {
             ok.put("associateWarning", r.associateWarning); //$NON-NLS-1$
+        }
+        if (r.launchApplicationIds != null)
+        {
+            ok.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
         }
         return ok.toJson();
     }
