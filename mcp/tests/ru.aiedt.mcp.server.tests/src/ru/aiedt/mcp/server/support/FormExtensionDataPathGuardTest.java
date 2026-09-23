@@ -541,18 +541,26 @@ public class FormExtensionDataPathGuardTest
      * rule the catch blocks consult is checked here - the operations themselves need a project and a
      * BM transaction, so the operational test lives on the stand.
      * </p>
+     * <p>
+     * The refusal the rule is tried on comes from the real write path: {@code assign} only reports
+     * the refusal in its outcome, and {@code BmFormHelper} throws it out of the transaction.
+     * </p>
      */
     @Test
-    public void theRefusalRuleLetsARefusalThroughAnyCatchBlock()
+    public void theRefusalRuleLetsARefusalThroughAnyCatchBlock() throws Exception
     {
+        BmFormHelper helper = new BmFormHelper();
+        assertTrue(helper.init());
         Form form = extensionForm("Объект"); //$NON-NLS-1$
+        FormField field = fieldIn(form);
+        helper.formForTest(form);
         RecordingPort port = new RecordingPort();
         port.borrowFails = true;
         FormExtensionDataPathGuard.installPort(port);
         FormExtensionDataPathGuard.RefusalException refusal;
         try
         {
-            FormExtensionDataPathGuard.assign(form, path(PATH), PATH, ITEM);
+            helper.setDataPath(field, PATH);
             throw new AssertionError("the fixture must produce a refusal"); //$NON-NLS-1$
         }
         catch (FormExtensionDataPathGuard.RefusalException refused)
