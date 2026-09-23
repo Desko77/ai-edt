@@ -215,10 +215,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * read. A client that cannot see the two arguments starts the managed client every time.
      * </p>
      * <p>
-     * And by 670 on infobase_admin for connectionString and makeDefault: a caller registering an
+     * And by 330 on infobase_admin for connectionString and makeDefault: a caller registering an
      * existing server infobase has no way to name the server and the infobase without the string,
      * and no way to say whether the new application becomes the project's default without the
-     * flag - both are the whole call.
+     * flag - both are the whole call. Their rules live in the operation help.
      * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
@@ -238,9 +238,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        // Raised by 670 for connectionString and makeDefault: registering an existing server
+        // Raised by 330 for connectionString and makeDefault: registering an existing server
         // infobase is named by the string, and the flag says whether it becomes the default.
-        PROSE.put("infobase_admin", Integer.valueOf(5570));
+        PROSE.put("infobase_admin", Integer.valueOf(5230));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -396,10 +396,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * with the seventeenth: 89293.
      * </p>
      * <p>
-     * And a nineteenth, by 517, for connectionString and makeDefault on infobase_admin: an
+     * And a nineteenth, by 177, for connectionString and makeDefault on infobase_admin: an
      * existing server infobase is named by the connection string and the flag says whether it
-     * becomes the project's default application. Together with the eighteenth: 89810.
+     * becomes the project's default application. Together with the eighteenth: 89470.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 89810;
+    private static final int DOCUMENT_PROSE = 89470;
 }

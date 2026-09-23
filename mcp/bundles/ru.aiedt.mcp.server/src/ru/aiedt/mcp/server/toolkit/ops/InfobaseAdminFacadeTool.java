@@ -230,22 +230,17 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "Application (infobase) id from get_applications.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "Infobase name. Required for create_infobase (the new infobase's name), " //$NON-NLS-1$
-                    + "delete_infobase (the infobase to remove) and register_infobase for a " //$NON-NLS-1$
-                    + "SERVER infobase; for a file one register_infobase defaults it to the " //$NON-NLS-1$
-                    + "directory name.") //$NON-NLS-1$
+                    + "delete_infobase (the infobase to remove) and register_infobase of a " //$NON-NLS-1$
+                    + "server infobase.") //$NON-NLS-1$
             .stringProperty("path", //$NON-NLS-1$
                 "create_infobase: absolute path to the infobase directory (required for that " //$NON-NLS-1$
-                    + "operation) - an empty/new directory for the .1CD. register_infobase: " //$NON-NLS-1$
-                    + "absolute path of an EXISTING file infobase directory (one of path / " //$NON-NLS-1$
-                    + "connectionString).") //$NON-NLS-1$
+                    + "operation) - an empty/new directory for the .1CD. register_infobase: an " //$NON-NLS-1$
+                    + "existing file infobase directory.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
-                "register_infobase: an existing server infobase address, Srvr=<server>;Ref=<infobase> " //$NON-NLS-1$
-                    + "(one of path / connectionString). A user or password in it (Usr, Pwd) is " //$NON-NLS-1$
-                    + "refused - store those with set_infobase_credentials.") //$NON-NLS-1$
+                "register_infobase: a server infobase address, Srvr=<server>;Ref=<infobase>.") //$NON-NLS-1$
             .booleanProperty("makeDefault", //$NON-NLS-1$
-                "register_infobase: make the application the project's default (default true " //$NON-NLS-1$
-                    + "when the project has no default application, else false). The answer " //$NON-NLS-1$
-                    + "names the default that stood before.") //$NON-NLS-1$
+                "register_infobase: make the application the project's default (omitted: only " //$NON-NLS-1$
+                    + "when it has none).") //$NON-NLS-1$
             .stringProperty("platform", //$NON-NLS-1$
                 "create_infobase: 1C:Enterprise platform version (optional, blank = latest " //$NON-NLS-1$
                     + "available).") //$NON-NLS-1$
@@ -478,6 +473,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("- **register_infobase** - register an EXISTING infobase (file or " //$NON-NLS-1$
                 + "server) in EDT's list and associate it to a project in one call; a " //$NON-NLS-1$
                 + "duplicate address is reused, a failed binding rolls the added entry back. " //$NON-NLS-1$
+                + "A file infobase is named after its directory unless name is given. " //$NON-NLS-1$
                 + "MUTATING.\n"); //$NON-NLS-1$
             sb.append("- **delete_infobase** - remove an infobase from EDT's list, optionally " //$NON-NLS-1$
                 + "its .1CD on disk. MUTATING, DESTRUCTIVE with deleteContent=true.\n"); //$NON-NLS-1$

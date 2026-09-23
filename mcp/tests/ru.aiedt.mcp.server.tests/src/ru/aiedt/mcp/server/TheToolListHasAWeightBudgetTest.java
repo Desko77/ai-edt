@@ -202,10 +202,10 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("code_search", Integer.valueOf(7248)); //$NON-NLS-1$
         // Raised by 787 for runMode and clientType on start_client: a configuration on ordinary
         // forms starts under the thick client in the ordinary run mode, and the caller names both.
-        // Raised by 918 for register_infobase: an existing infobase is registered in EDT's list
+        // Raised by 578 for register_infobase: an existing infobase is registered in EDT's list
         // and bound to the project in one call, and the facade's schema is where a client learns
         // the operation and its two new arguments exist.
-        BUDGETS.put("infobase_admin", Integer.valueOf(8860)); //$NON-NLS-1$
+        BUDGETS.put("infobase_admin", Integer.valueOf(8520)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
         BUDGETS.put("vanessa", Integer.valueOf(5405)); //$NON-NLS-1$
