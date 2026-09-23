@@ -357,7 +357,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         Thread.currentThread().interrupt();
         try
         {
-            BmInfobaseExtensionHelper.invokeUnderRebuildLock(lock, method, new Object());
+            BmInfobaseExtensionHelper.invokeUnderRebuildLock(ctx, method, new Object());
             fail("an interrupted worker must not run the dump-info-only call"); //$NON-NLS-1$
         }
         catch (InterruptedException expected)
@@ -372,6 +372,73 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
         assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
     }
+
+    /**
+     * A launch boundary the abandonment claimed first is a run that never starts, on the full
+     * dump path: the worker acquires the lock, finds the boundary taken, and exits with
+     * InterruptedException before the launcher is called.
+     */
+    @Test
+    public void aBoundaryTheAbandonmentClaimedFirstStartsNoFullDump() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+        ctx.launchClaim.set(true); // the abandonment crossed the boundary first
+
+        try
+        {
+            BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            fail("a run whose boundary the abandonment claimed starts no full dump"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the boundary refusal ends the run before the launcher
+        }
+
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * The same refusal on the dump-info-only path: a reflected launcher call whose boundary the
+     * abandonment claimed first is never invoked, and the lock comes back with the refusal.
+     */
+    @Test
+    public void aBoundaryTheAbandonmentClaimedFirstStartsNoDumpInfoOnlyCall() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launchClaim.set(true);
+        Object target = new Object()
+        {
+            @SuppressWarnings("unused")
+            public void invoke()
+            {
+                order.add("invoked"); //$NON-NLS-1$
+            }
+        };
+        java.lang.reflect.Method method = target.getClass().getDeclaredMethod("invoke"); //$NON-NLS-1$
+
+        try
+        {
+            BmInfobaseExtensionHelper.invokeUnderRebuildLock(ctx, method, target);
+            fail("a run whose boundary the abandonment claimed starts no dump-info-only call"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the boundary refusal ends the run before the method
+        }
+
+        assertFalse("the launcher was never called", order.contains("invoked")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
     /**
      * A launcher whose {@code exportFullXmlFromInfobase} records whether the lock was held while
      * it ran, and answers or throws as told.

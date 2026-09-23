@@ -14,6 +14,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,10 +25,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IThickClientLauncher;
 
 import ru.aiedt.mcp.server.support.DumpInfoRebuilder.Outcome;
 import ru.aiedt.mcp.server.support.DumpInfoRebuilder.RebuildIo;
@@ -850,6 +854,150 @@ public class TheRebuildRunsItsStepsInOrderTest
         {
             hold.countDown();
         }
+    }
+
+    /**
+     * An abandonment declared before the worker crossed the launch boundary starts no Designer
+     * and defers no cleanup: the boundary is claimed by the abandonment while the worker still
+     * waits for the per-infobase lock, so the run is answered as not running - there is nothing
+     * to wait for - and the launcher is never called.
+     */
+    @Test
+    public void anAbandonmentBeforeTheBoundaryStartsNoDesignerAndDefersNoCleanup() throws Exception
+    {
+        List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
+        ReentrantLock lock = new ReentrantLock();
+        BmInfobaseExtensionHelper.LauncherContext ctx =
+            new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        CountDownLatch gate = new CountDownLatch(1);
+        ctx.launcher = blockingFullDumpLauncher(order, gate);
+
+        lock.lock();
+        try
+        {
+            try
+            {
+                DumpInfoRebuilder.underTimeout("the Designer dump", 200L, //$NON-NLS-1$
+                    () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                        java.nio.file.Paths.get("dump")), //$NON-NLS-1$
+                    ctx.launchClaim);
+                fail("a run that outlasts its budget is abandoned"); //$NON-NLS-1$
+            }
+            catch (DumpInfoRebuilder.Abandoned abandoned)
+            {
+                assertFalse("a launch prevented at the boundary is waited for by nothing", //$NON-NLS-1$
+                    abandoned.processStillRunning());
+            }
+        }
+        finally
+        {
+            lock.unlock();
+            gate.countDown();
+        }
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+    }
+
+    /**
+     * The other order of the same crossing: the worker claims the boundary first - the launcher
+     * call is running - and the abandonment waits it out, running the cleanup only after that
+     * call returns on its own.
+     */
+    @Test
+    public void aBoundaryTheWorkerClaimedFirstIsWaitedOut() throws Exception
+    {
+        List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
+        ReentrantLock lock = new ReentrantLock();
+        BmInfobaseExtensionHelper.LauncherContext ctx =
+            new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        CountDownLatch gate = new CountDownLatch(1);
+        ctx.launcher = blockingFullDumpLauncher(order, gate);
+        AtomicBoolean cleaned = new AtomicBoolean(false);
+        CountDownLatch cleanedAt = new CountDownLatch(1);
+
+        try
+        {
+            DumpInfoRebuilder.underTimeout("the Designer dump", 200L, //$NON-NLS-1$
+                () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                    java.nio.file.Paths.get("dump")), //$NON-NLS-1$
+                ctx.launchClaim);
+            fail("a Designer that outlasts its budget is abandoned"); //$NON-NLS-1$
+        }
+        catch (DumpInfoRebuilder.Abandoned abandoned)
+        {
+            assertTrue("the launch the worker crossed into is running", //$NON-NLS-1$
+                abandoned.processStillRunning());
+            assertTrue("the launcher was called", order.contains("held")); //$NON-NLS-1$
+            abandoned.whenFinished(() -> {
+                cleaned.set(true);
+                cleanedAt.countDown();
+            });
+            assertFalse("the cleanup waits for the running call", cleaned.get()); //$NON-NLS-1$
+        }
+        finally
+        {
+            gate.countDown();
+        }
+        assertTrue("the cleanup runs once the call has returned", //$NON-NLS-1$
+            cleanedAt.await(5, TimeUnit.SECONDS));
+        assertTrue(cleaned.get());
+    }
+
+    /**
+     * The cleanup side of a prevented launch: an abandonment whose run started no Designer is
+     * settled in the rebuild's own steps - reconnect, delete, release - with nothing deferred.
+     */
+    @Test
+    public void anAbandonedRunThatStartedNoDesignerCleansUpAtOnce() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new DumpInfoRebuilder.Abandoned("the Designer dump did not finish within 600s", //$NON-NLS-1$
+                false, null);
+        };
+
+        Outcome outcome = run(io);
+
+        assertFalse(outcome.designerStillRunning);
+        assertFalse(outcome.lockHeldForProcess);
+        assertNull(outcome.tempDirLeft);
+        assertOrder(outcome.sequence, "release", "work", "reconnect", "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertTrue("the temporary directory is deleted at once", io.asked.contains("deleteTempDir")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the claim is released at once", io.asked.contains("releaseLock")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(io.lockHeld);
+    }
+
+    /**
+     * A launcher whose {@code exportFullXmlFromInfobase} records that it runs and then waits for
+     * the gate, ignoring interrupts the way a spawned Designer process ignores the worker's own
+     * interrupt.
+     */
+    private static IThickClientLauncher blockingFullDumpLauncher(List<String> order,
+        CountDownLatch gate)
+    {
+        return (IThickClientLauncher)Proxy.newProxyInstance(
+            IThickClientLauncher.class.getClassLoader(),
+            new Class<?>[] { IThickClientLauncher.class }, (proxy, method, args) -> {
+                if (!method.getName().equals("exportFullXmlFromInfobase")) //$NON-NLS-1$
+                {
+                    return null;
+                }
+                order.add("held"); //$NON-NLS-1$
+                while (gate.getCount() > 0)
+                {
+                    try
+                    {
+                        gate.await();
+                    }
+                    catch (InterruptedException ignored)
+                    {
+                        Thread.interrupted();
+                    }
+                }
+                return null;
+            });
     }
 
     /**

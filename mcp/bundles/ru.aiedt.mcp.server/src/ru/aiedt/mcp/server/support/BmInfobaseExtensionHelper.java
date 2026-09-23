@@ -1419,7 +1419,7 @@ public final class BmInfobaseExtensionHelper
             .additionalParameters("-configDumpInfoOnly"); //$NON-NLS-1$
         // The same per-infobase lock the strict conversion holds around its launcher call.
         // Without it this EDT's own thick-client callers run the Designer side by side.
-        invokeUnderRebuildLock(ctx.lock, execM, ctx.launcher, command,
+        invokeUnderRebuildLock(ctx, execM, ctx.launcher, command,
             ctx.component.getInstallation(), ctx.infobase, ctx.args);
     }
 
@@ -1438,7 +1438,7 @@ public final class BmInfobaseExtensionHelper
     static java.nio.file.Path runFullDumpUnderInfobaseLock(LauncherContext ctx,
         java.nio.file.Path tempDir) throws Exception
     {
-        lockForRebuild(ctx.lock);
+        lockForRebuild(ctx);
         try
         {
             return ctx.launcher.exportFullXmlFromInfobase(ctx.component, ctx.infobase,
@@ -1482,10 +1482,10 @@ public final class BmInfobaseExtensionHelper
 
     /**
      * Invokes a Designer run of the dump-info rebuild under the per-infobase lock. Differs from
-     * {@link #invokeUnderInfobaseLock} only in how the lock is taken: see
-     * {@link #lockForRebuild(java.util.concurrent.locks.Lock)}.
+     * {@link #invokeUnderInfobaseLock} only in how the run is entered: see
+     * {@link #lockForRebuild(LauncherContext)}.
      *
-     * @param lock the per-infobase lock, or {@code null} when this runtime has none
+     * @param ctx the launcher context of the rebuild's current run
      * @param method the method to invoke
      * @param target the launcher
      * @param args the method arguments
@@ -1493,34 +1493,36 @@ public final class BmInfobaseExtensionHelper
      * @throws InterruptedException when the rebuild was abandoned before the run started
      * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}
      */
-    static Object invokeUnderRebuildLock(java.util.concurrent.locks.Lock lock,
+    static Object invokeUnderRebuildLock(LauncherContext ctx,
         java.lang.reflect.Method method, Object target, Object... args) throws Exception
     {
-        lockForRebuild(lock);
-        return invokeAndRelease(lock, method, target, args);
+        lockForRebuild(ctx);
+        return invokeAndRelease(ctx.lock, method, target, args);
     }
 
     /**
-     * Takes the per-infobase lock for a Designer run of the dump-info rebuild. The rebuild
-     * abandons a run by interrupting its worker; a worker still waiting for the lock at that
-     * moment must not start the Designer once another caller lets the lock go, so the wait is
-     * interruptible, and an interrupt that arrives together with the lock gives it back.
+     * Takes the per-infobase lock and claims the launch boundary for a Designer run of the
+     * dump-info rebuild. The boundary is the one coordinated state the run and its abandonment
+     * cross: whichever side claims it first owns the launch. A worker that finds it claimed -
+     * abandoned while it waited for this lock, or in the gap between the lock and the launcher
+     * call - starts no Designer run at all, and a worker that claims it is a launch the
+     * abandonment waits out, so the lock wait itself is interruptible.
      *
-     * @param lock the per-infobase lock, or {@code null} when this runtime has none
-     * @throws InterruptedException when the worker was interrupted before the run started; the
-     *             lock is not held then
+     * @param ctx the launcher context of the rebuild's current run
+     * @throws InterruptedException when the run was abandoned before the boundary was claimed;
+     *             the lock is not held then
      */
-    static void lockForRebuild(java.util.concurrent.locks.Lock lock) throws InterruptedException
+    static void lockForRebuild(LauncherContext ctx) throws InterruptedException
     {
-        if (lock != null)
+        if (ctx.lock != null)
         {
-            lock.lockInterruptibly();
+            ctx.lock.lockInterruptibly();
         }
-        if (Thread.currentThread().isInterrupted())
+        if (!ctx.launchClaim.compareAndSet(false, true))
         {
-            if (lock != null)
+            if (ctx.lock != null)
             {
-                lock.unlock();
+                ctx.lock.unlock();
             }
             throw new InterruptedException("the rebuild was abandoned before its Designer run " //$NON-NLS-1$
                 + "started"); //$NON-NLS-1$
@@ -1601,6 +1603,16 @@ public final class BmInfobaseExtensionHelper
         String infobaseName;
         String error;
         String failureKind;
+
+        /**
+         * The Designer launch boundary of the rebuild's current run, claimed once by whoever
+         * crosses it first: the worker under the per-infobase lock, right before it calls the
+         * launcher, or the abandonment side when it gives the run up. Fresh for every run - a
+         * rebuild asks twice, the quick dump and the fallback - so each launch is claimed or
+         * abandoned on its own.
+         */
+        java.util.concurrent.atomic.AtomicBoolean launchClaim =
+            new java.util.concurrent.atomic.AtomicBoolean();
     }
 
     /**

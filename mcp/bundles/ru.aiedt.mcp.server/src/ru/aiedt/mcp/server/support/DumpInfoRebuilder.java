@@ -74,7 +74,8 @@ public final class DumpInfoRebuilder
         }
 
         /**
-         * @return whether the Designer call was still running when the wait gave up
+         * @return whether a Designer launch that crossed the boundary was still running when the
+         *         wait gave up; a launch prevented at the boundary never ran
          */
         boolean processStillRunning()
         {
@@ -420,10 +421,13 @@ public final class DumpInfoRebuilder
     private static Path runDumpInfoOnlyUnderTimeout(
         BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
+        java.util.concurrent.atomic.AtomicBoolean launchClaim =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        ctx.launchClaim = launchClaim;
         return underTimeout("the dump-info-only Designer run", timeoutMs, () -> { //$NON-NLS-1$
             BmInfobaseExtensionHelper.runDesignerDumpInfoOnly(ctx, tempDir);
             return null;
-        });
+        }, launchClaim);
     }
 
     /**
@@ -433,8 +437,12 @@ public final class DumpInfoRebuilder
     private static Path runFullDumpUnderTimeout(
         BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
+        java.util.concurrent.atomic.AtomicBoolean launchClaim =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        ctx.launchClaim = launchClaim;
         return underTimeout("the Designer dump", timeoutMs, //$NON-NLS-1$
-            () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx, tempDir));
+            () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx, tempDir),
+            launchClaim);
     }
 
     /**
@@ -456,12 +464,17 @@ public final class DumpInfoRebuilder
      * @param what what the run is, as the abandonment names it
      * @param timeoutMs how long the run is waited for
      * @param run the platform call
+     * @param launchClaim the launch boundary of this run, claimed by the worker under the
+     *            per-infobase lock right before it calls the launcher and by the abandonment
+     *            before it declares itself, or {@code null} when the call has no launcher
+     *            boundary (a stand-in)
      * @return whatever the call answered
      * @throws Abandoned when the budget ran out - the call is cancelled and the process left to
      *             finish on its own
      * @throws Exception when the call itself failed
      */
-    static Path underTimeout(String what, long timeoutMs, PlatformRun run) throws Exception
+    static Path underTimeout(String what, long timeoutMs, PlatformRun run,
+        java.util.concurrent.atomic.AtomicBoolean launchClaim) throws Exception
     {
         java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors
             .newSingleThreadExecutor(runnable -> {
@@ -493,7 +506,7 @@ public final class DumpInfoRebuilder
         catch (java.util.concurrent.TimeoutException tooSlow)
         {
             throw abandon(what + " did not finish within " + (timeoutMs / 1000) + "s", running, //$NON-NLS-1$ //$NON-NLS-2$
-                started, returned);
+                started, returned, launchClaim);
         }
         catch (InterruptedException interrupted)
         {
@@ -504,7 +517,7 @@ public final class DumpInfoRebuilder
             // interruption policy still sees it.
             Thread.currentThread().interrupt();
             throw abandon(what + " was interrupted while it was still running", running, started, //$NON-NLS-1$
-                returned);
+                returned, launchClaim);
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -522,22 +535,50 @@ public final class DumpInfoRebuilder
     }
 
     /**
-     * Builds the abandonment of a wait that gave up while the call may still be running: the
-     * Future is cancelled, and the caller is told whether the call itself had returned - which is
-     * the moment the cleanup may touch the temporary directory and the claim.
+     * The stand-in entry: a call with no launcher boundary to claim, whose abandonment decides on
+     * the call's own signals alone.
+     *
+     * @param what what the run is, as the abandonment names it
+     * @param timeoutMs how long the run is waited for
+     * @param run the platform call
+     * @return whatever the call answered
+     * @throws Abandoned when the budget ran out - the call is cancelled and the process left to
+     *             finish on its own
+     * @throws Exception when the call itself failed
+     */
+    static Path underTimeout(String what, long timeoutMs, PlatformRun run) throws Exception
+    {
+        return underTimeout(what, timeoutMs, run, null);
+    }
+
+    /**
+     * Builds the abandonment of a wait that gave up: the launch boundary is claimed first, so a
+     * worker that has not crossed it yet - still waiting for the per-infobase lock, or in the gap
+     * between the lock and the launcher call - starts no Designer run at all, and the Future is
+     * cancelled. A boundary the worker already claimed means the launcher call is committed, and
+     * the caller is told whether that call itself had returned - which is the moment the cleanup
+     * may touch the temporary directory and the claim.
      *
      * @param message what was abandoned and why
      * @param running the Future of the call
      * @param started whether the call began at all
      * @param returned the call's own return signal
+     * @param launchClaim the launch boundary of this run, or {@code null} for a stand-in call
      * @return the abandonment to throw
      */
     private static Abandoned abandon(String message, java.util.concurrent.Future<Path> running,
         java.util.concurrent.atomic.AtomicBoolean started,
-        java.util.concurrent.CountDownLatch returned)
+        java.util.concurrent.CountDownLatch returned,
+        java.util.concurrent.atomic.AtomicBoolean launchClaim)
     {
+        // The boundary is claimed BEFORE the cancel: once the wait gives up, no new launch may
+        // commit. Taking it means the worker cannot start the Designer - it exits at the
+        // boundary - so nothing is running and nothing is waited for. Failing to take it means
+        // the worker crossed first: the launcher call is committed, and only its own return
+        // ends it.
+        boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
         running.cancel(true);
-        boolean stillRunning = started.get() && returned.getCount() > 0;
+        boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
         return new Abandoned(message, stillRunning, stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
