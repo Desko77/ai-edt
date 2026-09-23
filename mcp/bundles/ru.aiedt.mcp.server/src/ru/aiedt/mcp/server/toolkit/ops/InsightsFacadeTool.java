@@ -69,6 +69,12 @@ public class InsightsFacadeTool implements IMcpTool
 
     private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
 
+    /**
+     * Which combination of scope and selectors is a walk and which is a refusal. The schema
+     * keeps one sentence per parameter; {@code operation=help topic=} the operation returns these.
+     */
+    private static final Map<String, Map<String, String>> NARROWING_RULES = buildNarrowingRules();
+
     @Override
     public String getName()
     {
@@ -123,6 +129,8 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("moduleFqn", //$NON-NLS-1$
                 "Module FQN when scope=module (dependency_graph) or scope=module/method " //$NON-NLS-1$
                     + "(detect_query_anti_patterns).") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "detect_query_anti_patterns: method inside moduleFqn.") //$NON-NLS-1$
             .stringProperty("level", //$NON-NLS-1$
                 "dependency_graph: metadata / modules / mixed (default metadata) - what " //$NON-NLS-1$
                     + "the graph nodes are. compare_configurations: object / attribute / module " //$NON-NLS-1$
@@ -445,8 +453,43 @@ public class InsightsFacadeTool implements IMcpTool
         // it routes to, and this facade's own schema does not repeat them. Without this, the detail
         // is reachable only by calling the standalone tool - which a caller who found the operation
         // here has no reason to know exists.
+        Map<String, String> rules = NARROWING_RULES.get(topic);
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
-            "workflow", "InsightsFacadeTool", schema); //$NON-NLS-1$
+            "workflow", "InsightsFacadeTool", schema, //$NON-NLS-1$ //$NON-NLS-2$
+            rules == null ? Collections.emptyMap() : rules);
+    }
+
+    /**
+     * The rules a narrowing parameter's one-sentence description no longer carries.
+     *
+     * @return operation name to parameter name to the rules
+     */
+    private static Map<String, Map<String, String>> buildNarrowingRules()
+    {
+        Map<String, Map<String, String>> rules = new LinkedHashMap<>();
+        Map<String, String> metrics = new LinkedHashMap<>();
+        metrics.put("scope", //$NON-NLS-1$
+            "scope=project rejects subsystemName. scope=subsystem requires it. An unknown " //$NON-NLS-1$
+                + "subsystem or scope word is refused by name and the project is not scanned."); //$NON-NLS-1$
+        metrics.put("subsystemName", //$NON-NLS-1$
+            "Required for scope=subsystem. Without scope it selects the subsystem on its own. " //$NON-NLS-1$
+                + "Nested subsystems are included; the answer names that and how many objects " //$NON-NLS-1$
+                + "the composition holds. An unknown subsystem is refused by name."); //$NON-NLS-1$
+        rules.put("project_metrics", Collections.unmodifiableMap(metrics)); //$NON-NLS-1$
+        Map<String, String> queries = new LinkedHashMap<>();
+        queries.put("scope", //$NON-NLS-1$
+            "scope=project rejects every selector. scope=module requires moduleFqn and rejects " //$NON-NLS-1$
+                + "methodName. scope=method requires both. An unknown module, method or scope " //$NON-NLS-1$
+                + "word is refused by name and the project is not scanned."); //$NON-NLS-1$
+        queries.put("moduleFqn", //$NON-NLS-1$
+            "Required for scope=module and scope=method. Without scope it selects the module " //$NON-NLS-1$
+                + "on its own. Refused when that module is unknown."); //$NON-NLS-1$
+        queries.put("methodName", //$NON-NLS-1$
+            "Required for scope=method. Refused when moduleFqn is absent, and refused when the " //$NON-NLS-1$
+                + "method is not in the module. Without scope, moduleFqn plus methodName selects " //$NON-NLS-1$
+                + "that method."); //$NON-NLS-1$
+        rules.put("detect_query_anti_patterns", Collections.unmodifiableMap(queries)); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
     }
 
     private static Map<String, String> buildOpsCatalog()

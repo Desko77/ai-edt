@@ -326,11 +326,11 @@ InsightsFacadeTool	compare_configurations	format:string,level:string,mode:string
 InsightsFacadeTool	compare_three_way	ancestorPath:string,changedBy:string,closeSession:boolean,decisions:string,decisionsFrom:string,decisionsPath:string,help:string,ignoreOriginMismatch:boolean,intent:string,limit:integer,methodLevel:boolean,mustBeMergedOnly:boolean,offset:integer,oneSided:boolean,otherPath:string,parentId:string,projectName:string,report:string,scope:string,type:string	delegate ThreeWayComparisonTool	
 InsightsFacadeTool	dependency_graph	depth:integer,direction:string,format:string,level:string,maxEdges:integer,maxNodes:integer,moduleFqn:string,objectFqn:string,projectName:string,scope:string,subsystemName:string	delegate DependencyGraphTool	
 InsightsFacadeTool	describe_db_tables	includeFields:boolean,objectFqn:string,projectName:string	delegate DbTablesReader	
-InsightsFacadeTool	detect_query_anti_patterns	format:string,moduleFqn:string,projectName:string,rules:string,scope:string,severity_filter:string	delegate DetectQueryAntiPatternsTool	
+InsightsFacadeTool	detect_query_anti_patterns	format:string,methodName:string,moduleFqn:string,projectName:string,rules:string,scope:string,severity_filter:string	delegate DetectQueryAntiPatternsTool	
 InsightsFacadeTool	generate_health_snapshot	includeAntiPatterns:boolean,includeErrors:boolean,includeMetadata:boolean,includeMetrics:boolean,projectName:string	delegate GenerateHealthSnapshotTool	
 InsightsFacadeTool	impact_analysis	action:string,limit:integer,objectFqn:string,projectName:string,skipBsl:boolean	delegate ImpactAnalysisTool	
 InsightsFacadeTool	object_summary	includeErrors:boolean,includeReferences:boolean,objectFqn:string,projectName:string	delegate ObjectSummaryTool	
-InsightsFacadeTool	project_metrics	format:string,includeDebtList:boolean,projectName:string,scope:string,timeoutSeconds:integer	delegate ProjectMetricsTool	
+InsightsFacadeTool	project_metrics	format:string,includeDebtList:boolean,projectName:string,scope:string,subsystemName:string,timeoutSeconds:integer	delegate ProjectMetricsTool	
 InsightsFacadeTool	semantic_metadata_search	limit:integer,metadataType:string,projectName:string,query:string	delegate SemanticMetadataSearchTool	
 LaunchDebuggerTool	add_breakpoint	action:string,topic:string	read in place	
 LaunchDebuggerTool	debug_launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string
@@ -378,8 +378,8 @@ ProjectAdminFacadeTool	restart_edt	action:string,delayMs:integer	delegate Restar
 ProjectAdminFacadeTool	resync_to_disk	objects:string[],projectName:string,refresh:boolean,waitTimeoutMs:integer	delegate DiskResynchronizer	
 ProjectAdminFacadeTool	self_upkeep	action:string,confirm:boolean,restart:boolean	delegate SelfUpkeepTool	
 SecurityAuditFacadeTool	audit_role_rights	apply:boolean,format:string,includeRls:boolean,mode:string,objectFqn:string,objectType:string,projectName:string,roleName:string,roleNames:string	delegate AuditRoleRightsTool	
-SecurityAuditFacadeTool	find_rls_violations	format:string,projectName:string,roleName:string,scope:string,severity_filter:string	delegate FindRlsViolationsTool	
-SecurityAuditFacadeTool	sensitive_data_scan	checks:string,customPatterns:string,format:string,projectName:string,scope:string,severity_filter:string	delegate SensitiveDataScanTool	
+SecurityAuditFacadeTool	find_rls_violations	format:string,methodName:string,moduleFqn:string,projectName:string,roleName:string,scope:string,severity_filter:string	delegate FindRlsViolationsTool	
+SecurityAuditFacadeTool	sensitive_data_scan	checks:string,customPatterns:string,format:string,moduleFqn:string,projectName:string,scope:string,severity_filter:string,subsystemName:string	delegate SensitiveDataScanTool	
 SupportRegistryTool	list_objects	limit:integer,offset:integer,parentId:string,userMode:string	read in place	apply:boolean,objectFqn:string,projectName:string,snapshotPath:string
 SupportRegistryTool	object_mode	limit:integer,objectFqn:string,offset:integer	read in place	apply:boolean,parentId:string,projectName:string,snapshotPath:string,userMode:string
 SupportRegistryTool	restore_modes	apply:boolean,snapshotPath:string	read in place	limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string

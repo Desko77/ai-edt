@@ -43,17 +43,12 @@ InsightsFacadeTool:batchSize
 # schema does name, so the capability is discoverable here and only this spelling of it is not.
 InsightsFacadeTool:help
 InsightsFacadeTool:includeStandard
-InsightsFacadeTool:methodName
 LaunchDebuggerTool:kind
 LaunchDebuggerTool:timeoutMs
 ProjectAdminFacadeTool:confirm
 ProjectAdminFacadeTool:restart
 SecurityAuditFacadeTool:apply
-SecurityAuditFacadeTool:methodName
-SecurityAuditFacadeTool:moduleFqn
 SecurityAuditFacadeTool:objectFqn
-SecurityAuditFacadeTool:scope
-SecurityAuditFacadeTool:subsystemName
 
 # The composition parameters. edit_metadata runs 51 composition operations by renaming the
 # operation and handing the call to dcs_workshop, whose schema advertises every one of these.

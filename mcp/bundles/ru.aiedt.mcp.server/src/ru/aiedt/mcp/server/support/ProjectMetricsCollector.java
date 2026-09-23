@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -283,11 +284,29 @@ public final class ProjectMetricsCollector
      */
     public void scanMarkers()
     {
+        scanMarkers(null);
+    }
+
+    /**
+     * Collects marker metrics, optionally limited to resources the predicate accepts.
+     * <p>
+     * A subsystem walk passes the predicate. The project walk passes <code>null</code> and reads
+     * every marker, which is what {@link #scanMarkers()} does.
+     * </p>
+     *
+     * @param include which resources count, or <code>null</code> for all of them
+     */
+    public void scanMarkers(Predicate<IResource> include)
+    {
         try
         {
             IMarker[] markers = project.findMarkers(IMarker.PROBLEM, true, IResource.DEPTH_INFINITE);
             for (IMarker marker : markers)
             {
+                if (include != null && !include.test(marker.getResource()))
+                {
+                    continue;
+                }
                 int severity = marker.getAttribute(IMarker.SEVERITY, IMarker.SEVERITY_WARNING);
                 String type = marker.getType() != null ? marker.getType() : ""; //$NON-NLS-1$
                 if (type.contains("codestyle") || type.contains("style")) //$NON-NLS-1$ //$NON-NLS-2$
