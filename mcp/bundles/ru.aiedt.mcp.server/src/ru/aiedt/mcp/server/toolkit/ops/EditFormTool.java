@@ -180,7 +180,7 @@ public class EditFormTool implements IMcpTool
         }
         // Refused here rather than inside the transaction: the answer is the same one, and it does
         // not need the workspace to be read before it can be given.
-        if (!EDIT_OPERATIONS.contains(JsonUtils.normalizeOperationToken(operation)))
+        if (!isEditOperation(operation))
         {
             return buildError(unknownOperation(operation));
         }
@@ -202,6 +202,26 @@ public class EditFormTool implements IMcpTool
         });
 
         return resultRef.get();
+    }
+
+    /**
+     * Answers whether an operation is one this facade edits a form with, in either spelling: the
+     * camelCase its help document uses or the snake_case the dispatch below reads.
+     *
+     * @param operation the operation as the caller wrote it
+     * @return true for an edit operation; false for an unknown one and for {@code help}
+     */
+    static boolean isEditOperation(String operation)
+    {
+        String asked = JsonUtils.normalizeOperationToken(operation);
+        for (String known : EDIT_OPERATIONS)
+        {
+            if (JsonUtils.normalizeOperationToken(known).equals(asked))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String executeInternal(String projectName, String formFqn, String operation,

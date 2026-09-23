@@ -63,6 +63,10 @@ public class FacadeHelpSearchTest
             + "### query\n\nThe text to look for.\n\n"
             + "### caseSensitive\n\nWhether case matters.\n";
 
+    /** A topic of an operation without arguments, rendered the way a facade renders one. */
+    private static final String NO_ARGUMENTS =
+        "## alpha - parameters\n\nThis tool takes no parameters.\n";
+
     /**
      * A small facade to search: a catalog of two operations, one operation's parameters and one
      * named topic. The Russian word is there on purpose: case folding has to work outside ASCII.
@@ -187,6 +191,14 @@ public class FacadeHelpSearchTest
             OPERATIONS, topic -> OPENING_PARAGRAPH);
         assertTrue(alone, alone.contains("### caseSensitive"));
         assertFalse(alone, alone.contains("fileMask"));
+    }
+
+    @Test
+    public void anOperationWithoutArgumentsKeepsItsProse()
+    {
+        String answer = FacadeHelpSearch.search("demo", "takes", "alpha", TOPICS,
+            OPERATIONS, topic -> NO_ARGUMENTS);
+        assertTrue(answer, answer.contains("This tool takes no parameters."));
     }
 
     @Test

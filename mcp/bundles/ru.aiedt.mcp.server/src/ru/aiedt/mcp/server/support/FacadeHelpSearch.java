@@ -404,7 +404,8 @@ public final class FacadeHelpSearch
      * An argument is named either by a heading deeper than a section or by a bullet in a list of
      * names, because facades draw them both ways. The operation's own heading is kept, alone: it
      * names what was asked, and the paragraph under it names every argument in passing rather than
-     * describing one - a chunk carrying all of them would match any two of them.
+     * describing one - a chunk carrying all of them would match any two of them. A topic that names
+     * no argument at all is kept whole: its paragraph describes the operation, not its arguments.
      * </p>
      *
      * @param text one rendered topic.
@@ -415,9 +416,11 @@ public final class FacadeHelpSearch
         List<String> chunks = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean named = false;
+        boolean anyArgument = false;
         for (String line : text.split("\n", -1)) //$NON-NLS-1$
         {
             boolean argument = namesAnArgument(line);
+            anyArgument |= argument;
             if (current.length() > 0 && (argument || headingLevel(line) > 0))
             {
                 flushArgument(chunks, current, named);
@@ -429,6 +432,12 @@ public final class FacadeHelpSearch
                 named = argument;
             }
             current.append(line).append('\n');
+        }
+        if (!anyArgument)
+        {
+            List<String> whole = new ArrayList<>();
+            whole.add(text);
+            return whole;
         }
         flushArgument(chunks, current, named);
         return chunks;
