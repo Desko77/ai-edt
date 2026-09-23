@@ -136,10 +136,12 @@ public class DatabaseUpdater implements IMcpTool
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "Answer what an update would face and start nothing: the update state the " //$NON-NLS-1$
                     + "environment holds, whether an update is needed, and - unless refreshWorkspace " //$NON-NLS-1$
-                    + "is off - what that refresh picked up. Readiness is NOT checked and is reported " //$NON-NLS-1$
-                    + "as notCheckedInDryRun: that check reaches the infobase synchronization cycle " //$NON-NLS-1$
-                    + "through a thick client and does not return while a thick-client session holds " //$NON-NLS-1$
-                    + "the infobase. No run is recorded, no runKey is issued, and no infobase is " //$NON-NLS-1$
+                    + "is off - what that refresh picked up. Readiness and the export validation an " //$NON-NLS-1$
+                    + "update runs first are NOT checked and are reported as notCheckedInDryRun: " //$NON-NLS-1$
+                    + "readiness reaches the infobase synchronization cycle through a thick client and " //$NON-NLS-1$
+                    + "does not return while a thick-client session holds the infobase; the export " //$NON-NLS-1$
+                    + "validation walks the whole project - diagnostics operation=validate_for_export " //$NON-NLS-1$
+                    + "answers it. No run is recorded, no runKey is issued, and no infobase is " //$NON-NLS-1$
                     + "claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -673,11 +675,13 @@ public class DatabaseUpdater implements IMcpTool
             answer.put("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
         }
         return answer
-            .put("notCheckedInDryRun", List.of("readiness")) //$NON-NLS-1$ //$NON-NLS-2$
+            .put("notCheckedInDryRun", List.of("readiness", "exportValidation")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .put("notCheckedInDryRunNote", "The readiness check an update itself performs is not run " //$NON-NLS-1$ //$NON-NLS-2$
                 + "here. Asking for it reaches the infobase synchronization cycle through a thick " //$NON-NLS-1$
                 + "client and does not return while a thick-client session holds the infobase, which " //$NON-NLS-1$
-                + "is what a dry run exists to avoid. Only an update can answer it.") //$NON-NLS-1$
+                + "is what a dry run exists to avoid. Only an update can answer it. The export " //$NON-NLS-1$
+                + "validation an update runs before writing is not run either: it walks the whole " //$NON-NLS-1$
+                + "project. diagnostics operation=validate_for_export runs it.") //$NON-NLS-1$
             .put("composition", "not available without running an update - the application API " //$NON-NLS-1$ //$NON-NLS-2$
                 + "reports the state, not the objects an update would carry. " //$NON-NLS-1$
                 + "Nothing was claimed, started or recorded by this call.") //$NON-NLS-1$
@@ -775,7 +779,8 @@ public class DatabaseUpdater implements IMcpTool
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
         boolean skipValidation, boolean checkOnly, Map<String, String> params)
     {
-        String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
+        String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
+            DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
         if (blocked != null)
         {
             return blocked;
@@ -1123,6 +1128,25 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * The export scan an update runs before it writes, or nothing for a dry run.
+     * <p>
+     * A dry run answers from what the environment already holds. The scan walks the whole
+     * project, so a dry run does not run it and names it in {@code notCheckedInDryRun} instead.
+     * </p>
+     *
+     * @param projectName the project about to be written to an infobase.
+     * @param skip whether the caller asked to go ahead unchecked.
+     * @param probe whether this call is a dry run.
+     * @param scan the scan to run, {@link #refuseWhatTheInfobaseWillRefuse} outside tests.
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    static String exportScanBefore(String projectName, boolean skip, boolean probe,
+        java.util.function.BiFunction<String, Boolean, String> scan)
+    {
+        return probe ? null : scan.apply(projectName, Boolean.valueOf(skip));
     }
 
     /**

@@ -91,7 +91,7 @@ public class ADryRunReadsOnlyWhatCannotStartAnUpdateTest
         {
             notChecked.add(each.getAsString());
         }
-        assertEquals(List.of("readiness"), notChecked); //$NON-NLS-1$
+        assertEquals(List.of("readiness", "exportValidation"), notChecked); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("the answer says why readiness was not asked for", //$NON-NLS-1$
             json.get("notCheckedInDryRunNote").getAsString().contains("thick client")); //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -486,5 +486,23 @@ public class ADryRunReadsOnlyWhatCannotStartAnUpdateTest
         {
             return null;
         }
+    }
+
+    /**
+     * A dry run runs no export scan and an update still runs it first: the scan walks the whole
+     * project, and a dry run answers from what the environment already holds.
+     */
+    @Test
+    public void aProbeDoesNotScanTheProjectForExport()
+    {
+        int[] scans = {0};
+        java.util.function.BiFunction<String, Boolean, String> scan = (name, skip) -> {
+            scans[0]++;
+            return null;
+        };
+        assertNull(DatabaseUpdater.exportScanBefore("P", false, true, scan)); //$NON-NLS-1$
+        assertEquals("a dry run runs no export scan", 0, scans[0]); //$NON-NLS-1$
+        DatabaseUpdater.exportScanBefore("P", false, false, scan); //$NON-NLS-1$
+        assertEquals("an update still scans first", 1, scans[0]); //$NON-NLS-1$
     }
 }

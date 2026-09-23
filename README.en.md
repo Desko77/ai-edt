@@ -63,7 +63,7 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
 | 🧪 **Run a data processor under the debugger** | Open an external data processor or report in the client that starts under the debugger, so its code runs with the breakpoints already set. |
 | 🔔 **See that the IDE is waiting for an answer** | Read the modal dialog holding a call - title, message and buttons - and press a named one instead of waiting for a person at the keyboard. |
-| 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind: `update_database` with `dryRun=true` answers with the update state and starts nothing. Readiness is not checked this way - the answer names it in `notCheckedInDryRun`. |
+| 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind: `update_database` with `dryRun=true` answers with the update state and starts nothing. Readiness and the export validation are not run this way - the answer names them in `notCheckedInDryRun`. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
 
