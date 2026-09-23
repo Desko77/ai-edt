@@ -941,6 +941,10 @@ public class NaparnikTool
                 // this call stays here, so the registry entry stays unfinished and the next
                 // question is refused, until the future has actually stopped.
                 boolean stopAsked = false;
+                // An interrupt of this thread (a shutdown of its executor) makes every wait below
+                // return at once, so it is taken here and put back after the loop: the wait
+                // keeps its pace instead of spinning.
+                boolean interrupted = false;
                 while (!finished)
                 {
                     if (!stopAsked && withdrawn(entry, live))
@@ -949,18 +953,24 @@ public class NaparnikTool
                         question.cancel();
                         stopAsked = true;
                     }
+                    interrupted |= Thread.interrupted();
                     finished = question.await(GRACE_MS);
                     if (!finished)
                     {
+                        interrupted |= Thread.interrupted();
                         try
                         {
                             Thread.sleep(20L);
                         }
-                        catch (InterruptedException interrupted)
+                        catch (InterruptedException e)
                         {
-                            Thread.currentThread().interrupt();
+                            interrupted = true;
                         }
                     }
+                }
+                if (interrupted)
+                {
+                    Thread.currentThread().interrupt();
                 }
             }
             finally

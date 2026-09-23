@@ -501,6 +501,48 @@ public class NaparnikAskTest
     }
 
     /**
+     * The worker is interrupted - a shutdown of its executor - while a question that ignores cancel
+     * is still running. The wait that holds the slot until that question stops keeps its pace: the
+     * raised interrupt does not turn it into a loop that never sleeps.
+     */
+    @Test
+    public void anInterruptedWaitForTheStopKeepsItsPace()
+        throws InterruptedException
+    {
+        host.stall = true;
+        host.elapseImmediately = true;
+        host.surviveCancel = true;
+
+        JsonObject first = ask("waitSeconds", "1", "timeoutSeconds", "30"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        String runKey = first.get("runKey").getAsString(); //$NON-NLS-1$
+        for (Thread worker : Thread.getAllStackTraces().keySet())
+        {
+            if (worker.getName().startsWith("naparnik-async")) //$NON-NLS-1$
+            {
+                worker.interrupt();
+            }
+        }
+        Thread.sleep(200L);
+        int before = host.waits.size();
+        Thread.sleep(500L);
+        int during = host.waits.size() - before;
+
+        assertTrue("the wait for the stop spins on the interrupt: " + during + " waits in 500 ms", //$NON-NLS-1$
+            during < 200);
+        host.release = true;
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (PendingWorkRegistry.NAPARNIK.unfinishedKeys().contains(runKey)
+            && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(20L);
+        }
+        assertFalse(PendingWorkRegistry.NAPARNIK.unfinishedKeys().contains(runKey));
+        host.stall = false;
+        host.elapseImmediately = false;
+        host.surviveCancel = false;
+        host.release = false;
+    }
+    /**
      * A timeout that asks the question to stop, and a future that keeps running anyway, must keep
      * the slot until that future actually finishes. The next question is refused until then.
      */
