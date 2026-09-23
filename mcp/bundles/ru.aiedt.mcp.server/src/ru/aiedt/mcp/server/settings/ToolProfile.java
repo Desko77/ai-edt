@@ -420,6 +420,10 @@ public enum ToolProfile
         names.add("write_module_source"); //$NON-NLS-1$
         names.add("generate_event_handlers"); //$NON-NLS-1$
         names.add("extension_lifecycle"); //$NON-NLS-1$
+        // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
+        // send a question and whatever Naparnik's tools read to that service. A preset that blocks
+        // writing switches the whole name off.
+        names.add("naparnik"); //$NON-NLS-1$
         return names;
     }
 

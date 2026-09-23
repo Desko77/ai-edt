@@ -277,6 +277,7 @@ Not every tool belongs to a facade. These are called by name.
 | `find_dead_code` | Exported methods nobody calls. |
 | `dcs_search` | Finds data composition schemas by what is inside them. |
 | `code_template` | Ready code patterns instead of writing a familiar shape from memory. |
+| `naparnik` | Whether 1C:Naparnik is installed, which version, and whether that version is the supported `1.0.7`. `status` only lists bundles. `probe=true` checks each link and starts the Naparnik UI bundle if it is not already running. Off by default (`mcpNaparnikBridgeEnabled`); Read-only, Debug & Test and Code Review disable `naparnik`. A question sent through this tool, and whatever Naparnik's tools read, goes to the 1C:Naparnik service. |
 | `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. A record carries `arbitratedBy` (`tool` / `signal` - whether the operator answered the agent from the status bar instead of the tool), `deliveryStatus` (`delivered` / `failed`) and, for a signal, `signalType` and `signalNote`; `stats` carries `interrupted` and `undelivered` on top of `success` and `failure`. |
 | `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
 | `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |

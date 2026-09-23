@@ -275,6 +275,8 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_search", Integer.valueOf(305));
         PROSE.put("generate_event_handlers", Integer.valueOf(299));
         PROSE.put("code_template", Integer.valueOf(171));
+        // naparnik: operation and probe. probe says that the call starts the Naparnik UI bundle.
+        PROSE.put("naparnik", Integer.valueOf(216));
         PROSE.put("get_mcp_history", Integer.valueOf(145));
         PROSE.put("get_command_interface", Integer.valueOf(98));
         PROSE.put("get_edt_version", Integer.valueOf(0));
@@ -358,6 +360,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * because the platform reads the last mode flag on the command line and the launch puts the
      * caller's there.
      * </p>
+     * <p>
+     * And 216 for naparnik: the operation, and probe, which starts the Naparnik UI bundle.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 86826;
+    private static final int DOCUMENT_PROSE = 87042;
 }
