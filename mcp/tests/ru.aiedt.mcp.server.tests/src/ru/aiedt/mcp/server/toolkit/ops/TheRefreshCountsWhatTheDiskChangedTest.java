@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
@@ -238,6 +239,32 @@ public class TheRefreshCountsWhatTheDiskChangedTest
     }
 
     /**
+     * A directory holding files, replaced on disk by a file with the same name, counts the new
+     * file itself: the delta node carries the removals of what the directory held as its
+     * children, and only reading the leaves would report the loss without the replacement.
+     *
+     * @throws Exception when the disk cannot be rearranged
+     */
+    @Test
+    public void aDirectoryReplacedByAFileIsCounted() throws Exception
+    {
+        IFolder folder = project.getFolder("ReplacedByFile"); //$NON-NLS-1$
+        folder.create(true, true, new NullProgressMonitor());
+        IFile inside = folder.getFile("Inside.bsl"); //$NON-NLS-1$
+        inside.create(new ByteArrayInputStream(new byte[] { 1 }), true, new NullProgressMonitor());
+        Path location = folder.getLocation().toFile().toPath();
+        try (var walk = Files.walk(location))
+        {
+            walk.sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+        }
+        Files.writeString(location, "// now a file\n", StandardCharsets.UTF_8); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject report = DatabaseUpdater.refreshFromDisk(project, project);
+
+        assertTrue(report.toString(), report.get("changedResources").getAsInt() >= 2); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Marker deltas carry workspace metadata, not a disk resource change, and do not count.
      *
      * @throws Exception when the marker cannot be changed
@@ -258,30 +285,38 @@ public class TheRefreshCountsWhatTheDiskChangedTest
 
     /**
      * A workspace API write in another thread may overlap the refresh listener, but it belongs to
-     * that writer rather than to the refresh and must not enter this call's answer.
+     * that writer rather than to the refresh and must not enter this call's answer. The refresh
+     * runs against the real project of this workspace: with a stand-in project an implementation
+     * could drop the writer's event on a project mismatch and pass without ever exercising the
+     * thread rule.
      *
      * @throws Exception when the coordinated write fails
      */
     @Test
     public void anotherThreadsWorkspaceWriteIsNotCounted() throws Exception
     {
-        CountDownLatch refreshEntered = new CountDownLatch(1);
-        CountDownLatch writeFinished = new CountDownLatch(1);
+        CountDownLatch refreshStarted = new CountDownLatch(1);
+        AtomicReference<JsonObject> report = new AtomicReference<>();
         AtomicReference<Throwable> writeFailure = new AtomicReference<>();
         IFile written = project.getFile("WrittenByAnotherThread.txt"); //$NON-NLS-1$
-        IProject coordinated = projectWhoseRefreshRuns(() -> {
-            refreshEntered.countDown();
-            if (!writeFinished.await(5, TimeUnit.SECONDS))
-            {
-                throw new IllegalStateException("workspace writer did not finish"); //$NON-NLS-1$
-            }
-        });
+
+        Thread refresh = new Thread(() -> {
+            refreshStarted.countDown();
+            report.set(DatabaseUpdater.refreshFromDisk(project, project));
+        }, "aiedt-refresh-under-test"); //$NON-NLS-1$
         Thread writer = new Thread(() -> {
             try
             {
-                if (!refreshEntered.await(5, TimeUnit.SECONDS))
+                if (!refreshStarted.await(5, TimeUnit.SECONDS))
                 {
                     throw new IllegalStateException("refresh did not start"); //$NON-NLS-1$
+                }
+                // The write goes in only once the refresh call watches the workspace, so it
+                // really overlaps the listener instead of racing its registration.
+                long deadline = System.currentTimeMillis() + 5_000L;
+                while (DatabaseUpdater.activeRefreshCounters() == 0 && System.currentTimeMillis() < deadline)
+                {
+                    Thread.sleep(5L);
                 }
                 written.create(new ByteArrayInputStream(new byte[] { 1 }), true, new NullProgressMonitor());
             }
@@ -289,19 +324,15 @@ public class TheRefreshCountsWhatTheDiskChangedTest
             {
                 writeFailure.set(failure);
             }
-            finally
-            {
-                writeFinished.countDown();
-            }
         }, "aiedt-unrelated-workspace-writer"); //$NON-NLS-1$
+        refresh.start();
         writer.start();
-
-        JsonObject report = DatabaseUpdater.refreshFromDisk(coordinated, coordinated);
+        refresh.join();
         writer.join();
 
         assertEquals("workspace write succeeded", null, writeFailure.get()); //$NON-NLS-1$
-        assertEquals(report.toString(), 0, report.get("changedResources").getAsInt()); //$NON-NLS-1$
         assertTrue("the other thread really wrote the resource", written.exists()); //$NON-NLS-1$
+        assertEquals(report.get().toString(), 0, report.get().get("changedResources").getAsInt()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

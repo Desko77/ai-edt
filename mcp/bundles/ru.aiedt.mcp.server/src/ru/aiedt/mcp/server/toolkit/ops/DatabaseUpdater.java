@@ -1457,7 +1457,10 @@ public class DatabaseUpdater implements IMcpTool
         }
 
         /**
-         * Walks one notification batch and counts changed leaf deltas of any resource kind.
+         * Walks one notification batch and counts changed leaf deltas of any resource kind, and
+         * every node whose kind of resource was replaced - a folder that became a file carries
+         * the removal of what it held as its children, and the replacement itself is only on the
+         * node.
          *
          * @param event the POST_CHANGE notification
          */
@@ -1481,11 +1484,16 @@ public class DatabaseUpdater implements IMcpTool
                     {
                         return false;
                     }
+                    int kind = child.getKind();
                     if (child.getAffectedChildren().length != 0)
                     {
+                        if ((kind & IResourceDelta.CHANGED) != 0
+                            && (child.getFlags() & (IResourceDelta.TYPE | IResourceDelta.REPLACED)) != 0)
+                        {
+                            changed.incrementAndGet();
+                        }
                         return true;
                     }
-                    int kind = child.getKind();
                     boolean counts = (kind & (IResourceDelta.ADDED | IResourceDelta.REMOVED)) != 0
                         || (kind & IResourceDelta.CHANGED) != 0
                             && (child.getFlags()
