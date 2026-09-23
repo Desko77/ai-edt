@@ -240,8 +240,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
-        // infobase is named by the string, and the flag says whether it becomes the default.
-        PROSE.put("infobase_admin", Integer.valueOf(5363));
+        // infobase is named by the string, and the flag says whether it becomes the default. And
+        // for the dump-info work: the syncOperation value rebuild_dump_info, the rebuild's wait
+        // budget, and the update's format override.
+        PROSE.put("infobase_admin", Integer.valueOf(5711));
         PROSE.put("config_io", Integer.valueOf(3064));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
@@ -417,6 +419,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * named by the connection string and the flag says whether it becomes the project's default
      * application. Together with the twentieth: 91166.
      * </p>
+     * <p>
+     * And a twenty-second, by 348, for the dump-info work on infobase_admin: the syncOperation
+     * value rebuild_dump_info, the rebuild's wait budget and the update's format override. Together
+     * with the twenty-first: 91514.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91166;
+    private static final int DOCUMENT_PROSE = 91514;
 }

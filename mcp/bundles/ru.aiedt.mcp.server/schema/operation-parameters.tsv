@@ -322,7 +322,7 @@ InfobaseAdminFacadeTool	register_infobase	connectionString:string,makeDefault:bo
 InfobaseAdminFacadeTool	set_infobase_credentials	accessMode:string,applicationId:string,password:string,projectName:string,userName:string	delegate InfobaseCredentialsWriter	syncOperation:string
 InfobaseAdminFacadeTool	start_client	allowSecondSession:boolean,applicationId:string,clientType:string,endpointTimeoutSeconds:integer,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate ClientSessionStarter	syncOperation:string
 InfobaseAdminFacadeTool	sync_control	syncOperation:string	read in place	
-InfobaseAdminFacadeTool	update_database	applicationId:string,autoFreeClients:boolean,autoRestructure:boolean,cancel:boolean,dryRun:boolean,fullUpdate:boolean,ignoreBranchBinding:boolean,launchConfigurationName:string,projectName:string,refreshWorkspace:boolean,runKey:string,statusOnly:boolean,timeoutSeconds:string	delegate DatabaseUpdater	syncOperation:string
+InfobaseAdminFacadeTool	update_database	applicationId:string,autoFreeClients:boolean,autoRestructure:boolean,cancel:boolean,dryRun:boolean,fullUpdate:boolean,ignoreBranchBinding:boolean,ignoreDumpInfoFormat:boolean,launchConfigurationName:string,projectName:string,refreshWorkspace:boolean,runKey:string,statusOnly:boolean,timeoutSeconds:string	delegate DatabaseUpdater	syncOperation:string
 InsightsFacadeTool	compare_configurations	format:string,level:string,mode:string,objectFqn:string,projectName:string,scope:string,showRenames:boolean,target:string	delegate CompareConfigurationsTool	
 InsightsFacadeTool	compare_three_way	ancestorPath:string,changedBy:string,closeSession:boolean,decisions:string,decisionsFrom:string,decisionsPath:string,help:string,ignoreOriginMismatch:boolean,intent:string,limit:integer,methodLevel:boolean,mustBeMergedOnly:boolean,offset:integer,oneSided:boolean,otherPath:string,parentId:string,projectName:string,report:string,scope:string,type:string	delegate ThreeWayComparisonTool	
 InsightsFacadeTool	dependency_graph	depth:integer,direction:string,edgeKinds:string,format:string,level:string,maxEdges:integer,maxNodes:integer,moduleFqn:string,objectFqn:string,projectName:string,scope:string,subsystemName:string	delegate DependencyGraphTool	
@@ -389,16 +389,17 @@ SupportRegistryTool	object_mode	limit:integer,objectFqn:string,offset:integer	re
 SupportRegistryTool	restore_modes	apply:boolean,snapshotPath:string	read in place	limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
 SupportRegistryTool	snapshot_modes	snapshotPath:string	read in place	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
 SupportRegistryTool	status	projectName:string	passed in as locals	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,snapshotPath:string,userMode:string
-SyncControlTool	diagnose	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	diagnose_delta	infobaseUuid:string	read in place	enabled:boolean,name:string,projectName:string
-SyncControlTool	diagnose_stuck_locks	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	list_support_snapshots	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	mark_synchronized	confirm:boolean,infobaseUuid:string	read in place	enabled:boolean,name:string,projectName:string
-SyncControlTool	recover_stuck_merge	confirm:boolean,infobaseUuid:string	read in place	enabled:boolean,name:string,projectName:string
-SyncControlTool	release_support_snapshot	name:string	read in place	enabled:boolean,infobaseUuid:string,projectName:string
-SyncControlTool	reseed_baseline	confirm:boolean,infobaseUuid:string	read in place	enabled:boolean,name:string,projectName:string
-SyncControlTool	status	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	suppress	enabled:boolean	read in place	infobaseUuid:string,name:string,projectName:string
+SyncControlTool	diagnose	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
+SyncControlTool	diagnose_delta	infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
+SyncControlTool	diagnose_stuck_locks	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
+SyncControlTool	list_support_snapshots	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
+SyncControlTool	mark_synchronized	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
+SyncControlTool	rebuild_dump_info	applicationId:string,confirm:boolean	read in place	enabled:boolean,infobaseUuid:string,name:string,projectName:string
+SyncControlTool	recover_stuck_merge	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
+SyncControlTool	release_support_snapshot	name:string	read in place	applicationId:string,enabled:boolean,infobaseUuid:string,projectName:string
+SyncControlTool	reseed_baseline	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
+SyncControlTool	status	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
+SyncControlTool	suppress	enabled:boolean	read in place	applicationId:string,infobaseUuid:string,name:string,projectName:string
 WorkspaceMarksFacadeTool	get_bookmarks	filePath:string,limit:integer,projectName:string	delegate BookmarksReader	
 WorkspaceMarksFacadeTool	get_objects_by_tags	limit:integer,projectName:string,tags:string[]	delegate TaggedObjectsReader	
 WorkspaceMarksFacadeTool	get_tags	projectName:string	delegate TagsReader	

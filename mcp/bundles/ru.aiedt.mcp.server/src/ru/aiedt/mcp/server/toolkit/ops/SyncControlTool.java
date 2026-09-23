@@ -37,10 +37,12 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.DumpInfoRebuilder;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.SyncBaseline;
 import ru.aiedt.mcp.server.support.SupportSnapshotStore;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.TimeoutArgs;
 
 /**
  * Inspect and control EDT&lt;-&gt;infobase synchronization (the engine that decides
@@ -104,7 +106,19 @@ public class SyncControlTool implements IMcpTool
             + "'active' - an interrupted update left the flag set, blocking every subsequent update until EDT restart. " //$NON-NLS-1$
             + "operation=recover_stuck_merge (infobaseUuid=... confirm=true): force-clears that stuck flag so updates " //$NON-NLS-1$
             + "proceed without an EDT restart. " //$NON-NLS-1$
-            + "reseed_baseline, mark_synchronized and recover_stuck_merge are DANGEROUS - only on explicit user request " //$NON-NLS-1$
+            + "operation=rebuild_dump_info (applicationId=... when several; confirm=true): rebuilds the stored " //$NON-NLS-1$
+            + "ConfigDumpInfo.xml with the infobase platform's own Designer dump - the cure for a dump-info file " //$NON-NLS-1$
+            + "whose format the platform does not understand (the answer to that is FullDump and every " //$NON-NLS-1$
+            + "update silently becomes a full load; update_database names the mismatch before starting). The " //$NON-NLS-1$
+            + "Designer is first asked for the dump-info alone, which takes seconds; the full hierarchical dump " //$NON-NLS-1$
+            + "is the fallback only when that run finished without error and left no file. A failed quick run " //$NON-NLS-1$
+            + "is refused with its own error. rebuildPath says which run produced the file and why. Releases " //$NON-NLS-1$
+            + "the infobase for a Designer run, backs the previous file up beside it, replaces it, makes EDT " //$NON-NLS-1$
+            + "re-read it and reconnects the infobase; a failed swap is rolled back from the backup. The format " //$NON-NLS-1$
+            + "the new file carries is recorded for THIS infobase together with the platform it was measured on " //$NON-NLS-1$
+            + "(formatPair). A record from another platform is not compared. Later checks compare against that " //$NON-NLS-1$
+            + "record only when it was stored; a failed record is not described as a comparison the next update will make. " //$NON-NLS-1$
+            + "reseed_baseline, mark_synchronized, recover_stuck_merge and rebuild_dump_info are DANGEROUS - only on explicit user request " //$NON-NLS-1$
             + "and only when you are CERTAIN of the state (project KNOWN to match the infobase / no update really " //$NON-NLS-1$
             + "running); otherwise EDT silently drops real changes or a genuine merge is aborted. NEVER call autonomously."; //$NON-NLS-1$
     }
@@ -115,7 +129,7 @@ public class SyncControlTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", "status | diagnose | diagnose_delta | suppress | reseed_baseline | " //$NON-NLS-1$ //$NON-NLS-2$
                 + "mark_synchronized | diagnose_stuck_locks | recover_stuck_merge | " //$NON-NLS-1$
-                + "list_support_snapshots | release_support_snapshot (required)", true) //$NON-NLS-1$
+                + "list_support_snapshots | release_support_snapshot | rebuild_dump_info (required)", true) //$NON-NLS-1$
             .stringProperty("name", "For operation=release_support_snapshot: the snapshot's file " //$NON-NLS-1$ //$NON-NLS-2$
                 + "name, as list_support_snapshots reports it. A protected snapshot is the only way back " //$NON-NLS-1$
                 + "from a merge whose outcome is not known here; releasing it says that merge has been " //$NON-NLS-1$
@@ -126,7 +140,15 @@ public class SyncControlTool implements IMcpTool
                 + "project (skip it on update), false = re-enable.") //$NON-NLS-1$
             .stringProperty("infobaseUuid", "For operation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$ //$NON-NLS-2$
                 + "recover_stuck_merge: the target infobase (an 'infobaseUuid' from status / diagnose_stuck_locks).") //$NON-NLS-1$
-            .booleanProperty("confirm", "For operation=reseed_baseline / mark_synchronized / recover_stuck_merge: " //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("applicationId", "For operation=rebuild_dump_info: the application " //$NON-NLS-1$ //$NON-NLS-2$
+                + "naming the infobase whose stored file is rebuilt. Required when the project has " //$NON-NLS-1$
+                + "several applications (see infobase_admin operation=get_applications); resolved " //$NON-NLS-1$
+                + "otherwise.") //$NON-NLS-1$
+            .stringProperty("timeoutSeconds", "For operation=rebuild_dump_info: how long each " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Designer run is waited for, 60-3600 (default 600). Past it the run is abandoned, " //$NON-NLS-1$
+                + "the stored file is not touched and the infobase is reconnected.") //$NON-NLS-1$
+            .booleanProperty("confirm", "For operation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$ //$NON-NLS-2$
+                + "recover_stuck_merge / rebuild_dump_info: " //$NON-NLS-1$
                 + "must be true to proceed. Confirms you are CERTAIN of the state (project matches the infobase, or " //$NON-NLS-1$
                 + "no update is really running) - otherwise EDT silently drops real changes or aborts a genuine merge.") //$NON-NLS-1$
             .build();
@@ -190,11 +212,13 @@ public class SyncControlTool implements IMcpTool
                 return doListSupportSnapshots(project);
             case "release_support_snapshot": //$NON-NLS-1$
                 return doReleaseSupportSnapshot(project, params);
+            case "rebuild_dump_info": //$NON-NLS-1$
+                return doRebuildDumpInfo(project, params);
             default:
                 return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
                     + "'. Valid: status, diagnose, diagnose_delta, suppress, reseed_baseline, mark_synchronized, " //$NON-NLS-1$
                     + "diagnose_stuck_locks, recover_stuck_merge, list_support_snapshots, " //$NON-NLS-1$
-                    + "release_support_snapshot.").toJson(); //$NON-NLS-1$
+                    + "release_support_snapshot, rebuild_dump_info.").toJson(); //$NON-NLS-1$
         }
     }
 
@@ -912,6 +936,129 @@ public class SyncControlTool implements IMcpTool
             return null;
         }
         return project.getLocation().toFile().toPath().resolve(".settings"); //$NON-NLS-1$
+    }
+
+    // ---- rebuild_dump_info (rewrite the stored ConfigDumpInfo.xml with the platform's own) ----
+
+    /** The least patience a rebuild is given - a full dump takes minutes, not seconds. */
+    private static final long REBUILD_MIN_TIMEOUT_MS = 60_000L;
+
+    /** The most, for configurations whose full dump is genuinely long. */
+    private static final long REBUILD_MAX_TIMEOUT_MS = 3_600_000L;
+
+    /** The default: ten minutes. */
+    private static final long REBUILD_DEFAULT_TIMEOUT_MS = 600_000L;
+
+    /**
+     * Rebuilds the stored {@code ConfigDumpInfo.xml} of one infobase with the platform's own
+     * Designer dump, under the per-infobase claim, with the previous file backed up beside it and
+     * EDT taken off the infobase for the Designer run and put back after it.
+     *
+     * <p>Every outcome is named on its own: which dump produced the file ({@code rebuildPath}, with
+     * the reason when the fallback was taken), what the swap did to the file ({@code fileState}),
+     * what the reconnection did, what the format recorded for this infobase says
+     * ({@code formatPair}). A mismatched file is the one condition {@code update_database} stops on
+     * before asking the infobase anything, and this is the operation that cures it.</p>
+     *
+     * @param project the project whose infobase is targeted
+     * @param params the call; {@code confirm} and, when the project has several applications,
+     *            {@code applicationId} name the target
+     * @return the outcome as a JSON answer
+     */
+    private String doRebuildDumpInfo(IProject project, Map<String, String> params)
+    {
+        Boolean confirm = JsonUtils.extractBooleanArgumentNullable(params, "confirm"); //$NON-NLS-1$
+        if (confirm == null || !confirm.booleanValue())
+        {
+            return ToolResult.error("rebuild_dump_info replaces the stored ConfigDumpInfo.xml of " //$NON-NLS-1$
+                + "one infobase with a fresh dump made by that infobase's own platform Designer: " //$NON-NLS-1$
+                + "EDT is disconnected from the infobase for the Designer run, the previous file is " //$NON-NLS-1$
+                + "backed up beside it and the new one is put in its place. Run update_database " //$NON-NLS-1$
+                + "dryRun=true first if you want to see the mismatch this would cure. Re-run with " //$NON-NLS-1$
+                + "confirm=true to proceed.").toJson(); //$NON-NLS-1$
+        }
+        String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
+        long timeoutMs = readRebuildTimeout(params);
+
+        DumpInfoRebuilder.Outcome outcome = DumpInfoRebuilder.rebuildViaEdt(project.getName(),
+            applicationId, timeoutMs);
+        Activator.logInfo("sync_control rebuild_dump_info: " + project.getName() //$NON-NLS-1$
+            + (applicationId == null || applicationId.isEmpty() ? "" : " app=" + applicationId) //$NON-NLS-1$ //$NON-NLS-2$
+            + " ok=" + outcome.ok //$NON-NLS-1$
+            + " path=" + outcome.rebuildPath //$NON-NLS-1$
+            + " fileState=" + outcome.fileState //$NON-NLS-1$
+            + (outcome.oldFormat == null ? "" : " " + outcome.oldFormat) //$NON-NLS-1$ //$NON-NLS-2$
+            + (outcome.newFormat == null ? "" : " -> " + outcome.newFormat) //$NON-NLS-1$ //$NON-NLS-2$
+            + (outcome.error == null ? "" : " error: " + outcome.error)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        ToolResult answer = outcome.ok
+            ? ToolResult.success().put("message", DumpInfoRebuilder.successMessage(outcome)) //$NON-NLS-1$
+            : ToolResult.error(outcome.error == null ? "The rebuild failed." : outcome.error); //$NON-NLS-1$
+        answer.put("operation", "rebuild_dump_info"); //$NON-NLS-1$ //$NON-NLS-2$
+        answer.put("projectName", project.getName()); //$NON-NLS-1$
+        if (outcome.infobaseName != null)
+        {
+            answer.put("infobaseName", outcome.infobaseName); //$NON-NLS-1$
+        }
+        if (outcome.failureKind != null)
+        {
+            answer.put("failureKind", outcome.failureKind); //$NON-NLS-1$
+        }
+        answer.put("ok", Boolean.valueOf(outcome.ok)); //$NON-NLS-1$
+        answer.put("fileState", outcome.fileState); //$NON-NLS-1$
+        if (outcome.platformVersion != null)
+        {
+            answer.put("platformVersion", outcome.platformVersion); //$NON-NLS-1$
+        }
+        if (outcome.oldFormat != null)
+        {
+            answer.put("oldFormat", outcome.oldFormat); //$NON-NLS-1$
+        }
+        if (outcome.newFormat != null)
+        {
+            answer.put("newFormat", outcome.newFormat); //$NON-NLS-1$
+        }
+        if (outcome.rebuildPath != null)
+        {
+            answer.put("rebuildPath", outcome.rebuildPath); //$NON-NLS-1$
+        }
+        if (outcome.records >= 0)
+        {
+            answer.put("records", Integer.valueOf(outcome.records)); //$NON-NLS-1$
+        }
+        if (outcome.backupPath != null)
+        {
+            answer.put("backupPath", outcome.backupPath); //$NON-NLS-1$
+        }
+        if (outcome.pairRemembered != null)
+        {
+            answer.put("formatPair", outcome.pairRemembered); //$NON-NLS-1$
+        }
+        if (outcome.holderRefresh != null)
+        {
+            answer.put("holderRefresh", outcome.holderRefresh); //$NON-NLS-1$
+        }
+        if (outcome.reconnectError != null)
+        {
+            answer.put("reconnectError", outcome.reconnectError); //$NON-NLS-1$
+        }
+        answer.put("durationMs", Long.valueOf(outcome.durationMs)); //$NON-NLS-1$
+        return answer.toJson();
+    }
+
+    /**
+     * The wait budget off the call, clamped to the rebuild's own bounds and defaulted to ten
+     * minutes - a value in the update's 5-120s range would abandon nearly every real dump.
+     */
+    private static long readRebuildTimeout(Map<String, String> params)
+    {
+        Integer askedSeconds = TimeoutArgs.requestedSeconds(params);
+        if (askedSeconds == null)
+        {
+            return REBUILD_DEFAULT_TIMEOUT_MS;
+        }
+        long askedMs = askedSeconds.intValue() * 1000L;
+        return Math.max(REBUILD_MIN_TIMEOUT_MS, Math.min(REBUILD_MAX_TIMEOUT_MS, askedMs));
     }
 
     /**

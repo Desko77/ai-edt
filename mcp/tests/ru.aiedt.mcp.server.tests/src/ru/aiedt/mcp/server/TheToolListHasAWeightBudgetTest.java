@@ -204,8 +204,9 @@ public class TheToolListHasAWeightBudgetTest
         // forms starts under the thick client in the ordinary run mode, and the caller names both.
         // Raised by 707 for register_infobase: an existing infobase is registered in EDT's list
         // and bound to the project in one call, and the facade's schema is where a client learns
-        // the operation and its two new arguments exist.
-        BUDGETS.put("infobase_admin", Integer.valueOf(8649)); //$NON-NLS-1$
+        // the operation and its two new arguments exist. And by 407 for the dump-info work: the
+        // syncOperation value rebuild_dump_info, the rebuild's wait budget, the format override.
+        BUDGETS.put("infobase_admin", Integer.valueOf(9056)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
