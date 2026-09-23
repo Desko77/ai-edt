@@ -41,6 +41,9 @@ public class RestartEdtTool implements IMcpTool
     private static final int DEFAULT_DELAY_MS = 1000;
     private static final int MAX_DELAY_MS = 60000;
 
+    /** The launcher {@code .ini} VM block that produced this process, captured at activation. */
+    private static volatile java.util.List<String> startupIniVmArguments;
+
     @Override
     public String getName()
     {
@@ -134,6 +137,7 @@ public class RestartEdtTool implements IMcpTool
 
         final int finalDelay = delayMs;
         final java.util.List<String> command = relaunchCommand;
+        final String vmArgumentsNote = shutdown ? null : relaunchVmArgumentsNote;
         Thread worker = new Thread(() -> {
             try
             {
@@ -221,6 +225,7 @@ public class RestartEdtTool implements IMcpTool
         return ToolResult.success()
             .put("action", action) //$NON-NLS-1$
             .put("delayMs", finalDelay) //$NON-NLS-1$
+            .put("vmArgumentsNote", vmArgumentsNote) //$NON-NLS-1$
             .put("note", "EDT will " + action + " in ~" + finalDelay //$NON-NLS-1$ //$NON-NLS-2$
                 + "ms. The MCP connection WILL drop (the server runs inside EDT); this is expected. " //$NON-NLS-1$
                 + (shutdown
@@ -245,6 +250,7 @@ public class RestartEdtTool implements IMcpTool
     static java.util.List<String> relaunchCommandOf()
     {
         relaunchProblem = null;
+        relaunchVmArgumentsNote = null;
         String home = System.getProperty("eclipse.home.location"); //$NON-NLS-1$
         if (home == null)
         {
@@ -279,34 +285,45 @@ public class RestartEdtTool implements IMcpTool
                 return null;
             }
         }
-        return relaunchCommandOf(launcher.getAbsolutePath(), workspaceDir.getAbsolutePath(),
-            System.getProperty("eclipse.vm"), //$NON-NLS-1$
-            java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments(),
-            iniVmArgumentsOf(launcher));
+        RelaunchPlan plan = relaunchCommandOf(startupIniVmArguments,
+            System.getProperty("eclipse.vmargs"), launcher.getAbsolutePath(), //$NON-NLS-1$
+            workspaceDir.getAbsolutePath(), System.getProperty("eclipse.vm")); //$NON-NLS-1$
+        relaunchVmArgumentsNote = vmArgumentsNoteOf(plan);
+        return plan.command();
+    }
+
+    static String vmArgumentsNoteOf(RelaunchPlan plan)
+    {
+        return plan.vmArgumentsOmissionReason() == null ? null
+            : "User VM arguments were not carried over: " //$NON-NLS-1$
+                + plan.vmArgumentsOmissionReason()
+                + " The launcher will use the current .ini VM block."; //$NON-NLS-1$
     }
 
     /**
      * Assembles the relaunch command line from the pieces it is made of.
      * <p>
-     * The VM arguments of the relaunched instance are exactly the ones returned here, because the
-     * command asks the launcher for {@code --launcher.overrideVmargs} rather than
-     * {@code --launcher.appendVmargs}. Append has the launcher add the {@code .ini} block to
-     * arguments that already carry it, and the relaunched instance then reads a doubled block back:
-     * measured, a launcher line of 12009 characters carrying 10 {@code -Xmx} and a VM line of 27313
-     * characters carrying 22, against the 32767-character Windows command-line limit. Every one of
-     * those blocks came from a previous restart, so the block is placed here exactly once and each
-     * further restart reproduces this command unchanged.
+     * {@code eclipse.vmargs} is the launcher's lossless, ordered account of its original VM
+     * arguments. Its leading block is removed using the {@code .ini} snapshot taken when this
+     * bundle activated, as are complete copies left by older restarts. Only the remaining user
+     * arguments are passed with {@code --launcher.appendVmargs}; the launcher reads its current
+     * {@code .ini} itself, so an edit made while EDT was running takes effect on restart.
+     * </p>
+     * <p>
+     * When the property is absent or does not begin with the snapshot, no VM arguments are passed.
+     * Guessing in that case would either regrow the command or let stale settings override the
+     * current {@code .ini}; the plan names the omission so the tool can report it.
      * </p>
      *
+     * @param iniVmArgumentsAtStartup the launcher's {@code .ini} VM block captured at activation.
+     * @param eclipseVmargs the newline-separated {@code eclipse.vmargs} system property.
      * @param launcherPath the launcher executable to start.
      * @param workspacePath the workspace to open.
      * @param vm the VM the launcher is to use, or <code>null</code> to leave the choice to it.
-     * @param inputArguments the VM arguments this instance is running with, as read from the JVM.
-     * @param iniVmArguments the VM arguments of the launcher's own {@code .ini}, in file order.
-     * @return the command line parts.
+     * @return the command and, when applicable, the reason user arguments were omitted.
      */
-    static java.util.List<String> relaunchCommandOf(String launcherPath, String workspacePath,
-        String vm, java.util.List<String> inputArguments, java.util.List<String> iniVmArguments)
+    static RelaunchPlan relaunchCommandOf(java.util.List<String> iniVmArgumentsAtStartup,
+        String eclipseVmargs, String launcherPath, String workspacePath, String vm)
     {
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add(launcherPath);
@@ -317,14 +334,84 @@ public class RestartEdtTool implements IMcpTool
             command.add("-vm"); //$NON-NLS-1$
             command.add(vm);
         }
-        command.add("--launcher.overrideVmargs"); //$NON-NLS-1$
-        command.add("-vmargs"); //$NON-NLS-1$
-        if (iniVmArguments != null)
+
+        String omissionReason = vmArgumentsOmissionReason(iniVmArgumentsAtStartup, eclipseVmargs);
+        if (omissionReason == null)
         {
-            command.addAll(iniVmArguments);
+            java.util.List<String> userArguments = extraVmArguments(
+                vmArgumentsFromProperty(eclipseVmargs), iniVmArgumentsAtStartup);
+            if (!userArguments.isEmpty())
+            {
+                command.add("--launcher.appendVmargs"); //$NON-NLS-1$
+                command.add("-vmargs"); //$NON-NLS-1$
+                command.addAll(userArguments);
+            }
         }
-        command.addAll(extraVmArguments(inputArguments, iniVmArguments));
-        return command;
+        return new RelaunchPlan(command, omissionReason);
+    }
+
+    private static String vmArgumentsOmissionReason(
+        java.util.List<String> iniVmArgumentsAtStartup, String eclipseVmargs)
+    {
+        if (eclipseVmargs == null)
+        {
+            return "the eclipse.vmargs system property is not set."; //$NON-NLS-1$
+        }
+        if (iniVmArgumentsAtStartup == null || iniVmArgumentsAtStartup.isEmpty())
+        {
+            return "the startup .ini VM argument snapshot is empty."; //$NON-NLS-1$
+        }
+        if (!blockStartsAt(vmArgumentsFromProperty(eclipseVmargs), 0,
+            iniVmArgumentsAtStartup))
+        {
+            return "eclipse.vmargs does not start with the startup .ini VM argument snapshot."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /** Splits the property exactly as {@code Main.setMultiValueProperty} joined it. */
+    private static java.util.List<String> vmArgumentsFromProperty(String eclipseVmargs)
+    {
+        java.util.List<String> arguments = new java.util.ArrayList<>();
+        if (eclipseVmargs == null || eclipseVmargs.isEmpty())
+        {
+            return arguments;
+        }
+        String[] lines = eclipseVmargs.split("\\n", -1); //$NON-NLS-1$
+        int length = lines.length;
+        if (length > 0 && lines[length - 1].isEmpty())
+        {
+            length--;
+        }
+        for (int i = 0; i < length; i++)
+        {
+            arguments.add(lines[i]);
+        }
+        return arguments;
+    }
+
+    /** Immutable output of the pure relaunch-command builder. */
+    static final class RelaunchPlan
+    {
+        private final java.util.List<String> command;
+        private final String vmArgumentsOmissionReason;
+
+        RelaunchPlan(java.util.List<String> command, String vmArgumentsOmissionReason)
+        {
+            this.command = java.util.Collections.unmodifiableList(
+                new java.util.ArrayList<>(command));
+            this.vmArgumentsOmissionReason = vmArgumentsOmissionReason;
+        }
+
+        java.util.List<String> command()
+        {
+            return command;
+        }
+
+        String vmArgumentsOmissionReason()
+        {
+            return vmArgumentsOmissionReason;
+        }
     }
 
     /**
@@ -337,7 +424,7 @@ public class RestartEdtTool implements IMcpTool
      * does not by itself reproduce one.
      * </p>
      *
-     * @param inputArguments the VM arguments an instance is running with.
+     * @param inputArguments the ordered arguments recorded in {@code eclipse.vmargs}.
      * @param iniVmArguments the VM arguments of the launcher's own {@code .ini}.
      * @return the arguments that did not come from the {@code .ini}, in their original order.
      */
@@ -392,10 +479,9 @@ public class RestartEdtTool implements IMcpTool
     /**
      * The VM arguments the launcher takes from its own {@code .ini}.
      * <p>
-     * The file is {@code <launcher>.ini} beside the executable, and the block is what follows the
-     * {@code -vmargs} line. An unreadable file answers empty rather than failing the restart: the
-     * caller then passes this instance's arguments through unchanged, which preserves the settings
-     * even though a block that was already doubled stays doubled.
+     * The file is {@code <launcher>.ini} beside the executable, and the block is every raw line
+     * after the exact {@code -vmargs} line. Eclipse documents whitespace as significant in this
+     * file, so no line is trimmed or otherwise normalised.
      * </p>
      *
      * @param launcher the launcher executable.
@@ -425,22 +511,48 @@ public class RestartEdtTool implements IMcpTool
         boolean inVmArgs = false;
         for (String line : lines)
         {
-            String trimmed = line.trim();
             if (!inVmArgs)
             {
-                inVmArgs = "-vmargs".equals(trimmed); //$NON-NLS-1$
+                inVmArgs = "-vmargs".equals(line); //$NON-NLS-1$
                 continue;
             }
-            if (!trimmed.isEmpty() && !trimmed.startsWith("#")) //$NON-NLS-1$
-            {
-                arguments.add(trimmed);
-            }
+            arguments.add(line);
         }
         return arguments;
     }
 
+    /** Captures the launcher's VM block once, on the bundle activation thread. */
+    public static void captureIniVmArgumentsAtStartup()
+    {
+        java.util.List<String> snapshot = java.util.Collections.emptyList();
+        String home = System.getProperty("eclipse.home.location"); //$NON-NLS-1$
+        if (home != null)
+        {
+            try
+            {
+                java.io.File homeDir = new java.io.File(
+                    java.net.URI.create(home.replace(" ", "%20"))); //$NON-NLS-1$ //$NON-NLS-2$
+                java.io.File launcher = new java.io.File(homeDir, "1cedt.exe"); //$NON-NLS-1$
+                if (!launcher.isFile())
+                {
+                    launcher = new java.io.File(homeDir, "eclipse"); //$NON-NLS-1$
+                }
+                snapshot = iniVmArgumentsOf(launcher);
+            }
+            catch (IllegalArgumentException ignored)
+            {
+                // A restart can still use the current .ini; it will report that extras were omitted.
+            }
+        }
+        startupIniVmArguments = java.util.Collections.unmodifiableList(
+            new java.util.ArrayList<>(snapshot));
+    }
+
     /** Set by {@link #relaunchCommandOf} when the command cannot be assembled, naming why. */
     private static String relaunchProblem;
+
+    /** Explanation included in a successful restart response when extras could not be identified. */
+    private static String relaunchVmArgumentsNote;
 
     /**
      * Whether the workbench is restarted through the launcher's restart exit code, or closed.
