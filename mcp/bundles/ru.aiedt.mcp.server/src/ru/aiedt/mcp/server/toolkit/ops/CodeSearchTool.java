@@ -496,8 +496,28 @@ public class CodeSearchTool implements IMcpTool
             routed.getInputSchema(), PARAMETER_RULES);
     }
 
+    /**
+     * The operations this facade dispatches, in the order the catalog names them: each is asked
+     * for its parameters, so {@code find} searches it one argument at a time.
+     */
+    private static final List<String> HELP_OPERATIONS = helpOperations();
+
     /** Every help topic, in the order the catalog names them: operations, then named topics. */
     private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics that name one of the operations.
+     *
+     * @return the operation names, never <code>null</code>
+     */
+    private static List<String> helpOperations()
+    {
+        List<String> operations = new ArrayList<>();
+        Collections.addAll(operations, "text_search", "object_references", //$NON-NLS-1$ //$NON-NLS-2$
+            "method_references", "resolve_symbol", "call_hierarchy", "symbol_info", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "content_assist", "outgoing_structures"); //$NON-NLS-1$ //$NON-NLS-2$
+        return Collections.unmodifiableList(operations);
+    }
 
     /**
      * The topics {@code find} searches, catalog first by the caller, these after.
@@ -506,10 +526,8 @@ public class CodeSearchTool implements IMcpTool
      */
     private static List<String> helpTopics()
     {
-        List<String> topics = new ArrayList<>();
-        Collections.addAll(topics, "text_search", "object_references", "method_references", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "resolve_symbol", "call_hierarchy", "symbol_info", "content_assist", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            "outgoing_structures", "workflow"); //$NON-NLS-1$ //$NON-NLS-2$
+        List<String> topics = new ArrayList<>(HELP_OPERATIONS);
+        topics.add("workflow"); //$NON-NLS-1$
         return Collections.unmodifiableList(topics);
     }
 
@@ -517,7 +535,7 @@ public class CodeSearchTool implements IMcpTool
     {
         if (find != null && !find.isBlank())
         {
-            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS, HELP_OPERATIONS,
                 asked -> buildHelp(asked, null));
         }
         topic = JsonUtils.normalizeOperationToken(topic);

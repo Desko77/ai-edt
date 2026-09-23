@@ -289,7 +289,7 @@ public class ProjectAdminFacadeTool implements IMcpTool
     {
         if (find != null && !find.isBlank())
         {
-            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS, OPS.keySet(),
                 asked -> buildHelp(asked, null, schema));
         }
         topic = JsonUtils.normalizeOperationToken(topic);

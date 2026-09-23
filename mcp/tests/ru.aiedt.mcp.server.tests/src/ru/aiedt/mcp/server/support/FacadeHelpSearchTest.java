@@ -24,11 +24,44 @@ import org.junit.Test;
  * a case-insensitive substring in any alphabet, that several words must share one chunk, that the
  * answer counts everything and shows the first ten, and that an empty answer lists what can be
  * asked instead of failing.
+ * <p>
+ * The two chunkings are pinned as well. A document of sections is cut at its sections, and what
+ * stands under a section belongs to it. An operation's parameters are cut at their arguments
+ * however the facade draws them, and neither the operation's own heading nor the paragraph that
+ * names every argument in passing carries the arguments' words.
+ * </p>
  * </p>
  */
 public class FacadeHelpSearchTest
 {
     private static final List<String> TOPICS = Arrays.asList("alpha", "workflow");
+
+    /** The topic of this facade that names an operation, and so is searched argument by argument. */
+    private static final List<String> OPERATIONS = Collections.singletonList("alpha");
+
+    /** A catalog whose `## Operations` section holds one `###` subsection per operation. */
+    private static final String NESTED_CATALOG =
+        "# demo - operations\n\n"
+            + "## Common\n\n- **alpha** - reads the Таблица of one project.\n\n"
+            + "## Operations\n\n"
+            + "### addField\n\nAdds a field.\n\n"
+            + "### addGroup\n\nAdds a group.\n";
+
+    /** One operation's parameters: its arguments are bullets under a heading per group. */
+    private static final String BULLETED_ARGUMENTS =
+        "## alpha - parameters\n\n"
+            + "### Established for this operation\n\n"
+            + "- **mode**  _string_ - what to restore.\n"
+            + "- **snapshotPath**  _string_ - where the snapshot is kept.\n\n"
+            + "### Accepted here as well\n\n"
+            + "- **projectName**  _string_ - the project it belongs to.\n";
+
+    /** One operation's help: a paragraph naming every argument above the headings for them. */
+    private static final String OPENING_PARAGRAPH =
+        "## alpha - parameters\n\n"
+            + "Parameters: query, caseSensitive, fileMask.\n\n"
+            + "### query\n\nThe text to look for.\n\n"
+            + "### caseSensitive\n\nWhether case matters.\n";
 
     /**
      * A small facade to search: a catalog of two operations, one operation's parameters and one
@@ -83,10 +116,10 @@ public class FacadeHelpSearchTest
     public void anOperationNameFindsTheCatalogEntry()
     {
         String answer = FacadeHelpSearch.search("demo", "beta", null, TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
 
         assertTrue(answer, answer.contains("1 chunk matches"));
-        assertTrue(answer, answer.contains("## From the operation catalog"));
+        assertTrue(answer, answer.contains("## From " + FacadeHelpSearch.CATALOG_ORIGIN));
         assertTrue(answer, answer.contains("- **beta** - writes nothing."));
     }
 
@@ -94,14 +127,15 @@ public class FacadeHelpSearchTest
     public void aWordMatchesInAnyCaseAndAnyAlphabet()
     {
         String russian = FacadeHelpSearch.search("demo", "ТАБЛИЦА", null, TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
         // The catalog line and the projectName description, catalog first.
         assertTrue(russian, russian.contains("2 chunks match"));
         assertTrue(russian,
-            russian.indexOf("From the operation catalog") < russian.indexOf("From topic=alpha"));
+            russian.indexOf("From " + FacadeHelpSearch.CATALOG_ORIGIN)
+                < russian.indexOf("From topic=alpha"));
 
         String english = FacadeHelpSearch.search("demo", "ROWS", null, TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
         assertTrue(english, english.contains("Cap on rows returned."));
     }
 
@@ -109,19 +143,57 @@ public class FacadeHelpSearchTest
     public void severalWordsMustShareOneChunk()
     {
         String both = FacadeHelpSearch.search("demo", "cap rows", null, TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
         assertTrue(both, both.contains("## From topic=alpha"));
 
         String apart = FacadeHelpSearch.search("demo", "cap beta", null, TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
         assertTrue(apart, apart.contains("Nothing matches"));
+    }
+
+    @Test
+    public void twoSubsectionsOfOneSectionShareItsChunk()
+    {
+        String answer = FacadeHelpSearch.search("demo", "addField addGroup", null,
+            Collections.<String> emptyList(), Collections.<String> emptyList(),
+            topic -> NESTED_CATALOG);
+
+        assertTrue(answer, answer.contains("1 chunk matches"));
+        assertTrue(answer, answer.contains("### addField"));
+        assertTrue(answer, answer.contains("### addGroup"));
+    }
+
+    @Test
+    public void twoArgumentsInOneGroupShareNoChunk()
+    {
+        String together = FacadeHelpSearch.search("demo", "mode snapshotPath", "alpha", TOPICS,
+            OPERATIONS, topic -> BULLETED_ARGUMENTS);
+        assertTrue(together, together.contains("Nothing matches"));
+
+        String alone = FacadeHelpSearch.search("demo", "snapshotPath", "alpha", TOPICS,
+            OPERATIONS, topic -> BULLETED_ARGUMENTS);
+        assertTrue(alone, alone.contains("- **snapshotPath**"));
+        assertFalse(alone, alone.contains("- **mode**"));
+    }
+
+    @Test
+    public void aParagraphNamingEveryArgumentIsNotAChunkOfItsOwn()
+    {
+        String together = FacadeHelpSearch.search("demo", "caseSensitive fileMask", "alpha", TOPICS,
+            OPERATIONS, topic -> OPENING_PARAGRAPH);
+        assertTrue(together, together.contains("Nothing matches"));
+
+        String alone = FacadeHelpSearch.search("demo", "caseSensitive", "alpha", TOPICS,
+            OPERATIONS, topic -> OPENING_PARAGRAPH);
+        assertTrue(alone, alone.contains("### caseSensitive"));
+        assertFalse(alone, alone.contains("fileMask"));
     }
 
     @Test
     public void moreThanTenMatchesAreCountedAndCut()
     {
         String answer = FacadeHelpSearch.search("demo", "row", null,
-            Collections.singletonList("big"), topic ->
+            Collections.singletonList("big"), Collections.singletonList("big"), topic ->
             {
                 if (topic == null)
                 {
@@ -144,18 +216,18 @@ public class FacadeHelpSearchTest
     public void findWithATopicSearchesOnlyThatTopic()
     {
         String answer = FacadeHelpSearch.search("demo", "таблица", "alpha", TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
 
         assertTrue(answer, answer.contains("1 chunk matches"));
         assertTrue(answer, answer.contains("## From topic=alpha"));
-        assertFalse(answer, answer.contains("From the operation catalog"));
+        assertFalse(answer, answer.contains("From " + FacadeHelpSearch.CATALOG_ORIGIN));
     }
 
     @Test
     public void findWithAnUnknownTopicAnswersTheRefusalItself()
     {
         String answer = FacadeHelpSearch.search("demo", "таблица", "no-such-topic", TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
 
         assertTrue(answer, answer.contains("Unknown topic"));
     }
@@ -164,10 +236,23 @@ public class FacadeHelpSearchTest
     public void noMatchListsWhatCanBeAskedInsteadOfFailing()
     {
         String answer = FacadeHelpSearch.search("demo", "zzz", null, TOPICS,
-            FacadeHelpSearchTest::helpOf);
+            OPERATIONS, FacadeHelpSearchTest::helpOf);
 
         assertTrue(answer, answer.contains("Nothing matches"));
         assertTrue(answer, answer.contains("alpha / workflow"));
+        assertFalse(answer, answer.contains("Unknown topic"));
+    }
+
+    @Test
+    public void aFacadeWithoutTopicsNamesItsSectionsInstead()
+    {
+        String answer = FacadeHelpSearch.search("demo", "zzzqqq", null,
+            Collections.<String> emptyList(), Collections.<String> emptyList(),
+            topic -> NESTED_CATALOG);
+
+        assertTrue(answer, answer.contains("its sections:"));
+        assertTrue(answer, answer.contains("addField"));
+        assertTrue(answer, answer.contains("addGroup"));
         assertFalse(answer, answer.contains("Unknown topic"));
     }
 

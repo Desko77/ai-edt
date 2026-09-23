@@ -6,7 +6,10 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -23,7 +26,6 @@ import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.ProjectResolver;
-import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.StandardCommandRegistry;
 
 /**
@@ -46,6 +48,11 @@ public class EditFormTool implements IMcpTool
     private static final String OP_ADD_DECORATION = "add_decoration"; //$NON-NLS-1$
     private static final String OP_REMOVE_ITEM = "remove_item"; //$NON-NLS-1$
     private static final String OP_HELP = "help"; //$NON-NLS-1$
+
+    /** The operations this facade dispatches, named as its help document names them. */
+    private static final List<String> EDIT_OPERATIONS = Collections.unmodifiableList(Arrays.asList(
+        "addField", "addGroup", "addButton", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "addTable", "addDecoration", "removeItem")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
     /** Lazy-initialized singleton helper */
     private BmFormHelper helper;
@@ -150,7 +157,7 @@ public class EditFormTool implements IMcpTool
                 // The whole help is one document with a section per operation, so it is searched
                 // as the catalog is elsewhere; there are no separate topics to confine it to.
                 return FacadeHelpSearch.search(NAME, find, null, Collections.<String> emptyList(),
-                    asked -> buildHelpResponse());
+                    Collections.<String> emptyList(), asked -> buildHelpResponse());
             }
             return buildHelpResponse();
         }
@@ -170,6 +177,12 @@ public class EditFormTool implements IMcpTool
         {
             return buildError("operation is required. " + //$NON-NLS-1$
                 "Options: addField, addGroup, addButton, addTable, addDecoration, removeItem, help"); //$NON-NLS-1$
+        }
+        // Refused here rather than inside the transaction: the answer is the same one, and it does
+        // not need the workspace to be read before it can be given.
+        if (!EDIT_OPERATIONS.contains(JsonUtils.normalizeOperationToken(operation)))
+        {
+            return buildError(unknownOperation(operation));
         }
 
         // Execute on UI thread (BM API requires it in some EDT versions)
@@ -305,9 +318,7 @@ public class EditFormTool implements IMcpTool
                 case "remove_item": //$NON-NLS-1$
                     return executeRemoveItem(form, name);
                 default:
-                    return "Error: " + TextSuggest.invalidValue("operation", operation, //$NON-NLS-1$ //$NON-NLS-2$
-                        java.util.Arrays.asList("addField", "addGroup", "addButton", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                            "addTable", "addDecoration", "removeItem", "help")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                    return buildError(unknownOperation(operation));
             }
         });
 
@@ -1468,7 +1479,37 @@ public class EditFormTool implements IMcpTool
             .wrapContent(body.toString());
     }
 
-    private String buildHelpResponse()
+    /**
+     * The refusal for an operation this facade does not dispatch: the names closest to what was
+     * asked, each with what it does, then every name that would have been accepted.
+     *
+     * @param operation what was asked for; may be <code>null</code>.
+     * @return the refusal text, never <code>null</code>
+     */
+    static String unknownOperation(String operation)
+    {
+        return "Unknown operation '" + operation + "'." //$NON-NLS-1$
+            + FacadeHelpSearch.closestMatches(operation, EDIT_OPERATIONS, operationDescriptions())
+            + "\n\nAllowed: " + String.join(" / ", EDIT_OPERATIONS) + " / help."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * What the help document says about each operation it dispatches.
+     *
+     * @return the operation names against their one-line descriptions, never <code>null</code>
+     */
+    private static Map<String, String> operationDescriptions()
+    {
+        Map<String, String> documented = FacadeHelpSearch.describe(buildHelpResponse());
+        Map<String, String> mine = new LinkedHashMap<>();
+        for (String operation : EDIT_OPERATIONS)
+        {
+            mine.put(operation, documented.get(operation));
+        }
+        return mine;
+    }
+
+    private static String buildHelpResponse()
     {
         StringBuilder sb = new StringBuilder();
         sb.append("# edit_form - Form Element Operations\n\n"); //$NON-NLS-1$
