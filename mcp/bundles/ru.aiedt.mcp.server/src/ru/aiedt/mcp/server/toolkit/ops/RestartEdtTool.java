@@ -234,10 +234,10 @@ public class RestartEdtTool implements IMcpTool
     /**
      * The command line this instance was started with, as something relaunchable.
      * <p>
-     * Read from the JVM, not reassembled: the launcher's own arguments include the workspace, the
-     * VM and the memory settings, and a line put together here would get exactly one of them wrong
-     * - measured: a command whose {@code -vm} path lost its quotes makes the launcher wait forever
-     * without a window.
+     * Each piece is read by name - the installation root, the workspace, the VM and the arguments
+     * the JVM reports - and never taken from a split command line: a path put back together from a
+     * string gets one of them wrong, and measured, a command whose {@code -vm} path lost its quotes
+     * makes the launcher wait forever without a window.
      * </p>
      *
      * @return the command line parts, or <code>null</code> when they cannot be read
@@ -279,24 +279,164 @@ public class RestartEdtTool implements IMcpTool
                 return null;
             }
         }
+        return relaunchCommandOf(launcher.getAbsolutePath(), workspaceDir.getAbsolutePath(),
+            System.getProperty("eclipse.vm"), //$NON-NLS-1$
+            java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments(),
+            iniVmArgumentsOf(launcher));
+    }
+
+    /**
+     * Assembles the relaunch command line from the pieces it is made of.
+     * <p>
+     * The VM arguments of the relaunched instance are exactly the ones returned here, because the
+     * command asks the launcher for {@code --launcher.overrideVmargs} rather than
+     * {@code --launcher.appendVmargs}. Append has the launcher add the {@code .ini} block to
+     * arguments that already carry it, and the relaunched instance then reads a doubled block back:
+     * measured, a launcher line of 12009 characters carrying 10 {@code -Xmx} and a VM line of 27313
+     * characters carrying 22, against the 32767-character Windows command-line limit. Every one of
+     * those blocks came from a previous restart, so the block is placed here exactly once and each
+     * further restart reproduces this command unchanged.
+     * </p>
+     *
+     * @param launcherPath the launcher executable to start.
+     * @param workspacePath the workspace to open.
+     * @param vm the VM the launcher is to use, or <code>null</code> to leave the choice to it.
+     * @param inputArguments the VM arguments this instance is running with, as read from the JVM.
+     * @param iniVmArguments the VM arguments of the launcher's own {@code .ini}, in file order.
+     * @return the command line parts.
+     */
+    static java.util.List<String> relaunchCommandOf(String launcherPath, String workspacePath,
+        String vm, java.util.List<String> inputArguments, java.util.List<String> iniVmArguments)
+    {
         java.util.List<String> command = new java.util.ArrayList<>();
-        command.add(launcher.getAbsolutePath());
+        command.add(launcherPath);
         command.add("-data"); //$NON-NLS-1$
-        command.add(workspaceDir.getAbsolutePath());
-        String vm = System.getProperty("eclipse.vm"); //$NON-NLS-1$
-        if (vm != null)
+        command.add(workspacePath);
+        if (vm != null && !vm.isEmpty())
         {
             command.add("-vm"); //$NON-NLS-1$
             command.add(vm);
         }
-        command.add("--launcher.appendVmargs"); //$NON-NLS-1$
+        command.add("--launcher.overrideVmargs"); //$NON-NLS-1$
         command.add("-vmargs"); //$NON-NLS-1$
-        for (String arg : java.lang.management.ManagementFactory.getRuntimeMXBean()
-                .getInputArguments())
+        if (iniVmArguments != null)
         {
-            command.add(arg);
+            command.addAll(iniVmArguments);
         }
+        command.addAll(extraVmArguments(inputArguments, iniVmArguments));
         return command;
+    }
+
+    /**
+     * The arguments of an instance that are not the launcher's own {@code .ini} block.
+     * <p>
+     * Every complete copy of the block is dropped, not one: an instance that has already been
+     * restarted carries one copy per restart, and one removal would leave the rest in place. An
+     * argument of the caller's own is kept - only a run that reproduces the whole block, line for
+     * line, is read as another copy of it, and an argument equal to a single line of the block
+     * does not by itself reproduce one.
+     * </p>
+     *
+     * @param inputArguments the VM arguments an instance is running with.
+     * @param iniVmArguments the VM arguments of the launcher's own {@code .ini}.
+     * @return the arguments that did not come from the {@code .ini}, in their original order.
+     */
+    static java.util.List<String> extraVmArguments(java.util.List<String> inputArguments,
+        java.util.List<String> iniVmArguments)
+    {
+        java.util.List<String> extras = new java.util.ArrayList<>();
+        if (inputArguments == null || inputArguments.isEmpty())
+        {
+            return extras;
+        }
+        int blockLength = iniVmArguments == null ? 0 : iniVmArguments.size();
+        int i = 0;
+        while (i < inputArguments.size())
+        {
+            if (blockLength > 0 && blockStartsAt(inputArguments, i, iniVmArguments))
+            {
+                i += blockLength;
+                continue;
+            }
+            extras.add(inputArguments.get(i));
+            i++;
+        }
+        return extras;
+    }
+
+    /**
+     * Whether the {@code .ini} block stands here in full.
+     *
+     * @param arguments the arguments to look in.
+     * @param offset where the block is expected to start.
+     * @param block the block to look for; empty or <code>null</code> never matches.
+     * @return whether every line of the block matches at this offset.
+     */
+    private static boolean blockStartsAt(java.util.List<String> arguments, int offset,
+        java.util.List<String> block)
+    {
+        if (block == null || block.isEmpty() || offset + block.size() > arguments.size())
+        {
+            return false;
+        }
+        for (int i = 0; i < block.size(); i++)
+        {
+            if (!block.get(i).equals(arguments.get(offset + i)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The VM arguments the launcher takes from its own {@code .ini}.
+     * <p>
+     * The file is {@code <launcher>.ini} beside the executable, and the block is what follows the
+     * {@code -vmargs} line. An unreadable file answers empty rather than failing the restart: the
+     * caller then passes this instance's arguments through unchanged, which preserves the settings
+     * even though a block that was already doubled stays doubled.
+     * </p>
+     *
+     * @param launcher the launcher executable.
+     * @return the arguments after {@code -vmargs}, in file order, or empty when there are none.
+     */
+    static java.util.List<String> iniVmArgumentsOf(java.io.File launcher)
+    {
+        java.util.List<String> arguments = new java.util.ArrayList<>();
+        if (launcher == null)
+        {
+            return arguments;
+        }
+        String name = launcher.getName();
+        int dot = name.lastIndexOf('.');
+        java.io.File ini = new java.io.File(launcher.getParentFile(),
+            (dot > 0 ? name.substring(0, dot) : name) + ".ini"); //$NON-NLS-1$
+        java.util.List<String> lines;
+        try
+        {
+            lines = java.nio.file.Files.readAllLines(ini.toPath(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        }
+        catch (java.io.IOException | RuntimeException unreadable)
+        {
+            return arguments;
+        }
+        boolean inVmArgs = false;
+        for (String line : lines)
+        {
+            String trimmed = line.trim();
+            if (!inVmArgs)
+            {
+                inVmArgs = "-vmargs".equals(trimmed); //$NON-NLS-1$
+                continue;
+            }
+            if (!trimmed.isEmpty() && !trimmed.startsWith("#")) //$NON-NLS-1$
+            {
+                arguments.add(trimmed);
+            }
+        }
+        return arguments;
     }
 
     /** Set by {@link #relaunchCommandOf} when the command cannot be assembled, naming why. */
