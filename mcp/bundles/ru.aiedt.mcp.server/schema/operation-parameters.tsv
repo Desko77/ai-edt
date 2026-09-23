@@ -318,6 +318,7 @@ InfobaseAdminFacadeTool	create_launch_config	infobaseName:string,projectName:str
 InfobaseAdminFacadeTool	delete_infobase	deleteContent:boolean,name:string,projectName:string	delegate InfobaseRemover	syncOperation:string
 InfobaseAdminFacadeTool	get_applications	projectName:string	delegate ApplicationsReader	syncOperation:string
 InfobaseAdminFacadeTool	read_event_log	applicationId:string,event:string,from:string,limit:integer,projectName:string,severity:string,to:string,user:string	delegate EventLogTool	syncOperation:string
+InfobaseAdminFacadeTool	register_infobase	connectionString:string,makeDefault:boolean,name:string,path:string,projectName:string	delegate InfobaseRegistrar	syncOperation:string
 InfobaseAdminFacadeTool	set_infobase_credentials	accessMode:string,applicationId:string,password:string,projectName:string,userName:string	delegate InfobaseCredentialsWriter	syncOperation:string
 InfobaseAdminFacadeTool	start_client	allowSecondSession:boolean,applicationId:string,clientType:string,endpointTimeoutSeconds:integer,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate ClientSessionStarter	syncOperation:string
 InfobaseAdminFacadeTool	sync_control	syncOperation:string	read in place	

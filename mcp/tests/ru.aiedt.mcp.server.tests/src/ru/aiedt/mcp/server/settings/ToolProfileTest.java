@@ -114,6 +114,7 @@ public class ToolProfileTest
         assertTrue(disabled.contains("rename_metadata_object")); //$NON-NLS-1$
         assertTrue(disabled.contains("update_database")); //$NON-NLS-1$
         assertTrue(disabled.contains("generate_event_handlers")); //$NON-NLS-1$
+        assertTrue(disabled.contains("register_infobase")); //$NON-NLS-1$
 
         // pure-read tools stay on
         assertFalse(disabled.contains("get_edt_version")); //$NON-NLS-1$
@@ -155,6 +156,7 @@ public class ToolProfileTest
         assertTrue(disabled.contains("rename_metadata_object")); //$NON-NLS-1$
         assertTrue(disabled.contains("set_breakpoint")); //$NON-NLS-1$
         assertTrue(disabled.contains("debug_launch")); //$NON-NLS-1$
+        assertTrue(disabled.contains("register_infobase")); //$NON-NLS-1$
 
         // reads and the constructors stay on - reading what a constructor would produce is part of
         // a review
@@ -179,6 +181,7 @@ public class ToolProfileTest
         assertTrue(disabled.contains("delete_project")); //$NON-NLS-1$
         assertTrue(disabled.contains("install_extension")); //$NON-NLS-1$
         assertTrue(disabled.contains("set_infobase_credentials")); //$NON-NLS-1$
+        assertTrue(disabled.contains("register_infobase")); //$NON-NLS-1$
         assertTrue(disabled.contains("restart_edt")); //$NON-NLS-1$
 
         // write/refactor/constructors off, debug + yaxunit on

@@ -308,6 +308,7 @@ public enum ToolProfile
             // infobase_admin covers these
             "get_applications", //$NON-NLS-1$
             "create_infobase", //$NON-NLS-1$
+            "register_infobase", //$NON-NLS-1$
             "delete_infobase", //$NON-NLS-1$
             "set_infobase_credentials", //$NON-NLS-1$
             "create_launch_config", //$NON-NLS-1$
@@ -357,8 +358,9 @@ public enum ToolProfile
     }
 
     /**
-     * The tools that can destroy work: they drop an infobase or a project, overwrite a configuration
-     * from outside, change what is installed, or resynchronise one side of the pair onto the other.
+     * The tools that can destroy work: they drop an infobase or a project, overwrite a
+     * configuration from outside, write the infobase list, change what is installed, or
+     * resynchronise one side of the pair onto the other.
      * <p>
      * Every one of them is in {@link ToolCategory#APPLICATIONS}, so a preset that disables that whole
      * group has them covered already. This list exists for the one preset that must not disable the
@@ -377,6 +379,7 @@ public enum ToolProfile
             "install_extension", //$NON-NLS-1$
             "uninstall_extension", //$NON-NLS-1$
             "set_infobase_credentials", //$NON-NLS-1$
+            "register_infobase", //$NON-NLS-1$
             "sync_control", //$NON-NLS-1$
             "resync_to_disk", //$NON-NLS-1$
             "restart_edt", //$NON-NLS-1$

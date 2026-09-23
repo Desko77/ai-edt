@@ -146,6 +146,22 @@ public class FacadeF3bTest
         assertTrue(result.contains("operation picker")); //$NON-NLS-1$
     }
 
+    @Test
+    public void infobaseAdminHelpForRegisterInfobaseMarksTheNameRuleAsSyncControls()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "help"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("topic", "register_infobase"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new InfobaseAdminFacadeTool().execute(params);
+
+        // The name rule on this topic is sync_control's, not register_infobase's: the prefix
+        // saying so must stand before the snapshot text it introduces.
+        int prefix = result.indexOf("sync_control release_support_snapshot:"); //$NON-NLS-1$
+        assertTrue("the name rule names the operation it belongs to: " + result, prefix >= 0); //$NON-NLS-1$
+        assertTrue("the snapshot text follows the prefix", //$NON-NLS-1$
+            result.indexOf("a protected snapshot is the only") > prefix); //$NON-NLS-1$
+    }
+
     // -- infobase_admin: sync_control operation remap --
 
     @Test

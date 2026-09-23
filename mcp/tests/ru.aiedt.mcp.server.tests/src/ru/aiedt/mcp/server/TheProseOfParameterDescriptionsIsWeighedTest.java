@@ -214,6 +214,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * line, so the caller names the mode and the client and the launch puts them where they are
      * read. A client that cannot see the two arguments starts the managed client every time.
      * </p>
+     * <p>
+     * And by 463 on infobase_admin for connectionString and makeDefault, and for name, which is
+     * declared once and names every operation that reads it: a caller registering an existing
+     * server infobase has no way to name the server and the infobase without the string, and no
+     * way to say whether the new application becomes the project's default without the flag.
+     * Their rules live in the operation help.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
@@ -232,7 +239,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(4900));
+        // Raised by 463 for connectionString, makeDefault and name: registering an existing server
+        // infobase is named by the string, and the flag says whether it becomes the default.
+        PROSE.put("infobase_admin", Integer.valueOf(5363));
         PROSE.put("config_io", Integer.valueOf(3064));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
@@ -402,6 +411,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * conversationId, replyTo, maxToolRounds, timeoutSeconds, waitSeconds, runKey and cancel, and
      * the operation sentence that now names ask. Together with the nineteenth: 90853.
      * </p>
+     * <p>
+     * And a twenty-first, by 313, for connectionString and makeDefault on infobase_admin and for
+     * its name, declared once for every operation that reads it: an existing server infobase is
+     * named by the connection string and the flag says whether it becomes the project's default
+     * application. Together with the twentieth: 91166.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 90853;
+    private static final int DOCUMENT_PROSE = 91166;
 }

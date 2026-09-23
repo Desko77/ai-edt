@@ -63,6 +63,7 @@ import ru.aiedt.mcp.server.toolkit.ops.CompareConfigurationsTool;
 import ru.aiedt.mcp.server.toolkit.ops.SupportRegistryTool;
 import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseCreator;
+import ru.aiedt.mcp.server.toolkit.ops.InfobaseRegistrar;
 import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchConfigCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCreator;
@@ -1493,6 +1494,7 @@ public class McpHttpEndpoint
             new CommonPictureExporter(),
             new InfobaseCredentialsWriter(),
             new InfobaseCreator(),
+            new InfobaseRegistrar(),
             new LaunchConfigCreator(),
             new ClientSessionStarter(),
             new BranchInfobaseTool(),
