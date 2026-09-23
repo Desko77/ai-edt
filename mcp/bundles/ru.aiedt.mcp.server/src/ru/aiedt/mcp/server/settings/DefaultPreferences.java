@@ -46,6 +46,8 @@ public class DefaultPreferences
             PrefKeys.DEFAULT_VANESSA_1C_EXE);
         store.setDefault(PrefKeys.PREF_NAPARNIK_BRIDGE_ENABLED,
             PrefKeys.DEFAULT_NAPARNIK_BRIDGE_ENABLED);
+        store.setDefault(PrefKeys.PREF_NAPARNIK_ALL_TOOLS_ENABLED,
+            PrefKeys.DEFAULT_NAPARNIK_ALL_TOOLS_ENABLED);
         store.setDefault(PrefKeys.PREF_AUTH_ENABLED, PrefKeys.DEFAULT_AUTH_ENABLED);
         store.setDefault(PrefKeys.PREF_AUTH_TOKEN, PrefKeys.DEFAULT_AUTH_TOKEN);
         store.setDefault(PrefKeys.PREF_BIND_ALL_INTERFACES,
