@@ -48,12 +48,51 @@ public final class DumpInfoRebuilder
     {
         private static final long serialVersionUID = 1L;
 
+        /** Whether the Designer call was still running when the wait gave up. */
+        private final boolean processStillRunning;
+
+        /**
+         * Schedules cleanup for when that call actually returns. {@code null} when the caller threw
+         * this itself (a test) or the call had already finished.
+         */
+        private final java.util.function.Consumer<Runnable> onFinished;
+
         /**
          * @param message what was abandoned and after how long
          */
         public Abandoned(String message)
         {
+            this(message, true, null);
+        }
+
+        Abandoned(String message, boolean processStillRunning,
+            java.util.function.Consumer<Runnable> onFinished)
+        {
             super(message);
+            this.processStillRunning = processStillRunning;
+            this.onFinished = onFinished;
+        }
+
+        /**
+         * @return whether the Designer call was still running when the wait gave up
+         */
+        boolean processStillRunning()
+        {
+            return processStillRunning;
+        }
+
+        /**
+         * Runs {@code cleanup} once the abandoned call has returned. A test that threw
+         * {@link #Abandoned(String)} has nothing to wait for, and the lock stays held.
+         *
+         * @param cleanup delete the temporary directory, reconnect, release the claim
+         */
+        void whenFinished(Runnable cleanup)
+        {
+            if (onFinished != null && cleanup != null)
+            {
+                onFinished.accept(cleanup);
+            }
         }
     }
 
@@ -70,10 +109,22 @@ public final class DumpInfoRebuilder
         public String failureKind;
 
         /**
-         * What happened to the stored file: {@code replaced}, {@code untouched}, or
-         * {@code restoredFromBackup}.
+         * What happened to the stored file: {@code replaced}, {@code untouched},
+         * {@code restoredFromBackup}, or {@code unknown} when the swap and the rollback both failed.
          */
         public String fileState = "untouched"; //$NON-NLS-1$
+
+        /**
+         * The Designer call was abandoned and had not returned. The claim stays held and the
+         * temporary directory stays on disk until that call returns.
+         */
+        public boolean designerStillRunning;
+
+        /** The temporary directory left in place while {@link #designerStillRunning}, or {@code null}. */
+        public String tempDirLeft;
+
+        /** Whether the cross-process claim was kept because the Designer call is still running. */
+        public boolean lockHeldForProcess;
 
         /** The stored file's format before the rebuild, or {@code null} when there was no file. */
         public String oldFormat;
@@ -133,11 +184,15 @@ public final class DumpInfoRebuilder
         String infobaseIdentity();
 
         /**
-         * @return whether the cross-process claim was taken
+         * @return {@code null} when the claim was taken, or the refusal sentence
+         *         ({@link MonopolyLock.Claim#refusal()}) naming who holds the infobase
          */
-        boolean takeLock();
+        String takeLock();
 
-        /** Lets the claim go; runs at every outcome. */
+        /**
+         * Lets the claim go. Not called while an abandoned Designer call is still running: the
+         * claim stays held until that call returns.
+         */
         void releaseLock();
 
         /**
@@ -196,9 +251,11 @@ public final class DumpInfoRebuilder
          *
          * @param infobaseIdentity the base the record is for ({@link InfobaseIdentity})
          * @param format the {@code version} attribute the Designer wrote
+         * @param platformVersion the platform the dump ran with, or {@code null} when it is not known
          * @throws IOException when the record cannot be written
          */
-        void rememberPair(String infobaseIdentity, String format) throws IOException;
+        void rememberPair(String infobaseIdentity, String format, String platformVersion)
+            throws IOException;
 
         /**
          * Removes the temporary dump directory; runs at every outcome past its creation.
@@ -217,7 +274,8 @@ public final class DumpInfoRebuilder
      * The production rebuild: resolves the thick-client environment the way every other Designer
      * call of this server does, then runs {@link #performRebuild} against it. The Designer dumps
      * into a temporary directory beside the store - first the dump-info file alone, and the whole
-     * configuration in the hierarchical format only when that left no file.
+     * configuration in the hierarchical format only when that run finished without error and left
+     * no file.
      *
      * @param projectName the project whose infobase the file belongs to
      * @param applicationId the application naming the infobase; required when the project has
@@ -239,6 +297,9 @@ public final class DumpInfoRebuilder
         }
         java.util.UUID infobaseUuid = ctx.infobase.getUuid();
         String platformVersion = ctx.component.getInstallation().getVersionWithBuild();
+        // The claim lives on the closure, not only in the thread-local: the cleanup that runs when
+        // an abandoned Designer call finally returns does so on another thread.
+        final MonopolyLock.Claim[] heldClaim = new MonopolyLock.Claim[1];
 
         RebuildIo io = new RebuildIo()
         {
@@ -249,29 +310,34 @@ public final class DumpInfoRebuilder
             }
 
             @Override
-            public boolean takeLock()
+            public String takeLock()
             {
                 MonopolyLock.Claim attempt =
                     MonopolyLock.claim(infobaseIdentity(), "rebuild_dump_info"); //$NON-NLS-1$
                 if (attempt.granted())
                 {
+                    heldClaim[0] = attempt;
                     claim.set(attempt);
-                    return true;
+                    return null;
                 }
                 // A refused claim is closed here and now: the orchestrator does not call back for
                 // it, and an unclosed one would sit in the thread-local for the thread's life.
+                // The refusal sentence names the holder; dropping it answered "busy" about nobody.
+                String refusal = attempt.refusal();
                 attempt.close();
-                return false;
+                return refusal != null ? refusal
+                    : "The rebuild was refused because the infobase lock was not granted."; //$NON-NLS-1$
             }
 
             @Override
             public void releaseLock()
             {
-                MonopolyLock.Claim held = claim.get();
+                MonopolyLock.Claim held = heldClaim[0];
+                heldClaim[0] = null;
+                claim.remove();
                 if (held != null)
                 {
                     held.close();
-                    claim.remove();
                 }
             }
 
@@ -315,9 +381,11 @@ public final class DumpInfoRebuilder
             }
 
             @Override
-            public void rememberPair(String infobaseIdentity, String format) throws IOException
+            public void rememberPair(String infobaseIdentity, String format, String platform)
+                throws IOException
             {
-                DumpInfoProbe.rememberPair(infobaseIdentity, format, DumpInfoProbe.stateFile());
+                DumpInfoProbe.rememberPair(infobaseIdentity, format, platform,
+                    DumpInfoProbe.stateFile());
             }
 
             @Override
@@ -375,7 +443,7 @@ public final class DumpInfoRebuilder
     /**
      * One Designer run, as the platform hands it to EDT.
      */
-    private interface PlatformRun
+    interface PlatformRun
     {
         /**
          * @return the fresh dump-info file, or {@code null} for the conventional name
@@ -396,7 +464,7 @@ public final class DumpInfoRebuilder
      *             finish on its own
      * @throws Exception when the call itself failed
      */
-    private static Path underTimeout(String what, long timeoutMs, PlatformRun run) throws Exception
+    static Path underTimeout(String what, long timeoutMs, PlatformRun run) throws Exception
     {
         java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors
             .newSingleThreadExecutor(runnable -> {
@@ -404,7 +472,22 @@ public final class DumpInfoRebuilder
                 thread.setDaemon(true);
                 return thread;
             });
-        java.util.concurrent.Future<Path> running = worker.submit(run::run);
+        // cancel() marks a Future done at once, while the call it interrupted can still be writing.
+        // The latch is the call itself returning, which is the moment the temporary directory and
+        // the claim may be touched.
+        java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.CountDownLatch returned = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Future<Path> running = worker.submit(() -> {
+            started.set(true);
+            try
+            {
+                return run.run();
+            }
+            finally
+            {
+                returned.countDown();
+            }
+        });
         worker.shutdown();
         try
         {
@@ -413,7 +496,26 @@ public final class DumpInfoRebuilder
         catch (java.util.concurrent.TimeoutException tooSlow)
         {
             running.cancel(true);
-            throw new Abandoned(what + " did not finish within " + (timeoutMs / 1000) + "s"); //$NON-NLS-1$ //$NON-NLS-2$
+            boolean stillRunning = started.get() && returned.getCount() > 0;
+            throw new Abandoned(what + " did not finish within " + (timeoutMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
+                stillRunning, stillRunning ? task -> {
+                    Thread watcher = new Thread(() -> {
+                        try
+                        {
+                            returned.await();
+                        }
+                        catch (InterruptedException finishedAnyway)
+                        {
+                            // The watcher was interrupted. The call may still be writing, so the
+                            // cleanup is not run from this thread.
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        task.run();
+                    }, "rebuild-dump-info-cleanup"); //$NON-NLS-1$
+                    watcher.setDaemon(true);
+                    watcher.start();
+                } : null);
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -478,6 +580,7 @@ public final class DumpInfoRebuilder
         out.platformVersion = platformVersion;
         boolean lockTaken = false;
         Path tempDir = null;
+        HandshakeOutcome handshake = null;
 
         // Fail-closed on a base this cannot name: an unidentified infobase would proceed without a
         // claim, and the operation that must not race a neighbour must refuse before releasing
@@ -495,10 +598,12 @@ public final class DumpInfoRebuilder
         }
 
         out.sequence.add("lock"); //$NON-NLS-1$
-        if (!io.takeLock())
+        String lockRefusal = io.takeLock();
+        if (lockRefusal != null)
         {
-            out.error = "Another AI-EDT instance is working on this infobase, or this instance " //$NON-NLS-1$
-                + "still holds it - the rebuild was refused."; //$NON-NLS-1$
+            // The sentence is the claim's own, which names the holder. A fixed "another instance"
+            // line threw that name away.
+            out.error = lockRefusal;
             out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.BUSY.wire();
             out.durationMs = System.currentTimeMillis() - startedAt;
             return out;
@@ -516,12 +621,47 @@ public final class DumpInfoRebuilder
             final Path dumpDir = java.nio.file.Files.createTempDirectory(storeDirectory, "rebuild-dump-"); //$NON-NLS-1$
             tempDir = dumpDir;
 
-            HandshakeOutcome handshake = BmInfobaseExtensionHelper.runUnderHandshake(
-                io::releaseInfobase,
-                () -> runTheDump(io, dumpDir, storedFile, out, stamp, identity),
-                io::reconnectInfobase);
-            out.sequence.addAll(handshake.sequence);
-            if (handshake.reconnectError != null)
+            // Steps are recorded as they run. The handshake's own list is appended only when it
+            // returns, which put release/reconnect after the dump they surround.
+            handshake = BmInfobaseExtensionHelper.runUnderHandshake(
+                () -> {
+                    out.sequence.add("release"); //$NON-NLS-1$
+                    return io.releaseInfobase();
+                },
+                () -> {
+                    out.sequence.add("work"); //$NON-NLS-1$
+                    try
+                    {
+                        runTheDump(io, dumpDir, storedFile, out, stamp, identity);
+                    }
+                    catch (Abandoned abandoned)
+                    {
+                        if (abandoned.processStillRunning())
+                        {
+                            out.designerStillRunning = true;
+                        }
+                        throw abandoned;
+                    }
+                },
+                () -> {
+                    if (out.designerStillRunning)
+                    {
+                        return;
+                    }
+                    out.sequence.add("reconnect"); //$NON-NLS-1$
+                    io.reconnectInfobase();
+                });
+            if (out.designerStillRunning)
+            {
+                out.lockHeldForProcess = true;
+                out.tempDirLeft = dumpDir.toString();
+                out.reconnectError = "The infobase was left disconnected because the Designer " //$NON-NLS-1$
+                    + "process is still running (" + oneLine(handshake.workError) + "). The " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "cross-process lock stays held until that process finishes, so another " //$NON-NLS-1$
+                    + "rebuild is refused, and the temporary directory was not deleted under the " //$NON-NLS-1$
+                    + "writer (" + dumpDir + ")."; //$NON-NLS-1$
+            }
+            else if (handshake.reconnectError != null)
             {
                 // Named on its own and whatever else happened: a replaced file with a disconnected
                 // infobase is two facts, and a caller repairing one must know the other stands.
@@ -552,15 +692,35 @@ public final class DumpInfoRebuilder
         }
         finally
         {
-            if (tempDir != null)
+            boolean hold = out.designerStillRunning;
+            if (tempDir != null && !hold)
             {
                 out.sequence.add("cleanup"); //$NON-NLS-1$
                 io.deleteTempDir(tempDir);
             }
-            if (lockTaken)
+            if (lockTaken && !hold)
             {
                 out.sequence.add("unlock"); //$NON-NLS-1$
                 io.releaseLock();
+            }
+            if (hold && handshake != null && handshake.workError instanceof Abandoned)
+            {
+                Path left = tempDir;
+                ((Abandoned)handshake.workError).whenFinished(() -> {
+                    if (left != null)
+                    {
+                        io.deleteTempDir(left);
+                    }
+                    try
+                    {
+                        io.reconnectInfobase();
+                    }
+                    catch (Exception ignored)
+                    {
+                        // The answer already said the infobase was left disconnected.
+                    }
+                    io.releaseLock();
+                });
             }
             out.durationMs = System.currentTimeMillis() - startedAt;
         }
@@ -580,10 +740,11 @@ public final class DumpInfoRebuilder
      *
      * <p>The quick run is asked for first because the platform writes one
      * {@code ConfigDumpInfo.xml} for it in seconds, while the full dump writes the whole
-     * configuration tree. The fallback runs when the quick run left no file at all - either
-     * answered none, or failed. What the file SAYS is not the fallback's question: a file that is
-     * there but does not read as a dump-info is refused by the verification below rather than
-     * replaced, and the stored file stays as it was.</p>
+     * configuration tree. The full dump runs only when the quick run finished without an error and
+     * left no file. A quick run that failed is refused with that error: a Configurator failure
+     * (credentials, a locked configuration, an unknown key) must not be followed by the longest
+     * dump while the infobase is still released. A file the quick run left before it threw is the
+     * file that is verified - the full dump is not asked for on top of it.</p>
      *
      * <p>A quick run ABANDONED by its budget is carried up as it stands rather than retried with
      * the full dump: the platform process is still running and holding the base, which is exactly
@@ -597,6 +758,7 @@ public final class DumpInfoRebuilder
         out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
         String fallback = null;
         Path freshFile = null;
+        Exception quickFailure = null;
         try
         {
             freshFile = producedFile(io.runDumpInfoOnly(tempDir), tempDir);
@@ -607,14 +769,23 @@ public final class DumpInfoRebuilder
         }
         catch (Exception refused)
         {
-            fallback = "the quick dump failed: " + oneLine(refused); //$NON-NLS-1$
+            // The call returned. A file it managed to leave is still the quick run's file; what it
+            // is not is a reason to start the full dump.
+            quickFailure = refused;
+            freshFile = producedFile(null, tempDir);
         }
-        if (freshFile == null && fallback == null)
+        if (freshFile != null)
+        {
+            out.rebuildPath = quickFailure == null ? PATH_DUMP_INFO_ONLY
+                : PATH_DUMP_INFO_ONLY + " (left the file, then threw: " + oneLine(quickFailure) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else if (quickFailure != null)
+        {
+            throw quickFailure;
+        }
+        else
         {
             fallback = "the quick dump left no " + DumpInfoProbe.FILE_NAME; //$NON-NLS-1$
-        }
-        if (freshFile == null)
-        {
             out.sequence.add("dumpFull"); //$NON-NLS-1$
             out.rebuildPath = PATH_FULL + " (" + fallback + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             freshFile = producedFile(io.runFullDump(tempDir), tempDir);
@@ -622,10 +793,6 @@ public final class DumpInfoRebuilder
             {
                 freshFile = tempDir.resolve(DumpInfoProbe.FILE_NAME);
             }
-        }
-        else
-        {
-            out.rebuildPath = PATH_DUMP_INFO_ONLY;
         }
 
         // Verify before anything of the stored file's is touched: a file that is not there, or not
@@ -652,17 +819,47 @@ public final class DumpInfoRebuilder
         out.sequence.add("rememberPair"); //$NON-NLS-1$
         try
         {
-            io.rememberPair(identity, out.newFormat);
-            out.pairRemembered = identity + " -> " + out.newFormat; //$NON-NLS-1$
+            io.rememberPair(identity, out.newFormat, out.platformVersion);
+            if (out.platformVersion == null || out.platformVersion.isEmpty())
+            {
+                out.pairRemembered = identity + " -> " + out.newFormat //$NON-NLS-1$
+                    + " (recorded without a platform version; the next update will not compare)"; //$NON-NLS-1$
+            }
+            else
+            {
+                out.pairRemembered = identity + " -> " + out.newFormat + " on " + out.platformVersion; //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
         catch (IOException notWritten)
         {
-            // The file is already replaced; an unrecorded format costs the NEXT check its
-            // expectation, not this rebuild its result.
+            // The file is already replaced. The next check will not compare, and the answer must
+            // not say that it will.
             out.pairRemembered = "NOT recorded (" + oneLine(notWritten) //$NON-NLS-1$
-                + ") - the next format check has no expectation for this infobase until a " //$NON-NLS-1$
-                + "rebuild records one"; //$NON-NLS-1$
+                + ") - the next update will not compare this infobase until a rebuild records " //$NON-NLS-1$
+                + "the format"; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The success sentence of a rebuild. It claims the next update will compare only when the
+     * format was actually recorded for a platform.
+     *
+     * @param outcome the rebuild's outcome
+     * @return the message
+     */
+    public static String successMessage(Outcome outcome)
+    {
+        boolean compares = outcome != null && outcome.pairRemembered != null
+            && !outcome.pairRemembered.startsWith("NOT recorded") //$NON-NLS-1$
+            && !outcome.pairRemembered.contains("will not compare"); //$NON-NLS-1$
+        if (compares)
+        {
+            return "The stored ConfigDumpInfo.xml was rebuilt with the platform's own dump; " //$NON-NLS-1$
+                + "the next update compares against it."; //$NON-NLS-1$
+        }
+        return "The stored ConfigDumpInfo.xml was rebuilt with the platform's own dump. " //$NON-NLS-1$
+            + "The format was not recorded for this platform, so the next update will not " //$NON-NLS-1$
+            + "compare against it."; //$NON-NLS-1$
     }
 
     /**
@@ -690,9 +887,22 @@ public final class DumpInfoRebuilder
         {
             SwapRolledBack rolled = (SwapRolledBack)workError;
             out.fileState = "restoredFromBackup"; //$NON-NLS-1$
+            out.backupPath = rolled.backupPath;
             out.error = "Replacing the stored file failed (" + oneLine(rolled.getCause()) //$NON-NLS-1$
                 + "); the previous file was restored from the copy at " + rolled.backupPath //$NON-NLS-1$
                 + ". Both attempts are named: the swap did not land, the rollback did."; //$NON-NLS-1$
+            out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
+            return;
+        }
+        if (workError instanceof SwapUncertain)
+        {
+            SwapUncertain uncertain = (SwapUncertain)workError;
+            out.fileState = "unknown"; //$NON-NLS-1$
+            out.backupPath = uncertain.backupPath;
+            out.error = "Replacing the stored file failed (" + uncertain.moveFailure //$NON-NLS-1$
+                + ") and restoring the previous file failed too (" + uncertain.rollbackFailure //$NON-NLS-1$
+                + "). The stored file is in an unknown state; the backup copy is at " //$NON-NLS-1$
+                + uncertain.backupPath + "."; //$NON-NLS-1$
             out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
             return;
         }
@@ -703,6 +913,12 @@ public final class DumpInfoRebuilder
                 + workError.getMessage() + ". The stored file was not touched; the platform " //$NON-NLS-1$
                 + "process, if it is still running, finishes on its own - do not start another " //$NON-NLS-1$
                 + "rebuild until it has."; //$NON-NLS-1$
+            if (out.designerStillRunning)
+            {
+                out.error += " The cross-process lock stays held while that process is alive, so " //$NON-NLS-1$
+                    + "another rebuild is refused, and the temporary directory is left in place " //$NON-NLS-1$
+                    + "under the writer."; //$NON-NLS-1$
+            }
         }
         else
         {
@@ -728,9 +944,14 @@ public final class DumpInfoRebuilder
      */
     public static String swapStored(Path storedFile, Path freshFile, String stamp) throws IOException
     {
-        return swapStored(storedFile, freshFile, stamp,
-            (from, to) -> Files.move(from, to, StandardCopyOption.REPLACE_EXISTING));
+        return swapStored(storedFile, freshFile, stamp, swapMover);
     }
+
+    /**
+     * The move onto the stored file. Tests replace it to fail the move on purpose; production moves.
+     */
+    static FileMover swapMover =
+        (from, to) -> Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
 
     /**
      * The move of the staged file onto the stored one - the one step a test needs to fail on
@@ -795,10 +1016,7 @@ public final class DumpInfoRebuilder
                 }
                 catch (IOException rollbackFailed)
                 {
-                    throw new IOException("the swap failed (" + oneLine(moveFailed) //$NON-NLS-1$
-                        + ") and restoring the previous file failed too (" //$NON-NLS-1$
-                        + oneLine(rollbackFailed) + ") - the backup copy is at " + backupPath, //$NON-NLS-1$
-                        rollbackFailed);
+                    throw new SwapUncertain(oneLine(moveFailed), oneLine(rollbackFailed), backupPath);
                 }
                 // Rolled back: the store holds the previous file again. Carried up as its own
                 // kind, so the answer names both attempts rather than reporting one failure.
@@ -810,6 +1028,32 @@ public final class DumpInfoRebuilder
             Files.deleteIfExists(staged);
         }
         return backupPath;
+    }
+
+    /**
+     * A swap whose move failed and whose rollback failed too. The stored file is in an unknown
+     * state; the backup copy is the only known good bytes.
+     */
+    static final class SwapUncertain extends IOException
+    {
+        private static final long serialVersionUID = 1L;
+
+        /** What the move said. */
+        final String moveFailure;
+
+        /** What the rollback said. */
+        final String rollbackFailure;
+
+        /** The copy of the previous file. */
+        final String backupPath;
+
+        SwapUncertain(String moveFailure, String rollbackFailure, String backupPath)
+        {
+            super(moveFailure + "; " + rollbackFailure); //$NON-NLS-1$
+            this.moveFailure = moveFailure;
+            this.rollbackFailure = rollbackFailure;
+            this.backupPath = backupPath;
+        }
     }
 
     /** A swap that failed and was rolled back from its backup - the store holds the old file. */

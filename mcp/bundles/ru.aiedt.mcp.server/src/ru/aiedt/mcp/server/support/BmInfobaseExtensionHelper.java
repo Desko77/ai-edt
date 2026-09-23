@@ -1410,13 +1410,68 @@ public final class BmInfobaseExtensionHelper
                 + (splitM == null ? "executeRuntimeProcessCommand / splitInfobaseConnection" //$NON-NLS-1$
                     : "executeRuntimeProcessCommand") + ")."); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        boolean split = splitM != null && (Boolean)splitM.invoke(ctx.launcher);
+        boolean split = splitM != null
+            && (Boolean)invokeUnderInfobaseLock(null, splitM, ctx.launcher);
         RuntimeExecutionCommandBuilder command = new RuntimeExecutionCommandBuilder(
             ctx.component.getFile(), RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
         command.forInfobase(ctx.infobase, split).exportXmlFromInfobase(tempDir)
             .withFormat(com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL)
             .additionalParameters("-configDumpInfoOnly"); //$NON-NLS-1$
-        execM.invoke(ctx.launcher, command, ctx.component.getInstallation(), ctx.infobase, ctx.args);
+        // The same per-infobase lock the strict conversion holds around its launcher call.
+        // Without it this EDT's own thick-client callers run the Designer side by side.
+        invokeUnderInfobaseLock(ctx.lock, execM, ctx.launcher, command,
+            ctx.component.getInstallation(), ctx.infobase, ctx.args);
+    }
+
+    /**
+     * Invokes a thick-client method under the per-infobase lock, and unwraps
+     * {@link java.lang.reflect.InvocationTargetException} to the cause the way the extension
+     * install does. The lock wraps the call and nothing else: holding it across a reconnect
+     * deadlocks with EDT's own synchronization worker.
+     *
+     * @param lock the per-infobase lock, or {@code null} when this runtime has none or the call is
+     *            not the Designer run
+     * @param method the method to invoke
+     * @param target the launcher
+     * @param args the method arguments
+     * @return whatever the method returned
+     * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}, or the
+     *             failure itself when it is already an exception
+     */
+    static Object invokeUnderInfobaseLock(java.util.concurrent.locks.Lock lock,
+        java.lang.reflect.Method method, Object target, Object... args) throws Exception
+    {
+        if (lock != null)
+        {
+            lock.lock();
+        }
+        try
+        {
+            try
+            {
+                return method.invoke(target, args);
+            }
+            catch (java.lang.reflect.InvocationTargetException wrapped)
+            {
+                Throwable cause = wrapped.getCause() != null ? wrapped.getCause() : wrapped;
+                if (cause instanceof Exception)
+                {
+                    throw (Exception)cause;
+                }
+                if (cause instanceof Error)
+                {
+                    throw (Error)cause;
+                }
+                throw new IllegalStateException(cause);
+            }
+        }
+        finally
+        {
+            if (lock != null)
+            {
+                lock.unlock();
+            }
+        }
     }
 
     private static void reconnectInfobase(LauncherContext ctx)

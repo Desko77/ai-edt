@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.After;
 import org.junit.Before;
@@ -124,6 +128,17 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         boolean refuseLock;
 
+        /** Set once a claim is taken, until {@link #releaseLock()}. */
+        boolean lockHeld;
+
+        /**
+         * The refusal {@link #takeLock()} returns when the base is already held or {@link #refuseLock}
+         * is set. The rebuild's answer must carry this sentence, holder and all.
+         */
+        String lockRefusal = "Another AI-EDT instance is working on this infobase. held by pid 4242"; //$NON-NLS-1$
+
+        boolean failRemember;
+
         /** The quick run, which writes the dump-info alone - the primary path. */
         DesignerRun quick = dir -> {
             Files.write(dir.resolve(DumpInfoProbe.FILE_NAME), platformDump().getBytes(
@@ -152,16 +167,27 @@ public class TheRebuildRunsItsStepsInOrderTest
         }
 
         @Override
-        public boolean takeLock()
+        public String takeLock()
         {
             asked.add("takeLock"); //$NON-NLS-1$
-            return !refuseLock;
+            if (lockHeld)
+            {
+                return "This AI-EDT instance is holding the infobase itself, rebuild_dump_info, " //$NON-NLS-1$
+                    + "since the Designer run that is still going"; //$NON-NLS-1$
+            }
+            if (refuseLock)
+            {
+                return lockRefusal;
+            }
+            lockHeld = true;
+            return null;
         }
 
         @Override
         public void releaseLock()
         {
             asked.add("releaseLock"); //$NON-NLS-1$
+            lockHeld = false;
         }
 
         @Override
@@ -216,10 +242,16 @@ public class TheRebuildRunsItsStepsInOrderTest
         }
 
         @Override
-        public void rememberPair(String infobaseIdentity, String format)
+        public void rememberPair(String infobaseIdentity, String format, String platformVersion)
+            throws IOException
         {
             asked.add("rememberPair"); //$NON-NLS-1$
-            rememberedPair = infobaseIdentity + " -> " + format; //$NON-NLS-1$
+            if (failRemember)
+            {
+                throw new IOException("disk full"); //$NON-NLS-1$
+            }
+            rememberedPair = infobaseIdentity + " -> " + format //$NON-NLS-1$
+                + (platformVersion == null ? "" : " on " + platformVersion); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         @Override
@@ -287,19 +319,19 @@ public class TheRebuildRunsItsStepsInOrderTest
         assertEquals("the quick run answered, so the full dump is never asked", //$NON-NLS-1$
             "configDumpInfoOnly", outcome.rebuildPath); //$NON-NLS-1$
         assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
-        assertEquals("file:///infobase -> 2.7", io.rememberedPair); //$NON-NLS-1$
-        assertEquals("file:///infobase -> 2.7", outcome.pairRemembered); //$NON-NLS-1$
+        assertEquals("file:///infobase -> 2.7 on 8.3.27.2214", io.rememberedPair); //$NON-NLS-1$
+        assertEquals("file:///infobase -> 2.7 on 8.3.27.2214", outcome.pairRemembered); //$NON-NLS-1$
+        assertTrue(DumpInfoRebuilder.successMessage(outcome).contains("compares against it")); //$NON-NLS-1$
         assertNotNull(outcome.holderRefresh);
         assertNull(outcome.reconnectError);
-        // The work's own steps land in the record as the work runs; the handshake's three step
-        // names are appended by the handshake when it returns. So the file's steps precede the
-        // release/work/reconnect triple - the run order is release, work (which appends its
-        // detail), reconnect, and that is what the record shows.
-        assertEquals(Arrays.asList("identity", "lock", "readOld", "tempDir", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        // Steps are written as they run: release, then the dump, then reconnect, then the
+        // temporary directory is deleted and the lock released.
+        assertEquals(Arrays.asList("identity", "lock", "readOld", "tempDir", "release", "work", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
             "dumpInfoOnly", "verify", "backup", "swap", "dropHolder", "rememberPair", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
-            "release", "work", "reconnect", "cleanup", "unlock"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "reconnect", "cleanup", "unlock"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             outcome.sequence);
         assertFalse("the temporary dump directory is deleted", Files.exists(io.tempDirs.get(0))); //$NON-NLS-1$
+        assertFalse("the lock is released", io.lockHeld); //$NON-NLS-1$
     }
 
     /**
@@ -324,15 +356,17 @@ public class TheRebuildRunsItsStepsInOrderTest
             outcome.rebuildPath.startsWith("fullHierarchical")); //$NON-NLS-1$
         assertTrue("the reason names what the quick run left", //$NON-NLS-1$
             outcome.rebuildPath.contains("left no " + DumpInfoProbe.FILE_NAME)); //$NON-NLS-1$
-        assertEquals("file:///infobase -> 2.7", outcome.pairRemembered); //$NON-NLS-1$
+        assertEquals("file:///infobase -> 2.7 on 8.3.27.2214", outcome.pairRemembered); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "dumpFull", "reconnect", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
-     * A quick run that FAILS falls back the same way, and both facts survive: the failure of the
-     * quick run in the path, the run that actually produced the file in the stored content.
+     * A quick run that FAILS is refused with that error. The full dump is not started: a Configurator
+     * failure would otherwise keep the infobase released and walk the whole configuration.
      */
     @Test
-    public void aFailedQuickRunFallsBackAndNamesBothRuns() throws IOException
+    public void aFailedQuickRunIsRefusedAndDoesNotStartTheFullDump() throws IOException
     {
         Path stored = storedOld();
         StandIn io = standIn();
@@ -342,13 +376,39 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         Outcome outcome = run(io);
 
+        assertFalse(outcome.ok);
+        assertEquals("untouched", outcome.fileState); //$NON-NLS-1$
+        assertFalse("a failed quick run is not followed by the full dump", //$NON-NLS-1$
+            io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertTrue(outcome.error.contains("exited with code 1")); //$NON-NLS-1$
+        assertTrue(new String(Files.readAllBytes(stored), StandardCharsets.UTF_8)
+            .contains("\"2.20\"")); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "reconnect", "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertFalse(outcome.sequence.contains("dumpFull")); //$NON-NLS-1$
+    }
+
+    /**
+     * A quick run that throws after leaving a readable file uses that file. The exception is not a
+     * reason to start the full dump, and the file is not ignored.
+     */
+    @Test
+    public void aQuickRunThatThrowsAfterLeavingAFileUsesThatFile() throws IOException
+    {
+        Path stored = storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            Files.write(dir.resolve(DumpInfoProbe.FILE_NAME), platformDump().getBytes(
+                StandardCharsets.UTF_8));
+            throw new IllegalStateException("the log could not be read"); //$NON-NLS-1$
+        };
+
+        Outcome outcome = run(io);
+
         assertTrue(outcome.ok);
-        assertEquals(fullDump(), new String(Files.readAllBytes(stored), StandardCharsets.UTF_8));
-        assertTrue(io.asked.contains("dumpFull")); //$NON-NLS-1$
-        assertTrue(outcome.rebuildPath.contains("fullHierarchical")); //$NON-NLS-1$
-        assertTrue("the reason is the quick run's own failure", //$NON-NLS-1$
-            outcome.rebuildPath.contains("the quick dump failed")); //$NON-NLS-1$
-        assertTrue(outcome.rebuildPath.contains("exited with code 1")); //$NON-NLS-1$
+        assertEquals(platformDump(), new String(Files.readAllBytes(stored), StandardCharsets.UTF_8));
+        assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertTrue(outcome.rebuildPath.contains("configDumpInfoOnly")); //$NON-NLS-1$
+        assertTrue(outcome.rebuildPath.contains("the log could not be read")); //$NON-NLS-1$
     }
 
     /**
@@ -371,11 +431,29 @@ public class TheRebuildRunsItsStepsInOrderTest
         assertEquals("untouched", outcome.fileState); //$NON-NLS-1$
         assertFalse("no second platform run is started after one was abandoned", //$NON-NLS-1$
             io.asked.contains("dumpFull")); //$NON-NLS-1$
-        assertTrue(io.asked.contains("reconnect")); //$NON-NLS-1$
+        assertFalse("the infobase stays disconnected while the Designer is still running", //$NON-NLS-1$
+            io.asked.contains("reconnect")); //$NON-NLS-1$
+        assertFalse("the lock stays held", io.asked.contains("releaseLock")); //$NON-NLS-1$
+        assertFalse("the temporary directory is not deleted under the writer", //$NON-NLS-1$
+            io.asked.contains("deleteTempDir")); //$NON-NLS-1$
+        assertTrue("the temporary directory is still there", Files.exists(io.tempDirs.get(0))); //$NON-NLS-1$
         assertTrue(outcome.error.contains("abandoned")); //$NON-NLS-1$
         assertTrue(outcome.error.contains("finishes on its own")); //$NON-NLS-1$
+        assertTrue(outcome.error.contains("lock stays held")); //$NON-NLS-1$
+        assertTrue(outcome.designerStillRunning);
+        assertTrue(outcome.lockHeldForProcess);
+        assertNotNull(outcome.tempDirLeft);
+        assertTrue(outcome.reconnectError.contains(outcome.tempDirLeft));
         assertTrue(new String(Files.readAllBytes(stored), StandardCharsets.UTF_8)
             .contains("\"2.20\"")); //$NON-NLS-1$
+        assertFalse(outcome.sequence.contains("cleanup")); //$NON-NLS-1$
+        assertFalse(outcome.sequence.contains("unlock")); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Outcome second = run(io);
+        assertFalse("a second rebuild is refused while the first Designer is still running", //$NON-NLS-1$
+            second.ok);
+        assertTrue(second.error.contains("still going")); //$NON-NLS-1$
     }
 
     // ---- fail-closed on an unidentified base ------------------------------------------------
@@ -417,15 +495,15 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         assertFalse(outcome.ok);
         assertEquals(Arrays.asList("identity", "takeLock"), io.asked); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(outcome.error.contains("Another AI-EDT instance")); //$NON-NLS-1$
+        assertTrue(outcome.error.contains("pid 4242")); //$NON-NLS-1$
+        assertEquals(io.lockRefusal, outcome.error);
     }
 
     // ---- the Designer run fails ---------------------------------------------------------------
 
     /**
-     * Both runs failing leaves the stored file untouched and the infobase reconnected - the swap
-     * sits after the verification, so a run that did not produce a file cannot have replaced one.
-     * The answer names the full dump's failure, and the path names the quick run's.
+     * A quick run that fails leaves the stored file untouched and the infobase reconnected. The full
+     * dump is not asked: the quick run's own error is the refusal.
      */
     @Test
     public void aFailedDesignerRunLeavesTheFileUntouchedAndReconnects() throws IOException
@@ -443,14 +521,16 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         assertFalse(outcome.ok);
         assertEquals("untouched", outcome.fileState); //$NON-NLS-1$
+        assertFalse("the full dump is not the answer to a failed quick run", //$NON-NLS-1$
+            io.asked.contains("dumpFull")); //$NON-NLS-1$
         assertTrue(new String(Files.readAllBytes(stored), StandardCharsets.UTF_8)
             .contains("\"2.20\"")); //$NON-NLS-1$
         assertTrue("the infobase is taken back whatever the run did", //$NON-NLS-1$
             io.asked.contains("reconnect")); //$NON-NLS-1$
         assertTrue(outcome.error.contains("exited with code 1")); //$NON-NLS-1$
-        assertTrue("the path keeps the quick run's own failure", //$NON-NLS-1$
-            outcome.rebuildPath.contains("the quick dump failed")); //$NON-NLS-1$
+        assertTrue(outcome.error.contains("not touched")); //$NON-NLS-1$
         assertNull(outcome.reconnectError);
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "reconnect", "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
     }
 
     /**
@@ -481,6 +561,10 @@ public class TheRebuildRunsItsStepsInOrderTest
         assertTrue(outcome.error.contains("no readable")); //$NON-NLS-1$
         assertFalse("the pair is not recorded for a dump that did not verify", //$NON-NLS-1$
             io.asked.contains("rememberPair")); //$NON-NLS-1$
+        assertFalse("a file that is there is not followed by the full dump", //$NON-NLS-1$
+            io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "verify", "reconnect", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     // ---- a reconnection that fails is named beside the swap ----------------------------------
@@ -504,6 +588,7 @@ public class TheRebuildRunsItsStepsInOrderTest
         assertNotNull(outcome.reconnectError);
         assertTrue(outcome.reconnectError.contains("could not take the infobase back")); //$NON-NLS-1$
         assertTrue(outcome.reconnectError.contains("reconnect it by hand")); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "reconnect", "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
     }
 
     // ---- the swap itself ---------------------------------------------------------------------
@@ -581,6 +666,122 @@ public class TheRebuildRunsItsStepsInOrderTest
         catch (IOException expected)
         {
             assertFalse("nothing was written into the store", Files.exists(stored)); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A record that cannot be written does not turn the rebuild into a failure of the swap, and the
+     * success sentence does not claim the next update will compare.
+     */
+    @Test
+    public void aRecordThatCannotBeWrittenDoesNotClaimTheNextUpdateWillCompare() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.failRemember = true;
+
+        Outcome outcome = run(io);
+
+        assertTrue(outcome.ok);
+        assertEquals("replaced", outcome.fileState); //$NON-NLS-1$
+        assertTrue(outcome.pairRemembered.startsWith("NOT recorded")); //$NON-NLS-1$
+        assertTrue(outcome.pairRemembered.contains("will not compare")); //$NON-NLS-1$
+        assertTrue(outcome.pairRemembered.contains("disk full")); //$NON-NLS-1$
+        assertFalse(DumpInfoRebuilder.successMessage(outcome).contains("compares against")); //$NON-NLS-1$
+    }
+
+    /**
+     * A swap whose move fails and whose rollback fails too is not "untouched": the stored file is
+     * in an unknown state, and the answer names the backup.
+     */
+    @Test
+    public void aSwapWhoseMoveAndRollbackBothFailNamesAnUnknownState() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        DumpInfoRebuilder.FileMover previous = DumpInfoRebuilder.swapMover;
+        try
+        {
+            DumpInfoRebuilder.swapMover = (from, to) -> {
+                Files.deleteIfExists(to.resolveSibling(
+                    DumpInfoProbe.FILE_NAME + ".before-rebuild-stamp")); //$NON-NLS-1$
+                throw new IOException("the file is held open by another process"); //$NON-NLS-1$
+            };
+
+            Outcome outcome = run(io);
+
+            assertFalse(outcome.ok);
+            assertEquals("unknown", outcome.fileState); //$NON-NLS-1$
+            assertTrue(outcome.error.contains("unknown state")); //$NON-NLS-1$
+            assertTrue(outcome.error.contains("before-rebuild-stamp")); //$NON-NLS-1$
+            assertFalse(outcome.error.contains("not touched")); //$NON-NLS-1$
+        }
+        finally
+        {
+            DumpInfoRebuilder.swapMover = previous;
+        }
+    }
+
+    /**
+     * A Designer call that is still running when the wait gives up keeps the cleanup for after the
+     * call returns. The cleanup does not run while the call is in progress.
+     */
+    @Test
+    public void anAbandonedRunCleansUpOnlyAfterTheCallReturns() throws Exception
+    {
+        CountDownLatch hold = new CountDownLatch(1);
+        AtomicBoolean cleaned = new AtomicBoolean(false);
+        CountDownLatch cleanedAt = new CountDownLatch(1);
+        try
+        {
+            DumpInfoRebuilder.underTimeout("the dump-info-only Designer run", 200L, () -> { //$NON-NLS-1$
+                while (hold.getCount() > 0)
+                {
+                    try
+                    {
+                        hold.await();
+                    }
+                    catch (InterruptedException ignored)
+                    {
+                        Thread.interrupted();
+                    }
+                }
+                return null;
+            });
+            fail("a run that outlasts its budget is abandoned"); //$NON-NLS-1$
+        }
+        catch (DumpInfoRebuilder.Abandoned abandoned)
+        {
+            try
+            {
+                assertTrue(abandoned.processStillRunning());
+                abandoned.whenFinished(() -> {
+                    cleaned.set(true);
+                    cleanedAt.countDown();
+                });
+                assertFalse("cleanup waits until the call returns", cleaned.get()); //$NON-NLS-1$
+                hold.countDown();
+                assertTrue("cleanup runs once the call has returned", //$NON-NLS-1$
+                    cleanedAt.await(5, TimeUnit.SECONDS));
+                assertTrue(cleaned.get());
+            }
+            finally
+            {
+                hold.countDown();
+            }
+        }
+    }
+
+    /** Steps occur in this order; steps between them are allowed. */
+    private static void assertOrder(List<String> sequence, String... steps)
+    {
+        int at = -1;
+        for (String step : steps)
+        {
+            int found = sequence.indexOf(step);
+            assertTrue(step + " is missing from " + sequence, found >= 0); //$NON-NLS-1$
+            assertTrue(step + " is out of order in " + sequence, found > at); //$NON-NLS-1$
+            at = found;
         }
     }
 }

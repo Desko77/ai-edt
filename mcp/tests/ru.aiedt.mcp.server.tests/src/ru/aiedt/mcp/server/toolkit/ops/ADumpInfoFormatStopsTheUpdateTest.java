@@ -7,15 +7,17 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +42,7 @@ import com.e1c.g5.dt.applications.LifecycleState;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.ApplicationUpdater;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
 
 /**
@@ -77,8 +80,14 @@ public class ADumpInfoFormatStopsTheUpdateTest
     {
         RecordingApplications manager =
             new RecordingApplications(ApplicationUpdateState.INCREMENTAL_UPDATE_REQUIRED);
+        IApplication application = new StubApplication("app-1"); //$NON-NLS-1$
 
-        String stop = DatabaseUpdater.stopOnForeignDumpInfoFormat(foreignFile(), false);
+        String stop = DatabaseUpdater.passTheFormatGate(manager, application, foreignFile(), false,
+            () -> {
+                manager.check(application, null, null, null);
+                manager.update(application, ApplicationUpdateType.INCREMENTAL, null, null);
+                return "asked"; //$NON-NLS-1$
+            });
 
         assertNotNull(stop);
         JsonObject refusal = JsonParser.parseString(stop).getAsJsonObject();
@@ -98,8 +107,8 @@ public class ADumpInfoFormatStopsTheUpdateTest
     }
 
     /**
-     * With the override the gate passes, and the first thing asked after it is the update state -
-     * the update goes ahead, and its answer says the check was overridden.
+     * With the override the gate passes and the supplier runs: the manager is asked to check and to
+     * update. The answer says the check was overridden.
      */
     @Test
     public void withTheOverrideTheGatePassesAndTheManagerIsAsked()
@@ -108,12 +117,15 @@ public class ADumpInfoFormatStopsTheUpdateTest
             new RecordingApplications(ApplicationUpdateState.UPDATED);
         IApplication application = new StubApplication("app-1"); //$NON-NLS-1$
 
-        assertNull(DatabaseUpdater.stopOnForeignDumpInfoFormat(foreignFile(), true));
-
-        // The first thing update_database asks of the manager once the gate has passed:
-        manager.getUpdateState(application);
+        String passed = DatabaseUpdater.passTheFormatGate(manager, application, foreignFile(), true,
+            () -> {
+                manager.check(application, null, null, null);
+                manager.update(application, ApplicationUpdateType.INCREMENTAL, null, null);
+                return "asked"; //$NON-NLS-1$
+            });
+        assertEquals("asked", passed); //$NON-NLS-1$
         assertEquals("past the gate, the manager is asked - the update goes ahead", //$NON-NLS-1$
-            List.of("getUpdateState"), manager.calls); //$NON-NLS-1$
+            List.of("check", "update"), manager.calls); //$NON-NLS-1$ //$NON-NLS-2$
 
         String described = DatabaseUpdater.describeDumpInfoFormatCheck(foreignFile(), true);
         assertNotNull(described);
@@ -240,6 +252,119 @@ public class ADumpInfoFormatStopsTheUpdateTest
         {
             Files.deleteIfExists(pairs);
         }
+    }
+
+    /**
+     * A record applies only on the platform it was measured on. Another platform is not compared,
+     * and the answer names both versions.
+     */
+    @Test
+    public void aRecordFromAnotherPlatformIsNotCompared() throws IOException
+    {
+        Path pairs = Files.createTempFile("dump-info-formats", ".properties"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            DumpInfoProbe.rememberPair("file:e:/bases/one", "2.7", "8.3.27.2214", pairs); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertEquals("2.7", DumpInfoProbe.applicableFormat("file:e:/bases/one", pairs, //$NON-NLS-1$ //$NON-NLS-2$
+                "8.3.27.2214")); //$NON-NLS-1$
+            assertNull(DumpInfoProbe.applicableFormat("file:e:/bases/one", pairs, "8.3.24.1000")); //$NON-NLS-1$ //$NON-NLS-2$
+            String reason = DumpInfoProbe.inapplicableReason("file:e:/bases/one", pairs, //$NON-NLS-1$
+                "8.3.24.1000"); //$NON-NLS-1$
+            assertTrue(reason.contains("not compared")); //$NON-NLS-1$
+            assertTrue(reason.contains("8.3.27.2214")); //$NON-NLS-1$
+            assertTrue(reason.contains("8.3.24.1000")); //$NON-NLS-1$
+
+            DumpInfoProbe.rememberPair("file:e:/bases/legacy", "2.20", pairs); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("2.20", DumpInfoProbe.expectedFormat("file:e:/bases/legacy", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull("a record without a platform is not applied", //$NON-NLS-1$
+                DumpInfoProbe.applicableFormat("file:e:/bases/legacy", pairs, "8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(DumpInfoProbe.inapplicableReason("file:e:/bases/legacy", pairs, //$NON-NLS-1$
+                "8.3.27.2214").contains("without the platform")); //$NON-NLS-1$ //$NON-NLS-2$
+
+            String described = DatabaseUpdater.describeDumpInfoFormatCheck(
+                DumpInfoProbe.reading("file", "2.20", null, "8.3.27.2214", reason), false); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(described.contains("not compared")); //$NON-NLS-1$
+            assertTrue(described.contains("8.3.24.1000")); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.deleteIfExists(pairs);
+        }
+    }
+
+    /**
+     * A failed write leaves the previous records in place. Opening the destination first would
+     * truncate it, and every base would lose its record.
+     */
+    @Test
+    public void aFailedRecordWriteLeavesThePreviousRecords() throws IOException
+    {
+        Path pairs = Files.createTempFile("dump-info-formats", ".properties"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            DumpInfoProbe.rememberPair("file:e:/bases/one", "2.7", "8.3.27.2214", pairs); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            // The destination is locked, so replacing it fails. Opening it for write would truncate
+            // it first, and every base already in the file would lose its record.
+            try (FileChannel channel = FileChannel.open(pairs, StandardOpenOption.READ,
+                StandardOpenOption.WRITE))
+            {
+                FileLock lock = channel.lock();
+                try
+                {
+                    DumpInfoProbe.rememberPair("file:e:/bases/two", "2.20", "8.3.27.2214", pairs); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    throw new AssertionError("a write that cannot replace the file must fail"); //$NON-NLS-1$
+                }
+                catch (IOException expected)
+                {
+                    // asserted after the lock is released: the locked file cannot be read either
+                }
+                finally
+                {
+                    lock.release();
+                }
+            }
+            assertEquals("2.7", DumpInfoProbe.expectedFormat("file:e:/bases/one", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull(DumpInfoProbe.expectedFormat("file:e:/bases/two", pairs)); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.deleteIfExists(pairs);
+        }
+    }
+
+    /**
+     * A launch-time update refuses a foreign format before the manager is asked, and asks the
+     * manager once the formats match.
+     */
+    @Test
+    public void aLaunchUpdateRefusesAForeignFormatBeforeTheManagerIsAsked()
+    {
+        RecordingApplications manager =
+            new RecordingApplications(ApplicationUpdateState.UPDATED);
+        IApplication application = new StubApplication("app-1"); //$NON-NLS-1$
+
+        ApplicationUpdater.Result refused = ApplicationUpdater.updateIfNeeded(manager, application,
+            foreignFile());
+        assertEquals(ApplicationUpdater.Outcome.FAILED, refused.outcome);
+        assertTrue(refused.errorMessage.contains("2.20")); //$NON-NLS-1$
+        assertTrue(manager.calls.isEmpty());
+
+        RecordingApplications matching =
+            new RecordingApplications(ApplicationUpdateState.UPDATED);
+        ApplicationUpdater.Result went = ApplicationUpdater.updateIfNeeded(matching, application,
+            DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertEquals(ApplicationUpdater.Outcome.ALREADY_UP_TO_DATE, went.outcome);
+        assertEquals(List.of("getUpdateState"), matching.calls); //$NON-NLS-1$
+
+        String debugRefusal = DebugSessionStarter.updateDatabase(manager, application, foreignFile());
+        assertNotNull(debugRefusal);
+        assertTrue(debugRefusal.contains("2.20")); //$NON-NLS-1$
+        assertTrue("the debugger's update did not ask the manager", manager.calls.isEmpty()); //$NON-NLS-1$
+
+        String debugWent = DebugSessionStarter.updateDatabase(matching, application,
+            DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertNull(debugWent);
+        assertEquals(List.of("getUpdateState", "getUpdateState"), matching.calls); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

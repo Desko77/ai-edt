@@ -760,10 +760,82 @@ public class DatabaseUpdater implements IMcpTool
         String platformVersion =
             ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.thickClientPlatformVersion(
                 infobaseProject, infobase);
-        String expected = DumpInfoProbe.expectedFormat(
-            ru.aiedt.mcp.server.support.InfobaseIdentity.of(infobase), DumpInfoProbe.stateFile());
+        String identity = ru.aiedt.mcp.server.support.InfobaseIdentity.of(infobase);
+        java.nio.file.Path state = DumpInfoProbe.stateFile();
+        String expected = DumpInfoProbe.applicableFormat(identity, state, platformVersion);
+        String notCompared = DumpInfoProbe.inapplicableReason(identity, state, platformVersion);
         return DumpInfoProbe.reading(stored.toString(), DumpInfoProbe.formatOf(stored), expected,
-            platformVersion);
+            platformVersion, notCompared);
+    }
+
+    /**
+     * The stored dump-info of an application, or {@code null} when it cannot be read. A launch that
+     * cannot read the store has nothing to compare, which is not a reason to refuse the update.
+     *
+     * @param application the application about to be updated
+     * @return the reading, or {@code null}
+     */
+    public static DumpInfoProbe.Reading dumpInfoOf(IApplication application)
+    {
+        if (application == null)
+        {
+            return null;
+        }
+        try
+        {
+            return readDumpInfoProbe(application.getProject(), application);
+        }
+        catch (Exception | LinkageError cannotRead)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * The sentence that stops a launch-time update on a foreign dump-info format, or {@code null}
+     * to go on. Launch paths do not take {@code ignoreDumpInfoFormat}; skipping the update is
+     * {@code updateBeforeLaunch=false}.
+     *
+     * @param dumpInfo the reading, or {@code null}
+     * @return the refusal sentence, or {@code null}
+     */
+    public static String launchUpdateRefusal(DumpInfoProbe.Reading dumpInfo)
+    {
+        String stop = stopOnForeignDumpInfoFormat(dumpInfo, false);
+        if (stop == null)
+        {
+            return null;
+        }
+        JsonObject body = com.google.gson.JsonParser.parseString(stop).getAsJsonObject();
+        return body.has("error") ? body.get("error").getAsString() : stop; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The update path's format gate. A foreign format returns before {@code askTheManager} runs, so
+     * a recording manager closed over by that supplier sees no {@code check} and no {@code update}.
+     * {@code updateDatabase} calls this and only then refreshes the workspace and asks the manager.
+     *
+     * @param manager the application manager the update would ask
+     * @param application the application the update would ask about
+     * @param dumpInfo the stored-file reading, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @param askTheManager what the update asks once the format allows it; not called on a refusal
+     * @return the refusal JSON, or whatever {@code askTheManager} returned
+     */
+    static String passTheFormatGate(IApplicationManager manager, IApplication application,
+        DumpInfoProbe.Reading dumpInfo, boolean ignore,
+        java.util.function.Supplier<String> askTheManager)
+    {
+        String stop = stopOnForeignDumpInfoFormat(dumpInfo, ignore);
+        if (stop != null)
+        {
+            return stop;
+        }
+        if (manager == null || application == null || askTheManager == null)
+        {
+            return null;
+        }
+        return askTheManager.get();
     }
 
     /**
@@ -818,6 +890,10 @@ public class DatabaseUpdater implements IMcpTool
         {
             if (dumpInfo.expectedFormat == null)
             {
+                if (dumpInfo.notComparedBecause != null)
+                {
+                    return dumpInfo.notComparedBecause;
+                }
                 return "not compared: no format has been recorded for this infobase yet (the " //$NON-NLS-1$
                     + "file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
                     + "\") - rebuild_dump_info records one from this base's own Designer"; //$NON-NLS-1$
@@ -1029,7 +1105,8 @@ public class DatabaseUpdater implements IMcpTool
                     refreshForProbe(params, project, infobaseProject), applicationId, projectName,
                     viaParent, infobaseProject.getName(), dumpInfo, ignoreDumpInfoFormat);
             }
-            String formatStop = stopOnForeignDumpInfoFormat(dumpInfo, ignoreDumpInfoFormat);
+            String formatStop = passTheFormatGate(appManager, application, dumpInfo,
+                ignoreDumpInfoFormat, () -> null);
             if (formatStop != null)
             {
                 return formatStop;

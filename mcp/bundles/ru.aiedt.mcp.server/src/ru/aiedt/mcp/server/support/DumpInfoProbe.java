@@ -8,9 +8,12 @@ package ru.aiedt.mcp.server.support;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -79,17 +82,31 @@ public final class DumpInfoProbe
         public final String expectedFormat;
 
         /**
-         * The platform whose Designer wrote the recorded format, or {@code null} - said in answers
-         * as the origin of the record, not as the reason for it.
+         * The platform whose Designer wrote the recorded format, or the platform this check is
+         * running on when no record names one - said in answers as the origin of the record.
          */
         public final String platformVersion;
 
+        /**
+         * Why this reading is not compared, when a record exists but does not apply (another
+         * platform, or a record that does not name the platform it was measured on). {@code null}
+         * when the formats are compared or when there is simply no record.
+         */
+        public final String notComparedBecause;
+
         Reading(String file, String actualFormat, String expectedFormat, String platformVersion)
+        {
+            this(file, actualFormat, expectedFormat, platformVersion, null);
+        }
+
+        Reading(String file, String actualFormat, String expectedFormat, String platformVersion,
+            String notComparedBecause)
         {
             this.file = file;
             this.actualFormat = actualFormat;
             this.expectedFormat = expectedFormat;
             this.platformVersion = platformVersion;
+            this.notComparedBecause = notComparedBecause;
         }
 
         /**
@@ -114,7 +131,38 @@ public final class DumpInfoProbe
     public static Reading reading(String file, String actualFormat, String expectedFormat,
         String platformVersion)
     {
-        return new Reading(file, actualFormat, expectedFormat, platformVersion);
+        return new Reading(file, actualFormat, expectedFormat, platformVersion, null);
+    }
+
+    /**
+     * As {@link #reading(String, String, String, String)}, with the sentence that says why a record
+     * was not applied.
+     *
+     * @param notComparedBecause why the record does not apply, or {@code null}
+     * @return the reading
+     */
+    public static Reading reading(String file, String actualFormat, String expectedFormat,
+        String platformVersion, String notComparedBecause)
+    {
+        return new Reading(file, actualFormat, expectedFormat, platformVersion, notComparedBecause);
+    }
+
+    /**
+     * A format recorded for one infobase, and the platform it was measured on.
+     */
+    public static final class Recorded
+    {
+        /** The {@code version} attribute the Designer wrote. */
+        public final String format;
+
+        /** The platform version that wrote {@link #format}, or {@code null} when the record has none. */
+        public final String platform;
+
+        Recorded(String format, String platform)
+        {
+            this.format = format;
+            this.platform = platform;
+        }
     }
 
     /**
@@ -212,9 +260,98 @@ public final class DumpInfoProbe
      */
     public static String expectedFormat(String infobaseIdentity, Path recordedFormats)
     {
-        Properties recorded = readPairs(recordedFormats);
-        return infobaseIdentity == null || recorded == null
-            ? null : recorded.getProperty(infobaseIdentity);
+        Recorded recorded = recorded(infobaseIdentity, recordedFormats);
+        return recorded == null ? null : recorded.format;
+    }
+
+    /**
+     * The format recorded for this infobase on this platform. A record measured on another platform,
+     * or a record that does not name its platform, does not apply: the check is not made.
+     *
+     * @param infobaseIdentity the base's identity ({@link InfobaseIdentity}), or {@code null}
+     * @param recordedFormats the properties file a rebuild writes, or {@code null}
+     * @param currentPlatform the platform this check is running on, or {@code null}
+     * @return the recorded format, or {@code null} when nothing applicable is recorded
+     */
+    public static String applicableFormat(String infobaseIdentity, Path recordedFormats,
+        String currentPlatform)
+    {
+        Recorded recorded = recorded(infobaseIdentity, recordedFormats);
+        if (recorded == null || recorded.platform == null || currentPlatform == null
+            || currentPlatform.isEmpty())
+        {
+            return null;
+        }
+        return recorded.platform.equals(currentPlatform.trim()) ? recorded.format : null;
+    }
+
+    /**
+     * Why {@link #applicableFormat} returned nothing even though a record exists. {@code null} when
+     * there is no record, or when the record applies to {@code currentPlatform}.
+     *
+     * @param infobaseIdentity the base's identity, or {@code null}
+     * @param recordedFormats the properties file, or {@code null}
+     * @param currentPlatform the platform this check is running on, or {@code null}
+     * @return the sentence an answer uses, or {@code null}
+     */
+    public static String inapplicableReason(String infobaseIdentity, Path recordedFormats,
+        String currentPlatform)
+    {
+        Recorded recorded = recorded(infobaseIdentity, recordedFormats);
+        if (recorded == null)
+        {
+            return null;
+        }
+        if (recorded.platform == null)
+        {
+            return "not compared: format \"" + recorded.format + "\" is recorded for this infobase " //$NON-NLS-1$ //$NON-NLS-2$
+                + "without the platform it was measured on"; //$NON-NLS-1$
+        }
+        String current = currentPlatform == null ? "" : currentPlatform.trim(); //$NON-NLS-1$
+        if (current.isEmpty())
+        {
+            return "not compared: format \"" + recorded.format + "\" was recorded on platform " //$NON-NLS-1$ //$NON-NLS-2$
+                + recorded.platform + ", and this check could not read the infobase platform"; //$NON-NLS-1$
+        }
+        if (!recorded.platform.equals(current))
+        {
+            return "not compared: format \"" + recorded.format + "\" was recorded on platform " //$NON-NLS-1$ //$NON-NLS-2$
+                + recorded.platform + ", not on " + current; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * The record for one infobase, legacy entries included. A legacy entry is a format with no
+     * platform, which {@link #applicableFormat} does not apply.
+     *
+     * @param infobaseIdentity the base's identity, or {@code null}
+     * @param recordedFormats the properties file, or {@code null}
+     * @return the record, or {@code null} when this base has none
+     */
+    public static Recorded recorded(String infobaseIdentity, Path recordedFormats)
+    {
+        Properties pairs = readPairs(recordedFormats);
+        if (infobaseIdentity == null || pairs == null)
+        {
+            return null;
+        }
+        String format = pairs.getProperty(formatKey(infobaseIdentity));
+        String platform = pairs.getProperty(platformKey(infobaseIdentity));
+        if (format == null)
+        {
+            format = pairs.getProperty(infobaseIdentity);
+            platform = null;
+        }
+        if (format == null || format.isEmpty())
+        {
+            return null;
+        }
+        if (platform != null && platform.isEmpty())
+        {
+            platform = null;
+        }
+        return new Recorded(format, platform);
     }
 
     /**
@@ -226,6 +363,11 @@ public final class DumpInfoProbe
      * carries the answer to the question it is read for rather than a list of every base ever
      * rebuilt, so nothing removes an entry except a later rebuild of the same base.
      * </p>
+     * <p>
+     * This overload stores no platform. A later check does not apply such a record: the platform it
+     * was measured on is unknown. {@link #rememberPair(String, String, String, Path)} is what a
+     * rebuild uses.
+     * </p>
      *
      * @param infobaseIdentity the base's identity ({@link InfobaseIdentity})
      * @param format the {@code version} attribute its Designer wrote
@@ -235,17 +377,100 @@ public final class DumpInfoProbe
     public static void rememberPair(String infobaseIdentity, String format, Path recordedFormats)
         throws IOException
     {
+        rememberPair(infobaseIdentity, format, null, recordedFormats);
+    }
+
+    /**
+     * Records the format and the platform it was measured on. A check running on another platform
+     * treats the record as absent.
+     * <p>
+     * The file is written to a temporary file in the same directory and moved into place. Opening
+     * the destination first would truncate it, and a failure of {@link Properties#store} would leave
+     * every base's record empty.
+     * </p>
+     *
+     * @param infobaseIdentity the base's identity ({@link InfobaseIdentity})
+     * @param format the {@code version} attribute its Designer wrote
+     * @param platformVersion the platform version that wrote the format, or {@code null} when it is
+     *            not known - the record is then stored without a platform and is not applied
+     * @param recordedFormats the properties file to write, or {@code null} for nowhere (tests)
+     * @throws IOException when the file cannot be written; the previous file is left as it was
+     */
+    public static void rememberPair(String infobaseIdentity, String format, String platformVersion,
+        Path recordedFormats) throws IOException
+    {
         if (recordedFormats == null || infobaseIdentity == null || format == null)
         {
             return;
         }
         Properties existing = readPairs(recordedFormats);
         Properties recorded = existing != null ? existing : new Properties();
-        recorded.setProperty(infobaseIdentity, format);
-        Files.createDirectories(recordedFormats.toAbsolutePath().getParent());
-        try (java.io.OutputStream out = Files.newOutputStream(recordedFormats))
+        recorded.remove(infobaseIdentity);
+        recorded.setProperty(formatKey(infobaseIdentity), format);
+        if (platformVersion == null || platformVersion.isEmpty())
         {
-            recorded.store(out, "ConfigDumpInfo formats written by the Designer of an infobase"); //$NON-NLS-1$
+            recorded.remove(platformKey(infobaseIdentity));
+        }
+        else
+        {
+            recorded.setProperty(platformKey(infobaseIdentity), platformVersion.trim());
+        }
+        writeAtomically(recorded, recordedFormats);
+    }
+
+    /** The properties key of the format itself. */
+    private static String formatKey(String infobaseIdentity)
+    {
+        return "format:" + infobaseIdentity; //$NON-NLS-1$
+    }
+
+    /** The properties key of the platform the format was measured on. */
+    private static String platformKey(String infobaseIdentity)
+    {
+        return "platform:" + infobaseIdentity; //$NON-NLS-1$
+    }
+
+    /**
+     * Writes the properties through a temporary file in the same directory, then replaces the
+     * destination. A failure leaves the previous file intact.
+     */
+    private static void writeAtomically(Properties recorded, Path destination) throws IOException
+    {
+        Path absolute = destination.toAbsolutePath();
+        Path parent = absolute.getParent();
+        if (parent != null)
+        {
+            Files.createDirectories(parent);
+        }
+        Path temporary = Files.createTempFile(parent == null ? absolute.getParent() : parent,
+            absolute.getFileName().toString(), ".tmp"); //$NON-NLS-1$
+        try
+        {
+            try (OutputStream out = Files.newOutputStream(temporary))
+            {
+                recorded.store(out, "ConfigDumpInfo formats written by the Designer of an infobase"); //$NON-NLS-1$
+            }
+            try
+            {
+                Files.move(temporary, absolute, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+            }
+            catch (AtomicMoveNotSupportedException unsupported)
+            {
+                Files.move(temporary, absolute, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+        catch (IOException failed)
+        {
+            try
+            {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException ignored)
+            {
+                // The destination was not opened, so the previous records still stand.
+            }
+            throw failed;
         }
     }
 

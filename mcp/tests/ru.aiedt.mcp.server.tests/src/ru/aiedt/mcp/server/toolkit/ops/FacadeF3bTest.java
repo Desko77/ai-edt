@@ -68,6 +68,8 @@ public class FacadeF3bTest
         assertTrue(schema.contains("\"projectName\"")); //$NON-NLS-1$
         assertTrue(schema.contains("\"syncOperation\"")); //$NON-NLS-1$
         assertTrue(schema.contains("\"required\"")); //$NON-NLS-1$
+        assertTrue("confirm names rebuild_dump_info", //$NON-NLS-1$
+            schema.contains("rebuild_dump_info - must be true")); //$NON-NLS-1$
     }
 
     // -- infobase_admin: routing table --
@@ -155,6 +157,8 @@ public class FacadeF3bTest
         params.put("operation", "sync_control"); //$NON-NLS-1$ //$NON-NLS-2$
         String result = new InfobaseAdminFacadeTool().execute(params);
         assertTrue(result.contains("syncOperation")); //$NON-NLS-1$
+        assertTrue("the missing-operation error names rebuild_dump_info", //$NON-NLS-1$
+            result.contains("rebuild_dump_info")); //$NON-NLS-1$
     }
 
     @Test

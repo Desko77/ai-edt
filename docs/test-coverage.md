@@ -6,9 +6,9 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 117 | a test class named after it |
-| exercised | 130 | reached by some other test |
+| exercised | 131 | reached by some other test |
 | tool-sweep | 69 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 48 | needs a display or an extension point |
+| ui-bound | 47 | needs a display or an extension point |
 | workspace-bound | 48 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
 | **total** | **412** | across 338 test classes |
@@ -85,7 +85,7 @@ _none_
 - RouteMapOps
 - SpecializedOps
 
-## ui-bound (48)
+## ui-bound (47)
 
 **(root)**
 - McpAutoStart
@@ -144,7 +144,6 @@ _none_
 - ToolsPrefTab
 
 **support**
-- ApplicationUpdater
 - BslHoverAccess
 - BslProposalAccess
 - DebugLog
@@ -230,7 +229,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (130)
+## exercised (131)
 
 **(root)**
 - Activator
@@ -259,6 +258,7 @@ _none_
 
 **support**
 - AllureResultReader
+- ApplicationUpdater
 - BmComparisonHelper
 - BmConfigurationProjectHelper
 - BmDcsHelper
@@ -549,7 +549,7 @@ closes.
 | 9-16 | 49 |
 | 17+ | 16 |
 
-2916 test methods across 338 test classes; 117 classes have a test of their own, median 9 methods each.
+2924 test methods across 338 test classes; 117 classes have a test of their own, median 9 methods each.
 
 Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 117 of 412 classes have one: 69 are covered by the registry-wide contract sweep and 48 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 

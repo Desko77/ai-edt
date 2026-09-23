@@ -189,4 +189,37 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
 
         assertEquals(Arrays.asList("release", "lock", "launcher", "unlock", "reconnect"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
     }
+
+    /**
+     * The dump-info-only Designer call holds the per-infobase lock for the call alone, and a failure
+     * thrown inside the reflected method reaches the caller as that failure rather than wrapped in
+     * {@link java.lang.reflect.InvocationTargetException}.
+     */
+    @Test
+    public void theDesignerCallRunsUnderTheInfobaseLockAndUnwrapsTheCause() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        Object target = new Object()
+        {
+            @SuppressWarnings("unused")
+            public void blow()
+            {
+                order.add(lock.isHeldByCurrentThread() ? "held" : "not-held"); //$NON-NLS-1$ //$NON-NLS-2$
+                throw new IllegalStateException("bad credentials"); //$NON-NLS-1$
+            }
+        };
+        java.lang.reflect.Method method = target.getClass().getDeclaredMethod("blow"); //$NON-NLS-1$
+        try
+        {
+            BmInfobaseExtensionHelper.invokeUnderInfobaseLock(lock, method, target);
+            fail("the cause has to reach the caller"); //$NON-NLS-1$
+        }
+        catch (IllegalStateException expected)
+        {
+            assertEquals("bad credentials", expected.getMessage()); //$NON-NLS-1$
+        }
+        assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
 }

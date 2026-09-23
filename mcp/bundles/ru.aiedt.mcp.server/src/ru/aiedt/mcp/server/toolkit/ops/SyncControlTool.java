@@ -111,13 +111,14 @@ public class SyncControlTool implements IMcpTool
             + "whose format the platform does not understand (the answer to that is FullDump and every " //$NON-NLS-1$
             + "update silently becomes a full load; update_database names the mismatch before starting). The " //$NON-NLS-1$
             + "Designer is first asked for the dump-info alone, which takes seconds; the full hierarchical dump " //$NON-NLS-1$
-            + "is the fallback when that leaves no file, and rebuildPath says which one produced the file and " //$NON-NLS-1$
-            + "why. Releases " //$NON-NLS-1$
+            + "is the fallback only when that run finished without error and left no file. A failed quick run " //$NON-NLS-1$
+            + "is refused with its own error. rebuildPath says which run produced the file and why. Releases " //$NON-NLS-1$
             + "the infobase for a Designer run, backs the previous file up beside it, replaces it, makes EDT " //$NON-NLS-1$
             + "re-read it and reconnects the infobase; a failed swap is rolled back from the backup. The format " //$NON-NLS-1$
-            + "the new file carries is recorded for THIS infobase (formatPair), and later checks compare against " //$NON-NLS-1$
-            + "that record rather than against the platform version. " //$NON-NLS-1$
-            + "reseed_baseline, mark_synchronized and recover_stuck_merge are DANGEROUS - only on explicit user request " //$NON-NLS-1$
+            + "the new file carries is recorded for THIS infobase together with the platform it was measured on " //$NON-NLS-1$
+            + "(formatPair). A record from another platform is not compared. Later checks compare against that " //$NON-NLS-1$
+            + "record only when it was stored; a failed record is not described as a comparison the next update will make. " //$NON-NLS-1$
+            + "reseed_baseline, mark_synchronized, recover_stuck_merge and rebuild_dump_info are DANGEROUS - only on explicit user request " //$NON-NLS-1$
             + "and only when you are CERTAIN of the state (project KNOWN to match the infobase / no update really " //$NON-NLS-1$
             + "running); otherwise EDT silently drops real changes or a genuine merge is aborted. NEVER call autonomously."; //$NON-NLS-1$
     }
@@ -991,8 +992,7 @@ public class SyncControlTool implements IMcpTool
             + (outcome.error == null ? "" : " error: " + outcome.error)); //$NON-NLS-1$ //$NON-NLS-2$
 
         ToolResult answer = outcome.ok
-            ? ToolResult.success().put("message", "The stored ConfigDumpInfo.xml was rebuilt " //$NON-NLS-1$ //$NON-NLS-2$
-                + "with the platform's own dump; the next update compares against it.") //$NON-NLS-1$
+            ? ToolResult.success().put("message", DumpInfoRebuilder.successMessage(outcome)) //$NON-NLS-1$
             : ToolResult.error(outcome.error == null ? "The rebuild failed." : outcome.error); //$NON-NLS-1$
         answer.put("operation", "rebuild_dump_info"); //$NON-NLS-1$ //$NON-NLS-2$
         answer.put("projectName", project.getName()); //$NON-NLS-1$
