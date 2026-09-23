@@ -344,7 +344,12 @@ public class MixedEndsAndReferenceCountTest
 
     /**
      * A module root - what {@code level=mixed scope=module} walks from - keeps its module
-     * dependencies; on the metadata level only the root stays.
+     * dependencies; on the metadata level the root itself is a stranger to the graph.
+     * <p>
+     * {@code scope=module} takes whatever the FQN names, and the level is not consulted for it. A
+     * module root on the metadata level is dropped by the same rule that drops a module end, and the
+     * answer names it rather than answering with a graph of one node and nothing around it.
+     * </p>
      */
     @Test
     public void aModuleRootKeepsItsModuleDependenciesOnMixedOnly()
@@ -366,9 +371,11 @@ public class MixedEndsAndReferenceCountTest
             BmReferencesHelper.Direction.OUT, 2, Map.of(),
             policy(BmReferencesHelper.Ends.METADATA));
 
-        assertEquals("only the root stays", Set.of("CommonModule.Sales.Module"),
-            onlyMetadata.nodes.keySet());
+        assertTrue("a root of the wrong kind is no node", onlyMetadata.nodes.isEmpty());
         assertTrue(onlyMetadata.edges.isEmpty());
+        assertEquals(List.of("CommonModule.Sales.Module"),
+            BmReferencesHelper.edgeKindFields("metadata", null, onlyMetadata)
+                .get("internalRootsDropped"));
     }
 
     /** One reference between two objects is one edge, seen from both sides of the walk. */
@@ -440,6 +447,63 @@ public class MixedEndsAndReferenceCountTest
         assertFalse("and nothing it points at is reached",
             result.nodes.containsKey("Catalog.Partner"));
         assertEquals(1, result.internalEdgesDropped);
+    }
+
+    /**
+     * A root named twice is one node and is walked once.
+     * <p>
+     * The objects of a collection are collected as a list, so the same object can arrive twice. The
+     * queue is the expansion order, and a repeated root was expanded a second time: every edge of it
+     * was reported again, and on {@code direction=both} one reference between two objects came back
+     * as {@code count=2}.
+     * </p>
+     */
+    @Test
+    public void aRootListedTwiceIsWalkedOnce()
+    {
+        Node goods = metadata("Catalog.Goods");
+        IBmObject root = goods.build();
+        IBmObject target = metadata("Catalog.Currencies").build();
+        EReference types = reference("types");
+        goods.pointsAt(types, target);
+
+        BmReferencesHelper.BfsResult result = walk(List.of(root, root),
+            BmReferencesHelper.Direction.BOTH, 2,
+            Map.of(target, List.of(backReference(root, types))),
+            policy(BmReferencesHelper.Ends.METADATA));
+
+        assertEquals(Set.of("Catalog.Goods", "Catalog.Currencies"), result.nodes.keySet());
+        assertEquals(1, result.edges.size());
+        assertEquals("one reference is one", 1, result.edges.get(0).count);
+        assertFalse("a count of one is not reported",
+            jsonEdges(result).get(0).containsKey("count"));
+    }
+
+    /**
+     * A root the level does not carry is no node and is not walked from, and the answer names it.
+     * <p>
+     * {@code scope=module} takes whatever the FQN names, and an EDT service index named that way
+     * used to enter the graph as a node and be expanded. Refusing it silently would leave the caller
+     * with an empty graph and no reason for it.
+     * </p>
+     */
+    @Test
+    public void aServiceRootIsNotANodeAndTheAnswerNamesIt()
+    {
+        Node index = service("Document.Order.Form.Index");
+        IBmObject root = index.build();
+        index.pointsAt(reference("uses"), metadata("Catalog.Partner").build());
+
+        BmReferencesHelper.BfsResult result = walk(List.of(root),
+            BmReferencesHelper.Direction.OUT, 1, Map.of(),
+            policy(BmReferencesHelper.Ends.METADATA));
+
+        assertTrue("no node of the level", result.nodes.isEmpty());
+        assertTrue(result.edges.isEmpty());
+
+        Map<String, Object> fields = BmReferencesHelper.edgeKindFields("metadata", null, result);
+        assertEquals(List.of("Document.Order.Form.Index"), fields.get("internalRootsDropped"));
+        assertFalse("a refused root is not an edge", fields.containsKey("internalEdgesDropped"));
     }
 
     /** The same walk on the mixed level keeps the module nodes and the edges between them. */

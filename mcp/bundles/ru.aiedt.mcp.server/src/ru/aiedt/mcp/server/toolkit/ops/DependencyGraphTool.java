@@ -225,11 +225,7 @@ public class DependencyGraphTool implements IMcpTool
                     else
                     {
                         Set<String> keep = edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
-                        // The mixed level shows metadata objects and BSL modules; the metadata level
-                        // is between metadata objects alone. Both refuse an EDT service object.
-                        BmReferencesHelper.EdgePolicy policy = level == Level.MIXED
-                            ? BmReferencesHelper.EdgePolicy.mixed(keep)
-                            : BmReferencesHelper.EdgePolicy.metadata(keep);
+                        BmReferencesHelper.EdgePolicy policy = edgePolicy(level, keep);
                         result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots, direction,
                             maxNodes, maxEdges, depth,
                             () -> monitor.isCanceled() || watch.stopHere(), policy);
@@ -268,6 +264,25 @@ public class DependencyGraphTool implements IMcpTool
             tr.put(extra.getKey(), extra.getValue());
         }
         return tr.toJson();
+    }
+
+    /**
+     * The filter of the walk a level makes.
+     * <p>
+     * The metadata level is a graph between metadata objects, and the mixed level shows both halves
+     * of a project, so a BSL module is an object of that graph as well. An EDT service object is an
+     * object of neither level and is refused at whichever end reports it and as a root.
+     * </p>
+     *
+     * @param level the level asked for
+     * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+     * @return the filter
+     */
+    static BmReferencesHelper.EdgePolicy edgePolicy(Level level, Set<String> keepKinds)
+    {
+        return level == Level.MIXED
+            ? BmReferencesHelper.EdgePolicy.mixed(keepKinds)
+            : BmReferencesHelper.EdgePolicy.metadata(keepKinds);
     }
 
     /**
@@ -362,13 +377,16 @@ public class DependencyGraphTool implements IMcpTool
                     direction == BmReferencesHelper.Direction.OUT
                         || direction == BmReferencesHelper.Direction.BOTH,
                     edge -> {
-                        if (result.edges.size() >= maxEdges)
+                        // Which half of the call graph reported this edge: the module being walked
+                        // is the source of an outgoing one and the target of an incoming one.
+                        BmReferencesHelper.Side side = selfFqn != null
+                            && selfFqn.equals(edge.fromFqn)
+                                ? BmReferencesHelper.Side.FORWARD
+                                : BmReferencesHelper.Side.BACKWARD;
+                        if (!addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
                         {
-                            result.truncated = true;
                             return;
                         }
-                        result.edges.add(new BmReferencesHelper.Edge(edge.fromFqn, edge.toFqn,
-                            "calls")); //$NON-NLS-1$
                         addModuleNodeIfNew(result, queue, visited, tx, edge.fromFqn, maxNodes);
                         addModuleNodeIfNew(result, queue, visited, tx, edge.toFqn, maxNodes);
                     });
@@ -377,6 +395,51 @@ public class DependencyGraphTool implements IMcpTool
         }
         return result;
     }
+
+    /**
+     * Records one {@code calls} edge, merging it with the same edge already recorded.
+     * <p>
+     * The two halves of the call graph name the same connection between two modules: walking the
+     * caller reports it as an outgoing one and walking the callee reports it as an incoming one.
+     * Added as they came, one connection was two rows under {@code direction=both}. Merging is by
+     * {@code from} / {@code to} / {@code via}, as on the other levels, and each half is tallied on
+     * its own there, so the pair stands for one reference either way.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param fromFqn the caller's FQN
+     * @param toFqn the callee's FQN
+     * @param side which half of the call graph reported the edge
+     * @param maxEdges the edge cap, counted after merging
+     * @return <code>true</code> when the edge is in the graph afterwards
+     */
+    static boolean addModuleEdge(BmReferencesHelper.BfsResult result, String fromFqn, String toFqn,
+        BmReferencesHelper.Side side, int maxEdges)
+    {
+        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        {
+            return false;
+        }
+        for (BmReferencesHelper.Edge existing : result.edges)
+        {
+            if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                && CALLS.equals(existing.featureName))
+            {
+                existing.observe(side);
+                return true;
+            }
+        }
+        if (result.edges.size() >= maxEdges)
+        {
+            result.truncated = true;
+            return false;
+        }
+        result.edges.add(new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, side));
+        return true;
+    }
+
+    /** The {@code via} of every edge of the module level. */
+    private static final String CALLS = "calls"; //$NON-NLS-1$
 
     /**
      * Records a module the walk has just found, and puts it in the queue so the next ring walks it.
@@ -726,7 +789,8 @@ public class DependencyGraphTool implements IMcpTool
         return Math.max(min, Math.min(max, value));
     }
 
-    private enum Level
+    /** What the nodes of the graph are. Visible to this package so the choice it drives is testable. */
+    enum Level
     {
         METADATA, MODULES, MIXED
     }

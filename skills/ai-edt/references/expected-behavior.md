@@ -112,14 +112,15 @@ from the person at the status bar. Either way the tool is not interrupted mid-un
 ## A metadata dependency graph names metadata
 
 `insights operation=dependency_graph` keeps what its level is about: `metadata` carries metadata
-objects, `mixed` carries metadata objects and BSL modules. An EDT-internal end is dropped on either
-level and from EITHER side of an edge, as the target and as the source (`internalEdgesDropped` when
-any were, counted once per edge; on `metadata` an edge with a BSL module is dropped the same way).
-Repeated edges of the same `from`, `to` and `via` are one edge, and `count` is the number of
-references between that pair - one reference met from both sides stays one - and is written when
-it is greater than 1. `edgeKinds` keeps only the named `via` values; a kind the walk never saw is
-`unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied (`edgeKinds:
-notApplied`) and `calls` edges are unchanged.
+objects, `mixed` carries metadata objects and BSL modules. An end of that kind is required on BOTH
+ends of an edge, as the source and as the target: an EDT-internal end is dropped at whichever end
+reports it (`internalEdgesDropped` when any were, counted once per edge; on `metadata` an edge with
+a BSL module is dropped the same way). A root of a kind the level does not carry is no node either,
+and `internalRootsDropped` names it. Repeated edges of the same `from`, `to` and `via` are one edge,
+and `count` is the number of references between that pair - one reference met from both sides stays
+one - and is written when it is greater than 1. `edgeKinds` keeps only the named `via` values; a kind
+the walk never saw is `unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied
+(`edgeKinds: notApplied`) and `calls` edges merge the same way.
 
 ## Cancelling an update that never gave you a runKey
 

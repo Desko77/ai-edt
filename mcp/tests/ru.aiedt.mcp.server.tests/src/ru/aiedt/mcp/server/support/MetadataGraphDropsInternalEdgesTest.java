@@ -322,7 +322,15 @@ public class MetadataGraphDropsInternalEdgesTest
         assertEquals(Integer.valueOf(3), jsonEdges(result).get(0).get("count"));
     }
 
-    /** Three references of one kind are one edge. Two kinds on the same pair are two edges. */
+    /**
+     * Three references of one kind are one edge. Two kinds on the same pair are two edges.
+     * <p>
+     * The pair is sighted three times forward and once backward, and it stands for three: the two
+     * passes enumerate the same references between the same ends, so the larger tally is the one
+     * worth reporting. An ordinal increment over the sightings would answer four here, and this is
+     * the sighting that tells the two apart - with one side alone both readings agree.
+     * </p>
+     */
     @Test
     public void repeatedEdgesMergeAndDistinctKindsDoNot()
     {
@@ -332,10 +340,13 @@ public class MetadataGraphDropsInternalEdgesTest
         edge(merged, goods, currencies, "types", 1, policy());
         edge(merged, goods, currencies, "types", 1, policy());
         edge(merged, goods, currencies, "types", 1, policy());
+        edge(merged, goods, currencies, "types", 1, policy(),
+            BmReferencesHelper.Side.BACKWARD);
 
         assertFalse(merged.truncated);
         assertEquals(1, merged.edges.size());
-        assertEquals(3, merged.edges.get(0).count);
+        assertEquals("the two passes enlist the same references, so the larger tally is the count",
+            3, merged.edges.get(0).count);
         assertEquals(Integer.valueOf(3), jsonEdges(merged).get(0).get("count"));
 
         BmReferencesHelper.BfsResult two = walk(goods);
@@ -364,6 +375,32 @@ public class MetadataGraphDropsInternalEdgesTest
             BmReferencesHelper.Side.BACKWARD);
 
         assertEquals("one edge, however many times the two ends report it", 1,
+            result.internalEdgesDropped);
+    }
+
+    /**
+     * An edge dropped for its kind and an edge dropped for an end are two different drops, and each
+     * counter answers for its own.
+     * <p>
+     * The two used to share one set of keys, and the end-drop published that set's size as
+     * {@code internalEdgesDropped}: a kind refused earlier was counted a second time here, so one
+     * internal edge was reported as two.
+     * </p>
+     */
+    @Test
+    public void anInternalDropIsNotCountedWithAKindDrop()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        IBmObject index = object(Kind.SERVICE, "Document.Order.Form.Index");
+        BmReferencesHelper.BfsResult result = walk(goods);
+
+        edge(result, goods, currencies, "basedOn", 100, policy("types"));
+        edge(result, goods, index, "refContextDefs", 100, policy("types"));
+
+        assertTrue(result.edges.isEmpty());
+        assertEquals(Integer.valueOf(1), result.edgesDroppedByKind.get("basedOn"));
+        assertEquals("one internal edge is one, and the refused kind is not one of them", 1,
             result.internalEdgesDropped);
     }
 

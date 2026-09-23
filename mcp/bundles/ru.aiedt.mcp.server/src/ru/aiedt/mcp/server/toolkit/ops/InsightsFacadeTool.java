@@ -494,16 +494,21 @@ public class InsightsFacadeTool implements IMcpTool
         rules.put("detect_query_anti_patterns", Collections.unmodifiableMap(queries)); //$NON-NLS-1$
         Map<String, String> graph = new LinkedHashMap<>();
         graph.put("edgeKinds", //$NON-NLS-1$
-            "On metadata and mixed, an edge whose target is not a metadata object is dropped " //$NON-NLS-1$
-                + "and not queued; internalEdgesDropped counts those when any were dropped. " //$NON-NLS-1$
-                + "Edges with the same from, to and via become one edge, and count is written " //$NON-NLS-1$
-                + "when it is greater than 1. maxEdges counts after that merge. This argument " //$NON-NLS-1$
-                + "keeps only the named via values; any other kind is not queued on its own, and " //$NON-NLS-1$
-                + "a target already reached by a kept kind stays. The answer repeats edgeKinds as " //$NON-NLS-1$
-                + "understood, edgesDroppedByKind, and unmatchedKinds for a named kind the walk " //$NON-NLS-1$
-                + "never saw - that is not a refusal. Omit the argument to keep every kind. On " //$NON-NLS-1$
-                + "level=modules the argument is not applied and the answer says notApplied; " //$NON-NLS-1$
-                + "calls edges are unchanged. Other operations do not read it."); //$NON-NLS-1$
+            "On metadata and mixed an edge is judged on BOTH ends: an end that is not an object " //$NON-NLS-1$
+                + "of the level is dropped, as the target and as the source, and is not queued; " //$NON-NLS-1$
+                + "internalEdgesDropped counts the dropped edges when any were. A root that is " //$NON-NLS-1$
+                + "not an object of the level is no node either, and the answer names it in " //$NON-NLS-1$
+                + "internalRootsDropped. The metadata level carries metadata objects; the mixed " //$NON-NLS-1$
+                + "level carries metadata objects and BSL modules, so a module end is kept on " //$NON-NLS-1$
+                + "mixed and dropped on metadata. Edges with the same from, to and via become one " //$NON-NLS-1$
+                + "edge, and count is written when it is greater than 1. maxEdges counts after " //$NON-NLS-1$
+                + "that merge. This argument keeps only the named via values; any other kind is " //$NON-NLS-1$
+                + "not queued on its own, and a target already reached by a kept kind stays. The " //$NON-NLS-1$
+                + "answer repeats edgeKinds as understood, edgesDroppedByKind, and unmatchedKinds " //$NON-NLS-1$
+                + "for a named kind the walk never saw - that is not a refusal. Omit the argument " //$NON-NLS-1$
+                + "to keep every kind. On level=modules the argument is not applied and the " //$NON-NLS-1$
+                + "answer says notApplied; calls edges merge the same way. Other operations do " //$NON-NLS-1$
+                + "not read it."); //$NON-NLS-1$
         rules.put("dependency_graph", Collections.unmodifiableMap(graph)); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
