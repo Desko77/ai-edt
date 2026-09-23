@@ -13,8 +13,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IResourceChangeEvent;
+import org.eclipse.core.resources.IResourceChangeListener;
+import org.eclipse.core.resources.IResourceDelta;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.debug.core.DebugPlugin;
@@ -183,8 +190,10 @@ public class DatabaseUpdater implements IMcpTool
                     + "this server - a file tool, git checkout, a pull - are otherwise invisible to " //$NON-NLS-1$
                     + "the model, and the update decision would be made against what the disk held " //$NON-NLS-1$
                     + "before them, answering Done or UPDATED over an update that never carried them. " //$NON-NLS-1$
-                    + "The answer reports workspaceRefresh.changedResources: 0 means the model already " //$NON-NLS-1$
-                    + "matched the disk. Pass false only when every change went through this server.") //$NON-NLS-1$
+                    + "The answer reports workspaceRefresh.changedResources: how many resources " //$NON-NLS-1$
+                    + "the re-read actually changed (added, removed, replaced or content-changed); " //$NON-NLS-1$
+                    + "0 means the model already matched the disk. Pass false only " //$NON-NLS-1$
+                    + "when every change went through this server.") //$NON-NLS-1$
             .build();
     }
 
@@ -1292,36 +1301,60 @@ public class DatabaseUpdater implements IMcpTool
      * invisible to the model until then, and the update decision below answers against the model:
      * Done or UPDATED over an update that never carried the change. This is the refresh a caller
      * would have had to know to ask for; done here, it cannot be forgotten. The count it reports
-     * is what this call picked up, so 0 means the model already matched the disk.
+     * is what this re-read actually changed - resources added, removed, replaced or whose content
+     * moved into the model - so 0 means the model already matched the disk.
+     * <p>
+     * The platform's {@code refreshLocal} answers nothing about what it found, so the number is
+     * measured rather than asked for: a POST_CHANGE listener counts leaf deltas delivered in the
+     * calling thread while it is inside {@code refreshLocal}. The platform delivers that operation's
+     * notification synchronously before returning. The listener is taken down in a closing step
+     * whatever the refresh did - a failed one included.
+     * </p>
      *
      * @param project the project being updated
      * @param infobaseProject the project that owns the infobase - the parent, for an extension,
      *            which is where the change usually is
      * @return the report: projects touched, resources changed, any failure noted rather than thrown
      */
-    private static JsonObject refreshFromDisk(IProject project, IProject infobaseProject)
+    static JsonObject refreshFromDisk(IProject project, IProject infobaseProject)
     {
         JsonObject report = new JsonObject();
         java.util.LinkedHashSet<String> touched = new java.util.LinkedHashSet<>();
-        int changed = 0;
-        String failure = null;
+        java.util.Set<IProject> watched = new java.util.LinkedHashSet<>();
         for (IProject each : new IProject[] { project, infobaseProject })
         {
-            if (each == null || !each.isAccessible() || touched.contains(each.getName()))
+            if (each != null && each.isAccessible() && !touched.contains(each.getName()))
             {
-                continue;
+                touched.add(each.getName());
+                watched.add(each);
             }
-            touched.add(each.getName());
-            try
+        }
+        String failure = null;
+        RefreshChangeCounter counter = new RefreshChangeCounter(watched);
+        counter.register();
+        try
+        {
+            for (IProject each : watched)
             {
-                each.refreshLocal(org.eclipse.core.resources.IResource.DEPTH_INFINITE,
-                    new NullProgressMonitor());
+                counter.beginRefresh();
+                try
+                {
+                    each.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+                }
+                catch (Exception e)
+                {
+                    failure = (failure == null ? "" : failure + "; ") //$NON-NLS-1$ //$NON-NLS-2$
+                        + each.getName() + ": " + e.getMessage(); //$NON-NLS-1$
+                }
+                finally
+                {
+                    counter.endRefresh();
+                }
             }
-            catch (Exception e)
-            {
-                failure = (failure == null ? "" : failure + "; ") //$NON-NLS-1$ //$NON-NLS-2$
-                    + each.getName() + ": " + e.getMessage();
-            }
+        }
+        finally
+        {
+            counter.unregister();
         }
         JsonArray names = new JsonArray();
         for (String name : touched)
@@ -1329,12 +1362,157 @@ public class DatabaseUpdater implements IMcpTool
             names.add(name);
         }
         report.add("projects", names); //$NON-NLS-1$
-        report.addProperty("changedResources", Integer.valueOf(changed)); //$NON-NLS-1$
+        report.addProperty("changedResources", Integer.valueOf(counter.changed())); //$NON-NLS-1$
         if (failure != null)
         {
             report.addProperty("refreshError", failure); //$NON-NLS-1$
         }
         return report;
+    }
+
+    /**
+     * How many refresh counters are registered right now. Exists for the test that says a failed
+     * refresh takes its listener down with it: a counter left behind would keep counting other
+     * calls' events into a report nobody reads.
+     *
+     * @return the number of registered counters
+     */
+    static int activeRefreshCounters()
+    {
+        return RefreshChangeCounter.ACTIVE.get();
+    }
+
+    /**
+     * Counts the resource deltas one refresh produced.
+     * <p>
+     * {@code IResource.refreshLocal} returns nothing about what it found, so the number the
+     * report promises is measured here: POST_CHANGE events delivered synchronously in the thread
+     * executing {@code refreshLocal} are watched, and their changed leaf resources are counted.
+     * Events from every other thread are ignored, including traffic in the same project while the
+     * refresh runs.
+     * </p>
+     */
+    static final class RefreshChangeCounter implements IResourceChangeListener
+    {
+        /** The counters registered right now; see {@link DatabaseUpdater#activeRefreshCounters()}. */
+        private static final AtomicInteger ACTIVE = new AtomicInteger();
+
+        private final Set<String> watched = new LinkedHashSet<>();
+
+        private final AtomicInteger changed = new AtomicInteger();
+
+        private volatile Thread refreshThread;
+
+        /**
+         * Binds the counter to the projects whose deltas count.
+         *
+         * @param watched the projects the refresh is asked about
+         */
+        RefreshChangeCounter(Set<IProject> watched)
+        {
+            for (IProject project : watched)
+            {
+                this.watched.add(project.getName());
+            }
+        }
+
+        /** Marks the calling thread as being inside one watched {@code refreshLocal} call. */
+        void beginRefresh()
+        {
+            refreshThread = Thread.currentThread();
+        }
+
+        /** Stops attributing events to the call that just returned or failed. */
+        void endRefresh()
+        {
+            refreshThread = null;
+        }
+
+        /** Starts watching the workspace for the deltas the refresh is about to cause. */
+        void register()
+        {
+            ResourcesPlugin.getWorkspace().addResourceChangeListener(this, IResourceChangeEvent.POST_CHANGE);
+            ACTIVE.incrementAndGet();
+        }
+
+        /**
+         * Stops watching. Runs in a closing step whatever the refresh did: a listener left
+         * behind would keep counting into a report whose call was already answered.
+         */
+        void unregister()
+        {
+            ResourcesPlugin.getWorkspace().removeResourceChangeListener(this);
+            ACTIVE.decrementAndGet();
+        }
+
+        /**
+         * What the refresh changed: leaf resources it added, removed, replaced, or whose content
+         * moved into the model.
+         *
+         * @return the count
+         */
+        int changed()
+        {
+            return changed.get();
+        }
+
+        /**
+         * Walks one notification batch and counts changed leaf deltas of any resource kind, and
+         * every node whose kind of resource was replaced - a folder that became a file carries
+         * the removal of what it held as its children, and the replacement itself is only on the
+         * node.
+         *
+         * @param event the POST_CHANGE notification
+         */
+        @Override
+        public void resourceChanged(IResourceChangeEvent event)
+        {
+            if (Thread.currentThread() != refreshThread)
+            {
+                return;
+            }
+            IResourceDelta delta = event.getDelta();
+            if (delta == null)
+            {
+                return;
+            }
+            try
+            {
+                delta.accept(child -> {
+                    IResource resource = child.getResource();
+                    if (resource instanceof IProject && !watched.contains(resource.getName()))
+                    {
+                        return false;
+                    }
+                    int kind = child.getKind();
+                    if (child.getAffectedChildren().length != 0)
+                    {
+                        if ((kind & IResourceDelta.CHANGED) != 0
+                            && (child.getFlags() & (IResourceDelta.TYPE | IResourceDelta.REPLACED)) != 0)
+                        {
+                            changed.incrementAndGet();
+                        }
+                        return true;
+                    }
+                    boolean counts = (kind & (IResourceDelta.ADDED | IResourceDelta.REMOVED)) != 0
+                        || (kind & IResourceDelta.CHANGED) != 0
+                            && (child.getFlags()
+                                & (IResourceDelta.CONTENT | IResourceDelta.TYPE | IResourceDelta.REPLACED)) != 0;
+                    if (counts)
+                    {
+                        changed.incrementAndGet();
+                    }
+                    return false;
+                });
+            }
+            catch (CoreException walkFailed)
+            {
+                // A tree that cannot be walked leaves a partial count; the refresh error beside
+                // it says more than throwing the answer away would.
+                Activator.logWarning("Refresh change count lost part of the delta tree: " //$NON-NLS-1$
+                    + walkFailed.getMessage());
+            }
+        }
     }
 
     /**
