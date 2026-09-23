@@ -41,6 +41,21 @@ public class RestartEdtTool implements IMcpTool
     private static final int DEFAULT_DELAY_MS = 1000;
     private static final int MAX_DELAY_MS = 60000;
 
+    /**
+     * The VM arguments the Java launcher keeps for itself and never hands to the JVM.
+     * <p>
+     * They stand in the launcher's own {@code .ini} block, and a JVM's input-argument view never
+     * reports them - so a copy of the block recorded from that view is the same block with these
+     * lines missing. Both forms are recognised as a copy of the block.
+     * </p>
+     */
+    private static final java.util.List<String> LAUNCHER_CONSUMED_VM_ARGUMENTS =
+        java.util.Collections.unmodifiableList(
+            java.util.Arrays.asList("-server", "-client")); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** The launcher {@code .ini} VM block that produced this process, captured at activation. */
+    private static volatile java.util.List<String> startupIniVmArguments;
+
     @Override
     public String getName()
     {
@@ -134,6 +149,7 @@ public class RestartEdtTool implements IMcpTool
 
         final int finalDelay = delayMs;
         final java.util.List<String> command = relaunchCommand;
+        final String vmArgumentsNote = shutdown ? null : relaunchVmArgumentsNote;
         Thread worker = new Thread(() -> {
             try
             {
@@ -221,23 +237,48 @@ public class RestartEdtTool implements IMcpTool
         return ToolResult.success()
             .put("action", action) //$NON-NLS-1$
             .put("delayMs", finalDelay) //$NON-NLS-1$
-            .put("note", "EDT will " + action + " in ~" + finalDelay //$NON-NLS-1$ //$NON-NLS-2$
-                + "ms. The MCP connection WILL drop (the server runs inside EDT); this is expected. " //$NON-NLS-1$
-                + (shutdown
-                    ? "EDT stays down - relaunch it (and its MCP server auto-starts)." //$NON-NLS-1$
-                    : "A detached watcher waits for the workspace to free and starts the same EDT " //$NON-NLS-1$
-                        + "with the same arguments; what happens after this process closes is past " //$NON-NLS-1$
-                        + "what this answer can see. Reconnect once /health answers again.")) //$NON-NLS-1$
+            .put("vmArgumentsNote", vmArgumentsNote) //$NON-NLS-1$
+            .put("note", noteOf(action, finalDelay, shutdown, vmArgumentsNote)) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The note of a successful restart or shutdown answer.
+     * <p>
+     * A relaunch carries the user's own VM arguments only when the command could be assembled from
+     * them; when they were omitted, the note says what the relaunch will actually carry rather
+     * than claiming the same arguments.
+     * </p>
+     *
+     * @param action the accepted action.
+     * @param delayMs the delay the action is deferred by.
+     * @param shutdown whether the action is a shutdown rather than a restart.
+     * @param vmArgumentsNote the reason user VM arguments are not carried over, or
+     *     <code>null</code> when they are.
+     * @return the note text.
+     */
+    static String noteOf(String action, int delayMs, boolean shutdown, String vmArgumentsNote)
+    {
+        return "EDT will " + action + " in ~" + delayMs //$NON-NLS-1$ //$NON-NLS-2$
+            + "ms. The MCP connection WILL drop (the server runs inside EDT); this is expected. " //$NON-NLS-1$
+            + (shutdown
+                ? "EDT stays down - relaunch it (and its MCP server auto-starts)." //$NON-NLS-1$
+                : "A detached watcher waits for the workspace to free and starts the same EDT" //$NON-NLS-1$
+                    + (vmArgumentsNote == null
+                        ? " with the same arguments; " //$NON-NLS-1$
+                        : " with the launcher's current .ini VM block - the user VM arguments are not " //$NON-NLS-1$
+                            + "carried over; ") //$NON-NLS-1$
+                    + "what happens after this process closes is past what this answer can see. " //$NON-NLS-1$
+                    + "Reconnect once /health answers again.");
     }
 
     /**
      * The command line this instance was started with, as something relaunchable.
      * <p>
-     * Read from the JVM, not reassembled: the launcher's own arguments include the workspace, the
-     * VM and the memory settings, and a line put together here would get exactly one of them wrong
-     * - measured: a command whose {@code -vm} path lost its quotes makes the launcher wait forever
-     * without a window.
+     * Each piece is read by name - the installation root, the workspace, the VM and the arguments
+     * the JVM reports - and never taken from a split command line: a path put back together from a
+     * string gets one of them wrong, and measured, a command whose {@code -vm} path lost its quotes
+     * makes the launcher wait forever without a window.
      * </p>
      *
      * @return the command line parts, or <code>null</code> when they cannot be read
@@ -245,6 +286,7 @@ public class RestartEdtTool implements IMcpTool
     static java.util.List<String> relaunchCommandOf()
     {
         relaunchProblem = null;
+        relaunchVmArgumentsNote = null;
         String home = System.getProperty("eclipse.home.location"); //$NON-NLS-1$
         if (home == null)
         {
@@ -279,28 +321,322 @@ public class RestartEdtTool implements IMcpTool
                 return null;
             }
         }
+        RelaunchPlan plan = relaunchCommandOf(startupIniVmArguments,
+            System.getProperty("eclipse.vmargs"), launcher.getAbsolutePath(), //$NON-NLS-1$
+            workspaceDir.getAbsolutePath(), System.getProperty("eclipse.vm")); //$NON-NLS-1$
+        relaunchVmArgumentsNote = vmArgumentsNoteOf(plan);
+        return plan.command();
+    }
+
+    static String vmArgumentsNoteOf(RelaunchPlan plan)
+    {
+        return plan.vmArgumentsOmissionReason() == null ? null
+            : "User VM arguments were not carried over: " //$NON-NLS-1$
+                + plan.vmArgumentsOmissionReason()
+                + " The launcher will use the current .ini VM block."; //$NON-NLS-1$
+    }
+
+    /**
+     * Assembles the relaunch command line from the pieces it is made of.
+     * <p>
+     * {@code eclipse.vmargs} is the launcher's lossless, ordered account of its original VM
+     * arguments. Its leading block is removed using the {@code .ini} snapshot taken when this
+     * bundle activated, as are complete copies left by older restarts. Only the remaining user
+     * arguments are passed with {@code --launcher.appendVmargs}; the launcher reads its current
+     * {@code .ini} itself, so an edit made while EDT was running takes effect on restart.
+     * </p>
+     * <p>
+     * When the property is absent or does not begin with the snapshot, no VM arguments are passed.
+     * Guessing in that case would either regrow the command or let stale settings override the
+     * current {@code .ini}; the plan names the omission so the tool can report it.
+     * </p>
+     *
+     * @param iniVmArgumentsAtStartup the launcher's {@code .ini} VM block captured at activation.
+     * @param eclipseVmargs the newline-separated {@code eclipse.vmargs} system property.
+     * @param launcherPath the launcher executable to start.
+     * @param workspacePath the workspace to open.
+     * @param vm the VM the launcher is to use, or <code>null</code> to leave the choice to it.
+     * @return the command and, when applicable, the reason user arguments were omitted.
+     */
+    static RelaunchPlan relaunchCommandOf(java.util.List<String> iniVmArgumentsAtStartup,
+        String eclipseVmargs, String launcherPath, String workspacePath, String vm)
+    {
         java.util.List<String> command = new java.util.ArrayList<>();
-        command.add(launcher.getAbsolutePath());
+        command.add(launcherPath);
         command.add("-data"); //$NON-NLS-1$
-        command.add(workspaceDir.getAbsolutePath());
-        String vm = System.getProperty("eclipse.vm"); //$NON-NLS-1$
-        if (vm != null)
+        command.add(workspacePath);
+        if (vm != null && !vm.isEmpty())
         {
             command.add("-vm"); //$NON-NLS-1$
             command.add(vm);
         }
-        command.add("--launcher.appendVmargs"); //$NON-NLS-1$
-        command.add("-vmargs"); //$NON-NLS-1$
-        for (String arg : java.lang.management.ManagementFactory.getRuntimeMXBean()
-                .getInputArguments())
+
+        String omissionReason = vmArgumentsOmissionReason(iniVmArgumentsAtStartup, eclipseVmargs);
+        if (omissionReason == null)
         {
-            command.add(arg);
+            java.util.List<String> userArguments = extraVmArguments(
+                vmArgumentsFromProperty(eclipseVmargs), iniVmArgumentsAtStartup);
+            if (!userArguments.isEmpty())
+            {
+                command.add("--launcher.appendVmargs"); //$NON-NLS-1$
+                command.add("-vmargs"); //$NON-NLS-1$
+                command.addAll(userArguments);
+            }
         }
-        return command;
+        return new RelaunchPlan(command, omissionReason);
+    }
+
+    private static String vmArgumentsOmissionReason(
+        java.util.List<String> iniVmArgumentsAtStartup, String eclipseVmargs)
+    {
+        if (eclipseVmargs == null)
+        {
+            return "the eclipse.vmargs system property is not set."; //$NON-NLS-1$
+        }
+        if (iniVmArgumentsAtStartup == null || iniVmArgumentsAtStartup.isEmpty())
+        {
+            return "the startup .ini VM argument snapshot is empty."; //$NON-NLS-1$
+        }
+        if (blockLengthAt(vmArgumentsFromProperty(eclipseVmargs), 0,
+            iniVmArgumentsAtStartup) == 0)
+        {
+            return "eclipse.vmargs does not start with the startup .ini VM argument snapshot."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Splits the property exactly as {@code Main.setMultiValueProperty} joined it.
+     * <p>
+     * Trailing empty lines are dropped on both sides: the property is joined with a line separator
+     * after every argument, so its last separator would otherwise read as an argument of its own,
+     * and the {@code .ini} reader drops the same lines so the two line up.
+     * </p>
+     */
+    private static java.util.List<String> vmArgumentsFromProperty(String eclipseVmargs)
+    {
+        java.util.List<String> arguments = new java.util.ArrayList<>();
+        if (eclipseVmargs == null || eclipseVmargs.isEmpty())
+        {
+            return arguments;
+        }
+        String[] lines = eclipseVmargs.split("\\n", -1); //$NON-NLS-1$
+        int length = lines.length;
+        while (length > 0 && lines[length - 1].isEmpty())
+        {
+            length--;
+        }
+        for (int i = 0; i < length; i++)
+        {
+            arguments.add(lines[i]);
+        }
+        return arguments;
+    }
+
+    /** Immutable output of the pure relaunch-command builder. */
+    static final class RelaunchPlan
+    {
+        private final java.util.List<String> command;
+        private final String vmArgumentsOmissionReason;
+
+        RelaunchPlan(java.util.List<String> command, String vmArgumentsOmissionReason)
+        {
+            this.command = java.util.Collections.unmodifiableList(
+                new java.util.ArrayList<>(command));
+            this.vmArgumentsOmissionReason = vmArgumentsOmissionReason;
+        }
+
+        java.util.List<String> command()
+        {
+            return command;
+        }
+
+        String vmArgumentsOmissionReason()
+        {
+            return vmArgumentsOmissionReason;
+        }
+    }
+
+    /**
+     * The arguments of an instance that are not the launcher's own {@code .ini} block.
+     * <p>
+     * Every complete copy of the block is dropped, not one: an instance that has already been
+     * restarted carries one copy per restart, and one removal would leave the rest in place. A
+     * copy is either the block as the {@code .ini} holds it or the same block without the
+     * arguments the launcher keeps for itself, because both forms are recorded by real instances.
+     * An argument of the caller's own is kept - only a run that reproduces the whole block, line
+     * for line, is read as another copy of it, and an argument equal to a single line of the block
+     * does not by itself reproduce one.
+     * </p>
+     *
+     * @param inputArguments the ordered arguments recorded in {@code eclipse.vmargs}.
+     * @param iniVmArguments the VM arguments of the launcher's own {@code .ini}.
+     * @return the arguments that did not come from the {@code .ini}, in their original order.
+     */
+    static java.util.List<String> extraVmArguments(java.util.List<String> inputArguments,
+        java.util.List<String> iniVmArguments)
+    {
+        java.util.List<String> extras = new java.util.ArrayList<>();
+        if (inputArguments == null || inputArguments.isEmpty())
+        {
+            return extras;
+        }
+        java.util.List<String> reducedBlock = withoutLauncherConsumedArguments(iniVmArguments);
+        int i = 0;
+        while (i < inputArguments.size())
+        {
+            int blockLength = blockLengthAt(inputArguments, i, iniVmArguments);
+            if (blockLength == 0)
+            {
+                blockLength = blockLengthAt(inputArguments, i, reducedBlock);
+            }
+            if (blockLength == 0)
+            {
+                extras.add(inputArguments.get(i));
+                i++;
+            }
+            else
+            {
+                i += blockLength;
+            }
+        }
+        return extras;
+    }
+
+    /**
+     * The block without the arguments the launcher keeps for itself.
+     *
+     * @param block the {@code .ini} VM block, or <code>null</code>.
+     * @return the block without {@link #LAUNCHER_CONSUMED_VM_ARGUMENTS}; the same lines when none
+     *     of them stands in it.
+     */
+    private static java.util.List<String> withoutLauncherConsumedArguments(
+        java.util.List<String> block)
+    {
+        java.util.List<String> reduced = new java.util.ArrayList<>();
+        if (block == null)
+        {
+            return reduced;
+        }
+        for (String argument : block)
+        {
+            if (!LAUNCHER_CONSUMED_VM_ARGUMENTS.contains(argument))
+            {
+                reduced.add(argument);
+            }
+        }
+        return reduced;
+    }
+
+    /**
+     * How many arguments the block occupies where it stands, or zero when it does not stand there.
+     *
+     * @param arguments the arguments to look in.
+     * @param offset where the block is expected to start.
+     * @param block the block to look for; empty or <code>null</code> never matches.
+     * @return the number of lines of the block when every one of them matches at this offset, and
+     *     zero otherwise.
+     */
+    private static int blockLengthAt(java.util.List<String> arguments, int offset,
+        java.util.List<String> block)
+    {
+        if (block == null || block.isEmpty() || offset + block.size() > arguments.size())
+        {
+            return 0;
+        }
+        for (int i = 0; i < block.size(); i++)
+        {
+            if (!block.get(i).equals(arguments.get(offset + i)))
+            {
+                return 0;
+            }
+        }
+        return block.size();
+    }
+
+    /**
+     * The VM arguments the launcher takes from its own {@code .ini}.
+     * <p>
+     * The file is {@code <launcher>.ini} beside the executable, and the block is every raw line
+     * after the exact {@code -vmargs} line. Eclipse documents whitespace as significant in this
+     * file, so no line is trimmed or otherwise normalised; empty lines closing the block are
+     * dropped, because the property this snapshot is compared against is built by joining
+     * arguments with a line separator and can never carry them.
+     * </p>
+     *
+     * @param launcher the launcher executable.
+     * @return the arguments after {@code -vmargs}, in file order, or empty when there are none.
+     */
+    static java.util.List<String> iniVmArgumentsOf(java.io.File launcher)
+    {
+        java.util.List<String> arguments = new java.util.ArrayList<>();
+        if (launcher == null)
+        {
+            return arguments;
+        }
+        String name = launcher.getName();
+        int dot = name.lastIndexOf('.');
+        java.io.File ini = new java.io.File(launcher.getParentFile(),
+            (dot > 0 ? name.substring(0, dot) : name) + ".ini"); //$NON-NLS-1$
+        java.util.List<String> lines;
+        try
+        {
+            lines = java.nio.file.Files.readAllLines(ini.toPath(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        }
+        catch (java.io.IOException | RuntimeException unreadable)
+        {
+            return arguments;
+        }
+        boolean inVmArgs = false;
+        for (String line : lines)
+        {
+            if (!inVmArgs)
+            {
+                inVmArgs = "-vmargs".equals(line); //$NON-NLS-1$
+                continue;
+            }
+            arguments.add(line);
+        }
+        while (!arguments.isEmpty() && arguments.get(arguments.size() - 1).isEmpty())
+        {
+            arguments.remove(arguments.size() - 1);
+        }
+        return arguments;
+    }
+
+    /** Captures the launcher's VM block once, on the bundle activation thread. */
+    public static void captureIniVmArgumentsAtStartup()
+    {
+        java.util.List<String> snapshot = java.util.Collections.emptyList();
+        String home = System.getProperty("eclipse.home.location"); //$NON-NLS-1$
+        if (home != null)
+        {
+            try
+            {
+                java.io.File homeDir = new java.io.File(
+                    java.net.URI.create(home.replace(" ", "%20"))); //$NON-NLS-1$ //$NON-NLS-2$
+                java.io.File launcher = new java.io.File(homeDir, "1cedt.exe"); //$NON-NLS-1$
+                if (!launcher.isFile())
+                {
+                    launcher = new java.io.File(homeDir, "eclipse"); //$NON-NLS-1$
+                }
+                snapshot = iniVmArgumentsOf(launcher);
+            }
+            catch (IllegalArgumentException ignored)
+            {
+                // A restart can still use the current .ini; it will report that extras were omitted.
+            }
+        }
+        startupIniVmArguments = java.util.Collections.unmodifiableList(
+            new java.util.ArrayList<>(snapshot));
     }
 
     /** Set by {@link #relaunchCommandOf} when the command cannot be assembled, naming why. */
     private static String relaunchProblem;
+
+    /** Explanation included in a successful restart response when extras could not be identified. */
+    private static String relaunchVmArgumentsNote;
 
     /**
      * Whether the workbench is restarted through the launcher's restart exit code, or closed.

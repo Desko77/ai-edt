@@ -57,6 +57,7 @@ import ru.aiedt.mcp.server.support.DebugLog;
 import ru.aiedt.mcp.server.support.IdleComparisonSweep;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
 
 /**
@@ -179,6 +180,11 @@ public class Activator
     {
         super.start(context);
         plugin = this;
+
+        // The launcher may be updated while EDT is running. Keep the block that produced this
+        // process so restart_edt can separate it from arguments the user supplied, while letting
+        // the next launcher invocation read the current .ini for itself.
+        RestartEdtTool.captureIniVmArgumentsAtStartup();
 
         mcpServer = new McpHttpEndpoint();
 
