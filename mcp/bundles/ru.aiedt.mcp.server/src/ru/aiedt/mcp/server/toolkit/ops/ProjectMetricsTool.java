@@ -67,15 +67,9 @@ public class ProjectMetricsTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", //$NON-NLS-1$
-                "project | subsystem. Absent, subsystemName selects a subsystem and nothing " //$NON-NLS-1$
-                    + "selects the project. scope=project rejects subsystemName. scope=subsystem " //$NON-NLS-1$
-                    + "requires it. An unknown subsystem or scope word is refused by name and the " //$NON-NLS-1$
-                    + "project is not scanned. A subsystem includes nested subsystems; the answer " //$NON-NLS-1$
-                    + "names that and how many objects the composition holds.") //$NON-NLS-1$
+                "project | subsystem, and absent, subsystemName selects the subsystem.") //$NON-NLS-1$
             .stringProperty("subsystemName", //$NON-NLS-1$
-                "Subsystem name when the walk is a subsystem. Required for scope=subsystem. " //$NON-NLS-1$
-                    + "Without scope it selects the subsystem on its own. Nested subsystems are " //$NON-NLS-1$
-                    + "included.") //$NON-NLS-1$
+                "Subsystem name when the walk is a subsystem.") //$NON-NLS-1$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("includeDebtList", //$NON-NLS-1$
                 "Include detailed debt items list with file:line. Default false.") //$NON-NLS-1$

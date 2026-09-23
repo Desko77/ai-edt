@@ -403,6 +403,38 @@ public class WalkNarrowingTest
     }
 
     @Test
+    public void locateMethodStopsBeforeModuleCodeThatFollowsTheMethod()
+    {
+        String module = "Процедура NarrowIn()\n" //$NON-NLS-1$
+            + "\tА = 1;\n" //$NON-NLS-1$
+            + "КонецПроцедуры\n" //$NON-NLS-1$
+            + "Запрос.Текст = \"ВЫБРАТЬ Код ИЗ Catalog.AfterMethod\";\n" //$NON-NLS-1$
+            + "Процедура NarrowSibling()\n" //$NON-NLS-1$
+            + "\tБ = 2;\n" //$NON-NLS-1$
+            + "КонецПроцедуры\n"; //$NON-NLS-1$
+        WalkNarrowing.MethodSpan span = WalkNarrowing.locateMethod(module, "NarrowIn"); //$NON-NLS-1$
+        assertNotNull(span);
+        assertTrue(span.contains(2));
+        assertTrue("the closing line is still the method", span.contains(3)); //$NON-NLS-1$
+        assertFalse("module code between methods is not the method", span.contains(4)); //$NON-NLS-1$
+        assertFalse(span.contains(6));
+    }
+
+    @Test
+    public void locateMethodStopsBeforeModuleCodeAfterTheLastMethod()
+    {
+        String module = "Procedure LastOne()\n" //$NON-NLS-1$
+            + "\tA = 1;\n" //$NON-NLS-1$
+            + "EndProcedure\n" //$NON-NLS-1$
+            + "Query.Text = \"SELECT Code FROM Catalog.AfterLast\";\n"; //$NON-NLS-1$
+        WalkNarrowing.MethodSpan span = WalkNarrowing.locateMethod(module, "LastOne"); //$NON-NLS-1$
+        assertNotNull(span);
+        assertTrue(span.contains(2));
+        assertTrue(span.contains(3));
+        assertFalse("module code after the last method is not the method", span.contains(4)); //$NON-NLS-1$
+    }
+
+    @Test
     public void locateMethodReturnsNullWhenTheMethodIsMissing()
     {
         assertNull(WalkNarrowing.locateMethod("Процедура NarrowIn()\nКонецПроцедуры\n", "NoSuchMethod")); //$NON-NLS-1$ //$NON-NLS-2$

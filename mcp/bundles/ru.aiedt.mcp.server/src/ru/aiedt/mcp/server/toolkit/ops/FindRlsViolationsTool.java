@@ -88,17 +88,10 @@ public class FindRlsViolationsTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", //$NON-NLS-1$
-                "project | module | method. Absent, the selectors decide: moduleFqn is a module, " //$NON-NLS-1$
-                    + "moduleFqn with methodName is a method, and nothing is the whole project. " //$NON-NLS-1$
-                    + "scope=project rejects every selector. scope=module requires moduleFqn and " //$NON-NLS-1$
-                    + "rejects methodName. scope=method requires both. An unknown module, method " //$NON-NLS-1$
-                    + "or scope word is refused by name and the project is not scanned.") //$NON-NLS-1$
+                "project | module | method, and absent, the selectors decide the area.") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
-                "Module FQN, for example CommonModule.Sales. Required for scope=module and " //$NON-NLS-1$
-                    + "scope=method. Without scope it selects the module on its own.") //$NON-NLS-1$
-            .stringProperty("methodName", //$NON-NLS-1$
-                "Method inside moduleFqn. Required for scope=method. Refused when moduleFqn is " //$NON-NLS-1$
-                    + "absent. Without scope, moduleFqn plus methodName selects that method.") //$NON-NLS-1$
+                "Module FQN, for example CommonModule.Sales.") //$NON-NLS-1$
+            .stringProperty("methodName", "Method inside moduleFqn.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("roleName", "Limit checks to RLS of this role (default: any RLS)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -364,6 +357,12 @@ public class FindRlsViolationsTool implements IMcpTool
         if (!module.exists())
         {
             return "Module '" + decision.moduleFqn() + "' was not found."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // The same boundary the project walk uses, asked before this one module is read.
+        // scope=module and scope=method otherwise scan the file after the operator has cancelled.
+        if (watch.stopHere())
+        {
+            return null;
         }
         String onlyMethod = WalkNarrowing.METHOD.equals(decision.area()) ? decision.methodName() : null;
         boolean found = scanFile(module, onlyMethod, findings);

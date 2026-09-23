@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -29,6 +30,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import ru.aiedt.mcp.server.support.SubsystemMembership;
+import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.WalkNarrowing;
 
 /**
@@ -62,6 +64,11 @@ public class NarrowingWalkTest
 
     private static final Set<String> NO_WHERE = Set.of("NO_WHERE_ON_LARGE_TABLE"); //$NON-NLS-1$
 
+    private static final Set<String> QUERY_AND_LOOP = Set.of(
+        "NO_WHERE_ON_LARGE_TABLE", "QUERY_IN_LOOP"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    private static final String TAIL_MODULE = "CommonModule.NarrowTail"; //$NON-NLS-1$
+
     private static IProject project;
 
     @BeforeClass
@@ -84,6 +91,10 @@ public class NarrowingWalkTest
             subsystem("NarrowParent", "CommonModule.NarrowInside", "NarrowChild")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         write("src/Subsystems/NarrowParent/Subsystems/NarrowChild/NarrowChild.mdo", //$NON-NLS-1$
             subsystem("NarrowChild", "CommonModule.NarrowNested", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        write("src/CommonModules/NarrowTail/Module.bsl", tailModule()); //$NON-NLS-1$
+        write("backup/CommonModules/NarrowInside/Module.bsl", //$NON-NLS-1$
+            module("BackupIn", "Catalog.BackupTable", "BACKUPBACKUPBACKUPBACKUP", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                null, null, "DebtBackup")); //$NON-NLS-1$
     }
 
     @AfterClass
@@ -133,6 +144,25 @@ public class NarrowingWalkTest
         String json = queries("scope", "method", "moduleFqn", MODULE, "methodName", "NarrowIn"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         found(json, "Catalog.InsideTable"); //$NON-NLS-1$
         missing(json, "Catalog.SiblingTable", "Catalog.NestedTable"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void queryMethodDropsModuleCodeAfterTheClosingLine() throws Exception
+    {
+        String moduleWide = tailQueries("scope", "module", "moduleFqn", TAIL_MODULE); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        found(moduleWide, "Catalog.TailBody", "Catalog.TailAfter", "QUERY_IN_LOOP", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Catalog.TailLastBody", "Catalog.TailAfterLast"); //$NON-NLS-1$ //$NON-NLS-2$
+        String json = tailQueries("scope", "method", "moduleFqn", TAIL_MODULE, "methodName", "TailHead"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        found(json, "Catalog.TailBody"); //$NON-NLS-1$
+        missing(json, "Catalog.TailAfter", "QUERY_IN_LOOP", "Catalog.TailLastBody", "Catalog.TailAfterLast"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    }
+
+    @Test
+    public void queryLastMethodDropsModuleCodeAfterIt() throws Exception
+    {
+        String json = tailQueries("scope", "method", "moduleFqn", TAIL_MODULE, "methodName", "TailLast"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        found(json, "Catalog.TailLastBody"); //$NON-NLS-1$
+        missing(json, "Catalog.TailAfterLast", "QUERY_IN_LOOP", "Catalog.TailAfter", "Catalog.TailBody"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     }
 
     @Test
@@ -188,6 +218,21 @@ public class NarrowingWalkTest
         String json = rls("scope", "method", "moduleFqn", MODULE, "methodName", "NarrowIn"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         found(json, "\"method\":\"NarrowIn\""); //$NON-NLS-1$
         missing(json, "\"method\":\"NarrowSibling\""); //$NON-NLS-1$
+    }
+
+    @Test
+    public void rlsModuleCancelledBeforeTheScanDoesNotReadTheModule() throws Exception
+    {
+        String json = cancelled(() -> rls("scope", "module", "moduleFqn", MODULE)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        stoppedBeforeReading(json, "\"method\":\"NarrowIn\""); //$NON-NLS-1$
+    }
+
+    @Test
+    public void rlsMethodCancelledBeforeTheScanDoesNotReadTheModule() throws Exception
+    {
+        String json = cancelled(() -> rls("scope", "method", "moduleFqn", MODULE, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "methodName", "NarrowIn")); //$NON-NLS-1$ //$NON-NLS-2$
+        stoppedBeforeReading(json, "\"method\":\"NarrowIn\""); //$NON-NLS-1$
     }
 
     @Test
@@ -295,6 +340,24 @@ public class NarrowingWalkTest
     }
 
     @Test
+    public void sensitiveSubsystemDropsACopyOutsideTheSourceRoot() throws Exception
+    {
+        // The copy is a real finding when the walk is the whole project, so its absence from
+        // the subsystem walk is the filter and not a token the scanner does not recognise.
+        found(sensitive(), "backup/CommonModules/NarrowInside"); //$NON-NLS-1$
+        String json = sensitive("scope", "subsystem", "subsystemName", "NarrowParent"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        found(json, INSIDE);
+        missing(json, "backup/CommonModules/NarrowInside"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void sensitiveModuleCancelledBeforeTheScanDoesNotReadTheModule() throws Exception
+    {
+        String json = cancelled(() -> sensitive("scope", "module", "moduleFqn", MODULE)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        stoppedBeforeReading(json, INSIDE);
+    }
+
+    @Test
     public void sensitiveUnknownSubsystemRefusesByName() throws Exception
     {
         refusal(sensitive("subsystemName", "NoSuchSubsystem"), "NoSuchSubsystem"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -364,6 +427,37 @@ public class NarrowingWalkTest
             "scope", "subsystem", "moduleFqn", MODULE); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         refuse("sensitive", "method unsupported", "method", "scope", "method"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         refuse("sensitive", "unknown scope", "widget", "scope", "widget"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+    }
+
+    private static String tailQueries(String... pairs) throws Exception
+    {
+        WalkNarrowing.Decision decision = WalkNarrowing.decide(args(pairs), QUERY_SCOPES,
+            WalkNarrowing.Selectors.MODULE_AND_METHOD);
+        assertFalse(String.valueOf(decision.refusal()), decision.refused());
+        return new DetectQueryAntiPatternsTool().runScan(project, decision, "all", "json", //$NON-NLS-1$ //$NON-NLS-2$
+            QUERY_AND_LOOP);
+    }
+
+    private static String cancelled(Callable<String> scan) throws Exception
+    {
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        flag.cancel("stop"); //$NON-NLS-1$
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            return scan.call();
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    private static void stoppedBeforeReading(String json, String marker)
+    {
+        assertTrue(json, json.contains("\"success\":true")); //$NON-NLS-1$
+        assertTrue(json, json.contains("cancelled by the operator")); //$NON-NLS-1$
+        assertFalse(marker + " was read after the cancel: " + json, json.contains(marker)); //$NON-NLS-1$
     }
 
     private static String queries(String... pairs) throws Exception
@@ -468,6 +562,28 @@ public class NarrowingWalkTest
             params.put(pairs[i], pairs[i + 1]);
         }
         return params;
+    }
+
+    private static String tailModule()
+    {
+        return "Процедура TailHead()\n" //$NON-NLS-1$
+            + "\tЗапрос = Новый Запрос;\n" //$NON-NLS-1$
+            + "\tЗапрос.Текст = \"ВЫБРАТЬ Код ИЗ Catalog.TailBody\";\n" //$NON-NLS-1$
+            + "КонецПроцедуры\n" //$NON-NLS-1$
+            + "Запрос = Новый Запрос;\n" //$NON-NLS-1$
+            + "Запрос.Текст = \"ВЫБРАТЬ Код ИЗ Catalog.TailAfter\";\n" //$NON-NLS-1$
+            + "Для Каждого Строка Из Таблица Цикл\n" //$NON-NLS-1$
+            + "\tЗапрос.Выполнить();\n" //$NON-NLS-1$
+            + "КонецЦикла;\n" //$NON-NLS-1$
+            + "Процедура TailLast()\n" //$NON-NLS-1$
+            + "\tЗапрос = Новый Запрос;\n" //$NON-NLS-1$
+            + "\tЗапрос.Текст = \"ВЫБРАТЬ Код ИЗ Catalog.TailLastBody\";\n" //$NON-NLS-1$
+            + "КонецПроцедуры\n" //$NON-NLS-1$
+            + "Запрос = Новый Запрос;\n" //$NON-NLS-1$
+            + "Запрос.Текст = \"ВЫБРАТЬ Код ИЗ Catalog.TailAfterLast\";\n" //$NON-NLS-1$
+            + "Для Каждого Строка Из Другая Цикл\n" //$NON-NLS-1$
+            + "\tЗапрос.Выполнить();\n" //$NON-NLS-1$
+            + "КонецЦикла;\n"; //$NON-NLS-1$
     }
 
     private static String module(String method, String table, String token, String sibling,

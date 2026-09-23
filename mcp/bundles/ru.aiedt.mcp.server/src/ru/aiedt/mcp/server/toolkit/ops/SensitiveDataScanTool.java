@@ -76,21 +76,10 @@ public class SensitiveDataScanTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", //$NON-NLS-1$
-                "project | subsystem | module. Absent, the selectors decide: moduleFqn is a " //$NON-NLS-1$
-                    + "module, subsystemName is a subsystem, and nothing is the whole project. " //$NON-NLS-1$
-                    + "moduleFqn together with subsystemName is refused: they name different " //$NON-NLS-1$
-                    + "areas. scope=project rejects every selector. scope=module requires " //$NON-NLS-1$
-                    + "moduleFqn. scope=subsystem requires subsystemName and rejects moduleFqn. " //$NON-NLS-1$
-                    + "An unknown module, subsystem or scope word is refused by name and the " //$NON-NLS-1$
-                    + "project is not scanned. A subsystem includes nested subsystems; the answer " //$NON-NLS-1$
-                    + "names that and how many objects the composition holds.") //$NON-NLS-1$
+                "project | subsystem | module, and absent, the selectors decide the area.") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
-                "Module FQN, for example CommonModule.Sales. Required for scope=module. Without " //$NON-NLS-1$
-                    + "scope it selects the module on its own. Refused together with subsystemName.") //$NON-NLS-1$
-            .stringProperty("subsystemName", //$NON-NLS-1$
-                "Subsystem name. Required for scope=subsystem. Without scope it selects the " //$NON-NLS-1$
-                    + "subsystem on its own, nested subsystems included. Refused together with " //$NON-NLS-1$
-                    + "moduleFqn.") //$NON-NLS-1$
+                "Module FQN, for example CommonModule.Sales.") //$NON-NLS-1$
+            .stringProperty("subsystemName", "Subsystem name.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("checks", //$NON-NLS-1$
                 "Comma-separated: ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, LOG_SENSITIVE") //$NON-NLS-1$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -397,6 +386,13 @@ public class SensitiveDataScanTool implements IMcpTool
     {
         if (onlyModule != null)
         {
+            // Asked before the file is read. The project and subsystem walks poll at each file;
+            // this branch is the one file, and skipping the poll scans it after a cancel and
+            // leaves the answer without the stop.
+            if (watch.stopHere())
+            {
+                return;
+            }
             scanBslFile(onlyModule, checks, findings);
             return;
         }

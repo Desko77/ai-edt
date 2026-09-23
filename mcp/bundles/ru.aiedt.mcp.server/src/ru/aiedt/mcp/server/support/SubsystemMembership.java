@@ -116,6 +116,11 @@ public final class SubsystemMembership
 
     /**
      * Whether a project-relative path sits inside one of the composition's objects.
+     * <p>
+     * The match is the object's folder as a prefix of the path from the source root {@code src/}.
+     * A copy of the same folder elsewhere in the project - {@code backup/CommonModules/Sales/},
+     * for example - is a different file and is not part of the composition.
+     * </p>
      *
      * @param projectRelativePath the path
      * @return whether the scan may read it
@@ -129,7 +134,7 @@ public final class SubsystemMembership
         String normalized = projectRelativePath.replace('\\', '/');
         for (String prefix : folderPrefixes)
         {
-            if (normalized.startsWith(prefix) || normalized.contains("/" + prefix)) //$NON-NLS-1$
+            if (normalized.startsWith("src/" + prefix)) //$NON-NLS-1$
             {
                 return true;
             }

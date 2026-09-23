@@ -194,6 +194,13 @@ public final class WalkNarrowing
         Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
             | Pattern.UNICODE_CHARACTER_CLASS);
 
+    // UNICODE_CHARACTER_CLASS because \\b after a Cyrillic closing keyword is a word boundary, and
+    // UNICODE_CASE because the keyword is written in either case.
+    private static final Pattern METHOD_END = Pattern.compile(
+        "^\\s*(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)\\b", //$NON-NLS-1$
+        Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+            | Pattern.UNICODE_CHARACTER_CLASS);
+
     private WalkNarrowing()
     {
         // utility
@@ -266,8 +273,12 @@ public final class WalkNarrowing
     /**
      * Finds a method in module text.
      * <p>
-     * The span runs from the method's header up to the line before the next method, so a finding in
-     * a neighbouring method is outside it. Matching ignores case, the way the language does.
+     * The span runs from the method's header through its closing line
+     * ({@code КонецПроцедуры} / {@code КонецФункции} / {@code EndProcedure} / {@code EndFunction}).
+     * Module code after that line is outside the method, including when this method is the last
+     * one in the file and including the code that sits between it and the next method. A module
+     * that never closes the method keeps the previous bound: the line before the next method, or
+     * the end of the file. Matching ignores case, the way the language does.
      * </p>
      *
      * @param content the module text; may be <code>null</code>
@@ -282,11 +293,13 @@ public final class WalkNarrowing
         }
         List<String> names = new ArrayList<>();
         List<Integer> lines = new ArrayList<>();
+        List<Integer> offsets = new ArrayList<>();
         Matcher matcher = METHOD_START.matcher(content);
         while (matcher.find())
         {
             names.add(matcher.group(2));
             lines.add(Integer.valueOf(lineAt(content, matcher.start())));
+            offsets.add(Integer.valueOf(matcher.start()));
         }
         int found = -1;
         for (int i = 0; i < names.size(); i++)
@@ -302,9 +315,9 @@ public final class WalkNarrowing
             return null;
         }
         int start = lines.get(found).intValue();
-        int end = found + 1 < lines.size()
-            ? lines.get(found + 1).intValue() - 1
-            : lineAt(content, Math.max(0, content.length() - 1));
+        int from = offsets.get(found).intValue();
+        int to = found + 1 < offsets.size() ? offsets.get(found + 1).intValue() : content.length();
+        int end = closingLine(content, from, to, start);
         if (end < start)
         {
             end = start;
@@ -442,6 +455,34 @@ public final class WalkNarrowing
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * The line the method closes on, or the line before the next method when it never closes.
+     *
+     * @param content the module text
+     * @param from the offset of this method's header
+     * @param to the offset of the next method, or the length of the text when this is the last
+     * @param startLine the header line, one-based
+     * @return the last line of the span, one-based
+     */
+    private static int closingLine(String content, int from, int to, int startLine)
+    {
+        if (from < to)
+        {
+            Matcher end = METHOD_END.matcher(content);
+            end.region(from, to);
+            if (end.find())
+            {
+                return lineAt(content, end.start());
+            }
+        }
+        if (to >= content.length())
+        {
+            return lineAt(content, Math.max(0, content.length() - 1));
+        }
+        int beforeNext = lineAt(content, to) - 1;
+        return beforeNext < startLine ? startLine : beforeNext;
     }
 
     private static Decision accept(String area, String moduleFqn, String methodName, String subsystemName)

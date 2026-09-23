@@ -223,9 +223,11 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("docs_lookup", Integer.valueOf(2547)); //$NON-NLS-1$
         BUDGETS.put("validate_query", Integer.valueOf(2460)); //$NON-NLS-1$
         BUDGETS.put("yaxunit_tests", Integer.valueOf(2395)); //$NON-NLS-1$
-        // Raised from 2295: the audit advertises the module, method and subsystem a scan may be
-        // limited to, and the refusals for a selector that does not match the scope.
-        BUDGETS.put("security_audit", Integer.valueOf(3666)); //$NON-NLS-1$
+        // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
+        // subsystemName, one sentence each. The sentences that say which combination is a walk
+        // and which is a refusal live in operation help, not in this schema. 3008 is what remains
+        // after that move (the four sentences are 235 bytes; the rest is the properties themselves).
+        BUDGETS.put("security_audit", Integer.valueOf(3008)); //$NON-NLS-1$
         BUDGETS.put("code_review", Integer.valueOf(2209)); //$NON-NLS-1$
         BUDGETS.put("find_dead_code", Integer.valueOf(1867)); //$NON-NLS-1$
         BUDGETS.put("diff_module", Integer.valueOf(1816)); //$NON-NLS-1$

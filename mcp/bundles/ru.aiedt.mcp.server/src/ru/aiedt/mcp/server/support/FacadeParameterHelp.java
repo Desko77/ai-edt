@@ -55,9 +55,10 @@ public final class FacadeParameterHelp
     /**
      * The same, with the rules the facade's own descriptions no longer carry.
      * <p>
-     * They reach an operation the facade handles itself, whose help is rendered from the facade's
-     * schema. An operation that routes to a tool is answered from that tool's schema, which carries
-     * its own detail and needs none from here.
+     * They reach an operation the facade handles itself, rendered from the facade's schema, and an
+     * operation that routes to a tool, rendered from that tool's schema. A rule is shown on a
+     * parameter the rendered schema actually declares; a name only the facade's own schema has
+     * stays with the operations the facade handles itself.
      * </p>
      *
      * @param topic the operation asked about.
@@ -78,8 +79,10 @@ public final class FacadeParameterHelp
         {
             IMcpTool routed = known.get();
             // Rendered under the name the caller used. An operation and the tool behind it usually
-            // share a name, and where they do not the caller asked by the operation's.
-            return ParameterHelp.render(topic, routed.getInputSchema());
+            // share a name, and where they do not the caller asked by the operation's. The detail
+            // continues a description the schema keeps to one sentence.
+            return ParameterHelp.render(topic, routed.getInputSchema(),
+                detail == null ? java.util.Collections.emptyMap() : detail);
         }
         if (topic != null && dispatched != null && dispatched.contains(topic))
         {
