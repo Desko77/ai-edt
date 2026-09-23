@@ -229,9 +229,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application (infobase) id from get_applications.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
-                "Infobase name. Required for create_infobase (the new infobase's name), " //$NON-NLS-1$
-                    + "delete_infobase (the infobase to remove) and register_infobase of a " //$NON-NLS-1$
-                    + "server infobase.") //$NON-NLS-1$
+                "Infobase name: required for create_infobase, delete_infobase and " //$NON-NLS-1$
+                    + "register_infobase of a server infobase. sync_control " //$NON-NLS-1$
+                    + "release_support_snapshot: the snapshot's file name from " //$NON-NLS-1$
+                    + "list_support_snapshots.") //$NON-NLS-1$
             .stringProperty("path", //$NON-NLS-1$
                 "create_infobase: absolute path to the infobase directory (required for that " //$NON-NLS-1$
                     + "operation) - an empty/new directory for the .1CD. register_infobase: an " //$NON-NLS-1$
@@ -325,9 +326,6 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
                     + "recover_stuck_merge / list_support_snapshots / release_support_snapshot " //$NON-NLS-1$
                     + "(required when operation=sync_control).") //$NON-NLS-1$
-            .stringProperty("name", //$NON-NLS-1$
-                "sync_control syncOperation=release_support_snapshot: the snapshot's file " //$NON-NLS-1$
-                    + "name, as syncOperation=list_support_snapshots reports it.") //$NON-NLS-1$
             .booleanProperty("enabled", //$NON-NLS-1$
                 "sync_control syncOperation=suppress: true = suppress synchronization for " //$NON-NLS-1$
                     + "the project (skip it on update), false = re-enable.") //$NON-NLS-1$

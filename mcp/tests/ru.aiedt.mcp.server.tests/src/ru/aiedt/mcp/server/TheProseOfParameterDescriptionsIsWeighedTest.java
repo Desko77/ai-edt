@@ -215,10 +215,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * read. A client that cannot see the two arguments starts the managed client every time.
      * </p>
      * <p>
-     * And by 330 on infobase_admin for connectionString and makeDefault: a caller registering an
-     * existing server infobase has no way to name the server and the infobase without the string,
-     * and no way to say whether the new application becomes the project's default without the
-     * flag - both are the whole call. Their rules live in the operation help.
+     * And by 463 on infobase_admin for connectionString and makeDefault, and for name, which is
+     * declared once and names every operation that reads it: a caller registering an existing
+     * server infobase has no way to name the server and the infobase without the string, and no
+     * way to say whether the new application becomes the project's default without the flag.
+     * Their rules live in the operation help.
      * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
@@ -238,9 +239,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        // Raised by 330 for connectionString and makeDefault: registering an existing server
+        // Raised by 463 for connectionString, makeDefault and name: registering an existing server
         // infobase is named by the string, and the flag says whether it becomes the default.
-        PROSE.put("infobase_admin", Integer.valueOf(5230));
+        PROSE.put("infobase_admin", Integer.valueOf(5363));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -396,10 +397,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * with the seventeenth: 89293.
      * </p>
      * <p>
-     * And a nineteenth, by 177, for connectionString and makeDefault on infobase_admin: an
-     * existing server infobase is named by the connection string and the flag says whether it
-     * becomes the project's default application. Together with the eighteenth: 89470.
+     * And a nineteenth, by 313, for connectionString and makeDefault on infobase_admin and for its
+     * name, declared once for every operation that reads it: an existing server infobase is named
+     * by the connection string and the flag says whether it becomes the project's default
+     * application. Together with the eighteenth: 89606.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 89470;
+    private static final int DOCUMENT_PROSE = 89606;
 }

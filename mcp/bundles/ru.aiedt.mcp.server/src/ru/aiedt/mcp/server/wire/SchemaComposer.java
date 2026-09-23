@@ -271,15 +271,25 @@ public class SchemaComposer
 
     /**
      * Files a finished property definition under its name.
+     * <p>
+     * A name is filed once. A second declaration would replace the first in the map, and the
+     * schema a client reads would describe only the later operation that uses the name.
+     * </p>
      *
      * @param name the parameter name
      * @param definition the property definition
      * @param isRequired whether the client must supply it
      * @return this builder
+     * @throws IllegalArgumentException when the name is already declared in this schema
      */
     private SchemaComposer addProperty(String name, Map<String, Object> definition,
         boolean isRequired)
     {
+        if (properties.containsKey(name))
+        {
+            throw new IllegalArgumentException("property " + name //$NON-NLS-1$
+                + " is declared twice in one schema"); //$NON-NLS-1$
+        }
         properties.put(name, definition);
         if (isRequired)
         {

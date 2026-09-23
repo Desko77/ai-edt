@@ -10,6 +10,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,24 @@ import com.google.gson.JsonParser;
  */
 public class SchemaComposerTest
 {
+    @Test
+    public void aPropertyDeclaredTwiceIsRefused()
+    {
+        SchemaComposer schema = SchemaComposer.object()
+            .stringProperty("name", "Infobase name.");
+        try
+        {
+            schema.stringProperty("name", "The snapshot's file name.");
+        }
+        catch (IllegalArgumentException expected)
+        {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("name"));
+            assertTrue(schema.build().contains("Infobase name."));
+            return;
+        }
+        fail("a second declaration of name replaced the first without a word");
+    }
+
     @Test
     public void anEmptySchemaIsAnObjectWithNoPropertiesAndNoRequiredFields()
     {
