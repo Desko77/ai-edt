@@ -63,6 +63,13 @@ final class FakeLaunchConfigurations
          */
         String attributeFailure;
 
+        /**
+         * When set, the memento cannot be read with this message while the attributes still
+         * read - a configuration that has no address to be named by, unlike {@link #unreadable},
+         * which cannot be read at all.
+         */
+        String mementoFailure;
+
         Configuration(String memento, String name, String typeId)
         {
             this.memento = memento;
@@ -88,6 +95,10 @@ final class FakeLaunchConfigurations
                         if (unreadable)
                         {
                             throw new CoreException(status("the .launch file could not be read")); //$NON-NLS-1$
+                        }
+                        if (mementoFailure != null)
+                        {
+                            throw new CoreException(status(mementoFailure));
                         }
                         return memento;
                     case "getType": //$NON-NLS-1$

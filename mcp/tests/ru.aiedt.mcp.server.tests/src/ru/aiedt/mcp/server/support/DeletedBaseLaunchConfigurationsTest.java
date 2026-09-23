@@ -260,6 +260,44 @@ public class DeletedBaseLaunchConfigurationsTest
     }
 
     @Test
+    public void aSameNamedConfigurationIsNotExcludedByOneThatCannotBeAddressed()
+    {
+        // A display name is not unique: two configurations of different launch types may carry
+        // one name. The configuration whose memento cannot be read names itself and excludes
+        // nothing else - excluding a same-named configuration whose memento does read would
+        // leave a binding off that no write took away.
+        FakeEnvironment environment = new FakeEnvironment();
+        Configuration unaddressable =
+            environment.configs.add("m-unaddressable", "Shared run", "project-one", "app-unaddressable"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Configuration foreign =
+            environment.configs.add("m-foreign", "Shared run", "project-two", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        environment.bind("project-two", "app-foreign", infobase()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        unaddressable.mementoFailure = "the .launch file could not be read"; //$NON-NLS-1$
+
+        LaunchIds launchIds = BmInfobaseLifecycleHelper.snapshotLaunchApplicationIds(environment);
+        DeletedBaseConfigurations found =
+            BmInfobaseLifecycleHelper.deletedBaseConfigurations(launchIds, environment, infobase());
+        environment.configs.stripApplicationIds();
+        String answer = BmInfobaseLifecycleHelper.restoreLaunchApplicationIds(launchIds, found,
+            "delete_infobase"); //$NON-NLS-1$
+
+        assertEquals("only the configuration whose memento read is held by the snapshot", //$NON-NLS-1$
+            Set.of("m-foreign"), launchIds.snapshot.held.keySet()); //$NON-NLS-1$
+        assertTrue("a same-named configuration is not excluded by one that cannot be addressed", //$NON-NLS-1$
+            found.unverified.isEmpty());
+        assertEquals("app-foreign", foreign.applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull(answer);
+        assertTrue("the same-named configuration is restored and named as such", //$NON-NLS-1$
+            answer.contains("restored the application id of: Shared run")); //$NON-NLS-1$
+        assertEquals("the unaddressable configuration is named once, as unaddressable", 1, //$NON-NLS-1$
+            occurrences(answer, "could not address 'Shared run'")); //$NON-NLS-1$
+        assertFalse("the same-named configuration is not claimed gone or unread", //$NON-NLS-1$
+            answer.contains("not read on restore")); //$NON-NLS-1$
+        assertFalse("nothing is left without an application id after deletion", //$NON-NLS-1$
+            answer.contains("left without an application id after deletion")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aConfigurationWhoseProjectDoesNotResolveIsNotRestoredAndIsNamed()
     {
         // project-closed is never registered: a closed project resolves to null, and a

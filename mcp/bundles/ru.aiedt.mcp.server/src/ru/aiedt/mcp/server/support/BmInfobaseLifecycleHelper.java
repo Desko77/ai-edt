@@ -9,7 +9,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -400,10 +399,13 @@ public final class BmInfobaseLifecycleHelper
      * The launch configurations whose application belongs to the infobase that is going away, and
      * what the search could not establish.
      * <p>
-     * A configuration the search could not read or place is not restored: it may belong to the
-     * deleted base, and putting its id back could hand the deleted base's binding back. Such a
-     * configuration is excluded as unverified, and the answer names it once - in
-     * {@link #notIdentified}, not again in the restore's report.
+     * A configuration the search addressed but could not read or place is not restored: it may
+     * belong to the deleted base, and putting its id back could hand the deleted base's binding
+     * back. Such a configuration is excluded as unverified, and the answer names it once - in
+     * {@link #notIdentified}, not again in the restore's report. A configuration the search could
+     * not address at all is named there too, and excludes nothing: it carries no memento for the
+     * snapshot to hold, and a display name names a configuration only in the answer, never in an
+     * exclusion.
      * </p>
      */
     static final class DeletedBaseConfigurations
@@ -567,9 +569,12 @@ public final class BmInfobaseLifecycleHelper
      * the answer and leaves the search running, instead of costing every other configuration its
      * exclusion. A configuration whose project cannot be resolved - closed, or named nowhere -
      * cannot be placed: its binding may be the deleted base's, so it is excluded like the
-     * identified ones, named in the answer, and its id stays removed. When nothing can be
-     * identified at all - no application manager, or no launch configuration list - the answer
-     * says so and the guard puts nothing back.
+     * identified ones, named in the answer, and its id stays removed. A configuration that cannot
+     * be addressed - no memento to name it by - is named in the answer and excludes nothing: what
+     * the exclusion acts on is the memento, and one display name occurs in several launch
+     * configuration types at once. When nothing can be identified at all - no application
+     * manager, or no launch configuration list - the answer says so and the guard puts nothing
+     * back.
      * </p>
      *
      * @param launchIds what the guard captured before the write
@@ -626,15 +631,15 @@ public final class BmInfobaseLifecycleHelper
                 }
                 if (memento == null || memento.isEmpty())
                 {
-                    // Cannot be addressed: it is not in the snapshot and nothing is restored
-                    // to it; the answer names it. When the snapshot did hold a configuration of
-                    // this name, its binding is excluded as unverified, so the restore leaves
-                    // it off too.
+                    // Cannot be addressed: it is not in the snapshot and nothing is restored to
+                    // it; the answer names it. It excludes nothing of any other configuration: a
+                    // configuration is excluded by its memento, and a display name is not one -
+                    // one name occurs in several launch configuration types at once, so a
+                    // same-named configuration of a readable memento keeps its binding.
                     String name = nameOf(configuration);
                     found.notIdentified.add("could not address '" + name + "'" //$NON-NLS-1$ //$NON-NLS-2$
                         + (mementoFailure == null ? "" : " (" + mementoFailure + ")") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                         + " - the application id was left off"); //$NON-NLS-1$
-                    excludeHeldOfName(launchIds, found, name);
                     continue;
                 }
                 IProject project = projectName.isEmpty() ? null : environment.resolveProject(projectName);
@@ -683,31 +688,6 @@ public final class BmInfobaseLifecycleHelper
             }
         }
         return found;
-    }
-
-    /**
-     * Excludes the snapshot-held configuration of this display name, when there is one: the
-     * search could not address the configuration, so it cannot tell whether the binding is the
-     * deleted base's, and the binding stays off.
-     *
-     * @param launchIds what the guard captured before the write
-     * @param found what the search has established so far
-     * @param name the display name the unaddressable configuration carries
-     */
-    private static void excludeHeldOfName(LaunchIds launchIds, DeletedBaseConfigurations found,
-        String name)
-    {
-        if (launchIds == null || launchIds.snapshot == null)
-        {
-            return;
-        }
-        for (Map.Entry<String, LaunchApplicationIds.SnapshotEntry> entry : launchIds.snapshot.held.entrySet())
-        {
-            if (entry.getValue().name.equals(name))
-            {
-                found.unverified.add(entry.getKey());
-            }
-        }
     }
 
     /** The display name of a configuration, or a placeholder when even that cannot be read. */
