@@ -293,14 +293,20 @@ public class TheClientTheStartStepLooksForTest
         Files.write(one.toPath(), new byte[0]);
         try
         {
+            JsonObject full = VanessaTool.screenshotKeys();
+            full.addProperty("ТаймаутДляАсинхронныхШагов", BUDGET_SEC); //$NON-NLS-1$
             for (boolean withTestClient : new boolean[] {true, false})
             {
                 for (boolean shots : new boolean[] {true, false})
                 {
                     for (boolean keepOpen : new boolean[] {true, false})
                     {
-                        census(one, withTestClient, shots, keepOpen, true);
-                        census(dir, withTestClient, shots, keepOpen, false);
+                        for (JsonObject ours : new JsonObject[] {null,
+                            VanessaTool.screenshotKeys(), full})
+                        {
+                            census(one, withTestClient, shots, keepOpen, true, ours);
+                            census(dir, withTestClient, shots, keepOpen, false, ours);
+                        }
                         censusWithExtra(one, withTestClient, shots, keepOpen);
                     }
                 }
@@ -316,8 +322,9 @@ public class TheClientTheStartStepLooksForTest
     /**
      * The two lists are one. A key this tool sets and does not bar from the passthrough can be
      * replaced by the caller, and the merge happens last, so the replacement wins while the answer
-     * still describes what the argument asked for. Comparing the set the guard holds with the keys
-     * a fully populated document carries is what keeps a new key from arriving unguarded.
+     * still describes what the argument asked for. The keys are gathered from every branch that
+     * builds the document - the plain one and each composing branch - because a key set on one
+     * branch only would slip past a census that never built that branch.
      *
      * @throws IOException if the temporary feature file cannot be written
      */
@@ -329,13 +336,18 @@ public class TheClientTheStartStepLooksForTest
         Files.write(one.toPath(), new byte[0]);
         try
         {
+            JsonObject full = VanessaTool.screenshotKeys();
+            full.addProperty("ТаймаутДляАсинхронныхШагов", BUDGET_SEC); //$NON-NLS-1$
             java.util.Set<String> written = new java.util.TreeSet<>();
-            for (String key : JsonParser.parseString(
-                VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
-                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
-                    true, null)).getAsJsonObject().keySet())
+            for (JsonObject ours : new JsonObject[] {null, VanessaTool.screenshotKeys(), full})
             {
-                written.add(key.toLowerCase(java.util.Locale.ROOT));
+                for (String key : JsonParser.parseString(
+                    VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                        new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                        true, null, ours)).getAsJsonObject().keySet())
+                {
+                    written.add(key.toLowerCase(java.util.Locale.ROOT));
+                }
             }
             assertEquals("a key this tool sets is not barred from the passthrough", //$NON-NLS-1$
                 new java.util.TreeSet<>(VanessaTool.OURS_TO_SET), written);
@@ -385,13 +397,14 @@ public class TheClientTheStartStepLooksForTest
      * @param shots whether a screenshot is taken on failure.
      * @param keepOpen whether the client is left running.
      * @param named whether the feature path is a file, which is named to Vanessa on its own.
+     * @param ours the keys of the call's own branch, or null for the branch that composes none.
      */
     private static void census(File featurePath, boolean withTestClient, boolean shots,
-        boolean keepOpen, boolean named)
+        boolean keepOpen, boolean named, JsonObject ours)
     {
         String json = VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
             new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
-            withTestClient, null);
+            withTestClient, null, ours);
         java.util.Set<String> read = new java.util.TreeSet<>(java.util.Arrays.asList(
             "ВыполнитьСценарии", "КаталогФич", "ДелатьОтчетВФорматеАллюр", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "КаталогOutputAllureБазовый", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
@@ -404,6 +417,10 @@ public class TheClientTheStartStepLooksForTest
         if (named)
         {
             read.add("СписокФичДляВыполнения"); //$NON-NLS-1$
+        }
+        if (ours != null)
+        {
+            read.addAll(ours.keySet());
         }
         java.util.Set<String> written = new java.util.TreeSet<>(
             JsonParser.parseString(json).getAsJsonObject().keySet());
