@@ -13,6 +13,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.Test;
 
@@ -55,7 +56,8 @@ public class PrintWidthOfATemplateTest
     }
 
     /**
-     * Sets the columns up so that column 0 is the first of the given widths.
+     * Sets the columns up so that column 0 is the first of the given widths, and the set's declared
+     * size covers them - the way a template on disk declares its columns.
      *
      * @param doc the document.
      * @param widths each column's width, in eighths of a character.
@@ -63,6 +65,7 @@ public class PrintWidthOfATemplateTest
     private static void withColumnWidths(SpreadsheetDocument doc, int... widths)
     {
         Columns columns = MoxelFactory.eINSTANCE.createColumns();
+        columns.setSize(widths.length);
         doc.setColumns(columns);
         for (int index = 0; index < widths.length; index++)
         {
@@ -145,6 +148,68 @@ public class PrintWidthOfATemplateTest
     }
 
     @Test
+    public void aColumnSetCountsItsDeclaredSizeNotItsLastCell()
+    {
+        // The receipt the corpus measured at 805: five columns holding 805 eighths between them,
+        // the last cell in column 4 - and a sixth declared column, 13 wide, that no cell reaches.
+        // The paginator measures a set to its declared size: 818, not 805.
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 200, 200, 200, 150, 55);
+        doc.getColumns().getColumns().put(Integer.valueOf(5), columnOf(formatOfWidth(doc, 13)));
+        doc.getColumns().setSize(6);
+        withRowOfCells(doc, 5);
+
+        Map<String, Object> answer =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+
+        assertEquals(818, answer.get("contentWidthCharUnits")); //$NON-NLS-1$
+        assertEquals(818 / 8.0 * NARROW_CHAR_MM, millimetres(answer, "contentWidthMm"), 0.01); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aRowColumnSetWiderThanTheDocumentColumnsIsTheSetPrinted()
+    {
+        // A second set of columns, carried by a row: the paginator holds a contest between the
+        // document's columns and every set a row brings, and the wider set is the one printed.
+        // Both sets need their own id - the contest is held per id, and a real document gives
+        // every set one.
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 40, 40);
+        doc.getColumns().setColumnsId(UUID.randomUUID());
+        Row row = withRowOfCells(doc, 2);
+        Columns own = MoxelFactory.eINSTANCE.createColumns();
+        own.setColumnsId(UUID.randomUUID());
+        own.setSize(2);
+        own.setFormatIndex(formatOfWidth(doc, 100));
+        row.setColumns(own);
+
+        Map<String, Object> answer =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+
+        assertEquals(200, answer.get("contentWidthCharUnits")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aPrintAreaNamesTheColumnsTheSheetPrints()
+    {
+        // An area that names columns keeps the measurement to those columns: the widest set behind
+        // it does not widen the answer.
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 100, 100, 100);
+        withRowOfCells(doc, 3);
+        ColumnsArea area = MoxelFactory.eINSTANCE.createColumnsArea();
+        area.setBegin(0);
+        area.setEnd(1);
+        area.setColumns(doc.getColumns());
+        doc.setPrintArea(area);
+
+        Map<String, Object> answer =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+
+        assertEquals(200, answer.get("contentWidthCharUnits")); //$NON-NLS-1$
+    }
+
+    @Test
     public void landscapeComesFromTheModelAndTheSameWidthOverflowsInPortrait()
     {
         // 1239 units - 154.9 characters - and no margins declared, which is what the corpus
@@ -209,13 +274,14 @@ public class PrintWidthOfATemplateTest
         withRowOfCells(doc, 2);
 
         // Whatever the model returns for print settings it never set - the platform fills them in
-        // when it prints, and the answer has to fill in the same ones.
+        // when it prints, and the answer has to fill in the same ones, scale included.
         List<String> assumed = assumedOf(TemplatePrintWidth.check(doc,
             TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow()));
         assertTrue(assumed.toString(), assumed.contains("paper=A4")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(assumed.toString(), assumed.contains("orientation=portrait")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(assumed.toString(), assumed.contains("leftMargin=10mm")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(assumed.toString(), assumed.contains("rightMargin=10mm")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(assumed.toString(), assumed.contains("scale=100%")); //$NON-NLS-1$ //$NON-NLS-2$
 
         PrintSettings settings = pageSettings(doc);
         List<String> onAnEmptyPage = assumedOf(TemplatePrintWidth.check(doc,
@@ -223,6 +289,59 @@ public class PrintWidthOfATemplateTest
         assertEquals("an untouched page takes exactly the same defaults", //$NON-NLS-1$
             assumed, onAnEmptyPage);
         assertFalse(settings.isSetPageOrientation());
+
+        // A scale of 100 the model actually declared is not a default: it stays out of `assumed`,
+        // so the two ways of printing at 100% stay tellable apart in the answer.
+        settings.setScale(100);
+        List<String> declared = assumedOf(TemplatePrintWidth.check(doc,
+            TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow()));
+        assertFalse(declared.toString(), declared.contains("scale=100%")); //$NON-NLS-1$
+        assertEquals(100, printScaleOf(TemplatePrintWidth.check(doc,
+            TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow())));
+    }
+
+    @Test
+    public void aPaperDeclaredByItsDimensionsIsMeasuredByThem()
+    {
+        // Code -1 names no paper: the sheet is as big as pageWidth and pageHeight say, in
+        // millimetres, with the orientation picking the side. Nothing was assumed.
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 72, 72);
+        withRowOfCells(doc, 2);
+        PrintSettings settings = pageSettings(doc);
+        settings.setPaper(-1);
+        settings.setPageWidth(148.0f);
+        settings.setPageHeight(210.0f);
+
+        Map<String, Object> portrait =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+        assertEquals("custom 148x210mm", portrait.get("paper")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(128.0, millimetres(portrait, "printableWidthMm"), 0.01); //$NON-NLS-1$
+        assertFalse(assumedOf(portrait).toString(), assumedOf(portrait).contains("paper=A4")); //$NON-NLS-1$
+
+        settings.setPageOrientation(PageOrientation.LANDSCAPE);
+        Map<String, Object> landscape =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+        assertEquals("the landscape sheet is as wide as pageHeight said", 190.0, //$NON-NLS-1$
+            millimetres(landscape, "printableWidthMm"), 0.01); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aPaperCodeOtherThanA4IsMeasuredAsA4AndSaysSo()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 72, 72);
+        withRowOfCells(doc, 2);
+        PrintSettings settings = pageSettings(doc);
+        settings.setPaper(8);
+
+        Map<String, Object> answer =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+
+        assertEquals("code 8", answer.get("paper")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(assumedOf(answer).toString(), //$NON-NLS-1$
+            assumedOf(answer).contains("paper=8 measured as A4")); //$NON-NLS-1$
+        assertEquals(190.0, millimetres(answer, "printableWidthMm"), 0.01); //$NON-NLS-1$
     }
 
     @Test
@@ -312,22 +431,102 @@ public class PrintWidthOfATemplateTest
     }
 
     @Test
-    public void theCharacterWidthComesFromAMeasurementAndSaysSo()
+    public void aMeasurementThatAnswersIsTheProcessAnswerAndSaysWhereItCameFrom()
     {
-        TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
+        try
+        {
+            TemplatePrintWidth.measuredCharWidth = null;
+            TemplatePrintWidth.charMeasurement = () -> new TemplatePrintWidth.CharMetrics(1.9, "jdk:probe 8"); //$NON-NLS-1$
 
-        assertTrue("a source is named: " + metrics.source(), //$NON-NLS-1$
-            metrics.source() != null && !metrics.source().isEmpty());
-        // Anywhere between a narrow condensed font and a wide one. The point is not the number - it
-        // is that a machine without the template font still answers with something a reader can
-        // weigh, and names it.
-        assertTrue("one character in millimetres: " + metrics.charWidthMm(), //$NON-NLS-1$
-            metrics.charWidthMm() > 1.0 && metrics.charWidthMm() < 4.0);
+            TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
+
+            assertEquals(1.9, metrics.charWidthMm(), 0.0001);
+            assertEquals("jdk:probe 8", metrics.source()); //$NON-NLS-1$
+
+            // The measurement runs once per process: a later one that fails does not change the
+            // answer a caller already has.
+            TemplatePrintWidth.charMeasurement = () -> {
+                throw new IllegalStateException("the second measurement must not run"); //$NON-NLS-1$
+            };
+            assertEquals("jdk:probe 8", TemplatePrintWidth.resolveCharMetrics().source()); //$NON-NLS-1$
+        }
+        finally
+        {
+            resetCharMetrics();
+        }
+    }
+
+    @Test
+    public void aMeasurementThatThrowsAnswersWithTheConstant()
+    {
+        try
+        {
+            TemplatePrintWidth.measuredCharWidth = null;
+            TemplatePrintWidth.charMeasurement = () -> {
+                throw new IllegalStateException("no font machinery here"); //$NON-NLS-1$
+            };
+
+            TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
+
+            assertEquals(TemplatePrintWidth.FALLBACK_CHAR_WIDTH_MM, metrics.charWidthMm(), 0.0001);
+            assertEquals("constant", metrics.source()); //$NON-NLS-1$
+        }
+        finally
+        {
+            resetCharMetrics();
+        }
+    }
+
+    @Test
+    public void aMeasurementThatNeverAnswersDoesNotHoldTheCallerPastItsDeadline()
+    {
+        try
+        {
+            TemplatePrintWidth.measuredCharWidth = null;
+            TemplatePrintWidth.charMeasurementTimeoutMs = 150;
+            TemplatePrintWidth.charMeasurement = () -> {
+                try
+                {
+                    Thread.sleep(60_000);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return new TemplatePrintWidth.CharMetrics(1.9, "jdk:too late"); //$NON-NLS-1$
+            };
+
+            long startedAt = System.nanoTime();
+            TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
+            long waitedMs = (System.nanoTime() - startedAt) / 1_000_000;
+
+            assertEquals("constant", metrics.source()); //$NON-NLS-1$
+            assertEquals(TemplatePrintWidth.FALLBACK_CHAR_WIDTH_MM, metrics.charWidthMm(), 0.0001);
+            assertTrue("held for " + waitedMs + " ms, past the deadline", //$NON-NLS-1$ //$NON-NLS-2$
+                waitedMs < 2000);
+        }
+        finally
+        {
+            resetCharMetrics();
+        }
+    }
+
+    /** Puts the measurement seam back the way production runs it. */
+    private static void resetCharMetrics()
+    {
+        TemplatePrintWidth.measuredCharWidth = null;
+        TemplatePrintWidth.charMeasurement = TemplatePrintWidth.MEASURE_THROUGH_THE_JDK;
+        TemplatePrintWidth.charMeasurementTimeoutMs = 2000;
     }
 
     @SuppressWarnings("unchecked")
     private static List<String> assumedOf(Map<String, Object> answer)
     {
         return (List<String>)answer.get("assumed"); //$NON-NLS-1$
+    }
+
+    private static int printScaleOf(Map<String, Object> answer)
+    {
+        return ((Number)answer.get("printScalePercent")).intValue(); //$NON-NLS-1$
     }
 }

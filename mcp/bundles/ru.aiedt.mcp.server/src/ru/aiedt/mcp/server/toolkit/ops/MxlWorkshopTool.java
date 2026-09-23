@@ -1064,6 +1064,21 @@ public class MxlWorkshopTool implements IMcpTool
      */
     private String opCheckPrintWidth(Map<String, String> params)
     {
+        boolean smallScaleSupplied = params != null && params.containsKey("smallScalePercent"); //$NON-NLS-1$
+        Integer smallScalePercent = JsonUtils.extractIntegerArgument(params, "smallScalePercent"); //$NON-NLS-1$
+        // Not a number, not a whole number, or outside 10..100: the same refusal for each. Taking
+        // the default silently instead would turn a caller's typo into a warning threshold nobody
+        // picked.
+        boolean refused = smallScalePercent == null ? smallScaleSupplied
+            : smallScalePercent.intValue() < 10 || smallScalePercent.intValue() > 100;
+        if (refused)
+        {
+            return ToolResult.error("smallScalePercent must be between 10 and 100") //$NON-NLS-1$
+                .toJson();
+        }
+        int threshold = smallScalePercent == null ? TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT
+            : smallScalePercent.intValue();
+
         if (!BmTemplateHelper.cellOpsAvailable())
         {
             return mxlApiNotFound("check_print_width"); //$NON-NLS-1$
@@ -1071,24 +1086,19 @@ public class MxlWorkshopTool implements IMcpTool
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
-        int smallScalePercent = JsonUtils.extractIntArgument(params, "smallScalePercent", //$NON-NLS-1$
-            TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT);
 
         if (projectName == null || ownerFqn == null || templateName == null)
         {
             return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
-        }
-        if (smallScalePercent < 10 || smallScalePercent > 100)
-        {
-            // Clamped silently would turn a caller's typo into a warning threshold nobody picked.
-            return ToolResult.error("smallScalePercent must be between 10 and 100") //$NON-NLS-1$
-                .toJson();
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
+        // The font measurement starts AWT, which has no business running inside a model
+        // transaction: it is taken here, before the task, and handed in.
+        final TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] widthRef = new Map[] { null };
         // Read-only: dryRun=true runs the reader lambda and rolls the get-or-create model touch back.
@@ -1096,8 +1106,7 @@ public class MxlWorkshopTool implements IMcpTool
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
-                widthRef[0] = TemplatePrintWidth.check(doc, smallScalePercent,
-                    TemplatePrintWidth.resolveCharMetrics());
+                widthRef[0] = TemplatePrintWidth.check(doc, threshold, metrics);
                 return templateName;
             });
         if (!r.ok)
@@ -1319,20 +1328,26 @@ public class MxlWorkshopTool implements IMcpTool
                     .put("text", "check_print_width - does the print area fit the sheet by width?\n" //$NON-NLS-1$
                         + "Read from the moxel model alone; the platform is not run and nothing is " //$NON-NLS-1$
                         + "written.\n\n" //$NON-NLS-1$
-                        + "Widths. Content width = the sum of the print area's column widths, or of " //$NON-NLS-1$
-                        + "the widest row's columns when the area names none. A column's width comes " //$NON-NLS-1$
-                        + "from its own format, then the format of its set of columns, then the " //$NON-NLS-1$
-                        + "document default, then 72 (the platform's default column, 9 characters). " //$NON-NLS-1$
-                        + "Format.width is held in eighths of a character; one character is " //$NON-NLS-1$
-                        + "measured as the advance of Arial 8 'X'. EDT measures that through SWT and " //$NON-NLS-1$
-                        + "gets the font the machine has; this measures the same character through " //$NON-NLS-1$
-                        + "the JDK, and `charWidthSource` says which way it went (charWidthMm carries " //$NON-NLS-1$
-                        + "the number).\n\n" //$NON-NLS-1$
+                        + "Widths. Content width is the width of the column set the platform's " //$NON-NLS-1$
+                        + "paginator prints: the document's columns and every set a row carries " //$NON-NLS-1$
+                        + "are each measured over their first `size` columns - a set whose " //$NON-NLS-1$
+                        + "declared size runs past the last cell counts to the size - and the " //$NON-NLS-1$
+                        + "widest set wins. A print area that names columns is measured by the " //$NON-NLS-1$
+                        + "area instead. A column's width comes from its own format, then the " //$NON-NLS-1$
+                        + "format of its set of columns, then the document default, then 72 (the " //$NON-NLS-1$
+                        + "platform's default column, 9 characters). Format.width is held in " //$NON-NLS-1$
+                        + "eighths of a character; one character is measured as the advance of " //$NON-NLS-1$
+                        + "Arial 8 'X'. EDT measures that through SWT and gets the font the " //$NON-NLS-1$
+                        + "machine has; this measures the same character through the JDK - once " //$NON-NLS-1$
+                        + "per process, off any model transaction - and `charWidthSource` says " //$NON-NLS-1$
+                        + "which way it went (charWidthMm carries the number).\n\n" //$NON-NLS-1$
                         + "Page. Printable width = the sheet (A4: 210 mm portrait, 297 landscape) " //$NON-NLS-1$
                         + "minus the left and right margins. Every parameter the model leaves unset " //$NON-NLS-1$
                         + "is taken the way EDT's fillMissingPrintSettings takes it - A4, portrait, " //$NON-NLS-1$
-                        + "10 mm margins - and each one taken is named in `assumed`. Only A4 has " //$NON-NLS-1$
-                        + "dimensions here: another paper code is measured as A4 and `assumed` says so.\n\n" //$NON-NLS-1$
+                        + "10 mm margins, 100% scale - and each one taken is named in `assumed`. " //$NON-NLS-1$
+                        + "A paper declared as its own dimensions (code -1 with pageWidth and " //$NON-NLS-1$
+                        + "pageHeight, millimetres) is measured by those, orientation picking the " //$NON-NLS-1$
+                        + "side; another paper code is measured as A4 and `assumed` says so.\n\n" //$NON-NLS-1$
                         + "Verdicts. Content within the printable width - fits. Wider by up to 5% - " //$NON-NLS-1$
                         + "borderline: it prints, but a layout that close to the edge flips " //$NON-NLS-1$
                         + "between fits and borderline with the font the machine has, so read " //$NON-NLS-1$

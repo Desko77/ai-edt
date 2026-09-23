@@ -10,9 +10,12 @@ import java.awt.Font;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 import org.eclipse.emf.common.util.EMap;
 
@@ -43,11 +46,14 @@ import ru.aiedt.mcp.server.Activator;
  * <p>
  * Widths are held in {@code Format.width}, in eighths of a character (the unit
  * {@code UnitsConverter.UNIT_PER_CHAR} names, and the one behind the platform's own default column
- * of 72). Millimetres come from one character's advance, which EDT measures with SWT: a template
- * opened in the editor gets the width of the font it finds, so the same document is slightly wider
- * or narrower depending on the machine. {@link #resolveCharMetrics()} measures the same character
- * through the JDK instead, and answers with the source it used, because a millimetre-sized
- * difference is a verdict that can flip.
+ * of 72). The content span is the platform paginator's: the widest column set, counted to its
+ * declared size rather than to the last cell. Millimetres come from one character's advance, which
+ * EDT measures with SWT: a template opened in the editor gets the width of the font it finds, so
+ * the same document is slightly wider or narrower depending on the machine.
+ * {@link #resolveCharMetrics()} measures the same character through the JDK instead - once per
+ * process, off any model transaction, on a daemon thread the caller waits for only a bounded time -
+ * and answers with the source it used, because a millimetre-sized difference is a verdict that can
+ * flip.
  * </p>
  */
 public final class TemplatePrintWidth
@@ -82,6 +88,9 @@ public final class TemplatePrintWidth
     /** The printer paper code of A4. */
     private static final int A4_PAPER_CODE = 9;
 
+    /** The paper code that means "the sheet is this big", with the size in pageWidth and pageHeight. */
+    private static final int CUSTOM_SIZE_PAPER_CODE = -1;
+
     /** Ten millimetres, in the hundredths of a millimetre the margins are held in. */
     private static final int DEFAULT_MARGIN_HUNDREDTHS_MM = 1000;
 
@@ -97,6 +106,9 @@ public final class TemplatePrintWidth
 
     private static final double POINTS_PER_INCH = 72.0;
 
+    /** How long the measuring daemon gets to answer before the constant stands in. */
+    private static final long CHAR_MEASUREMENT_TIMEOUT_MS = 2000;
+
     private TemplatePrintWidth() {}
 
     /**
@@ -109,32 +121,82 @@ public final class TemplatePrintWidth
     {
     }
 
+    /** One measurement of the character width; may throw or never return. */
+    @FunctionalInterface
+    public interface CharMeasurement
+    {
+        /** @return the measured width and its source. */
+        CharMetrics measure();
+    }
+
+    /** The JDK measurement; held in a field so a test can put it back after substituting another. */
+    static final CharMeasurement MEASURE_THROUGH_THE_JDK = TemplatePrintWidth::measureThroughTheJdk;
+
+    /** The measurement the process answer comes from; a test substitutes one that hangs or throws. */
+    static volatile CharMeasurement charMeasurement = MEASURE_THROUGH_THE_JDK;
+
+    /** The wait bound a caller of {@link #resolveCharMetrics()} is held to, in milliseconds. */
+    static volatile long charMeasurementTimeoutMs = CHAR_MEASUREMENT_TIMEOUT_MS;
+
+    /** The process answer once measured; {@code null} until then. */
+    static volatile CharMetrics measuredCharWidth;
+
     /**
-     * Measures one character of the template font through the JDK.
+     * The width of one character, measured once per process, and where that number came from.
+     * <p>
+     * The measurement builds an AWT font, and the first AWT call in a process starts the AWT
+     * toolkit - which must not happen inside a model transaction and must not hold a caller for as
+     * long as a stubborn font subsystem cares to take. So the measurement runs in a daemon thread
+     * of its own, the caller waits a bounded time, and whatever arrives late is not waited for: a
+     * measurement that throws, answers nothing usable or stays out past the bound all give the
+     * same answer - the constant, named as such.
+     * </p>
      * <p>
      * The font is named but not available everywhere: a machine without Arial answers with whatever
      * stands in for it, which is what the editor would do as well. On a machine with no graphics
      * environment at all - which is how the test runtime and a headless CI runner start - the font
-     * machinery can refuse to run, and that is not a reason to have no answer: the constant stands
-     * in and says so.
+     * machinery refuses to run, and that is not a reason to have no answer: the constant stands in
+     * and says so.
      * </p>
      *
      * @return the measured width and its source, never null
      */
     public static CharMetrics resolveCharMetrics()
     {
+        CharMetrics cached = measuredCharWidth;
+        if (cached != null)
+        {
+            return cached;
+        }
+        Thread measurer = new Thread(TemplatePrintWidth::measureAndCache, "char-width-measurement"); //$NON-NLS-1$
+        measurer.setDaemon(true);
+        measurer.start();
         try
         {
-            Font font = new Font(FONT_FAMILY, Font.PLAIN, FONT_SIZE_PT);
-            FontRenderContext context = new FontRenderContext(null, true, true);
-            GlyphVector glyphs = font.createGlyphVector(context, MEASURED_CHARACTER);
-            double advancePt = glyphs.getGlyphMetrics(0).getAdvanceX();
-            if (advancePt > 0)
-            {
-                double widthMm = advancePt * MILLIMETER_PER_INCH / POINTS_PER_INCH;
-                return new CharMetrics(widthMm,
-                    "jdk:" + font.getFontName() + " " + FONT_SIZE_PT); //$NON-NLS-1$ //$NON-NLS-2$
-            }
+            measurer.join(charMeasurementTimeoutMs);
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+        }
+        cached = measuredCharWidth;
+        if (cached != null)
+        {
+            return cached;
+        }
+        // Out of time: the constant answers, and it is the process answer - a later arrival from
+        // the daemon does not replace it, so the answer does not change under a caller's feet.
+        CharMetrics fallback = new CharMetrics(FALLBACK_CHAR_WIDTH_MM, "constant"); //$NON-NLS-1$
+        publishCharMetrics(fallback);
+        return fallback;
+    }
+
+    private static void measureAndCache()
+    {
+        CharMetrics result;
+        try
+        {
+            result = charMeasurement.measure();
         }
         catch (Throwable e)
         {
@@ -142,8 +204,33 @@ public final class TemplatePrintWidth
             // display answers with InternalError, and a missing font manager answers with something
             // else again. All three mean the same thing here - measure with the constant instead.
             Activator.logDebug("print width: no font metrics available: " + e); //$NON-NLS-1$
+            result = null;
         }
-        return new CharMetrics(FALLBACK_CHAR_WIDTH_MM, "constant"); //$NON-NLS-1$
+        if (result == null || result.charWidthMm() <= 0
+            || result.source() == null || result.source().isEmpty())
+        {
+            result = new CharMetrics(FALLBACK_CHAR_WIDTH_MM, "constant"); //$NON-NLS-1$
+        }
+        publishCharMetrics(result);
+    }
+
+    private static synchronized void publishCharMetrics(CharMetrics result)
+    {
+        if (measuredCharWidth == null)
+        {
+            measuredCharWidth = result;
+        }
+    }
+
+    /** @return the advance of the measured character in the template font, through the JDK. */
+    private static CharMetrics measureThroughTheJdk()
+    {
+        Font font = new Font(FONT_FAMILY, Font.PLAIN, FONT_SIZE_PT);
+        FontRenderContext context = new FontRenderContext(null, true, true);
+        GlyphVector glyphs = font.createGlyphVector(context, MEASURED_CHARACTER);
+        double advancePt = glyphs.getGlyphMetrics(0).getAdvanceX();
+        double widthMm = advancePt * MILLIMETER_PER_INCH / POINTS_PER_INCH;
+        return new CharMetrics(widthMm, "jdk:" + font.getFontName() + " " + FONT_SIZE_PT); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -196,10 +283,12 @@ public final class TemplatePrintWidth
      * by the platform, only differently from what its author expected.
      * </p>
      * <p>
-     * The print scale the model may hold is reported but not applied. The platform's own fit
-     * calculation compares the content against the printable width as it stands and applies the
-     * scale later, at print time - so folding it in here would answer a different question than the
-     * one the platform answers.
+     * The content span is the one the platform's paginator takes: the column set with the greatest
+     * width wins - the document's columns or a set a row carries - and a set is measured over its
+     * first {@code size} columns, declared columns past the last cell included. The print scale the
+     * model may hold is reported but not applied. The platform's own fit calculation compares the
+     * content against the printable width as it stands and applies the scale later, at print time -
+     * so folding it in here would answer a different question than the one the platform answers.
      * </p>
      *
      * @param doc the template's document, or {@code null} for an empty answer.
@@ -220,21 +309,19 @@ public final class TemplatePrintWidth
         PrintSettings settings = doc == null ? null : doc.getPrintSettings();
 
         boolean landscape = landscapeOf(settings, assumed);
-        String paper = paperOf(settings, assumed);
-        int sheetWidthMm = landscape ? A4_LONG_SIDE_MM : A4_SHORT_SIDE_MM;
+        Sheet sheet = sheetOf(settings, landscape, assumed);
         int leftMargin = marginOf(settings, true, assumed);
         int rightMargin = marginOf(settings, false, assumed);
         // A page cannot have a negative printable width; margins that wide are an overflow either
         // way, and zero is the floor a reader can act on.
         double printableWidthMm = Math.max(0.0,
-            sheetWidthMm - (leftMargin + rightMargin) / 100.0);
-        int printScalePercent =
-            settings != null && settings.isSetScale() ? settings.getScale() : DEFAULT_SCALE_PERCENT;
+            sheet.widthMm() - (leftMargin + rightMargin) / 100.0);
+        int printScalePercent = scaleOf(settings, assumed);
 
         Columns set = null;
         int[] columns = printAreaColumns(doc);
-        Row widest = widestRow(doc);
-        if (widest == null)
+        boolean anyCells = hasCells(doc);
+        if (!anyCells)
         {
             // No cell anywhere: there is no content to measure, whatever the print area names.
             columns = null;
@@ -245,9 +332,10 @@ public final class TemplatePrintWidth
         }
         else
         {
-            set = widest.getColumns();
-            int last = lastColumn(widest);
-            columns = last < 0 ? null : new int[] { 0, last };
+            set = longestRowColumns(doc);
+            int size = set == null ? 0 : set.getSize();
+            // The set is measured to its declared size, which may run past the last cell.
+            columns = size > 0 ? new int[] { 0, size - 1 } : null;
         }
         int contentCharUnits = 0;
         if (columns != null)
@@ -263,7 +351,7 @@ public final class TemplatePrintWidth
         boolean fitToPage = settings != null && settings.isFitToPage();
         String verdict;
         Double requiredScalePercent = null;
-        if (widest == null)
+        if (!anyCells)
         {
             verdict = "empty"; //$NON-NLS-1$
         }
@@ -294,7 +382,7 @@ public final class TemplatePrintWidth
         answer.put("marginMm", round(printableWidthMm - contentWidthMm, 2)); //$NON-NLS-1$
         answer.put("overflowMm", round(contentWidthMm - printableWidthMm, 2)); //$NON-NLS-1$
         answer.put("orientation", landscape ? "landscape" : "portrait"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        answer.put("paper", paper); //$NON-NLS-1$
+        answer.put("paper", sheet.paper()); //$NON-NLS-1$
         answer.put("printScalePercent", printScalePercent); //$NON-NLS-1$
         answer.put("charWidthMm", round(charWidthMm, 4)); //$NON-NLS-1$
         answer.put("charWidthSource", source); //$NON-NLS-1$
@@ -359,50 +447,96 @@ public final class TemplatePrintWidth
     }
 
     /**
-     * The row covering the most columns, which is the span a template prints when no print area
-     * says otherwise.
+     * Whether the document holds a cell anywhere.
      *
      * @param doc the document.
-     * @return the widest row, or {@code null} when the document has no cells at all.
+     * @return true when at least one row carries at least one cell.
      */
-    private static Row widestRow(SpreadsheetDocument doc)
+    private static boolean hasCells(SpreadsheetDocument doc)
     {
         EMap<Integer, Row> rows = doc == null ? null : doc.getRows();
         if (rows == null)
         {
-            return null;
+            return false;
         }
-        Row widest = null;
-        int widestLast = -1;
         for (Row row : rows.values())
         {
-            int last = lastColumn(row);
-            if (last > widestLast)
+            EMap<Integer, Cell> cells = row == null ? null : row.getCells();
+            if (cells != null && !cells.isEmpty())
             {
-                widestLast = last;
-                widest = row;
+                return true;
             }
         }
-        return widestLast < 0 ? null : widest;
+        return false;
     }
 
-    /** @return the 0-based index of a row's rightmost cell, or -1 for a row with none. */
-    private static int lastColumn(Row row)
+    /**
+     * The column set the platform's paginator prints when no print area says otherwise.
+     * <p>
+     * {@code MoxelRepaginator.getLongestRowColumns} starts from the document's columns, then walks
+     * the sets the rows carry - each counted once, by its id - and keeps whichever set has the
+     * greater width. A set's width is its first {@code size} columns, so a set whose declared size
+     * runs past the last cell is measured to the size, not to the cell.
+     * </p>
+     *
+     * @param doc the document.
+     * @return the widest column set, or {@code null} when the document declares none.
+     */
+    private static Columns longestRowColumns(SpreadsheetDocument doc)
     {
-        EMap<Integer, Cell> cells = row == null ? null : row.getCells();
-        if (cells == null)
+        if (doc == null)
         {
-            return -1;
+            return null;
         }
-        int last = -1;
-        for (Integer column : cells.keySet())
+        Columns winner = doc.getColumns();
+        int winnerWidth = setWidthCharUnits(doc, winner);
+        Set<UUID> seen = new HashSet<>();
+        if (winner != null)
         {
-            if (column != null && column.intValue() > last)
+            seen.add(winner.getColumnsId());
+        }
+        EMap<Integer, Row> rows = doc.getRows();
+        if (rows != null)
+        {
+            for (Row row : rows.values())
             {
-                last = column.intValue();
+                Columns set = row == null ? null : row.getColumns();
+                // A row without its own set measures as the document's, which is already a
+                // candidate; a set seen before was measured when it was first met.
+                if (set == null || !seen.add(set.getColumnsId()))
+                {
+                    continue;
+                }
+                int width = setWidthCharUnits(doc, set);
+                if (width > winnerWidth)
+                {
+                    winner = set;
+                    winnerWidth = width;
+                }
             }
         }
-        return last;
+        return winner;
+    }
+
+    /**
+     * The width of a column set, the way the paginator measures a candidate set.
+     *
+     * @param doc the document holding the format table.
+     * @param set the set of columns, or {@code null} for nothing.
+     * @return the sum of the first {@code size} columns' widths, in eighths of a character
+     */
+    private static int setWidthCharUnits(SpreadsheetDocument doc, Columns set)
+    {
+        if (set == null)
+        {
+            return 0;
+        }
+        int total = 0;
+        for (int column = 0; column < set.getSize(); column++)
+        {
+            total += columnWidthCharUnits(doc, set, column);
+        }
+        return total;
     }
 
     /**
@@ -446,28 +580,74 @@ public final class TemplatePrintWidth
     }
 
     /**
-     * The paper the sheet is, by name.
+     * The paper the sheet is, and how wide the sheet is across the print.
+     * <p>
+     * A paper declared as its own dimensions - code -1 with {@code pageWidth} and {@code pageHeight}
+     * in millimetres, the way {@code PrintInfoProvider.getPaperSize} reads it - is measured by
+     * those, with the orientation picking the side. Every other code names a paper this answer has
+     * no dimensions for, so the sheet is measured as A4 and {@code assumed} says so: a warning a
+     * reader can act on, where a guessed size would not be.
+     * </p>
      *
      * @param settings the print settings, or {@code null}.
+     * @param landscape true when the sheet prints landscape.
      * @param assumed collects the parameters taken by default.
-     * @return the paper's name.
+     * @return the paper's name and the sheet's width in millimetres.
      */
-    private static String paperOf(PrintSettings settings, List<String> assumed)
+    private static Sheet sheetOf(PrintSettings settings, boolean landscape, List<String> assumed)
     {
+        if (settings != null && settings.isSetPaper()
+            && settings.getPaper() == CUSTOM_SIZE_PAPER_CODE
+            && settings.isSetPageWidth() && settings.isSetPageHeight()
+            && settings.getPageWidth() > 0 && settings.getPageHeight() > 0)
+        {
+            float across = landscape ? settings.getPageHeight() : settings.getPageWidth();
+            return new Sheet(
+                "custom " + millimetres(settings.getPageWidth()) + "x" //$NON-NLS-1$ //$NON-NLS-2$
+                    + millimetres(settings.getPageHeight()) + "mm", //$NON-NLS-1$
+                across);
+        }
         if (settings == null || !settings.isSetPaper())
         {
             assumed.add("paper=A4"); //$NON-NLS-1$
-            return "A4"; //$NON-NLS-1$
         }
-        int code = settings.getPaper();
-        if (code == A4_PAPER_CODE)
+        else if (settings.getPaper() != A4_PAPER_CODE)
         {
-            return "A4"; //$NON-NLS-1$
+            // Only A4 has dimensions here. A template on another paper is measured as though it
+            // were on A4 and told so.
+            assumed.add("paper=" + settings.getPaper() + " measured as A4"); //$NON-NLS-1$ //$NON-NLS-2$
+            return new Sheet("code " + settings.getPaper(), //$NON-NLS-1$
+                landscape ? A4_LONG_SIDE_MM : A4_SHORT_SIDE_MM);
         }
-        // Only A4 has dimensions here. A template on another paper is measured as though it were on
-        // A4 and told so, which is a warning a reader can act on - a guessed size would not be.
-        assumed.add("paper=" + code + " measured as A4"); //$NON-NLS-1$ //$NON-NLS-2$
-        return "code " + code; //$NON-NLS-1$
+        return new Sheet("A4", landscape ? A4_LONG_SIDE_MM : A4_SHORT_SIDE_MM); //$NON-NLS-1$
+    }
+
+    /** @return a millimetre figure without a trailing zero decimal. */
+    private static String millimetres(float value)
+    {
+        return value == (int)value ? String.valueOf((int)value) : String.valueOf(value);
+    }
+
+    /** A paper's name together with the sheet width it gives. */
+    private record Sheet(String paper, double widthMm)
+    {
+    }
+
+    /**
+     * The print scale the model holds, or the one the platform fills in.
+     *
+     * @param settings the print settings, or {@code null}.
+     * @param assumed collects the parameters taken by default.
+     * @return the scale in percent.
+     */
+    private static int scaleOf(PrintSettings settings, List<String> assumed)
+    {
+        if (settings == null || !settings.isSetScale())
+        {
+            assumed.add("scale=100%"); //$NON-NLS-1$
+            return DEFAULT_SCALE_PERCENT;
+        }
+        return settings.getScale();
     }
 
     /**
