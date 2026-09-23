@@ -191,8 +191,8 @@ public class DatabaseUpdater implements IMcpTool
                     + "the model, and the update decision would be made against what the disk held " //$NON-NLS-1$
                     + "before them, answering Done or UPDATED over an update that never carried them. " //$NON-NLS-1$
                     + "The answer reports workspaceRefresh.changedResources: how many resources " //$NON-NLS-1$
-                    + "the re-read actually changed (added, removed or whose content moved into " //$NON-NLS-1$
-                    + "the model); 0 means the model already matched the disk. Pass false only " //$NON-NLS-1$
+                    + "the re-read actually changed (added, removed, replaced or content-changed); " //$NON-NLS-1$
+                    + "0 means the model already matched the disk. Pass false only " //$NON-NLS-1$
                     + "when every change went through this server.") //$NON-NLS-1$
             .build();
     }
@@ -1301,14 +1301,14 @@ public class DatabaseUpdater implements IMcpTool
      * invisible to the model until then, and the update decision below answers against the model:
      * Done or UPDATED over an update that never carried the change. This is the refresh a caller
      * would have had to know to ask for; done here, it cannot be forgotten. The count it reports
-     * is what this re-read actually changed - resources added, removed or whose content moved
-     * into the model - so 0 means the model already matched the disk.
+     * is what this re-read actually changed - resources added, removed, replaced or whose content
+     * moved into the model - so 0 means the model already matched the disk.
      * <p>
      * The platform's {@code refreshLocal} answers nothing about what it found, so the number is
-     * measured rather than asked for: a POST_CHANGE listener counts the leaf deltas for the
-     * duration of the refresh. Those notifications arrive after the call that caused them, so
-     * the listener is given a short quiet period to settle, and it is taken down in a closing
-     * step whatever the refresh did - a failed one included.
+     * measured rather than asked for: a POST_CHANGE listener counts leaf deltas delivered in the
+     * calling thread while it is inside {@code refreshLocal}. The platform delivers that operation's
+     * notification synchronously before returning. The listener is taken down in a closing step
+     * whatever the refresh did - a failed one included.
      * </p>
      *
      * @param project the project being updated
@@ -1336,6 +1336,7 @@ public class DatabaseUpdater implements IMcpTool
         {
             for (IProject each : watched)
             {
+                counter.beginRefresh();
                 try
                 {
                     each.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
@@ -1345,8 +1346,11 @@ public class DatabaseUpdater implements IMcpTool
                     failure = (failure == null ? "" : failure + "; ") //$NON-NLS-1$ //$NON-NLS-2$
                         + each.getName() + ": " + e.getMessage(); //$NON-NLS-1$
                 }
+                finally
+                {
+                    counter.endRefresh();
+                }
             }
-            counter.awaitQuiet();
         }
         finally
         {
@@ -1379,38 +1383,25 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
-     * Counts the resource deltas one refresh produced, for the time it is registered.
+     * Counts the resource deltas one refresh produced.
      * <p>
      * {@code IResource.refreshLocal} returns nothing about what it found, so the number the
-     * report promises is measured here: POST_CHANGE events are watched while the refresh runs
-     * and the leaf file deltas they carry - added, removed, or changed in content - are
-     * counted. Events are filtered to the projects the refresh was asked about, so a
-     * neighbour's own traffic inside the same window is not read as this refresh's work.
+     * report promises is measured here: POST_CHANGE events delivered synchronously in the thread
+     * executing {@code refreshLocal} are watched, and their changed leaf resources are counted.
+     * Events from every other thread are ignored, including traffic in the same project while the
+     * refresh runs.
      * </p>
      */
     private static final class RefreshChangeCounter implements IResourceChangeListener
     {
-        /** Quiet period after the last seen event before the count is considered settled. */
-        private static final long QUIET_PERIOD_MS = 200L;
-
-        /** Upper bound on the settle wait, so a stream of events cannot hold the answer open. */
-        private static final long MAX_SETTLE_MS = 1_500L;
-
-        /**
-         * How long an eventless refresh waits before concluding nothing is coming. Notifications
-         * arrive after the call that caused them, so "no event yet" right after the refresh
-         * returns means nothing on its own.
-         */
-        private static final long INITIAL_GRACE_MS = 150L;
-
         /** The counters registered right now; see {@link DatabaseUpdater#activeRefreshCounters()}. */
         private static final AtomicInteger ACTIVE = new AtomicInteger();
 
-        private final Set<IProject> watched;
+        private final Set<String> watched = new LinkedHashSet<>();
 
         private final AtomicInteger changed = new AtomicInteger();
 
-        private volatile long lastEventAt;
+        private volatile Thread refreshThread;
 
         /**
          * Binds the counter to the projects whose deltas count.
@@ -1419,7 +1410,22 @@ public class DatabaseUpdater implements IMcpTool
          */
         RefreshChangeCounter(Set<IProject> watched)
         {
-            this.watched = watched;
+            for (IProject project : watched)
+            {
+                this.watched.add(project.getName());
+            }
+        }
+
+        /** Marks the calling thread as being inside one watched {@code refreshLocal} call. */
+        void beginRefresh()
+        {
+            refreshThread = Thread.currentThread();
+        }
+
+        /** Stops attributing events to the call that just returned or failed. */
+        void endRefresh()
+        {
+            refreshThread = null;
         }
 
         /** Starts watching the workspace for the deltas the refresh is about to cause. */
@@ -1440,45 +1446,8 @@ public class DatabaseUpdater implements IMcpTool
         }
 
         /**
-         * Waits until the workspace has been quiet for a full quiet period, so the count covers
-         * what the refresh caused - the notifications arrive after the call that caused them.
-         * Bounded twice over: an eventless refresh waits only the initial grace, and a workspace
-         * that never goes quiet waits no longer than the cap.
-         */
-        void awaitQuiet()
-        {
-            long startedAt = System.currentTimeMillis();
-            long deadline = startedAt + MAX_SETTLE_MS;
-            while (System.currentTimeMillis() < deadline)
-            {
-                long last = lastEventAt;
-                long now = System.currentTimeMillis();
-                if (last == 0)
-                {
-                    if (now - startedAt >= INITIAL_GRACE_MS)
-                    {
-                        return;
-                    }
-                }
-                else if (now - last >= QUIET_PERIOD_MS)
-                {
-                    return;
-                }
-                try
-                {
-                    Thread.sleep(25L);
-                }
-                catch (InterruptedException interrupted)
-                {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-        }
-
-        /**
-         * What the refresh changed: the leaf files it added, removed, or whose content moved
-         * into the model.
+         * What the refresh changed: leaf resources it added, removed, replaced, or whose content
+         * moved into the model.
          *
          * @return the count
          */
@@ -1488,15 +1457,17 @@ public class DatabaseUpdater implements IMcpTool
         }
 
         /**
-         * Walks one notification batch and counts the leaf file deltas it carries. Directories
-         * are not counted: a directory that appeared or went away arrives with its files as
-         * their own deltas, and counting both would report one change twice.
+         * Walks one notification batch and counts changed leaf deltas of any resource kind.
          *
          * @param event the POST_CHANGE notification
          */
         @Override
         public void resourceChanged(IResourceChangeEvent event)
         {
+            if (Thread.currentThread() != refreshThread)
+            {
+                return;
+            }
             IResourceDelta delta = event.getDelta();
             if (delta == null)
             {
@@ -1506,18 +1477,19 @@ public class DatabaseUpdater implements IMcpTool
             {
                 delta.accept(child -> {
                     IResource resource = child.getResource();
-                    if (resource instanceof IProject && !watched.contains(resource))
+                    if (resource instanceof IProject && !watched.contains(resource.getName()))
                     {
                         return false;
                     }
-                    if (resource.getType() != IResource.FILE)
+                    if (child.getAffectedChildren().length != 0)
                     {
                         return true;
                     }
                     int kind = child.getKind();
                     boolean counts = (kind & (IResourceDelta.ADDED | IResourceDelta.REMOVED)) != 0
                         || (kind & IResourceDelta.CHANGED) != 0
-                            && (child.getFlags() & IResourceDelta.CONTENT) != 0;
+                            && (child.getFlags()
+                                & (IResourceDelta.CONTENT | IResourceDelta.TYPE | IResourceDelta.REPLACED)) != 0;
                     if (counts)
                     {
                         changed.incrementAndGet();
@@ -1532,7 +1504,6 @@ public class DatabaseUpdater implements IMcpTool
                 Activator.logWarning("Refresh change count lost part of the delta tree: " //$NON-NLS-1$
                     + walkFailed.getMessage());
             }
-            lastEventAt = System.currentTimeMillis();
         }
     }
 

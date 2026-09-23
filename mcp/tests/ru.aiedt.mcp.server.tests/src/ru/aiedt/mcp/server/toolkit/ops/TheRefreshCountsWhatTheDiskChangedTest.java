@@ -9,15 +9,26 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
+import org.eclipse.core.resources.IResourceChangeEvent;
+import org.eclipse.core.resources.IResourceChangeListener;
 import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
@@ -35,6 +46,7 @@ import com.google.gson.JsonObject;
  *
  * <p>The platform's {@code refreshLocal} returns nothing about what it found, so the count the
  * answer promises is measured with a POST_CHANGE listener held for the duration of the refresh.
+ * Only synchronous events in the refresh thread count, so another writer cannot enter the answer.
  * The project here is real - a temporary one with its location on disk - and the change is
  * written outside the workspace with {@code java.nio.file}, which is exactly the traffic the
  * refresh exists to catch: a file tool, a git checkout, a pull.</p>
@@ -88,6 +100,71 @@ public class TheRefreshCountsWhatTheDiskChangedTest
     }
 
     /**
+     * Measures the platform guarantee on which attribution of a delta to one refresh rests. Every
+     * POST_CHANGE event for this project must be delivered synchronously, in the thread executing
+     * {@code refreshLocal}, before that call returns.
+     *
+     * @throws Exception when the disk write or refresh fails
+     */
+    @Test
+    public void postChangeIsDeliveredInTheRefreshThreadBeforeReturn() throws Exception
+    {
+        Path measured = projectDir.resolve("src/Measured.bsl"); //$NON-NLS-1$
+        Files.writeString(measured, "// measured outside the workspace\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+
+        AtomicBoolean refreshReturned = new AtomicBoolean();
+        AtomicReference<Thread> refreshThread = new AtomicReference<>();
+        AtomicReference<Throwable> refreshFailure = new AtomicReference<>();
+        List<RefreshEventMeasurement> events = new CopyOnWriteArrayList<>();
+        IWorkspace workspace = ResourcesPlugin.getWorkspace();
+        IResourceChangeListener listener = event -> {
+            if (event.getDelta() != null && event.getDelta().findMember(project.getFullPath()) != null)
+            {
+                events.add(new RefreshEventMeasurement(Thread.currentThread(), refreshReturned.get()));
+            }
+        };
+        workspace.addResourceChangeListener(listener, IResourceChangeEvent.POST_CHANGE);
+        Thread worker = new Thread(() -> {
+            refreshThread.set(Thread.currentThread());
+            try
+            {
+                project.refreshLocal(IProject.DEPTH_INFINITE, new NullProgressMonitor());
+            }
+            catch (Throwable failure)
+            {
+                refreshFailure.set(failure);
+            }
+            finally
+            {
+                refreshReturned.set(true);
+            }
+        }, "aiedt-refresh-measurement"); //$NON-NLS-1$
+        try
+        {
+            worker.start();
+            worker.join();
+        }
+        finally
+        {
+            workspace.removeResourceChangeListener(listener);
+        }
+
+        assertEquals("refresh itself succeeded", null, refreshFailure.get()); //$NON-NLS-1$
+        assertTrue("the disk change produced a POST_CHANGE event", !events.isEmpty()); //$NON-NLS-1$
+        for (int index = 0; index < events.size(); index++)
+        {
+            RefreshEventMeasurement event = events.get(index);
+            System.out.println("REFRESH_EVENT_MEASUREMENT event=" + (index + 1) //$NON-NLS-1$
+                + " thread=" + event.thread.getName() //$NON-NLS-1$
+                + " refreshThread=" + refreshThread.get().getName() //$NON-NLS-1$
+                + " refreshReturned=" + event.afterReturn); //$NON-NLS-1$
+            assertEquals("POST_CHANGE uses the refresh thread", refreshThread.get(), event.thread); //$NON-NLS-1$
+            assertTrue("POST_CHANGE arrives before refreshLocal returns", !event.afterReturn); //$NON-NLS-1$
+        }
+        System.out.println("REFRESH_EVENT_MEASUREMENT total=" + events.size()); //$NON-NLS-1$
+    }
+
+    /**
      * A file rewritten on disk behind the workspace's back is picked up by the refresh, and the
      * report says so with a number rather than a constant zero. The timestamp is pushed forward
      * explicitly so the out-of-sync detection cannot miss the write on a coarse file clock.
@@ -106,6 +183,125 @@ public class TheRefreshCountsWhatTheDiskChangedTest
         assertTrue(report.toString(), report.get("changedResources").getAsInt() >= 1); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("the listener the refresh used does not outlive it", //$NON-NLS-1$
             0, DatabaseUpdater.activeRefreshCounters());
+    }
+
+    /**
+     * An empty directory is itself the changed leaf when it first appears on disk.
+     *
+     * @throws Exception when the directory cannot be created
+     */
+    @Test
+    public void anEmptyDirectoryCreatedOnDiskCountsOne() throws Exception
+    {
+        Files.createDirectory(projectDir.resolve("EmptyCreated")); //$NON-NLS-1$
+
+        JsonObject report = DatabaseUpdater.refreshFromDisk(project, project);
+
+        assertEquals(report.toString(), 1, report.get("changedResources").getAsInt()); //$NON-NLS-1$
+    }
+
+    /**
+     * An empty directory is itself the changed leaf when it disappears from disk.
+     *
+     * @throws Exception when the directory cannot be prepared or removed
+     */
+    @Test
+    public void anEmptyDirectoryDeletedOnDiskCountsOne() throws Exception
+    {
+        Path empty = projectDir.resolve("EmptyDeleted"); //$NON-NLS-1$
+        Files.createDirectory(empty);
+        project.refreshLocal(IProject.DEPTH_INFINITE, new NullProgressMonitor());
+        Files.delete(empty);
+
+        JsonObject report = DatabaseUpdater.refreshFromDisk(project, project);
+
+        assertEquals(report.toString(), 1, report.get("changedResources").getAsInt()); //$NON-NLS-1$
+    }
+
+    /**
+     * A resource whose disk type changes is reported even when neither side has child deltas.
+     *
+     * @throws Exception when the file or directory cannot be changed
+     */
+    @Test
+    public void aFileReplacedByADirectoryIsCounted() throws Exception
+    {
+        IFile original = project.getFile("ReplacedByDirectory"); //$NON-NLS-1$
+        original.create(new ByteArrayInputStream(new byte[] { 1 }), true, new NullProgressMonitor());
+        Path location = original.getLocation().toFile().toPath();
+        Files.delete(location);
+        Files.createDirectory(location);
+
+        JsonObject report = DatabaseUpdater.refreshFromDisk(project, project);
+
+        assertTrue(report.toString(), report.get("changedResources").getAsInt() > 0); //$NON-NLS-1$
+    }
+
+    /**
+     * Marker deltas carry workspace metadata, not a disk resource change, and do not count.
+     *
+     * @throws Exception when the marker cannot be changed
+     */
+    @Test
+    public void markerOnlyChangesCountZero() throws Exception
+    {
+        IProject markerRefresh = projectWhoseRefreshRuns(() -> {
+            IMarker marker = project.createMarker(IMarker.PROBLEM);
+            marker.setAttribute(IMarker.MESSAGE, "marker-only probe"); //$NON-NLS-1$
+            marker.delete();
+        });
+
+        JsonObject report = DatabaseUpdater.refreshFromDisk(markerRefresh, markerRefresh);
+
+        assertEquals(report.toString(), 0, report.get("changedResources").getAsInt()); //$NON-NLS-1$
+    }
+
+    /**
+     * A workspace API write in another thread may overlap the refresh listener, but it belongs to
+     * that writer rather than to the refresh and must not enter this call's answer.
+     *
+     * @throws Exception when the coordinated write fails
+     */
+    @Test
+    public void anotherThreadsWorkspaceWriteIsNotCounted() throws Exception
+    {
+        CountDownLatch refreshEntered = new CountDownLatch(1);
+        CountDownLatch writeFinished = new CountDownLatch(1);
+        AtomicReference<Throwable> writeFailure = new AtomicReference<>();
+        IFile written = project.getFile("WrittenByAnotherThread.txt"); //$NON-NLS-1$
+        IProject coordinated = projectWhoseRefreshRuns(() -> {
+            refreshEntered.countDown();
+            if (!writeFinished.await(5, TimeUnit.SECONDS))
+            {
+                throw new IllegalStateException("workspace writer did not finish"); //$NON-NLS-1$
+            }
+        });
+        Thread writer = new Thread(() -> {
+            try
+            {
+                if (!refreshEntered.await(5, TimeUnit.SECONDS))
+                {
+                    throw new IllegalStateException("refresh did not start"); //$NON-NLS-1$
+                }
+                written.create(new ByteArrayInputStream(new byte[] { 1 }), true, new NullProgressMonitor());
+            }
+            catch (Throwable failure)
+            {
+                writeFailure.set(failure);
+            }
+            finally
+            {
+                writeFinished.countDown();
+            }
+        }, "aiedt-unrelated-workspace-writer"); //$NON-NLS-1$
+        writer.start();
+
+        JsonObject report = DatabaseUpdater.refreshFromDisk(coordinated, coordinated);
+        writer.join();
+
+        assertEquals("workspace write succeeded", null, writeFailure.get()); //$NON-NLS-1$
+        assertEquals(report.toString(), 0, report.get("changedResources").getAsInt()); //$NON-NLS-1$
+        assertTrue("the other thread really wrote the resource", written.exists()); //$NON-NLS-1$
     }
 
     /**
@@ -171,5 +367,51 @@ public class TheRefreshCountsWhatTheDiskChangedTest
 
         assertTrue(after.toString(), after.get("changedResources").getAsInt() >= 1); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(0, DatabaseUpdater.activeRefreshCounters());
+    }
+
+    private static IProject projectWhoseRefreshRuns(CheckedRunnable refresh)
+    {
+        return (IProject)Proxy.newProxyInstance(
+            TheRefreshCountsWhatTheDiskChangedTest.class.getClassLoader(),
+            new Class<?>[] { IProject.class },
+            (proxy, method, args) -> {
+                switch (method.getName())
+                {
+                    case "isAccessible": //$NON-NLS-1$
+                        return true;
+                    case "getName": //$NON-NLS-1$
+                        return PROJECT;
+                    case "hashCode": //$NON-NLS-1$
+                        return System.identityHashCode(proxy);
+                    case "equals": //$NON-NLS-1$
+                        return proxy == args[0];
+                    case "toString": //$NON-NLS-1$
+                        return PROJECT;
+                    case "refreshLocal": //$NON-NLS-1$
+                        refresh.run();
+                        return null;
+                    default:
+                        return null;
+                }
+            });
+    }
+
+    @FunctionalInterface
+    private interface CheckedRunnable
+    {
+        void run() throws Exception;
+    }
+
+    private static final class RefreshEventMeasurement
+    {
+        private final Thread thread;
+
+        private final boolean afterReturn;
+
+        RefreshEventMeasurement(Thread thread, boolean afterReturn)
+        {
+            this.thread = thread;
+            this.afterReturn = afterReturn;
+        }
     }
 }
