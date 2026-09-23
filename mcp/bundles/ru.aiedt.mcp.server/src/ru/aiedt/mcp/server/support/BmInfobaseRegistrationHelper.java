@@ -43,7 +43,9 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * A duplicate is searched before any write: the new reference's {@link InfobaseIdentity} is
  * compared against every entry of the list, so the same infobase spelled with a trailing separator
  * or a different letter case (where the file system folds case) is reused, not added twice. The
- * answer names the projects a reused entry was already bound to ({@code alsoAssociatedWith}), and
+ * answer names the projects a reused entry was already bound to ({@code alsoAssociatedWith}),
+ * naming separately the projects whose applications could not be read, where the binding check
+ * did not run ({@code associationCheckFailed}), and
  * a name another entry already carries at another address is refused before the write - the name
  * is how {@code delete_infobase} and {@code create_launch_config} resolve the list.
  * </p>
@@ -83,10 +85,12 @@ public final class BmInfobaseRegistrationHelper
         public boolean defaultApplication;
         /** The default application that stood before, or {@code null} when there was none. */
         public String previousDefault;
-        /** Why the default was left alone or could not be set, or {@code null}. */
+        /** Why the default was left alone, could not be set, or the one it replaced is not named. */
         public String defaultWarning;
         /** Projects a reused entry was already bound to; {@code null} when it was bound nowhere else. */
         public List<String> alsoAssociatedWith;
+        /** Other projects whose applications could not be read, so the binding check did not run there. */
+        public List<String> associationCheckFailed;
         /** What the ordinary-application flag did: added / present / not set: ... */
         public String ordinaryApplicationFlag;
         /** Whether the list entry added for this call was removed again after a failed binding. */
@@ -332,11 +336,9 @@ public final class BmInfobaseRegistrationHelper
             }
             else
             {
-                r.alsoAssociatedWith = otherProjectsBoundTo(appMgr, env, project, found);
-                if (r.alsoAssociatedWith.isEmpty())
-                {
-                    r.alsoAssociatedWith = null;
-                }
+                OtherProjects others = otherProjectsBoundTo(appMgr, env, project, found);
+                r.alsoAssociatedWith = others.bound.isEmpty() ? null : others.bound;
+                r.associationCheckFailed = others.checkFailed.isEmpty() ? null : others.checkFailed;
             }
             try
             {
@@ -392,13 +394,8 @@ public final class BmInfobaseRegistrationHelper
         {
             r.previousDefault = previousDefault.getName();
         }
-        if (defaultRead.failure != null)
-        {
-            // An unread default is not "there is none": the omit rule must not replace a default
-            // the answer never saw, so the failure is named and the default is left alone.
-            r.defaultWarning = "the project's default application could not be read (" //$NON-NLS-1$
-                + defaultRead.failure + "), so the standing default was left alone"; //$NON-NLS-1$
-        }
+        // An unread default is not "there is none": the omit rule must not replace a default
+        // the answer never saw.
         boolean makeItDefault = makeDefault != null ? makeDefault.booleanValue()
             : previousDefault == null && defaultRead.failure == null;
         if (makeItDefault)
@@ -426,7 +423,18 @@ public final class BmInfobaseRegistrationHelper
         {
             // The flag answers "the application is the project's default after the call": a reused
             // entry that already held that state keeps it without a write.
-            r.defaultApplication = sameApplication(previousDefault, application);
+            r.defaultApplication = defaultNamesInfobase(previousDefault, application, bound);
+        }
+        if (defaultRead.failure != null && r.defaultWarning == null)
+        {
+            // The text follows the outcome: a set that went through replaced a default the answer
+            // never saw, so only the omission of its name is left to say; otherwise the standing
+            // default was left alone.
+            r.defaultWarning = r.defaultApplication
+                ? "the default that stood before could not be read (" + defaultRead.failure //$NON-NLS-1$
+                    + "), so the answer does not name it" //$NON-NLS-1$
+                : "the project's default application could not be read (" + defaultRead.failure //$NON-NLS-1$
+                    + "), so the standing default was left alone"; //$NON-NLS-1$
         }
 
         String runMode = env.projectRunMode(project);
@@ -612,6 +620,35 @@ public final class BmInfobaseRegistrationHelper
     private static IApplication findApplication(IApplicationManager appMgr, IProject project,
         InfobaseReference infobase)
     {
+        return scanApplication(appMgr, project, infobase).application;
+    }
+
+    /**
+     * What reading a project's applications for one infobase ended with: the application found,
+     * or why the read failed. The two must stay apart - a failed read answered as "not bound"
+     * would silence the projects the answer never checked.
+     */
+    private static final class ApplicationScan
+    {
+        /** The application pointing at the infobase; {@code null} when there is none or the read failed. */
+        IApplication application;
+
+        /** Why the read failed, or {@code null} when it succeeded. */
+        String failure;
+    }
+
+    /**
+     * Reads the project's applications and picks the one pointing at the given infobase.
+     *
+     * @param appMgr the application manager
+     * @param project the project
+     * @param infobase the reference to match
+     * @return what was found, with {@link ApplicationScan#failure} set when the read failed
+     */
+    private static ApplicationScan scanApplication(IApplicationManager appMgr, IProject project,
+        InfobaseReference infobase)
+    {
+        ApplicationScan scan = new ApplicationScan();
         try
         {
             List<IApplication> applications = appMgr.getApplications(project);
@@ -622,17 +659,19 @@ public final class BmInfobaseRegistrationHelper
                     if (application instanceof IInfobaseApplication
                         && sameInfobase(((IInfobaseApplication)application).getInfobase(), infobase))
                     {
-                        return application;
+                        scan.application = application;
+                        return scan;
                     }
                 }
             }
         }
         catch (Throwable e)
         {
+            scan.failure = msg(e);
             Activator.logWarning("register_infobase: the applications of a project were not read: " //$NON-NLS-1$
-                + msg(e));
+                + scan.failure);
         }
-        return null;
+        return scan;
     }
 
     /**
@@ -674,7 +713,8 @@ public final class BmInfobaseRegistrationHelper
 
     /**
      * Whether two application reads name the one application: by id, and for infobase
-     * applications by the infobase they point at.
+     * applications by the infobase they point at. A missing read on either side is not a
+     * match, and two missing reads are not the one application either.
      *
      * @param left one application, possibly {@code null}
      * @param right the other, possibly {@code null}
@@ -682,13 +722,13 @@ public final class BmInfobaseRegistrationHelper
      */
     private static boolean sameApplication(IApplication left, IApplication right)
     {
-        if (left == right)
-        {
-            return true;
-        }
         if (left == null || right == null)
         {
             return false;
+        }
+        if (left == right)
+        {
+            return true;
         }
         if (left.getId() != null && right.getId() != null)
         {
@@ -703,31 +743,72 @@ public final class BmInfobaseRegistrationHelper
     }
 
     /**
+     * Whether the default that stood before the call names the infobase this call bound: the
+     * application just found, or - when that lookup found nothing - an infobase application
+     * pointing at the same list entry. A default the answer never read is not a match.
+     *
+     * @param previousDefault the default read before the call, or {@code null}
+     * @param application the application found after the binding, or {@code null}
+     * @param bound the list entry the call bound
+     * @return whether the project's default points at the bound infobase
+     */
+    private static boolean defaultNamesInfobase(IApplication previousDefault,
+        IApplication application, InfobaseReference bound)
+    {
+        if (previousDefault == null)
+        {
+            return false;
+        }
+        if (application != null && sameApplication(previousDefault, application))
+        {
+            return true;
+        }
+        return previousDefault instanceof IInfobaseApplication
+            && sameInfobase(((IInfobaseApplication)previousDefault).getInfobase(), bound);
+    }
+
+    /** The outcome of scanning the other projects for bindings to a reused entry. */
+    private static final class OtherProjects
+    {
+        /** Projects whose applications point at the entry. */
+        final List<String> bound = new ArrayList<>();
+
+        /** Projects whose applications could not be read, so the check did not run there. */
+        final List<String> checkFailed = new ArrayList<>();
+    }
+
+    /**
      * The projects a reused entry was already bound to before this call: every workspace project
-     * but the one being registered to, whose applications point at the same infobase.
+     * but the one being registered to, whose applications point at the same infobase. A project
+     * whose applications could not be read is named apart - there the check did not run.
      *
      * @param appMgr the application manager
      * @param env where the workspace's projects are read from
      * @param registered the project being registered to
      * @param infobase the reused list entry
-     * @return the other project names; empty when the entry was bound nowhere else
+     * @return the bound projects, and apart the projects whose check failed
      */
-    private static List<String> otherProjectsBoundTo(IApplicationManager appMgr,
+    private static OtherProjects otherProjectsBoundTo(IApplicationManager appMgr,
         RegistrationEnvironment env, IProject registered, InfobaseReference infobase)
     {
-        List<String> names = new ArrayList<>();
+        OtherProjects result = new OtherProjects();
         for (IProject project : env.allProjects())
         {
             if (registered.getName().equals(project.getName()))
             {
                 continue;
             }
-            if (findApplication(appMgr, project, infobase) != null)
+            ApplicationScan scan = scanApplication(appMgr, project, infobase);
+            if (scan.application != null)
             {
-                names.add(project.getName());
+                result.bound.add(project.getName());
+            }
+            else if (scan.failure != null)
+            {
+                result.checkFailed.add(project.getName());
             }
         }
-        return names;
+        return result;
     }
 
     /** Whether two references name the one infobase: by uuid, else by normalized identity. */

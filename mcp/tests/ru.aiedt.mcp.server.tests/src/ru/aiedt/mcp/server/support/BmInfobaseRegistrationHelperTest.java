@@ -15,10 +15,12 @@ import static org.junit.Assert.assertTrue;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.eclipse.core.resources.IProject;
@@ -75,6 +77,16 @@ public class BmInfobaseRegistrationHelperTest
         /** When set, reading the default application throws with this message. */
         String defaultReadFailure;
 
+        /** Projects whose applications cannot be read: {@code getApplications} throws for them. */
+        final Set<String> applicationsReadFailures = new LinkedHashSet<>();
+
+        /** When true, {@code getApplications} answers an empty list, the way a lookup that found
+         * nothing does. */
+        boolean hideApplications;
+
+        /** Whether the infobase-list scan ran under the write lock. */
+        boolean getAllUnderWriteLock;
+
         /** What {@link #projectRunMode} answers. */
         String runMode = ClientLaunchMode.MANAGED;
 
@@ -117,6 +129,7 @@ public class BmInfobaseRegistrationHelperTest
                     switch (method.getName())
                     {
                     case "getAll": //$NON-NLS-1$
+                        getAllUnderWriteLock = LaunchApplicationIds.WRITE_LOCK.isHeldByCurrentThread();
                         return new ArrayList<Section>(infobases);
                     case "add": //$NON-NLS-1$
                         infobases.add((Section)args[0]);
@@ -174,6 +187,14 @@ public class BmInfobaseRegistrationHelperTest
                     switch (method.getName())
                     {
                     case "getApplications": //$NON-NLS-1$
+                        if (applicationsReadFailures.contains(((IProject)args[0]).getName()))
+                        {
+                            throw new IllegalStateException("the application store is closed"); //$NON-NLS-1$
+                        }
+                        if (hideApplications)
+                        {
+                            return new ArrayList<IApplication>();
+                        }
                         return new ArrayList<IApplication>(
                             applications.getOrDefault(((IProject)args[0]).getName(), List.of()));
                     case "getDefaultApplication": //$NON-NLS-1$
@@ -600,5 +621,96 @@ public class BmInfobaseRegistrationHelperTest
         assertFalse("the entry inside the group is found by the plain-list scan", r.added); //$NON-NLS-1$
         assertEquals("Existing base", r.infobaseName); //$NON-NLS-1$
         assertEquals("nothing was added beside the group", 1, env.infobases.size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedDefaultReadWithMakeDefaultTrueSetsTheDefaultAndSaysTheOldOneIsUnnamed()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.defaultReadFailure = "the application store is closed"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, Boolean.TRUE, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertTrue("makeDefault=true sets the default even when the read of the old one failed", //$NON-NLS-1$
+            r.defaultApplication);
+        assertNotNull("the new application was made the default", env.defaultSet); //$NON-NLS-1$
+        assertNotNull(r.defaultWarning);
+        assertTrue(r.defaultWarning.contains("could not be read")); //$NON-NLS-1$
+        assertTrue(r.defaultWarning.contains("the application store is closed")); //$NON-NLS-1$
+        assertFalse("the default was replaced, so the warning must not say it was left alone", //$NON-NLS-1$
+            r.defaultWarning.contains("left alone")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anApplicationLookupThatFindsNothingIsNotAnsweredAsTheDefault()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.hideApplications = true;
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, Boolean.FALSE, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertNull(r.applicationId);
+        assertFalse("two missing reads are not the one application", r.defaultApplication); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aStandingDefaultPointingAtTheReusedInfobaseKeepsTheFlagWhenTheLookupFindsNothing()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.defaultApplication = env.bind("project-one", existing); //$NON-NLS-1$
+        env.hideApplications = true;
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertFalse(r.added);
+        assertNull(r.applicationId);
+        assertTrue("the standing default points at this infobase, so it stays the default", //$NON-NLS-1$
+            r.defaultApplication);
+    }
+
+    @Test
+    public void aProjectWhoseApplicationsCouldNotBeReadIsNamedAsUnchecked()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.bind("project-two", existing); //$NON-NLS-1$
+        env.project("project-three"); //$NON-NLS-1$
+        env.applicationsReadFailures.add("project-three"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertFalse(r.added);
+        assertEquals(List.of("project-two"), r.alsoAssociatedWith); //$NON-NLS-1$
+        assertEquals("a failed read is not answered as \"not bound\"", //$NON-NLS-1$
+            List.of("project-three"), r.associationCheckFailed); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theDuplicateSearchRunsUnderTheWriteLock()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertTrue("the list is scanned for a duplicate under the lock that guards the write", //$NON-NLS-1$
+            env.getAllUnderWriteLock);
     }
 }

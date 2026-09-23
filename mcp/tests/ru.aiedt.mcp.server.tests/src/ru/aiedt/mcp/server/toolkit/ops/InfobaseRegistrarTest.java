@@ -128,6 +128,8 @@ public class InfobaseRegistrarTest
         assertTrue(json.contains("\"defaultApplication\":false")); //$NON-NLS-1$
         assertFalse("no other projects were named, so the field stays out", //$NON-NLS-1$
             json.contains("alsoAssociatedWith")); //$NON-NLS-1$
+        assertFalse("no binding check failed, so the field stays out", //$NON-NLS-1$
+            json.contains("associationCheckFailed")); //$NON-NLS-1$
     }
 
     @Test
@@ -144,6 +146,21 @@ public class InfobaseRegistrarTest
 
         assertTrue(json.contains("\"reused\":true")); //$NON-NLS-1$
         assertTrue(json.contains("\"alsoAssociatedWith\":[\"project-two\"]")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aReusedEntryNamesTheProjectsWhoseBindingCheckCouldNotRun()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "existing-base"; //$NON-NLS-1$
+        r.added = false;
+        r.applicationId = "app-two"; //$NON-NLS-1$
+        r.associationCheckFailed = List.of("project-three"); //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"associationCheckFailed\":[\"project-three\"]")); //$NON-NLS-1$
     }
 
     @Test
