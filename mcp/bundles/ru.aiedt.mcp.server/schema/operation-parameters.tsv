@@ -13,7 +13,7 @@ BranchInfobaseTool	list	projectName:string	passed in as locals	action:string,app
 BranchInfobaseTool	unbind	action:string,projectName:string	passed in as locals	applicationId:string,branch:string
 CodeSearchTool	call_hierarchy	depth:?,direction:string,limit:integer,methodName:string,modulePath:string,projectName:string	delegate CallHierarchyReader through rewriteForCallHierarchy	
 CodeSearchTool	content_assist	column:integer,contains:string,extendedDocumentation:boolean,filePath:string,limit:integer,line:integer,offset:integer,positions:array,projectName:string	delegate ContentAssistReader	
-CodeSearchTool	help	topic:string	read in place	
+CodeSearchTool	help	find:string,topic:string	read in place	
 CodeSearchTool	method_references	caseSensitive:boolean,compact:boolean,contextLines:integer,fileMask:string,isRegex:boolean,linesAfter:integer,linesBefore:integer,maxResults:integer,metadataType:string,outputMode:string,projectName:string,query:string,timeoutSeconds:integer,wholeWord:boolean	delegate CodeTextSearcher through rewriteForMethodReferences	
 CodeSearchTool	object_references	bslOnly:boolean,categories:string,deep:boolean,limit:integer,objectFqn:string,projectName:string,runKey:string,skipBsl:boolean,timeoutSeconds:integer	delegate ReferenceLocator through rewriteForObjectReferences	
 CodeSearchTool	outgoing_structures	objectFqn:string,projectName:string	delegate OutgoingStructuresReader through rewriteForObjectReferences	
@@ -153,7 +153,7 @@ EditMetadataTool	add_predefined_account_subconto	accountName:string,characterist
 EditMetadataTool	add_predefined_item	accountType:string,code:string,description:string,dryRun:boolean,isFolder:boolean,name:string,offBalance:boolean,order:string,ownerFqn:string,projectName:string	handler PredefinedOps.opAddPredefinedItem, read in place	
 EditMetadataTool	add_query_condition	condition:string,dataSetName:string	handler MiscOps.delegateToDcsWorkshop, delegate DcsWorkshopTool, renamed to add_query_condition	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,ownerFqn:string,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:boolean
 EditMetadataTool	add_query_field	dataSetName:string,field:string	handler MiscOps.delegateToDcsWorkshop, delegate DcsWorkshopTool, renamed to add_query_field	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,ownerFqn:string,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:boolean
-EditMetadataTool	add_radio_button	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool, renamed to add_radio_button - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
+EditMetadataTool	add_radio_button	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,find:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool, renamed to add_radio_button - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
 EditMetadataTool	add_recalculation	dryRun:boolean,name:string,ownerFqn:string,projectName:string,synonym:string	handler SpecializedOps.opAddRecalculation, read in place	
 EditMetadataTool	add_recalculation_dimension	dryRun:boolean,name:string,ownerFqn:string,projectName:string,recalculationName:string,registerDimension:string,synonym:string	handler SpecializedOps.opAddRecalculationDimension, read in place	
 EditMetadataTool	add_register_field	allowedLength:string,dateFractions:string,dryRun:boolean,fractionDigits:integer,kind:string,length:integer,name:string,nonNegative:boolean,ownerFqn:string,precision:integer,projectName:string,synonym:string,type:string	handler SpecializedOps.opAddRegisterField, read in place	
@@ -213,7 +213,7 @@ EditMetadataTool	remove_form_attribute	attributeName:string,deleteDataItems:?,dr
 EditMetadataTool	remove_form_command	commandName:string,dryRun:boolean,formFqn:string,projectName:string	handler FormItemsOps.opRemoveFormCommand, read in place	ownerFqn:string
 EditMetadataTool	remove_form_command_interface_item	commandFqn:?,dryRun:boolean,formFqn:string,panel:?,projectName:string	handler FormCommandInterfaceOps.opRemoveFormCommandInterfaceItem, read in place	ownerFqn:string
 EditMetadataTool	remove_form_event_handler	dryRun:boolean,event:string,formFqn:string,handlerName:string,itemName:string,projectName:string	handler FormEventOps.opRemoveFormEventHandler, read in place	ownerFqn:string
-EditMetadataTool	remove_form_item	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditForm, delegate EditFormTool, renamed to remove_form_item - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
+EditMetadataTool	remove_form_item	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,find:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditForm, delegate EditFormTool, renamed to remove_form_item - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
 EditMetadataTool	remove_form_item_functional_option	attributeName:string,commandName:string,dryRun:boolean,formFqn:string,projectName:string,valueFqn:string	handler MiscOps.opFormItemFunctionalOption, read in place	ownerFqn:string
 EditMetadataTool	remove_form_parameter	dryRun:boolean,formFqn:string,name:string,projectName:string	handler FormItemsOps.opRemoveFormParameter, read in place	ownerFqn:string
 EditMetadataTool	remove_functional_option_content	dryRun:boolean,ownerFqn:string,projectName:string,valueFqn:string	handler ContentOps.opFunctionalOptionContent, read in place	
@@ -332,20 +332,20 @@ InsightsFacadeTool	impact_analysis	action:string,limit:integer,objectFqn:string,
 InsightsFacadeTool	object_summary	includeErrors:boolean,includeReferences:boolean,objectFqn:string,projectName:string	delegate ObjectSummaryTool	
 InsightsFacadeTool	project_metrics	format:string,includeDebtList:boolean,projectName:string,scope:string,subsystemName:string,timeoutSeconds:integer	delegate ProjectMetricsTool	
 InsightsFacadeTool	semantic_metadata_search	limit:integer,metadataType:string,projectName:string,query:string	delegate SemanticMetadataSearchTool	
-LaunchDebuggerTool	add_breakpoint	action:string,topic:string	read in place	
+LaunchDebuggerTool	add_breakpoint	action:string,find:string,topic:string	read in place	
 LaunchDebuggerTool	debug_launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string
 LaunchDebuggerTool	debug_status	applicationId:string	delegate DebugStateReader	action:string
 LaunchDebuggerTool	evaluate	expression:string,frameRef:string	delegate ExpressionEvaluator	action:string
 LaunchDebuggerTool	get_profiling_results	minFrequency:integer,moduleFilter:string	delegate ProfilingResultsReader	action:string
 LaunchDebuggerTool	get_state	applicationId:string	delegate DebugStateReader	action:string
 LaunchDebuggerTool	get_variables	expandPath:string,frameIndex:integer,frameRef:string,scope:string,threadId:integer	delegate DebugVariablesReader	action:string
-LaunchDebuggerTool	help	topic:string	read in place	action:string
+LaunchDebuggerTool	help	find:string,topic:string	read in place	action:string
 LaunchDebuggerTool	launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string
-LaunchDebuggerTool	list_breakpoints	action:string,topic:string	read in place	
-LaunchDebuggerTool	remove_breakpoint	action:string,topic:string	read in place	
+LaunchDebuggerTool	list_breakpoints	action:string,find:string,topic:string	read in place	
+LaunchDebuggerTool	remove_breakpoint	action:string,find:string,topic:string	read in place	
 LaunchDebuggerTool	resume	applicationId:string,threadId:integer	delegate DebugResumer	action:string
 LaunchDebuggerTool	run_to_line	applicationId:string,lineNumber:integer,module:string,projectName:string,threadId:integer	delegate RunToLineTool	action:string
-LaunchDebuggerTool	set_breakpoint	action:string,topic:string	read in place	
+LaunchDebuggerTool	set_breakpoint	action:string,find:string,topic:string	read in place	
 LaunchDebuggerTool	set_exception_breakpoint	catchAll:boolean,message:string,projectName:string	delegate SetExceptionBreakpointTool	action:string
 LaunchDebuggerTool	set_variable	frameIndex:integer,frameRef:string,path:string,threadId:integer,value:string	delegate DebugVariableWriter	action:string
 LaunchDebuggerTool	start_profiling	applicationId:string	delegate ProfilingStarter	action:string
@@ -372,7 +372,7 @@ ProjectAdminFacadeTool	create_project	projectName:string,version:string	delegate
 ProjectAdminFacadeTool	delete_project	deleteContent:boolean,projectName:string	delegate ProjectRemover	
 ProjectAdminFacadeTool	get_configuration_properties	projectName:string	delegate ConfigurationInfoReader	
 ProjectAdminFacadeTool	list_configurations	projectName:string,type:string	delegate LaunchConfigsLister	
-ProjectAdminFacadeTool	list_projects	operation:string,topic:string	read in place	
+ProjectAdminFacadeTool	list_projects	find:string,operation:string,topic:string	read in place	
 ProjectAdminFacadeTool	list_subsystems	includeContent:boolean,language:string,limit:integer,nameFilter:string,projectName:string	delegate GetSubsystemsTool	
 ProjectAdminFacadeTool	restart_edt	action:string,delayMs:integer	delegate RestartEdtTool	
 ProjectAdminFacadeTool	resync_to_disk	objects:string[],projectName:string,refresh:boolean,waitTimeoutMs:integer	delegate DiskResynchronizer	

@@ -6,13 +6,16 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.runtime.Platform;
@@ -102,6 +105,7 @@ public class SupportRegistryTool
                     + "Pass operation=help without other parameters for the catalog.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project to read. Required for every operation except help.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
@@ -159,12 +163,16 @@ public class SupportRegistryTool
             // MalformedJsonException instead of the catalog, which is the only way in to the
             // list of operations.
             return ToolResult.success()
-                .put("help", buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema())) //$NON-NLS-1$ //$NON-NLS-2$
+                .put("help", buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$ //$NON-NLS-2$
+                    JsonUtils.extractStringArgument(params, "find"), getInputSchema())) //$NON-NLS-1$
                 .toJson();
         }
         if (!OPS.containsKey(operation))
         {
-            return ToolResult.error("Unknown operation '" + operation + "'. Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+            return ToolResult.error("Unknown operation '" + operation + "'." //$NON-NLS-1$ //$NON-NLS-2$
+                + FacadeHelpSearch.closestMatches(operation, OPS.keySet(),
+                    FacadeHelpSearch.describe(buildHelp(null, null, getInputSchema())))
+                + "\n\nAllowed: " //$NON-NLS-1$
                 + String.join(" / ", OPS.keySet()) + " / help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         String absent = supportSubsystemAbsent();
@@ -494,8 +502,29 @@ public class SupportRegistryTool
         return result.put("note", note).toJson(); //$NON-NLS-1$
     }
 
-    private static String buildHelp(String topic, String schema)
+    /** Every help topic, in the order the catalog names them: operations, then named topics. */
+    private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics {@code find} searches, catalog first by the caller, these after.
+     *
+     * @return the topic names, never <code>null</code>
+     */
+    private static List<String> helpTopics()
     {
+        List<String> topics = new ArrayList<>(OPS.keySet());
+        topics.add("modes"); //$NON-NLS-1$
+        topics.add("workflow"); //$NON-NLS-1$
+        return Collections.unmodifiableList(topics);
+    }
+
+    private static String buildHelp(String topic, String find, String schema)
+    {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+                asked -> buildHelp(asked, null, schema));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
         {
@@ -559,7 +588,7 @@ public class SupportRegistryTool
         // render. What this still owes a caller is the difference between a topic that
         // names nothing and one of its own operations, which nothing describes yet.
         return FacadeParameterHelp.answer(topic, Collections.emptyMap(), OPS.keySet(),
-            "modes, workflow", "SupportRegistryTool", schema); //$NON-NLS-1$
+            "modes, workflow", "SupportRegistryTool", schema, buildHelp(null, null, schema)); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     private static Map<String, String> buildOpsCatalog()

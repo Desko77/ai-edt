@@ -368,6 +368,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * scan is narrowed by. The sentences that refuse a selector the scope does not accept moved
      * to operation help. Measured at 87113.
      * </p>
+     * <p>
+     * And a sixteenth, by 1800, for find on the twelve facades whose help it searches: an agent
+     * that cannot see the argument reads the whole catalog and every topic to answer "where does
+     * this facade say X". Each copy is one shared sentence
+     * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
+     * to keep this raise the remainder it is. Together with the fifteenth: 88913.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 87113;
+    private static final int DOCUMENT_PROSE = 88913;
 }

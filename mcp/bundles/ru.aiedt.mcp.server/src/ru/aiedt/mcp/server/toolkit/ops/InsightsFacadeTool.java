@@ -6,9 +6,11 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -16,6 +18,7 @@ import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -114,6 +117,7 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
@@ -281,12 +285,15 @@ public class InsightsFacadeTool implements IMcpTool
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                JsonUtils.extractStringArgument(params, "find"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
-            return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
-                + "'. Allowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
+            return ToolResult.error("Unknown operation '" + operation + "'." //$NON-NLS-1$ //$NON-NLS-2$
+                + FacadeHelpSearch.closestMatches(operation, OPS.keySet(),
+                    FacadeHelpSearch.describe(buildHelp(null, null, getInputSchema())))
+                + "\n\nAllowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
                 + " / help.").toJson(); //$NON-NLS-1$
         }
         // One gate for every operation this facade folds in. Reaching a tool through a facade is
@@ -391,8 +398,28 @@ public class InsightsFacadeTool implements IMcpTool
         return Collections.unmodifiableMap(m);
     }
 
-    private static String buildHelp(String topic, String schema)
+    /** Every help topic, in the order the catalog names them: operations, then named topics. */
+    private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics {@code find} searches, catalog first by the caller, these after.
+     *
+     * @return the topic names, never <code>null</code>
+     */
+    private static List<String> helpTopics()
     {
+        List<String> topics = new ArrayList<>(OPS.keySet());
+        topics.add("workflow"); //$NON-NLS-1$
+        return Collections.unmodifiableList(topics);
+    }
+
+    private static String buildHelp(String topic, String find, String schema)
+    {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+                asked -> buildHelp(asked, null, schema));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
         {
@@ -456,7 +483,7 @@ public class InsightsFacadeTool implements IMcpTool
         Map<String, String> rules = NARROWING_RULES.get(topic);
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
             "workflow", "InsightsFacadeTool", schema, //$NON-NLS-1$ //$NON-NLS-2$
-            rules == null ? Collections.emptyMap() : rules);
+            rules == null ? Collections.emptyMap() : rules, buildHelp(null, null, schema));
     }
 
     /**

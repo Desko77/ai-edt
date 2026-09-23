@@ -20,6 +20,10 @@ EditMetadataTool:composerName
 EditMetadataTool:customSignature
 EditMetadataTool:eventName
 EditMetadataTool:filter
+# The form operations forward the call to EditFormTool whole, so the derivation hands them that
+# tool's whole schema - and find belongs to its help alone: outside operation=help nothing reads
+# it, and edit_metadata's own help does not search.
+EditMetadataTool:find
 EditMetadataTool:format
 EditMetadataTool:index
 EditMetadataTool:kind
