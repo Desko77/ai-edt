@@ -145,7 +145,10 @@ public class ToolCategoryTest
         // support state of a configuration and changes nothing, which is the same house as
         // the comparison tools it is read alongside.
         // On 2026-09-23 naparnik joined AI_HELPERS (+1 -> 134).
-        assertEquals(134, ToolCategory.getTotalToolCount());
+        // On 2026-09-23 register_infobase joined APPLICATIONS (+1 -> 135): it adds an existing
+        // infobase to EDT's list and binds it to a project, the same write to the list and the
+        // project's applications as create_infobase beside it.
+        assertEquals(135, ToolCategory.getTotalToolCount());
     }
 
     @Test

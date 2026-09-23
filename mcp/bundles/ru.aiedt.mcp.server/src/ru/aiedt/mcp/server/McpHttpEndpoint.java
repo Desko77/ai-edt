@@ -63,6 +63,7 @@ import ru.aiedt.mcp.server.toolkit.ops.CompareConfigurationsTool;
 import ru.aiedt.mcp.server.toolkit.ops.SupportRegistryTool;
 import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseCreator;
+import ru.aiedt.mcp.server.toolkit.ops.InfobaseRegistrar;
 import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchConfigCreator;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCreator;
@@ -186,9 +187,9 @@ import ru.aiedt.mcp.server.toolkit.ops.SecurityAuditFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.WorkspaceMarksFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.DocsLookupFacadeTool;
 import ru.aiedt.mcp.server.support.HeapHeadroom;
-import ru.aiedt.mcp.server.support.HeavyTools;
 import ru.aiedt.mcp.server.support.InstanceRegistry;
 import ru.aiedt.mcp.server.support.ToolCallScope;
+import ru.aiedt.mcp.server.support.ToolRoad;
 import ru.aiedt.mcp.server.support.WorkspacePhase;
 
 /**
@@ -358,14 +359,6 @@ public class McpHttpEndpoint
 
     private static final String MSG_OVERLOADED = "Too many tools running, try again shortly"; //$NON-NLS-1$
 
-    private static final String MSG_HEAVY_BUSY =
-        "A heavy tool is already running at the concurrency limit; retry shortly"; //$NON-NLS-1$
-
-    private static final String MSG_HEAP_EXHAUSTED =
-        "Refused to start an expensive tool: EDT has too little heap left, and starting it would " //$NON-NLS-1$
-            + "likely end the whole session rather than this one call. Give the workbench a moment, " //$NON-NLS-1$
-            + "run fewer expensive calls in a row, or restart EDT with a larger -Xmx. Heap: "; //$NON-NLS-1$
-
     private static final String MSG_SSE_OVERLOADED = "Server overloaded"; //$NON-NLS-1$
 
     private static final String MSG_SHUTTING_DOWN = "The endpoint is stopping and takes no new calls"; //$NON-NLS-1$
@@ -409,6 +402,12 @@ public class McpHttpEndpoint
      * preference at each start, so permits still held by tools that outlive a restart are not stranded.
      */
     private final AdjustableSemaphore heavyPermits = new AdjustableSemaphore(PrefKeys.DEFAULT_HEAVY_TOOL_LIMIT);
+
+    /**
+     * The road every tool call takes. Built over {@link #heavyPermits} and never replaced, so the
+     * permit the road admits a call under is returned to the same limiter across a restart.
+     */
+    private final ToolRoad toolRoad = new ToolRoad(heavyPermits);
 
     /** When the endpoint last opened, for the uptime reported by /health. */
     private volatile long serverStartMillis;
@@ -910,6 +909,17 @@ public class McpHttpEndpoint
     public int getPort()
     {
         return port;
+    }
+
+    /**
+     * Returns the road every tool call takes, for the service the activator publishes to other
+     * bundles.
+     *
+     * @return the road, never {@code null}; the same instance for the life of the endpoint
+     */
+    public ToolRoad getToolRoad()
+    {
+        return toolRoad;
     }
 
     /**
@@ -1484,6 +1494,7 @@ public class McpHttpEndpoint
             new CommonPictureExporter(),
             new InfobaseCredentialsWriter(),
             new InfobaseCreator(),
+            new InfobaseRegistrar(),
             new LaunchConfigCreator(),
             new ClientSessionStarter(),
             new BranchInfobaseTool(),
@@ -1870,49 +1881,27 @@ public class McpHttpEndpoint
         {
             JsonObject header = asJsonObject(body);
             String toolName = readToolName(header);
-            Semaphore permits = heavyPermits;
-            // Asked about the tool that will do the work, not about the name the call arrived under.
-            // Under the Canonical preset a client calls the facade, and the facade is not what runs:
-            // insights carries eight operations that are heavy, extension_workshop five, config_io
-            // four. Asking by the arriving name answered "light" for every one of them.
-            String routed = routedTool(toolName, readToolArguments(header));
-            boolean heavy = HeavyTools.isHeavy(toolName)
-                || (routed != null && HeavyTools.isHeavy(routed));
-            if (heavy)
+            // The road decides whether the call may run: the tool it will actually reach (a facade
+            // routes onward, and the tool underneath is what is expensive), the heap gate for a
+            // heavy call, and one permit per heavy caller. The refusal texts are the road's, so an
+            // agent and a bundle that called the same tool are told the same thing.
+            ToolRoad.Admission admission = toolRoad.admit(toolName, readToolArguments(header));
+            if (admission.refusal() != null)
             {
-                // The concurrency limit below bounds how many heavy tools run together, which never
-                // fires for one agent calling them in a row - and a long enough row walks the shared
-                // heap to its ceiling. What breaks then is not this call but the JVM, taking the
-                // workbench and this server with it, so the agent loses every later call as well.
-                HeapHeadroom.Reading heap = HeapHeadroom.current();
-                if (HeapHeadroom.refusesWork(heap, HeapHeadroom.refusalPercent()))
-                {
-                    Activator.logInfo("Heavy tool '" + toolName + "' refused: " + heap.describe()); //$NON-NLS-1$ //$NON-NLS-2$
-                    exchange.getResponseHeaders().add(HEADER_RETRY_AFTER, RETRY_AFTER_SECONDS);
-                    sendBody(exchange, HTTP_UNAVAILABLE,
-                        JsonUtils.buildSimpleError(MSG_HEAP_EXHAUSTED + heap.describe()));
-                    return;
-                }
-            }
-            if (heavy && !permits.tryAcquire())
-            {
-                // At the heavy-tool limit: turn this one away at once, freeing the request thread,
-                // rather than piling another expensive run onto EDT and starving everything else.
-                Activator.logInfo("Heavy tool '" + toolName //$NON-NLS-1$
-                    + "' refused: concurrency limit reached"); //$NON-NLS-1$
                 exchange.getResponseHeaders().add(HEADER_RETRY_AFTER, RETRY_AFTER_SECONDS);
-                sendBody(exchange, HTTP_UNAVAILABLE, JsonUtils.buildSimpleError(MSG_HEAVY_BUSY));
+                sendBody(exchange, HTTP_UNAVAILABLE, JsonUtils.buildSimpleError(admission.refusal()));
                 return;
             }
-            // The permit, if taken, is released by the worker when the tool truly finishes.
-            Runnable releasePermit = heavy ? permits::release : null;
+            // The permit, if taken, is spent by the road: released when the tool truly finishes,
+            // handed to the background run when the answer is a Pending envelope.
+            ToolRoad.Ticket ticket = admission.ticket();
             RunningToolCall call =
                 new RunningToolCall(exchange, toolName, readRequestId(header));
             setActiveToolCall(call);
             boolean workerStarted = false;
             try
             {
-                ToolExecution execution = new ToolExecution(body, call, releasePermit,
+                ToolExecution execution = new ToolExecution(body, call, ticket,
                     exchange.getRequestHeaders().getFirst(McpServerMeta.HEADER_SESSION_ID));
                 Thread worker = new Thread(execution, TOOL_EXECUTOR_THREAD);
                 worker.start();
@@ -1964,11 +1953,11 @@ public class McpHttpEndpoint
             }
             finally
             {
-                if (!workerStarted && releasePermit != null)
+                if (!workerStarted)
                 {
-                    // Building or starting the worker threw, so it will never release the permit: do it
-                    // here to avoid leaking a heavy slot.
-                    releasePermit.run();
+                    // Building or starting the worker threw, so the road will never spend the
+                    // ticket: do it here to avoid leaking a heavy slot.
+                    ticket.release();
                 }
                 clearActiveToolCall(call);
             }
@@ -2286,7 +2275,7 @@ public class McpHttpEndpoint
         /** Which client sent it, so every method the router serves here knows the same. */
         private final String sessionId;
 
-        private final Runnable onComplete;
+        private final ToolRoad.Ticket ticket;
 
         private final CountDownLatch finished = new CountDownLatch(1);
 
@@ -2294,11 +2283,11 @@ public class McpHttpEndpoint
 
         private volatile Exception failure;
 
-        ToolExecution(String body, RunningToolCall call, Runnable onComplete, String sessionId)
+        ToolExecution(String body, RunningToolCall call, ToolRoad.Ticket ticket, String sessionId)
         {
             this.body = body;
             this.call = call;
-            this.onComplete = onComplete;
+            this.ticket = ticket;
             this.sessionId = sessionId;
         }
 
@@ -2309,7 +2298,9 @@ public class McpHttpEndpoint
             {
                 // Inside the try so that even if scope setup throws an Error, the finally still runs
                 // countDown() - otherwise the waiting request thread would poll forever.
-                ToolCallScope.enter(ToolCallScope.create(call));
+                ToolCallScope scope = ToolCallScope.create(call);
+                scope.adoptTicket(ticket);
+                ToolCallScope.enter(scope);
                 document = protocolHandler.processRequest(body, sessionId);
             }
             catch (Exception e)
@@ -2329,16 +2320,13 @@ public class McpHttpEndpoint
                 ToolCallScope.exit();
                 try
                 {
-                    if (onComplete != null)
-                    {
-                        // Release the heavy permit (if any) before signalling completion, so a following
-                        // heavy call cannot briefly see the slot as still taken. This runs when the tool
-                        // truly finishes - which may be after the request thread already returned, since a
-                        // user signal answers the agent early while the tool keeps running - so the permit
-                        // is held for the tool's real lifetime. The nested finally keeps countDown
-                        // guaranteed even if the callback throws.
-                        onComplete.run();
-                    }
+                    // Release the heavy permit (if any) before signalling completion, so a following
+                    // heavy call cannot briefly see the slot as still taken. The road spends the
+                    // ticket itself when the body answers - a synchronous answer releases it, a
+                    // Pending answer hands it to the background run - so this is the safety net for
+                    // the answers that never reach a body: a refusal the router answered itself, a
+                    // document that did not parse. A spent ticket does nothing here.
+                    ticket.release();
                 }
                 finally
                 {
@@ -2749,23 +2737,6 @@ public class McpHttpEndpoint
             }
         }
         return arguments;
-    }
-
-    /**
-     * The tool a call reaches, when the name it arrived under only routes it onward.
-     *
-     * @param toolName the name in the request
-     * @param arguments the call arguments
-     * @return the tool that will run, or <code>null</code> when the named tool runs it itself
-     */
-    private static String routedTool(String toolName, Map<String, String> arguments)
-    {
-        if (toolName == null || toolName.isEmpty())
-        {
-            return null;
-        }
-        IMcpTool tool = McpToolCatalog.getInstance().getTool(toolName);
-        return tool == null ? null : tool.routesTo(arguments);
     }
 
     /**

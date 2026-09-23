@@ -12,6 +12,7 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.ServiceRegistration;
 import org.osgi.util.tracker.ServiceTracker;
 
 import com._1c.g5.v8.dt.bm.xtext.BmAwareResourceSetProvider;
@@ -57,6 +58,7 @@ import ru.aiedt.mcp.server.support.DebugLog;
 import ru.aiedt.mcp.server.support.IdleComparisonSweep;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.toolkit.IToolRoad;
 import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
 
@@ -100,6 +102,12 @@ public class Activator
     private static Activator plugin;
 
     private McpHttpEndpoint mcpServer;
+
+    /**
+     * The road every tool call takes, published to other bundles. Unregistered before the server
+     * stops, so a bundle holding the service never calls a road whose limiter is being torn down.
+     */
+    private ServiceRegistration<IToolRoad> toolRoadRegistration;
 
     private IClusterManager clusterService;
 
@@ -199,6 +207,10 @@ public class Activator
             // Nothing below is safe here. A headless test runtime brings the workspace, the UI and the
             // platform up on its own schedule, and reaching for any of them from a bundle activator
             // races it and kills the process. The server object exists; nothing else is touched.
+            // The road goes out here because a test runtime calls it as a service too: the built-in
+            // catalogue is never registered under this branch, so there is no initialization left
+            // for its publication to wait for.
+            toolRoadRegistration = context.registerService(IToolRoad.class, mcpServer.getToolRoad(), null);
             logInfo("AI-EDT started in headless mode: EDT services and UI are not initialized"); //$NON-NLS-1$
             return;
         }
@@ -211,6 +223,12 @@ public class Activator
         // Eagerly, and before any server start: the Tools preference page reads tool descriptions
         // straight out of the registry, and it has to work whether or not the server was ever started.
         mcpServer.registerTools();
+
+        // Only now, with the built-in catalogue in place: a service registration is visible to a
+        // tracker the moment it is made, and a bundle calling the road from its service callback
+        // must find the tools the catalogue has rather than a "Tool not found" of startup still
+        // going on. The whiteboard's own trackers stay asynchronous (see openInBackground).
+        toolRoadRegistration = context.registerService(IToolRoad.class, mcpServer.getToolRoad(), null);
 
         openServiceTrackers(context);
         SessionChangeTracker.initialize();
@@ -248,6 +266,18 @@ public class Activator
     @Override
     public void stop(BundleContext context) throws Exception
     {
+        if (toolRoadRegistration != null)
+        {
+            try
+            {
+                toolRoadRegistration.unregister();
+            }
+            catch (IllegalStateException alreadyGone)
+            {
+                // The framework tore the registration down with the bundle.
+            }
+            toolRoadRegistration = null;
+        }
         if (mcpServer != null && mcpServer.isRunning())
         {
             mcpServer.stop();

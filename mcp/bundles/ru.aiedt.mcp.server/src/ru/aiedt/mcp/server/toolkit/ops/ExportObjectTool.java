@@ -58,6 +58,19 @@ public class ExportObjectTool implements IMcpTool
         return NAME;
     }
 
+    /**
+     * Polls an export this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; a direct call names none, and the facade declares its own poll
+     * @return {@code export_object} when the key is in the export registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.EXPORT.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String getDescription()
     {
@@ -168,6 +181,9 @@ public class ExportObjectTool implements IMcpTool
         // auto-pick the single object regardless of the project name.
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> doExport(project, projectName, objectName, outputPath));
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String result = entry.await(timeoutMs);
         if (result != null)

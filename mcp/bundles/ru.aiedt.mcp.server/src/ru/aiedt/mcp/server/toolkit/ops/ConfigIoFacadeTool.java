@@ -22,6 +22,7 @@ import org.eclipse.core.resources.IProject;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
@@ -93,6 +94,34 @@ public class ConfigIoFacadeTool implements IMcpTool
         }
         Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
         return delegate == null ? null : delegate.get().getName();
+    }
+
+    /**
+     * Polls an export or a binary import, the two operations whose tools read {@code runKey}.
+     * <p>
+     * The other operations call {@code execute} and start new work, so a live key of either run
+     * must not exempt them.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; may be {@code null}
+     * @return the starter name this call polls, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        if (PendingWorkRegistry.EXPORT.domain().equals(domain)
+            && "export_object".equals(normalized)) //$NON-NLS-1$
+        {
+            return ExportObjectTool.NAME;
+        }
+        if (PendingWorkRegistry.IMPORT_BINARY.domain().equals(domain)
+            && "import_configuration_from_binary".equals(normalized)) //$NON-NLS-1$
+        {
+            return ConfigurationBinaryImporter.NAME;
+        }
+        return null;
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()

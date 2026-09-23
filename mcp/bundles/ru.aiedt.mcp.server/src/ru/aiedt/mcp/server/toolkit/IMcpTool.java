@@ -173,6 +173,27 @@ public interface IMcpTool
     }
 
     /**
+     * The run this call resumes in {@code domain}, or {@code null} when the call starts work of
+     * its own.
+     * <p>
+     * Default is none. Where {@link #routesTo(Map)} sends the call is not this answer: a facade
+     * that builds the tool and calls {@code execute} starts a new traversal, and a matching name
+     * is not proof the call will poll. A tool that really polls a {@code runKey} returns the
+     * {@code startedBy} name of that run, and only for the domain and the operation that poll it.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in, as
+     *            {@code PendingWorkRegistry.domain()} reports it; never {@code null} when the road
+     *            asks
+     * @param operation the operation argument, or {@code null} when the call names none
+     * @return the starter name this call polls, or {@code null} when it does not poll
+     */
+    default String resumes(String domain, String operation)
+    {
+        return null;
+    }
+
+    /**
      * The tool this call will actually run, when this one only routes it onward.
      * <p>
      * A facade is one name over many tools, and everything the server decides BEFORE the call runs -
