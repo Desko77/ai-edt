@@ -43,9 +43,15 @@ import com.google.gson.JsonParser;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
 
 /**
- * A stored ConfigDumpInfo.xml of a foreign format stops an update before anything is asked of the
- * infobase - measured 22.09: EDT 2026.2 writes format {@code 2.20}, the 8.3.27 platform reads and
- * writes {@code 2.7} and answers {@code FullDump}, so the update silently becomes a full load.
+ * A stored ConfigDumpInfo.xml whose format is not the one recorded for that infobase stops an update
+ * before anything is asked of the infobase: the platform answers {@code FullDump} to a format it does
+ * not understand, so such an update silently becomes a full load.
+ *
+ * <p>Which format an infobase understands is a property of the base rather than of the platform
+ * version - measured 23.09 on platform 8.3.27.2214, a base loaded from a {@code .cf} answered
+ * {@code 2.20} while another base on the same platform answered {@code 2.7}. So the expectation
+ * compared here is what a rebuild recorded for THIS base, and a base with no record is not compared
+ * at all.</p>
  *
  * <p>The application manager below records every call it receives. The gate being tested decides
  * BEFORE the manager's first call, so a foreign format answers with a refusal and an empty record,
@@ -54,7 +60,7 @@ import ru.aiedt.mcp.server.support.DumpInfoProbe;
  */
 public class ADumpInfoFormatStopsTheUpdateTest
 {
-    /** The reading the whole class is about: a 2.20 file where the platform writes 2.7. */
+    /** The reading the whole class is about: a 2.20 file where this base's own Designer wrote 2.7. */
     private static DumpInfoProbe.Reading foreignFile()
     {
         return DumpInfoProbe.reading("E:/ws/.metadata/ib-sync/ss/<uuid>/ConfigDumpInfo.xml", //$NON-NLS-1$
@@ -139,14 +145,20 @@ public class ADumpInfoFormatStopsTheUpdateTest
     }
 
     /**
-     * Nothing to compare means nothing to stop: no expectation for the platform, or no stored file
+     * Nothing to compare means nothing to stop: no format recorded for this base, or no stored file
      * at all, passes the gate - and the answer says the check was not made rather than claiming it.
+     * A base whose record is missing is not compared even where another base on the SAME platform
+     * has one, which is the measured case: 8.3.27.2214 wrote 2.7 for one base and 2.20 for another.
      */
     @Test
-    public void noExpectationOrNoFileMeansNoGate()
+    public void noRecordOrNoFileMeansNoGate()
     {
-        assertNull("no expectation -> no gate", DatabaseUpdater.stopOnForeignDumpInfoFormat( //$NON-NLS-1$
-            DumpInfoProbe.reading("file", "2.20", null, "9.9.9.1"), false)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertNull("a base with no record is not compared even on the platform that wrote 2.7", //$NON-NLS-1$
+            DatabaseUpdater.stopOnForeignDumpInfoFormat( //$NON-NLS-1$
+                DumpInfoProbe.reading("file", "2.20", null, "8.3.27.2214"), false)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertNull("a base with no record and no platform either -> no gate", //$NON-NLS-1$
+            DatabaseUpdater.stopOnForeignDumpInfoFormat( //$NON-NLS-1$
+                DumpInfoProbe.reading("file", "2.20", null, "9.9.9.1"), false)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertNull("no file -> no gate", DatabaseUpdater.stopOnForeignDumpInfoFormat( //$NON-NLS-1$
             DumpInfoProbe.reading("file", null, "2.7", "8.3.27.1"), false)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertNull("matching formats -> no gate", DatabaseUpdater.stopOnForeignDumpInfoFormat( //$NON-NLS-1$
@@ -199,26 +211,30 @@ public class ADumpInfoFormatStopsTheUpdateTest
     }
 
     /**
-     * The expectation is measured table first and remembered after: 8.3.27 is known to write 2.7,
-     * a rebuild's record makes an unknown platform known, and the build number is not part of the
-     * key.
+     * The expectation is what a rebuild recorded for THIS infobase, and nothing is assumed of a base
+     * without a record: not the platform's reputation, and not a neighbouring base's format.
      */
     @Test
-    public void theExpectationIsMeasuredThenRemembered()
+    public void theExpectationIsTheFormatRecordedForThisInfobase()
         throws IOException
     {
-        assertEquals("8.3.27", DumpInfoProbe.withoutBuild("8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("8.3.27", DumpInfoProbe.withoutBuild("8.3.27")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("2.7", DumpInfoProbe.expectedFormat("8.3.27.2214", null)); //$NON-NLS-1$ //$NON-NLS-2$
-
         Path pairs = Files.createTempFile("dump-info-formats", ".properties"); //$NON-NLS-1$ //$NON-NLS-2$
         try
         {
-            assertNull("an unknown platform has no expectation", //$NON-NLS-1$
-                DumpInfoProbe.expectedFormat("8.3.24.100", pairs)); //$NON-NLS-1$
-            DumpInfoProbe.rememberPair("8.3.24.100", "2.5", pairs); //$NON-NLS-1$ //$NON-NLS-2$
-            assertEquals("a rebuild's record is the expectation afterwards", "2.5", //$NON-NLS-1$
-                DumpInfoProbe.expectedFormat("8.3.24", pairs)); //$NON-NLS-1$
+            assertNull("a base with no record has no expectation", //$NON-NLS-1$
+                DumpInfoProbe.expectedFormat("file:e:/bases/one", pairs)); //$NON-NLS-1$
+            DumpInfoProbe.rememberPair("file:e:/bases/one", "2.7", pairs); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("what this base's own Designer wrote is the expectation afterwards", //$NON-NLS-1$
+                "2.7", DumpInfoProbe.expectedFormat("file:e:/bases/one", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull("another base on the same platform is given its own record, not this one", //$NON-NLS-1$
+                DumpInfoProbe.expectedFormat("server:srv/Acc", pairs)); //$NON-NLS-1$
+            DumpInfoProbe.rememberPair("file:e:/bases/one", "2.20", pairs); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("a later rebuild of the same base supersedes its earlier record", //$NON-NLS-1$
+                "2.20", DumpInfoProbe.expectedFormat("file:e:/bases/one", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull("nowhere to record means nothing is expected", //$NON-NLS-1$
+                DumpInfoProbe.expectedFormat("file:e:/bases/one", null)); //$NON-NLS-1$
+            assertNull("no infobase identity is no expectation", //$NON-NLS-1$
+                DumpInfoProbe.expectedFormat(null, pairs)); //$NON-NLS-1$
         }
         finally
         {

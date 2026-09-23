@@ -154,11 +154,12 @@ public class DatabaseUpdater implements IMcpTool
                 + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
                 + "branch switch, which cannot be undone.") //$NON-NLS-1$
             .booleanProperty("ignoreDumpInfoFormat", "Update even when the stored " //$NON-NLS-1$ //$NON-NLS-2$
-                + "ConfigDumpInfo.xml carries a format this infobase's platform is known not to " //$NON-NLS-1$
-                + "understand (the answer names both formats when it stops you). Off by default: " //$NON-NLS-1$
-                + "a file of a foreign format makes the platform answer FullDump and the update " //$NON-NLS-1$
-                + "silently becomes a full configuration load. The way to actually fix the file " //$NON-NLS-1$
-                + "is sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
+                + "ConfigDumpInfo.xml carries a format other than the one recorded for this " //$NON-NLS-1$
+                + "infobase by its own Designer (the answer names both formats when it stops you). " //$NON-NLS-1$
+                + "Off by default: a file of a foreign format makes the platform answer FullDump " //$NON-NLS-1$
+                + "and the update silently becomes a full configuration load. A base with no " //$NON-NLS-1$
+                + "recorded format is not compared at all. The way to actually fix the file is " //$NON-NLS-1$
+                + "sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
                 + "EDT-launched runtime-client sessions for this infobase, so an active client cannot keep " //$NON-NLS-1$
                 + "the infobase locked and block the update. Only runtime-client launches that match both this project " //$NON-NLS-1$
@@ -733,14 +734,14 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
-     * Reads the stored dump-info of an application's infobase and the format its platform is known
-     * to understand. Every leg that EDT may not be able to answer collapses to a reading with no
-     * expectation rather than to an exception: a check with nothing to compare is a fact the answer
-     * names, not a failure to run.
+     * Reads the stored dump-info of an application's infobase and the format recorded for that base
+     * by its own Designer. Every leg that EDT may not be able to answer collapses to a reading with
+     * no expectation rather than to an exception: a check with nothing to compare is a fact the
+     * answer names, not a failure to run.
      *
      * @param infobaseProject the project that owns the infobase - the parent, for an extension
      * @param application the application the update targets
-     * @return the reading; its {@code expectedFormat} is {@code null} when nothing is known
+     * @return the reading; its {@code expectedFormat} is {@code null} when this base has no record
      */
     static DumpInfoProbe.Reading readDumpInfoProbe(IProject infobaseProject, IApplication application)
     {
@@ -759,15 +760,16 @@ public class DatabaseUpdater implements IMcpTool
         String platformVersion =
             ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.thickClientPlatformVersion(
                 infobaseProject, infobase);
-        String expected = DumpInfoProbe.expectedFormat(platformVersion, DumpInfoProbe.stateFile());
+        String expected = DumpInfoProbe.expectedFormat(
+            ru.aiedt.mcp.server.support.InfobaseIdentity.of(infobase), DumpInfoProbe.stateFile());
         return DumpInfoProbe.reading(stored.toString(), DumpInfoProbe.formatOf(stored), expected,
             platformVersion);
     }
 
     /**
      * The refusal an update answers when the stored dump-info carries a foreign format, or
-     * <code>null</code> to go ahead - when the formats match, when nothing is known about this
-     * platform's format, when there is no stored file, or when the caller said to ignore it.
+     * <code>null</code> to go ahead - when the formats match, when this base has no recorded
+     * format, when there is no stored file, or when the caller said to ignore it.
      *
      * @param dumpInfo the reading of the stored file, or {@code null}
      * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
@@ -780,9 +782,9 @@ public class DatabaseUpdater implements IMcpTool
             return null;
         }
         return ToolResult.error("The stored ConfigDumpInfo.xml carries format \"" //$NON-NLS-1$
-            + dumpInfo.actualFormat + "\" while the platform of this infobase (" //$NON-NLS-1$
-            + dumpInfo.platformVersion + ") is known to read and write \"" //$NON-NLS-1$
-            + dumpInfo.expectedFormat + "\" - an update would silently become a FULL " //$NON-NLS-1$
+            + dumpInfo.actualFormat + "\" while the Designer of this infobase writes \"" //$NON-NLS-1$
+            + dumpInfo.expectedFormat + "\" (recorded for this base on platform " //$NON-NLS-1$
+            + dumpInfo.platformVersion + ") - an update would silently become a FULL " //$NON-NLS-1$
             + "configuration load (the platform answers FullDump to a dump-info file it does not " //$NON-NLS-1$
             + "understand), so it was not started. Rebuild the file with the platform's own " //$NON-NLS-1$
             + "Designer dump: infobase_admin operation=sync_control syncOperation=rebuild_dump_info " //$NON-NLS-1$
@@ -799,7 +801,7 @@ public class DatabaseUpdater implements IMcpTool
 
     /**
      * One sentence about the dump-info format check, for answers that went ahead: what was
-     * compared, what matched, what was overridden, or that nothing was known about this platform.
+     * compared, what matched, what was overridden, or that nothing has been recorded for this base.
      *
      * @param dumpInfo the reading, or {@code null}
      * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
@@ -816,17 +818,16 @@ public class DatabaseUpdater implements IMcpTool
         {
             if (dumpInfo.expectedFormat == null)
             {
-                return "not compared: no expected format is known for platform " //$NON-NLS-1$
-                    + (dumpInfo.platformVersion == null ? "unknown" : dumpInfo.platformVersion) //$NON-NLS-1$
-                    + " (the file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
-                    + "\") - rebuild_dump_info records one"; //$NON-NLS-1$
+                return "not compared: no format has been recorded for this infobase yet (the " //$NON-NLS-1$
+                    + "file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
+                    + "\") - rebuild_dump_info records one from this base's own Designer"; //$NON-NLS-1$
             }
             return "matched: the file carries \"" + dumpInfo.expectedFormat //$NON-NLS-1$
-                + "\" as the platform of this infobase writes"; //$NON-NLS-1$
+                + "\" as this infobase's own Designer writes"; //$NON-NLS-1$
         }
         return ignore
             ? "OVERRIDDEN by ignoreDumpInfoFormat: the file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
-                + "\", the platform of this infobase reads and writes \"" + dumpInfo.expectedFormat //$NON-NLS-1$
+                + "\", this infobase's Designer writes \"" + dumpInfo.expectedFormat //$NON-NLS-1$
                 + "\" - expect a FULL configuration load" //$NON-NLS-1$
             : "mismatch: file \"" + dumpInfo.actualFormat + "\", expected \"" //$NON-NLS-1$ //$NON-NLS-2$
                 + dumpInfo.expectedFormat + "\""; //$NON-NLS-1$

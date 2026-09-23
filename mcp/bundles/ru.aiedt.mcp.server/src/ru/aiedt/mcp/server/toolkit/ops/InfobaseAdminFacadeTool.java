@@ -207,9 +207,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "application.") //$NON-NLS-1$
             .booleanProperty("ignoreDumpInfoFormat", //$NON-NLS-1$
                 "update_database: update even when the stored ConfigDumpInfo.xml carries a " //$NON-NLS-1$
-                    + "format this infobase's platform is known not to understand - the answer " //$NON-NLS-1$
-                    + "names both formats when it stops you, and expects a FULL load when it " //$NON-NLS-1$
-                    + "does not.") //$NON-NLS-1$
+                    + "format other than the one this infobase's Designer wrote - the answer names " //$NON-NLS-1$
+                    + "both formats when it stops you, and expects a FULL load when it does not.") //$NON-NLS-1$
             .stringProperty("branch", //$NON-NLS-1$
                 "branch_infobase: the branch to bind or unbind. Defaults to the branch the " //$NON-NLS-1$
                     + "project is on.") //$NON-NLS-1$
@@ -288,7 +287,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "update_database: soft wait limit in seconds (5-120, default 30) before " //$NON-NLS-1$
                     + "replying Pending with a runKey to resume. sync_control " //$NON-NLS-1$
-                    + "syncOperation=rebuild_dump_info: how long the Designer dump is waited " //$NON-NLS-1$
+                    + "syncOperation=rebuild_dump_info: how long each Designer run is waited " //$NON-NLS-1$
                     + "for (60-3600, default 600).") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "update_database: resumes a Pending update issued earlier with this runKey; " //$NON-NLS-1$

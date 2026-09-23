@@ -25,6 +25,11 @@ import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.HandshakeOutcome;
  * loaded from disk once per holder, so a rebuild that replaces the file and drops the cached holder
  * is a rebuild the running EDT actually sees.</p>
  *
+ * <p>The dump itself is asked for twice over: the platform writes the one dump-info file alone for
+ * {@code -configDumpInfoOnly} (measured 23.09 on 8.3.27.2214: exit code 0, 2 seconds, one file),
+ * and the whole configuration tree for the hierarchical dump. The quick run is the primary path and
+ * the full dump is its fallback, named in the answer either way.</p>
+ *
  * <p>The whole environment is handed in through {@link RebuildIo}, so the step order and every
  * failure of it are testable against a stand-in that records what ran.</p>
  */
@@ -75,6 +80,13 @@ public final class DumpInfoRebuilder
 
         /** The format the platform wrote, or {@code null} when it never got that far. */
         public String newFormat;
+
+        /**
+         * Which dump produced the file - the quick {@code -configDumpInfoOnly} run, or the full
+         * hierarchical dump - with the reason when the fallback was taken. {@code null} when no run
+         * produced a file at all.
+         */
+        public String rebuildPath;
 
         /** How many object records the new file carries, or {@code -1} when unknown. */
         public int records = -1;
@@ -143,16 +155,25 @@ public final class DumpInfoRebuilder
         boolean releaseInfobase() throws Exception;
 
         /**
-         * The Designer run: dumps the infobase configuration into the directory given and answers
-         * the fresh dump-info file it produced (or {@code null} to mean the conventional
-         * {@code ConfigDumpInfo.xml} inside that directory). Throws {@link Abandoned} for a run
-         * given up on by timeout.
+         * The quick Designer run: asks the platform for the dump-info file alone, which it writes
+         * as one {@code ConfigDumpInfo.xml} without the configuration tree beside it. Throws
+         * {@link Abandoned} for a run given up on by timeout.
          *
          * @param tempDir the directory to dump into, beside the store
          * @return the fresh dump-info file, or {@code null} for the conventional name
          * @throws Exception when the platform run failed
          */
-        Path runDesignerDump(Path tempDir) throws Exception;
+        Path runDumpInfoOnly(Path tempDir) throws Exception;
+
+        /**
+         * The full Designer run: dumps the whole configuration in the hierarchical format, and with
+         * it the platform's own dump-info file - the fallback for a quick run that left no file.
+         *
+         * @param tempDir the directory to dump into, beside the store
+         * @return the fresh dump-info file, or {@code null} for the conventional name
+         * @throws Exception when the platform run failed
+         */
+        Path runFullDump(Path tempDir) throws Exception;
 
         /**
          * Takes the infobase back; owed exactly when the release said the infobase was connected.
@@ -170,13 +191,14 @@ public final class DumpInfoRebuilder
         String dropCachedHolder();
 
         /**
-         * Records the format this platform's Designer wrote, so later checks expect it.
+         * Records the format the Designer of this infobase wrote, so later checks of this base
+         * expect it.
          *
-         * @param platformVersion the platform version, with or without build
+         * @param infobaseIdentity the base the record is for ({@link InfobaseIdentity})
          * @param format the {@code version} attribute the Designer wrote
-         * @throws IOException when the pair cannot be written
+         * @throws IOException when the record cannot be written
          */
-        void rememberPair(String platformVersion, String format) throws IOException;
+        void rememberPair(String infobaseIdentity, String format) throws IOException;
 
         /**
          * Removes the temporary dump directory; runs at every outcome past its creation.
@@ -193,14 +215,14 @@ public final class DumpInfoRebuilder
 
     /**
      * The production rebuild: resolves the thick-client environment the way every other Designer
-     * call of this server does, then runs {@link #performRebuild} against it. The Designer dumps the
-     * whole configuration in the hierarchical format into a temporary directory beside the store -
-     * the dump that carries the platform's own {@code ConfigDumpInfo.xml}.
+     * call of this server does, then runs {@link #performRebuild} against it. The Designer dumps
+     * into a temporary directory beside the store - first the dump-info file alone, and the whole
+     * configuration in the hierarchical format only when that left no file.
      *
      * @param projectName the project whose infobase the file belongs to
      * @param applicationId the application naming the infobase; required when the project has
      *            several, resolved otherwise
-     * @param timeoutMs how long the Designer run is waited for before it is abandoned
+     * @param timeoutMs how long EACH Designer run is waited for before it is abandoned
      * @return the outcome; a resolution failure lands in {@link Outcome#error} with its kind
      */
     public static Outcome rebuildViaEdt(String projectName, String applicationId, long timeoutMs)
@@ -269,9 +291,15 @@ public final class DumpInfoRebuilder
             }
 
             @Override
-            public Path runDesignerDump(Path tempDir) throws Exception
+            public Path runDumpInfoOnly(Path tempDir) throws Exception
             {
-                return runDesignerDumpUnderTimeout(ctx, tempDir, timeoutMs);
+                return runDumpInfoOnlyUnderTimeout(ctx, tempDir, timeoutMs);
+            }
+
+            @Override
+            public Path runFullDump(Path tempDir) throws Exception
+            {
+                return runFullDumpUnderTimeout(ctx, tempDir, timeoutMs);
             }
 
             @Override
@@ -287,9 +315,9 @@ public final class DumpInfoRebuilder
             }
 
             @Override
-            public void rememberPair(String platform, String format) throws IOException
+            public void rememberPair(String infobaseIdentity, String format) throws IOException
             {
-                DumpInfoProbe.rememberPair(platform, format, DumpInfoProbe.stateFile());
+                DumpInfoProbe.rememberPair(infobaseIdentity, format, DumpInfoProbe.stateFile());
             }
 
             @Override
@@ -316,13 +344,59 @@ public final class DumpInfoRebuilder
         java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss"); //$NON-NLS-1$
 
     /**
-     * Runs the platform dump on a worker thread and abandons it when the budget runs out. The
+     * Runs the quick Designer dump on a worker thread and abandons it when the budget runs out. The
      * platform process itself cannot be reached to be killed from here - it runs inside EDT's
      * designer session - so an abandoned run is handed back as {@link Abandoned} and the process is
      * left to finish on its own, which the answer says plainly.
      */
-    private static Path runDesignerDumpUnderTimeout(
+    private static Path runDumpInfoOnlyUnderTimeout(
         BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
+    {
+        return underTimeout("the dump-info-only Designer run", timeoutMs, () -> { //$NON-NLS-1$
+            BmInfobaseExtensionHelper.runDesignerDumpInfoOnly(ctx, tempDir);
+            return null;
+        });
+    }
+
+    /**
+     * As above, for the full hierarchical dump - the fallback, and the run that walks the whole
+     * configuration.
+     */
+    private static Path runFullDumpUnderTimeout(
+        BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
+    {
+        return underTimeout("the Designer dump", timeoutMs, () -> ctx.launcher //$NON-NLS-1$
+            .exportFullXmlFromInfobase(ctx.component, ctx.infobase,
+                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL,
+                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesKind.PLAIN_FILES,
+                ctx.args, tempDir));
+    }
+
+    /**
+     * One Designer run, as the platform hands it to EDT.
+     */
+    private interface PlatformRun
+    {
+        /**
+         * @return the fresh dump-info file, or {@code null} for the conventional name
+         * @throws Exception when the run failed
+         */
+        Path run() throws Exception;
+    }
+
+    /**
+     * Runs a platform call on a worker thread and abandons it when its budget runs out, so a
+     * Designer that never answers costs the caller a wait it named rather than the session.
+     *
+     * @param what what the run is, as the abandonment names it
+     * @param timeoutMs how long the run is waited for
+     * @param run the platform call
+     * @return whatever the call answered
+     * @throws Abandoned when the budget ran out - the call is cancelled and the process left to
+     *             finish on its own
+     * @throws Exception when the call itself failed
+     */
+    private static Path underTimeout(String what, long timeoutMs, PlatformRun run) throws Exception
     {
         java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors
             .newSingleThreadExecutor(runnable -> {
@@ -330,21 +404,16 @@ public final class DumpInfoRebuilder
                 thread.setDaemon(true);
                 return thread;
             });
-        java.util.concurrent.Future<Path> run = worker.submit(() -> ctx.launcher
-            .exportFullXmlFromInfobase(ctx.component, ctx.infobase,
-                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL,
-                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesKind.PLAIN_FILES,
-                ctx.args, tempDir));
+        java.util.concurrent.Future<Path> running = worker.submit(run::run);
         worker.shutdown();
         try
         {
-            return run.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return running.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
         catch (java.util.concurrent.TimeoutException tooSlow)
         {
-            run.cancel(true);
-            throw new Abandoned("the Designer dump did not finish within " //$NON-NLS-1$
-                + (timeoutMs / 1000) + "s"); //$NON-NLS-1$
+            running.cancel(true);
+            throw new Abandoned(what + " did not finish within " + (timeoutMs / 1000) + "s"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -398,8 +467,8 @@ public final class DumpInfoRebuilder
      *
      * @param io the environment, step by step
      * @param stamp the timestamp suffix of the backup copy ({@code before-rebuild-<stamp>})
-     * @param platformVersion the platform version for the answer and the recorded pair, or
-     *            {@code null} when the caller could not name one (the pair is then not recorded)
+     * @param platformVersion the platform version the dump runs with, for the answer, or
+     *            {@code null} when the caller could not name one
      * @return the outcome, with the step sequence in it
      */
     public static Outcome performRebuild(RebuildIo io, String stamp, String platformVersion)
@@ -449,7 +518,7 @@ public final class DumpInfoRebuilder
 
             HandshakeOutcome handshake = BmInfobaseExtensionHelper.runUnderHandshake(
                 io::releaseInfobase,
-                () -> runTheDump(io, dumpDir, storedFile, out, stamp),
+                () -> runTheDump(io, dumpDir, storedFile, out, stamp, identity),
                 io::reconnectInfobase);
             out.sequence.addAll(handshake.sequence);
             if (handshake.reconnectError != null)
@@ -498,19 +567,66 @@ public final class DumpInfoRebuilder
         return out;
     }
 
+    /** The path token for the quick run, the primary one. */
+    private static final String PATH_DUMP_INFO_ONLY = "configDumpInfoOnly"; //$NON-NLS-1$
+
+    /** The path token for the full hierarchical dump, the fallback. */
+    private static final String PATH_FULL = "fullHierarchical"; //$NON-NLS-1$
+
     /**
-     * The Designer run and everything that must happen while the infobase is released: dump, verify
-     * the file, back the old one up, replace it, make EDT re-read it, record the pair.
+     * The Designer run and everything that must happen while the infobase is released: ask for the
+     * dump-info alone, fall back to the full dump when that left no file, verify the file, back the
+     * old one up, replace it, make EDT re-read it, record the format for this base.
+     *
+     * <p>The quick run is asked for first because the platform writes one
+     * {@code ConfigDumpInfo.xml} for it in seconds, while the full dump writes the whole
+     * configuration tree. The fallback runs when the quick run left no file at all - either
+     * answered none, or failed. What the file SAYS is not the fallback's question: a file that is
+     * there but does not read as a dump-info is refused by the verification below rather than
+     * replaced, and the stored file stays as it was.</p>
+     *
+     * <p>A quick run ABANDONED by its budget is carried up as it stands rather than retried with
+     * the full dump: the platform process is still running and holding the base, which is exactly
+     * what the abandonment warns the caller not to follow with another run.</p>
+     *
+     * @param identity the base's identity, the key the format is recorded under
      */
     private static void runTheDump(RebuildIo io, Path tempDir, Path storedFile, Outcome out,
-        String stamp) throws Exception
+        String stamp, String identity) throws Exception
     {
-        Path freshFile = io.runDesignerDump(tempDir);
+        out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
+        String fallback = null;
+        Path freshFile = null;
+        try
+        {
+            freshFile = producedFile(io.runDumpInfoOnly(tempDir), tempDir);
+        }
+        catch (Abandoned givenUp)
+        {
+            throw givenUp;
+        }
+        catch (Exception refused)
+        {
+            fallback = "the quick dump failed: " + oneLine(refused); //$NON-NLS-1$
+        }
+        if (freshFile == null && fallback == null)
+        {
+            fallback = "the quick dump left no " + DumpInfoProbe.FILE_NAME; //$NON-NLS-1$
+        }
         if (freshFile == null)
         {
-            freshFile = tempDir.resolve(DumpInfoProbe.FILE_NAME);
+            out.sequence.add("dumpFull"); //$NON-NLS-1$
+            out.rebuildPath = PATH_FULL + " (" + fallback + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            freshFile = producedFile(io.runFullDump(tempDir), tempDir);
+            if (freshFile == null)
+            {
+                freshFile = tempDir.resolve(DumpInfoProbe.FILE_NAME);
+            }
         }
-        out.sequence.add("dump"); //$NON-NLS-1$
+        else
+        {
+            out.rebuildPath = PATH_DUMP_INFO_ONLY;
+        }
 
         // Verify before anything of the stored file's is touched: a file that is not there, or not
         // a ConfigDumpInfo root with a version, is the platform's answer and not a reason to swap.
@@ -533,23 +649,34 @@ public final class DumpInfoRebuilder
         out.sequence.add("dropHolder"); //$NON-NLS-1$
         out.holderRefresh = io.dropCachedHolder();
 
-        if (out.platformVersion != null)
+        out.sequence.add("rememberPair"); //$NON-NLS-1$
+        try
         {
-            out.sequence.add("rememberPair"); //$NON-NLS-1$
-            try
-            {
-                io.rememberPair(out.platformVersion, out.newFormat);
-                out.pairRemembered = out.platformVersion + " -> " + out.newFormat; //$NON-NLS-1$
-            }
-            catch (IOException notWritten)
-            {
-                // The file is already replaced; an unrecorded pair costs the NEXT check its
-                // expectation, not this rebuild its result.
-                out.pairRemembered = "NOT recorded (" + oneLine(notWritten) //$NON-NLS-1$
-                    + ") - the next format check has no expectation for " //$NON-NLS-1$
-                    + out.platformVersion + " until a rebuild records one"; //$NON-NLS-1$
-            }
+            io.rememberPair(identity, out.newFormat);
+            out.pairRemembered = identity + " -> " + out.newFormat; //$NON-NLS-1$
         }
+        catch (IOException notWritten)
+        {
+            // The file is already replaced; an unrecorded format costs the NEXT check its
+            // expectation, not this rebuild its result.
+            out.pairRemembered = "NOT recorded (" + oneLine(notWritten) //$NON-NLS-1$
+                + ") - the next format check has no expectation for this infobase until a " //$NON-NLS-1$
+                + "rebuild records one"; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The file a Designer run left: its own answer, or the conventional name in the dump directory.
+     * Only the file's presence is asked here - what it carries is the verification's question.
+     *
+     * @param produced what the run answered, or {@code null} for the conventional name
+     * @param tempDir the directory the run dumped into
+     * @return the file, or {@code null} when the run left none
+     */
+    private static Path producedFile(Path produced, Path tempDir)
+    {
+        Path file = produced != null ? produced : tempDir.resolve(DumpInfoProbe.FILE_NAME);
+        return Files.isRegularFile(file) ? file : null;
     }
 
     /**

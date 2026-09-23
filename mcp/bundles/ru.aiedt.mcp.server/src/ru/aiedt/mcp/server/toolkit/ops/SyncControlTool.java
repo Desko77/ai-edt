@@ -108,10 +108,15 @@ public class SyncControlTool implements IMcpTool
             + "proceed without an EDT restart. " //$NON-NLS-1$
             + "operation=rebuild_dump_info (applicationId=... when several; confirm=true): rebuilds the stored " //$NON-NLS-1$
             + "ConfigDumpInfo.xml with the infobase platform's own Designer dump - the cure for a dump-info file " //$NON-NLS-1$
-            + "whose format or versions the platform does not understand (the answer to that is FullDump and every " //$NON-NLS-1$
-            + "update silently becomes a full load; update_database names the mismatch before starting). Releases " //$NON-NLS-1$
+            + "whose format the platform does not understand (the answer to that is FullDump and every " //$NON-NLS-1$
+            + "update silently becomes a full load; update_database names the mismatch before starting). The " //$NON-NLS-1$
+            + "Designer is first asked for the dump-info alone, which takes seconds; the full hierarchical dump " //$NON-NLS-1$
+            + "is the fallback when that leaves no file, and rebuildPath says which one produced the file and " //$NON-NLS-1$
+            + "why. Releases " //$NON-NLS-1$
             + "the infobase for a Designer run, backs the previous file up beside it, replaces it, makes EDT " //$NON-NLS-1$
-            + "re-read it and reconnects the infobase; a failed swap is rolled back from the backup. " //$NON-NLS-1$
+            + "re-read it and reconnects the infobase; a failed swap is rolled back from the backup. The format " //$NON-NLS-1$
+            + "the new file carries is recorded for THIS infobase (formatPair), and later checks compare against " //$NON-NLS-1$
+            + "that record rather than against the platform version. " //$NON-NLS-1$
             + "reseed_baseline, mark_synchronized and recover_stuck_merge are DANGEROUS - only on explicit user request " //$NON-NLS-1$
             + "and only when you are CERTAIN of the state (project KNOWN to match the infobase / no update really " //$NON-NLS-1$
             + "running); otherwise EDT silently drops real changes or a genuine merge is aborted. NEVER call autonomously."; //$NON-NLS-1$
@@ -138,10 +143,9 @@ public class SyncControlTool implements IMcpTool
                 + "naming the infobase whose stored file is rebuilt. Required when the project has " //$NON-NLS-1$
                 + "several applications (see infobase_admin operation=get_applications); resolved " //$NON-NLS-1$
                 + "otherwise.") //$NON-NLS-1$
-            .stringProperty("timeoutSeconds", "For operation=rebuild_dump_info: how long the " //$NON-NLS-1$ //$NON-NLS-2$
-                + "Designer dump is waited for, 60-3600 (default 600). A full dump of a large " //$NON-NLS-1$
-                + "configuration takes minutes; past the budget the run is abandoned, the stored " //$NON-NLS-1$
-                + "file is not touched and the infobase is reconnected.") //$NON-NLS-1$
+            .stringProperty("timeoutSeconds", "For operation=rebuild_dump_info: how long each " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Designer run is waited for, 60-3600 (default 600). Past it the run is abandoned, " //$NON-NLS-1$
+                + "the stored file is not touched and the infobase is reconnected.") //$NON-NLS-1$
             .booleanProperty("confirm", "For operation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$ //$NON-NLS-2$
                 + "recover_stuck_merge / rebuild_dump_info: " //$NON-NLS-1$
                 + "must be true to proceed. Confirms you are CERTAIN of the state (project matches the infobase, or " //$NON-NLS-1$
@@ -949,10 +953,11 @@ public class SyncControlTool implements IMcpTool
      * Designer dump, under the per-infobase claim, with the previous file backed up beside it and
      * EDT taken off the infobase for the Designer run and put back after it.
      *
-     * <p>Every outcome is named on its own: what the swap did to the file ({@code fileState}),
-     * what the reconnection did, what the recorded format pair says. A mismatched file is the one
-     * condition {@code update_database} stops on before asking the infobase anything, and this is
-     * the operation that cures it.</p>
+     * <p>Every outcome is named on its own: which dump produced the file ({@code rebuildPath}, with
+     * the reason when the fallback was taken), what the swap did to the file ({@code fileState}),
+     * what the reconnection did, what the format recorded for this infobase says
+     * ({@code formatPair}). A mismatched file is the one condition {@code update_database} stops on
+     * before asking the infobase anything, and this is the operation that cures it.</p>
      *
      * @param project the project whose infobase is targeted
      * @param params the call; {@code confirm} and, when the project has several applications,
@@ -979,6 +984,7 @@ public class SyncControlTool implements IMcpTool
         Activator.logInfo("sync_control rebuild_dump_info: " + project.getName() //$NON-NLS-1$
             + (applicationId == null || applicationId.isEmpty() ? "" : " app=" + applicationId) //$NON-NLS-1$ //$NON-NLS-2$
             + " ok=" + outcome.ok //$NON-NLS-1$
+            + " path=" + outcome.rebuildPath //$NON-NLS-1$
             + " fileState=" + outcome.fileState //$NON-NLS-1$
             + (outcome.oldFormat == null ? "" : " " + outcome.oldFormat) //$NON-NLS-1$ //$NON-NLS-2$
             + (outcome.newFormat == null ? "" : " -> " + outcome.newFormat) //$NON-NLS-1$ //$NON-NLS-2$
@@ -1011,6 +1017,10 @@ public class SyncControlTool implements IMcpTool
         if (outcome.newFormat != null)
         {
             answer.put("newFormat", outcome.newFormat); //$NON-NLS-1$
+        }
+        if (outcome.rebuildPath != null)
+        {
+            answer.put("rebuildPath", outcome.rebuildPath); //$NON-NLS-1$
         }
         if (outcome.records >= 0)
         {

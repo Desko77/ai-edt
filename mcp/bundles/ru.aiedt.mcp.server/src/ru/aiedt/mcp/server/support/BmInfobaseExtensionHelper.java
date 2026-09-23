@@ -1373,6 +1373,52 @@ public final class BmInfobaseExtensionHelper
         mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
     }
 
+    /**
+     * Asks the platform for the dump-info file alone: the {@code -configDumpInfoOnly} dump, which
+     * writes one {@code ConfigDumpInfo.xml} instead of the whole configuration tree.
+     * <p>
+     * There is no first-class launcher verb for it - the format is a builder call and the flag is
+     * not - so the DESIGNER command
+     * ({@code exportXmlFromInfobase(dir).withFormat(HIERARCHICAL)} plus {@code -configDumpInfoOnly})
+     * is built and run through the same protected {@code executeRuntimeProcessCommand} the extension
+     * install uses, which appends the infobase access and captures the designer log.
+     * {@code additionalParameters} places its tokens after the export verb and its {@code -format}
+     * value and before the access settings, which is where a command line carries them
+     * (bytecode-verified on the EDT 2026.1 target).
+     * </p>
+     * <p>
+     * Runs inside the caller's handshake: the caller has released the infobase and holds the claim,
+     * and this method neither takes the lock nor reconnects.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param tempDir the directory the dump-info file is written into
+     * @throws Exception when EDT does not expose the execution internals, or the Designer failed
+     */
+    static void runDesignerDumpInfoOnly(LauncherContext ctx, java.nio.file.Path tempDir)
+        throws Exception
+    {
+        java.lang.reflect.Method splitM =
+            findMethodUp(ctx.launcher.getClass(), "splitInfobaseConnection"); //$NON-NLS-1$
+        java.lang.reflect.Method execM = findMethodUp(ctx.launcher.getClass(),
+            "executeRuntimeProcessCommand", RuntimeExecutionCommandBuilder.class, //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        if (execM == null)
+        {
+            throw new IllegalStateException("This EDT runtime does not expose the thick-client " //$NON-NLS-1$
+                + "execution internals required to dump the configuration (" //$NON-NLS-1$
+                + (splitM == null ? "executeRuntimeProcessCommand / splitInfobaseConnection" //$NON-NLS-1$
+                    : "executeRuntimeProcessCommand") + ")."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        boolean split = splitM != null && (Boolean)splitM.invoke(ctx.launcher);
+        RuntimeExecutionCommandBuilder command = new RuntimeExecutionCommandBuilder(
+            ctx.component.getFile(), RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
+        command.forInfobase(ctx.infobase, split).exportXmlFromInfobase(tempDir)
+            .withFormat(com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL)
+            .additionalParameters("-configDumpInfoOnly"); //$NON-NLS-1$
+        execM.invoke(ctx.launcher, command, ctx.component.getInstallation(), ctx.infobase, ctx.args);
+    }
+
     private static void reconnectInfobase(LauncherContext ctx)
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
