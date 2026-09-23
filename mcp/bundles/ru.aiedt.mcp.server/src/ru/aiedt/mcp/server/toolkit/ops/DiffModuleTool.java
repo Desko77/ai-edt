@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,14 +25,19 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.GitDiffUtils;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.PreviousRevision;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.modules.IModuleSource;
+import ru.aiedt.mcp.server.support.modules.ModuleSources;
 
 /**
- * Tool for comparing BSL module with its previous VCS version.
+ * Tool for comparing BSL module with its previous revision.
  * Shows what changed: added/modified/removed methods and line-level diff.
  * Modes: summary (method-level overview), unified (git diff format), methods (per-method diff).
- * Critical for code review and change analysis.
+ * Compares against HEAD of the file that holds the module, a module a provider holds without a
+ * file of its own against a revision of its container, and names the outcome when there is
+ * nothing to compare with.
  */
 public class DiffModuleTool implements IMcpTool
 {
@@ -52,12 +59,18 @@ public class DiffModuleTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Compare BSL module with previous VCS version (git). " + //$NON-NLS-1$
+        return "Compare BSL module with its previous revision: HEAD of the file that holds it, " + //$NON-NLS-1$
+            "else Eclipse's local history. " + //$NON-NLS-1$
             "Shows what changed: added/modified/removed methods and line-by-line diff. " + //$NON-NLS-1$
             "Modes: summary (method-level overview, default), " + //$NON-NLS-1$
             "unified (full diff in unified/git diff format), " + //$NON-NLS-1$
             "methods (individual diff per modified method). " + //$NON-NLS-1$
-            "Critical for code review and change analysis. " + //$NON-NLS-1$
+            "A module held by a provider without a file of its own is compared against a revision " + //$NON-NLS-1$
+            "of its container. " + //$NON-NLS-1$
+            "When no previous revision can be read - no repository, no commits, an unreadable " + //$NON-NLS-1$
+            "local history, or a provider that does not read them - the answer names the outcome " + //$NON-NLS-1$
+            "and reports no changes; only a " + //$NON-NLS-1$
+            "module the revision does not hold is reported as new. " + //$NON-NLS-1$
             "Specify modulePath or objectName + moduleType."; //$NON-NLS-1$
     }
 
@@ -196,41 +209,56 @@ public class DiffModuleTool implements IMcpTool
             return unusable;
         }
 
-        // 5. Get file
+        // 5. Resolve the module: a file of its own, or a module a provider holds without one
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
-        if (!file.exists())
+        IModuleSource provided = file.exists() ? null : ModuleSources.locate(project, modulePath);
+        if (!file.exists() && provided == null)
         {
             return "Error: File not found: src/" + modulePath; //$NON-NLS-1$
         }
 
         try
         {
-            // 6. Read current file
-            List<String> currentLines = BslModuleAccess.readFileLines(file);
+            // 6. Read the current text: from the provider when it holds the module, from the file
+            // otherwise. A file is lines with the terminators dropped, joined with a line feed.
+            List<String> currentLines = provided != null
+                ? provided.lines() : BslModuleAccess.readFileLines(file);
             String currentContent = String.join("\n", currentLines); //$NON-NLS-1$
 
-            // 7. Get previous version
-            String previousContent = GitDiffUtils.getPreviousVersion(file, project);
+            // 7. Get the previous revision: HEAD of the file, or of the container when a provider
+            // holds the module, else local history. An ordinary file's local history is read as
+            // lines too; a provider keeps the container bytes and finds its own lines in them.
+            PreviousRevision previous = provided != null
+                ? previousOfProvided(project, provided)
+                : GitDiffUtils.previousRevision(file, project);
 
-            // 8. Handle no previous version (new file)
-            if (previousContent == null)
+            // 8. Nothing to compare with. A module the revision does not hold is new; every other
+            // outcome is named, because reporting it as a new file would invent a fact.
+            if (!previous.isFound())
             {
-                return buildNewFileResponse(projectName, modulePath, currentLines, currentContent);
+                if (previous.outcome() == PreviousRevision.Outcome.NOT_IN_HEAD)
+                {
+                    return buildNewFileResponse(projectName, modulePath, provided,
+                        currentLines, currentContent);
+                }
+                return buildNoPreviousResponse(projectName, modulePath, provided, previous,
+                    currentLines.size());
             }
+
+            String previousContent = previousText(previous, provided == null);
 
             // 9. Handle identical content
             if (currentContent.equals(previousContent))
             {
-                YamlFrontMatter fm = YamlFrontMatter.create()
-                    .put("tool", NAME) //$NON-NLS-1$
-                    .put("projectName", projectName) //$NON-NLS-1$
-                    .put("modulePath", modulePath) //$NON-NLS-1$
+                YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
+                    .put("previousRevision", previous.label()) //$NON-NLS-1$
                     .put("mode", mode) //$NON-NLS-1$
                     .put("hasChanges", false); //$NON-NLS-1$
 
                 return fm.wrapContent(
                     "## Module Diff: " + modulePath + "\n\n" + //$NON-NLS-1$ //$NON-NLS-2$
-                    "No changes detected. Module is identical to VCS version.\n"); //$NON-NLS-1$
+                    "No changes detected. Module is identical to the previous revision (" //$NON-NLS-1$
+                        + previous.label() + ").\n"); //$NON-NLS-1$
             }
 
             // 10. Compute diff based on mode
@@ -239,20 +267,20 @@ public class DiffModuleTool implements IMcpTool
             switch (mode)
             {
                 case MODE_SUMMARY:
-                    return buildSummaryDiff(projectName, modulePath, previousContent,
-                        currentContent, previousLines, currentLines);
+                    return buildSummaryDiff(projectName, modulePath, provided, previous,
+                        previousContent, currentContent, previousLines, currentLines);
 
                 case MODE_UNIFIED:
-                    return buildUnifiedDiff(projectName, modulePath, previousLines,
-                        currentLines.toArray(new String[0]), contextLines);
+                    return buildUnifiedDiff(projectName, modulePath, provided, previous,
+                        previousLines, currentLines.toArray(new String[0]), contextLines);
 
                 case MODE_METHODS:
-                    return buildMethodsDiff(projectName, modulePath, previousContent,
-                        currentContent, previousLines, currentLines);
+                    return buildMethodsDiff(projectName, modulePath, provided, previous,
+                        previousContent, currentContent, previousLines, currentLines);
 
                 default:
-                    return buildSummaryDiff(projectName, modulePath, previousContent,
-                        currentContent, previousLines, currentLines);
+                    return buildSummaryDiff(projectName, modulePath, provided, previous,
+                        previousContent, currentContent, previousLines, currentLines);
             }
         }
         catch (Exception e)
@@ -260,6 +288,110 @@ public class DiffModuleTool implements IMcpTool
             Activator.logError("Diff failed for module: " + modulePath, e); //$NON-NLS-1$
             return "Error: Diff failed: " + e.getMessage(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The previous text the comparison uses.
+     * <p>
+     * A provider's lines are already the module, decoded by the provider from the container bytes.
+     * An ordinary file compared with local history is read as lines joined with a line feed, the
+     * same shape as its current text. HEAD of an ordinary file stays the revision's own text.
+     * </p>
+     *
+     * @param previous the revision that was found
+     * @param ordinaryFile {@code true} when the module has a file of its own
+     * @return the previous text
+     */
+    private static String previousText(PreviousRevision previous, boolean ordinaryFile)
+    {
+        if (ordinaryFile && previous.origin() == PreviousRevision.Origin.LOCAL_HISTORY)
+        {
+            return GitDiffUtils.localHistoryText(previous.bytes());
+        }
+        return previous.text();
+    }
+
+    /**
+     * The previous revision of a module a provider holds without a file of its own.
+     * <p>
+     * HEAD holds the text of the file that carries the module, not the module itself, so the
+     * container is read out of its previous revision first and the provider then finds its own
+     * module inside those bytes. A provider that does not read previous revisions, one whose
+     * module is not in that revision, and one that cannot parse it are three different answers.
+     * </p>
+     *
+     * @param project the containing project
+     * @param provided the module source
+     * @return the revision and what came of looking for it; never {@code null}
+     */
+    private static PreviousRevision previousOfProvided(IProject project, IModuleSource provided)
+    {
+        String container = provided.containerPath();
+        if (container == null)
+        {
+            return PreviousRevision.missing(PreviousRevision.Outcome.NO_CONTAINER, null);
+        }
+        PreviousRevision ofContainer = GitDiffUtils.previousRevision(
+            project.getFile(new Path("src").append(container)), project); //$NON-NLS-1$
+        if (!ofContainer.isFound())
+        {
+            return PreviousRevision.missing(ofContainer.outcome(), "container src/" + container //$NON-NLS-1$
+                + (ofContainer.note() == null ? "" : ": " + ofContainer.note())); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        try
+        {
+            List<String> lines = provided.linesIn(ofContainer.bytes());
+            if (lines == null)
+            {
+                return PreviousRevision.missing(PreviousRevision.Outcome.NOT_IN_HEAD,
+                    "container src/" + container + " at " + ofContainer.label() //$NON-NLS-1$ //$NON-NLS-2$
+                        + " holds no such module"); //$NON-NLS-1$
+            }
+            return PreviousRevision.found(String.join("\n", lines).getBytes(StandardCharsets.UTF_8), //$NON-NLS-1$
+                ofContainer.origin(), "the module as src/" + container + " held it at " //$NON-NLS-1$ //$NON-NLS-2$
+                    + ofContainer.label());
+        }
+        catch (UnsupportedOperationException e)
+        {
+            return PreviousRevision.missing(PreviousRevision.Outcome.PROVIDER_UNSUPPORTED,
+                provided.kind());
+        }
+        catch (IOException e)
+        {
+            return PreviousRevision.missing(PreviousRevision.Outcome.READ_ERROR,
+                "parsing the previous revision of src/" + container + " failed: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The fields every answer carries: what was compared, where its text lives, and - when there is
+     * one - which revision it was compared with.
+     * <p>
+     * A provided module answers with the fields every answer about it carries: the interface
+     * requires them of any answer naming the module, so the modes here are not a place to leave
+     * them out.
+     * </p>
+     */
+    private static YamlFrontMatter frontMatter(String projectName, String modulePath,
+        IModuleSource provided)
+    {
+        YamlFrontMatter fm = YamlFrontMatter.create()
+            .put("tool", NAME) //$NON-NLS-1$
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("modulePath", modulePath); //$NON-NLS-1$
+        if (provided != null)
+        {
+            fm.put("source", provided.source()); //$NON-NLS-1$
+            if (provided.containerPath() != null)
+            {
+                fm.put("container", provided.containerPath()); //$NON-NLS-1$
+            }
+            for (Map.Entry<String, String> field : provided.answerFields().entrySet())
+            {
+                fm.put(field.getKey(), field.getValue());
+            }
+        }
+        return fm;
     }
 
     // -- = --
@@ -384,21 +516,21 @@ public class DiffModuleTool implements IMcpTool
     // -- = --
 
     private String buildNewFileResponse(String projectName, String modulePath,
-        List<String> currentLines, String currentContent)
+        IModuleSource provided, List<String> currentLines, String currentContent)
     {
         List<MethodInfo> methods = parseMethods(currentContent);
 
-        YamlFrontMatter fm = YamlFrontMatter.create()
-            .put("tool", NAME) //$NON-NLS-1$
-            .put("projectName", projectName) //$NON-NLS-1$
-            .put("modulePath", modulePath) //$NON-NLS-1$
+        YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
             .put("isNewFile", true) //$NON-NLS-1$
             .put("currentLines", currentLines.size()) //$NON-NLS-1$
             .put("addedMethodCount", methods.size()); //$NON-NLS-1$
 
         StringBuilder body = new StringBuilder();
         body.append("## Module Diff: ").append(modulePath).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        body.append("File is new (no previous version in VCS). All content is new.\n\n"); //$NON-NLS-1$
+        body.append(provided != null
+            ? "Module is new (the container's previous revision holds no such module). " //$NON-NLS-1$
+                + "All content is new.\n\n" //$NON-NLS-1$
+            : "File is new (no previous version in VCS). All content is new.\n\n"); //$NON-NLS-1$
 
         if (!methods.isEmpty())
         {
@@ -419,10 +551,46 @@ public class DiffModuleTool implements IMcpTool
     }
 
     // -- = --
+    // Nothing to compare with
+    // -- = --
+
+    /**
+     * An answer for a module whose previous revision could not be read: the outcome is named and
+     * the answer says there is nothing to compare with.
+     * <p>
+     * Not a new-file answer: no comparison was made, so the answer neither claims changes nor
+     * claims there are none. The current text is still described, so a caller that wanted to know
+     * the module's size is not left with nothing.
+     * </p>
+     *
+     * @param projectName the project
+     * @param modulePath the src-relative module path
+     * @param provided the provider that holds the module, or {@code null} for a file
+     * @param previous the revision lookup that found nothing
+     * @param currentLineCount how many lines the module has now
+     * @return the answer
+     */
+    private String buildNoPreviousResponse(String projectName, String modulePath,
+        IModuleSource provided, PreviousRevision previous, int currentLineCount)
+    {
+        YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
+            .put("outcome", previous.outcome().name()) //$NON-NLS-1$
+            .put("currentLines", currentLineCount); //$NON-NLS-1$
+
+        StringBuilder body = new StringBuilder();
+        body.append("## Module Diff: ").append(modulePath).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        body.append("Nothing to compare with: ").append(previous.explanation()).append(".\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        body.append("No comparison was made; the module is not reported as new. " //$NON-NLS-1$
+            + "Its current text is ").append(currentLineCount).append(" lines.\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        return fm.wrapContent(body.toString());
+    }
+
+    // -- = --
     // Summary diff
     // -- = --
 
     private String buildSummaryDiff(String projectName, String modulePath,
+        IModuleSource provided, PreviousRevision previous,
         String previousContent, String currentContent,
         String[] previousLines, List<String> currentLines)
     {
@@ -471,10 +639,8 @@ public class DiffModuleTool implements IMcpTool
         boolean hasChanges = !addedMethods.isEmpty() || !removedMethods.isEmpty()
             || !modifiedMethods.isEmpty() || !previousContent.equals(currentContent);
 
-        YamlFrontMatter fm = YamlFrontMatter.create()
-            .put("tool", NAME) //$NON-NLS-1$
-            .put("projectName", projectName) //$NON-NLS-1$
-            .put("modulePath", modulePath) //$NON-NLS-1$
+        YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
+            .put("previousRevision", previous.label()) //$NON-NLS-1$
             .put("mode", MODE_SUMMARY) //$NON-NLS-1$
             .put("hasChanges", hasChanges) //$NON-NLS-1$
             .put("previousLines", previousLines.length) //$NON-NLS-1$
@@ -560,6 +726,7 @@ public class DiffModuleTool implements IMcpTool
     // -- = --
 
     private String buildUnifiedDiff(String projectName, String modulePath,
+        IModuleSource provided, PreviousRevision previous,
         String[] oldLines, String[] newLines, int contextLines)
     {
         List<DiffLine> diffLines = computeDiff(oldLines, newLines);
@@ -634,10 +801,8 @@ public class DiffModuleTool implements IMcpTool
 
         boolean hasChanges = totalAdded > 0 || totalRemoved > 0;
 
-        YamlFrontMatter fm = YamlFrontMatter.create()
-            .put("tool", NAME) //$NON-NLS-1$
-            .put("projectName", projectName) //$NON-NLS-1$
-            .put("modulePath", modulePath) //$NON-NLS-1$
+        YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
+            .put("previousRevision", previous.label()) //$NON-NLS-1$
             .put("mode", MODE_UNIFIED) //$NON-NLS-1$
             .put("hasChanges", hasChanges) //$NON-NLS-1$
             .put("previousLines", oldLines.length) //$NON-NLS-1$
@@ -705,6 +870,7 @@ public class DiffModuleTool implements IMcpTool
     // -- = --
 
     private String buildMethodsDiff(String projectName, String modulePath,
+        IModuleSource provided, PreviousRevision previous,
         String previousContent, String currentContent,
         String[] previousLines, List<String> currentLines)
     {
@@ -765,10 +931,8 @@ public class DiffModuleTool implements IMcpTool
             }
         }
 
-        YamlFrontMatter fm = YamlFrontMatter.create()
-            .put("tool", NAME) //$NON-NLS-1$
-            .put("projectName", projectName) //$NON-NLS-1$
-            .put("modulePath", modulePath) //$NON-NLS-1$
+        YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
+            .put("previousRevision", previous.label()) //$NON-NLS-1$
             .put("mode", MODE_METHODS) //$NON-NLS-1$
             .put("hasChanges", !diffs.isEmpty()) //$NON-NLS-1$
             .put("totalChangedMethods", diffs.size()); //$NON-NLS-1$
