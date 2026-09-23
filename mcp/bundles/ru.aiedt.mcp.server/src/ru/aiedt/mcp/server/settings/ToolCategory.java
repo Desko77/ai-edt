@@ -96,6 +96,7 @@ public enum ToolCategory
         "start_client", //$NON-NLS-1$
         "branch_infobase", //$NON-NLS-1$
         "create_infobase", //$NON-NLS-1$
+        "register_infobase", //$NON-NLS-1$
         "delete_infobase", //$NON-NLS-1$
         "install_extension", //$NON-NLS-1$
         "uninstall_extension", //$NON-NLS-1$

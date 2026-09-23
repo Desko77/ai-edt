@@ -214,6 +214,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * line, so the caller names the mode and the client and the launch puts them where they are
      * read. A client that cannot see the two arguments starts the managed client every time.
      * </p>
+     * <p>
+     * And by 670 on infobase_admin for connectionString and makeDefault: a caller registering an
+     * existing server infobase has no way to name the server and the infobase without the string,
+     * and no way to say whether the new application becomes the project's default without the
+     * flag - both are the whole call.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
@@ -232,7 +238,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(4900));
+        // Raised by 670 for connectionString and makeDefault: registering an existing server
+        // infobase is named by the string, and the flag says whether it becomes the default.
+        PROSE.put("infobase_admin", Integer.valueOf(5570));
         PROSE.put("config_io", Integer.valueOf(3064));
         PROSE.put("vanessa", Integer.valueOf(3607));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
@@ -387,6 +395,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * graph edges are dropped and how a kind filter answers live in operation help. Together
      * with the seventeenth: 89293.
      * </p>
+     * <p>
+     * And a nineteenth, by 517, for connectionString and makeDefault on infobase_admin: an
+     * existing server infobase is named by the connection string and the flag says whether it
+     * becomes the project's default application. Together with the eighteenth: 89810.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 89293;
+    private static final int DOCUMENT_PROSE = 89810;
 }

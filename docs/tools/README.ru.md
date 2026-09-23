@@ -141,6 +141,7 @@
 | `start_client` | Выполнение | Запускает клиент 1С:Предприятие по конфигурации запуска EDT, без отладчика. Паре `projectName` + `applicationId` без конфигурации запуска конфигурация создается и сохраняется (`autoCreatedConfiguration`). `clientType` (`thin`, `thick`, `web`) и `runMode` (`ordinary`, `managed`) - как у `launch_debugger action=launch`. |
 | `branch_infobase` | Изменение | Связывает ветку git с информационной базой проекта; `update_database` сверяется с этой записью. |
 | `create_infobase` | Опасно | Создает информационную базу и связывает ее с проектом. |
+| `register_infobase` | Изменение | Регистрирует СУЩЕСТВУЮЩУЮ информационную базу - файловую (`path`) или серверную (`connectionString`), ровно один из двух доводов - в списке баз EDT и привязывает ее к проекту одним вызовом. Адрес-дубль отвечает `reused`; сбой привязки снимает добавленную запись, сами файлы базы не трогаются. |
 | `delete_infobase` | Опасно | Удаляет информационную базу. |
 | `install_extension` | Опасно | Устанавливает расширение в информационную базу. |
 | `uninstall_extension` | Опасно | Удаляет расширение из информационной базы. |
@@ -375,7 +376,7 @@
 <details>
 <summary><code>infobase_admin</code> - жизненный цикл информационной базы</summary>
 
-Объединяет `get_applications`, `read_event_log`, `create_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `branch_infobase`, `update_database`, `sync_control` и встроенную справку.
+Объединяет `get_applications`, `read_event_log`, `create_infobase`, `register_infobase`, `delete_infobase`, `set_infobase_credentials`, `create_launch_config`, `start_client`, `branch_infobase`, `update_database`, `sync_control` и встроенную справку.
 
 `dryRun` объявлен и здесь: через фасад он доходит до `update_database` тем же доводом. `update_database` принимает и `statusOnly`: чтение отслеживаемых обновлений (`runKey`, состояние, прогресс) без порождения прогона. Перед чтением состояния обновление обновляет проект и родителя расширения с диска (`refreshWorkspace`, по умолчанию true): файлы, записанные мимо сервера (файловый инструмент, git checkout, pull), модели иначе невидимы, и ответ несет `workspaceRefresh.changedResources` - число ресурсов, которые перечитывание с диска изменило (добавление, удаление, изменение содержимого); 0 значит модель уже совпадала с диском.
 </details>

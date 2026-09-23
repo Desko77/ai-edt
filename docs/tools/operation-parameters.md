@@ -317,6 +317,7 @@
 | `InfobaseAdminFacadeTool` | `delete_infobase` | `deleteContent:boolean`, `name:string`, `projectName:string`, `syncOperation:string` | delegate InfobaseRemover |
 | `InfobaseAdminFacadeTool` | `get_applications` | `projectName:string`, `syncOperation:string` | delegate ApplicationsReader |
 | `InfobaseAdminFacadeTool` | `read_event_log` | `applicationId:string`, `event:string`, `from:string`, `limit:integer`, `projectName:string`, `severity:string`, `syncOperation:string`, `to:string`, `user:string` | delegate EventLogTool |
+| `InfobaseAdminFacadeTool` | `register_infobase` | `connectionString:string`, `makeDefault:boolean`, `name:string`, `path:string`, `projectName:string`, `syncOperation:string` | delegate InfobaseRegistrar |
 | `InfobaseAdminFacadeTool` | `set_infobase_credentials` | `accessMode:string`, `applicationId:string`, `password:string`, `projectName:string`, `syncOperation:string`, `userName:string` | delegate InfobaseCredentialsWriter |
 | `InfobaseAdminFacadeTool` | `start_client` | `allowSecondSession:boolean`, `applicationId:string`, `clientType:string`, `endpointTimeoutSeconds:integer`, `launchConfigurationName:string`, `projectName:string`, `runMode:string`, `startupOption:string`, `syncOperation:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate ClientSessionStarter |
 | `InfobaseAdminFacadeTool` | `sync_control` | `syncOperation:string` | read in place |

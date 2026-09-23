@@ -34,6 +34,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *       launch targets (delegates to {@link ApplicationsReader})</li>
  *   <li>{@code create_infobase} - create a FILE infobase and register it in
  *       EDT's list (delegates to {@link InfobaseCreator}; MUTATING)</li>
+ *   <li>{@code register_infobase} - register an EXISTING infobase (file or
+ *       server) in EDT's list and associate it to a project (delegates to
+ *       {@link InfobaseRegistrar}; MUTATING)</li>
  *   <li>{@code delete_infobase} - remove an infobase from EDT's list, optionally
  *       its .1CD on disk (delegates to {@link InfobaseRemover}; MUTATING,
  *       DESTRUCTIVE with deleteContent=true)</li>
@@ -104,6 +107,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         m.put("get_applications", ApplicationsReader::new); //$NON-NLS-1$
         m.put("read_event_log", EventLogTool::new); //$NON-NLS-1$
         m.put("create_infobase", InfobaseCreator::new); //$NON-NLS-1$
+        m.put("register_infobase", InfobaseRegistrar::new); //$NON-NLS-1$
         m.put("delete_infobase", InfobaseRemover::new); //$NON-NLS-1$
         m.put("set_infobase_credentials", InfobaseCredentialsWriter::new); //$NON-NLS-1$
         m.put("create_launch_config", LaunchConfigCreator::new); //$NON-NLS-1$
@@ -124,16 +128,16 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Infobase and launch administration - list applications, create / delete an " //$NON-NLS-1$
+        return "Infobase and launch administration - list applications, create / register / delete an " //$NON-NLS-1$
             + "infobase, set credentials, create a launch configuration, start a 1C client from " //$NON-NLS-1$
             + "one, update the database, control EDT<->infobase sync. Operations: " //$NON-NLS-1$
-            + "get_applications, read_event_log, create_infobase, delete_infobase, " //$NON-NLS-1$
+            + "get_applications, read_event_log, create_infobase, register_infobase, delete_infobase, " //$NON-NLS-1$
             + "set_infobase_credentials, " //$NON-NLS-1$
             + "create_launch_config, start_client, branch_infobase, update_database, " //$NON-NLS-1$
             + "sync_control, help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
             + "getApplications is also accepted); remaining parameters follow the per-operation " //$NON-NLS-1$
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
-            + "delete_infobase / set_infobase_credentials / update_database mutate, and " //$NON-NLS-1$
+            + "register_infobase / delete_infobase / set_infobase_credentials / update_database mutate, and " //$NON-NLS-1$
             + "A real run of update_database / sync_control may reply with a Pending status and " //$NON-NLS-1$
             + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
             + "face and start nothing, answered in place with no runKey. sync_control has its own " //$NON-NLS-1$
@@ -167,11 +171,19 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "facade that does not accept it leaves that instruction impossible to " //$NON-NLS-1$
             + "follow."); //$NON-NLS-1$
         rules.put("projectName", "Required for get_applications, set_infobase_credentials, " //$NON-NLS-1$
-            + "create_launch_config and sync_control; optional association target " //$NON-NLS-1$
+            + "create_launch_config, register_infobase and sync_control; optional association target " //$NON-NLS-1$
             + "for create_infobase; optional dissociation target for " //$NON-NLS-1$
             + "delete_infobase; required for update_database when " //$NON-NLS-1$
             + "launchConfigurationName is not supplied - on its own it is enough, " //$NON-NLS-1$
             + "applicationId may be omitted."); //$NON-NLS-1$
+        rules.put("connectionString", "register_infobase only: the server infobase address, " //$NON-NLS-1$
+            + "Srvr=...;Ref=.... A user or password in it (Usr, Pwd) is refused before anything " //$NON-NLS-1$
+            + "is written - store those with set_infobase_credentials. Exactly one of path / " //$NON-NLS-1$
+            + "connectionString."); //$NON-NLS-1$
+        rules.put("makeDefault", "register_infobase only: by default the application becomes the " //$NON-NLS-1$
+            + "project's default only when the project has none; pass true to replace the " //$NON-NLS-1$
+            + "standing default, false to leave it. The answer names the default that stood " //$NON-NLS-1$
+            + "before either way."); //$NON-NLS-1$
         rules.put("applicationId", "Optional for set_infobase_credentials when the project has a single " //$NON-NLS-1$
             + "application, and for update_database, which falls back to the " //$NON-NLS-1$
             + "project's default application and - for an extension project, which " //$NON-NLS-1$
@@ -192,7 +204,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "get_applications / read_event_log / create_infobase / delete_infobase / " //$NON-NLS-1$
+                "get_applications / read_event_log / create_infobase / register_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
                     + "branch_infobase / update_database / sync_control / help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like getApplications is also accepted). " //$NON-NLS-1$
@@ -217,11 +229,23 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application (infobase) id from get_applications.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
-                "Infobase name. Required for create_infobase (the new infobase's name) and " //$NON-NLS-1$
-                    + "delete_infobase (the infobase to remove).") //$NON-NLS-1$
+                "Infobase name. Required for create_infobase (the new infobase's name), " //$NON-NLS-1$
+                    + "delete_infobase (the infobase to remove) and register_infobase for a " //$NON-NLS-1$
+                    + "SERVER infobase; for a file one register_infobase defaults it to the " //$NON-NLS-1$
+                    + "directory name.") //$NON-NLS-1$
             .stringProperty("path", //$NON-NLS-1$
                 "create_infobase: absolute path to the infobase directory (required for that " //$NON-NLS-1$
-                    + "operation) - an empty/new directory for the .1CD.") //$NON-NLS-1$
+                    + "operation) - an empty/new directory for the .1CD. register_infobase: " //$NON-NLS-1$
+                    + "absolute path of an EXISTING file infobase directory (one of path / " //$NON-NLS-1$
+                    + "connectionString).") //$NON-NLS-1$
+            .stringProperty("connectionString", //$NON-NLS-1$
+                "register_infobase: an existing server infobase address, Srvr=<server>;Ref=<infobase> " //$NON-NLS-1$
+                    + "(one of path / connectionString). A user or password in it (Usr, Pwd) is " //$NON-NLS-1$
+                    + "refused - store those with set_infobase_credentials.") //$NON-NLS-1$
+            .booleanProperty("makeDefault", //$NON-NLS-1$
+                "register_infobase: make the application the project's default (default true " //$NON-NLS-1$
+                    + "when the project has no default application, else false). The answer " //$NON-NLS-1$
+                    + "names the default that stood before.") //$NON-NLS-1$
             .stringProperty("platform", //$NON-NLS-1$
                 "create_infobase: 1C:Enterprise platform version (optional, blank = latest " //$NON-NLS-1$
                     + "available).") //$NON-NLS-1$
@@ -336,7 +360,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         {
             return ToolResult.error("operation is required. Allowed: get_applications / " //$NON-NLS-1$
                 + "read_event_log / " //$NON-NLS-1$
-                + "create_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
+                + "create_infobase / register_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
                 + "create_launch_config / start_client / branch_infobase / update_database / " //$NON-NLS-1$
                 + "sync_control / " //$NON-NLS-1$
                 + "help.").toJson(); //$NON-NLS-1$
@@ -372,6 +396,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 return new EventLogTool().execute(params);
             case "create_infobase": //$NON-NLS-1$
                 return new InfobaseCreator().execute(params);
+            case "register_infobase": //$NON-NLS-1$
+                return new InfobaseRegistrar().execute(params);
             case "delete_infobase": //$NON-NLS-1$
                 return new InfobaseRemover().execute(params);
             case "set_infobase_credentials": //$NON-NLS-1$
@@ -449,6 +475,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "targets.\n"); //$NON-NLS-1$
             sb.append("- **create_infobase** - create a FILE infobase and register it in " //$NON-NLS-1$
                 + "EDT's list. MUTATING.\n"); //$NON-NLS-1$
+            sb.append("- **register_infobase** - register an EXISTING infobase (file or " //$NON-NLS-1$
+                + "server) in EDT's list and associate it to a project in one call; a " //$NON-NLS-1$
+                + "duplicate address is reused, a failed binding rolls the added entry back. " //$NON-NLS-1$
+                + "MUTATING.\n"); //$NON-NLS-1$
             sb.append("- **delete_infobase** - remove an infobase from EDT's list, optionally " //$NON-NLS-1$
                 + "its .1CD on disk. MUTATING, DESTRUCTIVE with deleteContent=true.\n"); //$NON-NLS-1$
             sb.append("- **set_infobase_credentials** - store connection credentials in EDT's " //$NON-NLS-1$
@@ -483,6 +513,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("| What applications (infobases) can this project run against | " //$NON-NLS-1$
                 + "get_applications |\n"); //$NON-NLS-1$
             sb.append("| Create a brand-new FILE infobase | create_infobase |\n"); //$NON-NLS-1$
+            sb.append("| Register an EXISTING infobase (file or server) and bind it to a " //$NON-NLS-1$
+                + "project | register_infobase |\n"); //$NON-NLS-1$
             sb.append("| Remove an infobase from EDT's list | delete_infobase |\n"); //$NON-NLS-1$
             sb.append("| Store a user/password so update_database stops prompting | " //$NON-NLS-1$
                 + "set_infobase_credentials |\n"); //$NON-NLS-1$
@@ -504,6 +536,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         for (String op : Arrays.asList(
             "get_applications", "read_event_log", //$NON-NLS-1$ //$NON-NLS-2$
             "create_infobase", //$NON-NLS-1$
+            "register_infobase", //$NON-NLS-1$
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$
             "create_launch_config", "start_client", //$NON-NLS-1$ //$NON-NLS-2$
             "branch_infobase", //$NON-NLS-1$
