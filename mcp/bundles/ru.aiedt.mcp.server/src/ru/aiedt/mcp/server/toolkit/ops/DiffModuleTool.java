@@ -67,8 +67,9 @@ public class DiffModuleTool implements IMcpTool
             "methods (individual diff per modified method). " + //$NON-NLS-1$
             "A module held by a provider without a file of its own is compared against a revision " + //$NON-NLS-1$
             "of its container. " + //$NON-NLS-1$
-            "When no previous revision can be read - no repository, no commits, or a provider that " + //$NON-NLS-1$
-            "does not read them - the answer names the outcome and reports no changes; only a " + //$NON-NLS-1$
+            "When no previous revision can be read - no repository, no commits, an unreadable " + //$NON-NLS-1$
+            "local history, or a provider that does not read them - the answer names the outcome " + //$NON-NLS-1$
+            "and reports no changes; only a " + //$NON-NLS-1$
             "module the revision does not hold is reported as new. " + //$NON-NLS-1$
             "Specify modulePath or objectName + moduleType."; //$NON-NLS-1$
     }
@@ -343,6 +344,11 @@ public class DiffModuleTool implements IMcpTool
     /**
      * The fields every answer carries: what was compared, where its text lives, and - when there is
      * one - which revision it was compared with.
+     * <p>
+     * A provided module answers with the fields every answer about it carries: the interface
+     * requires them of any answer naming the module, so the modes here are not a place to leave
+     * them out.
+     * </p>
      */
     private static YamlFrontMatter frontMatter(String projectName, String modulePath,
         IModuleSource provided)
@@ -357,6 +363,10 @@ public class DiffModuleTool implements IMcpTool
             if (provided.containerPath() != null)
             {
                 fm.put("container", provided.containerPath()); //$NON-NLS-1$
+            }
+            for (Map.Entry<String, String> field : provided.answerFields().entrySet())
+            {
+                fm.put(field.getKey(), field.getValue());
             }
         }
         return fm;

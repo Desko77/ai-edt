@@ -222,6 +222,15 @@ public class ADiffAgainstTheContainerRevisionTest
         }
 
         @Override
+        public Map<String, String> answerFields()
+        {
+            Map<String, String> fields = new java.util.LinkedHashMap<>();
+            fields.put("formName", "ItemForm"); //$NON-NLS-1$ //$NON-NLS-2$
+            fields.put("probeField", "kept"); //$NON-NLS-1$ //$NON-NLS-2$
+            return fields;
+        }
+
+        @Override
         public boolean write(List<String> lines)
         {
             throw new UnsupportedOperationException("the diff probe writes nothing"); //$NON-NLS-1$
@@ -454,6 +463,29 @@ public class ADiffAgainstTheContainerRevisionTest
         assertTrue(answer, answer.contains("probe cannot parse the container")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("the module is not reported as new")); //$NON-NLS-1$
         assertFalse(answer, answer.contains("isNewFile")); //$NON-NLS-1$
+    }
+
+    /**
+     * The fields a provider requires of every answer about its module are in the diff answer too,
+     * in every mode and in the new-module answer: an answer that names the module and leaves them
+     * out is a different answer about the same module.
+     */
+    @Test
+    public void theFieldsAProviderRequiresAreInEveryAnswer() throws Exception
+    {
+        writeWorking(NEW_CONTAINER, container("форма: NewForm", OLD_MODULE)); //$NON-NLS-1$
+
+        for (String mode : List.of("summary", "unified", "methods")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            String answer = diff(ITEM_FORM, mode);
+            assertTrue(mode, answer.contains("formName: ItemForm")); //$NON-NLS-1$
+            assertTrue(mode, answer.contains("probeField: kept")); //$NON-NLS-1$
+        }
+
+        String newModule = diff(NEW_FORM, "summary"); //$NON-NLS-1$
+        assertTrue(newModule, newModule.contains("isNewFile: true")); //$NON-NLS-1$
+        assertTrue(newModule, newModule.contains("formName: ItemForm")); //$NON-NLS-1$
+        assertTrue(newModule, newModule.contains("probeField: kept")); //$NON-NLS-1$
     }
 
     /**

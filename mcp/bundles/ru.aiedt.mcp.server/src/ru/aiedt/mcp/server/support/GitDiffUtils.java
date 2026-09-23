@@ -6,12 +6,9 @@
 
 package ru.aiedt.mcp.server.support;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 import org.eclipse.core.resources.IFile;
@@ -172,49 +169,73 @@ public final class GitDiffUtils
      */
     private static PreviousRevision fromLocalHistory(IFile file, PreviousRevision gitOutcome)
     {
+        IFileState[] history;
         try
         {
-            IFileState[] history = file.getHistory(null);
-            if (history == null || history.length == 0)
-            {
-                return gitOutcome;
-            }
-            String text = readHistoryText(history[0]);
-            return PreviousRevision.found(text.getBytes(StandardCharsets.UTF_8),
-                PreviousRevision.Origin.LOCAL_HISTORY,
+            history = file.getHistory(null);
+        }
+        catch (Exception e)
+        {
+            return unreadableLocalHistory(e);
+        }
+        return fromLocalHistory(history, gitOutcome);
+    }
+
+    /**
+     * The local-history answer from states already fetched.
+     *
+     * <p>A history state is read as bytes, not as text: a caller comparing against it receives them
+     * through {@code IModuleSource.linesIn}, which is handed the revision as the commit holds it,
+     * so line terminators, a byte order mark, a missing last newline and an encoding that is not
+     * UTF-8 all have to survive the read.</p>
+     *
+     * <p>Package-private so a state that throws can be fed in: a read that fails is a read error,
+     * and the outcome it replaced is carried in the note - reporting the earlier outcome there
+     * would claim the revision does not hold the file on the strength of a read that never
+     * happened.</p>
+     *
+     * @param history the states the file has, newest first; may be {@code null} or empty
+     * @param gitOutcome what looking in HEAD came to, carried into the note
+     * @return the revision read out of the newest state, or an outcome saying why there is none
+     */
+    static PreviousRevision fromLocalHistory(IFileState[] history, PreviousRevision gitOutcome)
+    {
+        if (history == null || history.length == 0)
+        {
+            return gitOutcome;
+        }
+        try
+        {
+            byte[] bytes = readHistoryBytes(history[0]);
+            return PreviousRevision.found(bytes, PreviousRevision.Origin.LOCAL_HISTORY,
                 "git gave " + gitOutcome.outcome() + ": " + gitOutcome.note()); //$NON-NLS-1$
         }
         catch (Exception e)
         {
-            Activator.logInfo("Local History not available: " + e.getMessage()); //$NON-NLS-1$
-            return gitOutcome;
+            return unreadableLocalHistory(e);
         }
     }
 
     /**
-     * The text of one local-history state, line by line with no terminators - the way this path has
-     * always read it, which is why it is read as lines here rather than as bytes.
+     * One local-history state as it is stored, with nothing done to it on the way through.
      */
-    private static String readHistoryText(IFileState state) throws IOException, CoreException
+    private static byte[] readHistoryBytes(IFileState state) throws IOException, CoreException
     {
-        try (InputStream is = state.getContents();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(is,
-                StandardCharsets.UTF_8)))
+        try (InputStream is = state.getContents())
         {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null)
-            {
-                if (sb.length() > 0)
-                {
-                    sb.append("\n"); //$NON-NLS-1$
-                }
-                sb.append(line);
-            }
-            // A leading byte order mark is dropped here as well as in PreviousRevision.text(), so
-            // the bytes this path hands on are the module's own text.
-            return sb.length() > 0 && sb.codePointAt(0) == 0xFEFF ? sb.substring(1) : sb.toString();
+            return is.readAllBytes();
         }
+    }
+
+    /**
+     * A local history that could not be read is a read error naming what was thrown. The git
+     * outcome is part of the note, not the answer: the revision was never looked at.
+     */
+    private static PreviousRevision unreadableLocalHistory(Exception e)
+    {
+        Activator.logInfo("Local History not available: " + e.getMessage()); //$NON-NLS-1$
+        return PreviousRevision.missing(PreviousRevision.Outcome.READ_ERROR,
+            "reading the local history failed: " + describe(e)); //$NON-NLS-1$
     }
 
     /**
