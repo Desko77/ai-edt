@@ -2238,6 +2238,12 @@ public class EditMetadataTool implements IMcpTool
             + "    was expected (use 'Arial,12,bold' / '#RRGGBB' instead).\n" //$NON-NLS-1$
             + "- `autoBorrowed` [fqn, ...] - extension auto-borrowed objects (the owner, its tabular " //$NON-NLS-1$
             + "section, and any referenced metadata targets)\n" //$NON-NLS-1$
+            + "    (success path).\n" //$NON-NLS-1$
+            + "- `settingsWarnings` [ { variant, path, kind, name, comparisonType } ] - a DCS settings\n" //$NON-NLS-1$
+            + "    write went through and left a filter item switched on that compares against nothing\n" //$NON-NLS-1$
+            + "    (`emptyFilterValue`), or a data parameter holding a standard period with no dates\n" //$NON-NLS-1$
+            + "    (`emptyPeriod`). `variant` is the settings variant, or `default` for the schema's own\n" //$NON-NLS-1$
+            + "    settings and for a dynamic list. A warning, not a refusal; absent when there is none\n" //$NON-NLS-1$
             + "    (success path).\n\n" //$NON-NLS-1$
             + "AI agent pattern: branch on `response.alreadyExists` etc. instead of parsing\n" //$NON-NLS-1$
             + "the human-readable `error` text.\n"; //$NON-NLS-1$
