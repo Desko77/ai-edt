@@ -1548,8 +1548,8 @@ public class DcsWorkshopTool implements IMcpTool
      * Reads the right-hand side of a filter item and answers whether it is nothing to compare by.
      *
      * @param item a filter item.
-     * @return true when the item was given no value, an undefined one, an empty string or an empty
-     *         list
+     * @return true when the item was given no value, or every value it was given is undefined, an
+     *         empty string or an empty list
      */
     private boolean rightSideIsEmpty(EObject item)
     {
@@ -1558,11 +1558,24 @@ public class DcsWorkshopTool implements IMcpTool
         {
             return true;
         }
-        if (right.size() > 1)
+        for (EObject value : right)
         {
-            return false;
+            if (!valueIsEmpty(value))
+            {
+                return false;
+            }
         }
-        EObject value = right.get(0);
+        return true;
+    }
+
+    /**
+     * Answers whether one value on the right-hand side of a filter item compares by nothing.
+     *
+     * @param value one value of the right-hand side.
+     * @return true for an undefined value, an empty string or an empty list
+     */
+    private boolean valueIsEmpty(EObject value)
+    {
         String kind = value.eClass().getName();
         if ("UndefinedValue".equals(kind)) //$NON-NLS-1$
         {

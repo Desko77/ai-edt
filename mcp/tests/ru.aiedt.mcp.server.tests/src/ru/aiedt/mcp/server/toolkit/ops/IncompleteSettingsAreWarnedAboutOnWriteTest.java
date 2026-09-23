@@ -191,6 +191,43 @@ public class IncompleteSettingsAreWarnedAboutOnWriteTest
         assertTrue("a list with an entry in it compares against something: " + found, found.isEmpty()); //$NON-NLS-1$
     }
 
+    /** Several values on the right, every one of them empty: still nothing to compare by. */
+    @Test
+    public void severalEmptyValuesOnTheRightAreReported() throws Exception
+    {
+        warnings("add_filter", "field", "Организация", "comparisonType", "InList"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        Object first = mcore("createUndefinedValue"); //$NON-NLS-1$
+        Object second = mcore("createUndefinedValue"); //$NON-NLS-1$
+        Assume.assumeTrue("the value carriers are not in this runtime", //$NON-NLS-1$
+            first != null && second != null);
+        rightOf(item(0)).add((EObject)first);
+        rightOf(item(0)).add((EObject)second);
+
+        List<Map<String, Object>> found = warnings("add_filter", "field", "Склад", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "comparisonType", "Equal", "value", "Основной"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        assertOneEmptyFilterValue(found, DEFAULT_VARIANT, "Filter[0]", "Организация", "InList"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    }
+
+    /** An empty value beside a real one: the real one is something to compare by. */
+    @Test
+    public void anEmptyValueBesideARealOneIsNotReported() throws Exception
+    {
+        warnings("add_filter", "field", "Организация", "comparisonType", "InList"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        Object empty = mcore("createUndefinedValue"); //$NON-NLS-1$
+        Object real = empty == null ? null : BmDcsHelper.createLiteralValue("Основной"); //$NON-NLS-1$
+        Assume.assumeTrue("the value carriers are not in this runtime", //$NON-NLS-1$
+            empty != null && real != null);
+        rightOf(item(0)).add((EObject)empty);
+        rightOf(item(0)).add((EObject)real);
+
+        List<Map<String, Object>> found = warnings("add_filter", "field", "Склад", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "comparisonType", "Equal", "value", "Основной"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        assertTrue("an empty value beside a real one compares against the real one: " + found, //$NON-NLS-1$
+            found.isEmpty());
+    }
+
     /** A standard period switched on with both dates empty. */
     @Test
     public void aStandardPeriodWithNoDatesIsReported() throws Exception
