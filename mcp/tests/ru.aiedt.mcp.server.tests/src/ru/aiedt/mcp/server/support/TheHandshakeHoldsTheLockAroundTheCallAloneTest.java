@@ -55,6 +55,13 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         }
 
         @Override
+        public void lockInterruptibly() throws InterruptedException
+        {
+            order.add("lock"); //$NON-NLS-1$
+            super.lockInterruptibly();
+        }
+
+        @Override
         public void unlock()
         {
             order.add("unlock"); //$NON-NLS-1$
@@ -276,6 +283,95 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
     }
 
+    /**
+     * A rebuild abandoned while its full dump waits for the infobase lock never starts the dump:
+     * the worker is interrupted in the wait, and when the other caller lets the lock go the
+     * launcher is not called and the lock is not left held.
+     */
+    @Test
+    public void aFullDumpAbandonedWhileItWaitsForTheLockNeverStarts() throws Exception
+    {
+        List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+        java.util.concurrent.atomic.AtomicReference<Throwable> outcome =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+        lock.lock();
+        Thread worker = new Thread(() -> {
+            try
+            {
+                BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                    java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            }
+            catch (Throwable t)
+            {
+                outcome.set(t);
+            }
+        });
+        worker.start();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (!lock.hasQueuedThread(worker) && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5);
+        }
+        assertTrue("the worker waits for the lock", lock.hasQueuedThread(worker)); //$NON-NLS-1$
+        worker.interrupt();
+        worker.join(10000);
+        lock.unlock();
+
+        assertFalse("the worker finished", worker.isAlive()); //$NON-NLS-1$
+        assertTrue("the abandoned wait ends in an interrupt, not a dump: " + outcome.get(), //$NON-NLS-1$
+            outcome.get() instanceof InterruptedException);
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A worker interrupted before it asks for the lock starts no Designer run and holds no lock,
+     * on the full dump and on the dump-info-only call alike.
+     */
+    @Test
+    public void anInterruptedWorkerStartsNoRebuildRun() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+        java.lang.reflect.Method method = Object.class.getMethod("toString"); //$NON-NLS-1$
+
+        Thread.currentThread().interrupt();
+        try
+        {
+            BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            fail("an interrupted worker must not run the full dump"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the interrupt ends the call before the launcher
+        }
+        Thread.currentThread().interrupt();
+        try
+        {
+            BmInfobaseExtensionHelper.invokeUnderRebuildLock(lock, method, new Object());
+            fail("an interrupted worker must not run the dump-info-only call"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the interrupt ends the call before the method
+        }
+        finally
+        {
+            Thread.interrupted();
+        }
+
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
     /**
      * A launcher whose {@code exportFullXmlFromInfobase} records whether the lock was held while
      * it ran, and answers or throws as told.

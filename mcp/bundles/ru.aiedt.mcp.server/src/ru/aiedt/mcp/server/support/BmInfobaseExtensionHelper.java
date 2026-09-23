@@ -1419,7 +1419,7 @@ public final class BmInfobaseExtensionHelper
             .additionalParameters("-configDumpInfoOnly"); //$NON-NLS-1$
         // The same per-infobase lock the strict conversion holds around its launcher call.
         // Without it this EDT's own thick-client callers run the Designer side by side.
-        invokeUnderInfobaseLock(ctx.lock, execM, ctx.launcher, command,
+        invokeUnderRebuildLock(ctx.lock, execM, ctx.launcher, command,
             ctx.component.getInstallation(), ctx.infobase, ctx.args);
     }
 
@@ -1438,10 +1438,7 @@ public final class BmInfobaseExtensionHelper
     static java.nio.file.Path runFullDumpUnderInfobaseLock(LauncherContext ctx,
         java.nio.file.Path tempDir) throws Exception
     {
-        if (ctx.lock != null)
-        {
-            ctx.lock.lock();
-        }
+        lockForRebuild(ctx.lock);
         try
         {
             return ctx.launcher.exportFullXmlFromInfobase(ctx.component, ctx.infobase,
@@ -1480,6 +1477,71 @@ public final class BmInfobaseExtensionHelper
         {
             lock.lock();
         }
+        return invokeAndRelease(lock, method, target, args);
+    }
+
+    /**
+     * Invokes a Designer run of the dump-info rebuild under the per-infobase lock. Differs from
+     * {@link #invokeUnderInfobaseLock} only in how the lock is taken: see
+     * {@link #lockForRebuild(java.util.concurrent.locks.Lock)}.
+     *
+     * @param lock the per-infobase lock, or {@code null} when this runtime has none
+     * @param method the method to invoke
+     * @param target the launcher
+     * @param args the method arguments
+     * @return whatever the method returned
+     * @throws InterruptedException when the rebuild was abandoned before the run started
+     * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}
+     */
+    static Object invokeUnderRebuildLock(java.util.concurrent.locks.Lock lock,
+        java.lang.reflect.Method method, Object target, Object... args) throws Exception
+    {
+        lockForRebuild(lock);
+        return invokeAndRelease(lock, method, target, args);
+    }
+
+    /**
+     * Takes the per-infobase lock for a Designer run of the dump-info rebuild. The rebuild
+     * abandons a run by interrupting its worker; a worker still waiting for the lock at that
+     * moment must not start the Designer once another caller lets the lock go, so the wait is
+     * interruptible, and an interrupt that arrives together with the lock gives it back.
+     *
+     * @param lock the per-infobase lock, or {@code null} when this runtime has none
+     * @throws InterruptedException when the worker was interrupted before the run started; the
+     *             lock is not held then
+     */
+    static void lockForRebuild(java.util.concurrent.locks.Lock lock) throws InterruptedException
+    {
+        if (lock != null)
+        {
+            lock.lockInterruptibly();
+        }
+        if (Thread.currentThread().isInterrupted())
+        {
+            if (lock != null)
+            {
+                lock.unlock();
+            }
+            throw new InterruptedException("the rebuild was abandoned before its Designer run " //$NON-NLS-1$
+                + "started"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Runs the method with the lock already held, unwraps
+     * {@link java.lang.reflect.InvocationTargetException} to its cause, and releases the lock.
+     *
+     * @param lock the held per-infobase lock, or {@code null}
+     * @param method the method to invoke
+     * @param target the launcher
+     * @param args the method arguments
+     * @return whatever the method returned
+     * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}, or the
+     *             failure itself when it is already an exception
+     */
+    private static Object invokeAndRelease(java.util.concurrent.locks.Lock lock,
+        java.lang.reflect.Method method, Object target, Object... args) throws Exception
+    {
         try
         {
             try
