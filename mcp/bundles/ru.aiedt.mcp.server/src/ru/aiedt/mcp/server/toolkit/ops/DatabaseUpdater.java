@@ -59,7 +59,8 @@ import ru.aiedt.mcp.server.support.ProjectStateGuard;
  * The update can outlast an HTTP handler, so a slow one is handed to a worker and the caller gets a
  * runKey to poll with; a fast one returns in place. Targeting is by launch configuration name
  * (preferred, as it pins the project and application together) or by an explicit project +
- * application id pair.
+ * application id pair. A {@code dryRun} call is a probe rather than a run: answered in place, it
+ * reads only what cannot synchronize with the infobase and starts nothing.
  * </p>
  */
 public class DatabaseUpdater implements IMcpTool
@@ -133,9 +134,15 @@ public class DatabaseUpdater implements IMcpTool
                     + "application is used, and for an extension project - which has no infobase of its own - " //$NON-NLS-1$
                     + "the default of the configuration it extends. The response says which was updated.") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
-                "Answer what an update would face and start nothing: the update state, the " //$NON-NLS-1$
-                    + "environment's readiness check, and whether an update is needed. No run " //$NON-NLS-1$
-                    + "is recorded and no infobase is claimed.") //$NON-NLS-1$
+                "Answer what an update would face and start nothing: the update state the " //$NON-NLS-1$
+                    + "environment holds, whether an update is needed, and - unless refreshWorkspace " //$NON-NLS-1$
+                    + "is off - what that refresh picked up. Readiness and the export validation an " //$NON-NLS-1$
+                    + "update runs first are NOT checked and are reported as notCheckedInDryRun: " //$NON-NLS-1$
+                    + "readiness reaches the infobase synchronization cycle through a thick client and " //$NON-NLS-1$
+                    + "does not return while a thick-client session holds the infobase; the export " //$NON-NLS-1$
+                    + "validation walks the whole project - diagnostics operation=validate_for_export " //$NON-NLS-1$
+                    + "answers it. No run is recorded, no runKey is issued, and no infobase is " //$NON-NLS-1$
+                    + "claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
@@ -409,7 +416,9 @@ public class DatabaseUpdater implements IMcpTool
         // A slow FULL / restructure update would otherwise hold an HTTP-handler thread for its whole
         // run. Hand it to the worker registry; the caller polls via runKey, and a fast update that
         // finishes inside the window still returns synchronously. updateDatabase() re-resolves its own
-        // state from these params, so no live EDT handle crosses the thread boundary.
+        // state from these params, so no live EDT handle crosses the thread boundary. A PROBE is
+        // answered on this thread instead and never reaches the registry - see runOrAnswer - while the
+        // key below stays the one a real update under these arguments owns.
         final String fProjectName = projectName;
         final String fApplicationId = applicationId;
         final boolean fFull = fullUpdate;
@@ -417,17 +426,48 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
-        final boolean fCheckOnly = checkOnly;
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
-        // to a caller who had said to go ahead.
+        // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
+        // the key below is the one a real update under these arguments owns.
         String runKey = PendingWorkRegistry.computeRunKey(fProjectName, fApplicationId,
             String.valueOf(fFull), String.valueOf(fRestr), String.valueOf(fFree),
             String.valueOf(fIgnoreBranch));
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
-        PendingWorkRegistry registry = PendingWorkRegistry.UPDATE;
+        return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
+            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+                fSkipValidation, checkOnly, params));
+    }
+
+    /**
+     * Runs the call: through the run registry for an update, in place for a probe.
+     * <p>
+     * A probe is answered where it arrives and never enters the registry. It reads and starts
+     * nothing, so it has no run to track and no runKey to hand back - but that is not the whole of
+     * it. The registry coalesces on the key alone, and the key is built from the arguments an
+     * update coalesces on, which a probe shares with the update it asks about. On that path a probe
+     * was served a real update's answer - a run it never asked for, reported as the environment's
+     * state before the update - and a real update arriving while a probe ran joined the probe and
+     * never executed.
+     * </p>
+     *
+     * @param answerInPlace whether this call is a probe, answered on the calling thread
+     * @param runKey the key a real run under these arguments owns
+     * @param registry the run registry, which a probe does not touch
+     * @param projectName the project, named in a Pending body
+     * @param timeoutMs how long a real run is waited for before a Pending answer
+     * @param work the body: the probe's answer, or the update itself
+     * @return a JSON result body
+     */
+    static String runOrAnswer(boolean answerInPlace, String runKey, PendingWorkRegistry registry,
+        String projectName, long timeoutMs, java.util.function.Supplier<String> work)
+    {
+        if (answerInPlace)
+        {
+            return work.get();
+        }
         registry.pruneExpired();
         // A FRESH call must never be silently served a finished cached result for the same params:
         // update_database asserts "this just happened", so a completed entry from a prior identical
@@ -438,13 +478,11 @@ public class DatabaseUpdater implements IMcpTool
         {
             registry.remove(runKey);
         }
-        PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, fCheckOnly, params));
+        PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey, work);
         // So a caller who never got the runKey can still address this run - and so the shared
         // registry answers questions about updates with updates: edit_metadata starts its pending
         // work in this same registry, and a kind-less entry cannot be told apart from either.
-        entry.subject = fProjectName;
+        entry.subject = projectName;
         entry.workKind = WORK_KIND;
 
         String result = entry.await(timeoutMs);
@@ -453,7 +491,7 @@ public class DatabaseUpdater implements IMcpTool
             registry.remove(runKey);
             return result;
         }
-        return buildPendingJson(runKey, entry, fProjectName, timeoutMs);
+        return buildPendingJson(runKey, entry, projectName, timeoutMs);
     }
 
     /**
@@ -527,32 +565,98 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
-     * What an update would face, without starting one.
+     * The workspace refresh a probe performs before it reads the update state, or {@code null} when
+     * the caller asked for none.
      * <p>
-     * Two things are reachable without running: the update state the environment holds - whether an
-     * update is needed and of which kind - and its own readiness check, which answers a status and
-     * changes nothing. The COMPOSITION of an update, object by object, is not: nothing in the
-     * application API offers it, and it is not worth running an update to find out. That is said
-     * here rather than left for the caller to infer from a short answer.
+     * A seam rather than a call, because how often a probe refreshes is part of what the answer
+     * promises - none when the caller turned it off, exactly one otherwise - and that count is not
+     * readable back out of the answer once the refresh has nothing to report.
      * </p>
+     */
+    interface WorkspaceRefresh
+    {
+        /**
+         * Makes the workspace hear about what the disk holds.
+         *
+         * @return the report: projects touched, resources changed, any failure noted
+         */
+        JsonObject refresh();
+    }
+
+    /**
+     * The refresh a probe asks for, from the call as it arrived.
      * <p>
-     * Nothing is claimed and nothing is recorded: no run, no infobase claim, no change to the
-     * update state.
+     * The flag is read here so the whole rule sits in one place: on unless the caller turns it off,
+     * and turned off it is not a refresh that reports nothing, it is no refresh at all.
      * </p>
      *
-     * @param appManager the application manager.
+     * @param params the call
+     * @param project the project being updated
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension
+     * @return the refresh to perform, or {@code null} when the caller turned it off
+     */
+    static WorkspaceRefresh refreshForProbe(Map<String, String> params, IProject project,
+        IProject infobaseProject)
+    {
+        if (!JsonUtils.extractBooleanArgument(params, "refreshWorkspace", true)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return null;
+        }
+        return () -> refreshFromDisk(project, infobaseProject);
+    }
+
+    /**
+     * What an update would face, reading only what cannot start one.
+     * <p>
+     * Two things are reachable without running an update: the update state the environment holds -
+     * whether an update is needed and of which kind - and, when the caller asked for it, a workspace
+     * refresh, so that state is read against a model that has heard about what the disk holds. The
+     * COMPOSITION of an update, object by object, is not reachable: nothing in the application API
+     * offers it, and it is not worth running an update to find out. Both are said here rather than
+     * left for the caller to infer from a short answer.
+     * </p>
+     * <p>
+     * The readiness check an update itself performs is NOT among these reads. It reaches the
+     * infobase synchronization cycle - a thick client process, {@code config generation-id},
+     * {@code config dump-files}, a load into the infobase - through
+     * {@code InfobaseApplicationBehaviourDelegate.check} and
+     * {@code IInfobaseSynchronizationManager.retrieveInfobaseChanges}. Behind an open thick-client
+     * session that load waits for a monopoly it cannot get, so the check does not return, and a
+     * probe that asked for it hung the EDT it was asked about. What it used to fill is now a
+     * statement that it was not asked for, which is the whole of what a dry run can honestly say
+     * about it.
+     * </p>
+     * <p>
+     * Nothing is claimed and nothing is recorded: no run, no infobase claim, no change to the update
+     * state.
+     * </p>
+     *
+     * @param appManager the application manager, taken whole rather than as the one state it holds,
+     *            so what this path reads of it is a fact a stand-in can count.
      * @param application the application that would be updated.
+     * @param refresh the workspace refresh to perform first, or {@code null} for none.
      * @param applicationId its id, as the answer names it.
      * @param projectName the project the call named.
-     * @param infobaseProject the project that owns the infobase - the parent, for an extension.
      * @param viaParent whether the infobase belongs to the parent configuration.
-     * @param state the update state the environment holds.
+     * @param infobaseOwnerName the project that owns the infobase - the parent, for an extension.
      * @return the answer
      */
-    private static String whatAnUpdateWouldFace(IApplicationManager appManager,
-        IApplication application, String applicationId, String projectName, IProject infobaseProject,
-        boolean viaParent, ApplicationUpdateState state)
+    static String whatAnUpdateWouldFace(IApplicationManager appManager, IApplication application,
+        WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
+        String infobaseOwnerName)
     {
+        JsonObject workspaceRefresh = refresh == null ? null : refresh.refresh();
+        ApplicationUpdateState state;
+        try
+        {
+            state = appManager.getUpdateState(application);
+        }
+        catch (Exception | LinkageError cannotRead)
+        {
+            return ToolResult.error("Could not read what '" + infobaseOwnerName //$NON-NLS-1$
+                + "' holds, so nothing can be said about what an update would face: " + cannotRead) //$NON-NLS-1$
+                .toJson();
+        }
         ToolResult answer = ToolResult.success()
             .put("dryRun", Boolean.TRUE) //$NON-NLS-1$
             .put("projectName", projectName) //$NON-NLS-1$
@@ -562,40 +666,24 @@ public class DatabaseUpdater implements IMcpTool
                 || state == ApplicationUpdateState.FULL_UPDATE_REQUIRED));
         if (viaParent)
         {
-            answer.put("infobaseOwner", infobaseProject.getName()); //$NON-NLS-1$
+            answer.put("infobaseOwner", infobaseOwnerName); //$NON-NLS-1$
         }
-        try
+        if (workspaceRefresh != null)
         {
-            org.eclipse.core.runtime.IStatus readiness = appManager.check(application,
-                com.e1c.g5.dt.applications.ApplicationCheckUnknownStateTreatment.TREAT_AS_NOT_READY,
-                contextWithActiveShell(),
-                new org.eclipse.core.runtime.NullProgressMonitor());
-            if (readiness != null)
-            {
-                answer.put("readiness", readiness.isOK() ? "ok" : readiness.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-                List<String> problems = new ArrayList<>();
-                for (org.eclipse.core.runtime.IStatus child : readiness.getChildren())
-                {
-                    if (child != null && !child.isOK())
-                    {
-                        problems.add(child.getMessage());
-                    }
-                }
-                if (!problems.isEmpty())
-                {
-                    answer.put("readinessProblems", problems); //$NON-NLS-1$
-                }
-            }
-        }
-        catch (Exception | LinkageError cannotCheck)
-        {
-            // Said, not swallowed: a readiness that could not be asked for is a different answer
-            // from one that came back clean.
-            answer.put("readiness", "could not be established: " + cannotCheck); //$NON-NLS-1$ //$NON-NLS-2$
+            // The answer asserts what the model holds, so it asserts the refresh too: the state
+            // below is only as current as the workspace this call just read.
+            answer.put("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
         }
         return answer
+            .put("notCheckedInDryRun", List.of("readiness", "exportValidation")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .put("notCheckedInDryRunNote", "The readiness check an update itself performs is not run " //$NON-NLS-1$ //$NON-NLS-2$
+                + "here. Asking for it reaches the infobase synchronization cycle through a thick " //$NON-NLS-1$
+                + "client and does not return while a thick-client session holds the infobase, which " //$NON-NLS-1$
+                + "is what a dry run exists to avoid. Only an update can answer it. The export " //$NON-NLS-1$
+                + "validation an update runs before writing is not run either: it walks the whole " //$NON-NLS-1$
+                + "project. diagnostics operation=validate_for_export runs it.") //$NON-NLS-1$
             .put("composition", "not available without running an update - the application API " //$NON-NLS-1$ //$NON-NLS-2$
-                + "reports the state and the readiness, not the objects an update would carry. " //$NON-NLS-1$
+                + "reports the state, not the objects an update would carry. " //$NON-NLS-1$
                 + "Nothing was claimed, started or recorded by this call.") //$NON-NLS-1$
             .toJson();
     }
@@ -603,9 +691,8 @@ public class DatabaseUpdater implements IMcpTool
     /**
      * An execution context carrying the active shell.
      * <p>
-     * Both the update and its readiness check are given one. The environment refuses the readiness
-     * check outright without a shell - {@code ApplicationException: Shell is not provided in
-     * execution context} - and the update wants one for any modal it raises.
+     * The update is given one, because it wants a shell for any modal it raises. A probe is not:
+     * it raises none, and nothing else it reads asks for a shell.
      * </p>
      *
      * @return the context, carrying a shell when the workbench has one
@@ -647,7 +734,7 @@ public class DatabaseUpdater implements IMcpTool
      * @param timeoutMs how long was waited
      * @return a JSON Pending body
      */
-    private String buildPendingJson(String runKey, PendingWorkRegistry.PendingEntry entry, String projectName,
+    private static String buildPendingJson(String runKey, PendingWorkRegistry.PendingEntry entry, String projectName,
         long timeoutMs)
     {
         ToolResult body = ToolResult.success()
@@ -683,7 +770,8 @@ public class DatabaseUpdater implements IMcpTool
      * @param autoFreeClients whether to free held clients first
      * @param ignoreBranchBinding whether to go ahead when the branch names another application
      * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
-     * @param checkOnly whether to answer what an update would face and start nothing
+     * @param checkOnly whether to answer what an update would face and start nothing. Reached only
+     *            from the caller's thread - a probe is never a tracked run, see {@link #runOrAnswer}
      * @param params the full call, for the refreshWorkspace flag
      * @return a JSON result body
      */
@@ -691,7 +779,8 @@ public class DatabaseUpdater implements IMcpTool
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
         boolean skipValidation, boolean checkOnly, Map<String, String> params)
     {
-        String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
+        String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
+            DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
         if (blocked != null)
         {
             return blocked;
@@ -776,6 +865,17 @@ public class DatabaseUpdater implements IMcpTool
 
             IApplication application = appOpt.get();
 
+            if (checkOnly)
+            {
+                // Answered here, and only here: the probe reaches this method on the caller's
+                // thread, never as a tracked run - see runOrAnswer. What it reads is the state and,
+                // if asked, a refresh; what it must not read is the readiness check, which
+                // synchronizes with the infobase.
+                return whatAnUpdateWouldFace(appManager, application,
+                    refreshForProbe(params, project, infobaseProject), applicationId, projectName,
+                    viaParent, infobaseProject.getName());
+            }
+
             boolean refreshWorkspace =
                 JsonUtils.extractBooleanArgument(params, "refreshWorkspace", true); //$NON-NLS-1$
             JsonObject workspaceRefresh = null;
@@ -789,21 +889,6 @@ public class DatabaseUpdater implements IMcpTool
             }
 
             ApplicationUpdateState stateBefore = appManager.getUpdateState(application);
-            if (checkOnly)
-            {
-                String dryAnswer = whatAnUpdateWouldFace(appManager, application, applicationId,
-                    projectName, infobaseProject, viaParent, stateBefore);
-                if (workspaceRefresh != null)
-                {
-                    // The dry answer asserts what the model holds, so it asserts the refresh too:
-                    // its stateBefore is only as current as the workspace this call just read.
-                    com.google.gson.JsonObject parsed =
-                        com.google.gson.JsonParser.parseString(dryAnswer).getAsJsonObject();
-                    parsed.add("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
-                    dryAnswer = parsed.toString();
-                }
-                return dryAnswer;
-            }
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
                 return ToolResult.error("This application has an update already in progress - wait for it to finish.").toJson(); //$NON-NLS-1$
@@ -1043,6 +1128,25 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * The export scan an update runs before it writes, or nothing for a dry run.
+     * <p>
+     * A dry run answers from what the environment already holds. The scan walks the whole
+     * project, so a dry run does not run it and names it in {@code notCheckedInDryRun} instead.
+     * </p>
+     *
+     * @param projectName the project about to be written to an infobase.
+     * @param skip whether the caller asked to go ahead unchecked.
+     * @param probe whether this call is a dry run.
+     * @param scan the scan to run, {@link #refuseWhatTheInfobaseWillRefuse} outside tests.
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    static String exportScanBefore(String projectName, boolean skip, boolean probe,
+        java.util.function.BiFunction<String, Boolean, String> scan)
+    {
+        return probe ? null : scan.apply(projectName, Boolean.valueOf(skip));
     }
 
     /**

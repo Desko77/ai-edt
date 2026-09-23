@@ -131,9 +131,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "getApplications is also accepted); remaining parameters follow the per-operation " //$NON-NLS-1$
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
             + "delete_infobase / set_infobase_credentials / update_database mutate, and " //$NON-NLS-1$
-            + "update_database / sync_control may reply with a Pending status and a runKey to " //$NON-NLS-1$
-            + "resume. update_database takes dryRun to answer what an update would face and " //$NON-NLS-1$
-            + "start nothing. sync_control has its own " //$NON-NLS-1$
+            + "A real run of update_database / sync_control may reply with a Pending status and " //$NON-NLS-1$
+            + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
+            + "face and start nothing, answered in place with no runKey. sync_control has its own " //$NON-NLS-1$
             + "inner operation (status / diagnose / suppress / ...): pass it as syncOperation, " //$NON-NLS-1$
             + "not operation - operation here always selects the infobase_admin routing target. " //$NON-NLS-1$
             + "The standalone tools remain available for back-compat."; //$NON-NLS-1$
