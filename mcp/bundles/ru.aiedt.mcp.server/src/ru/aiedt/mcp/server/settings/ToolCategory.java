@@ -223,11 +223,12 @@ public enum ToolCategory
     /** The composites: one call where an agent would otherwise make five. */
     AI_HELPERS("aiHelpers", "Agent Composites", //$NON-NLS-1$ //$NON-NLS-2$
         "One-call composites and generators for AI agents: health snapshot, code templates, " //$NON-NLS-1$
-            + "event-handler stubs, extension lifecycle", //$NON-NLS-1$
+            + "event-handler stubs, extension lifecycle, and the 1C:Naparnik bridge", //$NON-NLS-1$
         "generate_health_snapshot", //$NON-NLS-1$
         "code_template", //$NON-NLS-1$
         "generate_event_handlers", //$NON-NLS-1$
-        "extension_lifecycle"); //$NON-NLS-1$
+        "extension_lifecycle", //$NON-NLS-1$
+        "naparnik"); //$NON-NLS-1$
 
     /**
      * Tool name to owning group.

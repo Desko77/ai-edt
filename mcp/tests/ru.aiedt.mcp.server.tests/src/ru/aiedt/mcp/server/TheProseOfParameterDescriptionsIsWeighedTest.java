@@ -280,6 +280,8 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_search", Integer.valueOf(305));
         PROSE.put("generate_event_handlers", Integer.valueOf(299));
         PROSE.put("code_template", Integer.valueOf(171));
+        // naparnik: operation and probe. probe says that the call starts the Naparnik UI bundle.
+        PROSE.put("naparnik", Integer.valueOf(216));
         PROSE.put("get_mcp_history", Integer.valueOf(145));
         PROSE.put("get_command_interface", Integer.valueOf(98));
         PROSE.put("get_edt_version", Integer.valueOf(0));
@@ -368,6 +370,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * scan is narrowed by. The sentences that refuse a selector the scope does not accept moved
      * to operation help. Measured at 87113.
      * </p>
+     * <p>
+     * And a sixteenth, by 216, for naparnik: the operation, and probe, which starts the Naparnik
+     * UI bundle. Together with the fifteenth: 87329.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 87113;
+    private static final int DOCUMENT_PROSE = 87329;
 }

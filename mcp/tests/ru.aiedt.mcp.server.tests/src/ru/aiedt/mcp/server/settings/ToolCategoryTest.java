@@ -144,7 +144,8 @@ public class ToolCategoryTest
         // On 2026-08-21 support_registry joined ANALYSIS (+1 -> 129): it reads the vendor
         // support state of a configuration and changes nothing, which is the same house as
         // the comparison tools it is read alongside.
-        assertEquals(133, ToolCategory.getTotalToolCount());
+        // On 2026-09-23 naparnik joined AI_HELPERS (+1 -> 134).
+        assertEquals(134, ToolCategory.getTotalToolCount());
     }
 
     @Test
