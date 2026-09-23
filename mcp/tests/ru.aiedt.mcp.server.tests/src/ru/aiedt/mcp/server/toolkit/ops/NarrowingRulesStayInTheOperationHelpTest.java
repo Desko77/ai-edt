@@ -67,6 +67,27 @@ public class NarrowingRulesStayInTheOperationHelpTest
             new SensitiveDataScanTool().getInputSchema().contains("scope=subsystem requires subsystemName")); //$NON-NLS-1$
     }
 
+    /**
+     * The rule reads about both ends of an edge, and about a root, because that is what the walk
+     * does. It said the target alone was checked, which was already untrue when the source of a
+     * backward reference was looked at, and it said nothing about the mixed level carrying modules.
+     */
+    @Test
+    public void graphHelpCarriesTheBothEndsRuleTheSchemaDoesNot()
+    {
+        String help = help(new InsightsFacadeTool(), "dependency_graph"); //$NON-NLS-1$
+        assertTrue(help, help.contains("judged on BOTH ends")); //$NON-NLS-1$
+        assertTrue(help, help.contains("a module end is kept on mixed")); //$NON-NLS-1$
+        assertTrue("a root the level does not carry is named, not dropped in silence", //$NON-NLS-1$
+            help.contains("internalRootsDropped")); //$NON-NLS-1$
+        assertFalse("the rule that reads as if the target alone were checked", //$NON-NLS-1$
+            help.contains("whose target is not a metadata object")); //$NON-NLS-1$
+        assertFalse(new InsightsFacadeTool().getInputSchema(),
+            new InsightsFacadeTool().getInputSchema().contains("judged on BOTH ends")); //$NON-NLS-1$
+        assertFalse(new DependencyGraphTool().getInputSchema(),
+            new DependencyGraphTool().getInputSchema().contains("judged on BOTH ends")); //$NON-NLS-1$
+    }
+
     private static String help(IMcpTool facade, String topic)
     {
         Map<String, String> params = new LinkedHashMap<>();

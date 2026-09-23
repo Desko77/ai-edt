@@ -24,6 +24,7 @@ import com._1c.g5.v8.bm.core.IBmEngine;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.bsl.model.Module;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 /**
@@ -241,23 +242,58 @@ public final class BmReferencesHelper
     public static BfsResult bfs(IBmTransaction tx, IBmEngine engine, Collection<IBmObject> roots,
         Direction direction, int maxNodes, int maxEdges, int maxDepth, CancelCheck progressCheck)
     {
+        return bfs(tx, engine, roots, direction, maxNodes, maxEdges, maxDepth, progressCheck, null);
+    }
+
+    /**
+     * The same walk, with the filter the metadata dependency graph asks for.
+     * <p>
+     * A <code>null</code> policy is the walk every other caller uses: no kind is dropped and a
+     * repeated edge stays a repeated edge. The metadata graph passes a policy so an end the level
+     * does not carry is not an edge and not a root either, repeated edges merge, and a caller can
+     * keep only the kinds they named.
+     * </p>
+     *
+     * @param policy how an edge is accepted, or <code>null</code> to accept every reportable edge
+     * @return the walk
+     */
+    public static BfsResult bfs(IBmTransaction tx, IBmEngine engine, Collection<IBmObject> roots,
+        Direction direction, int maxNodes, int maxEdges, int maxDepth, CancelCheck progressCheck,
+        EdgePolicy policy)
+    {
         BfsResult result = new BfsResult();
         if (engine == null || roots == null || roots.isEmpty())
         {
             return result;
         }
         Set<String> visited = new LinkedHashSet<>();
-        java.util.Deque<IBmObject> queue = new java.util.ArrayDeque<>(roots);
+        Set<String> expanded = new LinkedHashSet<>();
+        java.util.Deque<IBmObject> queue = new java.util.ArrayDeque<>();
         for (IBmObject root : roots)
         {
-            if (root != null)
+            if (root == null)
             {
-                String fqn = safeFqn(root);
-                if (fqn != null)
-                {
-                    visited.add(fqn);
-                    result.nodes.put(fqn, root);
-                }
+                continue;
+            }
+            String fqn = safeFqn(root);
+            if (fqn == null)
+            {
+                continue;
+            }
+            if (policy != null && !policy.ends.accepts(root))
+            {
+                // A root is judged by the filter that judges an edge: scope=module takes whatever
+                // the FQN names, and a service index named that way used to enter the graph as a
+                // node and be walked from. The answer names it instead of dropping it in silence.
+                result.internalRootsDropped.add(fqn);
+                continue;
+            }
+            if (visited.add(fqn))
+            {
+                // A root listed twice is one node and is walked once: the queue is the expansion
+                // order, and the second copy reported every edge of that node a second time.
+                result.nodes.put(fqn, root);
+                queue.add(root);
             }
         }
         // Level-by-level so maxDepth bounds the rings expanded from the roots.
@@ -284,13 +320,19 @@ public final class BmReferencesHelper
                 {
                     continue;
                 }
+                String nodeFqn = safeFqn(node);
+                if (nodeFqn != null && !expanded.add(nodeFqn))
+                {
+                    // One node is expanded once, whatever the queue was handed.
+                    continue;
+                }
                 // Backward references (callers / referencers).
                 if (direction == Direction.IN || direction == Direction.BOTH)
                 {
                     for (Reference r : backReferences(engine, node))
                     {
                         addBfsEdge(result, queue, visited, r.source, node, r.featureName, maxNodes,
-                            maxEdges);
+                            maxEdges, policy, Side.BACKWARD);
                     }
                 }
                 // Forward references (callees / referenced objects).
@@ -299,7 +341,7 @@ public final class BmReferencesHelper
                     for (Reference r : forwardReferences(tx, node))
                     {
                         addBfsEdge(result, queue, visited, node, r.target, r.featureName, maxNodes,
-                            maxEdges);
+                            maxEdges, policy, Side.FORWARD);
                     }
                 }
             }
@@ -308,15 +350,136 @@ public final class BmReferencesHelper
         return result;
     }
 
+    /**
+     * Whether the object is a metadata object of the configuration.
+     * <p>
+     * An EDT-internal index can be a top object with an address and still not be one of those.
+     * The metadata graph drops an edge that ends on such a target.
+     * </p>
+     *
+     * @param object one end of a reference, already collapsed to its top object
+     * @return <code>true</code> when it is a metadata object
+     */
+    public static boolean isMetadataObject(IBmObject object)
+    {
+        return object instanceof MdObject;
+    }
+
+    /**
+     * Whether the object is a BSL module.
+     * <p>
+     * The mixed graph shows both halves of a project, so a module is one of its objects. Everywhere
+     * else a module is as foreign to the graph as an EDT service index is.
+     * </p>
+     *
+     * @param object one end of a reference, already collapsed to its top object
+     * @return <code>true</code> when it is a BSL module
+     */
+    public static boolean isBslModule(IBmObject object)
+    {
+        return object instanceof Module;
+    }
+
+    /**
+     * Accepts one edge into a walk that has a {@link EdgePolicy}.
+     * <p>
+     * The unfiltered walk stays on {@code addBfsEdge} with no policy, which is what a caller that
+     * reflects that method still finds. This is the same step with the filter applied.
+     * </p>
+     *
+     * @param result the walk being built
+     * @param queue the ring still to expand
+     * @param visited addresses already in the walk
+     * @param from the source end
+     * @param to the target end
+     * @param featureName the {@code via} of the edge
+     * @param maxNodes the node cap
+     * @param maxEdges the edge cap, counted after merging when a policy is in force
+     * @param policy how the edge is accepted
+     * @param side which end of the reference reports it
+     */
+    public static void acceptEdge(BfsResult result, java.util.Deque<IBmObject> queue,
+        Set<String> visited, IBmObject from, IBmObject to, String featureName, int maxNodes,
+        int maxEdges, EdgePolicy policy, Side side)
+    {
+        addBfsEdge(result, queue, visited, from, to, featureName, maxNodes, maxEdges, policy, side);
+    }
+
+    /**
+     * The fields a dependency-graph answer adds for the kind filter, and for the objects the level
+     * does not carry: an edge dropped for an end, a root dropped for being that end itself.
+     * <p>
+     * No argument and nothing dropped is an empty map: the answer gains no field. On
+     * {@code modules} a supplied argument is reported as {@code notApplied} and the calls edges
+     * are left to the caller.
+     * </p>
+     *
+     * @param level the graph level, lower case
+     * @param requested the kinds the caller asked to keep, or <code>null</code> when the argument
+     *            was absent
+     * @param bfs the walk
+     * @return the fields to add, possibly empty
+     */
+    public static Map<String, Object> edgeKindFields(String level, List<String> requested,
+        BfsResult bfs)
+    {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        if ("modules".equals(level)) //$NON-NLS-1$
+        {
+            if (requested != null)
+            {
+                fields.put("edgeKinds", "notApplied"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return fields;
+        }
+        if (bfs != null && bfs.internalEdgesDropped > 0)
+        {
+            fields.put("internalEdgesDropped", Integer.valueOf(bfs.internalEdgesDropped)); //$NON-NLS-1$
+        }
+        if (bfs != null && !bfs.internalRootsDropped.isEmpty())
+        {
+            fields.put("internalRootsDropped", new ArrayList<>(bfs.internalRootsDropped)); //$NON-NLS-1$
+        }
+        if (requested == null)
+        {
+            return fields;
+        }
+        fields.put("edgeKinds", requested); //$NON-NLS-1$
+        fields.put("edgesDroppedByKind", //$NON-NLS-1$
+            bfs == null ? new LinkedHashMap<String, Integer>() : bfs.edgesDroppedByKind);
+        List<String> unmatched = new ArrayList<>();
+        Set<String> seen = bfs == null ? Set.of() : bfs.kindsSeen;
+        for (String kind : requested)
+        {
+            if (!seen.contains(kind))
+            {
+                unmatched.add(kind);
+            }
+        }
+        fields.put("unmatchedKinds", unmatched); //$NON-NLS-1$
+        return fields;
+    }
+
     private static void addBfsEdge(BfsResult result, java.util.Deque<IBmObject> queue,
         Set<String> visited, IBmObject from, IBmObject to, String featureName, int maxNodes,
         int maxEdges)
+    {
+        addBfsEdge(result, queue, visited, from, to, featureName, maxNodes, maxEdges, null,
+            Side.FORWARD);
+    }
+
+    private static void addBfsEdge(BfsResult result, java.util.Deque<IBmObject> queue,
+        Set<String> visited, IBmObject from, IBmObject to, String featureName, int maxNodes,
+        int maxEdges, EdgePolicy policy, Side side)
     {
         if (from == null || to == null)
         {
             return;
         }
-        if (result.edges.size() >= maxEdges)
+        // Without a policy the cap is consulted first, which is the walk the unfiltered callers
+        // and the reflected method have always had. With a policy a duplicate merges and does not
+        // consume a slot, so the cap is applied only when a new edge would be added.
+        if (policy == null && result.edges.size() >= maxEdges)
         {
             result.truncated = true;
             return;
@@ -334,6 +497,52 @@ public final class BmReferencesHelper
             // Both ends collapsed onto the same owner: the reference is internal to one object and
             // says nothing about the graph between objects.
             return;
+        }
+        // Both ends. A backward reference arrives from the object that holds it, and that holder is
+        // reached without passing the target check: a service index of the model used to enter the
+        // graph as a node and be walked from, through the side nothing looked at.
+        if (policy != null && !(policy.ends.accepts(fromEnd) && policy.ends.accepts(toEnd)))
+        {
+            // One edge is dropped once, however many times the two ends report it, and this count
+            // is its own: a kind dropped earlier was counted here again, so one internal edge
+            // could be reported as two.
+            if (result.endsDroppedEdges.add(edgeKey(fromFqn, toFqn, featureName)))
+            {
+                result.internalEdgesDropped = result.endsDroppedEdges.size();
+            }
+            return;
+        }
+        if (policy != null && featureName != null && !featureName.isEmpty())
+        {
+            result.kindsSeen.add(featureName);
+        }
+        if (policy != null && policy.keepKinds != null
+            && (featureName == null || !policy.keepKinds.contains(featureName)))
+        {
+            // One edge is dropped once, however many times the two ends report it.
+            if (result.kindDroppedEdges.add(edgeKey(fromFqn, toFqn, featureName)))
+            {
+                result.edgesDroppedByKind.merge(featureName == null ? "" : featureName, //$NON-NLS-1$
+                    Integer.valueOf(1), Integer::sum);
+            }
+            return;
+        }
+        if (policy != null)
+        {
+            for (Edge existing : result.edges)
+            {
+                if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                    && java.util.Objects.equals(featureName, existing.featureName))
+                {
+                    existing.observe(side);
+                    return;
+                }
+            }
+            if (result.edges.size() >= maxEdges)
+            {
+                result.truncated = true;
+                return;
+            }
         }
         // The target goes in FIRST. The edge used to be added before the cap was consulted, so a
         // walk that stopped at maxNodes returned an edge whose target was in no node of the graph -
@@ -364,7 +573,20 @@ public final class BmReferencesHelper
             result.nodes.put(fromFqn, fromEnd);
             queue.add(fromEnd);
         }
-        result.edges.add(new Edge(fromFqn, toFqn, featureName));
+        result.edges.add(new Edge(fromFqn, toFqn, featureName, side));
+    }
+
+    /**
+     * The key under which one edge is counted, so that the same edge reported twice is one edge.
+     *
+     * @param fromFqn the source end
+     * @param toFqn the target end
+     * @param featureName the {@code via} of the edge
+     * @return the key
+     */
+    private static String edgeKey(String fromFqn, String toFqn, String featureName)
+    {
+        return fromFqn + '\u0000' + toFqn + '\u0000' + (featureName == null ? "" : featureName); //$NON-NLS-1$
     }
 
     /**
@@ -476,6 +698,100 @@ public final class BmReferencesHelper
     }
 
     /**
+     * Which objects may be an end of an edge of a level.
+     * <p>
+     * The metadata level is a graph between metadata objects. The mixed level shows both halves of a
+     * project, so a BSL module is an object of that graph as well. An EDT service object - a module
+     * context index, a type, a command group - is an object of neither level, and an edge that ends
+     * on one is dropped at whichever end reports it.
+     * </p>
+     */
+    public enum Ends
+    {
+        /** Only metadata objects. */
+        METADATA,
+        /** Metadata objects and BSL modules. */
+        MIXED;
+
+        /**
+         * Whether an end is an object of the level that owns this filter.
+         *
+         * @param object one end of a reference, already collapsed to its top object
+         * @return <code>true</code> when the end belongs in the graph
+         */
+        public boolean accepts(IBmObject object)
+        {
+            if (isMetadataObject(object))
+            {
+                return true;
+            }
+            return this == MIXED && isBslModule(object);
+        }
+    }
+
+    /**
+     * Which end of a reference reports it.
+     * <p>
+     * The forward pass walks what a node points at and the backward pass asks the engine what points
+     * at it. Between the same two ends the two passes enumerate the same references, so a reference
+     * seen from both sides is one reference and not two. Counting the second sighting as a new one
+     * doubled every count on the default {@code direction=both} walk.
+     * </p>
+     */
+    public enum Side
+    {
+        FORWARD, BACKWARD
+    }
+
+    /**
+     * Which edges a metadata dependency graph keeps.
+     * <p>
+     * {@code keepKinds} <code>null</code> keeps every kind that survived the ends check. An empty
+     * set keeps none. Other callers pass no policy at all.
+     * </p>
+     */
+    public static final class EdgePolicy
+    {
+        /** Which objects may be an end of an edge. */
+        public final Ends ends;
+
+        /** The {@code via} values to keep, or <code>null</code> to keep every remaining kind. */
+        public final Set<String> keepKinds;
+
+        /**
+         * @param ends which objects may be an end of an edge
+         * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+         */
+        public EdgePolicy(Ends ends, Set<String> keepKinds)
+        {
+            this.ends = ends;
+            this.keepKinds = keepKinds;
+        }
+
+        /**
+         * The policy of the metadata level: metadata objects on both ends.
+         *
+         * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+         * @return the policy
+         */
+        public static EdgePolicy metadata(Set<String> keepKinds)
+        {
+            return new EdgePolicy(Ends.METADATA, keepKinds);
+        }
+
+        /**
+         * The policy of the mixed level: metadata objects and BSL modules on both ends.
+         *
+         * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+         * @return the policy
+         */
+        public static EdgePolicy mixed(Set<String> keepKinds)
+        {
+            return new EdgePolicy(Ends.MIXED, keepKinds);
+        }
+    }
+
+    /**
      * BFS edge with feature label.
      */
     public static final class Edge
@@ -484,11 +800,54 @@ public final class BmReferencesHelper
         public final String toFqn;
         public final String featureName;
 
+        /** How many references this one edge stands for. */
+        public int count = 1;
+
+        private int forwardObservations;
+        private int backwardObservations;
+
         public Edge(String fromFqn, String toFqn, String featureName)
+        {
+            this(fromFqn, toFqn, featureName, Side.FORWARD);
+        }
+
+        /**
+         * @param fromFqn the source end
+         * @param toFqn the target end
+         * @param featureName the {@code via} of the edge
+         * @param side the end that reported the first reference of this edge
+         */
+        public Edge(String fromFqn, String toFqn, String featureName, Side side)
         {
             this.fromFqn = fromFqn;
             this.toFqn = toFqn;
             this.featureName = featureName;
+            observe(side);
+        }
+
+        /**
+         * Records one more sighting of this edge.
+         * <p>
+         * Each side is tallied on its own and the count is the larger of the two, because the two
+         * passes enumerate the same references between two ends: a source with three attributes on
+         * one catalog is reported three times forward and three times backward, and the pair stands
+         * for three references either way. Adding the sighting to one number counted that pair six
+         * times.
+         * </p>
+         *
+         * @param side the end that reported the reference
+         */
+        public void observe(Side side)
+        {
+            if (side == Side.BACKWARD)
+            {
+                backwardObservations++;
+            }
+            else
+            {
+                forwardObservations++;
+            }
+            count = Math.max(forwardObservations, backwardObservations);
         }
     }
 
@@ -502,5 +861,23 @@ public final class BmReferencesHelper
         public final Map<String, IBmObject> nodes = new LinkedHashMap<>();
         public final List<Edge> edges = new ArrayList<>();
         public boolean truncated;
+
+        /** Edges dropped because an end is not an object of the level, counted once per edge. */
+        public int internalEdgesDropped;
+
+        /** Roots that are not objects of the level, each once, so the answer can name them. */
+        public final Set<String> internalRootsDropped = new LinkedHashSet<>();
+
+        /** Kind to how many edges of that kind the filter refused, counted once per edge. */
+        public final Map<String, Integer> edgesDroppedByKind = new LinkedHashMap<>();
+
+        /** Kinds seen on an edge whose ends are objects of the level, including kinds then dropped. */
+        public final Set<String> kindsSeen = new LinkedHashSet<>();
+
+        /** Keys of the edges already counted as dropped because an end is outside the level. */
+        private final Set<String> endsDroppedEdges = new LinkedHashSet<>();
+
+        /** Keys of the edges already counted as dropped because of their kind. */
+        private final Set<String> kindDroppedEdges = new LinkedHashSet<>();
     }
 }
