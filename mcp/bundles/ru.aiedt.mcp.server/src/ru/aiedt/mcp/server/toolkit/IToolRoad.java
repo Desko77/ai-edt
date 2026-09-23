@@ -15,7 +15,8 @@ import java.util.Map;
  * An external call over HTTP and an internal call from a bundle pass the same decisions: the tool
  * is looked up in the catalogue, the preset gate is asked, a heavy call clears the heap gate and
  * takes one of the heavy-tool permits, and the permit is held for as long as the work runs - past
- * a {@code Pending} answer, until the background future finishes. Calling through this service
+ * a {@code Pending} answer, until the background work itself has left. A run whose tracking was
+ * detached or stopped keeps the permit until its body returns. Calling through this service
  * therefore costs the same and is bounded by the same limits as a call from an agent.
  * </p>
  * <p>
