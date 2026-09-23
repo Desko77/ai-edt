@@ -54,6 +54,14 @@ public final class DumpInfoProbe
     /** Where recorded formats live, unless a test points somewhere else. */
     private static final String STATE_FILE = "dump-info-formats.properties"; //$NON-NLS-1$
 
+    /**
+     * Runs between reading the current records and replacing the file. Tests replace it to widen
+     * that window on purpose; production does nothing.
+     */
+    public static Runnable betweenRecordReadAndWrite = () -> {
+        // nothing
+    };
+
     private DumpInfoProbe()
     {
         // static utility
@@ -381,12 +389,24 @@ public final class DumpInfoProbe
     }
 
     /**
+     * Serializes the read-modify-write of the record file inside this process. Rebuilds of
+     * different infobases run under their own claims and reach this one file, and an
+     * unsynchronized pair of writes loses the record of whichever base wrote first.
+     */
+    private static final Object RECORD_FILE_LOCK = new Object();
+
+    /**
      * Records the format and the platform it was measured on. A check running on another platform
      * treats the record as absent.
      * <p>
      * The file is written to a temporary file in the same directory and moved into place. Opening
      * the destination first would truncate it, and a failure of {@link Properties#store} would leave
      * every base's record empty.
+     * </p>
+     * <p>
+     * The read-modify-write runs under {@link #RECORD_FILE_LOCK} and a cross-process file lock on
+     * a sidecar beside the record file, so two rebuilds of different infobases - which hold
+     * different per-infobase claims - cannot overwrite each other's record.
      * </p>
      *
      * @param infobaseIdentity the base's identity ({@link InfobaseIdentity})
@@ -403,19 +423,35 @@ public final class DumpInfoProbe
         {
             return;
         }
-        Properties existing = readPairs(recordedFormats);
-        Properties recorded = existing != null ? existing : new Properties();
-        recorded.remove(infobaseIdentity);
-        recorded.setProperty(formatKey(infobaseIdentity), format);
-        if (platformVersion == null || platformVersion.isEmpty())
+        synchronized (RECORD_FILE_LOCK)
         {
-            recorded.remove(platformKey(infobaseIdentity));
+            Path absolute = recordedFormats.toAbsolutePath();
+            Path parent = absolute.getParent();
+            if (parent != null)
+            {
+                Files.createDirectories(parent);
+            }
+            Path lockFile = absolute.resolveSibling(absolute.getFileName() + ".lock"); //$NON-NLS-1$
+            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(lockFile,
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+                java.nio.channels.FileLock crossProcess = channel.lock())
+            {
+                Properties existing = readPairs(recordedFormats);
+                betweenRecordReadAndWrite.run();
+                Properties recorded = existing != null ? existing : new Properties();
+                recorded.remove(infobaseIdentity);
+                recorded.setProperty(formatKey(infobaseIdentity), format);
+                if (platformVersion == null || platformVersion.isEmpty())
+                {
+                    recorded.remove(platformKey(infobaseIdentity));
+                }
+                else
+                {
+                    recorded.setProperty(platformKey(infobaseIdentity), platformVersion.trim());
+                }
+                writeAtomically(recorded, recordedFormats);
+            }
         }
-        else
-        {
-            recorded.setProperty(platformKey(infobaseIdentity), platformVersion.trim());
-        }
-        writeAtomically(recorded, recordedFormats);
     }
 
     /** The properties key of the format itself. */

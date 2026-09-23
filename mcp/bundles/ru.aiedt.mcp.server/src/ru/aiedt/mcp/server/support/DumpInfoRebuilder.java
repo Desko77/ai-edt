@@ -433,11 +433,8 @@ public final class DumpInfoRebuilder
     private static Path runFullDumpUnderTimeout(
         BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
-        return underTimeout("the Designer dump", timeoutMs, () -> ctx.launcher //$NON-NLS-1$
-            .exportFullXmlFromInfobase(ctx.component, ctx.infobase,
-                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL,
-                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesKind.PLAIN_FILES,
-                ctx.args, tempDir));
+        return underTimeout("the Designer dump", timeoutMs, //$NON-NLS-1$
+            () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx, tempDir));
     }
 
     /**
@@ -495,27 +492,19 @@ public final class DumpInfoRebuilder
         }
         catch (java.util.concurrent.TimeoutException tooSlow)
         {
-            running.cancel(true);
-            boolean stillRunning = started.get() && returned.getCount() > 0;
-            throw new Abandoned(what + " did not finish within " + (timeoutMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
-                stillRunning, stillRunning ? task -> {
-                    Thread watcher = new Thread(() -> {
-                        try
-                        {
-                            returned.await();
-                        }
-                        catch (InterruptedException finishedAnyway)
-                        {
-                            // The watcher was interrupted. The call may still be writing, so the
-                            // cleanup is not run from this thread.
-                            Thread.currentThread().interrupt();
-                            return;
-                        }
-                        task.run();
-                    }, "rebuild-dump-info-cleanup"); //$NON-NLS-1$
-                    watcher.setDaemon(true);
-                    watcher.start();
-                } : null);
+            throw abandon(what + " did not finish within " + (timeoutMs / 1000) + "s", running, //$NON-NLS-1$ //$NON-NLS-2$
+                started, returned);
+        }
+        catch (InterruptedException interrupted)
+        {
+            // The wait was cut short from outside, but the platform call is not accountable to
+            // it: cancelling the Future does not stop a Designer that is already writing, so
+            // this is the timeout's own situation and gets its handling - the cleanup waits for
+            // the call's own return. The flag goes back up first so the caller's own
+            // interruption policy still sees it.
+            Thread.currentThread().interrupt();
+            throw abandon(what + " was interrupted while it was still running", running, started, //$NON-NLS-1$
+                returned);
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -530,6 +519,43 @@ public final class DumpInfoRebuilder
         {
             worker.shutdownNow();
         }
+    }
+
+    /**
+     * Builds the abandonment of a wait that gave up while the call may still be running: the
+     * Future is cancelled, and the caller is told whether the call itself had returned - which is
+     * the moment the cleanup may touch the temporary directory and the claim.
+     *
+     * @param message what was abandoned and why
+     * @param running the Future of the call
+     * @param started whether the call began at all
+     * @param returned the call's own return signal
+     * @return the abandonment to throw
+     */
+    private static Abandoned abandon(String message, java.util.concurrent.Future<Path> running,
+        java.util.concurrent.atomic.AtomicBoolean started,
+        java.util.concurrent.CountDownLatch returned)
+    {
+        running.cancel(true);
+        boolean stillRunning = started.get() && returned.getCount() > 0;
+        return new Abandoned(message, stillRunning, stillRunning ? task -> {
+            Thread watcher = new Thread(() -> {
+                try
+                {
+                    returned.await();
+                }
+                catch (InterruptedException finishedAnyway)
+                {
+                    // The watcher was interrupted. The call may still be writing, so the
+                    // cleanup is not run from this thread.
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                task.run();
+            }, "rebuild-dump-info-cleanup"); //$NON-NLS-1$
+            watcher.setDaemon(true);
+            watcher.start();
+        } : null);
     }
 
     /**
@@ -706,18 +732,24 @@ public final class DumpInfoRebuilder
             if (hold && handshake != null && handshake.workError instanceof Abandoned)
             {
                 Path left = tempDir;
+                // Owed exactly what the release disconnected: a base that was already
+                // disconnected before the rebuild is left as the user had it.
+                final boolean reconnectOwed = handshake.released;
                 ((Abandoned)handshake.workError).whenFinished(() -> {
                     if (left != null)
                     {
                         io.deleteTempDir(left);
                     }
-                    try
+                    if (reconnectOwed)
                     {
-                        io.reconnectInfobase();
-                    }
-                    catch (Exception ignored)
-                    {
-                        // The answer already said the infobase was left disconnected.
+                        try
+                        {
+                            io.reconnectInfobase();
+                        }
+                        catch (Exception ignored)
+                        {
+                            // The answer already said the infobase was left disconnected.
+                        }
                     }
                     io.releaseLock();
                 });

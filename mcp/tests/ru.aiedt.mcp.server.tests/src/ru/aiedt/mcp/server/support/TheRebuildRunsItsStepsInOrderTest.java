@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.After;
 import org.junit.Before;
@@ -155,6 +156,10 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         Exception reconnectFailure;
 
+        /** Whether the infobase was connected when the rebuild released it; a release that reports
+         * false owes no reconnection. */
+        boolean connectedAtStart = true;
+
         String rememberedPair;
 
         String droppedHolder;
@@ -204,7 +209,7 @@ public class TheRebuildRunsItsStepsInOrderTest
         public boolean releaseInfobase()
         {
             asked.add("release"); //$NON-NLS-1$
-            return true;
+            return connectedAtStart;
         }
 
         @Override
@@ -770,6 +775,138 @@ public class TheRebuildRunsItsStepsInOrderTest
                 hold.countDown();
             }
         }
+    }
+
+    /**
+     * A wait cut short from OUTSIDE - the waiting thread is interrupted while the Designer call is
+     * still running - is the timeout's own situation: the call cannot be reached to be stopped, so
+     * the run is answered as abandoned, the cleanup waits for the call's own return, and the
+     * thread's interrupt flag is put back for its caller's own interruption policy.
+     */
+    @Test
+    public void anInterruptedWaitIsAnAbandonedRunAndRestoresTheFlag() throws Exception
+    {
+        CountDownLatch hold = new CountDownLatch(1);
+        CountDownLatch callStarted = new CountDownLatch(1);
+        AtomicBoolean cleaned = new AtomicBoolean(false);
+        CountDownLatch cleanedAt = new CountDownLatch(1);
+        AtomicReference<DumpInfoRebuilder.Abandoned> caught = new AtomicReference<>();
+        AtomicBoolean flagRestored = new AtomicBoolean(false);
+        AtomicReference<Exception> unexpected = new AtomicReference<>();
+        Thread waiter = new Thread(() -> {
+            try
+            {
+                DumpInfoRebuilder.underTimeout("the dump-info-only Designer run", 60000L, () -> { //$NON-NLS-1$
+                    callStarted.countDown();
+                    while (hold.getCount() > 0)
+                    {
+                        try
+                        {
+                            hold.await();
+                        }
+                        catch (InterruptedException ignored)
+                        {
+                            Thread.interrupted();
+                        }
+                    }
+                    return null;
+                });
+            }
+            catch (DumpInfoRebuilder.Abandoned abandoned)
+            {
+                flagRestored.set(Thread.currentThread().isInterrupted());
+                caught.set(abandoned);
+                abandoned.whenFinished(() -> {
+                    cleaned.set(true);
+                    cleanedAt.countDown();
+                });
+            }
+            catch (Exception other)
+            {
+                unexpected.set(other);
+            }
+        });
+        waiter.start();
+        try
+        {
+            assertTrue("the Designer call is running", callStarted.await(5, TimeUnit.SECONDS)); //$NON-NLS-1$
+            waiter.interrupt();
+            waiter.join(10000);
+            assertFalse("the waiter is done", waiter.isAlive()); //$NON-NLS-1$
+            assertNull("an interrupt is not an ordinary failure: " + unexpected.get(), //$NON-NLS-1$
+                unexpected.get());
+            DumpInfoRebuilder.Abandoned abandoned = caught.get();
+            assertNotNull("the interrupt is answered as an abandoned run", abandoned); //$NON-NLS-1$
+            assertTrue("the call was still running", abandoned.processStillRunning()); //$NON-NLS-1$
+            assertTrue("the interrupt flag is restored for the caller's own policy", //$NON-NLS-1$
+                flagRestored.get());
+            assertFalse("the cleanup waits for the call's return", cleaned.get()); //$NON-NLS-1$
+            hold.countDown();
+            assertTrue("the cleanup runs once the call has returned", //$NON-NLS-1$
+                cleanedAt.await(5, TimeUnit.SECONDS));
+            assertTrue(cleaned.get());
+        }
+        finally
+        {
+            hold.countDown();
+        }
+    }
+
+    /**
+     * An abandoned run whose base was ALREADY disconnected leaves it that way: the deferred
+     * cleanup reconnects only a base the release disconnected. Reconnecting a base the rebuild
+     * never disconnected would change the connection state the user had left.
+     */
+    @Test
+    public void anAbandonedRunDoesNotReconnectABaseItNeverDisconnected() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.connectedAtStart = false;
+        AtomicReference<Runnable> deferredCleanup = new AtomicReference<>();
+        io.quick = dir -> {
+            throw new DumpInfoRebuilder.Abandoned("the Designer dump did not finish within 600s", //$NON-NLS-1$
+                true, deferredCleanup::set);
+        };
+
+        Outcome outcome = run(io);
+
+        assertTrue(outcome.designerStillRunning);
+        assertFalse(io.asked.contains("reconnect")); //$NON-NLS-1$
+        Runnable cleanup = deferredCleanup.get();
+        assertNotNull("the cleanup is deferred until the call returns", cleanup); //$NON-NLS-1$
+        cleanup.run();
+        assertTrue("the temporary directory is deleted once the call has returned", //$NON-NLS-1$
+            io.asked.contains("deleteTempDir")); //$NON-NLS-1$
+        assertTrue("the claim is released once the call has returned", //$NON-NLS-1$
+            io.asked.contains("releaseLock")); //$NON-NLS-1$
+        assertFalse("a base the rebuild never disconnected is not reconnected", //$NON-NLS-1$
+            io.asked.contains("reconnect")); //$NON-NLS-1$
+    }
+
+    /**
+     * The other half of the same rule: when the release DID disconnect the base, the deferred
+     * cleanup takes it back once the Designer call has returned.
+     */
+    @Test
+    public void anAbandonedRunReconnectsAfterwardsTheBaseItDisconnected() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        AtomicReference<Runnable> deferredCleanup = new AtomicReference<>();
+        io.quick = dir -> {
+            throw new DumpInfoRebuilder.Abandoned("the Designer dump did not finish within 600s", //$NON-NLS-1$
+                true, deferredCleanup::set);
+        };
+
+        Outcome outcome = run(io);
+
+        assertTrue(outcome.designerStillRunning);
+        assertFalse(io.asked.contains("reconnect")); //$NON-NLS-1$
+        deferredCleanup.get().run();
+        assertTrue("the base the rebuild disconnected is taken back once the call has returned", //$NON-NLS-1$
+            io.asked.contains("reconnect")); //$NON-NLS-1$
+        assertTrue(io.asked.contains("releaseLock")); //$NON-NLS-1$
     }
 
     /** Steps occur in this order; steps between them are allowed. */

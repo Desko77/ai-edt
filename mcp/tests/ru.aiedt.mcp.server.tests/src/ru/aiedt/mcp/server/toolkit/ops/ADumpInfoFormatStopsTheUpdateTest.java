@@ -7,6 +7,8 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -21,6 +23,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -365,6 +369,90 @@ public class ADumpInfoFormatStopsTheUpdateTest
             DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         assertNull(debugWent);
         assertEquals(List.of("getUpdateState", "getUpdateState"), matching.calls); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Two updates that differ only in the format override are two different intentions and never
+     * share a run: the key they coalesce on carries the override, so a call that did not consent
+     * to the override never joins a run that did, and the overriding call never inherits another
+     * call's refusal.
+     */
+    @Test
+    public void theFormatOverrideIsPartOfTheRunIdentity()
+    {
+        String plain = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false); //$NON-NLS-1$ //$NON-NLS-2$
+        String overriding = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, true); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotEquals("the override separates two otherwise identical runs", plain, overriding); //$NON-NLS-1$
+        assertEquals("the same arguments still key the same run", plain, //$NON-NLS-1$
+            DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false)); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Two rebuilds of DIFFERENT infobases write the one record file each under its own claim, so
+     * the writes serialize: each record survives the other's write, and neither base silently
+     * loses the format its next update is checked against.
+     */
+    @Test
+    public void twoParallelRecordWritesBothSurvive() throws Exception
+    {
+        Path pairs = Files.createTempFile("dump-info-formats", ".properties"); //$NON-NLS-1$ //$NON-NLS-2$
+        // Both writers pause between reading the current records and replacing the file - the
+        // window in which an unsynchronized read-modify-write loses one of the two records.
+        CountDownLatch bothInside = new CountDownLatch(2);
+        DumpInfoProbe.betweenRecordReadAndWrite = () -> {
+            bothInside.countDown();
+            try
+            {
+                bothInside.await(2, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+            }
+        };
+        try
+        {
+            List<Throwable> failures = new ArrayList<>();
+            Thread one = recordWriter(pairs, "file:e:/bases/one", "2.7", failures); //$NON-NLS-1$ //$NON-NLS-2$
+            Thread two = recordWriter(pairs, "file:e:/bases/two", "2.20", failures); //$NON-NLS-1$ //$NON-NLS-2$
+            one.start();
+            two.start();
+            one.join(30000);
+            two.join(30000);
+            assertFalse("the first writer is done", one.isAlive()); //$NON-NLS-1$
+            assertFalse("the second writer is done", two.isAlive()); //$NON-NLS-1$
+            assertTrue("no writer failed: " + failures, failures.isEmpty()); //$NON-NLS-1$
+            assertEquals("2.7", DumpInfoProbe.expectedFormat("file:e:/bases/one", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("2.20", DumpInfoProbe.expectedFormat("file:e:/bases/two", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            DumpInfoProbe.betweenRecordReadAndWrite = () -> {
+                // nothing, as production keeps it
+            };
+            Files.deleteIfExists(pairs);
+            Files.deleteIfExists(pairs.resolveSibling(pairs.getFileName() + ".lock")); //$NON-NLS-1$
+        }
+    }
+
+    /** One parallel writer; its failure is collected for the assertion rather than lost. */
+    private static Thread recordWriter(Path pairs, String identity, String format,
+        List<Throwable> failures)
+    {
+        Thread thread = new Thread(() -> {
+            try
+            {
+                DumpInfoProbe.rememberPair(identity, format, "8.3.27.2214", pairs); //$NON-NLS-1$
+            }
+            catch (Throwable failed)
+            {
+                synchronized (failures)
+                {
+                    failures.add(failed);
+                }
+            }
+        });
+        return thread;
     }
 
     /**

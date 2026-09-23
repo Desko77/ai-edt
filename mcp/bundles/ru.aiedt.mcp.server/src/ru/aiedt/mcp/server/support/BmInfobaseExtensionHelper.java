@@ -1424,6 +1424,41 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
+     * The full hierarchical dump of the infobase - the rebuild's fallback for a quick
+     * dump-info-only run that left no file. Holds the same per-infobase lock around the launcher
+     * call as the dump-info-only run: without it this EDT's own thick-client callers run their
+     * Designer side by side with the dump. The lock wraps the call and nothing else - holding it
+     * across a reconnection deadlocks with EDT's own synchronization worker.
+     *
+     * @param ctx the resolved launcher context
+     * @param tempDir the directory the dump is written into
+     * @return the fresh dump-info file, or {@code null} for the conventional name
+     * @throws Exception when the Designer run failed
+     */
+    static java.nio.file.Path runFullDumpUnderInfobaseLock(LauncherContext ctx,
+        java.nio.file.Path tempDir) throws Exception
+    {
+        if (ctx.lock != null)
+        {
+            ctx.lock.lock();
+        }
+        try
+        {
+            return ctx.launcher.exportFullXmlFromInfobase(ctx.component, ctx.infobase,
+                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL,
+                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesKind.PLAIN_FILES,
+                ctx.args, tempDir);
+        }
+        finally
+        {
+            if (ctx.lock != null)
+            {
+                ctx.lock.unlock();
+            }
+        }
+    }
+
+    /**
      * Invokes a thick-client method under the per-infobase lock, and unwraps
      * {@link java.lang.reflect.InvocationTargetException} to the cause the way the extension
      * install does. The lock wraps the call and nothing else: holding it across a reconnect

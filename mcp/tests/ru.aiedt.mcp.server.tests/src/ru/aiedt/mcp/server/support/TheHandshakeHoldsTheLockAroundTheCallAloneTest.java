@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -18,6 +19,8 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.Test;
+
+import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IThickClientLauncher;
 
 /**
  * The per-infobase lock is taken after the release and given back before the reconnection.
@@ -221,5 +224,78 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         }
         assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * The full hierarchical dump - the rebuild's fallback - holds the same per-infobase lock
+     * around the launcher call as the dump-info-only run: without it this EDT's own thick-client
+     * callers run their Designer side by side with the dump.
+     */
+    @Test
+    public void theFullDumpHoldsTheInfobaseLockAroundTheCall() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+
+        BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+            java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+
+        assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A full dump that throws gives the lock back with the failure: the rebuild's failure path
+     * must not leave the infobase lock held against this EDT's own callers.
+     */
+    @Test
+    public void theFullDumpGivesTheLockBackWhenTheCallThrows() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock,
+            new IllegalStateException("the Designer exited with code 1")); //$NON-NLS-1$
+
+        try
+        {
+            BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            fail("the launcher's failure has to reach the caller"); //$NON-NLS-1$
+        }
+        catch (IllegalStateException expected)
+        {
+            assertEquals("the Designer exited with code 1", expected.getMessage()); //$NON-NLS-1$
+        }
+
+        assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A launcher whose {@code exportFullXmlFromInfobase} records whether the lock was held while
+     * it ran, and answers or throws as told.
+     */
+    private static IThickClientLauncher recordingLauncher(List<String> order, RecordingLock lock,
+        RuntimeException failure)
+    {
+        return (IThickClientLauncher)Proxy.newProxyInstance(
+            IThickClientLauncher.class.getClassLoader(),
+            new Class<?>[] { IThickClientLauncher.class }, (proxy, method, args) -> {
+                if (!method.getName().equals("exportFullXmlFromInfobase")) //$NON-NLS-1$
+                {
+                    return null;
+                }
+                order.add(lock.isHeldByCurrentThread() ? "held" : "not-held"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (failure != null)
+                {
+                    throw failure;
+                }
+                return null;
+            });
     }
 }

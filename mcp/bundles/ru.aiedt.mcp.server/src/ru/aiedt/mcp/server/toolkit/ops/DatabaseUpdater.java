@@ -437,19 +437,42 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
+        final boolean fIgnoreDumpInfo =
+            JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
         // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
         // the key below is the one a real update under these arguments owns.
-        String runKey = PendingWorkRegistry.computeRunKey(fProjectName, fApplicationId,
-            String.valueOf(fFull), String.valueOf(fRestr), String.valueOf(fFree),
-            String.valueOf(fIgnoreBranch));
+        String runKey = runKeyFor(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+            fIgnoreDumpInfo);
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
         return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
                 fSkipValidation, checkOnly, params));
+    }
+
+    /**
+     * The key a run under these arguments coalesces on: every argument that changes what the run
+     * does is part of it, so two calls that would do different things never share one run's answer.
+     *
+     * @param projectName the project
+     * @param applicationId the application naming the infobase
+     * @param fullUpdate whether the update loads the whole configuration
+     * @param autoRestructure whether restructuring is left automatic
+     * @param autoFreeClients whether client sessions are freed
+     * @param ignoreBranchBinding whether the branch-binding check is bypassed
+     * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @return the run key
+     */
+    static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
+        boolean ignoreDumpInfoFormat)
+    {
+        return PendingWorkRegistry.computeRunKey(projectName, applicationId,
+            String.valueOf(fullUpdate), String.valueOf(autoRestructure), String.valueOf(autoFreeClients),
+            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat));
     }
 
     /**
