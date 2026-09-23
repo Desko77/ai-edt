@@ -40,7 +40,11 @@ than all of them.
   `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
   extend the one it came from, and says so on the response; call borrow again on an object
   borrowed by an older build and it repairs the link in place. Do not hand-edit the `.mdo` for
-  this.
+  this. `includeChildren=true` on `borrow_object` also borrows that object's own children
+  (attributes, including those of a tabular section, forms, templates, commands, nested
+  subsystems) and lists what was taken, skipped, and what EDT pulled in by attribute type.
+  It does not override modules and does not walk other objects by reference. Default false
+  borrows only the named object. `borrow_objects` does not read the argument.
 
   To widen the type of something the extension has adopted, use
   `edit_metadata operation=extend_object_type` - **not** `set_object_type`. Setting a type

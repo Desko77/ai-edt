@@ -381,6 +381,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
      * to keep this raise the remainder it is. Together with the sixteenth: 89129.
      * </p>
+     * <p>
+     * And an eighteenth, by 164, for one sentence each on includeChildren (extension_workshop,
+     * 69 bytes) and edgeKinds (insights, 95 bytes). What is walked, what is skipped, which
+     * graph edges are dropped and how a kind filter answers live in operation help. Together
+     * with the seventeenth: 89293.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 89129;
+    private static final int DOCUMENT_PROSE = 89293;
 }
