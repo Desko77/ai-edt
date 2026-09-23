@@ -1387,8 +1387,9 @@ public final class BmInfobaseExtensionHelper
      * (bytecode-verified on the EDT 2026.1 target).
      * </p>
      * <p>
-     * Runs inside the caller's handshake: the caller has released the infobase and holds the claim,
-     * and this method neither takes the lock nor reconnects.
+     * Runs inside the caller's handshake: the caller has released the infobase and holds the claim.
+     * This method takes the per-infobase lock around the Designer call alone, through
+     * {@link #invokeUnderRebuildLock}, and does not reconnect.
      * </p>
      *
      * @param ctx the resolved launcher context
