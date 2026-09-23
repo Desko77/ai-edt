@@ -51,6 +51,11 @@ than all of them.
   replaces a composition the adopted object does not have; extending adds an entry marked
   `Extended` where an adopted object really keeps its types, and leaves the inherited ones alone.
 
+  A form element of an extension that takes a data path starting at a base-form attribute borrows
+  that attribute in the same write, and the response names it in `adoptedFormAttributes`. A path
+  that would not be exported with the extension form is refused before anything is written - the
+  refusal names the element, the path and the reason, and the form is left as it was.
+
 - **When a parameter's description reads like one line and you need the rules.**
   `edit_metadata operation=help topic=parameters` carries the full text of the parameters whose
   schema description was shortened. Nothing was removed from the schema - every parameter is still

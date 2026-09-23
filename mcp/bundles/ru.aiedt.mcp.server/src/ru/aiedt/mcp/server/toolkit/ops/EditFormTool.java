@@ -357,12 +357,12 @@ public class EditFormTool implements IMcpTool
                 return buildError(error);
             }
             // It's a success message from the action
-            return error;
+            return helper.annotateAdopted(error);
         }
 
         // Default success
-        return buildSuccess(projectName, formFqn, operation, name, title, elementType,
-            dataPath, parentName);
+        return helper.annotateAdopted(buildSuccess(projectName, formFqn, operation, name, title,
+            elementType, dataPath, parentName));
     }
 
     // -----------------------------------------------------------------------

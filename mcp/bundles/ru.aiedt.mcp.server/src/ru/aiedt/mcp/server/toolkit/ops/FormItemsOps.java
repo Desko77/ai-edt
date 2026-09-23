@@ -634,7 +634,8 @@ final class FormItemsOps
         String result = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) ->
             helper.addFormAttributeColumn(form, parentAttributeName, name, title, dataPath,
                 type, project, colConfig, colQualifiers));
-        return EditMetadataTool.formatFormResultWithApiTag(result, "add_form_attribute_column", formFqn); //$NON-NLS-1$
+        return helper.annotateAdopted(
+            EditMetadataTool.formatFormResultWithApiTag(result, "add_form_attribute_column", formFqn)); //$NON-NLS-1$
     }
 
     /**
@@ -1190,6 +1191,13 @@ final class FormItemsOps
         if (!warningTags.isEmpty())
         {
             tr.put("warning", warningTags.get(0)); //$NON-NLS-1$
+        }
+        if (!helperFinal.getAdoptedFormAttributes().isEmpty())
+        {
+            // The write borrowed a base-form attribute into the extension so the
+            // path survives export. Reported, because it is a change to the form
+            // the caller did not ask for by name.
+            tr.put("adoptedFormAttributes", helperFinal.getAdoptedFormAttributes()); //$NON-NLS-1$
         }
         return tr.toJson();
     }
