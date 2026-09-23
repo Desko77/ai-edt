@@ -8,8 +8,10 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -93,6 +95,11 @@ public class LaunchDebuggerTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when action=help: workflow (the typical debug sequence). " //$NON-NLS-1$
                 + "Without topic - lists actions.") //$NON-NLS-1$
+            .stringProperty("find", //$NON-NLS-1$
+                "With action=help: search the help for a case-insensitive substring over " //$NON-NLS-1$
+                    + "the action catalog and every topic; several words must all appear " //$NON-NLS-1$
+                    + "inside one chunk. Given together with topic, only that topic is " //$NON-NLS-1$
+                    + "searched.") //$NON-NLS-1$
             .stringProperty("projectName", "EDT project name (most actions).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Application identifier from list_applications.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
@@ -254,11 +261,16 @@ public class LaunchDebuggerTool implements IMcpTool
                 return new ProfilingResultsReader().execute(params);
 
             case "help": //$NON-NLS-1$
-                return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+                return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                    JsonUtils.extractStringArgument(params, "find")); //$NON-NLS-1$
 
             default:
                 return ToolResult.error(
-                    "Unknown action '" + action + "'. Allowed: launch / add_breakpoint / " //$NON-NLS-1$ //$NON-NLS-2$
+                    "Unknown action '" + action + "'." //$NON-NLS-1$ //$NON-NLS-2$
+                        + FacadeHelpSearch.closestMatches(action,
+                            FacadeHelpSearch.describe(buildHelp(null, null)).keySet(),
+                            FacadeHelpSearch.describe(buildHelp(null, null)))
+                        + "\n\nAllowed: launch / add_breakpoint / " //$NON-NLS-1$
                         + "set_exception_breakpoint / run_to_line / remove_breakpoint / " //$NON-NLS-1$
                         + "list_breakpoints / wait_for_break / get_state / get_variables / " //$NON-NLS-1$
                         + "set_variable / step_over / step_into / step_out / resume / terminate / " //$NON-NLS-1$
@@ -315,8 +327,16 @@ public class LaunchDebuggerTool implements IMcpTool
         return copy;
     }
 
-    private static String buildHelp(String topic)
+    /** Every help topic: this facade's operations are not topics, only the named ones are. */
+    private static final List<String> HELP_TOPICS = Collections.singletonList("workflow"); //$NON-NLS-1$
+
+    private static String buildHelp(String topic, String find)
     {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+                asked -> buildHelp(asked, null));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         StringBuilder sb = new StringBuilder();
         if (topic == null || topic.isEmpty())
@@ -359,6 +379,9 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "when done.\n"); //$NON-NLS-1$
             return sb.toString();
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        return "# Unknown topic '" + topic + "'." //$NON-NLS-1$
+            + FacadeHelpSearch.closestMatches(topic, HELP_TOPICS,
+                FacadeHelpSearch.describe(buildHelp(null, null)))
+            + "\n\nAvailable: workflow.\n"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

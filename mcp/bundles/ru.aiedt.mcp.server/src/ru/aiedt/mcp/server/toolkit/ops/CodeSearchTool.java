@@ -6,10 +6,13 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -142,6 +145,11 @@ public class CodeSearchTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help: workflow or the name of an operation. " //$NON-NLS-1$
                     + "Without it, every operation with a one-line summary.") //$NON-NLS-1$
+            .stringProperty("find", //$NON-NLS-1$
+                "With operation=help: search the help for a case-insensitive substring over " //$NON-NLS-1$
+                    + "the operation catalog and every topic; several words must all appear " //$NON-NLS-1$
+                    + "inside one chunk. Given together with topic, only that topic is " //$NON-NLS-1$
+                    + "searched.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
@@ -271,11 +279,15 @@ public class CodeSearchTool implements IMcpTool
                 // Same objectName -> objectFqn alias as object_references.
                 return new OutgoingStructuresReader().execute(rewriteForObjectReferences(params));
             case "help": //$NON-NLS-1$
-                return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+                return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                    JsonUtils.extractStringArgument(params, "find")); //$NON-NLS-1$
             default:
                 return ToolResult.error(
-                    "Unknown operation '" + operation //$NON-NLS-1$
-                        + "'. Allowed: text_search / object_references / method_references / " //$NON-NLS-1$
+                    "Unknown operation '" + operation + "'." //$NON-NLS-1$
+                        + FacadeHelpSearch.closestMatches(operation,
+                            FacadeHelpSearch.describe(buildHelp(null, null)).keySet(),
+                            FacadeHelpSearch.describe(buildHelp(null, null)))
+                        + "\n\nAllowed: text_search / object_references / method_references / " //$NON-NLS-1$
                         + "resolve_symbol / call_hierarchy / symbol_info / content_assist / " //$NON-NLS-1$
                         + "outgoing_structures / help.").toJson(); //$NON-NLS-1$
         }
@@ -488,8 +500,30 @@ public class CodeSearchTool implements IMcpTool
             routed.getInputSchema(), PARAMETER_RULES);
     }
 
-    private static String buildHelp(String topic)
+    /** Every help topic, in the order the catalog names them: operations, then named topics. */
+    private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics {@code find} searches, catalog first by the caller, these after.
+     *
+     * @return the topic names, never <code>null</code>
+     */
+    private static List<String> helpTopics()
     {
+        List<String> topics = new ArrayList<>();
+        Collections.addAll(topics, "text_search", "object_references", "method_references", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "resolve_symbol", "call_hierarchy", "symbol_info", "content_assist", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "outgoing_structures", "workflow"); //$NON-NLS-1$ //$NON-NLS-2$
+        return Collections.unmodifiableList(topics);
+    }
+
+    private static String buildHelp(String topic, String find)
+    {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS,
+                asked -> buildHelp(asked, null));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         StringBuilder sb = new StringBuilder();
         if (topic == null || topic.isEmpty())
@@ -579,7 +613,10 @@ public class CodeSearchTool implements IMcpTool
                     + "Returns the metadata the object points at (its outbound references).\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             default:
-                return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow, " //$NON-NLS-1$ //$NON-NLS-2$
+                return "# Unknown topic '" + topic + "'." //$NON-NLS-1$
+                    + FacadeHelpSearch.closestMatches(topic, HELP_TOPICS,
+                        FacadeHelpSearch.describe(buildHelp(null, null)))
+                    + "\n\nAvailable: workflow, " //$NON-NLS-1$
                     + "text_search, object_references, method_references, resolve_symbol, " //$NON-NLS-1$
                     + "call_hierarchy, symbol_info, content_assist, outgoing_structures.\n"; //$NON-NLS-1$
         }
