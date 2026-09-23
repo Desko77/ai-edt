@@ -172,15 +172,12 @@ public final class BmInfobaseCredentialsHelper
         // infobase-list write at once would snapshot the ids this write already stripped.
         LaunchApplicationIds.Access launches =
             LaunchConfigAccess.applicationIdAccess(LaunchConfigAccess.getLaunchManager());
-        LaunchApplicationIds.WRITE_LOCK.lock();
-        try
-        {
-            LaunchApplicationIds.SnapshotResult applicationIds = launches == null ? null
-                : LaunchApplicationIds.snapshot(launches);
+        InfobaseAccessSettings settings =
+            new InfobaseAccessSettings(access, userName, password, additionalParams);
+        LaunchApplicationIds.underWriteLock(launches, applicationIds -> {
             try
             {
-                mgr.updateSettings(res.infobase,
-                    new InfobaseAccessSettings(access, userName, password, additionalParams));
+                mgr.updateSettings(res.infobase, settings);
             }
             catch (Throwable e)
             {
@@ -190,10 +187,11 @@ public final class BmInfobaseCredentialsHelper
                 return r;
             }
             restoreApplicationIds(launches, applicationIds, r);
-        }
-        finally
+            return r;
+        });
+        if (r.error != null)
         {
-            LaunchApplicationIds.WRITE_LOCK.unlock();
+            return r;
         }
 
         // In-process readback to confirm what was persisted.

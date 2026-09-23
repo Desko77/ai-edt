@@ -9,6 +9,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -122,10 +123,10 @@ public final class BmInfobaseLifecycleHelper
         }
         // The snapshot, the write and the restore run under the one write lock: a second
         // infobase-list write at once would snapshot the ids this write already stripped.
-        LaunchApplicationIds.WRITE_LOCK.lock();
-        try
-        {
-            LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
+        ILaunchManager manager = PRODUCT.launchManager();
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(manager);
+        LaunchApplicationIds.underWriteLock(access, snapshot -> {
+            LaunchIds launchIds = new LaunchIds(manager, access, snapshot);
             try
             {
                 IInfobaseCreationOperation.Builder b = new IInfobaseCreationOperation.Builder()
@@ -147,12 +148,13 @@ public final class BmInfobaseLifecycleHelper
             }
             r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
                 DeletedBaseConfigurations.none(), "create_infobase"); //$NON-NLS-1$
-        }
-        finally
+            r.ok = true;
+            return r;
+        });
+        if (!r.ok)
         {
-            LaunchApplicationIds.WRITE_LOCK.unlock();
+            return r;
         }
-        r.ok = true;
         if (mgr != null)
         {
             Optional<InfobaseReference> ref = mgr.findInfobaseByName(name);
@@ -295,10 +297,10 @@ public final class BmInfobaseLifecycleHelper
         // The snapshot, the search, the dissociation, the delete and the restore run under the
         // one write lock: a second infobase-list write at once would snapshot the ids this
         // write already stripped.
-        LaunchApplicationIds.WRITE_LOCK.lock();
-        try
-        {
-            LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
+        ILaunchManager manager = PRODUCT.launchManager();
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(manager);
+        LaunchApplicationIds.underWriteLock(access, snapshot -> {
+            LaunchIds launchIds = new LaunchIds(manager, access, snapshot);
             DeletedBaseConfigurations deletedConfigurations =
                 deletedBaseConfigurations(launchIds, PRODUCT, ref.get());
             if (projectName != null && !projectName.isEmpty())
@@ -372,12 +374,9 @@ public final class BmInfobaseLifecycleHelper
             }
             r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, deletedConfigurations,
                 "delete_infobase"); //$NON-NLS-1$
-        }
-        finally
-        {
-            LaunchApplicationIds.WRITE_LOCK.unlock();
-        }
-        r.ok = true;
+            r.ok = true;
+            return r;
+        });
         return r;
     }
 
@@ -402,23 +401,31 @@ public final class BmInfobaseLifecycleHelper
      * what the search could not establish.
      * <p>
      * A configuration the search could not read or place is not restored: it may belong to the
-     * deleted base, and putting its id back could hand the deleted base's binding back. The
-     * answer names it instead of the guard guessing.
+     * deleted base, and putting its id back could hand the deleted base's binding back. Such a
+     * configuration is excluded as unverified, and the answer names it once - in
+     * {@link #notIdentified}, not again in the restore's report.
      * </p>
      */
     static final class DeletedBaseConfigurations
     {
         /**
-         * Mementos of the configurations whose removed application id must stay removed: the ones
-         * bound to the infobase being deleted, and the ones the search could not place anywhere.
+         * Mementos of the configurations of the deleted base itself: their removed application id
+         * must stay removed, and the restore's report names them as excluded.
          */
         final Set<String> mementos = new LinkedHashSet<>();
 
         /**
-         * Configurations the search could not read or place, named in the answer; where the
-         * memento was known, their binding is in {@link #mementos} and stays removed.
+         * Mementos excluded without being identified: the search could not read the configuration
+         * or place its binding, so the id stays removed. The restore leaves them alone and does
+         * not name them - {@link #notIdentified} carries the answer's only naming of them.
          */
-        final List<String> unidentified = new ArrayList<>();
+        final Set<String> unverified = new LinkedHashSet<>();
+
+        /**
+         * One line per configuration the search could not read or place, with the reason and the
+         * consequence; the answer's only naming of them.
+         */
+        final List<String> notIdentified = new ArrayList<>();
 
         /**
          * Why no configuration could be identified at all, or <code>null</code> when the search
@@ -440,12 +447,11 @@ public final class BmInfobaseLifecycleHelper
             {
                 return searchFailed;
             }
-            if (unidentified.isEmpty())
+            if (notIdentified.isEmpty())
             {
                 return null;
             }
-            return "could not read these launch configurations, so they were not restored: " //$NON-NLS-1$
-                + String.join(", ", unidentified); //$NON-NLS-1$
+            return String.join("; ", notIdentified); //$NON-NLS-1$
         }
     }
 
@@ -526,7 +532,7 @@ public final class BmInfobaseLifecycleHelper
         try
         {
             LaunchApplicationIds.RestoreReport restored = LaunchApplicationIds.restore(
-                launchIds.access, launchIds.snapshot.held, deleted.mementos);
+                launchIds.access, launchIds.snapshot.held, deleted.mementos, deleted.unverified);
             report = restored.isQuiet() ? null : restored.describe();
         }
         catch (Throwable e)
@@ -599,9 +605,18 @@ public final class BmInfobaseLifecycleHelper
         }
         for (ILaunchConfiguration configuration : configurations)
         {
+            String memento = null;
+            String mementoFailure = null;
             try
             {
-                String memento = configuration.getMemento();
+                memento = configuration.getMemento();
+            }
+            catch (Throwable e)
+            {
+                mementoFailure = msg(e);
+            }
+            try
+            {
                 String projectName = configuration.getAttribute(LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
                 String applicationId = configuration.getAttribute(
                     LaunchConfigAccess.ATTR_APPLICATION_ID, ""); //$NON-NLS-1$
@@ -611,9 +626,15 @@ public final class BmInfobaseLifecycleHelper
                 }
                 if (memento == null || memento.isEmpty())
                 {
-                    // Cannot be addressed, so it is not in the snapshot and nothing is restored
-                    // to it; the answer still names it.
-                    found.unidentified.add(nameOf(configuration));
+                    // Cannot be addressed: it is not in the snapshot and nothing is restored
+                    // to it; the answer names it. When the snapshot did hold a configuration of
+                    // this name, its binding is excluded as unverified, so the restore leaves
+                    // it off too.
+                    String name = nameOf(configuration);
+                    found.notIdentified.add("could not address '" + name + "'" //$NON-NLS-1$ //$NON-NLS-2$
+                        + (mementoFailure == null ? "" : " (" + mementoFailure + ")") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                        + " - the application id was left off"); //$NON-NLS-1$
+                    excludeHeldOfName(launchIds, found, name);
                     continue;
                 }
                 IProject project = projectName.isEmpty() ? null : environment.resolveProject(projectName);
@@ -621,9 +642,10 @@ public final class BmInfobaseLifecycleHelper
                 {
                     // The binding cannot be placed: it may be the deleted base's. It stays
                     // removed - putting it back could hand the deleted base's id back - and the
-                    // answer names it.
-                    found.mementos.add(memento);
-                    found.unidentified.add(nameOf(configuration));
+                    // answer names it once, here.
+                    found.unverified.add(memento);
+                    found.notIdentified.add(nameOf(configuration) + ": project '" + projectName //$NON-NLS-1$ //$NON-NLS-2$
+                        + "' not resolved - the application id was left off"); //$NON-NLS-1$
                     Activator.logWarning("delete_infobase: the launch configuration '" //$NON-NLS-1$
                         + nameOf(configuration) + "' names project '" + projectName //$NON-NLS-1$
                         + "', which does not resolve; its application id was not put back"); //$NON-NLS-1$
@@ -640,12 +662,52 @@ public final class BmInfobaseLifecycleHelper
             catch (Throwable e)
             {
                 String name = nameOf(configuration);
-                found.unidentified.add(name);
+                if (memento == null || memento.isEmpty())
+                {
+                    // Nothing is excluded: without a memento there is no address to exclude.
+                    found.notIdentified.add("could not address '" + name + "' (" //$NON-NLS-1$ //$NON-NLS-2$
+                        + (mementoFailure != null ? mementoFailure : msg(e))
+                        + ") - the application id was left off"); //$NON-NLS-1$
+                }
+                else
+                {
+                    // The memento was read, so the configuration is excluded from the restore;
+                    // what could not be read is whether it belongs to the deleted base. The
+                    // answer names it once, here.
+                    found.unverified.add(memento);
+                    found.notIdentified.add(name + ": could not be read (" + msg(e) //$NON-NLS-1$ //$NON-NLS-2$
+                        + ") - the application id was left off"); //$NON-NLS-1$
+                }
                 Activator.logWarning("delete_infobase: the launch configuration '" + name //$NON-NLS-1$
-                    + "' could not be read and was not excluded from the restore: " + msg(e)); //$NON-NLS-1$
+                    + "' could not be read, so its application id was left off: " + msg(e)); //$NON-NLS-1$
             }
         }
         return found;
+    }
+
+    /**
+     * Excludes the snapshot-held configuration of this display name, when there is one: the
+     * search could not address the configuration, so it cannot tell whether the binding is the
+     * deleted base's, and the binding stays off.
+     *
+     * @param launchIds what the guard captured before the write
+     * @param found what the search has established so far
+     * @param name the display name the unaddressable configuration carries
+     */
+    private static void excludeHeldOfName(LaunchIds launchIds, DeletedBaseConfigurations found,
+        String name)
+    {
+        if (launchIds == null || launchIds.snapshot == null)
+        {
+            return;
+        }
+        for (Map.Entry<String, LaunchApplicationIds.SnapshotEntry> entry : launchIds.snapshot.held.entrySet())
+        {
+            if (entry.getValue().name.equals(name))
+            {
+                found.unverified.add(entry.getKey());
+            }
+        }
     }
 
     /** The display name of a configuration, or a placeholder when even that cannot be read. */

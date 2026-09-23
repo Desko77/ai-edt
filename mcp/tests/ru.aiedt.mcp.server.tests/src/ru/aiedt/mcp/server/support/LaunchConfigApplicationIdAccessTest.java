@@ -176,6 +176,30 @@ public class LaunchConfigApplicationIdAccessTest
     }
 
     @Test
+    public void aConfigurationUnreadableAtTheRestoreIsNamedNotReadNotGone()
+    {
+        // The memento could be read at the snapshot and cannot be read at the restore: the
+        // configuration is not gone, and the answer names the read failure instead of guessing a
+        // rename. The id stays off - the guard cannot reach the configuration to put it back.
+        FakeLaunchConfigurations fake = new FakeLaunchConfigurations();
+        Configuration configuration = fake.add("m-one", "Run one", "project-one", "application-one"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(fake.manager());
+
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+        fake.stripApplicationIds();
+        configuration.unreadable = true;
+
+        LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
+
+        assertTrue(report.gone.isEmpty());
+        assertEquals(List.of("Run one (the .launch file could not be read)"), //$NON-NLS-1$
+            report.notReadOnRestore);
+        assertTrue(report.describe().contains("not read on restore")); //$NON-NLS-1$
+        assertNull("the id stays off - the guard cannot reach the configuration", //$NON-NLS-1$
+            configuration.applicationId());
+    }
+
+    @Test
     public void aConfigurationWithoutMementoIsNamedNotProtected()
     {
         // One configuration answers an empty memento: it cannot be addressed, it is named, and

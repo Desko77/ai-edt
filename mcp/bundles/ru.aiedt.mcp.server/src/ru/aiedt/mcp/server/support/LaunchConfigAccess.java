@@ -714,7 +714,9 @@ public final class LaunchConfigAccess
      * <p>
      * A listing failure propagates: an empty list and a failed listing are different answers, and
      * the guard reports the difference. A configuration whose memento cannot be had is listed
-     * with an empty one, so the snapshot names it as unprotected rather than dropping it.
+     * with an empty one and the reason attached, so the snapshot names it as unprotected rather
+     * than dropping it, and the restore names a snapshotted configuration of that name as not
+     * read rather than as gone.
      * </p>
      *
      * @param launchManager the launch manager; <code>null</code> yields <code>null</code>
@@ -735,6 +737,7 @@ public final class LaunchConfigAccess
                 for (ILaunchConfiguration config : launchManager.getLaunchConfigurations())
                 {
                     String memento = null;
+                    String addressingFailure = null;
                     try
                     {
                         memento = config.getMemento();
@@ -742,12 +745,24 @@ public final class LaunchConfigAccess
                     catch (CoreException e)
                     {
                         // One unaddressable configuration must not cost the others their place in
-                        // the snapshot; it is listed with an empty memento and named there.
+                        // the snapshot; it is listed with an empty memento and named there, the
+                        // reason carried on the configuration.
+                        addressingFailure = e.getMessage() != null ? e.getMessage()
+                            : e.getClass().getSimpleName();
                         Activator.logWarning("A launch configuration could not be addressed: " //$NON-NLS-1$
-                            + e.getMessage());
+                            + addressingFailure);
                     }
-                    configurations.add(new LaunchApplicationIds.Configuration(
-                        memento == null ? "" : memento, config.getName())); //$NON-NLS-1$
+                    if (memento == null || memento.isEmpty())
+                    {
+                        configurations.add(new LaunchApplicationIds.Configuration("", //$NON-NLS-1$
+                            config.getName(), addressingFailure == null ? "no memento was given" //$NON-NLS-1$
+                                : addressingFailure));
+                    }
+                    else
+                    {
+                        configurations.add(new LaunchApplicationIds.Configuration(memento,
+                            config.getName(), null));
+                    }
                 }
                 return configurations;
             }

@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.support;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -72,7 +73,8 @@ public final class LaunchApplicationIds
     /**
      * One launch configuration as the guard addresses it: a memento, which identifies it, and the
      * display name, which is only ever printed. A configuration that could not be addressed by a
-     * memento is listed with an empty one; the snapshot names it as unprotected.
+     * memento is listed with an empty one; the snapshot names it as unprotected, and the restore
+     * names a snapshotted configuration of that name as not read rather than as gone.
      */
     public static final class Configuration
     {
@@ -83,13 +85,32 @@ public final class LaunchApplicationIds
         public final String name;
 
         /**
+         * Why the memento could not be had, or <code>null</code> when it could. Set only together
+         * with an empty {@link #memento}; the answer carries it so the failure is named, not
+         * guessed at.
+         */
+        public final String addressingFailure;
+
+        /**
          * @param memento the configuration's memento
          * @param name the configuration's display name
          */
         public Configuration(String memento, String name)
         {
+            this(memento, name, null);
+        }
+
+        /**
+         * @param memento the configuration's memento, empty when it could not be had
+         * @param name the configuration's display name
+         * @param addressingFailure why the memento could not be had; <code>null</code> when it
+         *        could
+         */
+        public Configuration(String memento, String name, String addressingFailure)
+        {
             this.memento = memento;
             this.name = name;
+            this.addressingFailure = addressingFailure;
         }
     }
 
@@ -101,7 +122,8 @@ public final class LaunchApplicationIds
     {
         /**
          * @return every launch configuration, in the manager's order; a configuration that could
-         *         not be addressed by a memento is listed with an empty one
+         *         not be addressed by a memento is listed with an empty one, the reason set on
+         *         {@link Configuration#addressingFailure}
          * @throws Exception when the configurations cannot be listed at all - the caller must not
          *         read an empty answer as "the workspace has none"
          */
@@ -124,6 +146,22 @@ public final class LaunchApplicationIds
          */
         void writeApplicationId(String memento, String applicationId)
             throws Exception;
+    }
+
+    /**
+     * An infobase-list write run under {@link #WRITE_LOCK}: the write itself and whatever it needs
+     * around it, with the guard's snapshot in hand. Every operation that saves the infobase list
+     * ({@code set_infobase_credentials}, {@code create_infobase}, {@code delete_infobase}) runs
+     * its write through {@link #underWriteLock(Access, GuardedWrite)}.
+     */
+    public interface GuardedWrite<R>
+    {
+        /**
+         * @param snapshot what the guard held before the write, or <code>null</code> when the
+         *            launch configurations could not be reached at all
+         * @return what the caller needs from the write
+         */
+        R write(SnapshotResult snapshot);
     }
 
     /** One configuration as it stood before the write. */
@@ -165,6 +203,13 @@ public final class LaunchApplicationIds
         /** Configurations that no longer exist. */
         public final List<String> gone = new ArrayList<>();
 
+        /**
+         * Configurations that were listed after the write but could not be addressed, as
+         * "name (reason)": the configuration is there, the guard cannot reach it, and its id
+         * stays off. Naming them "gone" would guess a rename or a deletion nobody saw.
+         */
+        public final List<String> notReadOnRestore = new ArrayList<>();
+
         /** Excluded configurations whose id is gone, as their application was deleted. */
         public final List<String> excludedStripped = new ArrayList<>();
 
@@ -190,8 +235,8 @@ public final class LaunchApplicationIds
         public boolean isQuiet()
         {
             return restored.isEmpty() && changedMeanwhile.isEmpty() && gone.isEmpty()
-                && excludedStripped.isEmpty() && excludedKept.isEmpty() && lost.isEmpty()
-                && failed.isEmpty() && listingFailed == null;
+                && notReadOnRestore.isEmpty() && excludedStripped.isEmpty() && excludedKept.isEmpty()
+                && lost.isEmpty() && failed.isEmpty() && listingFailed == null;
         }
 
         /**
@@ -220,6 +265,11 @@ public final class LaunchApplicationIds
             {
                 parts.add("found gone (renamed or deleted during the write): " //$NON-NLS-1$
                     + String.join(", ", gone)); //$NON-NLS-1$
+            }
+            if (!notReadOnRestore.isEmpty())
+            {
+                parts.add("not read on restore, so the application id was not put back: " //$NON-NLS-1$
+                    + String.join(", ", notReadOnRestore)); //$NON-NLS-1$
             }
             if (!excludedStripped.isEmpty())
             {
@@ -374,6 +424,29 @@ public final class LaunchApplicationIds
     public static RestoreReport restore(Access access, Map<String, SnapshotEntry> snapshot,
         Set<String> excludedMementos)
     {
+        return restore(access, snapshot, excludedMementos, Collections.emptySet());
+    }
+
+    /**
+     * Puts back every stripped id except two kinds of configurations. The ones named by
+     * {@code excludedMementos} belong to the application the list write deliberately deleted;
+     * their removed id stays removed and the report names them as excluded. The ones named by
+     * {@code unverifiedMementos} the caller could not place - it could not read them or resolve
+     * what they point at - so their id stays removed too, but the report never names them: the
+     * caller that excluded them names them in its own answer, and naming them here as well would
+     * say the same thing twice.
+     *
+     * @param access the launch configurations
+     * @param snapshot the held map of what {@link #snapshot(Access)} returned before the write
+     * @param excludedMementos configurations whose removed application id must stay removed
+     * @param unverifiedMementos configurations left unrestored because the caller could not place
+     *        them; never named in the report
+     * @return what was restored, kept, refused, deliberately omitted, lost and failed, or why
+     *         nothing was; never <code>null</code>
+     */
+    public static RestoreReport restore(Access access, Map<String, SnapshotEntry> snapshot,
+        Set<String> excludedMementos, Set<String> unverifiedMementos)
+    {
         RestoreReport report = new RestoreReport();
         List<Configuration> configurations;
         try
@@ -389,9 +462,17 @@ public final class LaunchApplicationIds
             return report;
         }
         Set<String> present = new HashSet<>();
+        Map<String, String> unaddressable = new HashMap<>();
         for (Configuration configuration : configurations)
         {
-            if (configuration.memento != null && !configuration.memento.isEmpty())
+            if (configuration.memento == null || configuration.memento.isEmpty())
+            {
+                // Listed but unaddressable: the configuration is there, the guard just cannot
+                // reach it. A snapshotted entry of this name is named as not read, not as gone.
+                unaddressable.put(configuration.name, configuration.addressingFailure == null
+                    ? "no memento" : configuration.addressingFailure); //$NON-NLS-1$
+            }
+            else
             {
                 present.add(configuration.memento);
             }
@@ -405,7 +486,21 @@ public final class LaunchApplicationIds
             SnapshotEntry before = entry.getValue();
             if (!present.contains(memento))
             {
-                report.gone.add(before.name);
+                if (unverifiedMementos.contains(memento))
+                {
+                    // The caller that excluded it names it in its own answer; the report stays
+                    // silent about it.
+                    continue;
+                }
+                String addressingFailure = unaddressable.get(before.name);
+                if (addressingFailure != null)
+                {
+                    report.notReadOnRestore.add(before.name + " (" + addressingFailure + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                else
+                {
+                    report.gone.add(before.name);
+                }
                 continue;
             }
             String current = access.readApplicationId(memento);
@@ -415,6 +510,12 @@ public final class LaunchApplicationIds
                 // The application is gone with its infobase; putting the binding back would point
                 // the configuration at an application that no longer exists.
                 (stripped ? report.excludedStripped : report.excludedKept).add(before.name);
+                continue;
+            }
+            if (unverifiedMementos.contains(memento))
+            {
+                // Excluded without being identified: the caller that excluded it names it in its
+                // own answer; the report stays silent about it.
                 continue;
             }
             if (!stripped)
@@ -455,6 +556,30 @@ public final class LaunchApplicationIds
             }
         }
         return report;
+    }
+
+    /**
+     * Runs one infobase-list write under the one write lock: the snapshot, the write and the
+     * restore of one write must not interleave with another's, or the second write snapshots the
+     * ids the first write already stripped and protects nothing while the first answer has
+     * already claimed a restore.
+     *
+     * @param access the launch configurations; <code>null</code> when there is no launch manager,
+     *        in which case the write gets a <code>null</code> snapshot
+     * @param guarded the write to run under the lock
+     * @return what the write returned
+     */
+    public static <R> R underWriteLock(Access access, GuardedWrite<R> guarded)
+    {
+        WRITE_LOCK.lock();
+        try
+        {
+            return guarded.write(access == null ? null : snapshot(access));
+        }
+        finally
+        {
+            WRITE_LOCK.unlock();
+        }
     }
 
     /** The message of a failure, or its class name when it carries none. */

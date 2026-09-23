@@ -57,6 +57,12 @@ final class FakeLaunchConfigurations
         /** When set, the configuration cannot be read at all, the way a broken file behaves. */
         boolean unreadable;
 
+        /**
+         * When set, reading attributes fails with this message while the memento still reads -
+         * a configuration that breaks after it has been addressed.
+         */
+        String attributeFailure;
+
         Configuration(String memento, String name, String typeId)
         {
             this.memento = memento;
@@ -92,6 +98,10 @@ final class FakeLaunchConfigurations
                         if (unreadable)
                         {
                             throw new CoreException(status("the .launch file could not be read")); //$NON-NLS-1$
+                        }
+                        if (attributeFailure != null)
+                        {
+                            throw new CoreException(status(attributeFailure));
                         }
                         if (args != null && args.length == 2)
                         {

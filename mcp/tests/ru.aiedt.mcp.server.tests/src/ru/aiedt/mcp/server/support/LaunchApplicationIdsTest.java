@@ -386,20 +386,56 @@ public class LaunchApplicationIdsTest
     }
 
     @Test
-    public void aSnapshotRemembersTheNameAsItStoodThen()
+    public void aConfigurationRenamedDuringTheWriteIsNamedGoneByTheNameItHadThen()
     {
-        // A configuration renamed between the snapshot and the restore is still addressed by its
-        // memento, and the answer calls it what it was called when its id was taken.
+        // Eclipse's memento encodes the .launch file's path and name, so a rename changes the
+        // memento: the address the snapshot took no longer resolves, the id is not put back, and
+        // the answer names the configuration by the name it carried when its id was taken.
         FakeAccess access = new FakeAccess();
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
         LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
-        access.configs.put("m-one", new LaunchApplicationIds.Configuration("m-one", "renamed")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.stripApplicationIds();
+        // The rename: a new memento, and the stored attributes move under it.
+        access.configs.remove("m-one"); //$NON-NLS-1$
+        access.configs.put("m-renamed", new LaunchApplicationIds.Configuration("m-renamed", "renamed")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        access.attributes.put("m-renamed", access.attributes.remove("m-one")); //$NON-NLS-1$ //$NON-NLS-2$
+
         RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
-        assertEquals(List.of("app-one"), report.restored); //$NON-NLS-1$
-        assertEquals("app-1", access.readApplicationId("m-one")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(List.of("app-one"), report.gone); //$NON-NLS-1$
+        assertTrue(report.restored.isEmpty());
+        assertTrue("the guard repairs an attribute, it does not chase a renamed configuration", //$NON-NLS-1$
+            access.writes.isEmpty());
+        assertTrue(report.describe().contains("gone (renamed or deleted during the write)")); //$NON-NLS-1$
+        assertNull(access.readApplicationId("m-one")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aConfigurationThatCannotBeAddressedAtTheRestoreIsNamedNotReadNotGone()
+    {
+        // The configuration is still there after the write, but its memento could not be read
+        // this time: it is not gone, and the answer names the read failure instead of guessing a
+        // rename. The id stays off - the guard cannot reach the configuration to put it back.
+        FakeAccess access = new FakeAccess();
+        access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+        access.stripApplicationIds();
+        access.configs.remove("m-one"); //$NON-NLS-1$
+        access.configs.put("", new LaunchApplicationIds.Configuration("", "app-one", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "the .launch file could not be read")); //$NON-NLS-1$
+
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
+
+        assertTrue(report.gone.isEmpty());
+        assertEquals(List.of("app-one (the .launch file could not be read)"), //$NON-NLS-1$
+            report.notReadOnRestore);
+        assertFalse(report.isQuiet());
+        assertTrue(report.describe().contains("not read on restore")); //$NON-NLS-1$
+        assertFalse(report.describe().contains("gone")); //$NON-NLS-1$
+        assertTrue(access.writes.isEmpty());
+        assertNull(access.readApplicationId("m-one")); //$NON-NLS-1$
     }
 
     @Test

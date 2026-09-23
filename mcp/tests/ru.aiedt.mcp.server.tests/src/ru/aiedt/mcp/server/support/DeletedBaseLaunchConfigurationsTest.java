@@ -14,7 +14,6 @@ import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Proxy;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -65,6 +64,15 @@ public class DeletedBaseLaunchConfigurationsTest
         /** When false, EDT answers no applications at all. */
         boolean applicationManagerAvailable = true;
 
+        /**
+         * When set, looking up an application of {@link #applicationLookupFailureProject} fails with
+         * this message.
+         */
+        String applicationLookupFailure;
+
+        /** The project whose application lookup fails; the other projects answer as bound. */
+        String applicationLookupFailureProject;
+
         IProject project(String name)
         {
             return projects.computeIfAbsent(name, FakeEnvironment::projectProxy);
@@ -96,6 +104,11 @@ public class DeletedBaseLaunchConfigurationsTest
                     if ("getApplication".equals(method.getName())) //$NON-NLS-1$
                     {
                         String projectName = ((IProject)args[0]).getName();
+                        if (applicationLookupFailure != null
+                            && projectName.equals(applicationLookupFailureProject))
+                        {
+                            throw new IllegalStateException(applicationLookupFailure);
+                        }
                         return Optional.ofNullable(applications.get(key(projectName, (String)args[1])));
                     }
                     return FakeLaunchConfigurations.defaultValue(method.getReturnType());
@@ -155,6 +168,18 @@ public class DeletedBaseLaunchConfigurationsTest
         return reference;
     }
 
+    /** How many times {@code needle} occurs in {@code haystack}. */
+    private static int occurrences(String haystack, String needle)
+    {
+        int count = 0;
+        for (int at = haystack.indexOf(needle); at >= 0;
+            at = haystack.indexOf(needle, at + needle.length()))
+        {
+            count++;
+        }
+        return count;
+    }
+
     @Test
     public void theDeletedBasesConfigurationsAreFoundByMementoAndTheForeignOneIsNot()
     {
@@ -170,7 +195,7 @@ public class DeletedBaseLaunchConfigurationsTest
             BmInfobaseLifecycleHelper.deletedBaseConfigurations(launchIds, environment, deleted);
 
         assertEquals(Set.of("m-deleted"), found.mementos); //$NON-NLS-1$
-        assertTrue(found.unidentified.isEmpty());
+        assertTrue(found.notIdentified.isEmpty());
         assertNull(found.searchFailed);
         assertNull(found.describeSearch());
         assertEquals("both configurations were in the snapshot", 2, launchIds.snapshot.held.size()); //$NON-NLS-1$
@@ -193,12 +218,14 @@ public class DeletedBaseLaunchConfigurationsTest
 
         assertEquals("the configuration after the unreadable one was still examined", //$NON-NLS-1$
             Set.of("m-deleted"), found.mementos); //$NON-NLS-1$
-        assertEquals(List.of("Run broken"), found.unidentified); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(1, found.notIdentified.size());
         assertNull(found.searchFailed);
         assertNotNull(found.describeSearch());
         assertTrue(found.describeSearch().contains("Run broken")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue("an unreadable configuration is described as not restored", //$NON-NLS-1$
-            found.describeSearch().contains("not restored")); //$NON-NLS-1$
+        assertTrue("an unaddressable configuration is named as unaddressable", //$NON-NLS-1$
+            found.describeSearch().contains("could not address 'Run broken'")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("and the consequence is named with it", //$NON-NLS-1$
+            found.describeSearch().contains("the application id was left off")); //$NON-NLS-1$
     }
 
     @Test
@@ -226,7 +253,8 @@ public class DeletedBaseLaunchConfigurationsTest
         assertNotNull(answer);
         assertTrue("the snapshot names it as unprotected", //$NON-NLS-1$
             answer.contains("not protected: no memento: Run broken")); //$NON-NLS-1$
-        assertTrue("the search names it as unread", answer.contains("could not read")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the search names it as unaddressable", //$NON-NLS-1$
+            answer.contains("could not address 'Run broken'")); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse("the unreadable configuration is not claimed restored", //$NON-NLS-1$
             answer.contains("restored the application id of: Run broken")); //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -252,16 +280,85 @@ public class DeletedBaseLaunchConfigurationsTest
         String answer = BmInfobaseLifecycleHelper.restoreLaunchApplicationIds(launchIds, found,
             "delete_infobase"); //$NON-NLS-1$
 
-        assertEquals(List.of("Closed run", "No project run"), found.unidentified); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(2, found.notIdentified.size());
         assertTrue("an unplaceable configuration is excluded so its id stays removed", //$NON-NLS-1$
-            found.mementos.containsAll(Set.of("m-closed", "m-noproject"))); //$NON-NLS-1$ //$NON-NLS-2$
+            found.unverified.containsAll(Set.of("m-closed", "m-noproject"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(found.mementos.isEmpty());
         assertNull("the id of a configuration whose project does not resolve is not handed back", //$NON-NLS-1$
             environment.configs.byName("Closed run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
         assertNull(environment.configs.byName("No project run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("app-foreign", environment.configs.byName("Foreign run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertNotNull(answer);
-        assertTrue(answer.contains("Closed run")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(answer.contains("No project run")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the answer names the unresolved project, once", //$NON-NLS-1$
+            answer.contains("Closed run: project 'project-closed' not resolved - the application id was left off")); //$NON-NLS-1$
+        assertTrue(answer.contains("No project run: project '' not resolved - the application id was left off")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the configuration is named once, not once per list", 1, //$NON-NLS-1$
+            occurrences(answer, "Closed run")); //$NON-NLS-1$
+        assertEquals(1, occurrences(answer, "No project run")); //$NON-NLS-1$
+        assertFalse("an unverified configuration is not named as the deleted base's", //$NON-NLS-1$
+            answer.contains("left without an application id after deletion")); //$NON-NLS-1$
+        assertFalse(answer.contains("could not read")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aConfigurationThatFailsAfterItsMementoWasReadIsExcludedAndNamedOnce()
+    {
+        // The memento was read, then the attribute read failed: the configuration can be
+        // addressed, so it is excluded from the restore - its binding may be the deleted base's -
+        // and the answer names it once, as unread. It is not claimed restored, and it is not
+        // named as the deleted base's own.
+        FakeEnvironment environment = new FakeEnvironment();
+        Configuration failing = environment.configs.add("m-failing", "Failing run", "project-one", "app-failing"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        environment.configs.add("m-foreign", "Foreign run", "project-two", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        environment.bind("project-two", "app-foreign", infobase()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        LaunchIds launchIds = BmInfobaseLifecycleHelper.snapshotLaunchApplicationIds(environment);
+        failing.attributeFailure = "the attribute store is unreadable"; //$NON-NLS-1$
+        DeletedBaseConfigurations found =
+            BmInfobaseLifecycleHelper.deletedBaseConfigurations(launchIds, environment, infobase());
+        environment.configs.stripApplicationIds();
+        String answer = BmInfobaseLifecycleHelper.restoreLaunchApplicationIds(launchIds, found,
+            "delete_infobase"); //$NON-NLS-1$
+
+        assertTrue("the configuration is excluded so its id stays removed", //$NON-NLS-1$
+            found.unverified.contains("m-failing")); //$NON-NLS-1$
+        assertTrue(found.mementos.isEmpty());
+        assertNull(environment.configs.byName("Failing run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("app-foreign", environment.configs.byName("Foreign run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertNotNull(answer);
+        assertTrue(answer.contains("Failing run: could not be read (the attribute store is unreadable) - the application id was left off")); //$NON-NLS-1$
+        assertEquals("the configuration is named once", 1, occurrences(answer, "Failing run")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(answer.contains("restored the application id of: Failing run")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(answer.contains("left without an application id after deletion: Failing run")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aConfigurationWhoseApplicationCannotBeLookedUpIsExcludedAndNamedOnce()
+    {
+        // The configuration was read and its project resolves, but the application lookup failed:
+        // ownership is unverified, so the binding stays off and the answer says why, once.
+        FakeEnvironment environment = new FakeEnvironment();
+        environment.configs.add("m-bound", "Bound run", "project-one", "app-bound"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        environment.configs.add("m-foreign", "Foreign run", "project-two", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        environment.project("project-one"); //$NON-NLS-1$
+        environment.bind("project-two", "app-foreign", infobase()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        environment.applicationLookupFailure = "the application registry is unavailable"; //$NON-NLS-1$
+        environment.applicationLookupFailureProject = "project-one"; //$NON-NLS-1$
+
+        LaunchIds launchIds = BmInfobaseLifecycleHelper.snapshotLaunchApplicationIds(environment);
+        DeletedBaseConfigurations found =
+            BmInfobaseLifecycleHelper.deletedBaseConfigurations(launchIds, environment, infobase());
+        environment.configs.stripApplicationIds();
+        String answer = BmInfobaseLifecycleHelper.restoreLaunchApplicationIds(launchIds, found,
+            "delete_infobase"); //$NON-NLS-1$
+
+        assertTrue(found.unverified.contains("m-bound")); //$NON-NLS-1$
+        assertNull(environment.configs.byName("Bound run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("app-foreign", environment.configs.byName("Foreign run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertNotNull(answer);
+        assertTrue(answer.contains("Bound run: could not be read (the application registry is unavailable) - the application id was left off")); //$NON-NLS-1$
+        assertEquals("the configuration is named once", 1, occurrences(answer, "Bound run")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(answer.contains("restored the application id of: Bound run")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Test

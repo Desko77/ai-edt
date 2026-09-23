@@ -10,6 +10,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -21,13 +22,15 @@ import org.junit.Test;
 /**
  * Two writes of the infobase list wait for each other.
  *
- * <p>The guard brackets a write with a snapshot and a restore, and all three run under one lock.
+ * <p>The guard brackets a write with a snapshot and a restore, and all three run under one lock,
+ * which every infobase-list write takes through
+ * {@link LaunchApplicationIds#underWriteLock(LaunchApplicationIds.Access, LaunchApplicationIds.GuardedWrite)}.
  * Without it a second write snapshots while the first write's strip is still un-restored: the
  * second snapshot is empty, the second write protects nothing, and the first answer has already
  * claimed a restore the second write then strips again. The first thread below parks inside its
  * guarded region; the second can only snapshot after the first restore, so its snapshot has to
- * see the id put back. Without the lock the second snapshot lands in the park, while the store
- * is stripped, and the assertion fails.</p>
+ * see the id put back. Without the lock the second snapshot lands in the park, while the store is
+ * stripped, and the assertion fails.</p>
  */
 public class TwoInfobaseListWritesWaitForEachOtherTest
 {
@@ -38,7 +41,8 @@ public class TwoInfobaseListWritesWaitForEachOtherTest
         fake.add("m-one", "Run one", "project-one", "application-one"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(fake.manager());
         CountDownLatch firstWriteStripped = new CountDownLatch(1);
-        CountDownLatch secondSnapshotTaken = new CountDownLatch(1);
+        CountDownLatch releaseFirstWrite = new CountDownLatch(1);
+        CountDownLatch secondWriteDone = new CountDownLatch(1);
         AtomicReference<Map<String, LaunchApplicationIds.SnapshotEntry>> secondHeld =
             new AtomicReference<>();
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -46,12 +50,14 @@ public class TwoInfobaseListWritesWaitForEachOtherTest
         Thread first = new Thread(() -> {
             try
             {
-                underWriteLock(() -> {
-                    LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+                // The operation's path: the snapshot, the write and the restore, all under the
+                // one lock the operations take.
+                LaunchApplicationIds.underWriteLock(access, snapshot -> {
                     fake.stripApplicationIds();
                     firstWriteStripped.countDown();
-                    await(secondSnapshotTaken);
+                    await(releaseFirstWrite, failure);
                     LaunchApplicationIds.restore(access, snapshot.held);
+                    return null;
                 });
             }
             catch (Throwable t)
@@ -62,11 +68,11 @@ public class TwoInfobaseListWritesWaitForEachOtherTest
         Thread second = new Thread(() -> {
             try
             {
-                await(firstWriteStripped);
-                underWriteLock(() -> {
-                    secondHeld.set(LaunchApplicationIds.snapshot(access).held);
-                    secondSnapshotTaken.countDown();
+                LaunchApplicationIds.underWriteLock(access, snapshot -> {
+                    secondHeld.set(snapshot.held);
+                    return null;
                 });
+                secondWriteDone.countDown();
             }
             catch (Throwable t)
             {
@@ -74,7 +80,12 @@ public class TwoInfobaseListWritesWaitForEachOtherTest
             }
         });
         first.start();
+        assertTrue("the first write reached its guarded region", //$NON-NLS-1$
+            firstWriteStripped.await(2, TimeUnit.SECONDS));
         second.start();
+        assertFalse("the second write waits for the first to finish", //$NON-NLS-1$
+            secondWriteDone.await(500, TimeUnit.MILLISECONDS));
+        releaseFirstWrite.countDown();
         first.join(10000);
         second.join(10000);
 
@@ -87,30 +98,20 @@ public class TwoInfobaseListWritesWaitForEachOtherTest
         assertEquals("application-one", secondHeld.get().get("m-one").applicationId); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    /** Runs one guarded write: the lock is what the product holds across snapshot, write, restore. */
-    private static void underWriteLock(Runnable guarded)
-    {
-        LaunchApplicationIds.WRITE_LOCK.lock();
-        try
-        {
-            guarded.run();
-        }
-        finally
-        {
-            LaunchApplicationIds.WRITE_LOCK.unlock();
-        }
-    }
-
-    /** Waits briefly: with the lock held the awaited signal can only come after the release. */
-    private static void await(CountDownLatch latch)
+    /** Waits for the signal; a timeout is a failure - the signal is owed, not hoped for. */
+    private static void await(CountDownLatch latch, AtomicReference<Throwable> failure)
     {
         try
         {
-            latch.await(2, TimeUnit.SECONDS);
+            if (!latch.await(2, TimeUnit.SECONDS))
+            {
+                failure.compareAndSet(null, new AssertionError("the first write was never released")); //$NON-NLS-1$
+            }
         }
         catch (InterruptedException e)
         {
             Thread.currentThread().interrupt();
+            failure.compareAndSet(null, e);
         }
     }
 }
