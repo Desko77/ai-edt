@@ -5,7 +5,9 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -21,11 +23,11 @@ import ru.aiedt.mcp.server.Activator;
 /**
  * Keeps a data path assigned to an element of an extension form reachable from
  * the database: the base-form attribute the path starts at is borrowed into the
- * extension in the same write, and a path EDT would drop on export is refused
+ * extension in the same write, and a path the form does not resolve is refused
  * before a single change is saved.
  *
  * <p>The whole decision lives behind {@link Port}, which stands for the three
- * EDT services that own the question -
+ * EDT services that own the questions -
  * {@code com.e1c.g5.v8.dt.form.extension.IFormExtensionManagementService} (is an
  * object adopted, adopt it),
  * {@code com._1c.g5.v8.dt.form.service.extension.IFormExtensionService} (does
@@ -35,6 +37,25 @@ import ru.aiedt.mcp.server.Activator;
  * all three reflectively, so the bundle needs no compile dependency on them; a
  * test installs its own port and sees the entire decision.
  *
+ * <p>Why the form's own resolution of the path, and not the export answer
+ * alone, decides the refusal. EDT's export decision reads the path's referred
+ * objects first: {@code IFormExtensionService.shouldSkipForExport} calls a
+ * private {@code shouldSkipDataPathForExport(form, path, true)}, which asks
+ * {@code getAttributeRef(path)} - and that method returns an empty reference as
+ * soon as one referred object is null or the list itself is empty, on which the
+ * decision answers "drop". The referred objects are derived data: a transient
+ * list filled by the form's path index after the edit, which a path built here
+ * out of segments never carries. The export answer is therefore "drop" for
+ * every path the guard assembles, whatever the path names - it cannot tell a
+ * path to a live attribute from a path to nothing. What does separate them is
+ * the form's own resolution of the path ({@code findPropertyInfo} walks every
+ * segment, ignoring case and the {@code [...]} index of a collection), and that
+ * is the question the refusal hangs on. A path that resolves but that the
+ * extension still cannot reference - a segment of another engine - is left to
+ * EDT's own {@code form-data-path} marker, which runs after the write and
+ * reports exactly that; the list that would decide it is the same derived data
+ * the guard cannot see.
+ *
  * <p>A form of a configuration project is left alone: the services are not
  * asked at all, because the guard recognises an extension form by its non-null
  * base form before it touches the port.
@@ -42,7 +63,39 @@ import ru.aiedt.mcp.server.Activator;
 public final class FormExtensionDataPathGuard
 {
     /**
-     * The seam over the two EDT services. An implementation answers only; the
+     * The check that tells whether the attribute the path starts at already
+     * belongs to the extension (the name travels into an answer when the
+     * question could not be asked).
+     */
+    public static final String CHECK_BELONGING = "attributeBelongsToExtension"; //$NON-NLS-1$
+
+    /** The check that tells whether EDT writes the path with the form. */
+    public static final String CHECK_EXPORT = "exportOfExtensionForm"; //$NON-NLS-1$
+
+    /** The check that tells whether the form resolves the path. */
+    public static final String CHECK_RESOLUTION = "pathResolutionInForm"; //$NON-NLS-1$
+
+    /**
+     * What a question of the port answered. A question that could not be asked -
+     * the service is not installed, the method is not there, the call failed - is
+     * {@link #NOT_ASKED} and not an answer: a guard that turns it into a yes or a
+     * no reports a fact it never learned, and every refusal built on it would be
+     * a guess.
+     */
+    public enum Answer
+    {
+        /** The question was asked and the answer is yes. */
+        TRUE,
+
+        /** The question was asked and the answer is no. */
+        FALSE,
+
+        /** The question could not be asked, so nothing is known. */
+        NOT_ASKED
+    }
+
+    /**
+     * The seam over the EDT services. An implementation answers only; the
      * order of the questions and what is done with the answers belongs to
      * {@link #assign}.
      */
@@ -50,10 +103,12 @@ public final class FormExtensionDataPathGuard
     {
         /**
          * @param attribute a form attribute
-         * @return true when the attribute already belongs to the extension
-         *         (adopted), so a path through it survives export
+         * @return TRUE when the attribute already belongs to the extension, so a
+         *         path through it survives export; FALSE when it is the base
+         *         form's and has to be borrowed; NOT_ASKED when the service that
+         *         knows is not there
          */
-        boolean isExtensionBelongingObject(Object attribute);
+        Answer isExtensionBelongingObject(Object attribute);
 
         /**
          * Borrows a base-form object into the extension. Called inside the
@@ -68,35 +123,36 @@ public final class FormExtensionDataPathGuard
         /**
          * @param form the extension form
          * @param dataPath the assigned {@code AbstractDataPath}
-         * @return a human-readable reason when EDT will not write the path with
-         *         the form, or null when the path survives export - and also
-         *         when the question cannot be answered at all, because refusing
-         *         on an unanswerable question would refuse every path
+         * @return TRUE when EDT will not write the path with the form. The answer
+         *         is TRUE for every path the guard assembles - the referred
+         *         objects the decision reads are derived data such a path does not
+         *         carry - so it never condemns a path on its own; NOT_ASKED when
+         *         the question could not be asked
          */
-        String exportSkipReason(Object form, Object dataPath);
+        Answer exportSkip(Object form, Object dataPath);
 
         /**
          * @param form the extension form
          * @param dataPath the assigned {@code AbstractDataPath}
-         * @return true when the form resolves the path: every segment of it
+         * @return TRUE when the form resolves the path: every segment of it
          *         names something the form carries. A path assembled here holds
-         *         segments only, so this is the question that tells a nested
-         *         path to something that exists from a path leading nowhere -
-         *         the export decision cannot tell them apart, because it reads
-         *         the referred-object list such a path never fills. An
-         *         implementation that cannot answer says true, because refusing
-         *         on an unanswerable question would refuse every path
+         *         segments only, and this is the question that tells a nested
+         *         path to something that exists from a path leading nowhere;
+         *         NOT_ASKED when the question could not be asked
          */
-        boolean isPathResolved(Object form, Object dataPath);
+        Answer pathResolved(Object form, Object dataPath);
     }
 
     /**
-     * What the assignment did: the attributes it borrowed, and - when the path
-     * cannot reach the database - the refusal that must undo the write.
+     * What the assignment did: the attributes it borrowed, the checks that could
+     * not be asked, and - when the path cannot reach the database - the refusal
+     * that must undo the write.
      */
     public static final class Outcome
     {
         private final List<String> adoptedAttributes = new ArrayList<>();
+
+        private final List<String> notAskedChecks = new ArrayList<>();
 
         private String refusal;
 
@@ -104,6 +160,17 @@ public final class FormExtensionDataPathGuard
         public List<String> getAdoptedAttributes()
         {
             return Collections.unmodifiableList(adoptedAttributes);
+        }
+
+        /**
+         * @return the checks the guard could not ask about this path, named by
+         *         {@link #CHECK_BELONGING}, {@link #CHECK_EXPORT} and
+         *         {@link #CHECK_RESOLUTION}; empty when every one of them
+         *         answered
+         */
+        public List<String> getNotAskedChecks()
+        {
+            return Collections.unmodifiableList(notAskedChecks);
         }
 
         /** @return the refusal to report, or null when the path was accepted */
@@ -164,15 +231,20 @@ public final class FormExtensionDataPathGuard
      * Decides whether the assignment of a data path may stand.
      *
      * <p>On an extension form it borrows the base-form attribute the path
-     * starts at, then asks whether the path survives export. On a configuration
-     * form it answers immediately, without asking the port anything.
+     * starts at, asks whether EDT writes the path with the form, and refuses the
+     * write when the form does not resolve the path either. A question that
+     * cannot be asked refuses nothing and is named in the outcome, so a caller
+     * reads what was checked instead of reading a check that never ran. On a
+     * configuration form it answers immediately, without asking the port
+     * anything.
      *
      * @param form the form the element belongs to, or null when unknown
      * @param dataPath the assigned {@code AbstractDataPath}, or null when the
      *            path was cleared
      * @param pathText the dotted path as the caller wrote it
      * @param itemName the element the path was assigned to, for the refusal text
-     * @return what was borrowed and whether the write may stand
+     * @return what was borrowed, what could not be asked, and whether the write
+     *         may stand
      */
     public static Outcome assign(Object form, Object dataPath, String pathText, String itemName)
     {
@@ -188,56 +260,152 @@ public final class FormExtensionDataPathGuard
         Port port = port();
         if (port == null)
         {
+            outcome.notAskedChecks.add(CHECK_BELONGING);
+            outcome.notAskedChecks.add(CHECK_EXPORT);
+            outcome.notAskedChecks.add(CHECK_RESOLUTION);
             return outcome;
         }
 
         String root = firstSegment(pathText);
         Object attribute = findAttribute(form, root);
-        if (attribute == null)
+        // Whether the path starts at an object that is the extension's own - as
+        // opposed to a base-form attribute this write borrowed. Only the first
+        // kind is left out of the resolution question below: an operation that
+        // creates an attribute and binds a path to it in the same transaction
+        // (a dynamic list table, a settings composer) is asking about an object
+        // the model has not indexed yet, and a "no" there would undo a write that
+        // is right.
+        boolean ownAttribute = false;
+        if (attribute != null)
         {
-            // The first segment names no form attribute. Whether such a path is
-            // legal is EDT's own form-data-path check, not this guard's.
-            return outcome;
-        }
-
-        try
-        {
-            if (!port.isExtensionBelongingObject(attribute))
+            Answer belongs = port.isExtensionBelongingObject(attribute);
+            if (belongs == Answer.NOT_ASKED)
             {
-                port.adoptObject(attribute);
-                outcome.adoptedAttributes.add(root);
-                if (!port.isExtensionBelongingObject(attribute))
+                // Whether the path survives export depends on this answer, so
+                // asking further would compare answers about paths that may belong
+                // to the base form. The write goes through as if the guard were
+                // not there, and the answer says the check was not performed.
+                outcome.notAskedChecks.add(CHECK_BELONGING);
+                return outcome;
+            }
+            if (belongs == Answer.TRUE)
+            {
+                ownAttribute = true;
+            }
+            else
+            {
+                try
+                {
+                    port.adoptObject(attribute);
+                }
+                catch (Exception e)
+                {
+                    outcome.refusal = refusal(itemName, pathText,
+                        "заимствовать реквизит " + nameOf(attribute, root) + " не удалось: " //$NON-NLS-1$ //$NON-NLS-2$
+                            + reasonOf(e));
+                    return outcome;
+                }
+                outcome.adoptedAttributes.add(nameOf(attribute, root));
+                Answer took = port.isExtensionBelongingObject(attribute);
+                if (took == Answer.NOT_ASKED)
+                {
+                    // The borrow call returned but this answer did not: the model
+                    // was changed and the write must not be undone on a question
+                    // that failed, so the path is left alone and the check named.
+                    outcome.notAskedChecks.add(CHECK_BELONGING);
+                    return outcome;
+                }
+                if (took == Answer.FALSE)
                 {
                     // The call returned but the attribute still does not belong
                     // to the extension: the path would be dropped on export.
                     outcome.refusal = refusal(itemName, pathText,
-                        "реквизит " + root + " не заимствован расширением");
+                        "реквизит " + nameOf(attribute, root) + " не заимствован расширением"); //$NON-NLS-1$ //$NON-NLS-2$
                     return outcome;
                 }
             }
         }
-        catch (Exception e)
+
+        Answer skip = port.exportSkip(form, dataPath);
+        if (skip == Answer.NOT_ASKED)
         {
-            String reason = e.getMessage() != null && !e.getMessage().isEmpty()
-                ? e.getMessage() : e.getClass().getSimpleName();
-            outcome.refusal = refusal(itemName, pathText,
-                "заимствовать реквизит " + root + " не удалось: " + reason);
+            outcome.notAskedChecks.add(CHECK_EXPORT);
             return outcome;
         }
-
-        String skip = port.exportSkipReason(form, dataPath);
-        if (skip != null && !port.isPathResolved(form, dataPath))
+        if (skip == Answer.FALSE)
         {
-            // "Dropped" alone does not condemn the path. The export decision
-            // starts from the path's referred objects, a transient list a path
-            // assembled here never fills, and answers "dropped" for an empty one
-            // whatever the path names - which is the answer a path that exists
-            // gets as well as a path that does not. The form's own resolution of
-            // the path separates them: a path it cannot resolve leads nowhere
-            // and is refused, one it resolves was covered by the borrow above.
-            outcome.refusal = refusal(itemName, pathText, skip);
+            // EDT writes the path with the form: there is nothing to refuse.
+            return outcome;
+        }
+        if (ownAttribute)
+        {
+            // The path starts at an object that already belongs to the extension -
+            // for the operations that create their own attribute it is this very
+            // write's object, and the form's resolution answer about it inside the
+            // same transaction says nothing about the file.
+            return outcome;
+        }
+        Answer resolved = port.pathResolved(form, dataPath);
+        if (resolved == Answer.NOT_ASKED)
+        {
+            outcome.notAskedChecks.add(CHECK_RESOLUTION);
+            return outcome;
+        }
+        if (resolved == Answer.FALSE)
+        {
+            // The export answer alone cannot condemn a path (see the class
+            // comment): the path the form cannot resolve leads nowhere, and that
+            // is what is refused - nothing reaches Form.form.
+            outcome.refusal = refusal(itemName, pathText,
+                "EDT его не выгружает, и форма его не разрешает"); //$NON-NLS-1$
         }
         return outcome;
+    }
+
+    /**
+     * Lets a refusal out of a catch block that would otherwise turn it into a
+     * best-effort note or a warning - a column of a table generated over a
+     * refused path, a data path wired after the attribute was created. Every
+     * other exception keeps the behaviour the caller had for it.
+     *
+     * <p>The refusal is looked for underneath the wrappers too: a catch block
+     * cannot know how many frames of reflection the failure travelled through,
+     * and a swallowed refusal is a committed write with a rolled-back borrow.
+     * </p>
+     *
+     * @param e the exception a catch block is holding
+     */
+    public static void rethrowIfRefusal(Exception e)
+    {
+        RefusalException refused = findRefusal(e);
+        if (refused != null)
+        {
+            throw refused;
+        }
+    }
+
+    /**
+     * Finds a refusal under whatever the reflective call and the proxy wrapped
+     * it in - the BM transaction runs behind {@code Method.invoke} on a proxy, so
+     * the exception arrives as an InvocationTargetException or an
+     * UndeclaredThrowableException holding it.
+     *
+     * @param t the exception an operation failed with
+     * @return the refusal, or null when the failure is not one
+     */
+    public static RefusalException findRefusal(Throwable t)
+    {
+        Throwable current = t;
+        while (current != null)
+        {
+            if (current instanceof RefusalException)
+            {
+                return (RefusalException) current;
+            }
+            Throwable next = current.getCause();
+            current = next == current ? null : next;
+        }
+        return null;
     }
 
     /**
@@ -257,6 +425,27 @@ public final class FormExtensionDataPathGuard
     }
 
     /**
+     * The text of a failed call, unwrapped from the reflection wrappers it
+     * arrives in: {@code Method.invoke} reports a failure of the called method as
+     * an {@link InvocationTargetException} whose own message is empty, so the
+     * reason EDT gave would otherwise never reach the refusal.
+     *
+     * @param e the exception the port call failed with
+     * @return the message of the cause, or the class name when it has none
+     */
+    private static String reasonOf(Throwable e)
+    {
+        Throwable named = e;
+        while ((named instanceof InvocationTargetException
+            || named instanceof UndeclaredThrowableException) && named.getCause() != null)
+        {
+            named = named.getCause();
+        }
+        String message = named.getMessage();
+        return message != null && !message.isEmpty() ? message : named.getClass().getSimpleName();
+    }
+
+    /**
      * @param pathText a dotted data path
      * @return the first segment, or an empty string when there is none
      */
@@ -268,7 +457,9 @@ public final class FormExtensionDataPathGuard
 
     /**
      * Finds a form attribute by name, without depending on the form model at
-     * compile time.
+     * compile time. The name is compared ignoring case: the form's own lookup
+     * ({@code BmFormHelper.findFormAttributeByName}) does, and a path whose first
+     * segment differs in case from the attribute it names is the same path.
      *
      * @param form the form
      * @param name the attribute name
@@ -294,7 +485,7 @@ public final class FormExtensionDataPathGuard
                 {
                     continue;
                 }
-                if (name.equals(attributeName))
+                if (attributeName instanceof String && name.equalsIgnoreCase((String) attributeName))
                 {
                     return attribute;
                 }
@@ -306,6 +497,30 @@ public final class FormExtensionDataPathGuard
                 + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * @param attribute the attribute a name is wanted for
+     * @param fallback the name the caller wrote, used when the attribute has none
+     * @return the attribute's own name, so what is reported is what the form
+     *         carries and not the spelling the caller used
+     */
+    private static String nameOf(Object attribute, String fallback)
+    {
+        try
+        {
+            Object name = attribute.getClass().getMethod("getName").invoke(attribute); //$NON-NLS-1$
+            if (name instanceof String && !((String) name).isEmpty())
+            {
+                return (String) name;
+            }
+        }
+        catch (Exception e)
+        {
+            // The attribute does not answer for its name: the caller's spelling is
+            // reported rather than nothing.
+        }
+        return fallback;
     }
 
     /**
@@ -347,10 +562,11 @@ public final class FormExtensionDataPathGuard
      * The runtime port: the three EDT services reached by name, so the bundle
      * gains no compile dependency on their packages.
      *
-     * <p>Every method answers "do not refuse" when its service is missing: a
-     * guard that cannot see EDT must not block a write, and the alternative -
-     * refusing because the question could not be asked - would refuse every
-     * path on any install whose bundles are named differently.
+     * <p>A question whose service, method or call is not there is
+     * {@link Answer#NOT_ASKED}, never a yes or a no: a guard that cannot see EDT
+     * must not block a write, and it must not claim either that the path was
+     * checked. What was not asked travels to the caller in the outcome of the
+     * assignment.
      */
     private static final class EdtPort implements Port
     {
@@ -483,25 +699,29 @@ public final class FormExtensionDataPathGuard
         }
 
         @Override
-        public boolean isExtensionBelongingObject(Object attribute)
+        public Answer isExtensionBelongingObject(Object attribute)
         {
             Object service = extension();
             if (service == null)
             {
-                return true;
+                return Answer.NOT_ASKED;
             }
             try
             {
                 Object answer = service.getClass()
                     .getMethod("isExtensionBelongingObject", Object.class) //$NON-NLS-1$
                     .invoke(service, attribute);
-                return Boolean.TRUE.equals(answer);
+                if (!(answer instanceof Boolean))
+                {
+                    return Answer.NOT_ASKED;
+                }
+                return Boolean.TRUE.equals(answer) ? Answer.TRUE : Answer.FALSE;
             }
             catch (Exception e)
             {
                 Activator.logWarning("FormExtensionDataPathGuard: isExtensionBelongingObject " //$NON-NLS-1$
                     + "failed: " + e.getMessage()); //$NON-NLS-1$
-                return true;
+                return Answer.NOT_ASKED;
             }
         }
 
@@ -518,12 +738,12 @@ public final class FormExtensionDataPathGuard
         }
 
         @Override
-        public String exportSkipReason(Object form, Object dataPath)
+        public Answer exportSkip(Object form, Object dataPath)
         {
             Object service = extension();
             if (service == null)
             {
-                return null;
+                return Answer.NOT_ASKED;
             }
             try
             {
@@ -543,27 +763,30 @@ public final class FormExtensionDataPathGuard
                 }
                 if (shouldSkip == null)
                 {
-                    return null;
+                    return Answer.NOT_ASKED;
                 }
                 Object answer = shouldSkip.invoke(service, form, dataPath, null, null);
-                return Boolean.TRUE.equals(answer)
-                    ? "путь не выгружается расширением" : null; //$NON-NLS-1$
+                if (!(answer instanceof Boolean))
+                {
+                    return Answer.NOT_ASKED;
+                }
+                return Boolean.TRUE.equals(answer) ? Answer.TRUE : Answer.FALSE;
             }
             catch (Exception e)
             {
                 Activator.logWarning("FormExtensionDataPathGuard: shouldSkipForExport failed: " //$NON-NLS-1$
                     + e.getMessage());
-                return null;
+                return Answer.NOT_ASKED;
             }
         }
 
         @Override
-        public boolean isPathResolved(Object form, Object dataPath)
+        public Answer pathResolved(Object form, Object dataPath)
         {
             Object service = dataSourceInfo();
             if (service == null)
             {
-                return true;
+                return Answer.NOT_ASKED;
             }
             try
             {
@@ -579,16 +802,20 @@ public final class FormExtensionDataPathGuard
                 }
                 if (resolve == null)
                 {
-                    return true;
+                    return Answer.NOT_ASKED;
                 }
                 Object answer = resolve.invoke(service, form, dataPath);
-                return !Boolean.FALSE.equals(answer);
+                if (!(answer instanceof Boolean))
+                {
+                    return Answer.NOT_ASKED;
+                }
+                return Boolean.TRUE.equals(answer) ? Answer.TRUE : Answer.FALSE;
             }
             catch (Exception e)
             {
                 Activator.logWarning("FormExtensionDataPathGuard: isPathResolved failed: " //$NON-NLS-1$
                     + e.getMessage());
-                return true;
+                return Answer.NOT_ASKED;
             }
         }
     }

@@ -24,6 +24,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
+import ru.aiedt.mcp.server.support.FormExtensionDataPathGuard;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.StandardCommandRegistry;
@@ -886,6 +887,11 @@ public class EditFormTool implements IMcpTool
         }
         catch (Exception e)
         {
+            // A refused data path is not a column that could not be generated:
+            // the refusal has to reach the caller and roll the whole write back,
+            // or the table and its earlier columns stay in a transaction that
+            // commits with no borrow to show for them.
+            FormExtensionDataPathGuard.rethrowIfRefusal(e);
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             warnings.add("autogen failed: " + (cause.getMessage() != null //$NON-NLS-1$
                 ? cause.getMessage() : cause.getClass().getSimpleName()));

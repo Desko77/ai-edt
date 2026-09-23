@@ -53,8 +53,14 @@ than all of them.
 
   A form element of an extension that takes a data path starting at a base-form attribute borrows
   that attribute in the same write, and the response names it in `adoptedFormAttributes`. A path
-  that would not be exported with the extension form is refused before anything is written - the
-  refusal names the element, the path and the reason, and the form is left as it was.
+  EDT does not export with the extension form **and** the form does not resolve is refused before
+  anything is written - the refusal names the element, the path and the reason, and the form is left
+  as it was. A path an operation creates itself (the table of `add_dynamic_list_table`, the tables
+  of `setup_settings_composer_on_form`) is not asked about resolution: the object is the write's
+  own. When a check cannot be asked at all - the EDT service is absent or the call failed - nothing
+  is refused and the response names the check in `dataPathChecksNotPerformed`
+  (`attributeBelongsToExtension`, `exportOfExtensionForm`, `pathResolutionInForm`), because a
+  response that stays silent about it reads as a path that passed it.
 
 - **When a parameter's description reads like one line and you need the rules.**
   `edit_metadata operation=help topic=parameters` carries the full text of the parameters whose

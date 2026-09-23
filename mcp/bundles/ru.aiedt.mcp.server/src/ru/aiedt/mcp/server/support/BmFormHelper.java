@@ -135,6 +135,17 @@ public class BmFormHelper
     private final List<String> adoptedFormAttributes = new ArrayList<>();
 
     /**
+     * Checks of the data-path guard that could not be asked during the write in
+     * progress, named by the guard's {@code CHECK_*} constants. An answer that
+     * performed a data-path write has to say what it did not verify: a check
+     * that failed and was dropped reads exactly like a check that passed, and the
+     * caller takes the write for verified.
+     *
+     * <p>Belongs to one write, like the borrowed names above.
+     */
+    private final List<String> notAskedDataPathChecks = new ArrayList<>();
+
+    /**
      * The form the current {@code executeFormOperation} transaction works on.
      * Set while the task runs; a call made outside a transaction sees null and
      * the data-path guard stays out of it.
@@ -541,7 +552,7 @@ public class BmFormHelper
             // API: the transaction has already rolled back and the text the
             // caller gets is the contract's, not a wrapped stack message.
             FormExtensionDataPathGuard.RefusalException refusal =
-                findRefusal(e);
+                FormExtensionDataPathGuard.findRefusal(e);
             if (refusal != null)
             {
                 return "Error: " + refusal.getOutcome().getRefusal(); //$NON-NLS-1$
@@ -1781,7 +1792,7 @@ public class BmFormHelper
             }
             catch (Exception ignored)
             {
-                rethrowIfRefusal(ignored);
+                FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
                 // column may not be a DataItem
             }
         }
@@ -2009,7 +2020,7 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
-            rethrowIfRefusal(ignored);
+            FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
             // best-effort: dataPath wiring may need explicit setup later
         }
 
@@ -2100,7 +2111,7 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
-            rethrowIfRefusal(ignored);
+            FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
             // best-effort
         }
         Object userSettingsTable = createTable(userSettingsTableName, null);
@@ -2110,7 +2121,7 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
-            rethrowIfRefusal(ignored);
+            FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
             // best-effort
         }
 
@@ -2200,7 +2211,7 @@ public class BmFormHelper
             }
             catch (Exception e)
             {
-                rethrowIfRefusal(e);
+                FormExtensionDataPathGuard.rethrowIfRefusal(e);
                 return "Failed to set dataPath: " + e.getMessage(); //$NON-NLS-1$
             }
         }
@@ -2223,7 +2234,7 @@ public class BmFormHelper
             }
             catch (Exception e)
             {
-                rethrowIfRefusal(e);
+                FormExtensionDataPathGuard.rethrowIfRefusal(e);
                 return "Failed to set " + property + ": " + e.getMessage(); //$NON-NLS-1$
             }
         }
@@ -2240,7 +2251,7 @@ public class BmFormHelper
                 }
                 catch (Exception e)
                 {
-                    rethrowIfRefusal(e);
+                    FormExtensionDataPathGuard.rethrowIfRefusal(e);
                     return "Failed to set " + property + ": " + e.getMessage(); //$NON-NLS-1$
                 }
             }
@@ -2659,11 +2670,21 @@ public class BmFormHelper
         {
             // The refusal throws out of the transaction action, so this write
             // is rolled back whole: nothing of it was borrowed, and no name may
-            // survive into a later answer.
+            // survive into a later answer. A check that could not be asked never
+            // produces a refusal, so there is nothing to report beside it.
             abandonWrite();
             throw new FormExtensionDataPathGuard.RefusalException(outcome);
         }
+        // A check that could not be asked is remembered: the answer names it, so
+        // a caller does not read an unverified path as a verified one.
         adoptedFormAttributes.addAll(outcome.getAdoptedAttributes());
+        for (String check : outcome.getNotAskedChecks())
+        {
+            if (!notAskedDataPathChecks.contains(check))
+            {
+                notAskedDataPathChecks.add(check);
+            }
+        }
     }
 
     /**
@@ -2676,6 +2697,7 @@ public class BmFormHelper
     private void beginWrite(Object form)
     {
         adoptedFormAttributes.clear();
+        notAskedDataPathChecks.clear();
         currentForm = form;
     }
 
@@ -2687,6 +2709,7 @@ public class BmFormHelper
     private void abandonWrite()
     {
         adoptedFormAttributes.clear();
+        notAskedDataPathChecks.clear();
     }
 
     /**
@@ -2727,45 +2750,6 @@ public class BmFormHelper
     }
 
     /**
-     * Lets a refusal out of a catch block that would otherwise turn it into a
-     * best-effort note or a "Failed to set" string. Every other exception keeps
-     * the behaviour it had.
-     *
-     * @param e the exception a catch block is holding
-     */
-    private static void rethrowIfRefusal(Exception e)
-    {
-        if (e instanceof FormExtensionDataPathGuard.RefusalException)
-        {
-            throw (FormExtensionDataPathGuard.RefusalException) e;
-        }
-    }
-
-    /**
-     * Finds a refusal under whatever the reflective call and the proxy wrapped
-     * it in - the transaction runs behind {@code Method.invoke} on a proxy, so
-     * the exception arrives as an InvocationTargetException or an
-     * UndeclaredThrowableException holding it.
-     *
-     * @param t the exception the operation failed with
-     * @return the refusal, or null when the failure is not one
-     */
-    private static FormExtensionDataPathGuard.RefusalException findRefusal(Throwable t)
-    {
-        Throwable current = t;
-        while (current != null)
-        {
-            if (current instanceof FormExtensionDataPathGuard.RefusalException)
-            {
-                return (FormExtensionDataPathGuard.RefusalException) current;
-            }
-            Throwable next = current.getCause();
-            current = next == current ? null : next;
-        }
-        return null;
-    }
-
-    /**
      * @return base-form attributes borrowed by the write in progress, in the
      *         order they were borrowed; empty once that write was abandoned
      */
@@ -2775,21 +2759,37 @@ public class BmFormHelper
     }
 
     /**
-     * Names the borrowed attributes in an operation's answer.
+     * @return the data-path checks the guard could not ask during the write in
+     *         progress, named by the guard's {@code CHECK_*} constants; empty
+     *         when every check answered
+     */
+    public List<String> getNotAskedDataPathChecks()
+    {
+        return new ArrayList<>(notAskedDataPathChecks);
+    }
+
+    /**
+     * Names the borrowed attributes and the checks that were not performed in an
+     * operation's answer.
      *
      * <p>A data path assigned on an extension form reaches the database only
      * when the attribute it starts at belongs to the extension, so the write
      * borrows it. That is a second change to the form beside the one the caller
      * asked for, and the answer says so: a caller comparing files otherwise
-     * reads the borrowed attribute as someone else's edit. The field is absent
-     * when nothing was borrowed.
+     * reads the borrowed attribute as someone else's edit.
+     *
+     * <p>A check the guard could not ask is named too, in
+     * {@code dataPathChecksNotPerformed}: on a runtime where the EDT service is
+     * not there, the path was written without the question being answered, and an
+     * answer that stays silent about it is read as a path that passed the check.
+     * Either field is absent when it has nothing to say.
      *
      * @param response the answer the operation already built
-     * @return the answer with the borrowed names, or unchanged when none were
+     * @return the answer with the names, or unchanged when there are none
      */
     public String annotateAdopted(String response)
     {
-        if (response == null || adoptedFormAttributes.isEmpty())
+        if (response == null || (adoptedFormAttributes.isEmpty() && notAskedDataPathChecks.isEmpty()))
         {
             return response;
         }
@@ -2800,9 +2800,20 @@ public class BmFormHelper
         {
             return response;
         }
-        return response.substring(0, closing + 1)
-            + "adoptedFormAttributes: " + String.join(",", adoptedFormAttributes) + "\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + response.substring(closing + 1);
+        StringBuilder fields = new StringBuilder();
+        if (!adoptedFormAttributes.isEmpty())
+        {
+            fields.append("adoptedFormAttributes: ") //$NON-NLS-1$
+                .append(String.join(",", adoptedFormAttributes)) //$NON-NLS-1$
+                .append('\n');
+        }
+        if (!notAskedDataPathChecks.isEmpty())
+        {
+            fields.append("dataPathChecksNotPerformed: ") //$NON-NLS-1$
+                .append(String.join(",", notAskedDataPathChecks)) //$NON-NLS-1$
+                .append('\n');
+        }
+        return response.substring(0, closing + 1) + fields + response.substring(closing + 1);
     }
 
     /**

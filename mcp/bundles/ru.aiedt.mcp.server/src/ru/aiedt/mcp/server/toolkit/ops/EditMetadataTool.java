@@ -2000,15 +2000,33 @@ public class EditMetadataTool implements IMcpTool
     static String formatFormResultWithApiTag(String helperResult, String op, String formFqn,
         List<String> adoptedFormAttributes)
     {
+        return formatFormResultWithApiTag(helperResult, op, formFqn, adoptedFormAttributes, null);
+    }
+
+    /**
+     * Same as
+     * {@link #formatFormResultWithApiTag(String, String, String, List)}, naming the data-path checks
+     * that could not be performed.
+     *
+     * @param helperResult the result text of the form operation
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @param checksNotPerformed the data-path checks the guard could not ask, or null
+     * @return the JSON answer
+     */
+    static String formatFormResultWithApiTag(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes, List<String> checksNotPerformed)
+    {
         String body = stripErrorEnvelope(helperResult);
         if (body == null)
         {
-            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes);
+            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes, checksNotPerformed);
         }
         int idx = body.indexOf("formApiNotFound:"); //$NON-NLS-1$
         if (idx < 0)
         {
-            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes);
+            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes, checksNotPerformed);
         }
         String missing = body.substring(idx + "formApiNotFound:".length()).trim(); //$NON-NLS-1$
         // 1.41: trim trailing closing parens that come from upstream
@@ -2056,16 +2074,39 @@ public class EditMetadataTool implements IMcpTool
     static String formatFormResult(String helperResult, String op, String formFqn,
         List<String> adoptedFormAttributes)
     {
+        return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes, null);
+    }
+
+    /**
+     * Same as {@link #formatFormResult(String, String, String, List)}, naming the data-path checks
+     * that were not performed.
+     * <p>
+     * A data-path write on an extension form is verified by checks the runtime answers through EDT
+     * services. When one of them cannot be asked, the write still stands - the path is written as if
+     * the guard were not there - and that is what the answer has to say: an answer that stays silent
+     * about a check that never ran is read as a path that passed it.
+     * </p>
+     *
+     * @param helperResult the result text of the form operation; null counts as success
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @param checksNotPerformed the data-path checks the guard could not ask, or null
+     * @return the JSON answer
+     */
+    static String formatFormResult(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes, List<String> checksNotPerformed)
+    {
         // Row 42 note: a pending/failed disk flush is appended to helperResult as
         // a plain-text note by BmFormHelper.executeFormOperation, so it flows
         // through the "message" field here (and at every other form-op response
         // builder) with no special handling.
         if (helperResult == null)
         {
-            return putAdopted(ToolResult.success()
+            return putNotAsked(putAdopted(ToolResult.success()
                 .put("operation", op) //$NON-NLS-1$
                 .put("formFqn", formFqn) //$NON-NLS-1$
-                .put("message", "ok"), adoptedFormAttributes) //$NON-NLS-1$ //$NON-NLS-2$
+                .put("message", "ok"), adoptedFormAttributes), checksNotPerformed) //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
         }
         if (isErrorOutcome(helperResult))
@@ -2075,10 +2116,10 @@ public class EditMetadataTool implements IMcpTool
                 .put("formFqn", formFqn) //$NON-NLS-1$
                 .toJson();
         }
-        return putAdopted(ToolResult.success()
+        return putNotAsked(putAdopted(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
             .put("formFqn", formFqn) //$NON-NLS-1$
-            .put("message", helperResult), adoptedFormAttributes) //$NON-NLS-1$
+            .put("message", helperResult), adoptedFormAttributes), checksNotPerformed) //$NON-NLS-1$
             .toJson();
     }
 
@@ -2096,6 +2137,23 @@ public class EditMetadataTool implements IMcpTool
             return result;
         }
         return result.put("adoptedFormAttributes", adoptedFormAttributes); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds {@code dataPathChecksNotPerformed} to an answer when a data-path check could not be
+     * asked.
+     *
+     * @param result the answer being built
+     * @param checksNotPerformed the checks the guard could not ask, or null
+     * @return the answer with the names, or unchanged when every check ran
+     */
+    private static ToolResult putNotAsked(ToolResult result, List<String> checksNotPerformed)
+    {
+        if (checksNotPerformed == null || checksNotPerformed.isEmpty())
+        {
+            return result;
+        }
+        return result.put("dataPathChecksNotPerformed", checksNotPerformed); //$NON-NLS-1$
     }
 
     /**
