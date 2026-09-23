@@ -234,7 +234,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("code_search", Integer.valueOf(3357));
         PROSE.put("infobase_admin", Integer.valueOf(4900));
         PROSE.put("config_io", Integer.valueOf(3064));
-        PROSE.put("vanessa", Integer.valueOf(3607));
+        // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
+        // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
+        // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
+        // the schema.
+        PROSE.put("vanessa", Integer.valueOf(4600));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
         // Raised from 2710 for three arguments the debugger gained in 0.2.49, each of which a
         // caller cannot reach without being told it exists: the debug server port (on a
@@ -381,6 +385,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
      * to keep this raise the remainder it is. Together with the sixteenth: 89129.
      * </p>
+     * <p>
+     * And an eighteenth, by 993, for the ten list-action arguments of vanessa, one sentence each:
+     * the capture of a window a button opened is a call a client cannot build without being told
+     * its parts exist.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 89129;
+    private static final int DOCUMENT_PROSE = 90122;
 }
