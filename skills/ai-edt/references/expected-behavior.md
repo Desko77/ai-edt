@@ -109,6 +109,15 @@ appears only when the module scan finished or a test module was actually found.
 A withdrawal comes from the client as `notifications/cancelled` naming the call's `requestId`, or
 from the person at the status bar. Either way the tool is not interrupted mid-unit.
 
+## A metadata dependency graph names metadata
+
+`insights operation=dependency_graph` at `level=metadata` or `mixed` does not keep an EDT-internal
+target: an edge whose target is not a metadata object is dropped (`internalEdgesDropped` when any
+were). Repeated edges of the same `from`, `to` and `via` are one edge, and `count` is written when
+it is greater than 1. `edgeKinds` keeps only the named `via` values; a kind the walk never saw is
+`unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied (`edgeKinds:
+notApplied`) and `calls` edges are unchanged.
+
 ## Cancelling an update that never gave you a runKey
 
 `update_database` can be cancelled without one, addressed by `projectName` instead: that is what

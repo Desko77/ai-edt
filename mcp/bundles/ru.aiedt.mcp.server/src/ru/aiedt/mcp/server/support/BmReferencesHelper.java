@@ -241,6 +241,25 @@ public final class BmReferencesHelper
     public static BfsResult bfs(IBmTransaction tx, IBmEngine engine, Collection<IBmObject> roots,
         Direction direction, int maxNodes, int maxEdges, int maxDepth, CancelCheck progressCheck)
     {
+        return bfs(tx, engine, roots, direction, maxNodes, maxEdges, maxDepth, progressCheck, null);
+    }
+
+    /**
+     * The same walk, with the filter the metadata dependency graph asks for.
+     * <p>
+     * A <code>null</code> policy is the walk every other caller uses: no kind is dropped and a
+     * repeated edge stays a repeated edge. The metadata graph passes a policy so a target that is
+     * not a metadata object is not an edge, repeated edges merge, and a caller can keep only the
+     * kinds they named.
+     * </p>
+     *
+     * @param policy how an edge is accepted, or <code>null</code> to accept every reportable edge
+     * @return the walk
+     */
+    public static BfsResult bfs(IBmTransaction tx, IBmEngine engine, Collection<IBmObject> roots,
+        Direction direction, int maxNodes, int maxEdges, int maxDepth, CancelCheck progressCheck,
+        EdgePolicy policy)
+    {
         BfsResult result = new BfsResult();
         if (engine == null || roots == null || roots.isEmpty())
         {
@@ -290,7 +309,7 @@ public final class BmReferencesHelper
                     for (Reference r : backReferences(engine, node))
                     {
                         addBfsEdge(result, queue, visited, r.source, node, r.featureName, maxNodes,
-                            maxEdges);
+                            maxEdges, policy);
                     }
                 }
                 // Forward references (callees / referenced objects).
@@ -299,7 +318,7 @@ public final class BmReferencesHelper
                     for (Reference r : forwardReferences(tx, node))
                     {
                         addBfsEdge(result, queue, visited, node, r.target, r.featureName, maxNodes,
-                            maxEdges);
+                            maxEdges, policy);
                     }
                 }
             }
@@ -308,15 +327,115 @@ public final class BmReferencesHelper
         return result;
     }
 
+    /**
+     * Whether the object is a metadata object of the configuration.
+     * <p>
+     * An EDT-internal index can be a top object with an address and still not be one of those.
+     * The metadata graph drops an edge that ends on such a target.
+     * </p>
+     *
+     * @param object one end of a reference, already collapsed to its top object
+     * @return <code>true</code> when it is a metadata object
+     */
+    public static boolean isMetadataObject(IBmObject object)
+    {
+        return object instanceof MdObject;
+    }
+
+    /**
+     * Accepts one edge into a walk that has a {@link EdgePolicy}.
+     * <p>
+     * The unfiltered walk stays on {@code addBfsEdge} with no policy, which is what a caller that
+     * reflects that method still finds. This is the same step with the filter applied.
+     * </p>
+     *
+     * @param result the walk being built
+     * @param queue the ring still to expand
+     * @param visited addresses already in the walk
+     * @param from the source end
+     * @param to the target end
+     * @param featureName the {@code via} of the edge
+     * @param maxNodes the node cap
+     * @param maxEdges the edge cap, counted after merging when a policy is in force
+     * @param policy how the edge is accepted
+     */
+    public static void acceptEdge(BfsResult result, java.util.Deque<IBmObject> queue,
+        Set<String> visited, IBmObject from, IBmObject to, String featureName, int maxNodes,
+        int maxEdges, EdgePolicy policy)
+    {
+        addBfsEdge(result, queue, visited, from, to, featureName, maxNodes, maxEdges, policy);
+    }
+
+    /**
+     * The fields a dependency-graph answer adds for the kind filter, and for edges that were
+     * dropped because their target is not a metadata object.
+     * <p>
+     * No argument and nothing dropped is an empty map: the answer gains no field. On
+     * {@code modules} a supplied argument is reported as {@code notApplied} and the calls edges
+     * are left to the caller.
+     * </p>
+     *
+     * @param level the graph level, lower case
+     * @param requested the kinds the caller asked to keep, or <code>null</code> when the argument
+     *            was absent
+     * @param bfs the walk
+     * @return the fields to add, possibly empty
+     */
+    public static Map<String, Object> edgeKindFields(String level, List<String> requested,
+        BfsResult bfs)
+    {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        if ("modules".equals(level)) //$NON-NLS-1$
+        {
+            if (requested != null)
+            {
+                fields.put("edgeKinds", "notApplied"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return fields;
+        }
+        if (bfs != null && bfs.internalEdgesDropped > 0)
+        {
+            fields.put("internalEdgesDropped", Integer.valueOf(bfs.internalEdgesDropped)); //$NON-NLS-1$
+        }
+        if (requested == null)
+        {
+            return fields;
+        }
+        fields.put("edgeKinds", requested); //$NON-NLS-1$
+        fields.put("edgesDroppedByKind", //$NON-NLS-1$
+            bfs == null ? new LinkedHashMap<String, Integer>() : bfs.edgesDroppedByKind);
+        List<String> unmatched = new ArrayList<>();
+        Set<String> seen = bfs == null ? Set.of() : bfs.kindsSeen;
+        for (String kind : requested)
+        {
+            if (!seen.contains(kind))
+            {
+                unmatched.add(kind);
+            }
+        }
+        fields.put("unmatchedKinds", unmatched); //$NON-NLS-1$
+        return fields;
+    }
+
     private static void addBfsEdge(BfsResult result, java.util.Deque<IBmObject> queue,
         Set<String> visited, IBmObject from, IBmObject to, String featureName, int maxNodes,
         int maxEdges)
+    {
+        addBfsEdge(result, queue, visited, from, to, featureName, maxNodes, maxEdges, null);
+    }
+
+    private static void addBfsEdge(BfsResult result, java.util.Deque<IBmObject> queue,
+        Set<String> visited, IBmObject from, IBmObject to, String featureName, int maxNodes,
+        int maxEdges, EdgePolicy policy)
     {
         if (from == null || to == null)
         {
             return;
         }
-        if (result.edges.size() >= maxEdges)
+        // Without a policy the cap is consulted first, which is the walk the unfiltered callers
+        // and the reflected method have always had. With a policy a duplicate merges and does not
+        // consume a slot, so the cap is applied only when a new edge would be added.
+        if (policy == null && result.edges.size() >= maxEdges)
         {
             result.truncated = true;
             return;
@@ -334,6 +453,39 @@ public final class BmReferencesHelper
             // Both ends collapsed onto the same owner: the reference is internal to one object and
             // says nothing about the graph between objects.
             return;
+        }
+        if (policy != null && policy.metadataObjectsOnly && !isMetadataObject(toEnd))
+        {
+            result.internalEdgesDropped++;
+            return;
+        }
+        if (policy != null && featureName != null && !featureName.isEmpty())
+        {
+            result.kindsSeen.add(featureName);
+        }
+        if (policy != null && policy.keepKinds != null
+            && (featureName == null || !policy.keepKinds.contains(featureName)))
+        {
+            result.edgesDroppedByKind.merge(featureName == null ? "" : featureName, //$NON-NLS-1$
+                Integer.valueOf(1), Integer::sum);
+            return;
+        }
+        if (policy != null)
+        {
+            for (Edge existing : result.edges)
+            {
+                if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                    && java.util.Objects.equals(featureName, existing.featureName))
+                {
+                    existing.count++;
+                    return;
+                }
+            }
+            if (result.edges.size() >= maxEdges)
+            {
+                result.truncated = true;
+                return;
+            }
         }
         // The target goes in FIRST. The edge used to be added before the cap was consulted, so a
         // walk that stopped at maxNodes returned an edge whose target was in no node of the graph -
@@ -476,6 +628,32 @@ public final class BmReferencesHelper
     }
 
     /**
+     * Which edges a metadata dependency graph keeps.
+     * <p>
+     * {@code keepKinds} <code>null</code> keeps every kind that survived the metadata check. An
+     * empty set keeps none. Other callers pass no policy at all.
+     * </p>
+     */
+    public static final class EdgePolicy
+    {
+        /** Drop an edge whose target top object is not a metadata object, and do not queue it. */
+        public final boolean metadataObjectsOnly;
+
+        /** The {@code via} values to keep, or <code>null</code> to keep every remaining kind. */
+        public final Set<String> keepKinds;
+
+        /**
+         * @param metadataObjectsOnly whether a non-metadata target is dropped
+         * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+         */
+        public EdgePolicy(boolean metadataObjectsOnly, Set<String> keepKinds)
+        {
+            this.metadataObjectsOnly = metadataObjectsOnly;
+            this.keepKinds = keepKinds;
+        }
+    }
+
+    /**
      * BFS edge with feature label.
      */
     public static final class Edge
@@ -483,6 +661,9 @@ public final class BmReferencesHelper
         public final String fromFqn;
         public final String toFqn;
         public final String featureName;
+
+        /** How many references this one edge stands for. One until a duplicate is merged into it. */
+        public int count = 1;
 
         public Edge(String fromFqn, String toFqn, String featureName)
         {
@@ -502,5 +683,14 @@ public final class BmReferencesHelper
         public final Map<String, IBmObject> nodes = new LinkedHashMap<>();
         public final List<Edge> edges = new ArrayList<>();
         public boolean truncated;
+
+        /** Edges dropped because the target top object is not a metadata object. */
+        public int internalEdgesDropped;
+
+        /** Kind to how many edges of that kind the filter refused. */
+        public final Map<String, Integer> edgesDroppedByKind = new LinkedHashMap<>();
+
+        /** Kinds seen on an edge whose target is a metadata object, including kinds then dropped. */
+        public final Set<String> kindsSeen = new LinkedHashSet<>();
     }
 }

@@ -139,6 +139,9 @@ public class InsightsFacadeTool implements IMcpTool
                 "dependency_graph: BFS depth, 1-5 (default 2).") //$NON-NLS-1$
             .stringProperty("direction", //$NON-NLS-1$
                 "dependency_graph: in / out / both (default both).") //$NON-NLS-1$
+            .stringProperty("edgeKinds", //$NON-NLS-1$
+                "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
+                    + "Omit to keep every kind.") //$NON-NLS-1$
             .integerProperty("maxNodes", //$NON-NLS-1$
                 "dependency_graph: cap on nodes visited by the BFS (default 200).") //$NON-NLS-1$
             .integerProperty("maxEdges", //$NON-NLS-1$
@@ -489,6 +492,19 @@ public class InsightsFacadeTool implements IMcpTool
                 + "method is not in the module. Without scope, moduleFqn plus methodName selects " //$NON-NLS-1$
                 + "that method."); //$NON-NLS-1$
         rules.put("detect_query_anti_patterns", Collections.unmodifiableMap(queries)); //$NON-NLS-1$
+        Map<String, String> graph = new LinkedHashMap<>();
+        graph.put("edgeKinds", //$NON-NLS-1$
+            "On metadata and mixed, an edge whose target is not a metadata object is dropped " //$NON-NLS-1$
+                + "and not queued; internalEdgesDropped counts those when any were dropped. " //$NON-NLS-1$
+                + "Edges with the same from, to and via become one edge, and count is written " //$NON-NLS-1$
+                + "when it is greater than 1. maxEdges counts after that merge. This argument " //$NON-NLS-1$
+                + "keeps only the named via values; any other kind is not queued on its own, and " //$NON-NLS-1$
+                + "a target already reached by a kept kind stays. The answer repeats edgeKinds as " //$NON-NLS-1$
+                + "understood, edgesDroppedByKind, and unmatchedKinds for a named kind the walk " //$NON-NLS-1$
+                + "never saw - that is not a refusal. Omit the argument to keep every kind. On " //$NON-NLS-1$
+                + "level=modules the argument is not applied and the answer says notApplied; " //$NON-NLS-1$
+                + "calls edges are unchanged. Other operations do not read it."); //$NON-NLS-1$
+        rules.put("dependency_graph", Collections.unmodifiableMap(graph)); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 

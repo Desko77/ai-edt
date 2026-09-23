@@ -374,6 +374,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And a sixteenth, by 216, for naparnik: the operation, and probe, which starts the Naparnik
      * UI bundle. Together with the fifteenth: 87329.
      * </p>
+     * <p>
+     * And a seventeenth, by 164, for one sentence each on includeChildren (extension_workshop,
+     * 69 bytes) and edgeKinds (insights, 95 bytes). What is walked, what is skipped, which
+     * graph edges are dropped and how a kind filter answers live in operation help. 87493 is
+     * 87329 plus those two sentences.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 87329;
+    private static final int DOCUMENT_PROSE = 87493;
 }

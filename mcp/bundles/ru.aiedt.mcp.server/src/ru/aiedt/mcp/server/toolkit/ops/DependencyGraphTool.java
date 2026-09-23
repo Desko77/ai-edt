@@ -10,8 +10,10 @@ import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
@@ -88,6 +90,9 @@ public class DependencyGraphTool implements IMcpTool
             .integerProperty("depth", "BFS depth (1-5, default 2)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | mermaid | plantuml | dot (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("direction", "in | out | both (default both)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("edgeKinds", //$NON-NLS-1$
+                "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
+                    + "Omit to keep every kind.") //$NON-NLS-1$
             .integerProperty("maxNodes", "Cap for BFS (default 200)") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("maxEdges", "Cap for edges (default 500)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
@@ -124,6 +129,7 @@ public class DependencyGraphTool implements IMcpTool
         int depth = clamp(parseInt(params, "depth", 2), 1, 5); //$NON-NLS-1$
         int maxNodes = Math.max(1, parseInt(params, "maxNodes", 200)); //$NON-NLS-1$
         int maxEdges = Math.max(1, parseInt(params, "maxEdges", 500)); //$NON-NLS-1$
+        List<String> edgeKinds = understoodEdgeKinds(params);
 
         Level level = parseLevel(levelStr);
         if (level == null)
@@ -150,7 +156,7 @@ public class DependencyGraphTool implements IMcpTool
                 try
                 {
                     return buildGraph(project, level, scopeStr, params, direction, depth,
-                        maxNodes, maxEdges, format);
+                        maxNodes, maxEdges, format, edgeKinds);
                 }
                 catch (Exception e)
                 {
@@ -167,7 +173,8 @@ public class DependencyGraphTool implements IMcpTool
 
     private String buildGraph(IProject project, Level level, String scopeStr,
         Map<String, String> params, BmReferencesHelper.Direction direction, int depth,
-        int maxNodes, int maxEdges, DependencyGraphBuilder.Format format) throws Exception
+        int maxNodes, int maxEdges, DependencyGraphBuilder.Format format,
+        List<String> edgeKinds) throws Exception
     {
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         if (configProvider == null)
@@ -217,9 +224,11 @@ public class DependencyGraphTool implements IMcpTool
                     }
                     else
                     {
+                        Set<String> keep = edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
                         result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots, direction,
                             maxNodes, maxEdges, depth,
-                            () -> monitor.isCanceled() || watch.stopHere());
+                            () -> monitor.isCanceled() || watch.stopHere(),
+                            new BmReferencesHelper.EdgePolicy(true, keep));
                     }
                     bfsRef.set(result);
                 }
@@ -249,7 +258,50 @@ public class DependencyGraphTool implements IMcpTool
         tr.put("cancelled", watch.note("nodes")); //$NON-NLS-1$ //$NON-NLS-2$
         tr.put("level", level.name().toLowerCase()); //$NON-NLS-1$
         tr.put("depth", depth); //$NON-NLS-1$
+        for (Map.Entry<String, Object> extra : BmReferencesHelper.edgeKindFields(
+            level.name().toLowerCase(java.util.Locale.ROOT), edgeKinds, bfs).entrySet())
+        {
+            tr.put(extra.getKey(), extra.getValue());
+        }
         return tr.toJson();
+    }
+
+    /**
+     * The via values to keep, in the order given, with blanks and repeats dropped.
+     * <p>
+     * Absent is <code>null</code> and keeps every kind. Present and empty keeps none: an empty
+     * list and a missing argument are different, and the reader of a list returns
+     * <code>null</code> for both, so the key itself is what tells them apart.
+     * </p>
+     *
+     * @param params the call
+     * @return the kinds, an empty list when the argument was present and named nothing, or
+     *         <code>null</code> when it was absent
+     */
+    private static List<String> understoodEdgeKinds(Map<String, String> params)
+    {
+        if (params == null || !params.containsKey("edgeKinds")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        List<String> raw = JsonUtils.extractArrayArgument(params, "edgeKinds"); //$NON-NLS-1$
+        List<String> understood = new ArrayList<>();
+        if (raw != null)
+        {
+            for (String item : raw)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+                String trimmed = item.trim();
+                if (!trimmed.isEmpty() && !understood.contains(trimmed))
+                {
+                    understood.add(trimmed);
+                }
+            }
+        }
+        return understood;
     }
 
     private BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
