@@ -701,4 +701,70 @@ public final class LaunchConfigAccess
         DebugPlugin plugin = DebugPlugin.getDefault();
         return plugin == null ? null : plugin.getLaunchManager();
     }
+
+    /**
+     * The launch configurations as {@link LaunchApplicationIds} needs them, over Eclipse's launch
+     * manager.
+     *
+     * @param launchManager the launch manager; <code>null</code> yields <code>null</code>
+     * @return the access, or <code>null</code> when there is no launch manager
+     */
+    public static LaunchApplicationIds.Access applicationIdAccess(ILaunchManager launchManager)
+    {
+        if (launchManager == null)
+        {
+            return null;
+        }
+        return new LaunchApplicationIds.Access()
+        {
+            @Override
+            public List<String> configurationNames()
+            {
+                List<String> names = new ArrayList<>();
+                try
+                {
+                    for (ILaunchConfiguration config : launchManager.getLaunchConfigurations())
+                    {
+                        names.add(config.getName());
+                    }
+                }
+                catch (CoreException e)
+                {
+                    Activator.logError("Failed to list launch configurations", e); //$NON-NLS-1$
+                }
+                return names;
+            }
+
+            @Override
+            public String readApplicationId(String name)
+            {
+                try
+                {
+                    ILaunchConfiguration config = launchManager.getLaunchConfiguration(name);
+                    if (config == null || !config.exists())
+                    {
+                        return null;
+                    }
+                    String value = config.getAttribute(ATTR_APPLICATION_ID, ""); //$NON-NLS-1$
+                    return value.isEmpty() ? null : value;
+                }
+                catch (CoreException e)
+                {
+                    return null;
+                }
+            }
+
+            @Override
+            public void writeApplicationId(String name, String applicationId)
+                throws CoreException
+            {
+                ILaunchConfiguration config = launchManager.getLaunchConfiguration(name);
+                // The working copy is taken now, after every edit made since the snapshot, so
+                // saving it puts back the one attribute and keeps whatever else changed meanwhile.
+                ILaunchConfigurationWorkingCopy copy = config.getWorkingCopy();
+                copy.setAttribute(ATTR_APPLICATION_ID, applicationId);
+                copy.doSave();
+            }
+        };
+    }
 }

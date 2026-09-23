@@ -122,6 +122,10 @@ public class InfobaseCredentialsWriter implements IMcpTool
             {
                 err.put(r.failureKind, Boolean.TRUE);
             }
+            if (r.launchApplicationIds != null)
+            {
+                err.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
+            }
             return err.toJson();
         }
 
@@ -134,6 +138,10 @@ public class InfobaseCredentialsWriter implements IMcpTool
             .put("userName", r.userName != null ? r.userName : "") //$NON-NLS-1$ //$NON-NLS-2$
             .put("passwordStored", r.passwordStored) //$NON-NLS-1$
             .put("verifiedByReadback", Boolean.TRUE); //$NON-NLS-1$
+        if (r.launchApplicationIds != null)
+        {
+            ok.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
+        }
         // additionalParameters is intentionally NOT echoed: 1C connection
         // additional parameters can carry a plaintext password (e.g. /P<pwd>).
         if (ErrorTags.READBACK_FAILED.wire().equals(r.failureKind))
