@@ -793,7 +793,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         if (r.ok)
         {
-            attachSettingsWarnings(r.tags, written);
+            attachSettingsWarnings(r.tags, written.warnings);
         }
         return formatResult(r, op);
     }
@@ -865,7 +865,7 @@ public class DcsWorkshopTool implements IMcpTool
             .put("operation", op) //$NON-NLS-1$
             .put("formFqn", formFqn) //$NON-NLS-1$
             .put("attributeName", attributeName) //$NON-NLS-1$
-            .put("message", outcome == null ? "" : outcome), written) //$NON-NLS-1$ //$NON-NLS-2$
+            .put("message", outcome == null ? "" : outcome), written.warnings) //$NON-NLS-1$ //$NON-NLS-2$
             .toJson();
     }
 
@@ -1319,13 +1319,13 @@ public class DcsWorkshopTool implements IMcpTool
      * Adds what a call found to the tags of a schema-route answer, when it found anything.
      *
      * @param tags the result tags the answer is built from.
-     * @param written what the call recorded.
+     * @param warnings what the call found, empty when the settings are complete.
      */
-    private static void attachSettingsWarnings(Map<String, Object> tags, SettingsWritten written)
+    static void attachSettingsWarnings(Map<String, Object> tags, List<Map<String, Object>> warnings)
     {
-        if (tags != null && written != null && !written.warnings.isEmpty())
+        if (tags != null && warnings != null && !warnings.isEmpty())
         {
-            tags.put(SETTINGS_WARNINGS_TAG, written.warnings);
+            tags.put(SETTINGS_WARNINGS_TAG, warnings);
         }
     }
 
@@ -1333,14 +1333,14 @@ public class DcsWorkshopTool implements IMcpTool
      * Adds what a call found to a list-route answer, when it found anything.
      *
      * @param result the answer being built.
-     * @param written what the call recorded.
+     * @param warnings what the call found, empty when the settings are complete.
      * @return the same answer, so the caller can finish building it
      */
-    private static ToolResult withSettingsWarnings(ToolResult result, SettingsWritten written)
+    static ToolResult withSettingsWarnings(ToolResult result, List<Map<String, Object>> warnings)
     {
-        if (written != null && !written.warnings.isEmpty())
+        if (warnings != null && !warnings.isEmpty())
         {
-            result.put(SETTINGS_WARNINGS_TAG, written.warnings);
+            result.put(SETTINGS_WARNINGS_TAG, warnings);
         }
         return result;
     }
@@ -1614,9 +1614,10 @@ public class DcsWorkshopTool implements IMcpTool
      * @param value the property value.
      * @return the literal, or null when there is no such property
      */
-    private Object literalOf(Object value)
+    private String literalOf(Object value)
     {
-        return value == null ? null : invokeGetter(value, "getLiteral"); //$NON-NLS-1$
+        Object literal = value == null ? null : invokeGetter(value, "getLiteral"); //$NON-NLS-1$
+        return literal == null ? null : literal.toString();
     }
 
     /**
