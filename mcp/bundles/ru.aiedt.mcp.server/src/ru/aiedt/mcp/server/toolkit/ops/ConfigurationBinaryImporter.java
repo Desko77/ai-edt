@@ -256,6 +256,9 @@ public class ConfigurationBinaryImporter implements IMcpTool
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
                 finalExtensionName, finalBase, finalKeepDir));
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String done = entry.await(timeoutMs);
         if (done != null)

@@ -279,6 +279,9 @@ public final class PendingWorkRegistry
             }
             entry.future = CompletableFuture.supplyAsync(() ->
             {
+                // Under the work-life lock, so a future completed before this body ran is told
+                // apart from one whose body is already in flight (see settleIfWorkNeverBegan).
+                entry.markWorkBegan();
                 ToolCallScope previous = ToolCallScope.current();
                 if (current != null)
                 {
@@ -286,7 +289,6 @@ public final class PendingWorkRegistry
                 }
                 try
                 {
-                    entry.beganAt = System.currentTimeMillis();
                     return work.apply(entry);
                 }
                 catch (Throwable t)
@@ -310,6 +312,11 @@ public final class PendingWorkRegistry
                             ToolCallScope.exit();
                         }
                     }
+                    // The signal a transferred permit waits on. The body's own exit, not the
+                    // future's completion: a cancel completes the future without reaching work
+                    // that is already running, and the permit belongs to the work, not to the
+                    // tracking of it.
+                    entry.workExited();
                 }
             }, executor);
             entry.future.whenComplete((result, throwable) ->
@@ -318,6 +325,14 @@ public final class PendingWorkRegistry
                 entry.cachedResult = cached;
                 entry.oversized = cached.length() > MAX_CACHED_RESULT_CHARS;
                 entry.completedAt = System.currentTimeMillis();
+                // The call graph the scope carries - the run record and its exchange - is done
+                // with once the run completes. Held here, a completed-not-retrieved entry pinned
+                // it until somebody came to collect or the TTL threw it out.
+                entry.scope = null;
+                // A future cancelled before its task left the queue never runs the body whose
+                // exit would return a transferred permit; this is the only door left for that
+                // permit, and the lock tells it apart from a body already in flight.
+                entry.settleIfWorkNeverBegan();
             });
             return entry;
         });
@@ -881,6 +896,30 @@ public final class PendingWorkRegistry
         public volatile ToolCallScope scope;
 
         /**
+         * The call that may poll this run: the tool's own name, or the standalone a facade routed
+         * to it.
+         * <p>
+         * A live {@code runKey} in a call's arguments exempts that call from the heavy-tool gates
+         * only when this field names it. Any known key used to exempt any call, which let a
+         * running work's key, passed as a stray argument to a heavy tool that reads no key, start
+         * ungated work beside it.
+         * </p>
+         */
+        public volatile String startedBy;
+
+        /**
+         * Coordinates the work's begin and exit with a permit handed over mid-run, so the permit
+         * is returned exactly once whichever of the two arrives first.
+         */
+        private final Object workLife = new Object();
+
+        private boolean workBegan;
+
+        private boolean workExitSettled;
+
+        private final List<Runnable> onWorkExit = new java.util.ArrayList<>(2);
+
+        /**
          * The flag the work watches, held where it outlives the request that started the run.
          * <p>
          * A run that answers Pending continues after its exchange is closed, and the flag belonged
@@ -953,6 +992,115 @@ public final class PendingWorkRegistry
         public boolean isDone()
         {
             return cachedResult != null || (future != null && future.isDone());
+        }
+
+        /**
+         * Marks the work as begun, under the lock that also decides whether a completed future
+         * ever ran its body.
+         */
+        void markWorkBegan()
+        {
+            synchronized (workLife)
+            {
+                beganAt = System.currentTimeMillis();
+                workBegan = true;
+            }
+        }
+
+        /**
+         * Hands a permit release to the work's own exit.
+         * <p>
+         * The release runs when the body leaves the executor - in success, in failure, or after a
+         * cancel that could not reach it - and never on the tracking future's completion alone,
+         * which a cancel moves while the body still runs.
+         * </p>
+         *
+         * @param release what returns the permit; runs immediately when the work already left
+         */
+        void attachWorkExit(Runnable release)
+        {
+            boolean settled;
+            synchronized (workLife)
+            {
+                settled = workExitSettled;
+                if (!settled)
+                {
+                    onWorkExit.add(release);
+                }
+            }
+            if (settled)
+            {
+                release.run();
+            }
+        }
+
+        /**
+         * The body's exit: settles the work-life door and returns every permit handed to it.
+         * <p>
+         * Called from the executor body's {@code finally} - the one place that knows the work
+         * stopped consuming the session's resources.
+         * </p>
+         */
+        void workExited()
+        {
+            for (Runnable release : settleWorkExit())
+            {
+                release.run();
+            }
+        }
+
+        /**
+         * Settles the door for a future that completed without its body ever running, so a permit
+         * transferred to a run cancelled before it began does not wait on an exit that never
+         * comes.
+         */
+        void settleIfWorkNeverBegan()
+        {
+            synchronized (workLife)
+            {
+                if (workBegan || workExitSettled)
+                {
+                    return;
+                }
+            }
+            // A body racing this check from its very first instruction loses the race exactly
+            // once: its own workExited finds the door settled and releases nothing.
+            for (Runnable release : settleWorkExit())
+            {
+                release.run();
+            }
+        }
+
+        /**
+         * Whether a call under the given name resumes this run, so a poll by that name is the
+         * run's own rather than a stray key on an unrelated tool.
+         *
+         * @param name the called tool's own name, or the standalone a facade routed it to; may
+         *            be {@code null}
+         * @return {@code true} when this run belongs to that name's resumption path
+         */
+        public boolean resumableBy(String name)
+        {
+            return name != null && name.equals(startedBy);
+        }
+
+        private List<Runnable> settleWorkExit()
+        {
+            synchronized (workLife)
+            {
+                if (workExitSettled)
+                {
+                    return Collections.emptyList();
+                }
+                workExitSettled = true;
+                if (onWorkExit.isEmpty())
+                {
+                    return Collections.emptyList();
+                }
+                List<Runnable> toRun = new java.util.ArrayList<>(onWorkExit);
+                onWorkExit.clear();
+                return toRun;
+            }
         }
 
         public long elapsedMs()

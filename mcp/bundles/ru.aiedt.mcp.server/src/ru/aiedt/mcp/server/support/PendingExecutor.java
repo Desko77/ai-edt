@@ -149,6 +149,12 @@ public final class PendingExecutor
             }
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey, work);
+        // The name the run answers to when it is polled: only a call under this name treats the
+        // key as its own resumption path, and a stray key on any other tool exempts nothing.
+        if (entry.startedBy == null)
+        {
+            entry.startedBy = operationName;
+        }
         String result = entry.await(waitMs);
         if (result != null)
         {

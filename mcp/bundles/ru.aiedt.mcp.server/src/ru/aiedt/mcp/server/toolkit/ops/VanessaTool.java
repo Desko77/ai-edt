@@ -462,6 +462,9 @@ public class VanessaTool implements IMcpTool
                     composedScenario, screenshots, keepOpen, settledTimeout,
                     settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
                     settledAddress, settledWantsTestClient, settledWantsManager));
+            // The name a poll of this run arrives under, so a live key exempts only this tool's
+            // own resumption path from the heavy gates.
+            entry.startedBy = NAME;
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)

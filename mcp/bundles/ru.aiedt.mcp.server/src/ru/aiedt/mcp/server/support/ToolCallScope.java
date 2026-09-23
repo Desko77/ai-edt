@@ -123,7 +123,7 @@ public final class ToolCallScope
 
     private final Cancellation cancellation;
 
-    private final AtomicBoolean clientGone = new AtomicBoolean();
+    private final AtomicBoolean clientGone;
 
     private final RunningToolCall runningCall;
 
@@ -146,12 +146,50 @@ public final class ToolCallScope
     private ToolCallScope(RunningToolCall runningCall, Cancellation cancellation)
     {
         this.runningCall = runningCall;
+        this.clientGone = new AtomicBoolean();
         // Share the call's own Cancellation so a cancel arriving on the request thread (via the call)
         // and a checkpoint reading it on the worker thread see one and the same flag - no second
         // instance, no attach race. Tests may pass a null call, in which case the scope owns one.
         this.cancellation = cancellation != null ? cancellation
             : (runningCall != null && runningCall.cancellation() != null)
                 ? runningCall.cancellation() : new Cancellation();
+    }
+
+    /**
+     * A scope for the body of a nested call, carrying this one's state with only the permit
+     * ticket replaced.
+     *
+     * @param caller the scope on the thread, whose state the derived scope shares
+     * @param ticket the nested call's own hold on the limiter
+     */
+    private ToolCallScope(ToolCallScope caller, ToolRoad.Ticket ticket)
+    {
+        this.runningCall = caller.runningCall;
+        this.cancellation = caller.cancellation;
+        this.clientGone = caller.clientGone;
+        this.responseByteLimit = caller.responseByteLimit;
+        this.operationId = caller.operationId;
+        this.timeoutSeconds = caller.timeoutSeconds;
+        this.ticket = ticket;
+    }
+
+    /**
+     * A scope like this one whose heavy-permit ticket is the given one, for the body of a nested
+     * call that took a permit its caller did not have.
+     * <p>
+     * A light caller can still make a heavy nested call, and that call's permit is the one the
+     * work under it must inherit: a grandchild asked under the caller's own scope would see no
+     * permit and take a second one, which the limit refuses. The derived scope shares this one's
+     * cancellation flag, call record and client-gone flag, so a cancel still reaches the whole
+     * call tree; only the ticket differs, and only for the body's duration.
+     * </p>
+     *
+     * @param ticket the nested call's permit ticket; must not be {@code null}
+     * @return a scope like this one carrying that ticket
+     */
+    public ToolCallScope withTicket(ToolRoad.Ticket ticket)
+    {
+        return new ToolCallScope(this, Objects.requireNonNull(ticket, "ticket")); //$NON-NLS-1$
     }
 
     /**

@@ -168,6 +168,9 @@ public class ExportObjectTool implements IMcpTool
         // auto-pick the single object regardless of the project name.
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> doExport(project, projectName, objectName, outputPath));
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String result = entry.await(timeoutMs);
         if (result != null)

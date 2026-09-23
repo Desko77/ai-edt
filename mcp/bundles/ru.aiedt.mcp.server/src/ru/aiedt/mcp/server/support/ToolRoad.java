@@ -40,10 +40,13 @@ import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
  * </p>
  * <p>
  * A call that answers {@code Pending} hands its ticket to the registry entry: the permit comes
- * back when the entry's future completes, whichever way it completes, and never before. A poll of
- * a live {@code runKey} starts no new work and so takes no permit and clears no heap gate. A
- * nested heavy call under a caller that already holds a permit inherits it rather than taking a
- * second one.
+ * back when the entry's work leaves the executor, and never on the tracking future's completion
+ * alone - a cancel completes that future without reaching work already running. A poll of a live
+ * {@code runKey} starts no new work and so takes no permit and clears no heap gate, and only the
+ * tool whose resumption path the key belongs to polls it. A nested heavy call under a caller that
+ * already holds a permit inherits it rather than taking a second one; a heavy child under a light
+ * caller binds its own permit to the scope for the duration of its body, so a grandchild under it
+ * inherits that one.
  * </p>
  */
 public final class ToolRoad
@@ -103,8 +106,10 @@ public final class ToolRoad
      * The decision reads the name the call will actually run under - a facade routes onward, and
      * the tool underneath is what is expensive - and the tool's own declaration when it came from
      * another bundle ({@code ru.aiedt.mcp.tool.heavy}). A call that names a live {@code runKey}
-     * polls work already running: it starts nothing, so it takes no permit and clears no heap
-     * gate.
+     * of its own resumption path polls work already running: it starts nothing, so it takes no
+     * permit and clears no heap gate. A key belonging to any other run exempts nothing - a heavy
+     * tool that reads no key would otherwise start new work past both gates under a running
+     * work's key.
      * </p>
      *
      * @param toolName the name the call arrived under
@@ -114,13 +119,16 @@ public final class ToolRoad
     public Admission admit(String toolName, Map<String, String> arguments)
     {
         String polled = arguments == null ? null : arguments.get(ARG_RUN_KEY);
-        if (polled != null && !polled.isEmpty() && PendingWorkRegistry.domainOf(polled) != null)
+        IMcpTool named = toolName == null || toolName.isEmpty() ? null
+            : McpToolCatalog.getInstance().getTool(toolName);
+        String canonical = named == null ? toolName : named.getName();
+        String routed = named == null ? null : named.routesTo(arguments);
+        if (polled != null && !polled.isEmpty() && isOwnPoll(polled, canonical, routed))
         {
             // A poll waits on work that is already accounted for; charging it again would count
             // one run as many.
             return Admission.admitted(new Ticket(null));
         }
-        String routed = routedTool(toolName, arguments);
         boolean heavy = HeavyTools.isHeavy(toolName)
             || (routed != null && HeavyTools.isHeavy(routed));
         if (!heavy)
@@ -151,20 +159,19 @@ public final class ToolRoad
     }
 
     /**
-     * The tool a call reaches, when the name it arrived under only routes it onward.
+     * Whether a {@code runKey} argument names a run the called tool itself resumes: a live entry
+     * whose {@code startedBy} is the called name, or the standalone a facade routed it to.
      *
-     * @param toolName the name in the request
-     * @param arguments the call arguments
-     * @return the tool that will run, or {@code null} when the named tool runs it itself
+     * @param polled the key from the arguments; neither null nor empty
+     * @param canonical the called tool's own name
+     * @param routed the tool a facade routes the call to, or {@code null}
+     * @return whether polling the key is this call's own resumption path
      */
-    private static String routedTool(String toolName, Map<String, String> arguments)
+    private static boolean isOwnPoll(String polled, String canonical, String routed)
     {
-        if (toolName == null || toolName.isEmpty())
-        {
-            return null;
-        }
-        IMcpTool tool = McpToolCatalog.getInstance().getTool(toolName);
-        return tool == null ? null : tool.routesTo(arguments);
+        PendingWorkRegistry domain = PendingWorkRegistry.domainOf(polled);
+        PendingWorkRegistry.PendingEntry entry = domain == null ? null : domain.get(polled);
+        return entry != null && (entry.resumableBy(canonical) || entry.resumableBy(routed));
     }
 
     /**
@@ -305,15 +312,36 @@ public final class ToolRoad
         {
             // Nested: the caller's flag is the one a cancel should reach, and its permit is the
             // one this call inherits when it holds one.
+            Ticket ticket = admission.ticket();
+            if (ticket != null && ticket.holdsPermit())
+            {
+                // The child took a permit its caller did not have. Bound to the scope for the
+                // body's duration, so a grandchild under the child inherits that permit - and so
+                // work the body dispatches to a registry re-enters the child's scope rather than
+                // the caller's permit-less one. The caller's scope comes back after the body.
+                ToolCallScope childScope = parent.withTicket(ticket);
+                ToolCallScope.enter(childScope);
+                try
+                {
+                    return runAndRecord(found, flat, ticket, origin);
+                }
+                finally
+                {
+                    ToolCallScope.enter(parent);
+                    // The safety spend for a body that never answered: a ticket the road already
+                    // spent does nothing here.
+                    ticket.release();
+                }
+            }
             try
             {
-                return runAndRecord(found, flat, admission.ticket(), origin);
+                return runAndRecord(found, flat, ticket, origin);
             }
             finally
             {
                 // The safety spend for a body that never answered: a ticket the road already spent
                 // does nothing here.
-                admission.ticket().release();
+                ticket.release();
             }
         }
         ToolCallScope scope = ToolCallScope.create(null);
@@ -543,8 +571,9 @@ public final class ToolRoad
      * nested call inheriting its caller's permit all take no second permit, and spending their
      * ticket is a no-op. A ticket that holds a permit is spent once: released when the call ends
      * synchronously, or handed to the registry entry a {@code Pending} answer named so the permit
-     * returns when that entry's future completes. A second spend, and the safety release a caller
-     * makes after the ticket was already handed over, do nothing.
+     * returns when that entry's work leaves the executor - which a cancel cannot move, unlike the
+     * tracking future's completion. A second spend, and the safety release a caller makes after
+     * the ticket was already handed over, do nothing.
      * </p>
      */
     public static final class Ticket
@@ -579,8 +608,8 @@ public final class ToolRoad
         }
 
         /**
-         * Hands the permit to an entry: it is released when the entry's future completes, in
-         * success, failure, cancellation or eviction.
+         * Hands the permit to an entry: it is released when the entry's work leaves the executor,
+         * in success, failure, or after a cancellation or eviction that could not reach it.
          *
          * @param entry the entry the answer named
          * @return whether this ticket was the one handed over
@@ -591,21 +620,19 @@ public final class ToolRoad
             {
                 return false;
             }
+            if (release == null)
+            {
+                return true;
+            }
             CompletableFuture<String> future = entry.future;
             if (future == null)
             {
-                if (release != null)
-                {
-                    release.run();
-                }
+                release.run();
                 return true;
             }
-            future.whenComplete((result, throwable) -> {
-                if (release != null)
-                {
-                    release.run();
-                }
-            });
+            // Not the future's completion, which a cancel moves while the body still runs: the
+            // body's own exit is what says the session's resources are free again.
+            entry.attachWorkExit(release);
             return true;
         }
     }

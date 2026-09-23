@@ -484,6 +484,9 @@ public class DatabaseUpdater implements IMcpTool
         // work in this same registry, and a kind-less entry cannot be told apart from either.
         entry.subject = projectName;
         entry.workKind = WORK_KIND;
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String result = entry.await(timeoutMs);
         if (result != null)

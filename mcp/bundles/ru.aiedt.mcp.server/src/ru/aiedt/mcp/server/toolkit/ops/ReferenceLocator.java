@@ -429,6 +429,9 @@ public class ReferenceLocator implements IMcpTool
         // re-run is harmless, so a completed entry is removed only after a successful await below.
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
             () -> findReferencesInternal(resolvedProjectName, fqnFinal, maxResults, deepFinal, filterFinal));
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String result = entry.await(timeoutMs);
         if (result != null)
