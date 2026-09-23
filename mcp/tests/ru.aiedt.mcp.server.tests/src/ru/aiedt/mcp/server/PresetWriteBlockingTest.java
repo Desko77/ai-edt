@@ -44,7 +44,7 @@ public class PresetWriteBlockingTest
      */
     private static final List<String> COMPOSITE_WRITERS =
         Arrays.asList("write_module_source", "generate_event_handlers", "extension_lifecycle",
-            "project_admin", "infobase_admin", "config_io");
+            "naparnik", "project_admin", "infobase_admin", "config_io");
 
     /** Agent composites that only read or only return text, and may stay on under any preset. */
     private static final List<String> NON_WRITING_COMPOSITES =

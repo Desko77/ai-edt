@@ -249,6 +249,9 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("get_command_interface", Integer.valueOf(790)); //$NON-NLS-1$
         BUDGETS.put("self_status", Integer.valueOf(762)); //$NON-NLS-1$
         BUDGETS.put("code_template", Integer.valueOf(746)); //$NON-NLS-1$
+        // First weigh of naparnik: status, help and probe. Raised only if the suite prints a
+        // larger size.
+        BUDGETS.put("naparnik", Integer.valueOf(1800)); //$NON-NLS-1$
         BUDGETS.put("get_mcp_history", Integer.valueOf(676)); //$NON-NLS-1$
         BUDGETS.put("get_edt_version", Integer.valueOf(123)); //$NON-NLS-1$
     }

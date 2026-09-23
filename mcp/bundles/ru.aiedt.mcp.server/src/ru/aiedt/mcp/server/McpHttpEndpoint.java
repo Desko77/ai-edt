@@ -143,6 +143,7 @@ import ru.aiedt.mcp.server.toolkit.ops.GitCommitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitCheckoutTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectsLister;
 import ru.aiedt.mcp.server.toolkit.ops.MxlWorkshopTool;
+import ru.aiedt.mcp.server.toolkit.ops.NaparnikTool;
 import ru.aiedt.mcp.server.toolkit.ops.ObjectSummaryTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectMetricsTool;
 import ru.aiedt.mcp.server.toolkit.ops.MethodSourceReader;
@@ -1522,6 +1523,7 @@ public class McpHttpEndpoint
             new GenerateHealthSnapshotTool(),
             new CodeTemplateTool(),
             new ExtensionLifecycleTool(),
+            new NaparnikTool(),
             new ExtensionDiffTool(),
             new ListInterceptorsTool(),
             new FindDeadCodeTool(),

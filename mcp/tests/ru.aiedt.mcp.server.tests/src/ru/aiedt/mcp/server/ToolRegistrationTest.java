@@ -115,6 +115,7 @@ public class ToolRegistrationTest
         // Tripwire on the surface size: this list is the single place tools are declared, so a change
         // here is a deliberate add or drop, updated on purpose, not an accident.
         // 2026-08-19: compare_three_way declared (+1 -> 128).
-        assertEquals(133, declared.size());
+        // On 2026-09-23 naparnik joined the declaration list (+1 -> 134).
+        assertEquals(134, declared.size());
     }
 }
