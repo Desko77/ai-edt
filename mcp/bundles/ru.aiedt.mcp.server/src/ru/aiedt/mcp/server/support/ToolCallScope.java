@@ -133,6 +133,16 @@ public final class ToolCallScope
 
     private volatile long timeoutSeconds = UNSET;
 
+    /**
+     * The call's hold on the heavy-tool limiter, when it has one.
+     * <p>
+     * Present for two readers: the road, which lets a nested heavy call inherit its caller's
+     * permit instead of taking a second one, and the router, which hands the ticket to the body so
+     * a {@code Pending} answer can keep the permit until the background work finishes.
+     * </p>
+     */
+    private volatile ToolRoad.Ticket ticket;
+
     private ToolCallScope(RunningToolCall runningCall, Cancellation cancellation)
     {
         this.runningCall = runningCall;
@@ -327,5 +337,33 @@ public final class ToolCallScope
     public void setTimeoutSeconds(long seconds)
     {
         this.timeoutSeconds = seconds;
+    }
+
+    /**
+     * Binds the call's heavy-permit ticket to this scope, so the body can hand it to a background
+     * run and a nested heavy call can inherit it.
+     *
+     * @param ticket the ticket the admission produced; may be {@code null} or permit-less
+     */
+    public void adoptTicket(ToolRoad.Ticket ticket)
+    {
+        this.ticket = ticket;
+    }
+
+    /**
+     * @return the heavy-permit ticket bound to this scope, or {@code null} when the call took none
+     */
+    public ToolRoad.Ticket ticket()
+    {
+        return this.ticket;
+    }
+
+    /**
+     * @return whether the call this scope carries holds a permit of the heavy-tool limiter
+     */
+    public boolean holdsHeavyPermit()
+    {
+        ToolRoad.Ticket held = this.ticket;
+        return held != null && held.holdsPermit();
     }
 }

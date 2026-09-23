@@ -12,6 +12,7 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.ServiceRegistration;
 import org.osgi.util.tracker.ServiceTracker;
 
 import com._1c.g5.v8.dt.bm.xtext.BmAwareResourceSetProvider;
@@ -57,6 +58,7 @@ import ru.aiedt.mcp.server.support.DebugLog;
 import ru.aiedt.mcp.server.support.IdleComparisonSweep;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.toolkit.IToolRoad;
 import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
 
@@ -100,6 +102,12 @@ public class Activator
     private static Activator plugin;
 
     private McpHttpEndpoint mcpServer;
+
+    /**
+     * The road every tool call takes, published to other bundles. Unregistered before the server
+     * stops, so a bundle holding the service never calls a road whose limiter is being torn down.
+     */
+    private ServiceRegistration<IToolRoad> toolRoadRegistration;
 
     private IClusterManager clusterService;
 
@@ -188,6 +196,11 @@ public class Activator
 
         mcpServer = new McpHttpEndpoint();
 
+        // Before the headless branch, so a test runtime sees the road too: an internal call and a
+        // wire call pass the same gates, and the service is how another bundle takes the internal
+        // one.
+        toolRoadRegistration = context.registerService(IToolRoad.class, mcpServer.getToolRoad(), null);
+
         // Plain OSGi, safe under any runtime: a tool or a module source another bundle publishes
         // reaches the catalogue and the module registry whether or not the UI comes up, and the
         // catalogue re-registers the tools it has been given at every clear. Off this thread,
@@ -248,6 +261,18 @@ public class Activator
     @Override
     public void stop(BundleContext context) throws Exception
     {
+        if (toolRoadRegistration != null)
+        {
+            try
+            {
+                toolRoadRegistration.unregister();
+            }
+            catch (IllegalStateException alreadyGone)
+            {
+                // The framework tore the registration down with the bundle.
+            }
+            toolRoadRegistration = null;
+        }
         if (mcpServer != null && mcpServer.isRunning())
         {
             mcpServer.stop();

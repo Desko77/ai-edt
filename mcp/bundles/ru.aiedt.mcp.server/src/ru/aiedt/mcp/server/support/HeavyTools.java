@@ -11,6 +11,8 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+
 /**
  * The tools whose one invocation can be genuinely expensive on a large configuration - whole-project
  * scans, whole-configuration export/import, cross-configuration compares, thick-client spawns, and the
@@ -82,13 +84,21 @@ public final class HeavyTools
 
     /**
      * Whether the named tool is one the heavy-tool limiter should count.
+     * <p>
+     * A tool another bundle published is named here by its own declaration, the
+     * {@code ru.aiedt.mcp.tool.heavy} service property, rather than by this list: the list is this
+     * server's policy over this server's tools, and a bundle is the one who knows what its own
+     * call costs.
+     * </p>
      *
      * @param toolName the wire tool name, or <code>null</code>
      * @return <code>true</code> when the tool is heavy
      */
     public static boolean isHeavy(String toolName)
     {
-        return toolName != null && HEAVY.contains(toolName);
+        return toolName != null
+            && (HEAVY.contains(toolName)
+                || McpToolCatalog.getInstance().isExternalHeavy(toolName));
     }
 
     /**

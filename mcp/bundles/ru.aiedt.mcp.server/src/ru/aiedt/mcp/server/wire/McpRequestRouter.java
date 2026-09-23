@@ -40,14 +40,12 @@ import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.FailureShape;
 import ru.aiedt.mcp.server.support.GenericPending;
 import ru.aiedt.mcp.server.support.InstanceRegistry;
-import ru.aiedt.mcp.server.support.MutatorIdempotency;
-import ru.aiedt.mcp.server.support.MutatorIdempotencyStore;
-import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.TaskDirectory;
 import ru.aiedt.mcp.server.support.ResponseCap;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.ToolGate;
+import ru.aiedt.mcp.server.support.ToolRoad;
 import ru.aiedt.mcp.server.support.UiSync;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
@@ -79,15 +77,6 @@ public class McpRequestRouter
 
     /** Echoed when the client's id cannot be determined; clients tolerate it, a null id would vanish. */
     private static final Object FALLBACK_REQUEST_ID = Integer.valueOf(1);
-
-    /** Smallest per-argument extent in a history summary, however small the budget. */
-    private static final int MIN_VALUE_CHARS = 80;
-
-    /** Numerator of the share of the history budget one argument value may take. */
-    private static final int VALUE_SHARE_NUMERATOR = 2;
-
-    /** Denominator of that share. Two fifths: long values stay readable, short ones stay visible. */
-    private static final int VALUE_SHARE_DENOMINATOR = 5;
 
     private static final String EMBEDDED_URI_PREFIX = "embedded://"; //$NON-NLS-1$
 
@@ -824,7 +813,7 @@ public class McpRequestRouter
             return answer(requestId, ToolCallResult.text(disabledToolMessage(toolName)), era);
         }
 
-        Map<String, String> arguments = flattenArguments(request.getArguments());
+        Map<String, String> arguments = ToolRoad.flattenArguments(request.getArguments());
         Activator.logInfo("MCP tool call: " + toolName); //$NON-NLS-1$
 
         String result;
@@ -967,11 +956,11 @@ public class McpRequestRouter
                 // A tool that returned {success:false} is a logical failure for the stats, even
                 // though it did not throw (tools report failure via the result, not an exception).
                 boolean logicalSuccess = success && !FailureShape.looksFailed(result);
-                ArgSummary args = summarizeArgs(arguments, history.argChars());
+                McpHistory.ArgsSummary args = McpHistory.summarizeArguments(arguments, history.argChars());
                 // Masking and shortening are two different things done in one place, and the store
                 // needs the first without the second: a credential must never reach the disk, while
                 // a long ordinary argument is exactly what the reader opened the window for.
-                ArgSummary whole = summarizeArgs(arguments, Integer.MAX_VALUE);
+                McpHistory.ArgsSummary whole = McpHistory.summarizeArguments(arguments, Integer.MAX_VALUE);
                 McpHistory.Completion completion = new McpHistory.Completion(tool.getName(), args.text,
                     args.cut, resultSummary, System.currentTimeMillis() - start, logicalSuccess,
                     whole.text, tool.getResponseType() == IMcpTool.ResponseType.IMAGE
@@ -994,18 +983,13 @@ public class McpRequestRouter
     }
 
     /**
-     * Runs the tool body, routing the slow read-only analysis tools through the
-     * generic soft-timeout / {@code runKey} Pending flow (see {@link GenericPending})
-     * and every other tool inline.
+     * Runs the tool body through the road every call takes: idempotency for an allowlisted
+     * mutator, the generic soft-timeout {@code Pending} flow for an allowlisted slow read
+     * (see {@link GenericPending}), the tool itself for everything else.
      * <p>
-     * For a wrapped tool the real work runs on the {@link PendingWorkRegistry#GENERIC}
-     * executor; the request thread waits a fixed soft timeout and then returns a
-     * resumable {@code Pending} instead of staying pinned for the whole call. The
-     * soft wait is a fixed server value - it never reads the tool's own
-     * {@code timeoutSeconds}, which stays the tool's work budget and part of its
-     * run identity. Only read-only, side-effect-free tools are wrapped, because the
-     * flow cache-replays and coalesces; a resume request (carrying {@code runKey})
-     * is served from the same registry without re-running the work.
+     * The call's heavy-permit ticket travels on the call scope, and the road spends it there: a
+     * synchronous answer releases it, a {@code Pending} answer hands it to the registry entry and
+     * the permit returns when the background work finishes. See {@link ToolRoad#runBody}.
      *
      * @param tool the resolved tool
      * @param arguments the flattened arguments
@@ -1013,124 +997,8 @@ public class McpRequestRouter
      */
     private static String runToolBody(IMcpTool tool, Map<String, String> arguments)
     {
-        String name = tool.getName();
-        // An optional client operationId makes an allowlisted mutator at-most-once: a repeat
-        // with the same id replays the first result instead of mutating again. Absent the id
-        // (the case for every client today) this is a no-op and the call runs as before.
-        String operationId = arguments.get("operationId"); //$NON-NLS-1$
-        if (MutatorIdempotency.applies(name, operationId, arguments))
-        {
-            String key = MutatorIdempotency.key(name, operationId);
-            return MutatorIdempotencyStore.INSTANCE.call(key, () -> tool.execute(arguments),
-                MutatorIdempotencyStore.DEFAULT_WAITER_TIMEOUT_MS);
-        }
-        if (!GenericPending.applies(name))
-        {
-            return tool.execute(arguments);
-        }
-        String runKey = PendingWorkRegistry.computeRunKey(name,
-            GenericPending.canonicalParams(arguments));
-        return PendingExecutor.execute(PendingWorkRegistry.GENERIC, name, arguments, runKey,
-            PendingExecutor.DEFAULT_SOFT_TIMEOUT_MS, () -> tool.execute(arguments), null);
-    }
-
-    /**
-     * Flattens a tool's arguments into a {@code k=v; k=v} summary for the history buffer.
-     * <p>
-     * Both caps come from the budget the history is keeping, because both decide what a person
-     * afterwards gets to see. They used to be fixed at 80 and 250 here, in front of the buffer's own
-     * limit - so raising that limit would have bought nothing: the text had already been cut before
-     * it arrived. A single argument may take {@link #VALUE_SHARE_DENOMINATOR}ths of the budget, so
-     * that one long value still leaves room for the arguments after it to be seen.
-     * </p>
-     *
-     * @param arguments what the tool was called with
-     * @param budget how many characters of this the history keeps
-     * @return the summary and whether anything was left out of it
-     */
-    private static ArgSummary summarizeArgs(Map<String, String> arguments, int budget)
-    {
-        if (arguments == null || arguments.isEmpty())
-        {
-            return new ArgSummary("", false); //$NON-NLS-1$
-        }
-        int perValue = Math.max(MIN_VALUE_CHARS, budget * VALUE_SHARE_NUMERATOR / VALUE_SHARE_DENOMINATOR);
-        StringBuilder sb = new StringBuilder();
-        boolean cut = false;
-        for (Map.Entry<String, String> e : arguments.entrySet())
-        {
-            if (sb.length() > 0)
-            {
-                sb.append("; "); //$NON-NLS-1$
-            }
-            sb.append(e.getKey()).append('=');
-            String v = e.getValue();
-            if (v != null && isSensitiveArgKey(e.getKey()))
-            {
-                // Never leak credentials (set_infobase_credentials.password, tokens, ...) into
-                // the in-memory history buffer, nor into the journal file fed from it. A masked
-                // value is not a shortened one: nothing was lost that the reader could have had.
-                sb.append("***"); //$NON-NLS-1$
-            }
-            else if (v == null)
-            {
-                sb.append("null"); //$NON-NLS-1$
-            }
-            else if (v.length() > perValue)
-            {
-                // Cap each value so a huge argument (source code, long JSON) does not build an
-                // unbounded temporary string before the whole-summary cap applies. This shortening
-                // happens INSIDE the summary, so the finished string can still come out under the
-                // budget - which is why it has to be reported rather than inferred from the length.
-                sb.append(v, 0, perValue).append("..."); //$NON-NLS-1$
-                cut = true;
-            }
-            else
-            {
-                sb.append(v);
-            }
-            if (sb.length() > budget)
-            {
-                sb.append("..."); //$NON-NLS-1$
-                cut = true;
-                break;
-            }
-        }
-        return new ArgSummary(sb.toString(), cut);
-    }
-
-    /** A flattened argument list and whether anything was left out of it. */
-    private static final class ArgSummary
-    {
-        final String text;
-
-        final boolean cut;
-
-        ArgSummary(String text, boolean cut)
-        {
-            this.text = text;
-            this.cut = cut;
-        }
-    }
-
-    /** Argument keys whose values must not be recorded (credentials, tokens, secrets). */
-    private static boolean isSensitiveArgKey(String key)
-    {
-        if (key == null)
-        {
-            return false;
-        }
-        String lc = key.toLowerCase();
-        // connectionstring, vanessaparams and scenariotext contain none of the words below and
-        // all three can carry a password: the platform names one Pwd, WSP or DBPwd inside a
-        // connection string, a scenario parameter can be a user password under a name Vanessa
-        // chooses, and a scenario types into fields - one of which can be a password. Deciding by
-        // the name of the ARGUMENT is why they have to be named here.
-        return lc.contains("password") || lc.contains("passwd") || lc.contains("pwd") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            || lc.contains("token") || lc.contains("secret") || lc.contains("apikey") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            || lc.contains("credential") || lc.contains("authorization") //$NON-NLS-1$ //$NON-NLS-2$
-            || lc.contains("connectionstring") || lc.contains("vanessaparams") //$NON-NLS-1$ //$NON-NLS-2$
-            || lc.contains("scenariotext"); //$NON-NLS-1$
+        ToolCallScope scope = ToolCallScope.current();
+        return ToolRoad.runBody(tool, arguments, scope == null ? null : scope.ticket());
     }
 
     /**
@@ -1365,49 +1233,6 @@ public class McpRequestRouter
         {
             return null;
         }
-    }
-
-    /**
-     * Flattens the arguments of a tools/call into the string map tools are written against.
-     * <p>
-     * Structure survives as compact JSON; everything else is stringified. A whole number keeps its
-     * form on the way through ({@code 10} reaches a tool as {@code "10"}, and stays {@code 10}
-     * inside a nested array) because the parser boxes it as a {@link Long} rather than a
-     * {@link Double} - see {@link GsonHolder}. An explicit {@code null} is dropped: a tool cannot
-     * tell it from an argument that was never sent, and every tool is written for the latter.
-     * </p>
-     *
-     * @param arguments the raw arguments object; may be <code>null</code>
-     * @return the flattened arguments, never <code>null</code>
-     */
-    private static Map<String, String> flattenArguments(Map<String, Object> arguments)
-    {
-        Map<String, String> flattened = new LinkedHashMap<>();
-        if (arguments == null)
-        {
-            return flattened;
-        }
-        for (Map.Entry<String, Object> argument : arguments.entrySet())
-        {
-            Object value = argument.getValue();
-            if (value == null)
-            {
-                continue;
-            }
-            if (value instanceof String)
-            {
-                flattened.put(argument.getKey(), (String)value);
-            }
-            else if (value instanceof List || value instanceof Map)
-            {
-                flattened.put(argument.getKey(), GsonHolder.toJson(value));
-            }
-            else
-            {
-                flattened.put(argument.getKey(), String.valueOf(value));
-            }
-        }
-        return flattened;
     }
 
     /**

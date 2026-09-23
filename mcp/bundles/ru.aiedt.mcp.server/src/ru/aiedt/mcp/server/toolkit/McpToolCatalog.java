@@ -49,12 +49,15 @@ public class McpToolCatalog
     private final Map<String, String> callableToCapability = new ConcurrentHashMap<>();
 
     /**
-     * The tools other bundles published, by capability, with whether each one writes. They are
-     * registered again after every {@link #clear()}, which the server runs at each start.
+     * The tools other bundles published, by capability, with whether each one writes and whether it
+     * declared itself heavy. They are registered again after every {@link #clear()}, which the
+     * server runs at each start.
      */
     private final Map<String, IMcpTool> externalTools = new ConcurrentHashMap<>();
 
     private final Map<String, Boolean> externalWrites = new ConcurrentHashMap<>();
+
+    private final Map<String, Boolean> externalHeavy = new ConcurrentHashMap<>();
 
     private McpToolCatalog()
     {
@@ -73,6 +76,22 @@ public class McpToolCatalog
      */
     public void registerExternal(IMcpTool tool, boolean writes)
     {
+        registerExternal(tool, writes, false);
+    }
+
+    /**
+     * Registers a tool another bundle published, with both facts its bundle declares about it.
+     *
+     * <p>Whether it writes decides a write-blocking preset; whether it is heavy decides the heap
+     * gate and the heavy-tool limiter. A bundle that says nothing about weight counts as light,
+     * exactly as a tool of this server's that the heavy list does not name.</p>
+     *
+     * @param tool the tool
+     * @param writes whether the tool changes anything
+     * @param heavy whether one call of the tool can be genuinely expensive
+     */
+    public void registerExternal(IMcpTool tool, boolean writes, boolean heavy)
+    {
         if (tool == null || tool.getName() == null)
         {
             return;
@@ -80,6 +99,7 @@ public class McpToolCatalog
         String capabilityId = capabilityOf(tool);
         externalTools.put(capabilityId, tool);
         externalWrites.put(capabilityId, Boolean.valueOf(writes));
+        externalHeavy.put(capabilityId, Boolean.valueOf(heavy));
         register(tool);
     }
 
@@ -97,7 +117,25 @@ public class McpToolCatalog
         String capabilityId = capabilityOf(tool);
         externalTools.remove(capabilityId);
         externalWrites.remove(capabilityId);
+        externalHeavy.remove(capabilityId);
         unregister(tool.getName());
+    }
+
+    /**
+     * Whether the tool another bundle published under this name declared itself heavy.
+     *
+     * @param callableName the name the caller used; may be {@code null}
+     * @return {@code true} when an external tool answers the name and said it was heavy
+     */
+    public boolean isExternalHeavy(String callableName)
+    {
+        if (callableName == null)
+        {
+            return false;
+        }
+        String capabilityId = callableToCapability.get(callableName);
+        Boolean heavy = capabilityId == null ? null : externalHeavy.get(capabilityId);
+        return heavy != null && heavy.booleanValue();
     }
 
     /**
@@ -346,9 +384,13 @@ public class McpToolCatalog
         callableToCapability.clear();
         // The tools of other bundles are not this server's to forget: they came in through the
         // whiteboard and leave the same way.
-        for (IMcpTool tool : externalTools.values())
+        for (Map.Entry<String, IMcpTool> external : externalTools.entrySet())
         {
-            register(tool);
+            Boolean writes = externalWrites.get(external.getKey());
+            Boolean heavy = externalHeavy.get(external.getKey());
+            registerExternal(external.getValue(),
+                writes == null || writes.booleanValue(),
+                heavy != null && heavy.booleanValue());
         }
     }
 

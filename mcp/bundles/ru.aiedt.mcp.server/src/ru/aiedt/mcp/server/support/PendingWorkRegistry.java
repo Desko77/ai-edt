@@ -249,29 +249,27 @@ public final class PendingWorkRegistry
      */
     public PendingEntry getOrStart(String runKey, Function<PendingEntry, String> work)
     {
-        // Capture just the calling (worker) thread's cancellation flag so the async work can expose
-        // it and a cooperative loop on the executor thread bails out when the operator cancels. We
-        // capture the flag, not the whole scope, so the future does not pin the RunningToolCall (and
-        // its HttpExchange) alive for the run's duration.
+        // Capture the calling (worker) thread's whole call scope and re-enter it on the executor
+        // thread for the duration of the work. The scope carries more than the cancellation flag
+        // now: it carries the heavy-permit ticket a nested heavy call inherits, and the work runs
+        // under the permit its call holds. The call graph - the RunningToolCall and its
+        // HttpExchange - stays reachable for the run's duration with it; a run that answers Pending
+        // goes on after its exchange is closed, and everything a cancel or a nested call needs has
+        // to outlive that exchange with it.
         //
-        // On coalesce the first caller's flag wins - a later caller's cancel does not reach the shared
-        // work. That is right for a read whose result the later caller still wants; it also means a
-        // second caller cannot cancel the first's work.
-        //
-        // REFERENCES now carries cancellation checkpoints, so this is visible rather than theoretical:
-        // find_references answers Pending past its await timeout, and a cancel arriving on the resumed
-        // call reaches that caller's own flag while the work runs under the first one's. Closing it
-        // needs the entry to hold the flag the work reads and every waiter to be able to raise it -
-        // a change to this registry, not to the tools.
+        // On coalesce the first caller's scope wins - a later caller's cancel does not reach the
+        // shared work. That is right for a read whose result the later caller still wants; it also
+        // means a second caller cannot cancel the first's work.
         ToolCallScope current = ToolCallScope.current();
         ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
         ru.aiedt.mcp.server.RunningToolCall starter = current != null ? current.runningCall() : null;
         return entries.computeIfAbsent(runKey, k ->
         {
             PendingEntry entry = new PendingEntry(k);
-            // The flag the work reads, kept where it outlives the request that made it. A run that
-            // answers Pending goes on after its exchange is closed, and until the entry held this
-            // there was nothing left for a withdrawal to raise.
+            // The scope the work runs under, kept where it outlives the request that made it. A
+            // run that answers Pending goes on after its exchange is closed, and until the entry
+            // held this there was nothing left for a withdrawal to raise.
+            entry.scope = current;
             entry.cancellation = dispatchCancellation;
             if (starter != null)
             {
@@ -282,9 +280,9 @@ public final class PendingWorkRegistry
             entry.future = CompletableFuture.supplyAsync(() ->
             {
                 ToolCallScope previous = ToolCallScope.current();
-                if (dispatchCancellation != null)
+                if (current != null)
                 {
-                    ToolCallScope.enter(ToolCallScope.forCancellation(dispatchCancellation));
+                    ToolCallScope.enter(current);
                 }
                 try
                 {
@@ -301,7 +299,7 @@ public final class PendingWorkRegistry
                     // Restore whatever was bound before. On a fresh executor thread nothing was, so
                     // exit; but CallerRunsPolicy runs this inline on the submitting tool-worker thread,
                     // whose own scope must survive - re-enter it rather than clearing it.
-                    if (dispatchCancellation != null)
+                    if (current != null)
                     {
                         if (previous != null)
                         {
@@ -870,6 +868,17 @@ public final class PendingWorkRegistry
          * </p>
          */
         public volatile String progressNote;
+
+        /**
+         * The scope the work runs under, held where it outlives the request that started the run.
+         * <p>
+         * A run that answers Pending continues after its exchange is closed. The scope is what the
+         * work re-enters on the executor thread: its cancellation flag is what a withdrawal raises,
+         * and its heavy-permit ticket is what a nested heavy call inside the work inherits. Null
+         * when the work was started outside a tool call.
+         * </p>
+         */
+        public volatile ToolCallScope scope;
 
         /**
          * The flag the work watches, held where it outlives the request that started the run.
