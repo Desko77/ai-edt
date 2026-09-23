@@ -369,14 +369,17 @@ public class VanessaTool implements IMcpTool
         boolean hasPath = featurePathArg != null && !featurePathArg.trim().isEmpty();
         boolean hasText = scenarioText != null && !scenarioText.trim().isEmpty();
         boolean hasForm = formToOpen != null && !formToOpen.trim().isEmpty();
-        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText, hasForm);
+        // The list arguments are a fourth way of naming the scenario. Counted with the other
+        // three, a call that brings only them reaches the composition below; counted afterwards,
+        // that call has named nothing and is refused before any of it runs.
+        boolean hasList = anyListArgumentGiven(params);
+        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText, hasForm, hasList);
         if (badlyNamed != null)
         {
             return ToolResult.error(badlyNamed).toJson();
         }
         String openStep = JsonUtils.extractStringArgument(params, "openStep"); //$NON-NLS-1$
         String startStep = JsonUtils.extractStringArgument(params, "startStep"); //$NON-NLS-1$
-        boolean hasList = anyListArgumentGiven(params);
         if (hasList)
         {
             String badlyMixed = whyTheListWayIsNotTheOnlyOne(hasPath, hasText, hasForm, openStep);
@@ -825,21 +828,43 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * Why this call does not say what to play, or <code>null</code> when it does.
+     * Why this call does not say what to play, when the list arguments are not part of the question.
      *
      * @param hasPath whether a file or directory was named.
      * @param hasText whether the scenario itself was given.
      * @param hasForm whether a form to open was named, from which a scenario is composed.
      * @return the refusal, or <code>null</code>
+     * @see #whyTheScenarioIsNotNamed(boolean, boolean, boolean, boolean)
      */
     static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText, boolean hasForm)
     {
-        int named = (hasPath ? 1 : 0) + (hasText ? 1 : 0) + (hasForm ? 1 : 0);
+        return whyTheScenarioIsNotNamed(hasPath, hasText, hasForm, false);
+    }
+
+    /**
+     * Why this call does not say what to play, or <code>null</code> when it does.
+     * <p>
+     * Four ways name a scenario, and a call carries exactly one of them: a file, the scenario
+     * text, a form to open, or the list arguments that compose an action in a list. None of them,
+     * and there is nothing to play; more than one, and the call does not say which was meant.
+     * </p>
+     *
+     * @param hasPath whether a file or directory was named.
+     * @param hasText whether the scenario itself was given.
+     * @param hasForm whether a form to open was named, from which a scenario is composed.
+     * @param hasList whether any list argument is present, which composes a scenario of its own.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText, boolean hasForm,
+        boolean hasList)
+    {
+        int named = (hasPath ? 1 : 0) + (hasText ? 1 : 0) + (hasForm ? 1 : 0) + (hasList ? 1 : 0);
         if (named > 1)
         {
-            return "featurePath, scenarioText and formToOpen each name what to play, and only " //$NON-NLS-1$
-                + "one of them can be it. Pass the path to a file that exists, the scenario text " //$NON-NLS-1$
-                + "to be written for this run, or the form to open and snapshot."; //$NON-NLS-1$
+            return "featurePath, scenarioText, formToOpen and the list arguments each name what " //$NON-NLS-1$
+                + "to play, and only one of them can be it. Pass the path to a file that exists, " //$NON-NLS-1$
+                + "the scenario text to be written for this run, the form to open and snapshot, " //$NON-NLS-1$
+                + "or the list arguments."; //$NON-NLS-1$
         }
         if (named == 0)
         {
@@ -1163,9 +1188,11 @@ public class VanessaTool implements IMcpTool
      * <p>
      * Two step families name one: a button that was not found writes {@code ТекущееОкно=} followed
      * by the active window's title, and a window that never opened is reported as
-     * {@code Текущее окно} followed by it. Everything else Vanessa writes about a failure names no
-     * window at all, and an empty string is what that honestly reads as - a title guessed at from
-     * anywhere else would put a window on screen the run never saw.
+     * {@code Текущее окно <%3>.} - the title inside angle brackets, then the full stop that closes
+     * the sentence. The brackets and that stop belong to Vanessa's sentence and are not part of
+     * the title. Everything else Vanessa writes about a failure names no window at all, and an
+     * empty string is what that honestly reads as - a title guessed at from anywhere else would
+     * put a window on screen the run never saw.
      * </p>
      *
      * @param failureText the message of the failing step, as the report carries it.
@@ -1185,9 +1212,31 @@ public class VanessaTool implements IMcpTool
         int waitedWindow = failureText.indexOf("Текущее окно "); //$NON-NLS-1$
         if (waitedWindow >= 0)
         {
-            return restOfTheLine(failureText, waitedWindow + "Текущее окно ".length()); //$NON-NLS-1$
+            return titleInsideTheSentenceBrackets(
+                restOfTheLine(failureText, waitedWindow + "Текущее окно ".length())); //$NON-NLS-1$
         }
         return ""; //$NON-NLS-1$
+    }
+
+    /**
+     * The title Vanessa wrapped as {@code <%3>}, or the text unchanged when it is not wrapped.
+     * <p>
+     * The waiting step's refusal puts the active window's title between angle brackets. Those
+     * brackets are the sentence's, the same shape as the count step's {@code <%1>}, and a caller
+     * reading them back would be told the window is named {@code <Реализация товаров>} when its
+     * title is {@code Реализация товаров}.
+     * </p>
+     *
+     * @param value the remainder of the sentence, already without the closing full stop.
+     * @return the title
+     */
+    private static String titleInsideTheSentenceBrackets(String value)
+    {
+        if (value.length() >= 2 && value.charAt(0) == '<' && value.charAt(value.length() - 1) == '>')
+        {
+            return value.substring(1, value.length() - 1).trim();
+        }
+        return value;
     }
 
     /**
@@ -1292,8 +1341,10 @@ public class VanessaTool implements IMcpTool
          * Every value lands inside a step's quotes - double quotes in most steps, single quotes in
          * a Gherkin table row - so a value carrying the quote it is wrapped in, or a line break,
          * is refused rather than composed into a scenario Vanessa would read as something else.
-         * The one value read exactly as given is {@code columnValue}: an empty string is a value
-         * there, looked for as empty.
+         * {@code column} and {@code columnValue} also land in a table cell, and a Gherkin table
+         * splits that cell on every vertical bar, so a bar is refused there too. The one value
+         * read exactly as given is {@code columnValue}: an empty string is a value there, looked
+         * for as empty.
          * </p>
          *
          * @param params the call's arguments.
@@ -1324,7 +1375,7 @@ public class VanessaTool implements IMcpTool
                 return null;
             }
             listName = listName.trim();
-            String namedBadly = whyItCannotGoIntoAStep("listName", listName, '"'); //$NON-NLS-1$
+            String namedBadly = whyItCannotGoIntoAStep("listName", listName, false, '"'); //$NON-NLS-1$
             if (namedBadly != null)
             {
                 refusal[0] = namedBadly;
@@ -1345,7 +1396,7 @@ public class VanessaTool implements IMcpTool
             else
             {
                 tableName = tableName.trim();
-                String tableBadly = whyItCannotGoIntoAStep("tableName", tableName, '"'); //$NON-NLS-1$
+                String tableBadly = whyItCannotGoIntoAStep("tableName", tableName, false, '"'); //$NON-NLS-1$
                 if (tableBadly != null)
                 {
                     refusal[0] = tableBadly;
@@ -1361,8 +1412,8 @@ public class VanessaTool implements IMcpTool
             }
             column = column.trim();
             // Both quote kinds: the column stands inside a Gherkin table row in single quotes and
-            // inside the counting step's own double quotes.
-            String columnBadly = whyItCannotGoIntoAStep("column", column, '"', '\''); //$NON-NLS-1$
+            // inside the counting step's own double quotes. The bar is the table's own separator.
+            String columnBadly = whyItCannotGoIntoAStep("column", column, true, '"', '\''); //$NON-NLS-1$
             if (columnBadly != null)
             {
                 refusal[0] = columnBadly;
@@ -1376,7 +1427,7 @@ public class VanessaTool implements IMcpTool
                     + "argument has to be there to carry it."; //$NON-NLS-1$
                 return null;
             }
-            String valueBadly = whyItCannotGoIntoAStep("columnValue", columnValue, '"', '\''); //$NON-NLS-1$
+            String valueBadly = whyItCannotGoIntoAStep("columnValue", columnValue, true, '"', '\''); //$NON-NLS-1$
             if (valueBadly != null)
             {
                 refusal[0] = valueBadly;
@@ -1420,7 +1471,7 @@ public class VanessaTool implements IMcpTool
             {
                 buttonName = buttonName.trim();
                 buttonTitle = null;
-                String nameBadly = whyItCannotGoIntoAStep("buttonName", buttonName, '\''); //$NON-NLS-1$
+                String nameBadly = whyItCannotGoIntoAStep("buttonName", buttonName, false, '\''); //$NON-NLS-1$
                 if (nameBadly != null)
                 {
                     refusal[0] = nameBadly;
@@ -1431,7 +1482,7 @@ public class VanessaTool implements IMcpTool
             {
                 buttonTitle = buttonTitle.trim();
                 buttonName = null;
-                String titleBadly = whyItCannotGoIntoAStep("buttonTitle", buttonTitle, '"'); //$NON-NLS-1$
+                String titleBadly = whyItCannotGoIntoAStep("buttonTitle", buttonTitle, false, '"'); //$NON-NLS-1$
                 if (titleBadly != null)
                 {
                     refusal[0] = titleBadly;
@@ -1442,7 +1493,7 @@ public class VanessaTool implements IMcpTool
             if (windowTitle != null && !windowTitle.trim().isEmpty())
             {
                 windowTitle = windowTitle.trim();
-                String windowBadly = whyItCannotGoIntoAStep("windowTitle", windowTitle, '"'); //$NON-NLS-1$
+                String windowBadly = whyItCannotGoIntoAStep("windowTitle", windowTitle, false, '"'); //$NON-NLS-1$
                 if (windowBadly != null)
                 {
                     refusal[0] = windowBadly;
@@ -1478,10 +1529,13 @@ public class VanessaTool implements IMcpTool
          *
          * @param argument the argument the value came under, for the refusal to name.
          * @param value the value as it will be substituted.
+         * @param inATableCell whether the value is written into a Gherkin table cell, which splits
+         *            on every vertical bar.
          * @param quotes the quote characters the steps wrap this value in.
          * @return the refusal, or <code>null</code>
          */
-        private static String whyItCannotGoIntoAStep(String argument, String value, char... quotes)
+        private static String whyItCannotGoIntoAStep(String argument, String value,
+            boolean inATableCell, char... quotes)
         {
             for (char quote : quotes)
             {
@@ -1496,6 +1550,13 @@ public class VanessaTool implements IMcpTool
             {
                 return argument + " spans lines, and a step is one line of a scenario. Pass the " //$NON-NLS-1$
                     + "value alone, or write the whole scenario in scenarioText."; //$NON-NLS-1$
+            }
+            if (inATableCell && value.indexOf('|') >= 0)
+            {
+                return argument + " carries a vertical bar, and the value goes into a cell of a " //$NON-NLS-1$
+                    + "Gherkin table, which splits the row on every bar. The step would look for " //$NON-NLS-1$
+                    + "something other than the value that was passed. Pass the value alone, or " //$NON-NLS-1$
+                    + "write the whole scenario in scenarioText."; //$NON-NLS-1$
             }
             return null;
         }
@@ -1924,6 +1985,21 @@ public class VanessaTool implements IMcpTool
         "ТаймаутДляАсинхронныхШагов"); //$NON-NLS-1$
 
     /**
+     * The English names Vanessa's name table gives three keys this tool sets, lower-cased.
+     * <p>
+     * {@code ТаблицаИменНоваяСтрока} reads {@code useaddin} as
+     * {@code ИспользоватьКомпонентуVanessaExt}, {@code useaddinforscreencapture} as
+     * {@code ИспользоватьВнешнююКомпонентуДляСкриншотов}, and {@code timeoutforasynchronoussteps}
+     * as {@code ТаймаутДляАсинхронныхШагов}. They are not keys this tool writes - the document
+     * carries the Russian names - so they do not belong in {@link #OURS_TO_SET}, whose census is
+     * the keys that were written. A passthrough carrying one is merged after those keys and would
+     * raise the wait, or turn the capture off, under a name the answer does not mention.
+     * </p>
+     */
+    static final java.util.Set<String> OURS_BY_ENGLISH_NAME = lowerCased(
+        "useaddin", "useaddinforscreencapture", "timeoutforasynchronoussteps"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /**
      * Field names a connection string carries a password under that no rule would catch.
      * <p>
      * The platform names most of them after the word - Pwd, DBPwd, SPwd - and one after neither:
@@ -2026,8 +2102,10 @@ public class VanessaTool implements IMcpTool
         for (String key : given.keySet())
         {
             // Without a locale, lower-casing turns I into a dotless letter where the machine is
-            // set to Turkish, and a protected name stops matching.
-            if (OURS_TO_SET.contains(key.toLowerCase(java.util.Locale.ROOT)))
+            // set to Turkish, and a protected name stops matching. The English names are the same
+            // settings under the names Vanessa's own table gives them.
+            String lower = key.toLowerCase(java.util.Locale.ROOT);
+            if (OURS_TO_SET.contains(lower) || OURS_BY_ENGLISH_NAME.contains(lower))
             {
                 refusal[0] = "'" + key + "' is set by this tool, from its own " //$NON-NLS-1$ //$NON-NLS-2$
                     + "arguments. Passing it here as well would leave the answer describing a " //$NON-NLS-1$

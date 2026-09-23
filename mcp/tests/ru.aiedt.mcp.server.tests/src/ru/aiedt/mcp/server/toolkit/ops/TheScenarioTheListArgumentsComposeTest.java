@@ -7,14 +7,22 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.junit.Assume;
 import org.junit.Test;
+
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -79,19 +87,42 @@ public class TheScenarioTheListArgumentsComposeTest
     }
 
     /**
-     * The kind picks the opening step's wording: each kind opens by its own words, an unknown one
-     * is refused by name, and a call with no kind at all has nothing to open.
+     * The kind picks the opening step's wording: each kind opens by the words of Vanessa's step
+     * library, an unknown one is refused by name, and a call with no kind at all has nothing to
+     * open.
+     * <p>
+     * The phrases are written out here, from the library's own lines. Comparing the scenario to
+     * the map that produces it would stay green however those lines were spelled.
+     * </p>
      */
     @Test
     public void theKindPicksTheOpeningStep()
     {
-        for (Map.Entry<String, String> kind : VanessaTool.LIST_OPEN_STEPS.entrySet())
+        String[][] kinds = {
+            {"catalog", "Я открываю основную форму списка справочника \"Товары\""}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"document", "Я открываю основную форму списка документа \"Товары\""}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"documentJournal", "Я открываю основную форму журнала документов \"Товары\""}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"chartOfCharacteristicTypes", //$NON-NLS-1$
+                "Я открываю основную форму списка плана видов характеристик \"Товары\""}, //$NON-NLS-1$
+            {"chartOfAccounts", "Я открываю основную форму списка плана счетов \"Товары\""}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"chartOfCalculationTypes", //$NON-NLS-1$
+                "Я открываю основную форму списка плана видов расчета \"Товары\""}, //$NON-NLS-1$
+            {"informationRegister", //$NON-NLS-1$
+                "Я открываю основную форму списка регистра сведений \"Товары\""}, //$NON-NLS-1$
+            {"accumulationRegister", //$NON-NLS-1$
+                "Я открываю основную форму списка регистра накопления \"Товары\""}, //$NON-NLS-1$
+            {"accountingRegister", //$NON-NLS-1$
+                "Я открываю основную форму списка регистра бухгалтерии \"Товары\""}, //$NON-NLS-1$
+            {"calculationRegister", //$NON-NLS-1$
+                "Я открываю основную форму списка регистра расчета \"Товары\""}, //$NON-NLS-1$
+        };
+        for (String[] kind : kinds)
         {
             Map<String, String> p = given();
-            p.put("listKind", kind.getKey()); //$NON-NLS-1$
+            p.put("listKind", kind[0]); //$NON-NLS-1$
             String scenario = accepted(p).scenario(null);
-            assertTrue(kind.getKey() + " opens by its own words: " + scenario, //$NON-NLS-1$
-                scenario.contains(kind.getValue().replace("{list}", "Товары"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(kind[0] + " opens by the library's own words: " + scenario, //$NON-NLS-1$
+                scenario.contains(kind[1]));
         }
         Map<String, String> unknown = given();
         unknown.put("listKind", "crime"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -285,12 +316,16 @@ public class TheScenarioTheListArgumentsComposeTest
         Map<String, String> quoted = given();
         quoted.put("windowTitle", "Окно \"это\""); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(refused(quoted).contains("windowTitle")); //$NON-NLS-1$
+        Map<String, String> lined = given();
+        lined.put("windowTitle", "Окно\nдва"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refused(lined).contains("windowTitle")); //$NON-NLS-1$
     }
 
     /**
      * The wait goes into the step's text and into the document's asynchronous-step ceiling, and is
-     * bounded: not a whole number, less than a second, or above the run's own timeout, all
-     * refused; left out it is ten seconds.
+     * bounded below: not a whole number or less than a second is refused; left out it is ten
+     * seconds. A wait above the run's own timeout is judged later, once that timeout has been
+     * clamped.
      */
     @Test
     public void theWaitGoesIntoTheStepAndTheDocument()
@@ -347,6 +382,8 @@ public class TheScenarioTheListArgumentsComposeTest
         assertEquals("catalog", sought.get("listKind").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("Товары", sought.get("listName").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("Список", sought.get("tableName").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Наименование", sought.get("column").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Стол письменный", sought.get("columnValue").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("Печать", sought.get("button").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("Печатная форма", sought.get("windowTitle").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(!sought.has("differentFrom")); //$NON-NLS-1$
@@ -402,15 +439,19 @@ public class TheScenarioTheListArgumentsComposeTest
     }
 
     /**
-     * The three keys this branch sets are barred from the passthrough: a caller raising the
-     * asynchronous-step ceiling above the seconds they named, or turning the capture machinery
-     * off, would be answered with a run that did not happen the way it says.
+     * The keys this branch sets are barred from the passthrough, under the Russian names the
+     * document carries and under the English names Vanessa's name table gives the same three: a
+     * caller raising the asynchronous-step ceiling above the seconds they named, or turning the
+     * capture machinery off, would be answered with a run that did not happen the way it says.
      */
     @Test
     public void theThreeKeysAreRefusedInThePassthrough()
     {
         for (String key : new String[] {"ИспользоватьКомпонентуVanessaExt", //$NON-NLS-1$
-            "ИспользоватьВнешнююКомпонентуДляСкриншотов", "ТаймаутДляАсинхронныхШагов"}) //$NON-NLS-1$ //$NON-NLS-2$
+            "ИспользоватьВнешнююКомпонентуДляСкриншотов", "ТаймаутДляАсинхронныхШагов", //$NON-NLS-1$ //$NON-NLS-2$
+            // The name table's English names of those three. A different case is the same name:
+            // Vanessa folds it before it reads.
+            "useaddin", "useaddinforscreencapture", "TimeoutForAsynchronousSteps"}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         {
             String[] refusalOfPassthrough = new String[1];
             VanessaTool.extraParams("{\"" + key + "\": true}", refusalOfPassthrough); //$NON-NLS-1$ //$NON-NLS-2$
@@ -463,13 +504,179 @@ public class TheScenarioTheListArgumentsComposeTest
     {
         assertEquals("Список документов", VanessaTool.onScreenOf( //$NON-NLS-1$
             "Кнопка/команда с заголовком <Печать> не найдена. ТекущееОкно=Список документов")); //$NON-NLS-1$
+        // The library's own sentence: the seconds, the sought title and the window on screen each
+        // sit in angle brackets, and the sentence closes with a full stop. The title is what is
+        // between the last pair.
         assertEquals("Реализация товаров", VanessaTool.onScreenOf( //$NON-NLS-1$
-            "Ожидали в течение 20 секунд, что откроется окно с заголовком <Печатная форма>. " //$NON-NLS-1$
-                + "Текущее окно Реализация товаров.")); //$NON-NLS-1$
-        assertEquals("a message that stops after the title still gives the title", "Реализация", //$NON-NLS-1$ //$NON-NLS-2$
-            VanessaTool.onScreenOf("Текущее окно Реализация")); //$NON-NLS-1$
+            "Ожидали в течение <20> секунд, что откроется окно с заголовком <Печатная форма>. " //$NON-NLS-1$
+                + "Текущее окно <Реализация товаров>.")); //$NON-NLS-1$
+        assertEquals("a sentence that stops at the title still gives the title", "Реализация", //$NON-NLS-1$ //$NON-NLS-2$
+            VanessaTool.onScreenOf("Текущее окно <Реализация>.")); //$NON-NLS-1$
         assertEquals("", VanessaTool.onScreenOf( //$NON-NLS-1$
             "В таблице <Список> найдено <3> значений. А ожидали <1>.")); //$NON-NLS-1$
         assertEquals("", VanessaTool.onScreenOf(null)); //$NON-NLS-1$
+    }
+
+    /**
+     * The scenario for one ordinary call, line for line. A phrase checked with {@code contains}
+     * stays green when a step is added, dropped or reordered around it.
+     */
+    @Test
+    public void theWholeScenarioIsThatOneCall()
+    {
+        String[] lines = accepted(given()).scenario(null).split("\n", -1); //$NON-NLS-1$
+        String[] expected = {
+            "#language: ru", //$NON-NLS-1$
+            "", //$NON-NLS-1$
+            "Функционал: Снимок после действия", //$NON-NLS-1$
+            "", //$NON-NLS-1$
+            "Контекст:", //$NON-NLS-1$
+            "    Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий", //$NON-NLS-1$
+            "", //$NON-NLS-1$
+            "Сценарий: Действие в списке Товары", //$NON-NLS-1$
+            "    Когда Я открываю основную форму списка справочника \"Товары\"", //$NON-NLS-1$
+            "    И я запоминаю заголовок текущего окна как \"ОкноДо\"", //$NON-NLS-1$
+            "    И в таблице \"Список\" 1 строк, у которых колонка \"Наименование\" \"Равно\" " //$NON-NLS-1$
+                + "\"Стол письменный\"", //$NON-NLS-1$
+            "    И в таблице \"Список\" я перехожу к строке", //$NON-NLS-1$
+            "        | 'Наименование' |", //$NON-NLS-1$
+            "        | 'Стол письменный' |", //$NON-NLS-1$
+            "    И я нажимаю на кнопку \"Печать\"", //$NON-NLS-1$
+            "    @screenshot", //$NON-NLS-1$
+            "    И я жду открытия окна отличного от \"$ОкноДо$\" в течение 10 секунд", //$NON-NLS-1$
+            "    И Я закрываю все окна клиентского приложения", //$NON-NLS-1$
+            "", //$NON-NLS-1$
+        };
+        assertEquals(expected.length, lines.length);
+        for (int i = 0; i < expected.length; i++)
+        {
+            assertEquals("line " + (i + 1), expected[i], lines[i]); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A vertical bar in a table cell splits the cell. The column and the value both stand in one,
+     * so a bar in either is refused before a scenario is written.
+     */
+    @Test
+    public void aBarInATableCellIsRefused()
+    {
+        Map<String, String> column = given();
+        column.put("column", "Код|Наименование"); //$NON-NLS-1$ //$NON-NLS-2$
+        String columnRefusal = refused(column);
+        assertTrue(columnRefusal, columnRefusal.contains("column carries")); //$NON-NLS-1$
+        Map<String, String> value = given();
+        value.put("columnValue", "А|Б"); //$NON-NLS-1$ //$NON-NLS-2$
+        String valueRefusal = refused(value);
+        assertTrue(valueRefusal, valueRefusal.contains("columnValue")); //$NON-NLS-1$
+    }
+
+    /**
+     * A call that brings only the list arguments is a named scenario. It is answered through the
+     * same entry a client uses, and it gets as far as the scenario: the refusal that follows is
+     * the wait judged against the run's timeout after that timeout has been clamped, which is
+     * past the point where an unnamed call is turned away.
+     *
+     * @throws IOException when the stand-in processor files cannot be created
+     */
+    @Test
+    public void aCallWithOnlyTheListArgumentsReachesTheScenario() throws IOException
+    {
+        assertNull("the list arguments are a way of naming the scenario", //$NON-NLS-1$
+            VanessaTool.whyTheScenarioIsNotNamed(false, false, false, true));
+        Map<String, String> p = given();
+        p.put("connectionString", "File=\"C:/bases/demo\";"); //$NON-NLS-1$ //$NON-NLS-2$
+        // 5000 is above the ceiling, so the run's timeout becomes 3600. 4000 is above that and
+        // below 5000: a comparison made before the clamp would let the call through.
+        p.put("timeoutSeconds", "5000"); //$NON-NLS-1$ //$NON-NLS-2$
+        p.put("windowWaitSeconds", "4000"); //$NON-NLS-1$ //$NON-NLS-2$
+        String answer = answered(p);
+        assertFalse("answered as if nothing named the scenario: " + answer, //$NON-NLS-1$
+            answer.contains("featurePath is required")); //$NON-NLS-1$
+        assertTrue("the wait is judged against the timeout after it is clamped: " + answer, //$NON-NLS-1$
+            answer.contains("windowWaitSeconds is 4000") //$NON-NLS-1$
+                && answer.contains("timeoutSeconds of 3600")); //$NON-NLS-1$
+    }
+
+    /**
+     * The list arguments stay the only way when the call is answered the way a client answers it.
+     * A file, a text or a form beside them is still a refusal, and the refusal happens before a
+     * client is started.
+     *
+     * @throws IOException when the stand-in processor files cannot be created
+     */
+    @Test
+    public void theListArgumentsStayAloneWhenTheCallIsAnswered() throws IOException
+    {
+        String[][] others = {
+            {"featurePath", "features/one.feature"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"scenarioText", "Сценарий: что-нибудь"}, //$NON-NLS-1$ //$NON-NLS-2$
+            {"formToOpen", "ОбщаяФорма.Печать"}, //$NON-NLS-1$ //$NON-NLS-2$
+        };
+        for (String[] other : others)
+        {
+            Map<String, String> p = given();
+            p.put("connectionString", "File=\"C:/bases/demo\";"); //$NON-NLS-1$ //$NON-NLS-2$
+            // High enough that a missed mix check still stops before a client is started.
+            p.put("timeoutSeconds", "30"); //$NON-NLS-1$ //$NON-NLS-2$
+            p.put("windowWaitSeconds", "4000"); //$NON-NLS-1$ //$NON-NLS-2$
+            p.put(other[0], other[1]);
+            String answer = answered(p);
+            assertTrue(other[0] + " beside the list arguments is still refused: " + answer, //$NON-NLS-1$
+                answer.contains("only one of them")); //$NON-NLS-1$
+            assertFalse(other[0] + " reached the launch: " + answer, //$NON-NLS-1$
+                answer.contains("junitXmlPath")); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The answer {@code execute} gives once the processor and the client are configured as files
+     * that exist, so the call gets past the setup check.
+     * <p>
+     * The files are empty. The calls that use this are refused before anything is launched; the
+     * assertion on the answer is what says so.
+     * </p>
+     *
+     * @param params the call's arguments, including a connection string.
+     * @return the tool's answer
+     * @throws IOException when the stand-in files cannot be created
+     */
+    private static String answered(Map<String, String> params) throws IOException
+    {
+        Assume.assumeNotNull(Activator.getDefault());
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        boolean epfWasDefault = store.isDefault(PrefKeys.PREF_VANESSA_EPF);
+        boolean exeWasDefault = store.isDefault(PrefKeys.PREF_VANESSA_1C_EXE);
+        String epfBefore = store.getString(PrefKeys.PREF_VANESSA_EPF);
+        String exeBefore = store.getString(PrefKeys.PREF_VANESSA_1C_EXE);
+        File epf = File.createTempFile("aiedt-vanessa", ".epf"); //$NON-NLS-1$ //$NON-NLS-2$
+        File exe = File.createTempFile("aiedt-1cv8", ".exe"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            store.setValue(PrefKeys.PREF_VANESSA_EPF, epf.getAbsolutePath());
+            store.setValue(PrefKeys.PREF_VANESSA_1C_EXE, exe.getAbsolutePath());
+            return new VanessaTool().execute(params);
+        }
+        finally
+        {
+            if (epfWasDefault)
+            {
+                store.setToDefault(PrefKeys.PREF_VANESSA_EPF);
+            }
+            else
+            {
+                store.setValue(PrefKeys.PREF_VANESSA_EPF, epfBefore);
+            }
+            if (exeWasDefault)
+            {
+                store.setToDefault(PrefKeys.PREF_VANESSA_1C_EXE);
+            }
+            else
+            {
+                store.setValue(PrefKeys.PREF_VANESSA_1C_EXE, exeBefore);
+            }
+            epf.delete();
+            exe.delete();
+        }
     }
 }
