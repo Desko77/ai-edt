@@ -458,4 +458,29 @@ public final class ToolCallScope
             return startedEntries.get(runKey);
         }
     }
+
+    /**
+     * A background run this call dispatched whose work has not left the executor.
+     * <p>
+     * The road reads it from the call's {@code finally} when the tool threw after
+     * {@link PendingWorkRegistry#getOrStart}: the registry notes the entry here before returning
+     * to the tool, so the permit can follow that work instead of returning with the throw.
+     * </p>
+     *
+     * @return one such entry, or {@code null} when this call started none that still runs
+     */
+    PendingWorkRegistry.PendingEntry workStillRunningHere()
+    {
+        synchronized (startedEntries)
+        {
+            for (PendingWorkRegistry.PendingEntry entry : startedEntries.values())
+            {
+                if (entry != null && !entry.isDone())
+                {
+                    return entry;
+                }
+            }
+            return null;
+        }
+    }
 }

@@ -42,7 +42,10 @@ import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
  * <p>
  * A call that answers {@code Pending} hands its ticket to the registry entry: the permit comes
  * back when the entry's work leaves the executor, and never on the tracking future's completion
- * alone - a cancel completes that future without reaching work already running. The entry the
+ * alone - a cancel completes that future without reaching work already running. A call that
+ * throws after it has already dispatched a run hands the ticket over the same way: the registry
+ * noted the entry on the call's scope before the tool resumed, and the permit comes back when
+ * that supplier leaves, not when the throw unwinds. The entry the
  * answer names is not only the one the registry map still holds: work whose tracking was dropped
  * while it runs - a subject sweep, a cancel that cannot reach it - is found through the entry the
  * call's scope kept when it started the run, so its permit waits on the work and not on the
@@ -154,8 +157,14 @@ public final class ToolRoad
             // The limit counts concurrent callers, not reentry into them. The child takes a share
             // of that permit rather than a permit-less ride: work the child dispatches can go on
             // after the parent has returned, and the permit must stay held for as long as any of
-            // that work runs.
-            return Admission.admitted(scope.ticket().share());
+            // that work runs. The share refuses a count that has already fallen to zero, so a
+            // permit returned between this check and the increment is taken below, the ordinary
+            // way, instead of being resurrected.
+            Ticket shared = scope.ticket().share();
+            if (shared != null)
+            {
+                return Admission.admitted(shared);
+            }
         }
         if (!permits.tryAcquire())
         {
@@ -393,9 +402,7 @@ public final class ToolRoad
                 finally
                 {
                     ToolCallScope.enter(parent);
-                    // The safety spend for a body that never answered: a ticket the road already
-                    // spent does nothing here.
-                    ticket.release();
+                    releaseUnlessDispatchedWorkStillRuns(ticket, childScope);
                 }
             }
             try
@@ -404,9 +411,7 @@ public final class ToolRoad
             }
             finally
             {
-                // The safety spend for a body that never answered: a ticket the road already spent
-                // does nothing here.
-                ticket.release();
+                releaseUnlessDispatchedWorkStillRuns(ticket, parent);
             }
         }
         ToolCallScope scope = ToolCallScope.create(null);
@@ -419,8 +424,35 @@ public final class ToolRoad
         finally
         {
             ToolCallScope.exit();
-            admission.ticket().release();
+            releaseUnlessDispatchedWorkStillRuns(admission.ticket(), scope);
         }
+    }
+
+    /**
+     * Returns a ticket the body did not spend, unless this call already dispatched work that is
+     * still running.
+     * <p>
+     * {@code getOrStart} notes that entry on the scope before it returns to the tool. A throw
+     * never reaches {@link #spend}: without this hand-off the {@code finally} would give the
+     * permit back while the supplier is still inside the executor. A ticket already spent, and a
+     * call that started nothing still running, take the same path as before.
+     * </p>
+     *
+     * @param ticket the call's ticket; may be {@code null} or already spent
+     * @param scope the scope the body ran under; may be {@code null}
+     */
+    private static void releaseUnlessDispatchedWorkStillRuns(Ticket ticket, ToolCallScope scope)
+    {
+        if (ticket == null)
+        {
+            return;
+        }
+        PendingWorkRegistry.PendingEntry started = scope == null ? null : scope.workStillRunningHere();
+        if (started != null)
+        {
+            ticket.transferTo(started);
+        }
+        ticket.release();
     }
 
     /**
@@ -721,8 +753,8 @@ public final class ToolRoad
          * counted.
          * </p>
          *
-         * @return a ticket holding a share of this one's permit, or a permit-less ticket when
-         *         this one holds no permit
+         * @return a ticket holding a share of this one's permit, a permit-less ticket when this one
+         *         holds no permit, or {@code null} when the permit was already returned
          */
         Ticket share()
         {
@@ -734,8 +766,10 @@ public final class ToolRoad
      * One permit of the heavy-tool limiter and everyone still holding it.
      * <p>
      * The count starts at one - the call that took the permit - and grows by every share handed to
-     * a nested call. Each holder departs at most once (a ticket's spend is single-shot), so the
-     * count cannot pass zero, and the permit is returned at the one moment it reaches it.
+     * a nested call. A share is a compare-and-increment that leaves a zero count untouched, so a
+     * ticket whose last holder has already departed cannot be resurrected. Each holder departs at
+     * most once (a ticket's spend is single-shot), and the permit is returned at the one moment
+     * the count reaches zero.
      * </p>
      */
     private static final class Lease
@@ -762,9 +796,21 @@ public final class ToolRoad
             }
         }
 
+        /**
+         * @return a ticket sharing this permit, or {@code null} when the count is already zero
+         */
         Ticket share()
         {
-            holders.incrementAndGet();
+            int seen;
+            do
+            {
+                seen = holders.get();
+                if (seen <= 0)
+                {
+                    return null;
+                }
+            }
+            while (!holders.compareAndSet(seen, seen + 1));
             return new Ticket(this);
         }
 

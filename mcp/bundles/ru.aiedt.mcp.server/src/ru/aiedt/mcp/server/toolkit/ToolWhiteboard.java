@@ -59,7 +59,31 @@ public final class ToolWhiteboard
      */
     public void openInBackground(BundleContext context)
     {
-        Thread opener = new Thread(() -> open(context), "AI-EDT whiteboard"); //$NON-NLS-1$
+        openInBackground(context, null);
+    }
+
+    /**
+     * Starts watching on a thread of its own, then runs {@code afterOpen} on that same thread
+     * once {@link #open} has returned.
+     * <p>
+     * The activator publishes the road from this callback. A tracker that receives the road then
+     * already sees the external tools this open collected. The activating thread must not join
+     * the opener: opening a tracker there re-enters the SCR cycle described on
+     * {@link #openInBackground(BundleContext)}.
+     * </p>
+     *
+     * @param context this bundle's context
+     * @param afterOpen run after the trackers are open; may be {@code null}
+     */
+    public void openInBackground(BundleContext context, Runnable afterOpen)
+    {
+        Thread opener = new Thread(() -> {
+            open(context);
+            if (afterOpen != null)
+            {
+                afterOpen.run();
+            }
+        }, "AI-EDT whiteboard"); //$NON-NLS-1$
         opener.setDaemon(true);
         opener.start();
     }
