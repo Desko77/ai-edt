@@ -634,8 +634,8 @@ final class FormItemsOps
         String result = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) ->
             helper.addFormAttributeColumn(form, parentAttributeName, name, title, dataPath,
                 type, project, colConfig, colQualifiers));
-        return helper.annotateAdopted(
-            EditMetadataTool.formatFormResultWithApiTag(result, "add_form_attribute_column", formFqn)); //$NON-NLS-1$
+        return EditMetadataTool.formatFormResultWithApiTag(result, "add_form_attribute_column", //$NON-NLS-1$
+            formFqn, helper.getAdoptedFormAttributes());
     }
 
     /**
@@ -1334,13 +1334,18 @@ final class FormItemsOps
      * error text. When the YamlFrontMatter cannot be parsed, the raw string is
      * wrapped as a success message (or error when it looks like one) so the
      * caller always receives valid JSON.
+     * <p>
+     * A successful answer also carries the {@code adoptedFormAttributes} line when
+     * {@link ru.aiedt.mcp.server.support.BmFormHelper#annotateAdopted(String)} wrote one,
+     * as a JSON array under the same key: a write that borrowed base-form attributes
+     * names them to the caller.
      *
      * @param markdown the raw EditFormTool response (YamlFrontMatter + body)
      * @param op the unified (snake_case) operation name for the response
      * @param formFqn the form FQN forwarded to EditFormTool (may be null)
      * @return a JSON string in EditMetadataTool's response shape
      */
-    private static String convertEditFormMarkdownToJson(String markdown, String op, String formFqn)
+    static String convertEditFormMarkdownToJson(String markdown, String op, String formFqn)
     {
         if (markdown == null)
         {
@@ -1349,6 +1354,7 @@ final class FormItemsOps
                 .toJson();
         }
         String status = null;
+        List<String> adopted = null;
         String body = markdown;
         // Parse a leading YamlFrontMatter block: "---\n" <lines> "---\n" <body>.
         // Strip a leading UTF-8 BOM defensively (YamlFrontMatter.build() never emits
@@ -1372,13 +1378,22 @@ final class FormItemsOps
                     String key = line.substring(0, colon).trim();
                     if ("status".equals(key)) //$NON-NLS-1$
                     {
-                        // Strip optional surrounding quotes from the YAML scalar.
-                        String val = line.substring(colon + 1).trim();
-                        if (val.length() >= 2 && val.startsWith("\"") && val.endsWith("\"")) //$NON-NLS-1$ //$NON-NLS-2$
+                        status = unquoteYamlScalar(line.substring(colon + 1).trim());
+                    }
+                    else if ("adoptedFormAttributes".equals(key)) //$NON-NLS-1$
+                    {
+                        // BmFormHelper.annotateAdopted writes the borrowed names as one
+                        // comma-separated scalar; the JSON answer names them as an array.
+                        // A list of one name is written bare, several names may arrive
+                        // quoted, and an empty scalar names nothing.
+                        adopted = new ArrayList<>();
+                        for (String name : unquoteYamlScalar(line.substring(colon + 1).trim()).split(",")) //$NON-NLS-1$
                         {
-                            val = val.substring(1, val.length() - 1);
+                            if (!name.trim().isEmpty())
+                            {
+                                adopted.add(name.trim());
+                            }
                         }
-                        status = val;
                     }
                 }
             }
@@ -1422,7 +1437,31 @@ final class FormItemsOps
         {
             ok.put("formFqn", formFqn); //$NON-NLS-1$
         }
+        if (adopted != null && !adopted.isEmpty())
+        {
+            ok.put("adoptedFormAttributes", adopted); //$NON-NLS-1$
+        }
         return ok.toJson();
+    }
+
+    /**
+     * Removes the quotes {@link YamlFrontMatter} puts around a scalar when it needs them.
+     * <p>
+     * A value carrying a comma or an empty value is written quoted, a bare word is not, so the
+     * parser has to accept both. Anything shorter than two characters is returned as it came - a
+     * single quote is a value, not a delimiter pair.
+     * </p>
+     *
+     * @param value the scalar as it stands in the front matter, already trimmed
+     * @return the value without its surrounding quotes
+     */
+    private static String unquoteYamlScalar(String value)
+    {
+        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     /**

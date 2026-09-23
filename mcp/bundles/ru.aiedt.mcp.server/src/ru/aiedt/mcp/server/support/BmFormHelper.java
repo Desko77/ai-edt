@@ -2203,7 +2203,7 @@ public class BmFormHelper
         {
             try
             {
-                setDataPathProperty(item, itemDataPathSetter, value);
+                setDataPathProperty(item, itemDataPathSetter, value, itemName);
                 return null;
             }
             catch (Exception e)
@@ -2220,7 +2220,7 @@ public class BmFormHelper
             {
                 try
                 {
-                    setDataPathProperty(dataPathExtInfo, extDataPathSetter, value);
+                    setDataPathProperty(dataPathExtInfo, extDataPathSetter, value, itemName);
                     return null;
                 }
                 catch (Exception e)
@@ -2624,21 +2624,22 @@ public class BmFormHelper
         Class<?> dataItemClass = Class.forName("com._1c.g5.v8.dt.form.model.DataItem"); //$NON-NLS-1$
         dataItemClass.getMethod("setDataPath", abstractDataPathClass).invoke(item, pathObj); //$NON-NLS-1$
 
-        guardDataPath(item, pathObj, dataPath);
+        guardDataPath(pathObj, dataPath, nameOfItem(item));
     }
 
     /**
      * Runs the extension-form check for a data path just assigned, and refuses
      * the whole write when the path would not reach the database.
      *
-     * @param item the form item the path was assigned to
      * @param pathObj the assigned {@code AbstractDataPath}
      * @param dataPath the dotted path as the caller wrote it
+     * @param elementName the name of the element the caller named, for the
+     *            refusal text
      */
-    private void guardDataPath(Object item, Object pathObj, String dataPath)
+    private void guardDataPath(Object pathObj, String dataPath, String elementName)
     {
         FormExtensionDataPathGuard.Outcome outcome = FormExtensionDataPathGuard.assign(
-            currentForm, pathObj, dataPath, nameOfItem(item));
+            currentForm, pathObj, dataPath, elementName);
         adoptedFormAttributes.addAll(outcome.getAdoptedAttributes());
         if (!outcome.isAccepted())
         {
@@ -2833,7 +2834,8 @@ public class BmFormHelper
         }
         setter.invoke(item, pathObj);
 
-        guardDataPath(item, pathObj, value);
+        guardDataPath(pathObj, value,
+            elementName != null && !elementName.isEmpty() ? elementName : nameOfItem(item));
     }
 
     // -----------------------------------------------------------------------

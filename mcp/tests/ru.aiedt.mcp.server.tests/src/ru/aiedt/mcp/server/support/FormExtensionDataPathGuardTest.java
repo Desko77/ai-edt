@@ -302,6 +302,38 @@ public class FormExtensionDataPathGuardTest
         }
     }
 
+    /**
+     * The names the guard collected are written where the caller reads the outcome.
+     * <p>
+     * Only the writer is checked here: the helper owns the list, and the operations that read the
+     * line back live in another package. The reader is pinned by
+     * {@code TheAnswerNamesWhatWasBorrowedTest} against this exact line.
+     * </p>
+     */
+    @Test
+    public void theBorrowedNamesAreWrittenIntoTheFrontMatter() throws Exception
+    {
+        BmFormHelper helper = new BmFormHelper();
+        assertTrue(helper.init());
+        Form form = extensionForm("Объект"); //$NON-NLS-1$
+        FormField field = fieldIn(form);
+        helper.formForTest(form);
+        FormExtensionDataPathGuard.installPort(new RecordingPort());
+
+        helper.setDataPath(field, PATH);
+        String answer = YamlFrontMatter.create()
+            .put("tool", "edit_form") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("status", "success") //$NON-NLS-1$ //$NON-NLS-2$
+            .wrapContent("ok"); //$NON-NLS-1$
+
+        String annotated = helper.annotateAdopted(answer);
+
+        assertTrue("the borrowed name must go into the front matter, where the caller reads the " //$NON-NLS-1$
+            + "outcome: " + annotated, annotated.contains("\nadoptedFormAttributes: Объект\n")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("a helper that borrowed nothing leaves the answer alone", answer, //$NON-NLS-1$
+            new BmFormHelper().annotateAdopted(answer));
+    }
+
     private static Form extensionForm(String... attributes)
     {
         Form form = FormFactory.eINSTANCE.createForm();

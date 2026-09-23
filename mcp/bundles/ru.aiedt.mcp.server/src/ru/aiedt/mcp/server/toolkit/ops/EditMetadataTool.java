@@ -1984,15 +1984,31 @@ public class EditMetadataTool implements IMcpTool
      */
     static String formatFormResultWithApiTag(String helperResult, String op, String formFqn)
     {
+        return formatFormResultWithApiTag(helperResult, op, formFqn, null);
+    }
+
+    /**
+     * Same as {@link #formatFormResultWithApiTag(String, String, String)}, naming the base-form
+     * attributes a successful write borrowed into the extension.
+     *
+     * @param helperResult the result text of the form operation
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @return the JSON answer
+     */
+    static String formatFormResultWithApiTag(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes)
+    {
         String body = stripErrorEnvelope(helperResult);
         if (body == null)
         {
-            return formatFormResult(helperResult, op, formFqn);
+            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes);
         }
         int idx = body.indexOf("formApiNotFound:"); //$NON-NLS-1$
         if (idx < 0)
         {
-            return formatFormResult(helperResult, op, formFqn);
+            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes);
         }
         String missing = body.substring(idx + "formApiNotFound:".length()).trim(); //$NON-NLS-1$
         // 1.41: trim trailing closing parens that come from upstream
@@ -2018,16 +2034,38 @@ public class EditMetadataTool implements IMcpTool
 
     static String formatFormResult(String helperResult, String op, String formFqn)
     {
+        return formatFormResult(helperResult, op, formFqn, null);
+    }
+
+    /**
+     * Builds the JSON answer of a form operation, naming the base-form attributes a successful
+     * write borrowed into an extension.
+     * <p>
+     * A form element of an extension whose data path starts at a base-form attribute borrows that
+     * attribute in the same write. The caller did not ask for it by name, so a successful answer
+     * carries {@code adoptedFormAttributes}; the key is absent when nothing was borrowed, and an
+     * error answer carries it not at all, because a refused write rolls back.
+     * </p>
+     *
+     * @param helperResult the result text of the form operation; null counts as success
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @return the JSON answer
+     */
+    static String formatFormResult(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes)
+    {
         // Row 42 note: a pending/failed disk flush is appended to helperResult as
         // a plain-text note by BmFormHelper.executeFormOperation, so it flows
         // through the "message" field here (and at every other form-op response
         // builder) with no special handling.
         if (helperResult == null)
         {
-            return ToolResult.success()
+            return putAdopted(ToolResult.success()
                 .put("operation", op) //$NON-NLS-1$
                 .put("formFqn", formFqn) //$NON-NLS-1$
-                .put("message", "ok") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("message", "ok"), adoptedFormAttributes) //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
         }
         if (isErrorOutcome(helperResult))
@@ -2037,11 +2075,27 @@ public class EditMetadataTool implements IMcpTool
                 .put("formFqn", formFqn) //$NON-NLS-1$
                 .toJson();
         }
-        return ToolResult.success()
+        return putAdopted(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
             .put("formFqn", formFqn) //$NON-NLS-1$
-            .put("message", helperResult) //$NON-NLS-1$
+            .put("message", helperResult), adoptedFormAttributes) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * Adds {@code adoptedFormAttributes} to an answer when names were borrowed.
+     *
+     * @param result the answer being built
+     * @param adoptedFormAttributes the borrowed base-form attribute names, or null
+     * @return the answer with the names, or unchanged when nothing was borrowed
+     */
+    private static ToolResult putAdopted(ToolResult result, List<String> adoptedFormAttributes)
+    {
+        if (adoptedFormAttributes == null || adoptedFormAttributes.isEmpty())
+        {
+            return result;
+        }
+        return result.put("adoptedFormAttributes", adoptedFormAttributes); //$NON-NLS-1$
     }
 
     /**
