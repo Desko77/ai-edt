@@ -111,9 +111,12 @@ from the person at the status bar. Either way the tool is not interrupted mid-un
 
 ## A metadata dependency graph names metadata
 
-`insights operation=dependency_graph` at `level=metadata` or `mixed` does not keep an EDT-internal
-target: an edge whose target is not a metadata object is dropped (`internalEdgesDropped` when any
-were). Repeated edges of the same `from`, `to` and `via` are one edge, and `count` is written when
+`insights operation=dependency_graph` keeps what its level is about: `metadata` carries metadata
+objects, `mixed` carries metadata objects and BSL modules. An EDT-internal end is dropped on either
+level and from EITHER side of an edge, as the target and as the source (`internalEdgesDropped` when
+any were, counted once per edge; on `metadata` an edge with a BSL module is dropped the same way).
+Repeated edges of the same `from`, `to` and `via` are one edge, and `count` is the number of
+references between that pair - one reference met from both sides stays one - and is written when
 it is greater than 1. `edgeKinds` keeps only the named `via` values; a kind the walk never saw is
 `unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied (`edgeKinds:
 notApplied`) and `calls` edges are unchanged.

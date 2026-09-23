@@ -25,11 +25,17 @@ import org.eclipse.emf.ecore.EObject;
 import org.junit.Test;
 
 import com._1c.g5.v8.bm.core.IBmObject;
+import com._1c.g5.v8.dt.bsl.model.Module;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 /**
- * The metadata dependency graph keeps metadata objects, merges a repeated edge, and can keep only
- * the kinds it was asked for.
+ * The dependency graph keeps the objects its level is about, merges a repeated edge, and can keep
+ * only the kinds it was asked for.
+ * <p>
+ * An edge is accepted or dropped by looking at BOTH ends, and the two ends of one reference report
+ * it, so the same edge arrives twice and is one edge. A metadata level carries metadata objects; a
+ * mixed level carries metadata objects and BSL modules; neither carries an EDT service object.
+ * </p>
  * <p>
  * No OSGi project: the ends are proxies, the same way {@link EveryEdgeEndIsANodeTest} stands in
  * for a BM object. The unfiltered walk is not this policy, and that test still reflects the
@@ -38,6 +44,24 @@ import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
  */
 public class MetadataGraphDropsInternalEdgesTest
 {
+    /** The three kinds of end a level can meet. */
+    private enum Kind
+    {
+        /** A metadata object, the only end the metadata level carries. */
+        METADATA("Catalog"),
+        /** A BSL module, an end of the mixed level as well. */
+        MODULE("Module"),
+        /** An EDT service object, an end of neither level. */
+        SERVICE("ModuleContextDefIndex");
+
+        final String eClassName;
+
+        Kind(String eClassName)
+        {
+            this.eClassName = eClassName;
+        }
+    }
+
     private static Object defaultOf(Class<?> type)
     {
         if (!type.isPrimitive())
@@ -51,6 +75,22 @@ public class MetadataGraphDropsInternalEdgesTest
         if (type == void.class)
         {
             return null;
+        }
+        if (type == char.class)
+        {
+            return Character.valueOf('\0');
+        }
+        if (type == long.class)
+        {
+            return Long.valueOf(0L);
+        }
+        if (type == float.class)
+        {
+            return Float.valueOf(0);
+        }
+        if (type == double.class)
+        {
+            return Double.valueOf(0);
         }
         return Integer.valueOf(0);
     }
@@ -76,7 +116,7 @@ public class MetadataGraphDropsInternalEdgesTest
             new Class<?>[] {EClass.class}, handler);
     }
 
-    private static IBmObject object(boolean metadata, String fqn)
+    private static IBmObject object(Kind kind, String fqn)
     {
         InvocationHandler handler = (proxy, method, args) -> {
             switch (method.getName())
@@ -88,7 +128,7 @@ public class MetadataGraphDropsInternalEdgesTest
             case "eContainer":
                 return null;
             case "eClass":
-                return eClass(metadata ? "Catalog" : "ModuleContextDefIndex");
+                return eClass(kind.eClassName);
             case "hashCode":
                 return Integer.valueOf(System.identityHashCode(proxy));
             case "equals":
@@ -100,21 +140,14 @@ public class MetadataGraphDropsInternalEdgesTest
             }
         };
         List<Class<?>> types = new ArrayList<>();
-        if (metadata)
-        {
-            types.add(MdObject.class);
-            if (!IBmObject.class.isAssignableFrom(MdObject.class))
-            {
-                types.add(IBmObject.class);
-            }
-            if (!EObject.class.isAssignableFrom(MdObject.class))
-            {
-                types.add(EObject.class);
-            }
-        }
-        else
+        types.add(kind == Kind.MODULE ? Module.class : (kind == Kind.METADATA
+            ? MdObject.class : IBmObject.class));
+        if (!IBmObject.class.isAssignableFrom(types.get(0)))
         {
             types.add(IBmObject.class);
+        }
+        if (!EObject.class.isAssignableFrom(types.get(0)))
+        {
             types.add(EObject.class);
         }
         return (IBmObject)Proxy.newProxyInstance(MetadataGraphDropsInternalEdgesTest.class.getClassLoader(),
@@ -124,11 +157,17 @@ public class MetadataGraphDropsInternalEdgesTest
     /** No arguments keeps every kind. Named arguments keep only those. */
     private static BmReferencesHelper.EdgePolicy policy(String... kinds)
     {
+        return policy(BmReferencesHelper.Ends.METADATA, kinds);
+    }
+
+    private static BmReferencesHelper.EdgePolicy policy(BmReferencesHelper.Ends ends,
+        String... kinds)
+    {
         if (kinds == null || kinds.length == 0)
         {
-            return new BmReferencesHelper.EdgePolicy(true, null);
+            return new BmReferencesHelper.EdgePolicy(ends, null);
         }
-        return new BmReferencesHelper.EdgePolicy(true, new LinkedHashSet<>(List.of(kinds)));
+        return new BmReferencesHelper.EdgePolicy(ends, new LinkedHashSet<>(List.of(kinds)));
     }
 
     private static BmReferencesHelper.BfsResult walk(IBmObject root)
@@ -141,18 +180,32 @@ public class MetadataGraphDropsInternalEdgesTest
     private static void edge(BmReferencesHelper.BfsResult result, IBmObject from, IBmObject to,
         String via, int maxEdges, BmReferencesHelper.EdgePolicy policy)
     {
+        edge(result, from, to, via, maxEdges, policy, BmReferencesHelper.Side.FORWARD);
+    }
+
+    private static void edge(BmReferencesHelper.BfsResult result, IBmObject from, IBmObject to,
+        String via, int maxEdges, BmReferencesHelper.EdgePolicy policy, BmReferencesHelper.Side side)
+    {
         Deque<IBmObject> queue = new ArrayDeque<>();
         Set<String> visited = new LinkedHashSet<>(result.nodes.keySet());
-        BmReferencesHelper.acceptEdge(result, queue, visited, from, to, via, 100, maxEdges, policy);
+        BmReferencesHelper.acceptEdge(result, queue, visited, from, to, via, 100, maxEdges, policy,
+            side);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> jsonEdges(BmReferencesHelper.BfsResult result)
+    {
+        return (List<Map<String, Object>>)DependencyGraphBuilder
+            .render(result, DependencyGraphBuilder.Format.JSON).get("edges");
     }
 
     /** A non-metadata target is not an edge and not a node. A metadata target stays. */
     @Test
     public void aServiceTargetIsDroppedAndAMetadataTargetStays()
     {
-        IBmObject goods = object(true, "Catalog.Goods");
-        IBmObject currencies = object(true, "Catalog.Currencies");
-        IBmObject index = object(false, "Documents.Order.ObjectModule.bsl.mCtxIdx");
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        IBmObject index = object(Kind.SERVICE, "Documents.Order.ObjectModule.bsl.mCtxIdx");
         BmReferencesHelper.BfsResult result = walk(goods);
 
         edge(result, goods, index, "refContextDefs", 100, policy());
@@ -166,21 +219,115 @@ public class MetadataGraphDropsInternalEdgesTest
         assertEquals("types", result.edges.get(0).featureName);
     }
 
+    /**
+     * A service object is refused as the SOURCE of an edge too, and it is not queued for the next
+     * ring. A backward reference arrives from whatever holds it, and that holder is reached without
+     * passing the target check - so checking the target alone let a service index of the model into
+     * the graph as a node and walked from it.
+     */
+    @Test
+    public void aServiceSourceIsDroppedTooAndIsNotQueued()
+    {
+        IBmObject order = object(Kind.METADATA, "Document.Order");
+        IBmObject index = object(Kind.SERVICE, "Document.Order.Form.Index");
+        BmReferencesHelper.BfsResult result = walk(order);
+        Deque<IBmObject> queue = new ArrayDeque<>();
+        Set<String> visited = new LinkedHashSet<>(result.nodes.keySet());
+
+        BmReferencesHelper.acceptEdge(result, queue, visited, index, order, "refContextDefs", 100,
+            100, policy(), BmReferencesHelper.Side.BACKWARD);
+
+        assertEquals(1, result.internalEdgesDropped);
+        assertTrue(result.edges.isEmpty());
+        assertEquals(1, result.nodes.size());
+        assertTrue("a service object is not walked from", queue.isEmpty());
+        assertFalse("and it is not visited either", visited.contains("Document.Order.Form.Index"));
+    }
+
     /** The predicate is the metadata type, and it needs no project. */
     @Test
     public void thePredicateIsAnInstanceofCheck()
     {
-        assertFalse(BmReferencesHelper.isMetadataObject(object(false, "Type.String")));
-        assertTrue(BmReferencesHelper.isMetadataObject(object(true, "Catalog.Goods")));
+        assertFalse(BmReferencesHelper.isMetadataObject(object(Kind.SERVICE, "Type.String")));
+        assertTrue(BmReferencesHelper.isMetadataObject(object(Kind.METADATA, "Catalog.Goods")));
         assertFalse(BmReferencesHelper.isMetadataObject(null));
+        assertFalse(BmReferencesHelper.isMetadataObject(object(Kind.MODULE, "CommonModule.A.Module")));
+    }
+
+    /** A module is an end of the mixed level and is a stranger to the metadata level. */
+    @Test
+    public void aModuleEndIsKeptOnMixedAndDroppedOnMetadata()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject module = object(Kind.MODULE, "CommonModule.Sales.Module");
+        assertTrue(BmReferencesHelper.isBslModule(module));
+        assertFalse(BmReferencesHelper.isBslModule(goods));
+
+        BmReferencesHelper.BfsResult mixed = walk(goods);
+        edge(mixed, goods, module, "types", 100,
+            policy(BmReferencesHelper.Ends.MIXED));
+
+        assertEquals(1, mixed.edges.size());
+        assertEquals("CommonModule.Sales.Module", mixed.edges.get(0).toFqn);
+        assertTrue(mixed.nodes.containsKey("CommonModule.Sales.Module"));
+        assertEquals(0, mixed.internalEdgesDropped);
+
+        BmReferencesHelper.BfsResult metadata = walk(goods);
+        edge(metadata, goods, module, "types", 100, policy(BmReferencesHelper.Ends.METADATA));
+
+        assertTrue(metadata.edges.isEmpty());
+        assertEquals(1, metadata.internalEdgesDropped);
+        assertFalse(metadata.nodes.containsKey("CommonModule.Sales.Module"));
+    }
+
+    /**
+     * One reference is one edge, however the walk came by it. The forward pass enumerates what a
+     * node points at and the backward pass asks the engine what points at it; between the same two
+     * ends both enumerate the same references, so a reference seen from both sides is one.
+     */
+    @Test
+    public void oneReferenceSeenFromBothSidesIsOne()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        BmReferencesHelper.BfsResult result = walk(goods);
+
+        edge(result, goods, currencies, "types", 100, policy(),
+            BmReferencesHelper.Side.FORWARD);
+        edge(result, goods, currencies, "types", 100, policy(),
+            BmReferencesHelper.Side.BACKWARD);
+
+        assertEquals(1, result.edges.size());
+        assertEquals(1, result.edges.get(0).count);
+        assertFalse("a count of one is not reported", jsonEdges(result).get(0).containsKey("count"));
+    }
+
+    /** Three references between the same two ends are three, seen from either side. */
+    @Test
+    public void threeReferencesSeenFromBothSidesStayThree()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        BmReferencesHelper.BfsResult result = walk(goods);
+        for (int i = 0; i < 3; i++)
+        {
+            edge(result, goods, currencies, "types", 100, policy(),
+                BmReferencesHelper.Side.FORWARD);
+            edge(result, goods, currencies, "types", 100, policy(),
+                BmReferencesHelper.Side.BACKWARD);
+        }
+
+        assertEquals(1, result.edges.size());
+        assertEquals(3, result.edges.get(0).count);
+        assertEquals(Integer.valueOf(3), jsonEdges(result).get(0).get("count"));
     }
 
     /** Three references of one kind are one edge. Two kinds on the same pair are two edges. */
     @Test
     public void repeatedEdgesMergeAndDistinctKindsDoNot()
     {
-        IBmObject goods = object(true, "Catalog.Goods");
-        IBmObject currencies = object(true, "Catalog.Currencies");
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
         BmReferencesHelper.BfsResult merged = walk(goods);
         edge(merged, goods, currencies, "types", 1, policy());
         edge(merged, goods, currencies, "types", 1, policy());
@@ -189,10 +336,7 @@ public class MetadataGraphDropsInternalEdgesTest
         assertFalse(merged.truncated);
         assertEquals(1, merged.edges.size());
         assertEquals(3, merged.edges.get(0).count);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> json = (List<Map<String, Object>>)DependencyGraphBuilder
-            .render(merged, DependencyGraphBuilder.Format.JSON).get("edges");
-        assertEquals(Integer.valueOf(3), json.get(0).get("count"));
+        assertEquals(Integer.valueOf(3), jsonEdges(merged).get(0).get("count"));
 
         BmReferencesHelper.BfsResult two = walk(goods);
         edge(two, goods, currencies, "types", 100, policy());
@@ -201,20 +345,35 @@ public class MetadataGraphDropsInternalEdgesTest
         assertEquals(2, two.edges.size());
         assertEquals(1, two.edges.get(0).count);
         assertEquals(1, two.edges.get(1).count);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> plain = (List<Map<String, Object>>)DependencyGraphBuilder
-            .render(two, DependencyGraphBuilder.Format.JSON).get("edges");
+        List<Map<String, Object>> plain = jsonEdges(two);
         assertFalse(plain.get(0).containsKey("count"));
         assertFalse(plain.get(1).containsKey("count"));
+    }
+
+    /** A dropped edge is counted once, whichever side reported it. */
+    @Test
+    public void aDroppedEdgeIsCountedOnceWhicheverSideReportsIt()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject index = object(Kind.SERVICE, "Document.Order.Form.Index");
+        BmReferencesHelper.BfsResult result = walk(goods);
+
+        edge(result, goods, index, "refContextDefs", 100, policy(),
+            BmReferencesHelper.Side.FORWARD);
+        edge(result, goods, index, "refContextDefs", 100, policy(),
+            BmReferencesHelper.Side.BACKWARD);
+
+        assertEquals("one edge, however many times the two ends report it", 1,
+            result.internalEdgesDropped);
     }
 
     /** A named kind is kept. A kind the walk never saw is reported and is not a refusal. */
     @Test
     public void namedKindsAreKeptAndAnUnknownKindLeavesTheRoots()
     {
-        IBmObject goods = object(true, "Catalog.Goods");
-        IBmObject currencies = object(true, "Catalog.Currencies");
-        IBmObject partner = object(true, "Catalog.Partner");
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        IBmObject partner = object(Kind.METADATA, "Catalog.Partner");
         BmReferencesHelper.BfsResult kept = walk(goods);
         edge(kept, goods, currencies, "types", 100, policy("types"));
         edge(kept, goods, partner, "basedOn", 100, policy("types"));
@@ -237,15 +396,56 @@ public class MetadataGraphDropsInternalEdgesTest
         assertEquals(Integer.valueOf(1), none.edgesDroppedByKind.get("types"));
     }
 
+    /** A kind the filter refuses is dropped once, whichever side reported the same edge. */
+    @Test
+    public void aRefusedKindIsCountedOnceWhicheverSideReportsIt()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        BmReferencesHelper.BfsResult result = walk(goods);
+
+        edge(result, goods, currencies, "basedOn", 100, policy("types"),
+            BmReferencesHelper.Side.FORWARD);
+        edge(result, goods, currencies, "basedOn", 100, policy("types"),
+            BmReferencesHelper.Side.BACKWARD);
+
+        assertTrue(result.edges.isEmpty());
+        assertEquals(Integer.valueOf(1), result.edgesDroppedByKind.get("basedOn"));
+    }
+
+    /**
+     * The mixed level keeps the kinds the caller named on an edge between two modules, and still
+     * drops the service object.
+     */
+    @Test
+    public void theMixedLevelKeepsAModulePairAndStillDropsAServiceEnd()
+    {
+        IBmObject caller = object(Kind.MODULE, "CommonModule.Sales.Module");
+        IBmObject callee = object(Kind.MODULE, "CommonModule.Prices.Module");
+        IBmObject index = object(Kind.SERVICE, "CommonModule.Sales.Module.mCtxIdx");
+        BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
+        result.nodes.put("CommonModule.Sales.Module", caller);
+
+        edge(result, caller, callee, "calls", 100,
+            policy(BmReferencesHelper.Ends.MIXED, "calls"));
+        edge(result, caller, index, "refContextDefs", 100,
+            policy(BmReferencesHelper.Ends.MIXED, "calls"));
+
+        assertEquals(1, result.edges.size());
+        assertEquals("CommonModule.Prices.Module", result.edges.get(0).toFqn);
+        assertEquals(1, result.internalEdgesDropped);
+    }
+
     /** No argument keeps every metadata kind, and still drops the internal target. */
     @Test
     public void withoutTheArgumentEveryMetadataKindStays()
     {
-        IBmObject goods = object(true, "Catalog.Goods");
-        IBmObject currencies = object(true, "Catalog.Currencies");
-        IBmObject index = object(false, "Documents.Order.ObjectModule.bsl.mCtxIdx");
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        IBmObject index = object(Kind.SERVICE, "Documents.Order.ObjectModule.bsl.mCtxIdx");
         BmReferencesHelper.BfsResult result = walk(goods);
-        BmReferencesHelper.EdgePolicy all = new BmReferencesHelper.EdgePolicy(true, null);
+        BmReferencesHelper.EdgePolicy all = new BmReferencesHelper.EdgePolicy(
+            BmReferencesHelper.Ends.METADATA, null);
         edge(result, goods, currencies, "types", 100, all);
         edge(result, goods, currencies, "basedOn", 100, all);
         edge(result, goods, index, "refContextDefs", 100, all);

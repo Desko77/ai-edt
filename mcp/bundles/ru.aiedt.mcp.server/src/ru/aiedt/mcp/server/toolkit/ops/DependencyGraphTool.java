@@ -225,10 +225,14 @@ public class DependencyGraphTool implements IMcpTool
                     else
                     {
                         Set<String> keep = edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
+                        // The mixed level shows metadata objects and BSL modules; the metadata level
+                        // is between metadata objects alone. Both refuse an EDT service object.
+                        BmReferencesHelper.EdgePolicy policy = level == Level.MIXED
+                            ? BmReferencesHelper.EdgePolicy.mixed(keep)
+                            : BmReferencesHelper.EdgePolicy.metadata(keep);
                         result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots, direction,
                             maxNodes, maxEdges, depth,
-                            () -> monitor.isCanceled() || watch.stopHere(),
-                            new BmReferencesHelper.EdgePolicy(true, keep));
+                            () -> monitor.isCanceled() || watch.stopHere(), policy);
                     }
                     bfsRef.set(result);
                 }
