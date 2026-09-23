@@ -74,6 +74,12 @@ public final class BmInfobaseCredentialsHelper
         /** True when a non-empty password is stored (the value is never exposed). */
         public boolean passwordStored;
         public String additionalParameters;
+        /**
+         * What the launch-configuration guard did after the list write (the save strips the
+         * application id of every launch configuration; the guard puts it back), or null when
+         * there was nothing to report. Never carries attribute values, only configuration names.
+         */
+        public String launchApplicationIds;
     }
 
     /** Internal infobase resolution. */
@@ -159,15 +165,32 @@ public final class BmInfobaseCredentialsHelper
                 + msg(e));
         }
 
-        try
+        // updateSettings saves the infobase list, and the reload that follows strips
+        // ATTR_APPLICATION_ID from every launch configuration (see LaunchApplicationIds).
+        // Remember the ids before the write and put them back after it, failure included. The
+        // snapshot, the write and the restore run under the one write lock: a second
+        // infobase-list write at once would snapshot the ids this write already stripped.
+        LaunchApplicationIds.Access launches =
+            LaunchConfigAccess.applicationIdAccess(LaunchConfigAccess.getLaunchManager());
+        InfobaseAccessSettings settings =
+            new InfobaseAccessSettings(access, userName, password, additionalParams);
+        LaunchApplicationIds.underWriteLock(launches, applicationIds -> {
+            try
+            {
+                mgr.updateSettings(res.infobase, settings);
+            }
+            catch (Throwable e)
+            {
+                r.error = "Failed to store the credentials in secure storage: " + msg(e); //$NON-NLS-1$
+                r.failureKind = ErrorTags.WRITE_FAILED.wire();
+                restoreApplicationIds(launches, applicationIds, r);
+                return r;
+            }
+            restoreApplicationIds(launches, applicationIds, r);
+            return r;
+        });
+        if (r.error != null)
         {
-            mgr.updateSettings(res.infobase,
-                new InfobaseAccessSettings(access, userName, password, additionalParams));
-        }
-        catch (Throwable e)
-        {
-            r.error = "Failed to store the credentials in secure storage: " + msg(e); //$NON-NLS-1$
-            r.failureKind = ErrorTags.WRITE_FAILED.wire();
             return r;
         }
 
@@ -287,8 +310,8 @@ public final class BmInfobaseCredentialsHelper
             if (!(app instanceof IInfobaseApplication))
             {
                 r.notInfobaseApp = true;
-                r.error = "No application named '" + applicationId + "' is not an infobase " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "application; credentials apply only to infobase applications."; //$NON-NLS-1$
+                r.error = "Application '" + applicationId + "' is not an infobase application; " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "credentials apply only to infobase applications."; //$NON-NLS-1$
                 return r;
             }
             InfobaseReference ib = ((IInfobaseApplication) app).getInfobase();
@@ -306,6 +329,51 @@ public final class BmInfobaseCredentialsHelper
         {
             r.error = "Failed to resolve the infobase application: " + msg(e); //$NON-NLS-1$
             return r;
+        }
+    }
+
+    /**
+     * Puts the launch configurations' application ids back after the infobase list write, and
+     * names in the result what the snapshot could not protect and what was restored, refused or
+     * lost. Best effort: a guard failure is logged, never thrown back into the credentials answer.
+     *
+     * @param launches the launch configurations, or null when there is no launch manager
+     * @param snapshot what {@link LaunchApplicationIds#snapshot} returned before the write
+     * @param r the result the report lands in
+     */
+    private static void restoreApplicationIds(LaunchApplicationIds.Access launches,
+        LaunchApplicationIds.SnapshotResult snapshot, CredentialResult r)
+    {
+        if (launches == null || snapshot == null)
+        {
+            return;
+        }
+        try
+        {
+            String snapshotNote = snapshot.isQuiet() ? null : snapshot.describe();
+            LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(launches, snapshot.held);
+            String reportNote = report.isQuiet() ? null : report.describe();
+            if (snapshotNote != null && reportNote != null)
+            {
+                r.launchApplicationIds = snapshotNote + "; " + reportNote; //$NON-NLS-1$
+            }
+            else if (snapshotNote != null)
+            {
+                r.launchApplicationIds = snapshotNote;
+            }
+            else
+            {
+                r.launchApplicationIds = reportNote;
+            }
+        }
+        catch (Throwable e)
+        {
+            // The guard itself failed: the ids are where the write left them, and the caller is
+            // told rather than handed silence.
+            Activator.logWarning("set_infobase_credentials: the launch configurations' application " //$NON-NLS-1$
+                + "ids were not restored: " + msg(e)); //$NON-NLS-1$
+            r.launchApplicationIds = "the launch configurations' application ids were not restored: " //$NON-NLS-1$
+                + msg(e);
         }
     }
 

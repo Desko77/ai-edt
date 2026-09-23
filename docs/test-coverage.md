@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 119 | a test class named after it |
-| exercised | 133 | reached by some other test |
-| tool-sweep | 69 | declaration checked by the registry-wide contract sweep |
+| direct | 120 | a test class named after it |
+| exercised | 139 | reached by some other test |
+| tool-sweep | 65 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 48 | needs a display or an extension point |
-| workspace-bound | 48 | drives a live EDT project or debug session |
+| workspace-bound | 46 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **417** | across 344 test classes |
+| **total** | **418** | across 351 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (48)
+## workspace-bound (46)
 
 **folders**
 - IClusterChangeObserver
@@ -52,8 +52,6 @@ _none_
 - BmFormGeneratorHelper
 - BmFormResourceHelper
 - BmHelpHelper
-- BmInfobaseCredentialsHelper
-- BmInfobaseLifecycleHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
 - BmRouteMapHelper
@@ -157,7 +155,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (69)
+## tool-sweep (65)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -199,13 +197,9 @@ _none_
 - GetFormStructureTool
 - GetObjectHelpTool
 - GetSubsystemsTool
-- InfobaseCreator
-- InfobaseCredentialsWriter
-- InfobaseRemover
 - InstallExtensionTool
 - LaunchConfigCreator
 - LaunchConfigsLister
-- LaunchTerminator
 - ListExtensionsTool
 - McpHistoryReader
 - MetadataObjectRenamer
@@ -230,7 +224,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (133)
+## exercised (139)
 
 **(root)**
 - Activator
@@ -266,7 +260,9 @@ _none_
 - BmExternalObjectDumpHelper
 - BmExternalObjectProjectHelper
 - BmFormHelper
+- BmInfobaseCredentialsHelper
 - BmInfobaseExtensionHelper
+- BmInfobaseLifecycleHelper
 - BmObjectHelper
 - BmReferencesHelper
 - BmRightsHelper
@@ -350,8 +346,12 @@ _none_
 - GitTool
 - ImpactAnalysisTool
 - InfobaseAdminFacadeTool
+- InfobaseCreator
+- InfobaseCredentialsWriter
+- InfobaseRemover
 - InsightsFacadeTool
 - LaunchDebuggerTool
+- LaunchTerminator
 - ListInterceptorsTool
 - MetadataDetailsReader
 - MetadataObjectDeleter
@@ -395,7 +395,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (119)
+## direct (120)
 
 **(root)**
 - BrowserOrigin
@@ -447,6 +447,7 @@ _none_
 - InstanceRegistry
 - JUnitReportFormatter
 - JUnitXmlReader
+- LaunchApplicationIds
 - LegacyStorageMigration
 - LineDelimiters
 - LocalizedStringUtils
@@ -554,11 +555,11 @@ closes.
 | 3-4 | 16 |
 | 5-8 | 36 |
 | 9-16 | 51 |
-| 17+ | 16 |
+| 17+ | 17 |
 
-3027 test methods across 344 test classes; 119 classes have a test of their own, median 9 methods each.
+3074 test methods across 351 test classes; 120 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 119 of 417 classes have one: 69 are covered by the registry-wide contract sweep and 48 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 120 of 418 classes have one: 65 are covered by the registry-wide contract sweep and 46 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 
