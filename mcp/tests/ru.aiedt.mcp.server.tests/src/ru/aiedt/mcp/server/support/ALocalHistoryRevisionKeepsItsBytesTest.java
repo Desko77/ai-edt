@@ -16,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -61,6 +62,10 @@ import ru.aiedt.mcp.server.toolkit.ops.DiffModuleTool;
  * {@code NOT_IN_HEAD} outcome, which a diff reports as a new module - on the strength of a read
  * that never happened. A history kept in a real workspace is exercised end to end as well, so the
  * bytes are seen arriving in a provider's hands and not only in this test's.</p>
+ *
+ * <p>An ordinary module is the other reader of the same history. It has a file of its own, so its
+ * current text is lines joined with a line feed, and the history it is compared with is read the
+ * same way. The bytes a provider is handed stay the bytes of the state.</p>
  */
 public class ALocalHistoryRevisionKeepsItsBytesTest
 {
@@ -234,9 +239,11 @@ public class ALocalHistoryRevisionKeepsItsBytesTest
         Map<String, byte[]> states = new LinkedHashMap<>();
         states.put("byte order mark", OLD_BYTES); //$NON-NLS-1$
         states.put("no final newline", "Процедура Старая()".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
-        // Single-byte Cyrillic: read as UTF-8 it would come out as replacement characters, so a
-        // read that decodes and re-encodes cannot return these bytes.
-        states.put("not UTF-8", "Процедура Старая()\r\n".getBytes(StandardCharsets.ISO_8859_1)); //$NON-NLS-1$
+        // windows-1251 Cyrillic. ISO-8859-1 cannot encode these letters and replaces each with
+        // '?', and those bytes are ordinary UTF-8, so a read that decodes and re-encodes would
+        // hand them back unchanged. These bytes it cannot.
+        states.put("not UTF-8", //$NON-NLS-1$
+            "Процедура Старая()\r\n".getBytes(Charset.forName("windows-1251"))); //$NON-NLS-1$ //$NON-NLS-2$
         states.put("empty", new byte[0]); //$NON-NLS-1$
 
         for (Map.Entry<String, byte[]> state : states.entrySet())
@@ -328,7 +335,8 @@ public class ALocalHistoryRevisionKeepsItsBytesTest
      * The whole path over a history kept in a real workspace: the project is in no repository, so
      * the revision of the container comes from local history, and the provider is handed exactly
      * the bytes that were written before the current text - byte order mark, CRLF and the missing
-     * final newline included.
+     * final newline included. The module lines are read with those terminators dropped, and the
+     * method diff names the procedure that was added.
      */
     @Test
     public void theLocalHistoryOfAWorkspaceFileReachesTheProvider() throws Exception
@@ -352,10 +360,110 @@ public class ALocalHistoryRevisionKeepsItsBytesTest
         assertTrue(answer, answer.contains("source: local-history-probe")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("container: " + CONTAINER)); //$NON-NLS-1$
         assertTrue(answer, answer.contains("hasChanges: true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("totalChangedMethods: 1")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("### Procedure Новая (added)")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("### Procedure Старая")); //$NON-NLS-1$
+    }
+
+    // -- An ordinary module, compared with its local history --
+
+    /**
+     * A module that has a file of its own, in a project that is in no repository, is compared with
+     * the local history. The saved text is CRLF and the edit adds one method; the method diff names
+     * that method and no other.
+     */
+    @Test
+    public void anOrdinaryCrlfModuleNamesOnlyTheMethodThatChanged() throws Exception
+    {
+        String path = "CommonModules/CrlfChanged/Module.bsl"; //$NON-NLS-1$
+        byte[] before = (
+            "Процедура Старая()\r\n" //$NON-NLS-1$
+                + "\tВозврат 1;\r\n" //$NON-NLS-1$
+                + "КонецПроцедуры\r\n").getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        byte[] after = (
+            "Процедура Старая()\r\n" //$NON-NLS-1$
+                + "\tВозврат 1;\r\n" //$NON-NLS-1$
+                + "КонецПроцедуры\r\n" //$NON-NLS-1$
+                + "Процедура Новая()\r\n" //$NON-NLS-1$
+                + "\tВозврат 2;\r\n" //$NON-NLS-1$
+                + "КонецПроцедуры\r\n").getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        keep(path, before, after);
+
+        String answer = diff(path, "methods"); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("previousRevision: local history")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("hasChanges: true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("totalChangedMethods: 1")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("### Procedure Новая (added)")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("### Procedure Старая")); //$NON-NLS-1$
+    }
+
+    /**
+     * The same module left untouched, CRLF and a trailing newline included, is identical to the
+     * local history. Summary reports no changes.
+     */
+    @Test
+    public void anUnchangedCrlfModuleReportsNoChanges() throws Exception
+    {
+        String path = "CommonModules/CrlfSame/Module.bsl"; //$NON-NLS-1$
+        byte[] same = (
+            "Процедура Старая()\r\n" //$NON-NLS-1$
+                + "\tВозврат 1;\r\n" //$NON-NLS-1$
+                + "КонецПроцедуры\r\n").getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        keep(path, same, same);
+
+        String answer = diff(path, "summary"); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("previousRevision: local history")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("hasChanges: false")); //$NON-NLS-1$
+        assertTrue(answer,
+            answer.contains("identical to the previous revision (local history)")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("Changes detected outside of methods")); //$NON-NLS-1$
+    }
+
+    /**
+     * A line feed and a trailing newline are the other shape in which the raw history disagrees
+     * with the current text. An untouched file in that shape is identical as well.
+     */
+    @Test
+    public void anUnchangedModuleWithATrailingLineFeedReportsNoChanges() throws Exception
+    {
+        String path = "CommonModules/LfSame/Module.bsl"; //$NON-NLS-1$
+        byte[] same = (
+            "Процедура Старая()\n" //$NON-NLS-1$
+                + "\tВозврат 1;\n" //$NON-NLS-1$
+                + "КонецПроцедуры\n").getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        keep(path, same, same);
+
+        String answer = diff(path, "summary"); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("previousRevision: local history")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("hasChanges: false")); //$NON-NLS-1$
+        assertTrue(answer,
+            answer.contains("identical to the previous revision (local history)")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("Changes detected outside of methods")); //$NON-NLS-1$
     }
 
     // -- Helpers --
+
+    /**
+     * Writes {@code previous} where the workspace can see it, then replaces it with {@code current}
+     * and keeps the local history, so the newest history state is {@code previous}.
+     */
+    private static void keep(String srcRelative, byte[] previous, byte[] current) throws Exception
+    {
+        Path target = projectDir.resolve("src").resolve(srcRelative); //$NON-NLS-1$
+        Files.createDirectories(target.getParent());
+        Files.write(target, previous);
+        project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+        IFile file = project.getFile(new org.eclipse.core.runtime.Path("src").append(srcRelative)); //$NON-NLS-1$
+        assertTrue("the module file is in the workspace: " + srcRelative, file.exists()); //$NON-NLS-1$
+        file.setContents(new ByteArrayInputStream(current),
+            IResource.FORCE | IResource.KEEP_HISTORY, new NullProgressMonitor());
+        IFileState[] history = file.getHistory(null);
+        assertNotNull(history);
+        assertTrue("the previous save is in the local history", history.length > 0); //$NON-NLS-1$
+    }
 
     /** Runs the tool over the module of the fixture project. */
     private static String diff(String modulePath, String mode)
@@ -373,10 +481,13 @@ public class ALocalHistoryRevisionKeepsItsBytesTest
         return header + "\n" + OPEN + "\n" + module + "\n" + CLOSE + "\n"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     }
 
-    /** The lines between the module markers, or {@code null} when the container holds no module. */
+    /**
+     * The lines between the module markers, with the terminators dropped, or {@code null} when the
+     * container holds no module.
+     */
     private static List<String> parse(String containerText)
     {
-        String[] lines = containerText.split("\n", -1); //$NON-NLS-1$
+        String[] lines = containerText.split("\r\n|\n|\r", -1); //$NON-NLS-1$
         int open = -1;
         for (int i = 0; i < lines.length; i++)
         {

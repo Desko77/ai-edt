@@ -6,9 +6,13 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 import org.eclipse.core.resources.IFile;
@@ -62,6 +66,10 @@ public final class GitDiffUtils
     /**
      * Gets the previous version of a file from VCS as text.
      * Tries git HEAD first, falls back to Eclipse Local History.
+     * <p>
+     * HEAD is the revision's own text, UTF-8, with a leading byte order mark stripped. Local
+     * history is lines of that text joined with a line feed, which is how a module file is read.
+     * </p>
      *
      * @param file the workspace file
      * @param project the containing project
@@ -69,7 +77,12 @@ public final class GitDiffUtils
      */
     public static String getPreviousVersion(IFile file, IProject project)
     {
-        return previousRevision(file, project).text();
+        PreviousRevision revision = previousRevision(file, project);
+        if (revision.origin() == PreviousRevision.Origin.LOCAL_HISTORY)
+        {
+            return localHistoryText(revision.bytes());
+        }
+        return revision.text();
     }
 
     /**
@@ -184,10 +197,12 @@ public final class GitDiffUtils
     /**
      * The local-history answer from states already fetched.
      *
-     * <p>A history state is read as bytes, not as text: a caller comparing against it receives them
-     * through {@code IModuleSource.linesIn}, which is handed the revision as the commit holds it,
-     * so line terminators, a byte order mark, a missing last newline and an encoding that is not
-     * UTF-8 all have to survive the read.</p>
+     * <p>A history state is read as bytes, not as text: a provider comparing against it receives
+     * them through {@code IModuleSource.linesIn}, which is handed the revision as the history holds
+     * it, so line terminators, a byte order mark, a missing last newline and an encoding that is
+     * not UTF-8 all have to survive the read. A module that has a file of its own is compared with
+     * {@link #localHistoryText} of those same bytes, the line-based read this path used before the
+     * bytes were kept.</p>
      *
      * <p>Package-private so a state that throws can be fed in: a read that fails is a read error,
      * and the outcome it replaced is carried in the note - reporting the earlier outcome there
@@ -224,6 +239,51 @@ public final class GitDiffUtils
         try (InputStream is = state.getContents())
         {
             return is.readAllBytes();
+        }
+    }
+
+    /**
+     * The text an ordinary module is compared with when the revision is the local history.
+     * <p>
+     * UTF-8, terminators dropped, lines joined with {@code \n}, a leading byte order mark taken
+     * off. That is how this path read a history state before the bytes were kept, and it is the
+     * shape {@code readFileLines} gives the current text of a module file. The bytes themselves
+     * stay on the revision: a provider is handed them unchanged.
+     * </p>
+     *
+     * @param bytes the history state, or {@code null}
+     * @return the lines joined with {@code \n}, or {@code null} when {@code bytes} is {@code null}
+     */
+    public static String localHistoryText(byte[] bytes)
+    {
+        if (bytes == null)
+        {
+            return null;
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+            new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)))
+        {
+            StringBuilder text = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null)
+            {
+                if (text.length() > 0)
+                {
+                    text.append("\n"); //$NON-NLS-1$
+                }
+                text.append(line);
+            }
+            if (text.length() > 0 && text.codePointAt(0) == 0xFEFF)
+            {
+                return text.substring(1);
+            }
+            return text.toString();
+        }
+        catch (IOException e)
+        {
+            // The source is a byte array and the charset replaces what it cannot decode, so this
+            // read does not fail. The declaration on the reader is what remains.
+            throw new IllegalStateException(e);
         }
     }
 

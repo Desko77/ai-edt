@@ -220,13 +220,14 @@ public class DiffModuleTool implements IMcpTool
         try
         {
             // 6. Read the current text: from the provider when it holds the module, from the file
-            // otherwise. Both are lines, and both are compared the same way.
+            // otherwise. A file is lines with the terminators dropped, joined with a line feed.
             List<String> currentLines = provided != null
                 ? provided.lines() : BslModuleAccess.readFileLines(file);
             String currentContent = String.join("\n", currentLines); //$NON-NLS-1$
 
             // 7. Get the previous revision: HEAD of the file, or of the container when a provider
-            // holds the module, else local history
+            // holds the module, else local history. An ordinary file's local history is read as
+            // lines too; a provider keeps the container bytes and finds its own lines in them.
             PreviousRevision previous = provided != null
                 ? previousOfProvided(project, provided)
                 : GitDiffUtils.previousRevision(file, project);
@@ -244,7 +245,7 @@ public class DiffModuleTool implements IMcpTool
                     currentLines.size());
             }
 
-            String previousContent = previous.text();
+            String previousContent = previousText(previous, provided == null);
 
             // 9. Handle identical content
             if (currentContent.equals(previousContent))
@@ -287,6 +288,27 @@ public class DiffModuleTool implements IMcpTool
             Activator.logError("Diff failed for module: " + modulePath, e); //$NON-NLS-1$
             return "Error: Diff failed: " + e.getMessage(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The previous text the comparison uses.
+     * <p>
+     * A provider's lines are already the module, decoded by the provider from the container bytes.
+     * An ordinary file compared with local history is read as lines joined with a line feed, the
+     * same shape as its current text. HEAD of an ordinary file stays the revision's own text.
+     * </p>
+     *
+     * @param previous the revision that was found
+     * @param ordinaryFile {@code true} when the module has a file of its own
+     * @return the previous text
+     */
+    private static String previousText(PreviousRevision previous, boolean ordinaryFile)
+    {
+        if (ordinaryFile && previous.origin() == PreviousRevision.Origin.LOCAL_HISTORY)
+        {
+            return GitDiffUtils.localHistoryText(previous.bytes());
+        }
+        return previous.text();
     }
 
     /**
