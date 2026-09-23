@@ -29,6 +29,7 @@ import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationMan
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
 import com._1c.g5.v8.dt.platform.services.model.FileConnectionString;
+import com._1c.g5.v8.dt.platform.services.model.Group;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.model.ModelFactory;
 import com._1c.g5.v8.dt.platform.services.model.Section;
@@ -67,6 +68,12 @@ public class BmInfobaseRegistrationHelperTest
 
         /** When set, the association throws with this message. */
         String associateFailure;
+
+        /** When set, deleting the list entry throws with this message. */
+        String deleteFailure;
+
+        /** When set, reading the default application throws with this message. */
+        String defaultReadFailure;
 
         /** What {@link #projectRunMode} answers. */
         String runMode = ClientLaunchMode.MANAGED;
@@ -118,6 +125,10 @@ public class BmInfobaseRegistrationHelperTest
                         configs.stripApplicationIds();
                         return null;
                     case "delete": //$NON-NLS-1$
+                        if (deleteFailure != null)
+                        {
+                            throw new IllegalStateException(deleteFailure);
+                        }
                         infobases.remove(args[0]);
                         configs.stripApplicationIds();
                         return null;
@@ -166,6 +177,10 @@ public class BmInfobaseRegistrationHelperTest
                         return new ArrayList<IApplication>(
                             applications.getOrDefault(((IProject)args[0]).getName(), List.of()));
                     case "getDefaultApplication": //$NON-NLS-1$
+                        if (defaultReadFailure != null)
+                        {
+                            throw new IllegalStateException(defaultReadFailure);
+                        }
                         return Optional.ofNullable(defaultApplication);
                     case "setDefaultApplication": //$NON-NLS-1$
                         defaultSet = (IApplication)args[1];
@@ -187,6 +202,12 @@ public class BmInfobaseRegistrationHelperTest
         public IProject resolveProject(String name)
         {
             return projects.get(name);
+        }
+
+        @Override
+        public List<IProject> allProjects()
+        {
+            return new ArrayList<>(projects.values());
         }
 
         @Override
@@ -255,6 +276,19 @@ public class BmInfobaseRegistrationHelperTest
         reference.setUuid(UUID.randomUUID());
         reference.setName(name);
         return reference;
+    }
+
+    /** A server infobase reference as an existing list entry carries one. */
+    private static InfobaseReference serverInfobase(String server, String referenceName, String name)
+    {
+        InfobaseReference infobase = ModelFactory.eINSTANCE.createInfobaseReference();
+        ServerConnectionString connection = ModelFactory.eINSTANCE.createServerConnectionString();
+        connection.setServer(server);
+        connection.setReference(referenceName);
+        infobase.setConnectionString(connection);
+        infobase.setUuid(UUID.randomUUID());
+        infobase.setName(name);
+        return infobase;
     }
 
     /**
@@ -412,5 +446,159 @@ public class BmInfobaseRegistrationHelperTest
         assertNotNull("the flag was applied to the new application", env.flagApplication); //$NON-NLS-1$
         assertEquals(r.applicationId, env.flagApplication.getId());
         assertTrue(env.flagWanted);
+    }
+
+    @Test
+    public void aSecondCallAnswersTheReusedEntryAsTheDefaultItAlreadyIs()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult first = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/NewBase", null, null, null, env); //$NON-NLS-1$
+        assertTrue(first.error, first.ok);
+        assertTrue(first.defaultApplication);
+
+        RegisterResult second = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/NewBase", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(second.error, second.ok);
+        assertFalse("the second call reuses the entry the first one added", second.added); //$NON-NLS-1$
+        assertTrue("the reused entry is the project's default after the call, so the answer " //$NON-NLS-1$
+            + "says true", second.defaultApplication); //$NON-NLS-1$
+        assertEquals("NewBase", second.previousDefault); //$NON-NLS-1$
+        assertEquals("no second entry was written", 1, env.infobases.size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedDefaultReadLeavesTheDefaultAloneAndNamesTheFailure()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.defaultReadFailure = "the application store is closed"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertNull("an unread default was not replaced", env.defaultSet); //$NON-NLS-1$
+        assertFalse(r.defaultApplication);
+        assertNotNull("the answer names the failed read", r.defaultWarning); //$NON-NLS-1$
+        assertTrue(r.defaultWarning.contains("could not be read")); //$NON-NLS-1$
+        assertTrue(r.defaultWarning.contains("the application store is closed")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aReusedDuplicateAlreadyBoundToAnotherProjectNamesIt()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.bind("project-two", existing); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertFalse(r.added);
+        assertNotNull(r.alsoAssociatedWith);
+        assertEquals(List.of("project-two"), r.alsoAssociatedWith); //$NON-NLS-1$
+        assertNotNull("the binding to this project still goes ahead", r.applicationId); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aNameAnotherEntryCarriesIsRefusedBeforeAnythingIsWritten()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.infobases.add(fileInfobase("C:/bases/other", "Taken")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, "Taken", null, env); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ALREADY_EXISTS.wire(), r.failureKind);
+        assertTrue(r.error.contains("another address")); //$NON-NLS-1$
+        assertEquals("nothing was written", 1, env.infobases.size()); //$NON-NLS-1$
+        assertTrue("nothing was bound", env.applications.isEmpty()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anExplicitMakeDefaultFalseLeavesTheProjectWithoutADefault()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, Boolean.FALSE, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertFalse(r.defaultApplication);
+        assertNull("no default was set", env.defaultSet); //$NON-NLS-1$
+        assertNull("the project still has no default", env.defaultApplication); //$NON-NLS-1$
+        assertNull(r.defaultWarning);
+    }
+
+    @Test
+    public void aFailedRollbackDeleteIsNamedInTheAnswer()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.associateFailure = "the association was refused"; //$NON-NLS-1$
+        env.deleteFailure = "the list would not save"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env); //$NON-NLS-1$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertFalse("the rollback did not complete, so it is not claimed", r.rolledBack); //$NON-NLS-1$
+        assertNotNull(r.rollbackFailure);
+        assertTrue(r.rollbackFailure.contains("the list would not save")); //$NON-NLS-1$
+        assertTrue("the answer names the failed rollback", //$NON-NLS-1$
+            r.error.contains("could NOT be removed again")); //$NON-NLS-1$
+        assertEquals("the entry stays in the list", 1, env.infobases.size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aServerDuplicateMatchesAcrossKeyCasePortAndExtraKeys()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = serverInfobase("srv-1c:1541", "Trade", "Trade server"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        env.infobases.add(existing);
+
+        // The same server infobase spelled with another key case, the port kept inside Srvr, and
+        // an extra key the parser skips.
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", null, //$NON-NLS-1$
+            "sRvR=\"SRV-1C:1541\";rEf=\"TRADE\";App=\"Debug\";", "Other name", null, env); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(r.error, r.ok);
+        assertFalse("the same server address is reused, not added", r.added); //$NON-NLS-1$
+        assertEquals("Trade server", r.infobaseName); //$NON-NLS-1$
+        assertEquals("the reused entry's uuid is the one answered", //$NON-NLS-1$
+            existing.getUuid().toString(), r.uuid);
+        assertEquals("no second entry was written", 1, env.infobases.size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aDuplicateNestedInAGroupIsFoundByThePlainListScan()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        Group group = ModelFactory.eINSTANCE.createGroup();
+        group.setName("Bases"); //$NON-NLS-1$
+        group.addSubsection(existing);
+        env.infobases.add(group);
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertFalse("the entry inside the group is found by the plain-list scan", r.added); //$NON-NLS-1$
+        assertEquals("Existing base", r.infobaseName); //$NON-NLS-1$
+        assertEquals("nothing was added beside the group", 1, env.infobases.size()); //$NON-NLS-1$
     }
 }

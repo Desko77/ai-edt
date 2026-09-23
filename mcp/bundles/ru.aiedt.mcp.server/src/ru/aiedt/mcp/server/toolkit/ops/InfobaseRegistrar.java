@@ -19,7 +19,8 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * Registers an EXISTING infobase (file or server) in EDT's infobase list and associates it to a
  * project as its application, in one call. The infobase itself is never created or deleted: only
  * the list entry and the project binding are written. A duplicate address is reused, not added
- * twice; a failed binding rolls the added entry back.
+ * twice, and the answer names the projects the reused entry was already bound to; a failed
+ * binding rolls the added entry back.
  */
 public class InfobaseRegistrar implements IMcpTool
 {
@@ -91,8 +92,9 @@ public class InfobaseRegistrar implements IMcpTool
     }
 
     /**
-     * Builds the answer: what was added or reused, the application it bound, the default and the
-     * run-mode flag outcomes, and what the launch-configuration guard repaired.
+     * Builds the answer: what was added or reused, the application it bound, the projects a reused
+     * entry was already bound to, the default and the run-mode flag outcomes, and what the
+     * launch-configuration guard repaired.
      *
      * @param r what the registration did
      * @return the answer JSON
@@ -135,6 +137,10 @@ public class InfobaseRegistrar implements IMcpTool
         if (r.previousDefault != null)
         {
             ok.put("previousDefaultApplication", r.previousDefault); //$NON-NLS-1$
+        }
+        if (r.alsoAssociatedWith != null)
+        {
+            ok.put("alsoAssociatedWith", r.alsoAssociatedWith); //$NON-NLS-1$
         }
         if (r.defaultWarning != null)
         {

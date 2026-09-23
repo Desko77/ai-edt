@@ -192,8 +192,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         rules.put("accessMode", "Optional - defaults to INFOBASE when userName is supplied, else OS."); //$NON-NLS-1$
         rules.put("syncOperation", "Kept separate from this facade's routing operation on purpose - " //$NON-NLS-1$
             + "sync_control has its own operation concept."); //$NON-NLS-1$
-        rules.put("name", "A protected snapshot is the only way back from a merge whose outcome " //$NON-NLS-1$
-            + "is not known here; releasing it says that merge has been dealt with."); //$NON-NLS-1$
+        rules.put("name", "sync_control release_support_snapshot: a protected snapshot is the only " //$NON-NLS-1$
+            + "way back from a merge whose outcome is not known here; releasing it says that " //$NON-NLS-1$
+            + "merge has been dealt with."); //$NON-NLS-1$
         rules.put("confirm", "These are DANGEROUS - only on explicit user request and only when " //$NON-NLS-1$
             + "certain of the state."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);

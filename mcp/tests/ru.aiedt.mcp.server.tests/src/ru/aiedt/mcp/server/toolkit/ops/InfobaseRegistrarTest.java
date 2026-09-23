@@ -10,6 +10,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.Test;
@@ -125,6 +126,24 @@ public class InfobaseRegistrarTest
         assertFalse(json.contains("\"added\":true")); //$NON-NLS-1$
         assertTrue(json.contains("\"previousDefaultApplication\":\"old-base\"")); //$NON-NLS-1$
         assertTrue(json.contains("\"defaultApplication\":false")); //$NON-NLS-1$
+        assertFalse("no other projects were named, so the field stays out", //$NON-NLS-1$
+            json.contains("alsoAssociatedWith")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aReusedEntryNamesTheProjectsItWasAlreadyBoundTo()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "existing-base"; //$NON-NLS-1$
+        r.added = false;
+        r.applicationId = "app-two"; //$NON-NLS-1$
+        r.alsoAssociatedWith = List.of("project-two"); //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"reused\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"alsoAssociatedWith\":[\"project-two\"]")); //$NON-NLS-1$
     }
 
     @Test

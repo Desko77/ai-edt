@@ -4,10 +4,14 @@
  */
 package ru.aiedt.mcp.server.support;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.debug.core.ILaunchManager;
 
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
@@ -38,7 +42,10 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * <p>
  * A duplicate is searched before any write: the new reference's {@link InfobaseIdentity} is
  * compared against every entry of the list, so the same infobase spelled with a trailing separator
- * or a different letter case (where the file system folds case) is reused, not added twice.
+ * or a different letter case (where the file system folds case) is reused, not added twice. The
+ * answer names the projects a reused entry was already bound to ({@code alsoAssociatedWith}), and
+ * a name another entry already carries at another address is refused before the write - the name
+ * is how {@code delete_infobase} and {@code create_launch_config} resolve the list.
  * </p>
  * <p>
  * Both the add and a rollback delete save the infobase list, and that save strips
@@ -76,8 +83,10 @@ public final class BmInfobaseRegistrationHelper
         public boolean defaultApplication;
         /** The default application that stood before, or {@code null} when there was none. */
         public String previousDefault;
-        /** Why the application could not be made the default, or {@code null}. */
+        /** Why the default was left alone or could not be set, or {@code null}. */
         public String defaultWarning;
+        /** Projects a reused entry was already bound to; {@code null} when it was bound nowhere else. */
+        public List<String> alsoAssociatedWith;
         /** What the ordinary-application flag did: added / present / not set: ... */
         public String ordinaryApplicationFlag;
         /** Whether the list entry added for this call was removed again after a failed binding. */
@@ -110,6 +119,11 @@ public final class BmInfobaseRegistrationHelper
          * @return the project, or <code>null</code> when unknown
          */
         IProject resolveProject(String name);
+
+        /**
+         * @return every project of the workspace, in the workspace's order
+         */
+        List<IProject> allProjects();
 
         /**
          * @param project the project
@@ -171,6 +185,12 @@ public final class BmInfobaseRegistrationHelper
         }
 
         @Override
+        public List<IProject> allProjects()
+        {
+            return Arrays.asList(ResourcesPlugin.getWorkspace().getRoot().getProjects());
+        }
+
+        @Override
         public InfobaseAssociationContext associationContext(IProject project)
         {
             return BmInfobaseLifecycleHelper.associationContextOf(project);
@@ -200,7 +220,8 @@ public final class BmInfobaseRegistrationHelper
      * @param name the name in EDT's list; required for a server infobase, defaults to the
      *        directory name for a file one; {@code null} means "not passed"
      * @param makeDefault whether the application becomes the project's default; {@code null} means
-     *        "true when the project has no default application, false otherwise"
+     *        "true when the project has no default application, false otherwise" - and a default
+     *        that could not be read counts as standing, not as absent
      * @return what was added or reused, bound and set as default; never <code>null</code>
      */
     public static RegisterResult registerInfobase(String projectName, String path,
@@ -260,33 +281,46 @@ public final class BmInfobaseRegistrationHelper
         candidate.setUuid(UUID.randomUUID());
         candidate.setName(name != null && !name.isBlank() ? name.trim() : defaultNameOf(path));
 
-        // The duplicate search runs before any write: the same infobase under another spelling is
-        // reused, never added twice.
-        InfobaseReference target = candidate;
-        String identity = InfobaseIdentity.of(candidate);
-        for (InfobaseReference existing : InfobaseReferences.asPlainList(mgr.getAll()))
-        {
-            if (identity.equals(InfobaseIdentity.of(existing)))
-            {
-                target = existing;
-                break;
-            }
-        }
-        r.added = target == candidate;
-
-        // The snapshot, the add, the binding, a rollback delete and the restore run under the one
-        // write lock: a second infobase-list write at once would snapshot the ids this write
+        // The snapshot, the duplicate search, the add, the binding, a rollback delete and the
+        // restore run under the one write lock: two calls at once must not both see no entry and
+        // both add, a second infobase-list write at once would snapshot the ids this write
         // already stripped, and the rollback delete strips them a second time.
         ILaunchManager launchManager = env.launchManager();
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(launchManager);
-        InfobaseReference bound = target;
+        InfobaseReference[] target = new InfobaseReference[1];
         LaunchApplicationIds.underWriteLock(access, snapshot -> {
             LaunchIds launchIds = new LaunchIds(launchManager, access, snapshot);
+            // The duplicate search runs before any write: the same infobase under another
+            // spelling is reused, never added twice.
+            InfobaseReference found = candidate;
+            String identity = InfobaseIdentity.of(candidate);
+            for (InfobaseReference existing : InfobaseReferences.asPlainList(mgr.getAll()))
+            {
+                if (identity.equals(InfobaseIdentity.of(existing)))
+                {
+                    found = existing;
+                    break;
+                }
+            }
+            target[0] = found;
+            r.added = found == candidate;
             if (r.added)
             {
+                // A second entry under one name would leave delete_infobase and
+                // create_launch_config resolving that name to the wrong base, so the collision
+                // is refused before the write, the way create_infobase refuses it.
+                Optional<InfobaseReference> sameName = mgr.findInfobaseByName(candidate.getName());
+                if (sameName.isPresent() && !sameInfobase(sameName.get(), candidate))
+                {
+                    r.error = "An infobase named '" + candidate.getName() + "' already stands in " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "EDT's list at another address. Pass another name, or delete that " //$NON-NLS-1$
+                        + "entry first (delete_infobase)."; //$NON-NLS-1$
+                    r.failureKind = ErrorTags.ALREADY_EXISTS.wire();
+                    return r;
+                }
                 try
                 {
-                    mgr.add(bound, ""); //$NON-NLS-1$
+                    mgr.add(found, ""); //$NON-NLS-1$
                 }
                 catch (Throwable e)
                 {
@@ -296,9 +330,17 @@ public final class BmInfobaseRegistrationHelper
                     return r;
                 }
             }
+            else
+            {
+                r.alsoAssociatedWith = otherProjectsBoundTo(appMgr, env, project, found);
+                if (r.alsoAssociatedWith.isEmpty())
+                {
+                    r.alsoAssociatedWith = null;
+                }
+            }
             try
             {
-                am.associate(project, bound,
+                am.associate(project, found,
                     InfobaseAssociationSettings.notSynchronized(env.associationContext(project)));
             }
             catch (Throwable e)
@@ -307,7 +349,7 @@ public final class BmInfobaseRegistrationHelper
                 {
                     try
                     {
-                        mgr.delete(bound);
+                        mgr.delete(found);
                         r.rolledBack = true;
                     }
                     catch (Throwable rollback)
@@ -334,6 +376,7 @@ public final class BmInfobaseRegistrationHelper
             return r;
         }
         r.ok = true;
+        InfobaseReference bound = target[0];
         r.infobaseName = bound.getName();
         r.uuid = bound.getUuid() == null ? null : bound.getUuid().toString();
 
@@ -343,13 +386,21 @@ public final class BmInfobaseRegistrationHelper
             r.applicationId = application.getId();
         }
 
-        IApplication previousDefault = defaultApplicationOf(appMgr, project);
+        DefaultRead defaultRead = defaultApplicationOf(appMgr, project);
+        IApplication previousDefault = defaultRead.application;
         if (previousDefault != null)
         {
             r.previousDefault = previousDefault.getName();
         }
+        if (defaultRead.failure != null)
+        {
+            // An unread default is not "there is none": the omit rule must not replace a default
+            // the answer never saw, so the failure is named and the default is left alone.
+            r.defaultWarning = "the project's default application could not be read (" //$NON-NLS-1$
+                + defaultRead.failure + "), so the standing default was left alone"; //$NON-NLS-1$
+        }
         boolean makeItDefault = makeDefault != null ? makeDefault.booleanValue()
-            : previousDefault == null;
+            : previousDefault == null && defaultRead.failure == null;
         if (makeItDefault)
         {
             if (application != null)
@@ -370,6 +421,12 @@ public final class BmInfobaseRegistrationHelper
                 r.defaultWarning = "the new application was not found among the project's " //$NON-NLS-1$
                     + "applications, so it could not be made the default"; //$NON-NLS-1$
             }
+        }
+        else
+        {
+            // The flag answers "the application is the project's default after the call": a reused
+            // entry that already held that state keeps it without a write.
+            r.defaultApplication = sameApplication(previousDefault, application);
         }
 
         String runMode = env.projectRunMode(project);
@@ -544,12 +601,12 @@ public final class BmInfobaseRegistrationHelper
     }
 
     /**
-     * The application the binding materialized: found among the project's applications by the
-     * infobase it points at.
+     * An application of the project that points at the given infobase: how the new binding
+     * materializes, and how a reused entry's other homes are found.
      *
      * @param appMgr the application manager
      * @param project the project
-     * @param infobase the reference that was bound
+     * @param infobase the reference to match
      * @return the application, or <code>null</code> when it cannot be read
      */
     private static IApplication findApplication(IApplicationManager appMgr, IProject project,
@@ -572,9 +629,24 @@ public final class BmInfobaseRegistrationHelper
         }
         catch (Throwable e)
         {
-            Activator.logWarning("register_infobase: the new application was not found: " + msg(e)); //$NON-NLS-1$
+            Activator.logWarning("register_infobase: the applications of a project were not read: " //$NON-NLS-1$
+                + msg(e));
         }
         return null;
+    }
+
+    /**
+     * What reading the project's default application ended with: the application, or why the read
+     * failed. The two must stay apart - a failed read answered as "there is none" lets the omit
+     * rule replace a default nobody saw.
+     */
+    private static final class DefaultRead
+    {
+        /** The default application; {@code null} when there is none or the read failed. */
+        IApplication application;
+
+        /** Why the read failed, or {@code null} when it succeeded. */
+        String failure;
     }
 
     /**
@@ -582,20 +654,80 @@ public final class BmInfobaseRegistrationHelper
      *
      * @param appMgr the application manager
      * @param project the project
-     * @return the default application, or <code>null</code> when there is none or it cannot be read
+     * @return what was read; {@link DefaultRead#failure} is set when the read failed
      */
-    private static IApplication defaultApplicationOf(IApplicationManager appMgr, IProject project)
+    private static DefaultRead defaultApplicationOf(IApplicationManager appMgr, IProject project)
     {
+        DefaultRead read = new DefaultRead();
         try
         {
-            return appMgr.getDefaultApplication(project).orElse(null);
+            read.application = appMgr.getDefaultApplication(project).orElse(null);
         }
         catch (Throwable e)
         {
+            read.failure = msg(e);
             Activator.logWarning("register_infobase: the project's default application was not read: " //$NON-NLS-1$
-                + msg(e));
-            return null;
+                + read.failure);
         }
+        return read;
+    }
+
+    /**
+     * Whether two application reads name the one application: by id, and for infobase
+     * applications by the infobase they point at.
+     *
+     * @param left one application, possibly {@code null}
+     * @param right the other, possibly {@code null}
+     * @return whether they name the same application
+     */
+    private static boolean sameApplication(IApplication left, IApplication right)
+    {
+        if (left == right)
+        {
+            return true;
+        }
+        if (left == null || right == null)
+        {
+            return false;
+        }
+        if (left.getId() != null && right.getId() != null)
+        {
+            return left.getId().equals(right.getId());
+        }
+        if (left instanceof IInfobaseApplication && right instanceof IInfobaseApplication)
+        {
+            return sameInfobase(((IInfobaseApplication)left).getInfobase(),
+                ((IInfobaseApplication)right).getInfobase());
+        }
+        return false;
+    }
+
+    /**
+     * The projects a reused entry was already bound to before this call: every workspace project
+     * but the one being registered to, whose applications point at the same infobase.
+     *
+     * @param appMgr the application manager
+     * @param env where the workspace's projects are read from
+     * @param registered the project being registered to
+     * @param infobase the reused list entry
+     * @return the other project names; empty when the entry was bound nowhere else
+     */
+    private static List<String> otherProjectsBoundTo(IApplicationManager appMgr,
+        RegistrationEnvironment env, IProject registered, InfobaseReference infobase)
+    {
+        List<String> names = new ArrayList<>();
+        for (IProject project : env.allProjects())
+        {
+            if (registered.getName().equals(project.getName()))
+            {
+                continue;
+            }
+            if (findApplication(appMgr, project, infobase) != null)
+            {
+                names.add(project.getName());
+            }
+        }
+        return names;
     }
 
     /** Whether two references name the one infobase: by uuid, else by normalized identity. */
