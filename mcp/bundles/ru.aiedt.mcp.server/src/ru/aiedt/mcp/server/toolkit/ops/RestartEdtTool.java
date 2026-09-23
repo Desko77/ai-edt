@@ -41,6 +41,18 @@ public class RestartEdtTool implements IMcpTool
     private static final int DEFAULT_DELAY_MS = 1000;
     private static final int MAX_DELAY_MS = 60000;
 
+    /**
+     * The VM arguments the Java launcher keeps for itself and never hands to the JVM.
+     * <p>
+     * They stand in the launcher's own {@code .ini} block, and a JVM's input-argument view never
+     * reports them - so a copy of the block recorded from that view is the same block with these
+     * lines missing. Both forms are recognised as a copy of the block.
+     * </p>
+     */
+    private static final java.util.List<String> LAUNCHER_CONSUMED_VM_ARGUMENTS =
+        java.util.Collections.unmodifiableList(
+            java.util.Arrays.asList("-server", "-client")); //$NON-NLS-1$ //$NON-NLS-2$
+
     /** The launcher {@code .ini} VM block that produced this process, captured at activation. */
     private static volatile java.util.List<String> startupIniVmArguments;
 
@@ -226,14 +238,38 @@ public class RestartEdtTool implements IMcpTool
             .put("action", action) //$NON-NLS-1$
             .put("delayMs", finalDelay) //$NON-NLS-1$
             .put("vmArgumentsNote", vmArgumentsNote) //$NON-NLS-1$
-            .put("note", "EDT will " + action + " in ~" + finalDelay //$NON-NLS-1$ //$NON-NLS-2$
-                + "ms. The MCP connection WILL drop (the server runs inside EDT); this is expected. " //$NON-NLS-1$
-                + (shutdown
-                    ? "EDT stays down - relaunch it (and its MCP server auto-starts)." //$NON-NLS-1$
-                    : "A detached watcher waits for the workspace to free and starts the same EDT " //$NON-NLS-1$
-                        + "with the same arguments; what happens after this process closes is past " //$NON-NLS-1$
-                        + "what this answer can see. Reconnect once /health answers again.")) //$NON-NLS-1$
+            .put("note", noteOf(action, finalDelay, shutdown, vmArgumentsNote)) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The note of a successful restart or shutdown answer.
+     * <p>
+     * A relaunch carries the user's own VM arguments only when the command could be assembled from
+     * them; when they were omitted, the note says what the relaunch will actually carry rather
+     * than claiming the same arguments.
+     * </p>
+     *
+     * @param action the accepted action.
+     * @param delayMs the delay the action is deferred by.
+     * @param shutdown whether the action is a shutdown rather than a restart.
+     * @param vmArgumentsNote the reason user VM arguments are not carried over, or
+     *     <code>null</code> when they are.
+     * @return the note text.
+     */
+    static String noteOf(String action, int delayMs, boolean shutdown, String vmArgumentsNote)
+    {
+        return "EDT will " + action + " in ~" + delayMs //$NON-NLS-1$ //$NON-NLS-2$
+            + "ms. The MCP connection WILL drop (the server runs inside EDT); this is expected. " //$NON-NLS-1$
+            + (shutdown
+                ? "EDT stays down - relaunch it (and its MCP server auto-starts)." //$NON-NLS-1$
+                : "A detached watcher waits for the workspace to free and starts the same EDT" //$NON-NLS-1$
+                    + (vmArgumentsNote == null
+                        ? " with the same arguments; " //$NON-NLS-1$
+                        : " with the launcher's current .ini VM block - the user VM arguments are not " //$NON-NLS-1$
+                            + "carried over; ") //$NON-NLS-1$
+                    + "what happens after this process closes is past what this answer can see. " //$NON-NLS-1$
+                    + "Reconnect once /health answers again.");
     }
 
     /**
@@ -361,15 +397,22 @@ public class RestartEdtTool implements IMcpTool
         {
             return "the startup .ini VM argument snapshot is empty."; //$NON-NLS-1$
         }
-        if (!blockStartsAt(vmArgumentsFromProperty(eclipseVmargs), 0,
-            iniVmArgumentsAtStartup))
+        if (blockLengthAt(vmArgumentsFromProperty(eclipseVmargs), 0,
+            iniVmArgumentsAtStartup) == 0)
         {
             return "eclipse.vmargs does not start with the startup .ini VM argument snapshot."; //$NON-NLS-1$
         }
         return null;
     }
 
-    /** Splits the property exactly as {@code Main.setMultiValueProperty} joined it. */
+    /**
+     * Splits the property exactly as {@code Main.setMultiValueProperty} joined it.
+     * <p>
+     * Trailing empty lines are dropped on both sides: the property is joined with a line separator
+     * after every argument, so its last separator would otherwise read as an argument of its own,
+     * and the {@code .ini} reader drops the same lines so the two line up.
+     * </p>
+     */
     private static java.util.List<String> vmArgumentsFromProperty(String eclipseVmargs)
     {
         java.util.List<String> arguments = new java.util.ArrayList<>();
@@ -379,7 +422,7 @@ public class RestartEdtTool implements IMcpTool
         }
         String[] lines = eclipseVmargs.split("\\n", -1); //$NON-NLS-1$
         int length = lines.length;
-        if (length > 0 && lines[length - 1].isEmpty())
+        while (length > 0 && lines[length - 1].isEmpty())
         {
             length--;
         }
@@ -418,9 +461,11 @@ public class RestartEdtTool implements IMcpTool
      * The arguments of an instance that are not the launcher's own {@code .ini} block.
      * <p>
      * Every complete copy of the block is dropped, not one: an instance that has already been
-     * restarted carries one copy per restart, and one removal would leave the rest in place. An
-     * argument of the caller's own is kept - only a run that reproduces the whole block, line for
-     * line, is read as another copy of it, and an argument equal to a single line of the block
+     * restarted carries one copy per restart, and one removal would leave the rest in place. A
+     * copy is either the block as the {@code .ini} holds it or the same block without the
+     * arguments the launcher keeps for itself, because both forms are recorded by real instances.
+     * An argument of the caller's own is kept - only a run that reproduces the whole block, line
+     * for line, is read as another copy of it, and an argument equal to a single line of the block
      * does not by itself reproduce one.
      * </p>
      *
@@ -436,44 +481,77 @@ public class RestartEdtTool implements IMcpTool
         {
             return extras;
         }
-        int blockLength = iniVmArguments == null ? 0 : iniVmArguments.size();
+        java.util.List<String> reducedBlock = withoutLauncherConsumedArguments(iniVmArguments);
         int i = 0;
         while (i < inputArguments.size())
         {
-            if (blockLength > 0 && blockStartsAt(inputArguments, i, iniVmArguments))
+            int blockLength = blockLengthAt(inputArguments, i, iniVmArguments);
+            if (blockLength == 0)
+            {
+                blockLength = blockLengthAt(inputArguments, i, reducedBlock);
+            }
+            if (blockLength == 0)
+            {
+                extras.add(inputArguments.get(i));
+                i++;
+            }
+            else
             {
                 i += blockLength;
-                continue;
             }
-            extras.add(inputArguments.get(i));
-            i++;
         }
         return extras;
     }
 
     /**
-     * Whether the {@code .ini} block stands here in full.
+     * The block without the arguments the launcher keeps for itself.
+     *
+     * @param block the {@code .ini} VM block, or <code>null</code>.
+     * @return the block without {@link #LAUNCHER_CONSUMED_VM_ARGUMENTS}; the same lines when none
+     *     of them stands in it.
+     */
+    private static java.util.List<String> withoutLauncherConsumedArguments(
+        java.util.List<String> block)
+    {
+        java.util.List<String> reduced = new java.util.ArrayList<>();
+        if (block == null)
+        {
+            return reduced;
+        }
+        for (String argument : block)
+        {
+            if (!LAUNCHER_CONSUMED_VM_ARGUMENTS.contains(argument))
+            {
+                reduced.add(argument);
+            }
+        }
+        return reduced;
+    }
+
+    /**
+     * How many arguments the block occupies where it stands, or zero when it does not stand there.
      *
      * @param arguments the arguments to look in.
      * @param offset where the block is expected to start.
      * @param block the block to look for; empty or <code>null</code> never matches.
-     * @return whether every line of the block matches at this offset.
+     * @return the number of lines of the block when every one of them matches at this offset, and
+     *     zero otherwise.
      */
-    private static boolean blockStartsAt(java.util.List<String> arguments, int offset,
+    private static int blockLengthAt(java.util.List<String> arguments, int offset,
         java.util.List<String> block)
     {
         if (block == null || block.isEmpty() || offset + block.size() > arguments.size())
         {
-            return false;
+            return 0;
         }
         for (int i = 0; i < block.size(); i++)
         {
             if (!block.get(i).equals(arguments.get(offset + i)))
             {
-                return false;
+                return 0;
             }
         }
-        return true;
+        return block.size();
     }
 
     /**
@@ -481,7 +559,9 @@ public class RestartEdtTool implements IMcpTool
      * <p>
      * The file is {@code <launcher>.ini} beside the executable, and the block is every raw line
      * after the exact {@code -vmargs} line. Eclipse documents whitespace as significant in this
-     * file, so no line is trimmed or otherwise normalised.
+     * file, so no line is trimmed or otherwise normalised; empty lines closing the block are
+     * dropped, because the property this snapshot is compared against is built by joining
+     * arguments with a line separator and can never carry them.
      * </p>
      *
      * @param launcher the launcher executable.
@@ -517,6 +597,10 @@ public class RestartEdtTool implements IMcpTool
                 continue;
             }
             arguments.add(line);
+        }
+        while (!arguments.isEmpty() && arguments.get(arguments.size() - 1).isEmpty())
+        {
+            arguments.remove(arguments.size() - 1);
         }
         return arguments;
     }
