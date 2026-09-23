@@ -54,7 +54,7 @@ public class EditFormTool implements IMcpTool
         "addField", "addGroup", "addButton", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "addTable", "addDecoration", "removeItem")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** Lazy-initialized singleton helper */
+    /** The helper of the request being served; see {@link #executeInternal} */
     private BmFormHelper helper;
 
     @Override
@@ -227,11 +227,9 @@ public class EditFormTool implements IMcpTool
     private String executeInternal(String projectName, String formFqn, String operation,
         Map<String, String> params)
     {
-        // Initialize helper (lazy singleton)
-        if (helper == null)
-        {
-            helper = new BmFormHelper();
-        }
+        // One helper per request: it holds the form the write works on and the
+        // base-form attributes that write borrowed, and neither may outlive it.
+        helper = new BmFormHelper();
         if (!helper.init())
         {
             return buildError("BmFormHelper initialization failed. " + //$NON-NLS-1$

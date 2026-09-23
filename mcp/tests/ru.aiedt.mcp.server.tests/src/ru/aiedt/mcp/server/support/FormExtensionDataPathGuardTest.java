@@ -50,6 +50,9 @@ public class FormExtensionDataPathGuardTest
 {
     private static final String PATH = "Объект.Description"; //$NON-NLS-1$
 
+    /** The finding's example: a second segment no attribute of the form carries. */
+    private static final String UNRESOLVED_PATH = "Объект.НесуществующийРеквизит"; //$NON-NLS-1$
+
     private static final String ITEM = "ПолеВвода"; //$NON-NLS-1$
 
     /** A write path of the helper, as one call the operations make. */
@@ -76,11 +79,16 @@ public class FormExtensionDataPathGuardTest
 
         boolean borrowFails;
 
+        /** What the form answers about the path's segments. */
+        boolean resolved = true;
+
         int belongingAsked;
 
         int borrowAsked;
 
         int skipAsked;
+
+        int resolvedAsked;
 
         @Override
         public boolean isExtensionBelongingObject(Object attribute)
@@ -106,6 +114,13 @@ public class FormExtensionDataPathGuardTest
         {
             skipAsked++;
             return skipReason;
+        }
+
+        @Override
+        public boolean isPathResolved(Object form, Object dataPath)
+        {
+            resolvedAsked++;
+            return resolved;
         }
     }
 
@@ -155,8 +170,51 @@ public class FormExtensionDataPathGuardTest
         assertTrue("nothing is reported as borrowed", outcome.getAdoptedAttributes().isEmpty()); //$NON-NLS-1$
     }
 
+    /**
+     * A segment the form does not resolve is refused, whatever the export says.
+     * <p>
+     * The path is built here from segments, so the referred-object list the export reads first is
+     * empty and the export answers "dropped" about any path at all. That answer says nothing about
+     * the path, and only a path the form really resolves may be accepted on the strength of its
+     * first segment: {@code Объект.НесуществующийРеквизит} names an attribute that does not exist,
+     * and EDT would drop it on export - it must not reach Form.form.
+     * </p>
+     */
     @Test
-    public void aPathTheExportWouldDropIsRefusedAfterTheBorrow()
+    public void aPathTheFormDoesNotResolveIsRefused()
+    {
+        Form form = extensionForm("Объект"); //$NON-NLS-1$
+        RecordingPort port = new RecordingPort();
+        port.skipReason = "путь не выгружается расширением"; //$NON-NLS-1$
+        port.resolved = false;
+        FormExtensionDataPathGuard.installPort(port);
+
+        FormExtensionDataPathGuard.Outcome outcome =
+            FormExtensionDataPathGuard.assign(form, path(UNRESOLVED_PATH), UNRESOLVED_PATH, ITEM);
+
+        assertFalse("a path the form does not resolve must not be written", outcome.isAccepted());
+        assertEquals("the attribute is borrowed before the export is asked about", 1, //$NON-NLS-1$
+            port.borrowAsked);
+        assertEquals("the export is asked once", 1, port.skipAsked); //$NON-NLS-1$
+        assertEquals("and the resolution is asked before the answer is honoured", 1, //$NON-NLS-1$
+            port.resolvedAsked);
+        assertEquals("what was borrowed is still reported with the refusal", List.of("Объект"), //$NON-NLS-1$ //$NON-NLS-2$
+            outcome.getAdoptedAttributes());
+        assertEquals(ITEM + ": путь данных " + UNRESOLVED_PATH //$NON-NLS-1$
+            + " не будет выгружен с формой расширения (" + port.skipReason //$NON-NLS-1$
+            + "); ничего не записано", outcome.getRefusal()); //$NON-NLS-1$
+    }
+
+    /**
+     * The same answer about a path the form does resolve is accepted.
+     * <p>
+     * This is the case the write paths of the tools are in: the export says "dropped" because the
+     * referred-object list of a path built here is empty, while the segments resolve and the first
+     * segment was borrowed just above. Refusing it would refuse every write of a data path.
+     * </p>
+     */
+    @Test
+    public void aPathTheFormResolvesSurvivesTheExportAnswer()
     {
         Form form = extensionForm("Объект"); //$NON-NLS-1$
         RecordingPort port = new RecordingPort();
@@ -166,14 +224,12 @@ public class FormExtensionDataPathGuardTest
         FormExtensionDataPathGuard.Outcome outcome =
             FormExtensionDataPathGuard.assign(form, path(PATH), PATH, ITEM);
 
-        assertFalse("a path EDT would drop must not be written", outcome.isAccepted());
-        assertEquals("the attribute is borrowed before the export is asked about", 1, //$NON-NLS-1$
-            port.borrowAsked);
-        assertEquals("the question is asked once, after the borrow", 1, port.skipAsked);
-        assertEquals("what was borrowed is still reported with the refusal", List.of("Объект"), //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("a path that resolves is written", outcome.isAccepted()); //$NON-NLS-1$
+        assertNull("nothing is refused", outcome.getRefusal()); //$NON-NLS-1$
+        assertEquals("the borrow is still reported", List.of("Объект"), //$NON-NLS-1$ //$NON-NLS-2$
             outcome.getAdoptedAttributes());
-        assertEquals(ITEM + ": путь данных " + PATH + " не будет выгружен с формой расширения (" //$NON-NLS-1$ //$NON-NLS-2$
-            + port.skipReason + "); ничего не записано", outcome.getRefusal()); //$NON-NLS-1$
+        assertEquals("the export is asked once", 1, port.skipAsked); //$NON-NLS-1$
+        assertEquals("and the resolution is asked once", 1, port.resolvedAsked); //$NON-NLS-1$
     }
 
     @Test
@@ -260,6 +316,9 @@ public class FormExtensionDataPathGuardTest
         for (Map.Entry<String, WritePath> entry : writePaths(helper, form, field).entrySet())
         {
             RecordingPort port = new RecordingPort();
+            // The answer a real port gives about a path built here, where the
+            // referred-object list the export reads first is empty.
+            port.skipReason = "путь не выгружается расширением"; //$NON-NLS-1$
             FormExtensionDataPathGuard.installPort(port);
 
             entry.getValue().call();
@@ -268,6 +327,8 @@ public class FormExtensionDataPathGuardTest
                 + "extension, and asks again to confirm the borrow took", 2, port.belongingAsked); //$NON-NLS-1$
             assertEquals(entry.getKey() + ": and borrows it", 1, port.borrowAsked); //$NON-NLS-1$
             assertEquals(entry.getKey() + ": and asks about export", 1, port.skipAsked); //$NON-NLS-1$
+            assertEquals(entry.getKey() + ": and asks the form to resolve the path, which is what " //$NON-NLS-1$
+                + "decides the export answer", 1, port.resolvedAsked); //$NON-NLS-1$
             assertTrue(entry.getKey() + ": the borrow is reported back to the caller", //$NON-NLS-1$
                 helper.getAdoptedFormAttributes().contains("Объект")); //$NON-NLS-1$
         }
@@ -300,6 +361,80 @@ public class FormExtensionDataPathGuardTest
                     expected.getOutcome().getRefusal());
             }
         }
+    }
+
+    /**
+     * A write that was refused and rolled back leaves no borrowed names behind.
+     * <p>
+     * The guard records the borrow before the export answers, and a refusal throws out of the
+     * transaction afterwards: the borrow happened in the model, but the model was rolled back, so
+     * the form the caller finds on disk has no borrowed attribute and the answer must not name one.
+     * </p>
+     */
+    @Test
+    public void aRefusedWriteLeavesNoBorrowedNames() throws Exception
+    {
+        BmFormHelper helper = new BmFormHelper();
+        assertTrue(helper.init());
+        Form form = extensionForm("Объект"); //$NON-NLS-1$
+        FormField field = fieldIn(form);
+        helper.formForTest(form);
+        RecordingPort port = new RecordingPort();
+        port.skipReason = "путь не выгружается расширением"; //$NON-NLS-1$
+        port.resolved = false;
+        FormExtensionDataPathGuard.installPort(port);
+
+        try
+        {
+            helper.setDataPath(field, PATH);
+            fail("the write must be refused, nothing reaches Form.form"); //$NON-NLS-1$
+        }
+        catch (FormExtensionDataPathGuard.RefusalException expected)
+        {
+            assertEquals("the refusal still reports what it borrowed before giving up", //$NON-NLS-1$
+                List.of("Объект"), expected.getOutcome().getAdoptedAttributes()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        assertTrue("nothing was borrowed in a form that was rolled back", //$NON-NLS-1$
+            helper.getAdoptedFormAttributes().isEmpty());
+    }
+
+    /**
+     * A second write through the same helper does not answer with the first one's borrow.
+     * <p>
+     * A tool keeps its helper across requests (EditFormTool holds one for its lifetime), so the names
+     * of one write were still there for the next one - a name from another form, and after a rollback
+     * a name of an attribute that was never borrowed at all.
+     * </p>
+     */
+    @Test
+    public void aSecondWriteDoesNotNameTheFirstOnesBorrow() throws Exception
+    {
+        BmFormHelper helper = new BmFormHelper();
+        assertTrue(helper.init());
+
+        Form first = extensionForm("Объект"); //$NON-NLS-1$
+        FormField firstField = fieldIn(first);
+        helper.formForTest(first);
+        FormExtensionDataPathGuard.installPort(new RecordingPort());
+        helper.setDataPath(firstField, PATH);
+
+        assertEquals("the first write names what it borrowed", List.of("Объект"), //$NON-NLS-1$ //$NON-NLS-2$
+            helper.getAdoptedFormAttributes());
+
+        // The next write is another form, and it borrows nothing: its own
+        // attribute already belongs to the extension.
+        Form second = extensionForm("СобственныйРеквизит"); //$NON-NLS-1$
+        FormField secondField = fieldIn(second);
+        RecordingPort port = new RecordingPort();
+        port.belonging.add(attribute(second, "СобственныйРеквизит")); //$NON-NLS-1$
+        helper.formForTest(second);
+        FormExtensionDataPathGuard.installPort(port);
+        helper.setDataPath(secondField, "СобственныйРеквизит.Поле"); //$NON-NLS-1$
+
+        assertEquals("the second write borrows nothing", 0, port.borrowAsked); //$NON-NLS-1$
+        assertTrue("the second write must not answer with the first one's borrow", //$NON-NLS-1$
+            helper.getAdoptedFormAttributes().isEmpty());
     }
 
     /**

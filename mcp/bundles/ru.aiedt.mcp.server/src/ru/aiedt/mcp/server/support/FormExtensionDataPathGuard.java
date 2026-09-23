@@ -24,14 +24,16 @@ import ru.aiedt.mcp.server.Activator;
  * extension in the same write, and a path EDT would drop on export is refused
  * before a single change is saved.
  *
- * <p>The whole decision lives behind {@link Port}, which stands for the two EDT
- * services that own the question -
+ * <p>The whole decision lives behind {@link Port}, which stands for the three
+ * EDT services that own the question -
  * {@code com.e1c.g5.v8.dt.form.extension.IFormExtensionManagementService} (is an
- * object adopted, adopt it) and
+ * object adopted, adopt it),
  * {@code com._1c.g5.v8.dt.form.service.extension.IFormExtensionService} (does
- * this path survive export of an extension form). The runtime implementation
- * reaches both reflectively, so the bundle needs no compile dependency on them;
- * a test installs its own port and sees the entire decision.
+ * this path survive export of an extension form) and
+ * {@code com._1c.g5.v8.dt.form.service.datasourceinfo.IDataSourceInfoAssociationService}
+ * (does the form resolve the path at all). The runtime implementation reaches
+ * all three reflectively, so the bundle needs no compile dependency on them; a
+ * test installs its own port and sees the entire decision.
  *
  * <p>A form of a configuration project is left alone: the services are not
  * asked at all, because the guard recognises an extension form by its non-null
@@ -72,6 +74,20 @@ public final class FormExtensionDataPathGuard
          *         on an unanswerable question would refuse every path
          */
         String exportSkipReason(Object form, Object dataPath);
+
+        /**
+         * @param form the extension form
+         * @param dataPath the assigned {@code AbstractDataPath}
+         * @return true when the form resolves the path: every segment of it
+         *         names something the form carries. A path assembled here holds
+         *         segments only, so this is the question that tells a nested
+         *         path to something that exists from a path leading nowhere -
+         *         the export decision cannot tell them apart, because it reads
+         *         the referred-object list such a path never fills. An
+         *         implementation that cannot answer says true, because refusing
+         *         on an unanswerable question would refuse every path
+         */
+        boolean isPathResolved(Object form, Object dataPath);
     }
 
     /**
@@ -210,8 +226,15 @@ public final class FormExtensionDataPathGuard
         }
 
         String skip = port.exportSkipReason(form, dataPath);
-        if (skip != null)
+        if (skip != null && !port.isPathResolved(form, dataPath))
         {
+            // "Dropped" alone does not condemn the path. The export decision
+            // starts from the path's referred objects, a transient list a path
+            // assembled here never fills, and answers "dropped" for an empty one
+            // whatever the path names - which is the answer a path that exists
+            // gets as well as a path that does not. The form's own resolution of
+            // the path separates them: a path it cannot resolve leads nowhere
+            // and is refused, one it resolves was covered by the borrow above.
             outcome.refusal = refusal(itemName, pathText, skip);
         }
         return outcome;
@@ -321,7 +344,7 @@ public final class FormExtensionDataPathGuard
     }
 
     /**
-     * The runtime port: the two EDT services reached by name, so the bundle
+     * The runtime port: the three EDT services reached by name, so the bundle
      * gains no compile dependency on their packages.
      *
      * <p>Every method answers "do not refuse" when its service is missing: a
@@ -336,6 +359,9 @@ public final class FormExtensionDataPathGuard
 
         private static final String EXTENSION_SERVICE =
             "com._1c.g5.v8.dt.form.service.extension.IFormExtensionService"; //$NON-NLS-1$
+
+        private static final String DATASOURCE_INFO_SERVICE =
+            "com._1c.g5.v8.dt.form.service.datasourceinfo.IDataSourceInfoAssociationService"; //$NON-NLS-1$
 
         private static final String MANAGEMENT_BUNDLE =
             "com.e1c.g5.v8.dt.form.extension"; //$NON-NLS-1$
@@ -451,6 +477,11 @@ public final class FormExtensionDataPathGuard
             return service(EXTENSION_SERVICE, FORM_BUNDLE, FORM_PLUGIN);
         }
 
+        private Object dataSourceInfo()
+        {
+            return service(DATASOURCE_INFO_SERVICE, FORM_BUNDLE, FORM_PLUGIN);
+        }
+
         @Override
         public boolean isExtensionBelongingObject(Object attribute)
         {
@@ -500,7 +531,6 @@ public final class FormExtensionDataPathGuard
                 // shouldSkipDataPathForExport(form, path, true) as soon as the
                 // feature argument is null and the object is a DataPath - the
                 // call the contract names, through the one public door onto it.
-                Class<?> dataPathClass = dataPath.getClass();
                 Method shouldSkip = null;
                 for (Method candidate : service.getClass().getMethods())
                 {
@@ -516,25 +546,8 @@ public final class FormExtensionDataPathGuard
                     return null;
                 }
                 Object answer = shouldSkip.invoke(service, form, dataPath, null, null);
-                if (!Boolean.TRUE.equals(answer))
-                {
-                    return null;
-                }
-                // The answer says "dropped". Its first step reads the path's
-                // referred objects, a transient list a path built here never
-                // fills, and reports "dropped" for an empty one whatever the
-                // attribute is. So the belonging question is asked directly -
-                // that is the condition the export actually turns on.
-                if (hasReferredObjects(dataPath, dataPathClass))
-                {
-                    return "путь не выгружается расширением"; //$NON-NLS-1$
-                }
-                Object root = rootAttribute(form, dataPath);
-                if (root != null && !isExtensionBelongingObject(root))
-                {
-                    return "реквизит " + nameOf(root) + " не принадлежит расширению"; //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                return null;
+                return Boolean.TRUE.equals(answer)
+                    ? "путь не выгружается расширением" : null; //$NON-NLS-1$
             }
             catch (Exception e)
             {
@@ -544,65 +557,38 @@ public final class FormExtensionDataPathGuard
             }
         }
 
-        /**
-         * @param dataPath the assigned path
-         * @param dataPathClass its class, for the reflective call
-         * @return true when the path carries at least one referred object
-         */
-        private boolean hasReferredObjects(Object dataPath, Class<?> dataPathClass)
+        @Override
+        public boolean isPathResolved(Object form, Object dataPath)
         {
+            Object service = dataSourceInfo();
+            if (service == null)
+            {
+                return true;
+            }
             try
             {
-                Object objects = dataPathClass.getMethod("getObjects").invoke(dataPath); //$NON-NLS-1$
-                if (!(objects instanceof java.util.Collection))
+                Method resolve = null;
+                for (Method candidate : service.getClass().getMethods())
                 {
-                    return false;
+                    if ("isPathResolved".equals(candidate.getName()) //$NON-NLS-1$
+                        && candidate.getParameterCount() == 2)
+                    {
+                        resolve = candidate;
+                        break;
+                    }
                 }
-                return !((java.util.Collection<?>) objects).isEmpty();
-            }
-            catch (Exception e)
-            {
-                return false;
-            }
-        }
-
-        /**
-         * @param form the form
-         * @param dataPath the assigned path
-         * @return the form attribute the path starts at, or null
-         */
-        private Object rootAttribute(Object form, Object dataPath)
-        {
-            try
-            {
-                Object segments = dataPath.getClass().getMethod("getSegments").invoke(dataPath); //$NON-NLS-1$
-                if (!(segments instanceof java.util.List) || ((java.util.List<?>) segments).isEmpty())
+                if (resolve == null)
                 {
-                    return null;
+                    return true;
                 }
-                Object first = ((java.util.List<?>) segments).get(0);
-                return first instanceof String ? findAttribute(form, (String) first) : null;
+                Object answer = resolve.invoke(service, form, dataPath);
+                return !Boolean.FALSE.equals(answer);
             }
             catch (Exception e)
             {
-                return null;
-            }
-        }
-
-        /**
-         * @param attribute a form attribute
-         * @return its name, or its class name when it has none to read
-         */
-        private String nameOf(Object attribute)
-        {
-            try
-            {
-                Object name = attribute.getClass().getMethod("getName").invoke(attribute); //$NON-NLS-1$
-                return name instanceof String ? (String) name : attribute.getClass().getSimpleName();
-            }
-            catch (Exception e)
-            {
-                return attribute.getClass().getSimpleName();
+                Activator.logWarning("FormExtensionDataPathGuard: isPathResolved failed: " //$NON-NLS-1$
+                    + e.getMessage());
+                return true;
             }
         }
     }

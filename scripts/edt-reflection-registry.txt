@@ -201,5 +201,6 @@ com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumpSupport isEnable
 com._1c.g5.wiring.ServiceAccess get
 com.e1c.g5.v8.dt.internal.distribution.DistributionPlugin getDefault,getInjector
 com.e1c.g5.v8.dt.form.extension.IFormExtensionManagementService adoptObject
+com._1c.g5.v8.dt.form.service.datasourceinfo.IDataSourceInfoAssociationService isPathResolved
 com._1c.g5.v8.dt.form.service.extension.IFormExtensionService isExtensionBelongingObject,shouldSkipForExport
 com.e1c.g5.v8.dt.internal.form.extension.FormExtensionPlugin getDefault,getInjector

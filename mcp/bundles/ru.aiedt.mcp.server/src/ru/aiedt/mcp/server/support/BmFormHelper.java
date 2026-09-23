@@ -124,16 +124,20 @@ public class BmFormHelper
 
     /**
      * Base-form attributes borrowed into the extension while this helper
-     * assigned data paths. Reported back to the caller, so a write that changed
-     * the form in a second place says so instead of looking like it only set a
-     * path.
+     * assigned data paths of the write in progress. Reported back to the
+     * caller, so a write that changed the form in a second place says so
+     * instead of looking like it only set a path.
+     *
+     * <p>Belongs to one write, not to the helper: a tool keeps its helper for
+     * its lifetime, so the list is opened by {@link #beginWrite} and dropped by
+     * {@link #abandonWrite} rather than living as long as the object.
      */
     private final List<String> adoptedFormAttributes = new ArrayList<>();
 
     /**
      * The form the current {@code executeFormOperation} transaction works on.
-     * Set while the task runs and left behind afterwards; a call made outside a
-     * transaction sees null and the data-path guard stays out of it.
+     * Set while the task runs; a call made outside a transaction sees null and
+     * the data-path guard stays out of it.
      */
     private Object currentForm;
 
@@ -323,6 +327,7 @@ public class BmFormHelper
     public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
         FormTransactionAction action)
     {
+        beginWrite(null);
         try
         {
             // Get BM model manager from Activator
@@ -430,7 +435,7 @@ public class BmFormHelper
                                 + "Re-run; if it persists, the form model may be stale (clean_project)."; //$NON-NLS-1$
                         }
 
-                        currentForm = form;
+                        beginWrite(form);
                         Object actionResult = action.execute(transaction, form);
                         if (dryRun)
                         {
@@ -470,6 +475,9 @@ public class BmFormHelper
                 // reflective invoke wraps it (InvocationTargetException / UTE).
                 if (unwrapsTo(invokeEx, BmDcsHelper.DryRunAbort.class))
                 {
+                    // A dry run is a rollback: the model keeps none of what the
+                    // write borrowed, so the names go with the transaction.
+                    abandonWrite();
                     Object preview = dryRunPreview.get();
                     if (preview instanceof String && ((String) preview).startsWith("Error:")) //$NON-NLS-1$
                     {
@@ -494,6 +502,9 @@ public class BmFormHelper
             // "Error:" to surface a fatal condition (form not found, etc.).
             if (result instanceof String && ((String) result).startsWith("Error:")) //$NON-NLS-1$
             {
+                // The action ran but its result is an error, and the persist
+                // below is skipped: nothing of this write reached the file.
+                abandonWrite();
                 return (String) result;
             }
 
@@ -522,6 +533,10 @@ public class BmFormHelper
         }
         catch (Exception e)
         {
+            // The transaction rolled back: a form that was not written has no
+            // borrowed attributes, and naming them would describe a change the
+            // caller cannot find in the file.
+            abandonWrite();
             // A data-path refusal is an expected answer, not a failure of the
             // API: the transaction has already rolled back and the text the
             // caller gets is the contract's, not a wrapped stack message.
@@ -2640,16 +2655,44 @@ public class BmFormHelper
     {
         FormExtensionDataPathGuard.Outcome outcome = FormExtensionDataPathGuard.assign(
             currentForm, pathObj, dataPath, elementName);
-        adoptedFormAttributes.addAll(outcome.getAdoptedAttributes());
         if (!outcome.isAccepted())
         {
+            // The refusal throws out of the transaction action, so this write
+            // is rolled back whole: nothing of it was borrowed, and no name may
+            // survive into a later answer.
+            abandonWrite();
             throw new FormExtensionDataPathGuard.RefusalException(outcome);
         }
+        adoptedFormAttributes.addAll(outcome.getAdoptedAttributes());
+    }
+
+    /**
+     * Opens a write: the borrowed names belong to one write, and the next one
+     * starts without them.
+     *
+     * @param form the form this write works on, or null when the form is not
+     *            resolved yet
+     */
+    private void beginWrite(Object form)
+    {
+        adoptedFormAttributes.clear();
+        currentForm = form;
+    }
+
+    /**
+     * Closes a write that will not reach the file - a refusal, a BM error, a
+     * dry run's rollback: the form is left as it was, so the names of what the
+     * write borrowed go with it.
+     */
+    private void abandonWrite()
+    {
+        adoptedFormAttributes.clear();
     }
 
     /**
      * Points the helper at the form a direct call works on, for tests that
-     * exercise a write path outside a BM transaction.
+     * exercise a write path outside a BM transaction. Opens a write on that
+     * form, the way {@link #executeFormOperation} does.
      * <p>
      * The operations do not call this: they get the form from
      * {@link #executeFormOperation}, which is also what makes a rollback
@@ -2659,7 +2702,7 @@ public class BmFormHelper
      */
     void formForTest(Object form)
     {
-        currentForm = form;
+        beginWrite(form);
     }
 
     /**
@@ -2723,8 +2766,8 @@ public class BmFormHelper
     }
 
     /**
-     * @return base-form attributes borrowed while this helper assigned data
-     *         paths, in the order they were borrowed
+     * @return base-form attributes borrowed by the write in progress, in the
+     *         order they were borrowed; empty once that write was abandoned
      */
     public List<String> getAdoptedFormAttributes()
     {
