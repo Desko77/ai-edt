@@ -6,11 +6,16 @@ package ru.aiedt.mcp.server.support;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.debug.core.ILaunchConfiguration;
+import org.eclipse.debug.core.ILaunchManager;
 
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationContextProvider;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
@@ -58,6 +63,7 @@ public final class BmInfobaseLifecycleHelper
         public boolean associated;
         public String applicationId;
         public String associateWarning;
+        public String launchApplicationIds;
     }
 
     /** Result of associate. */
@@ -81,6 +87,7 @@ public final class BmInfobaseLifecycleHelper
         public boolean dissociated;
         public boolean contentDeleted;
         public String dissociateWarning;
+        public String launchApplicationIds;
     }
 
     /**
@@ -113,6 +120,7 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.ALREADY_EXISTS.wire();
             return r;
         }
+        LaunchIds launchIds = snapshotLaunchApplicationIds();
         try
         {
             IInfobaseCreationOperation.Builder b = new IInfobaseCreationOperation.Builder()
@@ -127,9 +135,11 @@ public final class BmInfobaseLifecycleHelper
         }
         catch (Throwable e)
         {
+            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, Set.of(), "create_infobase"); //$NON-NLS-1$
             classifyCreate(r, e);
             return r;
         }
+        r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, Set.of(), "create_infobase"); //$NON-NLS-1$
         r.ok = true;
         if (mgr != null)
         {
@@ -270,6 +280,9 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.INFOBASE_NOT_FOUND.wire();
             return r;
         }
+        LaunchIds launchIds = snapshotLaunchApplicationIds();
+        Set<String> deletedConfigurations = configurationsForInfobase(launchIds.manager,
+            Activator.getDefault().getApplicationManager(), ref.get());
         if (projectName != null && !projectName.isEmpty())
         {
             IProject project = ProjectResolver.resolve(projectName);
@@ -333,12 +346,116 @@ public final class BmInfobaseLifecycleHelper
         }
         catch (Throwable e)
         {
+            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, Set.of(), "delete_infobase"); //$NON-NLS-1$
             r.error = "Failed to delete the infobase: " + msg(e); //$NON-NLS-1$
             r.failureKind = ErrorTags.DELETE_FAILED.wire();
             return r;
         }
+        r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, deletedConfigurations,
+            "delete_infobase"); //$NON-NLS-1$
         r.ok = true;
         return r;
+    }
+
+    /** The launch-manager state captured immediately before an infobase-list write. */
+    private static final class LaunchIds
+    {
+        final ILaunchManager manager;
+        final LaunchApplicationIds.Access access;
+        final Map<String, String> snapshot;
+
+        LaunchIds(ILaunchManager manager, LaunchApplicationIds.Access access,
+            Map<String, String> snapshot)
+        {
+            this.manager = manager;
+            this.access = access;
+            this.snapshot = snapshot;
+        }
+    }
+
+    private static LaunchIds snapshotLaunchApplicationIds()
+    {
+        ILaunchManager manager = LaunchConfigAccess.getLaunchManager();
+        LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(manager);
+        Map<String, String> snapshot = access == null ? null : LaunchApplicationIds.snapshot(access);
+        return new LaunchIds(manager, access, snapshot);
+    }
+
+    private static String restoreLaunchApplicationIds(LaunchIds launchIds,
+        Set<String> excludedConfigurations, String operation)
+    {
+        if (launchIds.access == null || launchIds.snapshot == null)
+        {
+            return null;
+        }
+        try
+        {
+            LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(
+                launchIds.access, launchIds.snapshot, excludedConfigurations);
+            return report.isQuiet() ? null : report.describe();
+        }
+        catch (Throwable e)
+        {
+            Activator.logWarning(operation + ": the launch configurations' application ids were not restored: " //$NON-NLS-1$
+                + msg(e));
+            return null;
+        }
+    }
+
+    /** Finds precisely the launch configurations whose application belongs to the deleted base. */
+    private static Set<String> configurationsForInfobase(ILaunchManager launchManager,
+        IApplicationManager applicationManager, InfobaseReference infobase)
+    {
+        Set<String> names = new LinkedHashSet<>();
+        if (launchManager == null || applicationManager == null)
+        {
+            return names;
+        }
+        try
+        {
+            for (ILaunchConfiguration configuration : launchManager.getLaunchConfigurations())
+            {
+                String projectName = configuration.getAttribute(LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
+                String applicationId = configuration.getAttribute(
+                    LaunchConfigAccess.ATTR_APPLICATION_ID, ""); //$NON-NLS-1$
+                IProject project = projectName.isEmpty() ? null : ProjectResolver.resolve(projectName);
+                if (project == null || applicationId.isEmpty())
+                {
+                    continue;
+                }
+                IApplication application = applicationManager.getApplication(project, applicationId)
+                    .orElse(null);
+                if (application instanceof IInfobaseApplication
+                    && sameInfobase(((IInfobaseApplication)application).getInfobase(), infobase))
+                {
+                    names.add(configuration.getName());
+                }
+            }
+        }
+        catch (Throwable e)
+        {
+            Activator.logWarning("delete_infobase: launch configurations of the deleted infobase " //$NON-NLS-1$
+                + "were not identified: " + msg(e)); //$NON-NLS-1$
+        }
+        return names;
+    }
+
+    private static boolean sameInfobase(InfobaseReference left, InfobaseReference right)
+    {
+        if (left == right)
+        {
+            return true;
+        }
+        if (left == null || right == null)
+        {
+            return false;
+        }
+        if (left.getUuid() != null && right.getUuid() != null)
+        {
+            return left.getUuid().equals(right.getUuid());
+        }
+        String leftIdentity = InfobaseIdentity.of(left);
+        return leftIdentity != null && leftIdentity.equals(InfobaseIdentity.of(right));
     }
 
     /** Finds the application id for an associated infobase (by matching name). */

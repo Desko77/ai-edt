@@ -740,7 +740,7 @@ public final class LaunchConfigAccess
             {
                 try
                 {
-                    ILaunchConfiguration config = launchManager.getLaunchConfiguration(name);
+                    ILaunchConfiguration config = findConfiguration(launchManager, name);
                     if (config == null || !config.exists())
                     {
                         return null;
@@ -758,7 +758,11 @@ public final class LaunchConfigAccess
             public void writeApplicationId(String name, String applicationId)
                 throws CoreException
             {
-                ILaunchConfiguration config = launchManager.getLaunchConfiguration(name);
+                ILaunchConfiguration config = findConfiguration(launchManager, name);
+                if (config == null || !config.exists())
+                {
+                    return;
+                }
                 // The working copy is taken now, after every edit made since the snapshot, so
                 // saving it puts back the one attribute and keeps whatever else changed meanwhile.
                 ILaunchConfigurationWorkingCopy copy = config.getWorkingCopy();
@@ -766,5 +770,19 @@ public final class LaunchConfigAccess
                 copy.doSave();
             }
         };
+    }
+
+    /** Finds a configuration by its display name; getLaunchConfiguration expects a memento. */
+    private static ILaunchConfiguration findConfiguration(ILaunchManager launchManager, String name)
+        throws CoreException
+    {
+        for (ILaunchConfiguration config : launchManager.getLaunchConfigurations())
+        {
+            if (name.equals(config.getName()))
+            {
+                return config;
+            }
+        }
+        return null;
     }
 }

@@ -302,8 +302,8 @@ public final class BmInfobaseCredentialsHelper
             if (!(app instanceof IInfobaseApplication))
             {
                 r.notInfobaseApp = true;
-                r.error = "No application named '" + applicationId + "' is not an infobase " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "application; credentials apply only to infobase applications."; //$NON-NLS-1$
+                r.error = "Application '" + applicationId + "' is not an infobase application; " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "credentials apply only to infobase applications."; //$NON-NLS-1$
                 return r;
             }
             InfobaseReference ib = ((IInfobaseApplication) app).getInfobase();

@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -79,6 +80,9 @@ public final class LaunchApplicationIds
         /** Configurations that no longer exist. */
         public final List<String> gone = new ArrayList<>();
 
+        /** Configurations deliberately left without an id because their application was deleted. */
+        public final List<String> excluded = new ArrayList<>();
+
         /** Configurations whose id could not be written back or did not read back as written. */
         public final List<String> failed = new ArrayList<>();
 
@@ -87,7 +91,7 @@ public final class LaunchApplicationIds
          */
         public boolean isQuiet()
         {
-            return restored.isEmpty() && changedMeanwhile.isEmpty() && gone.isEmpty()
+            return restored.isEmpty() && changedMeanwhile.isEmpty() && gone.isEmpty() && excluded.isEmpty()
                 && failed.isEmpty();
         }
 
@@ -111,6 +115,11 @@ public final class LaunchApplicationIds
             if (!gone.isEmpty())
             {
                 parts.add("found gone: " + String.join(", ", gone)); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (!excluded.isEmpty())
+            {
+                parts.add("left without an application id after deletion: " //$NON-NLS-1$
+                    + String.join(", ", excluded)); //$NON-NLS-1$
             }
             if (!failed.isEmpty())
             {
@@ -158,6 +167,23 @@ public final class LaunchApplicationIds
      */
     public static RestoreReport restore(Access access, Map<String, String> snapshot)
     {
+        return restore(access, snapshot, Collections.emptySet());
+    }
+
+    /**
+     * Puts back every stripped id except those belonging to an application that the list write
+     * deliberately deleted. Exclusions name configurations, rather than application ids, because
+     * application ids are scoped to projects and the same spelling can validly occur in two
+     * projects.
+     *
+     * @param access the launch configurations
+     * @param snapshot what {@link #snapshot(Access)} returned before the write
+     * @param excludedConfigurations configurations whose removed application id must stay removed
+     * @return what was restored, kept, refused, deliberately omitted, lost and failed
+     */
+    public static RestoreReport restore(Access access, Map<String, String> snapshot,
+        Set<String> excludedConfigurations)
+    {
         RestoreReport report = new RestoreReport();
         Set<String> names = new HashSet<>(access.configurationNames());
         for (Map.Entry<String, String> entry : snapshot.entrySet())
@@ -167,6 +193,11 @@ public final class LaunchApplicationIds
             if (!names.contains(name))
             {
                 report.gone.add(name);
+                continue;
+            }
+            if (excludedConfigurations.contains(name))
+            {
+                report.excluded.add(name);
                 continue;
             }
             String current = access.readApplicationId(name);

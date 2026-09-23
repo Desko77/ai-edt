@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.Test;
 
@@ -243,5 +244,40 @@ public class LaunchApplicationIdsTest
         assertTrue(report.restored.isEmpty());
         assertTrue(report.describe().contains("app-one")); //$NON-NLS-1$
         assertNull(access.readApplicationId("app-one")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void createInfobaseRestoresBothForeignApplicationIds()
+    {
+        FakeAccess access = new FakeAccess();
+        access.add("foreign-one", "application-one"); //$NON-NLS-1$ //$NON-NLS-2$
+        access.add("foreign-two", "application-two"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Map<String, String> snapshot = LaunchApplicationIds.snapshot(access);
+        access.stripApplicationIds();
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+
+        assertEquals("application-one", access.readApplicationId("foreign-one")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("application-two", access.readApplicationId("foreign-two")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(List.of("foreign-one", "foreign-two"), report.restored); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the create response has a launchApplicationIds report", report.isQuiet()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void deleteInfobaseLeavesItsConfigurationUnboundAndRestoresTheForeignOne()
+    {
+        FakeAccess access = new FakeAccess();
+        access.add("deleted-base", "deleted-application"); //$NON-NLS-1$ //$NON-NLS-2$
+        access.add("foreign-base", "foreign-application"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Map<String, String> snapshot = LaunchApplicationIds.snapshot(access);
+        access.stripApplicationIds();
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot, Set.of("deleted-base")); //$NON-NLS-1$
+
+        assertNull(access.readApplicationId("deleted-base")); //$NON-NLS-1$
+        assertEquals("foreign-application", access.readApplicationId("foreign-base")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(List.of("deleted-base"), report.excluded); //$NON-NLS-1$
+        assertEquals(List.of("foreign-base"), report.restored); //$NON-NLS-1$
+        assertTrue(report.describe().contains("deleted-base")); //$NON-NLS-1$
     }
 }
