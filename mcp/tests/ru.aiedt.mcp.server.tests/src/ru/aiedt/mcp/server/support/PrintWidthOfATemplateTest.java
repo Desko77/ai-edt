@@ -14,6 +14,8 @@ import static org.junit.Assert.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.Test;
 
@@ -73,15 +75,21 @@ public class PrintWidthOfATemplateTest
         }
     }
 
-    /** @return a row of that many cells, added to the document. */
+    /** @return a row of that many cells, added to the document at row 0. */
     private static Row withRowOfCells(SpreadsheetDocument doc, int count)
     {
+        return rowAt(doc, 0, count);
+    }
+
+    /** @return a row of that many cells, stored at {@code rowIndex}. */
+    private static Row rowAt(SpreadsheetDocument doc, int rowIndex, int cellCount)
+    {
         Row row = MoxelFactory.eINSTANCE.createRow();
-        for (int index = 0; index < count; index++)
+        for (int index = 0; index < cellCount; index++)
         {
             row.getCells().put(Integer.valueOf(index), MoxelFactory.eINSTANCE.createCell());
         }
-        doc.getRows().put(Integer.valueOf(0), row);
+        doc.getRows().put(Integer.valueOf(rowIndex), row);
         return row;
     }
 
@@ -190,10 +198,34 @@ public class PrintWidthOfATemplateTest
     }
 
     @Test
+    public void aWideColumnSetOnTheRowWhoseCellsEndEarlierIsTheSetPrinted()
+    {
+        // The wide set sits on the row whose cells stop first. The row that reaches further right
+        // carries the document's narrow columns. Measuring "the row with the rightmost cell,
+        // through that cell" answers 40; the paginator answers the wide set's declared size, 300.
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 10, 10, 10, 10);
+        doc.getColumns().setColumnsId(UUID.randomUUID());
+        rowAt(doc, 0, 4);
+        Row shorter = rowAt(doc, 1, 1);
+        Columns own = MoxelFactory.eINSTANCE.createColumns();
+        own.setColumnsId(UUID.randomUUID());
+        own.setSize(3);
+        own.setFormatIndex(formatOfWidth(doc, 100));
+        shorter.setColumns(own);
+
+        Map<String, Object> answer =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+
+        assertEquals(300, answer.get("contentWidthCharUnits")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aPrintAreaNamesTheColumnsTheSheetPrints()
     {
-        // An area that names columns keeps the measurement to those columns: the widest set behind
-        // it does not widen the answer.
+        // The area's begin..end keeps the measurement to those columns: the widest set behind it
+        // does not widen the answer. Row 0 carries no set of its own, so the widths are the
+        // document's - the same set this area happens to store.
         SpreadsheetDocument doc = emptyDocument();
         withColumnWidths(doc, 100, 100, 100);
         withRowOfCells(doc, 3);
@@ -201,6 +233,37 @@ public class PrintWidthOfATemplateTest
         area.setBegin(0);
         area.setEnd(1);
         area.setColumns(doc.getColumns());
+        doc.setPrintArea(area);
+
+        Map<String, Object> answer =
+            TemplatePrintWidth.check(doc, TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT, narrow());
+
+        assertEquals(200, answer.get("contentWidthCharUnits")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aColumnsAreaIsMeasuredWithTheFirstRowsColumnsNotItsOwn()
+    {
+        // The area carries a narrow set of its own. Row 0 carries a wider one. The paginator reads
+        // row 0: getPrintRangeRect turns the area into a rectangle whose y is 0, and both the
+        // width scale and the page break then call getRowColumns of that y.
+        SpreadsheetDocument doc = emptyDocument();
+        withColumnWidths(doc, 10, 10, 10);
+        Row first = withRowOfCells(doc, 2);
+        Columns rowColumns = MoxelFactory.eINSTANCE.createColumns();
+        rowColumns.setColumnsId(UUID.randomUUID());
+        rowColumns.setSize(2);
+        rowColumns.setFormatIndex(formatOfWidth(doc, 100));
+        first.setColumns(rowColumns);
+
+        Columns areaColumns = MoxelFactory.eINSTANCE.createColumns();
+        areaColumns.setColumnsId(UUID.randomUUID());
+        areaColumns.setSize(2);
+        areaColumns.setFormatIndex(formatOfWidth(doc, 40));
+        ColumnsArea area = MoxelFactory.eINSTANCE.createColumnsArea();
+        area.setBegin(0);
+        area.setEnd(1);
+        area.setColumns(areaColumns);
         doc.setPrintArea(area);
 
         Map<String, Object> answer =
@@ -435,7 +498,7 @@ public class PrintWidthOfATemplateTest
     {
         try
         {
-            TemplatePrintWidth.measuredCharWidth = null;
+            TemplatePrintWidth.discardMeasuredCharWidth();
             TemplatePrintWidth.charMeasurement = () -> new TemplatePrintWidth.CharMetrics(1.9, "jdk:probe 8"); //$NON-NLS-1$
 
             TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
@@ -461,7 +524,7 @@ public class PrintWidthOfATemplateTest
     {
         try
         {
-            TemplatePrintWidth.measuredCharWidth = null;
+            TemplatePrintWidth.discardMeasuredCharWidth();
             TemplatePrintWidth.charMeasurement = () -> {
                 throw new IllegalStateException("no font machinery here"); //$NON-NLS-1$
             };
@@ -482,7 +545,7 @@ public class PrintWidthOfATemplateTest
     {
         try
         {
-            TemplatePrintWidth.measuredCharWidth = null;
+            TemplatePrintWidth.discardMeasuredCharWidth();
             TemplatePrintWidth.charMeasurementTimeoutMs = 150;
             TemplatePrintWidth.charMeasurement = () -> {
                 try
@@ -511,10 +574,65 @@ public class PrintWidthOfATemplateTest
         }
     }
 
-    /** Puts the measurement seam back the way production runs it. */
+    @Test
+    public void aMeasurementThatFinishesInsideTheTimeoutWindowIsWhatTheCallerReturns()
+        throws Exception
+    {
+        // The daemon publishes after the caller has seen an empty cache and before the caller
+        // publishes the constant. The cache keeps the measurement; the caller has to return that
+        // same value.
+        CountDownLatch callerInTheWindow = new CountDownLatch(1);
+        try
+        {
+            TemplatePrintWidth.discardMeasuredCharWidth();
+            TemplatePrintWidth.charMeasurementTimeoutMs = 1;
+            TemplatePrintWidth.charMeasurement = () -> {
+                try
+                {
+                    if (!callerInTheWindow.await(5, TimeUnit.SECONDS))
+                    {
+                        return null;
+                    }
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+                return new TemplatePrintWidth.CharMetrics(1.9, "jdk:in the window"); //$NON-NLS-1$
+            };
+            TemplatePrintWidth.beforePublishingFallback = () -> {
+                callerInTheWindow.countDown();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (TemplatePrintWidth.measuredCharWidth == null)
+                {
+                    if (System.nanoTime() > deadline)
+                    {
+                        throw new AssertionError("the measurement did not publish inside the window"); //$NON-NLS-1$
+                    }
+                    Thread.onSpinWait();
+                }
+            };
+
+            TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
+
+            assertEquals("caller=" + metrics.source() + " cache=" //$NON-NLS-1$ //$NON-NLS-2$
+                + TemplatePrintWidth.measuredCharWidth.source(),
+                "jdk:in the window", metrics.source()); //$NON-NLS-1$
+            assertEquals(1.9, metrics.charWidthMm(), 0.0001);
+            assertEquals(1.9, TemplatePrintWidth.measuredCharWidth.charWidthMm(), 0.0001);
+        }
+        finally
+        {
+            resetCharMetrics();
+        }
+    }
+
+    /** Puts the measurement seam back, and drops a measurement still trying to publish. */
     private static void resetCharMetrics()
     {
-        TemplatePrintWidth.measuredCharWidth = null;
+        TemplatePrintWidth.discardMeasuredCharWidth();
+        TemplatePrintWidth.beforePublishingFallback = null;
         TemplatePrintWidth.charMeasurement = TemplatePrintWidth.MEASURE_THROUGH_THE_JDK;
         TemplatePrintWidth.charMeasurementTimeoutMs = 2000;
     }

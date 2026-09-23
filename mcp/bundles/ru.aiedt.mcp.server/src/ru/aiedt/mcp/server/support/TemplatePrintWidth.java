@@ -142,14 +142,28 @@ public final class TemplatePrintWidth
     static volatile CharMetrics measuredCharWidth;
 
     /**
+     * Runs after a timeout has seen an empty cache and before the constant is published, so a test
+     * can finish a measurement inside that window. Null when nobody is testing the window.
+     */
+    static volatile Runnable beforePublishingFallback;
+
+    /**
+     * Bumped when a test drops the cache, so a measurement still in flight from the previous
+     * attempt cannot publish into the next one.
+     */
+    private static volatile int charMetricsEpoch;
+
+    /**
      * The width of one character, measured once per process, and where that number came from.
      * <p>
      * The measurement builds an AWT font, and the first AWT call in a process starts the AWT
      * toolkit - which must not happen inside a model transaction and must not hold a caller for as
      * long as a stubborn font subsystem cares to take. So the measurement runs in a daemon thread
      * of its own, the caller waits a bounded time, and whatever arrives late is not waited for: a
-     * measurement that throws, answers nothing usable or stays out past the bound all give the
-     * same answer - the constant, named as such.
+     * measurement that throws, answers nothing usable, or is still out when the constant is
+     * published gives the constant, named as such. A measurement that publishes in the gap between
+     * the empty read and that publication keeps the cache, and the caller returns that winner
+     * rather than the constant it tried to store.
      * </p>
      * <p>
      * The font is named but not available everywhere: a machine without Arial answers with whatever
@@ -168,7 +182,8 @@ public final class TemplatePrintWidth
         {
             return cached;
         }
-        Thread measurer = new Thread(TemplatePrintWidth::measureAndCache, "char-width-measurement"); //$NON-NLS-1$
+        int epoch = charMetricsEpoch;
+        Thread measurer = new Thread(() -> measureAndCache(epoch), "char-width-measurement"); //$NON-NLS-1$
         measurer.setDaemon(true);
         measurer.start();
         try
@@ -184,14 +199,21 @@ public final class TemplatePrintWidth
         {
             return cached;
         }
-        // Out of time: the constant answers, and it is the process answer - a later arrival from
-        // the daemon does not replace it, so the answer does not change under a caller's feet.
+        // Out of time. The constant is published only while the cache is still empty: a measurement
+        // that landed between the read above and this publish keeps the cache, and this call
+        // returns that winner. A still later arrival does not replace it.
+        Runnable parked = beforePublishingFallback;
+        if (parked != null)
+        {
+            parked.run();
+        }
         CharMetrics fallback = new CharMetrics(FALLBACK_CHAR_WIDTH_MM, "constant"); //$NON-NLS-1$
-        publishCharMetrics(fallback);
-        return fallback;
+        publishCharMetrics(fallback, epoch);
+        CharMetrics winner = measuredCharWidth;
+        return winner != null ? winner : fallback;
     }
 
-    private static void measureAndCache()
+    private static void measureAndCache(int epoch)
     {
         CharMetrics result;
         try
@@ -211,15 +233,23 @@ public final class TemplatePrintWidth
         {
             result = new CharMetrics(FALLBACK_CHAR_WIDTH_MM, "constant"); //$NON-NLS-1$
         }
-        publishCharMetrics(result);
+        publishCharMetrics(result, epoch);
     }
 
-    private static synchronized void publishCharMetrics(CharMetrics result)
+    private static synchronized void publishCharMetrics(CharMetrics result, int epoch)
     {
-        if (measuredCharWidth == null)
+        if (epoch != charMetricsEpoch || measuredCharWidth != null)
         {
-            measuredCharWidth = result;
+            return;
         }
+        measuredCharWidth = result;
+    }
+
+    /** Drops the process answer and any measurement still trying to publish the previous one. */
+    static synchronized void discardMeasuredCharWidth()
+    {
+        charMetricsEpoch++;
+        measuredCharWidth = null;
     }
 
     /** @return the advance of the measured character in the template font, through the JDK. */
@@ -238,9 +268,9 @@ public final class TemplatePrintWidth
      * <p>
      * A column's own format first, then the format of the set of columns it belongs to, then the
      * document's default format, then the platform's default column. The set is consulted rather
-     * than the document alone because a row or a print area may carry its own: a template that
-     * formats its columns through the row they sit in would otherwise be measured with the
-     * document's widths.
+     * than the document alone because a row, or a rectangular print area, may carry its own: a
+     * template that formats its columns through the row they sit in would otherwise be measured
+     * with the document's widths.
      * </p>
      *
      * @param doc the document holding the format table.
@@ -285,7 +315,10 @@ public final class TemplatePrintWidth
      * <p>
      * The content span is the one the platform's paginator takes: the column set with the greatest
      * width wins - the document's columns or a set a row carries - and a set is measured over its
-     * first {@code size} columns, declared columns past the last cell included. The print scale the
+     * first {@code size} columns, declared columns past the last cell included. A columns print
+     * area is that contest's exception: it is measured over begin..end with the columns of row 0.
+     * A rectangular area is measured over x..x+width-1, the span the fit-to-width scale uses; page
+     * breaking takes one column more. The print scale the
      * model may hold is reported but not applied. The platform's own fit calculation compares the
      * content against the printable width as it stands and applies the scale later, at print time -
      * so folding it in here would answer a different question than the one the platform answers.
@@ -402,7 +435,7 @@ public final class TemplatePrintWidth
      * @param doc the document.
      * @return the first and last column, 0-based inclusive, or {@code null} when the area names no
      *         columns - a rows-only area covers every column, and the caller falls back to the
-     *         widest row for both.
+     *         widest column set for both.
      */
     private static int[] printAreaColumns(SpreadsheetDocument doc)
     {
@@ -411,7 +444,8 @@ public final class TemplatePrintWidth
         {
             ColumnsArea columns = (ColumnsArea)area;
             // The normal accessors order the pair, so an area written right to left is read the same
-            // way as one written left to right.
+            // way as one written left to right. begin..end is the span repaginateInternal measures
+            // (x through x+width). The fit-to-width scale stops one column earlier.
             int begin = columns.normalBegin();
             int end = columns.normalEnd();
             return begin >= 0 && end >= begin ? new int[] { begin, end } : null;
@@ -423,6 +457,8 @@ public final class TemplatePrintWidth
             {
                 int x = position.normalX();
                 int width = position.normalWidth();
+                // x..x+width-1 is the span calculateScaleToFitPageWidth measures. Page breaking
+                // takes one column more (x through x+width).
                 if (x >= 0 && width > 0)
                 {
                     return new int[] { x, x + width - 1 };
@@ -437,13 +473,38 @@ public final class TemplatePrintWidth
         Area area = doc == null ? null : doc.getPrintArea();
         if (area instanceof ColumnsArea)
         {
-            return ((ColumnsArea)area).getColumns();
+            // getPrintRangeRect builds (begin, 0, end-begin, 0). The width scale and the paginator
+            // both then measure getRowColumns(rect.y), which is row 0, not the set the area carries.
+            return columnsOfRow(doc, 0);
         }
         if (area instanceof RectArea)
         {
             return ((RectArea)area).getColumns();
         }
         return null;
+    }
+
+    /**
+     * The column set {@code MoxelUtil.getRowColumns} returns for a row: the row's own set, or the
+     * document's when the row has none.
+     *
+     * @param doc the document.
+     * @param rowIndex the 0-based row.
+     * @return that set, or {@code null} when the document has no columns either.
+     */
+    private static Columns columnsOfRow(SpreadsheetDocument doc, int rowIndex)
+    {
+        if (doc == null)
+        {
+            return null;
+        }
+        EMap<Integer, Row> rows = doc.getRows();
+        Row row = rows == null ? null : rows.get(Integer.valueOf(rowIndex));
+        if (row != null && row.getColumns() != null)
+        {
+            return row.getColumns();
+        }
+        return doc.getColumns();
     }
 
     /**

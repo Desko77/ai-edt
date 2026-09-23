@@ -1332,8 +1332,12 @@ public class MxlWorkshopTool implements IMcpTool
                         + "paginator prints: the document's columns and every set a row carries " //$NON-NLS-1$
                         + "are each measured over their first `size` columns - a set whose " //$NON-NLS-1$
                         + "declared size runs past the last cell counts to the size - and the " //$NON-NLS-1$
-                        + "widest set wins. A print area that names columns is measured by the " //$NON-NLS-1$
-                        + "area instead. A column's width comes from its own format, then the " //$NON-NLS-1$
+                        + "widest set wins. A columns print area is measured over begin..end " //$NON-NLS-1$
+                        + "with the columns of row 0, the row the paginator reads, not the set " //$NON-NLS-1$
+                        + "stored on the area. A rectangular print area is measured over " //$NON-NLS-1$
+                        + "x..x+width-1, the span the fit-to-width scale uses; when the platform " //$NON-NLS-1$
+                        + "paginates that rectangle it takes one column more. A column's width " //$NON-NLS-1$
+                        + "comes from its own format, then the " //$NON-NLS-1$
                         + "format of its set of columns, then the document default, then 72 (the " //$NON-NLS-1$
                         + "platform's default column, 9 characters). Format.width is held in " //$NON-NLS-1$
                         + "eighths of a character; one character is measured as the advance of " //$NON-NLS-1$
