@@ -31,6 +31,18 @@ import java.util.function.Function;
  */
 public final class FacadeHelpSearch
 {
+    /**
+     * The one sentence every facade's schema says about {@code find}.
+     * <p>
+     * Eleven facades declare the argument and each wrote the rule in its own words until the
+     * differences became the documentation. One sentence, shared, so the rule is stated once and
+     * weighed once: the parameter-prose budget counts every copy.
+     * </p>
+     */
+    public static final String FIND_DESCRIPTION =
+        "With help: search this help for a case-insensitive substring - all the words must appear " //$NON-NLS-1$
+            + "inside one chunk, and with topic only that topic is searched."; //$NON-NLS-1$
+
     /** How many matching chunks one answer shows; the rest is reported as the count alone. */
     private static final int SHOWN = 10;
 
@@ -95,9 +107,14 @@ public final class FacadeHelpSearch
         if (chunks.isEmpty())
         {
             answer.append("Nothing matches. The match is a plain substring with no word forms ") //$NON-NLS-1$
-                .append("behind it - search by the stem of the word.\n\n"); //$NON-NLS-1$
-            answer.append("Ask for a whole topic with topic=<name>: ") //$NON-NLS-1$
-                .append(String.join(" / ", topics)).append(".\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                .append("behind it - search by the stem of the word.\n"); //$NON-NLS-1$
+            if (!topics.isEmpty())
+            {
+                // A facade without topics searched its whole help already, so there is nothing
+                // left to name - ending on an empty list would read as a broken sentence.
+                answer.append("\nAsk for a whole topic with topic=<name>: ") //$NON-NLS-1$
+                    .append(String.join(" / ", topics)).append(".\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
             return answer.toString();
         }
         answer.append(chunks.size())

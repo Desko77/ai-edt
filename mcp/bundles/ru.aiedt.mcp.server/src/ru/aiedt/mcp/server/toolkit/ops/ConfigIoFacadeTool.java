@@ -186,11 +186,7 @@ public class ConfigIoFacadeTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
-            .stringProperty("find", //$NON-NLS-1$
-                "With operation=help: search the help for a case-insensitive substring over " //$NON-NLS-1$
-                    + "the operation catalog and every topic; several words must all appear " //$NON-NLS-1$
-                    + "inside one chunk. Given together with topic, only that topic is " //$NON-NLS-1$
-                    + "searched.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("binaryPath", //$NON-NLS-1$
                 "import_configuration_from_binary: absolute path to the .cf or .cfe to " //$NON-NLS-1$
                     + "import. Required for that operation.") //$NON-NLS-1$

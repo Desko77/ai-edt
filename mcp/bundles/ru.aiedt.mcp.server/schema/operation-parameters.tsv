@@ -11,22 +11,22 @@ BranchInfobaseTool	bind	applicationId:string	read in place	action:string,branch:
 BranchInfobaseTool	current	projectName:string	passed in as locals	action:string,applicationId:string,branch:string
 BranchInfobaseTool	list	projectName:string	passed in as locals	action:string,applicationId:string,branch:string
 BranchInfobaseTool	unbind	action:string,projectName:string	passed in as locals	applicationId:string,branch:string
-CodeSearchTool	call_hierarchy	depth:?,direction:string,limit:integer,methodName:string,modulePath:string,projectName:string	delegate CallHierarchyReader through rewriteForCallHierarchy	find:string
-CodeSearchTool	content_assist	column:integer,contains:string,extendedDocumentation:boolean,filePath:string,limit:integer,line:integer,offset:integer,positions:array,projectName:string	delegate ContentAssistReader	find:string
+CodeSearchTool	call_hierarchy	depth:?,direction:string,limit:integer,methodName:string,modulePath:string,projectName:string	delegate CallHierarchyReader through rewriteForCallHierarchy	
+CodeSearchTool	content_assist	column:integer,contains:string,extendedDocumentation:boolean,filePath:string,limit:integer,line:integer,offset:integer,positions:array,projectName:string	delegate ContentAssistReader	
 CodeSearchTool	help	find:string,topic:string	read in place	
-CodeSearchTool	method_references	caseSensitive:boolean,compact:boolean,contextLines:integer,fileMask:string,isRegex:boolean,linesAfter:integer,linesBefore:integer,maxResults:integer,metadataType:string,outputMode:string,projectName:string,query:string,timeoutSeconds:integer,wholeWord:boolean	delegate CodeTextSearcher through rewriteForMethodReferences	find:string
-CodeSearchTool	object_references	bslOnly:boolean,categories:string,deep:boolean,limit:integer,objectFqn:string,projectName:string,runKey:string,skipBsl:boolean,timeoutSeconds:integer	delegate ReferenceLocator through rewriteForObjectReferences	find:string
-CodeSearchTool	outgoing_structures	objectFqn:string,projectName:string	delegate OutgoingStructuresReader through rewriteForObjectReferences	find:string
-CodeSearchTool	resolve_symbol	includeSource:boolean,modulePath:string,projectName:string,symbol:string	delegate DefinitionNavigator through rewriteForResolveSymbol	find:string
-CodeSearchTool	symbol_info	column:integer,computeTypes:boolean,filePath:string,line:integer,positions:array,projectName:string	delegate SymbolInfoReader	find:string
-CodeSearchTool	text_search	caseSensitive:boolean,compact:boolean,contextLines:integer,fileMask:string,isRegex:boolean,linesAfter:integer,linesBefore:integer,maxResults:integer,metadataType:string,outputMode:string,projectName:string,query:string,timeoutSeconds:integer,wholeWord:boolean	delegate CodeTextSearcher through rewriteForTextSearcher	find:string
-ConfigIoFacadeTool	export_common_picture	allVariants:boolean,name:string,outputPath:string,projectName:string,variant:string	delegate CommonPictureExporter	applicationId:string,find:string,skipValidation:string
-ConfigIoFacadeTool	export_configuration_to_cf	applicationId:string,outputPath:string,projectName:string,skipValidation:string	read in place	find:string
-ConfigIoFacadeTool	export_configuration_to_xml	outputPath:string,projectName:string	delegate ConfigurationXmlExporter	applicationId:string,find:string,skipValidation:string
-ConfigIoFacadeTool	export_object	objectName:string,outputPath:string,projectName:string,runKey:string,timeoutSeconds:string	delegate ExportObjectTool	applicationId:string,find:string,skipValidation:string
-ConfigIoFacadeTool	import_configuration_from_binary	baseConfigurationPath:string,binaryPath:string,extensionName:string,keepXmlPath:string,platform:string,projectName:string,runKey:string,timeoutSeconds:string	delegate ConfigurationBinaryImporter	applicationId:string,find:string,outputPath:string,skipValidation:string
-ConfigIoFacadeTool	import_configuration_from_xml	importPath:string,projectName:string,projectNature:string,xmlVersion:string	delegate ConfigurationXmlImporter	applicationId:string,find:string,outputPath:string,skipValidation:string
-ConfigIoFacadeTool	unpack_external_binary	applicationId:string,projectName:string,sourcePath:string,targetPath:string	delegate ExternalBinaryUnpacker	find:string,outputPath:string,skipValidation:string
+CodeSearchTool	method_references	caseSensitive:boolean,compact:boolean,contextLines:integer,fileMask:string,isRegex:boolean,linesAfter:integer,linesBefore:integer,maxResults:integer,metadataType:string,outputMode:string,projectName:string,query:string,timeoutSeconds:integer,wholeWord:boolean	delegate CodeTextSearcher through rewriteForMethodReferences	
+CodeSearchTool	object_references	bslOnly:boolean,categories:string,deep:boolean,limit:integer,objectFqn:string,projectName:string,runKey:string,skipBsl:boolean,timeoutSeconds:integer	delegate ReferenceLocator through rewriteForObjectReferences	
+CodeSearchTool	outgoing_structures	objectFqn:string,projectName:string	delegate OutgoingStructuresReader through rewriteForObjectReferences	
+CodeSearchTool	resolve_symbol	includeSource:boolean,modulePath:string,projectName:string,symbol:string	delegate DefinitionNavigator through rewriteForResolveSymbol	
+CodeSearchTool	symbol_info	column:integer,computeTypes:boolean,filePath:string,line:integer,positions:array,projectName:string	delegate SymbolInfoReader	
+CodeSearchTool	text_search	caseSensitive:boolean,compact:boolean,contextLines:integer,fileMask:string,isRegex:boolean,linesAfter:integer,linesBefore:integer,maxResults:integer,metadataType:string,outputMode:string,projectName:string,query:string,timeoutSeconds:integer,wholeWord:boolean	delegate CodeTextSearcher through rewriteForTextSearcher	
+ConfigIoFacadeTool	export_common_picture	allVariants:boolean,name:string,outputPath:string,projectName:string,variant:string	delegate CommonPictureExporter	applicationId:string,skipValidation:string
+ConfigIoFacadeTool	export_configuration_to_cf	applicationId:string,outputPath:string,projectName:string,skipValidation:string	read in place	
+ConfigIoFacadeTool	export_configuration_to_xml	outputPath:string,projectName:string	delegate ConfigurationXmlExporter	applicationId:string,skipValidation:string
+ConfigIoFacadeTool	export_object	objectName:string,outputPath:string,projectName:string,runKey:string,timeoutSeconds:string	delegate ExportObjectTool	applicationId:string,skipValidation:string
+ConfigIoFacadeTool	import_configuration_from_binary	baseConfigurationPath:string,binaryPath:string,extensionName:string,keepXmlPath:string,platform:string,projectName:string,runKey:string,timeoutSeconds:string	delegate ConfigurationBinaryImporter	applicationId:string,outputPath:string,skipValidation:string
+ConfigIoFacadeTool	import_configuration_from_xml	importPath:string,projectName:string,projectNature:string,xmlVersion:string	delegate ConfigurationXmlImporter	applicationId:string,outputPath:string,skipValidation:string
+ConfigIoFacadeTool	unpack_external_binary	applicationId:string,projectName:string,sourcePath:string,targetPath:string	delegate ExternalBinaryUnpacker	outputPath:string,skipValidation:string
 DcsWorkshopTool	add_appearance	appearance:string,conditionType:string,conditionValue:string,field:string	handler DcsWorkshopTool.doAddAppearance, read in place	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:string
 DcsWorkshopTool	add_calculated_field	expression:string,name:string,title:string	handler DcsWorkshopTool.doAddCalculatedField, read in place	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:string
 DcsWorkshopTool	add_chart	name:string	handler DcsWorkshopTool.doAddSettingsStructureItem, read in place	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:string
@@ -102,15 +102,15 @@ DcsWorkshopTool	set_settings_item_user_mode	container:string,index:integer,viewM
 DcsWorkshopTool	set_settings_parameter	name:string,userSettingID:string,value:string,variantName:string	handler DcsWorkshopTool.doSetSettingsParameter, read in place	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean
 DcsWorkshopTool	set_total_field	expression:string,name:string	handler DcsWorkshopTool.doSetTotalField, read in place	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:string
 DcsWorkshopTool	set_user_field	expression:string,name:string,title:string	handler DcsWorkshopTool.doSetUserField, read in place	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:string
-DiagnosticsFacadeTool	clean_project	projectName:string	delegate ProjectCleaner	find:string
-DiagnosticsFacadeTool	get_check_description	checkId:string	delegate CheckDocReader	find:string
-DiagnosticsFacadeTool	get_problem_summary	projectName:string	delegate ProblemSummaryReader	find:string
-DiagnosticsFacadeTool	get_project_errors	checkId:string,compact:boolean,extraInfo:boolean,fileFilter:string,limit:integer,objects:string[],projectName:string,scope:string,severity:string,waitForRefresh:boolean	delegate ProjectProblemsReader	find:string
-DiagnosticsFacadeTool	revalidate_objects	objectFqns:string[],objects:string[],projectName:string	delegate ObjectsRevalidator	find:string
-DiagnosticsFacadeTool	validate_for_export	checkFilter:string,limit:integer,pathFilter:string,projectName:string	delegate ValidateForExportTool	find:string
-DocsLookupFacadeTool	get_object_help	format:string,language:string,objectName:string,projectName:string	delegate GetObjectHelpTool	find:string,typeName:string
-DocsLookupFacadeTool	get_platform_documentation	category:string,language:string,limit:integer,memberName:string,memberType:string,projectName:string,typeName:string	delegate PlatformDocReader	find:string
-DocsLookupFacadeTool	system_enum_values	projectName:string,typeName:string	read in place	find:string
+DiagnosticsFacadeTool	clean_project	projectName:string	delegate ProjectCleaner	
+DiagnosticsFacadeTool	get_check_description	checkId:string	delegate CheckDocReader	
+DiagnosticsFacadeTool	get_problem_summary	projectName:string	delegate ProblemSummaryReader	
+DiagnosticsFacadeTool	get_project_errors	checkId:string,compact:boolean,extraInfo:boolean,fileFilter:string,limit:integer,objects:string[],projectName:string,scope:string,severity:string,waitForRefresh:boolean	delegate ProjectProblemsReader	
+DiagnosticsFacadeTool	revalidate_objects	objectFqns:string[],objects:string[],projectName:string	delegate ObjectsRevalidator	
+DiagnosticsFacadeTool	validate_for_export	checkFilter:string,limit:integer,pathFilter:string,projectName:string	delegate ValidateForExportTool	
+DocsLookupFacadeTool	get_object_help	format:string,language:string,objectName:string,projectName:string	delegate GetObjectHelpTool	typeName:string
+DocsLookupFacadeTool	get_platform_documentation	category:string,language:string,limit:integer,memberName:string,memberType:string,projectName:string,typeName:string	delegate PlatformDocReader	
+DocsLookupFacadeTool	system_enum_values	projectName:string,typeName:string	read in place	
 EditFormTool	add_button	beforeName:string,commandName:string,handler:string,name:string,parentName:string,standardCommand:string,title:string	passed in as locals	autoGenerateColumns:boolean,dataPath:string,dryRun:boolean,elementType:string,formFqn:string,hyperlink:boolean,picture:string,projectName:string
 EditFormTool	add_decoration	beforeName:string,elementType:string,hyperlink:boolean,name:string,parentName:string,picture:string,projectName:string,title:string	passed in as locals	autoGenerateColumns:boolean,commandName:string,dataPath:string,dryRun:boolean,formFqn:string,handler:string,standardCommand:string
 EditFormTool	add_field	beforeName:string,dataPath:string,elementType:string,formFqn:string,hyperlink:boolean,name:string,parentName:string,title:string	passed in as locals	autoGenerateColumns:boolean,commandName:string,dryRun:boolean,handler:string,picture:string,projectName:string,standardCommand:string
@@ -153,7 +153,7 @@ EditMetadataTool	add_predefined_account_subconto	accountName:string,characterist
 EditMetadataTool	add_predefined_item	accountType:string,code:string,description:string,dryRun:boolean,isFolder:boolean,name:string,offBalance:boolean,order:string,ownerFqn:string,projectName:string	handler PredefinedOps.opAddPredefinedItem, read in place	
 EditMetadataTool	add_query_condition	condition:string,dataSetName:string	handler MiscOps.delegateToDcsWorkshop, delegate DcsWorkshopTool, renamed to add_query_condition	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,ownerFqn:string,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:boolean
 EditMetadataTool	add_query_field	dataSetName:string,field:string	handler MiscOps.delegateToDcsWorkshop, delegate DcsWorkshopTool, renamed to add_query_field	attributeName:string,dryRun:boolean,formFqn:string,nestedSchemaName:string,objectName:string,overwriteModel:boolean,ownerFqn:string,projectName:string,property:string,queryText:string,templateName:string,validate_expression:boolean,validate_query:boolean,value:boolean
-EditMetadataTool	add_radio_button	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool, renamed to add_radio_button - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
+EditMetadataTool	add_radio_button	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,find:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditFormAsRadioButton, delegate EditFormTool, renamed to add_radio_button - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
 EditMetadataTool	add_recalculation	dryRun:boolean,name:string,ownerFqn:string,projectName:string,synonym:string	handler SpecializedOps.opAddRecalculation, read in place	
 EditMetadataTool	add_recalculation_dimension	dryRun:boolean,name:string,ownerFqn:string,projectName:string,recalculationName:string,registerDimension:string,synonym:string	handler SpecializedOps.opAddRecalculationDimension, read in place	
 EditMetadataTool	add_register_field	allowedLength:string,dateFractions:string,dryRun:boolean,fractionDigits:integer,kind:string,length:integer,name:string,nonNegative:boolean,ownerFqn:string,precision:integer,projectName:string,synonym:string,type:string	handler SpecializedOps.opAddRegisterField, read in place	
@@ -213,7 +213,7 @@ EditMetadataTool	remove_form_attribute	attributeName:string,deleteDataItems:?,dr
 EditMetadataTool	remove_form_command	commandName:string,dryRun:boolean,formFqn:string,projectName:string	handler FormItemsOps.opRemoveFormCommand, read in place	ownerFqn:string
 EditMetadataTool	remove_form_command_interface_item	commandFqn:?,dryRun:boolean,formFqn:string,panel:?,projectName:string	handler FormCommandInterfaceOps.opRemoveFormCommandInterfaceItem, read in place	ownerFqn:string
 EditMetadataTool	remove_form_event_handler	dryRun:boolean,event:string,formFqn:string,handlerName:string,itemName:string,projectName:string	handler FormEventOps.opRemoveFormEventHandler, read in place	ownerFqn:string
-EditMetadataTool	remove_form_item	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditForm, delegate EditFormTool, renamed to remove_form_item - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
+EditMetadataTool	remove_form_item	autoGenerateColumns:boolean,beforeName:string,dataPath:string,elementType:string,find:string,formFqn:string,hyperlink:boolean,name:string,operation:string,parentName:string,picture:string,projectName:string,standardCommand:string,title:string	handler FormItemsOps.delegateToEditForm, delegate EditFormTool, renamed to remove_form_item - target row not found, read from the handler instead	dryRun:boolean,ownerFqn:string
 EditMetadataTool	remove_form_item_functional_option	attributeName:string,commandName:string,dryRun:boolean,formFqn:string,projectName:string,valueFqn:string	handler MiscOps.opFormItemFunctionalOption, read in place	ownerFqn:string
 EditMetadataTool	remove_form_parameter	dryRun:boolean,formFqn:string,name:string,projectName:string	handler FormItemsOps.opRemoveFormParameter, read in place	ownerFqn:string
 EditMetadataTool	remove_functional_option_content	dryRun:boolean,ownerFqn:string,projectName:string,valueFqn:string	handler ContentOps.opFunctionalOptionContent, read in place	
@@ -312,50 +312,50 @@ GitTool	checkout	operation:string,projectName:string	passed in as locals
 GitTool	commit	authorName:string,projectName:string	passed in as locals	
 GitTool	log	projectName:string	passed in as locals	
 GitTool	status	projectName:string	passed in as locals	
-InfobaseAdminFacadeTool	branch_infobase	action:string,applicationId:string,branch:string,projectName:string	delegate BranchInfobaseTool	find:string,syncOperation:string
-InfobaseAdminFacadeTool	create_infobase	name:string,path:string,platform:string,projectName:string,templateCf:string	delegate InfobaseCreator	find:string,syncOperation:string
-InfobaseAdminFacadeTool	create_launch_config	infobaseName:string,projectName:string	delegate LaunchConfigCreator	find:string,syncOperation:string
-InfobaseAdminFacadeTool	delete_infobase	deleteContent:boolean,name:string,projectName:string	delegate InfobaseRemover	find:string,syncOperation:string
-InfobaseAdminFacadeTool	get_applications	projectName:string	delegate ApplicationsReader	find:string,syncOperation:string
-InfobaseAdminFacadeTool	read_event_log	applicationId:string,event:string,from:string,limit:integer,projectName:string,severity:string,to:string,user:string	delegate EventLogTool	find:string,syncOperation:string
-InfobaseAdminFacadeTool	set_infobase_credentials	accessMode:string,applicationId:string,password:string,projectName:string,userName:string	delegate InfobaseCredentialsWriter	find:string,syncOperation:string
-InfobaseAdminFacadeTool	start_client	allowSecondSession:boolean,applicationId:string,clientType:string,endpointTimeoutSeconds:integer,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate ClientSessionStarter	find:string,syncOperation:string
-InfobaseAdminFacadeTool	sync_control	syncOperation:string	read in place	find:string
-InfobaseAdminFacadeTool	update_database	applicationId:string,autoFreeClients:boolean,autoRestructure:boolean,cancel:boolean,dryRun:boolean,fullUpdate:boolean,ignoreBranchBinding:boolean,launchConfigurationName:string,projectName:string,refreshWorkspace:boolean,runKey:string,statusOnly:boolean,timeoutSeconds:string	delegate DatabaseUpdater	find:string,syncOperation:string
-InsightsFacadeTool	compare_configurations	format:string,level:string,mode:string,objectFqn:string,projectName:string,scope:string,showRenames:boolean,target:string	delegate CompareConfigurationsTool	find:string
-InsightsFacadeTool	compare_three_way	ancestorPath:string,changedBy:string,closeSession:boolean,decisions:string,decisionsFrom:string,decisionsPath:string,help:string,ignoreOriginMismatch:boolean,intent:string,limit:integer,methodLevel:boolean,mustBeMergedOnly:boolean,offset:integer,oneSided:boolean,otherPath:string,parentId:string,projectName:string,report:string,scope:string,type:string	delegate ThreeWayComparisonTool	find:string
-InsightsFacadeTool	dependency_graph	depth:integer,direction:string,format:string,level:string,maxEdges:integer,maxNodes:integer,moduleFqn:string,objectFqn:string,projectName:string,scope:string,subsystemName:string	delegate DependencyGraphTool	find:string
-InsightsFacadeTool	describe_db_tables	includeFields:boolean,objectFqn:string,projectName:string	delegate DbTablesReader	find:string
-InsightsFacadeTool	detect_query_anti_patterns	format:string,moduleFqn:string,projectName:string,rules:string,scope:string,severity_filter:string	delegate DetectQueryAntiPatternsTool	find:string
-InsightsFacadeTool	generate_health_snapshot	includeAntiPatterns:boolean,includeErrors:boolean,includeMetadata:boolean,includeMetrics:boolean,projectName:string	delegate GenerateHealthSnapshotTool	find:string
-InsightsFacadeTool	impact_analysis	action:string,limit:integer,objectFqn:string,projectName:string,skipBsl:boolean	delegate ImpactAnalysisTool	find:string
-InsightsFacadeTool	object_summary	includeErrors:boolean,includeReferences:boolean,objectFqn:string,projectName:string	delegate ObjectSummaryTool	find:string
-InsightsFacadeTool	project_metrics	format:string,includeDebtList:boolean,projectName:string,scope:string,timeoutSeconds:integer	delegate ProjectMetricsTool	find:string
-InsightsFacadeTool	semantic_metadata_search	limit:integer,metadataType:string,projectName:string,query:string	delegate SemanticMetadataSearchTool	find:string
+InfobaseAdminFacadeTool	branch_infobase	action:string,applicationId:string,branch:string,projectName:string	delegate BranchInfobaseTool	syncOperation:string
+InfobaseAdminFacadeTool	create_infobase	name:string,path:string,platform:string,projectName:string,templateCf:string	delegate InfobaseCreator	syncOperation:string
+InfobaseAdminFacadeTool	create_launch_config	infobaseName:string,projectName:string	delegate LaunchConfigCreator	syncOperation:string
+InfobaseAdminFacadeTool	delete_infobase	deleteContent:boolean,name:string,projectName:string	delegate InfobaseRemover	syncOperation:string
+InfobaseAdminFacadeTool	get_applications	projectName:string	delegate ApplicationsReader	syncOperation:string
+InfobaseAdminFacadeTool	read_event_log	applicationId:string,event:string,from:string,limit:integer,projectName:string,severity:string,to:string,user:string	delegate EventLogTool	syncOperation:string
+InfobaseAdminFacadeTool	set_infobase_credentials	accessMode:string,applicationId:string,password:string,projectName:string,userName:string	delegate InfobaseCredentialsWriter	syncOperation:string
+InfobaseAdminFacadeTool	start_client	allowSecondSession:boolean,applicationId:string,clientType:string,endpointTimeoutSeconds:integer,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate ClientSessionStarter	syncOperation:string
+InfobaseAdminFacadeTool	sync_control	syncOperation:string	read in place	
+InfobaseAdminFacadeTool	update_database	applicationId:string,autoFreeClients:boolean,autoRestructure:boolean,cancel:boolean,dryRun:boolean,fullUpdate:boolean,ignoreBranchBinding:boolean,launchConfigurationName:string,projectName:string,refreshWorkspace:boolean,runKey:string,statusOnly:boolean,timeoutSeconds:string	delegate DatabaseUpdater	syncOperation:string
+InsightsFacadeTool	compare_configurations	format:string,level:string,mode:string,objectFqn:string,projectName:string,scope:string,showRenames:boolean,target:string	delegate CompareConfigurationsTool	
+InsightsFacadeTool	compare_three_way	ancestorPath:string,changedBy:string,closeSession:boolean,decisions:string,decisionsFrom:string,decisionsPath:string,help:string,ignoreOriginMismatch:boolean,intent:string,limit:integer,methodLevel:boolean,mustBeMergedOnly:boolean,offset:integer,oneSided:boolean,otherPath:string,parentId:string,projectName:string,report:string,scope:string,type:string	delegate ThreeWayComparisonTool	
+InsightsFacadeTool	dependency_graph	depth:integer,direction:string,format:string,level:string,maxEdges:integer,maxNodes:integer,moduleFqn:string,objectFqn:string,projectName:string,scope:string,subsystemName:string	delegate DependencyGraphTool	
+InsightsFacadeTool	describe_db_tables	includeFields:boolean,objectFqn:string,projectName:string	delegate DbTablesReader	
+InsightsFacadeTool	detect_query_anti_patterns	format:string,moduleFqn:string,projectName:string,rules:string,scope:string,severity_filter:string	delegate DetectQueryAntiPatternsTool	
+InsightsFacadeTool	generate_health_snapshot	includeAntiPatterns:boolean,includeErrors:boolean,includeMetadata:boolean,includeMetrics:boolean,projectName:string	delegate GenerateHealthSnapshotTool	
+InsightsFacadeTool	impact_analysis	action:string,limit:integer,objectFqn:string,projectName:string,skipBsl:boolean	delegate ImpactAnalysisTool	
+InsightsFacadeTool	object_summary	includeErrors:boolean,includeReferences:boolean,objectFqn:string,projectName:string	delegate ObjectSummaryTool	
+InsightsFacadeTool	project_metrics	format:string,includeDebtList:boolean,projectName:string,scope:string,timeoutSeconds:integer	delegate ProjectMetricsTool	
+InsightsFacadeTool	semantic_metadata_search	limit:integer,metadataType:string,projectName:string,query:string	delegate SemanticMetadataSearchTool	
 LaunchDebuggerTool	add_breakpoint	action:string,find:string,topic:string	read in place	
-LaunchDebuggerTool	debug_launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string,find:string
-LaunchDebuggerTool	debug_status	applicationId:string	delegate DebugStateReader	action:string,find:string
-LaunchDebuggerTool	evaluate	expression:string,frameRef:string	delegate ExpressionEvaluator	action:string,find:string
-LaunchDebuggerTool	get_profiling_results	minFrequency:integer,moduleFilter:string	delegate ProfilingResultsReader	action:string,find:string
-LaunchDebuggerTool	get_state	applicationId:string	delegate DebugStateReader	action:string,find:string
-LaunchDebuggerTool	get_variables	expandPath:string,frameIndex:integer,frameRef:string,scope:string,threadId:integer	delegate DebugVariablesReader	action:string,find:string
+LaunchDebuggerTool	debug_launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string
+LaunchDebuggerTool	debug_status	applicationId:string	delegate DebugStateReader	action:string
+LaunchDebuggerTool	evaluate	expression:string,frameRef:string	delegate ExpressionEvaluator	action:string
+LaunchDebuggerTool	get_profiling_results	minFrequency:integer,moduleFilter:string	delegate ProfilingResultsReader	action:string
+LaunchDebuggerTool	get_state	applicationId:string	delegate DebugStateReader	action:string
+LaunchDebuggerTool	get_variables	expandPath:string,frameIndex:integer,frameRef:string,scope:string,threadId:integer	delegate DebugVariablesReader	action:string
 LaunchDebuggerTool	help	find:string,topic:string	read in place	action:string
-LaunchDebuggerTool	launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string,find:string
+LaunchDebuggerTool	launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string
 LaunchDebuggerTool	list_breakpoints	action:string,find:string,topic:string	read in place	
 LaunchDebuggerTool	remove_breakpoint	action:string,find:string,topic:string	read in place	
-LaunchDebuggerTool	resume	applicationId:string,threadId:integer	delegate DebugResumer	action:string,find:string
-LaunchDebuggerTool	run_to_line	applicationId:string,lineNumber:integer,module:string,projectName:string,threadId:integer	delegate RunToLineTool	action:string,find:string
+LaunchDebuggerTool	resume	applicationId:string,threadId:integer	delegate DebugResumer	action:string
+LaunchDebuggerTool	run_to_line	applicationId:string,lineNumber:integer,module:string,projectName:string,threadId:integer	delegate RunToLineTool	action:string
 LaunchDebuggerTool	set_breakpoint	action:string,find:string,topic:string	read in place	
-LaunchDebuggerTool	set_exception_breakpoint	catchAll:boolean,message:string,projectName:string	delegate SetExceptionBreakpointTool	action:string,find:string
-LaunchDebuggerTool	set_variable	frameIndex:integer,frameRef:string,path:string,threadId:integer,value:string	delegate DebugVariableWriter	action:string,find:string
-LaunchDebuggerTool	start_profiling	applicationId:string	delegate ProfilingStarter	action:string,find:string
-LaunchDebuggerTool	step	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper	action:string,find:string
-LaunchDebuggerTool	step_into	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper through withMode	action:string,find:string
-LaunchDebuggerTool	step_out	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper through withMode	action:string,find:string
-LaunchDebuggerTool	step_over	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper through withMode	action:string,find:string
-LaunchDebuggerTool	terminate	all:boolean,applicationId:string	delegate LaunchTerminator	action:string,find:string
-LaunchDebuggerTool	terminate_launch	all:boolean,applicationId:string	delegate LaunchTerminator	action:string,find:string
-LaunchDebuggerTool	wait_for_break	applicationId:string,timeoutMs:integer,timeoutSeconds:integer	delegate SuspendWaiter	action:string,find:string
+LaunchDebuggerTool	set_exception_breakpoint	catchAll:boolean,message:string,projectName:string	delegate SetExceptionBreakpointTool	action:string
+LaunchDebuggerTool	set_variable	frameIndex:integer,frameRef:string,path:string,threadId:integer,value:string	delegate DebugVariableWriter	action:string
+LaunchDebuggerTool	start_profiling	applicationId:string	delegate ProfilingStarter	action:string
+LaunchDebuggerTool	step	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper	action:string
+LaunchDebuggerTool	step_into	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper through withMode	action:string
+LaunchDebuggerTool	step_out	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper through withMode	action:string
+LaunchDebuggerTool	step_over	kind:string,threadId:integer,timeoutSeconds:integer	delegate DebugStepper through withMode	action:string
+LaunchDebuggerTool	terminate	all:boolean,applicationId:string	delegate LaunchTerminator	action:string
+LaunchDebuggerTool	terminate_launch	all:boolean,applicationId:string	delegate LaunchTerminator	action:string
+LaunchDebuggerTool	wait_for_break	applicationId:string,timeoutMs:integer,timeoutSeconds:integer	delegate SuspendWaiter	action:string
 MxlWorkshopTool	add_drawing	beginColumn:integer,beginColumnOffset:integer,beginRow:integer,beginRowOffset:integer,drawingType:string,dryRun:boolean,endColumn:integer,endColumnOffset:integer,endRow:integer,endRowOffset:integer,formatIndex:integer,language:string,ownerFqn:string,projectName:string,templateName:string,text:string,zOrder:integer	read in place	areaKind:string,areaName:string,autoColumnWidth:boolean,col:integer,columnWidth:integer,columnWidthWeight:integer,drawingId:integer,fromCol:integer,fromRow:integer,layout:string,row:integer,rowHeight:integer,templateType:string,textOrientation:integer,textPlacement:string,toCol:integer,toRow:integer
 MxlWorkshopTool	add_named_area	areaKind:string,areaName:string,dryRun:boolean,fromCol:integer,fromRow:integer,ownerFqn:string,projectName:string,templateName:string,toCol:integer,toRow:integer	read in place	autoColumnWidth:boolean,beginColumn:integer,beginColumnOffset:integer,beginRow:integer,beginRowOffset:integer,col:integer,columnWidth:integer,columnWidthWeight:integer,drawingId:integer,drawingType:string,endColumn:integer,endColumnOffset:integer,endRow:integer,endRowOffset:integer,formatIndex:integer,language:string,layout:string,row:integer,rowHeight:integer,templateType:string,text:string,textOrientation:integer,textPlacement:string,zOrder:integer
 MxlWorkshopTool	create_template	dryRun:boolean,ownerFqn:string,projectName:string,templateName:string,templateType:string	read in place	areaKind:string,areaName:string,autoColumnWidth:boolean,beginColumn:integer,beginColumnOffset:integer,beginRow:integer,beginRowOffset:integer,col:integer,columnWidth:integer,columnWidthWeight:integer,drawingId:integer,drawingType:string,endColumn:integer,endColumnOffset:integer,endRow:integer,endRowOffset:integer,formatIndex:integer,fromCol:integer,fromRow:integer,language:string,layout:string,row:integer,rowHeight:integer,text:string,textOrientation:integer,textPlacement:string,toCol:integer,toRow:integer,zOrder:integer
@@ -367,24 +367,24 @@ MxlWorkshopTool	read_template	language:string,ownerFqn:string,projectName:string
 MxlWorkshopTool	remove_drawing	drawingId:integer,dryRun:boolean,ownerFqn:string,projectName:string,templateName:string	read in place	areaKind:string,areaName:string,autoColumnWidth:boolean,beginColumn:integer,beginColumnOffset:integer,beginRow:integer,beginRowOffset:integer,col:integer,columnWidth:integer,columnWidthWeight:integer,drawingType:string,endColumn:integer,endColumnOffset:integer,endRow:integer,endRowOffset:integer,formatIndex:integer,fromCol:integer,fromRow:integer,language:string,layout:string,row:integer,rowHeight:integer,templateType:string,text:string,textOrientation:integer,textPlacement:string,toCol:integer,toRow:integer,zOrder:integer
 MxlWorkshopTool	remove_named_area	areaName:string,dryRun:boolean,ownerFqn:string,projectName:string,templateName:string	read in place	areaKind:string,autoColumnWidth:boolean,beginColumn:integer,beginColumnOffset:integer,beginRow:integer,beginRowOffset:integer,col:integer,columnWidth:integer,columnWidthWeight:integer,drawingId:integer,drawingType:string,endColumn:integer,endColumnOffset:integer,endRow:integer,endRowOffset:integer,formatIndex:integer,fromCol:integer,fromRow:integer,language:string,layout:string,row:integer,rowHeight:integer,templateType:string,text:string,textOrientation:integer,textPlacement:string,toCol:integer,toRow:integer,zOrder:integer
 MxlWorkshopTool	set_cell	col:integer,dryRun:boolean,language:string,ownerFqn:string,projectName:string,row:integer,templateName:string,text:string	read in place	areaKind:string,areaName:string,autoColumnWidth:boolean,beginColumn:integer,beginColumnOffset:integer,beginRow:integer,beginRowOffset:integer,columnWidth:integer,columnWidthWeight:integer,drawingId:integer,drawingType:string,endColumn:integer,endColumnOffset:integer,endRow:integer,endRowOffset:integer,formatIndex:integer,fromCol:integer,fromRow:integer,layout:string,rowHeight:integer,templateType:string,textOrientation:integer,textPlacement:string,toCol:integer,toRow:integer,zOrder:integer
-ProjectAdminFacadeTool	answer_dialog	button:string	delegate DialogAnswerer	find:string
-ProjectAdminFacadeTool	create_project	projectName:string,version:string	delegate ProjectCreator	find:string
-ProjectAdminFacadeTool	delete_project	deleteContent:boolean,projectName:string	delegate ProjectRemover	find:string
-ProjectAdminFacadeTool	get_configuration_properties	projectName:string	delegate ConfigurationInfoReader	find:string
-ProjectAdminFacadeTool	list_configurations	projectName:string,type:string	delegate LaunchConfigsLister	find:string
+ProjectAdminFacadeTool	answer_dialog	button:string	delegate DialogAnswerer	
+ProjectAdminFacadeTool	create_project	projectName:string,version:string	delegate ProjectCreator	
+ProjectAdminFacadeTool	delete_project	deleteContent:boolean,projectName:string	delegate ProjectRemover	
+ProjectAdminFacadeTool	get_configuration_properties	projectName:string	delegate ConfigurationInfoReader	
+ProjectAdminFacadeTool	list_configurations	projectName:string,type:string	delegate LaunchConfigsLister	
 ProjectAdminFacadeTool	list_projects	find:string,operation:string,topic:string	read in place	
-ProjectAdminFacadeTool	list_subsystems	includeContent:boolean,language:string,limit:integer,nameFilter:string,projectName:string	delegate GetSubsystemsTool	find:string
-ProjectAdminFacadeTool	restart_edt	action:string,delayMs:integer	delegate RestartEdtTool	find:string
-ProjectAdminFacadeTool	resync_to_disk	objects:string[],projectName:string,refresh:boolean,waitTimeoutMs:integer	delegate DiskResynchronizer	find:string
-ProjectAdminFacadeTool	self_upkeep	action:string,confirm:boolean,restart:boolean	delegate SelfUpkeepTool	find:string
-SecurityAuditFacadeTool	audit_role_rights	apply:boolean,format:string,includeRls:boolean,mode:string,objectFqn:string,objectType:string,projectName:string,roleName:string,roleNames:string	delegate AuditRoleRightsTool	find:string
-SecurityAuditFacadeTool	find_rls_violations	format:string,projectName:string,roleName:string,scope:string,severity_filter:string	delegate FindRlsViolationsTool	find:string
-SecurityAuditFacadeTool	sensitive_data_scan	checks:string,customPatterns:string,format:string,projectName:string,scope:string,severity_filter:string	delegate SensitiveDataScanTool	find:string
-SupportRegistryTool	list_objects	limit:integer,offset:integer,parentId:string,userMode:string	read in place	apply:boolean,find:string,objectFqn:string,projectName:string,snapshotPath:string
-SupportRegistryTool	object_mode	limit:integer,objectFqn:string,offset:integer	read in place	apply:boolean,find:string,parentId:string,projectName:string,snapshotPath:string,userMode:string
-SupportRegistryTool	restore_modes	apply:boolean,snapshotPath:string	read in place	find:string,limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
-SupportRegistryTool	snapshot_modes	snapshotPath:string	read in place	apply:boolean,find:string,limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
-SupportRegistryTool	status	projectName:string	passed in as locals	apply:boolean,find:string,limit:integer,objectFqn:string,offset:integer,parentId:string,snapshotPath:string,userMode:string
+ProjectAdminFacadeTool	list_subsystems	includeContent:boolean,language:string,limit:integer,nameFilter:string,projectName:string	delegate GetSubsystemsTool	
+ProjectAdminFacadeTool	restart_edt	action:string,delayMs:integer	delegate RestartEdtTool	
+ProjectAdminFacadeTool	resync_to_disk	objects:string[],projectName:string,refresh:boolean,waitTimeoutMs:integer	delegate DiskResynchronizer	
+ProjectAdminFacadeTool	self_upkeep	action:string,confirm:boolean,restart:boolean	delegate SelfUpkeepTool	
+SecurityAuditFacadeTool	audit_role_rights	apply:boolean,format:string,includeRls:boolean,mode:string,objectFqn:string,objectType:string,projectName:string,roleName:string,roleNames:string	delegate AuditRoleRightsTool	
+SecurityAuditFacadeTool	find_rls_violations	format:string,projectName:string,roleName:string,scope:string,severity_filter:string	delegate FindRlsViolationsTool	
+SecurityAuditFacadeTool	sensitive_data_scan	checks:string,customPatterns:string,format:string,projectName:string,scope:string,severity_filter:string	delegate SensitiveDataScanTool	
+SupportRegistryTool	list_objects	limit:integer,offset:integer,parentId:string,userMode:string	read in place	apply:boolean,objectFqn:string,projectName:string,snapshotPath:string
+SupportRegistryTool	object_mode	limit:integer,objectFqn:string,offset:integer	read in place	apply:boolean,parentId:string,projectName:string,snapshotPath:string,userMode:string
+SupportRegistryTool	restore_modes	apply:boolean,snapshotPath:string	read in place	limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
+SupportRegistryTool	snapshot_modes	snapshotPath:string	read in place	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
+SupportRegistryTool	status	projectName:string	passed in as locals	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,snapshotPath:string,userMode:string
 SyncControlTool	diagnose	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
 SyncControlTool	diagnose_delta	infobaseUuid:string	read in place	enabled:boolean,name:string,projectName:string
 SyncControlTool	diagnose_stuck_locks	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
@@ -395,10 +395,10 @@ SyncControlTool	release_support_snapshot	name:string	read in place	enabled:boole
 SyncControlTool	reseed_baseline	confirm:boolean,infobaseUuid:string	read in place	enabled:boolean,name:string,projectName:string
 SyncControlTool	status	projectName:string	passed in as locals	enabled:boolean,infobaseUuid:string,name:string
 SyncControlTool	suppress	enabled:boolean	read in place	infobaseUuid:string,name:string,projectName:string
-WorkspaceMarksFacadeTool	get_bookmarks	filePath:string,limit:integer,projectName:string	delegate BookmarksReader	find:string
-WorkspaceMarksFacadeTool	get_objects_by_tags	limit:integer,projectName:string,tags:string[]	delegate TaggedObjectsReader	find:string
-WorkspaceMarksFacadeTool	get_tags	projectName:string	delegate TagsReader	find:string
-WorkspaceMarksFacadeTool	get_tasks	filePath:string,limit:integer,priority:string,projectName:string	delegate TasksReader	find:string
+WorkspaceMarksFacadeTool	get_bookmarks	filePath:string,limit:integer,projectName:string	delegate BookmarksReader	
+WorkspaceMarksFacadeTool	get_objects_by_tags	limit:integer,projectName:string,tags:string[]	delegate TaggedObjectsReader	
+WorkspaceMarksFacadeTool	get_tags	projectName:string	delegate TagsReader	
+WorkspaceMarksFacadeTool	get_tasks	filePath:string,limit:integer,priority:string,projectName:string	delegate TasksReader	
 XdtoWorkshopTool	add_object_type	abstract:boolean,mixed:boolean,name:string,open:boolean	read in place	attributeFormQualified:boolean,dryRun:boolean,elementFormQualified:boolean,form:string,itemType:string,itemTypeNamespace:string,lowerBound:integer,namespace:string,nillable:boolean,objectType:string,ownerFqn:string,packageName:string,projectName:string,type:string,typeNamespace:string,upperBound:integer,variety:string
 XdtoWorkshopTool	add_property	form:string,lowerBound:integer,name:string,nillable:boolean,objectType:string,type:string,typeNamespace:string,upperBound:integer	read in place	abstract:boolean,attributeFormQualified:boolean,dryRun:boolean,elementFormQualified:boolean,itemType:string,itemTypeNamespace:string,mixed:boolean,namespace:string,open:boolean,ownerFqn:string,packageName:string,projectName:string,variety:string
 XdtoWorkshopTool	add_value_type	itemType:string,itemTypeNamespace:string,name:string,variety:string	read in place	abstract:boolean,attributeFormQualified:boolean,dryRun:boolean,elementFormQualified:boolean,form:string,lowerBound:integer,mixed:boolean,namespace:string,nillable:boolean,objectType:string,open:boolean,ownerFqn:string,packageName:string,projectName:string,type:string,typeNamespace:string,upperBound:integer

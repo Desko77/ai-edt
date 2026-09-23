@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -19,6 +20,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmFormHelper;
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -81,6 +83,7 @@ public class EditFormTool implements IMcpTool
             .stringProperty("operation", //$NON-NLS-1$
                 "Operation: addField, addGroup, addButton, addTable, addDecoration, " + //$NON-NLS-1$
                 "removeItem, help (required)", true) //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION) //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "Element name (required for add/remove operations)") //$NON-NLS-1$
             .stringProperty("title", //$NON-NLS-1$
@@ -141,6 +144,14 @@ public class EditFormTool implements IMcpTool
         // Handle help operation early (no project/form needed)
         if (OP_HELP.equalsIgnoreCase(operation))
         {
+            String find = JsonUtils.extractStringArgument(params, "find"); //$NON-NLS-1$
+            if (find != null && !find.isBlank())
+            {
+                // The whole help is one document with a section per operation, so it is searched
+                // as the catalog is elsewhere; there are no separate topics to confine it to.
+                return FacadeHelpSearch.search(NAME, find, null, Collections.<String> emptyList(),
+                    asked -> buildHelpResponse());
+            }
             return buildHelpResponse();
         }
 

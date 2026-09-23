@@ -105,11 +105,7 @@ public class SupportRegistryTool
                     + "Pass operation=help without other parameters for the catalog.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
-            .stringProperty("find", //$NON-NLS-1$
-                "With operation=help: search the help for a case-insensitive substring over " //$NON-NLS-1$
-                    + "the operation catalog and every topic; several words must all appear " //$NON-NLS-1$
-                    + "inside one chunk. Given together with topic, only that topic is " //$NON-NLS-1$
-                    + "searched.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project to read. Required for every operation except help.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$

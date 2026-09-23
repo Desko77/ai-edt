@@ -358,6 +358,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * because the platform reads the last mode flag on the command line and the launch puts the
      * caller's there.
      * </p>
+     * <p>
+     * And a fifteenth, by 1800, for find on the twelve facades whose help it searches: an agent
+     * that cannot see the argument reads the whole catalog and every topic to answer "where does
+     * this facade say X". Each copy is one shared sentence
+     * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
+     * to keep this raise the remainder it is.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 86826;
+    private static final int DOCUMENT_PROSE = 88626;
 }

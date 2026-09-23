@@ -522,13 +522,13 @@ def looped_registrations(source: str) -> list[tuple[str, str]]:
 
 
 CONTROL_WORDS = ("if", "for", "while", "switch", "return", "catch", "new", "synchronized")
-# Keys the call carries rather than the operation - they steer dispatch, preview and batching, and
-# UnreadArguments exempts every one of them. A facade reads them once for all its operations, so
-# attributing them to each adds nothing the guard uses and puts seven names of plumbing in front of
-# a caller who asked what one operation reads. Subtracted from the facade-wide set only: an
-# operation that reads one of these itself keeps it.
+# Keys the call carries rather than the operation - they steer dispatch, preview, batching and
+# the search inside help, and UnreadArguments exempts every one of them. A facade reads them once
+# for all its operations, so attributing them to each adds nothing the guard uses and puts seven
+# names of plumbing in front of a caller who asked what one operation reads. Subtracted from the
+# facade-wide set only: an operation that reads one of these itself keeps it.
 CALL_KEYS = frozenset(("operation", "batch", "operations", "stopOnError", "runKey",
-                       "timeoutSeconds", "topic", "confirm"))
+                       "timeoutSeconds", "topic", "confirm", "find"))
 ALIAS_PUT = re.compile(r'\bput\(\s*"([a-z0-9_]+)"\s*,\s*"([a-z0-9_]+)"\s*\)')
 
 

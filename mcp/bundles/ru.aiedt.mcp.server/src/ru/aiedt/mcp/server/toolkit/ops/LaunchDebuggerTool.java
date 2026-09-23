@@ -95,11 +95,7 @@ public class LaunchDebuggerTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when action=help: workflow (the typical debug sequence). " //$NON-NLS-1$
                 + "Without topic - lists actions.") //$NON-NLS-1$
-            .stringProperty("find", //$NON-NLS-1$
-                "With action=help: search the help for a case-insensitive substring over " //$NON-NLS-1$
-                    + "the action catalog and every topic; several words must all appear " //$NON-NLS-1$
-                    + "inside one chunk. Given together with topic, only that topic is " //$NON-NLS-1$
-                    + "searched.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", "EDT project name (most actions).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Application identifier from list_applications.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
