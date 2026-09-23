@@ -103,6 +103,17 @@ class LegitimateBlocksAreLeftAlone(unittest.TestCase):
             "}\n")
         self.assertEqual([], CHECKER.orphans_in(source))
 
+    def test_a_nested_generic_return_type_on_a_package_private_method(self):
+        source = (
+            "/**\n"
+            " * Documents the method below.\n"
+            " */\n"
+            "List<Map<String, Object>> warningsForTest(String op,\n"
+            "    Object schema) throws Exception\n"
+            "{\n"
+            "}\n")
+        self.assertEqual([], CHECKER.orphans_in(source))
+
     def test_an_annotation_between_the_block_and_its_method(self):
         source = (
             "/**\n"

@@ -38,7 +38,8 @@ DECLARATION = re.compile(
     r"(public|protected|private|static|final|abstract|synchronized|native|default|transient|volatile|strictfp)\s"
     r"|class\s|interface\s|enum\s|record\s|@interface\s"
     r"|package\s|import\s"
-    r"|[\w.\[\]]+(<[^>]*>)?(\[\])*\s+\w+\s*[;=(]"
+    # A type argument may itself be generic one level deep: List<Map<String, Object>>.
+    r"|[\w.\[\]]+(<(?:[^<>]|<[^<>]*>)*>)?(\[\])*\s+\w+\s*[;=(]"
     r"|\w+\s*\("
     # An enum constant: a name, optional arguments, then a comma, a semicolon or a body.
     r"|\w+\s*(\(.*\))?\s*[,;{]\s*$"
