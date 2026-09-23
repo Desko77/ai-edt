@@ -50,7 +50,9 @@ import ru.aiedt.mcp.server.support.BmInfobaseRegistrationHelper.RegistrationEnvi
  * infobase list ({@code add}, and {@code delete} for the rollback) reloads the list, and the
  * reload strips {@code ATTR_APPLICATION_ID} from the launch configurations of EVERY project in
  * the workspace - so the fake {@code IInfobaseManager} strips them on both writes, and the fake
- * {@code ILaunchManager} addresses configurations by memento only, never by display name.</p>
+ * {@code ILaunchManager} addresses configurations by memento only, never by display name.
+ * Associating the first application of a project makes it that project's default, the way EDT
+ * does during the binding.</p>
  */
 public class BmInfobaseRegistrationHelperTest
 {
@@ -76,6 +78,18 @@ public class BmInfobaseRegistrationHelperTest
 
         /** When set, reading the default application throws with this message. */
         String defaultReadFailure;
+
+        /**
+         * Whether {@code getDefaultApplication} ran while the write lock was held. The previous
+         * default has to be read there, before the association.
+         */
+        boolean defaultReadUnderWriteLock;
+
+        /**
+         * The default's name as that locked read saw it, or {@code null} when the project had
+         * none. Meaningful only when {@link #defaultReadUnderWriteLock} is true.
+         */
+        String defaultNameReadUnderWriteLock;
 
         /** Projects whose applications cannot be read: {@code getApplications} throws for them. */
         final Set<String> applicationsReadFailures = new LinkedHashSet<>();
@@ -173,7 +187,16 @@ public class BmInfobaseRegistrationHelperTest
                         {
                             throw new IllegalStateException(associateFailure);
                         }
-                        bind(((IProject)args[0]).getName(), (InfobaseReference)args[1]);
+                        String projectName = ((IProject)args[0]).getName();
+                        boolean firstOfProject = !applications.containsKey(projectName)
+                            || applications.get(projectName).isEmpty();
+                        IInfobaseApplication created =
+                            bind(projectName, (InfobaseReference)args[1]);
+                        // EDT makes the first application of a project the default itself.
+                        if (firstOfProject)
+                        {
+                            defaultApplication = created;
+                        }
                     }
                     return FakeLaunchConfigurations.defaultValue(method.getReturnType());
                 });
@@ -198,6 +221,12 @@ public class BmInfobaseRegistrationHelperTest
                         return new ArrayList<IApplication>(
                             applications.getOrDefault(((IProject)args[0]).getName(), List.of()));
                     case "getDefaultApplication": //$NON-NLS-1$
+                        if (LaunchApplicationIds.WRITE_LOCK.isHeldByCurrentThread())
+                        {
+                            defaultReadUnderWriteLock = true;
+                            defaultNameReadUnderWriteLock = defaultApplication == null
+                                ? null : defaultApplication.getName();
+                        }
                         if (defaultReadFailure != null)
                         {
                             throw new IllegalStateException(defaultReadFailure);
@@ -338,7 +367,12 @@ public class BmInfobaseRegistrationHelperTest
         assertNotNull(r.uuid);
         assertEquals("app-1", r.applicationId); //$NON-NLS-1$
         assertTrue("no default stood, so the new one becomes it", r.defaultApplication); //$NON-NLS-1$
-        assertNull(r.previousDefault);
+        assertNull("the default read before the binding saw none, so the new name is not " //$NON-NLS-1$
+            + "reported as the one that stood before", r.previousDefault); //$NON-NLS-1$
+        assertNull(r.defaultWarning);
+        assertTrue("the previous default is read under the write lock, before the binding", //$NON-NLS-1$
+            env.defaultReadUnderWriteLock);
+        assertNull("that read saw no default", env.defaultNameReadUnderWriteLock); //$NON-NLS-1$
         assertEquals(1, env.infobases.size());
         assertEquals("NewBase", env.infobases.get(0).getName()); //$NON-NLS-1$
         assertNotNull("the operation sets the uuid the factory leaves out", //$NON-NLS-1$
@@ -407,6 +441,10 @@ public class BmInfobaseRegistrationHelperTest
             r.defaultApplication);
         assertEquals("Old base", r.previousDefault); //$NON-NLS-1$
         assertNull("the standing default was not touched", env.defaultSet); //$NON-NLS-1$
+        assertTrue("the previous default is read under the write lock, before the binding", //$NON-NLS-1$
+            env.defaultReadUnderWriteLock);
+        assertEquals("that read saw the default that stood, not the application just bound", //$NON-NLS-1$
+            "Old base", env.defaultNameReadUnderWriteLock); //$NON-NLS-1$
     }
 
     @Test
@@ -546,7 +584,7 @@ public class BmInfobaseRegistrationHelperTest
     }
 
     @Test
-    public void anExplicitMakeDefaultFalseLeavesTheProjectWithoutADefault()
+    public void anExplicitMakeDefaultFalseNamesTheDefaultEdtSetWhenTheProjectHadNone()
     {
         FakeEnvironment env = new FakeEnvironment();
         env.project("project-one"); //$NON-NLS-1$
@@ -555,10 +593,17 @@ public class BmInfobaseRegistrationHelperTest
             "C:/bases/new", null, null, Boolean.FALSE, env); //$NON-NLS-1$
 
         assertTrue(r.error, r.ok);
-        assertFalse(r.defaultApplication);
-        assertNull("no default was set", env.defaultSet); //$NON-NLS-1$
-        assertNull("the project still has no default", env.defaultApplication); //$NON-NLS-1$
-        assertNull(r.defaultWarning);
+        assertNull("no default stood before the binding", r.previousDefault); //$NON-NLS-1$
+        assertTrue("EDT made the first application the default; the call does not undo it", //$NON-NLS-1$
+            r.defaultApplication);
+        assertNotNull(r.defaultWarning);
+        assertTrue(r.defaultWarning.contains("EDT")); //$NON-NLS-1$
+        assertTrue(r.defaultWarning.toLowerCase(Locale.ROOT).contains("associat")); //$NON-NLS-1$
+        assertNull("makeDefault false does not call setDefaultApplication", env.defaultSet); //$NON-NLS-1$
+        assertNotNull("the association itself set the default", env.defaultApplication); //$NON-NLS-1$
+        assertTrue("the previous default is read under the write lock, before the binding", //$NON-NLS-1$
+            env.defaultReadUnderWriteLock);
+        assertNull("that read saw no default", env.defaultNameReadUnderWriteLock); //$NON-NLS-1$
     }
 
     @Test
@@ -649,6 +694,10 @@ public class BmInfobaseRegistrationHelperTest
     {
         FakeEnvironment env = new FakeEnvironment();
         env.project("project-one"); //$NON-NLS-1$
+        // Already has an application, so this binding is not the project's first and EDT does
+        // not make it the default. The lookup is hidden and no default stands: two missing
+        // reads are not the one application.
+        env.bind("project-one", fileInfobase("C:/bases/other", "Other")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         env.hideApplications = true;
 
         RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
@@ -656,7 +705,9 @@ public class BmInfobaseRegistrationHelperTest
 
         assertTrue(r.error, r.ok);
         assertNull(r.applicationId);
+        assertNull(r.previousDefault);
         assertFalse("two missing reads are not the one application", r.defaultApplication); //$NON-NLS-1$
+        assertNull(r.defaultWarning);
     }
 
     @Test

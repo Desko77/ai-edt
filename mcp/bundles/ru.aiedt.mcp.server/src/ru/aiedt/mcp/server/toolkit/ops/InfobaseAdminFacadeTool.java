@@ -205,8 +205,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "connectionString."); //$NON-NLS-1$
         rules.put("makeDefault", "register_infobase only: by default the application becomes the " //$NON-NLS-1$
             + "project's default only when the project has none; pass true to replace the " //$NON-NLS-1$
-            + "standing default, false to leave it. The answer names the default that stood " //$NON-NLS-1$
-            + "before either way."); //$NON-NLS-1$
+            + "standing default, false to leave a standing one. EDT makes the first application " //$NON-NLS-1$
+            + "the default on association, and false does not undo that; the answer says so. " //$NON-NLS-1$
+            + "The answer names the default that stood before either way."); //$NON-NLS-1$
         rules.put("applicationId", "Optional for set_infobase_credentials when the project has a single " //$NON-NLS-1$
             + "application, and for update_database, which falls back to the " //$NON-NLS-1$
             + "project's default application and - for an extension project, which " //$NON-NLS-1$

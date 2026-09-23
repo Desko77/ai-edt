@@ -60,7 +60,18 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * When the project's configuration defaults to the ordinary application, the infobase's additional
  * launch parameters get {@code /RunModeOrdinaryApplication} for this EDT session (the same
  * in-memory reconciling {@code start_client} does); the answer says whether the flag was set and
- * why not when it was not. Never throws out; all failures land in the returned result.
+ * why not when it was not.
+ * </p>
+ * <p>
+ * The default that stood before the call is read under the write lock, before the association.
+ * EDT makes the first application of a project the default itself during that association, so a
+ * read afterwards would name the new application as the one that stood before.
+ * {@code makeDefault} and {@code previousDefault} follow the earlier read; a failed read leaves
+ * the default alone unless {@code makeDefault} is true, and the answer says so in
+ * {@code defaultWarning}. {@code defaultApplication} is read again after the association and
+ * after any default this call sets, and answers the state after the call. When the project had
+ * no default and the caller passed {@code makeDefault=false}, EDT's choice stands and the answer
+ * names it. Never throws out; all failures land in the returned result.
  * </p>
  */
 public final class BmInfobaseRegistrationHelper
@@ -85,7 +96,10 @@ public final class BmInfobaseRegistrationHelper
         public boolean defaultApplication;
         /** The default application that stood before, or {@code null} when there was none. */
         public String previousDefault;
-        /** Why the default was left alone, could not be set, or the one it replaced is not named. */
+        /**
+         * Why the default was left alone, could not be set, the one it replaced is not named, or
+         * EDT made the application the default while associating it.
+         */
         public String defaultWarning;
         /** Projects a reused entry was already bound to; {@code null} when it was bound nowhere else. */
         public List<String> alsoAssociatedWith;
@@ -225,7 +239,9 @@ public final class BmInfobaseRegistrationHelper
      *        directory name for a file one; {@code null} means "not passed"
      * @param makeDefault whether the application becomes the project's default; {@code null} means
      *        "true when the project has no default application, false otherwise" - and a default
-     *        that could not be read counts as standing, not as absent
+     *        that could not be read counts as standing, not as absent. {@code false} leaves a
+     *        standing default and does not undo one EDT set while associating the project's
+     *        first application
      * @return what was added or reused, bound and set as default; never <code>null</code>
      */
     public static RegisterResult registerInfobase(String projectName, String path,
@@ -292,6 +308,7 @@ public final class BmInfobaseRegistrationHelper
         ILaunchManager launchManager = env.launchManager();
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(launchManager);
         InfobaseReference[] target = new InfobaseReference[1];
+        DefaultRead[] previousReadBox = new DefaultRead[1];
         LaunchApplicationIds.underWriteLock(access, snapshot -> {
             LaunchIds launchIds = new LaunchIds(launchManager, access, snapshot);
             // The duplicate search runs before any write: the same infobase under another
@@ -340,6 +357,11 @@ public final class BmInfobaseRegistrationHelper
                 r.alsoAssociatedWith = others.bound.isEmpty() ? null : others.bound;
                 r.associationCheckFailed = others.checkFailed.isEmpty() ? null : others.checkFailed;
             }
+            // The default that stood before the binding. EDT makes the first application of a
+            // project the default during associate, so a read afterwards names the new
+            // application as the one that stood before. A failed read is kept: the omit rule
+            // must not treat it as "there is none".
+            previousReadBox[0] = defaultApplicationOf(appMgr, project);
             try
             {
                 am.associate(project, found,
@@ -388,8 +410,13 @@ public final class BmInfobaseRegistrationHelper
             r.applicationId = application.getId();
         }
 
-        DefaultRead defaultRead = defaultApplicationOf(appMgr, project);
-        IApplication previousDefault = defaultRead.application;
+        DefaultRead previousRead = previousReadBox[0];
+        if (previousRead == null)
+        {
+            previousRead = new DefaultRead();
+            previousRead.failure = "the default was not read before the association"; //$NON-NLS-1$
+        }
+        IApplication previousDefault = previousRead.application;
         if (previousDefault != null)
         {
             r.previousDefault = previousDefault.getName();
@@ -397,7 +424,7 @@ public final class BmInfobaseRegistrationHelper
         // An unread default is not "there is none": the omit rule must not replace a default
         // the answer never saw.
         boolean makeItDefault = makeDefault != null ? makeDefault.booleanValue()
-            : previousDefault == null && defaultRead.failure == null;
+            : previousDefault == null && previousRead.failure == null;
         if (makeItDefault)
         {
             if (application != null)
@@ -405,7 +432,6 @@ public final class BmInfobaseRegistrationHelper
                 try
                 {
                     appMgr.setDefaultApplication(project, application);
-                    r.defaultApplication = true;
                 }
                 catch (Throwable e)
                 {
@@ -419,21 +445,32 @@ public final class BmInfobaseRegistrationHelper
                     + "applications, so it could not be made the default"; //$NON-NLS-1$
             }
         }
-        else
+        // The flag answers the state after the association and after any default this call set.
+        DefaultRead afterRead = defaultApplicationOf(appMgr, project);
+        if (afterRead.failure == null)
         {
-            // The flag answers "the application is the project's default after the call": a reused
-            // entry that already held that state keeps it without a write.
-            r.defaultApplication = defaultNamesInfobase(previousDefault, application, bound);
+            r.defaultApplication = defaultNamesInfobase(afterRead.application, application, bound);
         }
-        if (defaultRead.failure != null && r.defaultWarning == null)
+        else if (makeItDefault && r.defaultWarning == null)
+        {
+            // The set went through; the re-read of the result did not.
+            r.defaultApplication = true;
+        }
+        if (Boolean.FALSE.equals(makeDefault) && previousRead.failure == null
+            && previousDefault == null && r.defaultApplication && r.defaultWarning == null)
+        {
+            r.defaultWarning = "EDT made the application the project's default when associating " //$NON-NLS-1$
+                + "it, because the project had none; makeDefault false does not undo that"; //$NON-NLS-1$
+        }
+        if (previousRead.failure != null && r.defaultWarning == null)
         {
             // The text follows the outcome: a set that went through replaced a default the answer
             // never saw, so only the omission of its name is left to say; otherwise the standing
             // default was left alone.
             r.defaultWarning = r.defaultApplication
-                ? "the default that stood before could not be read (" + defaultRead.failure //$NON-NLS-1$
+                ? "the default that stood before could not be read (" + previousRead.failure //$NON-NLS-1$
                     + "), so the answer does not name it" //$NON-NLS-1$
-                : "the project's default application could not be read (" + defaultRead.failure //$NON-NLS-1$
+                : "the project's default application could not be read (" + previousRead.failure //$NON-NLS-1$
                     + "), so the standing default was left alone"; //$NON-NLS-1$
         }
 
@@ -743,11 +780,12 @@ public final class BmInfobaseRegistrationHelper
     }
 
     /**
-     * Whether the default that stood before the call names the infobase this call bound: the
-     * application just found, or - when that lookup found nothing - an infobase application
-     * pointing at the same list entry. A default the answer never read is not a match.
+     * Whether {@code previousDefault} names the infobase this call bound: the application just
+     * found, or - when that lookup found nothing - an infobase application pointing at the same
+     * list entry. A default the answer never read is not a match. Used for the default read
+     * after the call, which is the state {@code defaultApplication} reports.
      *
-     * @param previousDefault the default read before the call, or {@code null}
+     * @param previousDefault the default being compared, or {@code null}
      * @param application the application found after the binding, or {@code null}
      * @param bound the list entry the call bound
      * @return whether the project's default points at the bound infobase
