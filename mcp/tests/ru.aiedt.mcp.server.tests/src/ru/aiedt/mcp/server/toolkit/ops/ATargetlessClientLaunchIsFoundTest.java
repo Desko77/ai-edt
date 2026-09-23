@@ -225,7 +225,7 @@ public class ATargetlessClientLaunchIsFoundTest
                 }
             }
         };
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
 
         // The save of the infobase list strips the attribute from every launch configuration.
         attributes.remove(LaunchConfigAccess.ATTR_APPLICATION_ID);
@@ -233,7 +233,7 @@ public class ATargetlessClientLaunchIsFoundTest
         assertTrue("without the attribute the terminator cannot see the client", //$NON-NLS-1$
             LaunchTerminator.activeEdtLaunches(mgr, new ArrayList<>()).isEmpty());
 
-        LaunchApplicationIds.restore(access, snapshot);
+        LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("app-1", DebugSessionBook.findApplicationIdFor(client)); //$NON-NLS-1$
         List<ILaunch> active = LaunchTerminator.activeEdtLaunches(mgr, new ArrayList<>());

@@ -711,6 +711,11 @@ public final class LaunchConfigAccess
      * configuration types at once, and the first of them in the manager's list is not necessarily
      * the one whose application id is at stake.
      * </p>
+     * <p>
+     * A listing failure propagates: an empty list and a failed listing are different answers, and
+     * the guard reports the difference. A configuration whose memento cannot be had is listed
+     * with an empty one, so the snapshot names it as unprotected rather than dropping it.
+     * </p>
      *
      * @param launchManager the launch manager; <code>null</code> yields <code>null</code>
      * @return the access, or <code>null</code> when there is no launch manager
@@ -724,37 +729,25 @@ public final class LaunchConfigAccess
         return new LaunchApplicationIds.Access()
         {
             @Override
-            public List<LaunchApplicationIds.Configuration> configurations()
+            public List<LaunchApplicationIds.Configuration> configurations() throws CoreException
             {
                 List<LaunchApplicationIds.Configuration> configurations = new ArrayList<>();
-                ILaunchConfiguration[] found;
-                try
+                for (ILaunchConfiguration config : launchManager.getLaunchConfigurations())
                 {
-                    found = launchManager.getLaunchConfigurations();
-                }
-                catch (CoreException e)
-                {
-                    Activator.logError("Failed to list launch configurations", e); //$NON-NLS-1$
-                    return configurations;
-                }
-                for (ILaunchConfiguration config : found)
-                {
-                    // One unreadable configuration must not cost the others their place in the
-                    // snapshot: its memento is what everything here is keyed by.
+                    String memento = null;
                     try
                     {
-                        String memento = config.getMemento();
-                        if (memento != null && !memento.isEmpty())
-                        {
-                            configurations.add(
-                                new LaunchApplicationIds.Configuration(memento, config.getName()));
-                        }
+                        memento = config.getMemento();
                     }
                     catch (CoreException e)
                     {
+                        // One unaddressable configuration must not cost the others their place in
+                        // the snapshot; it is listed with an empty memento and named there.
                         Activator.logWarning("A launch configuration could not be addressed: " //$NON-NLS-1$
-                            + e.getMessage()); //$NON-NLS-1$
+                            + e.getMessage());
                     }
+                    configurations.add(new LaunchApplicationIds.Configuration(
+                        memento == null ? "" : memento, config.getName())); //$NON-NLS-1$
                 }
                 return configurations;
             }

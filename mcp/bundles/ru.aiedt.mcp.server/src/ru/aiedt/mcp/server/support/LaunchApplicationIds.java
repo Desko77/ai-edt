@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Puts back the application id of EDT launch configurations that a save of the infobase list
@@ -47,16 +48,35 @@ import java.util.Set;
  * {@code Executor}, {@code CompletableFuture} or {@code Display.asyncExec} anywhere on the path.
  * The restore therefore runs after the strip and can settle the outcome itself: each write is
  * read back, and the report speaks by that reading, not by the write having returned.</p>
+ *
+ * <p><b>Two windows are known and left open.</b> A configuration created after the snapshot
+ * carries an application id the guard never saw: when the write strips it, there is nothing to
+ * put back and the report cannot name the loss. A configuration that disappears between the
+ * restore's listing and its write is named as one whose id "did not stay", which is
+ * indistinguishable from a write the store accepted and dropped.</p>
+ *
+ * <p>Every infobase-list write runs under {@link #WRITE_LOCK}: the snapshot, the write and the
+ * restore of one write must not interleave with another's.</p>
  */
 public final class LaunchApplicationIds
 {
     /**
+     * The one lock every write of the infobase list runs under: the snapshot, the write itself
+     * and the restore. Shared by {@code set_infobase_credentials}, {@code create_infobase} and
+     * {@code delete_infobase}. Without it two writes at once interleave: the second snapshot is
+     * taken after the first write stripped the ids, so the second write protects nothing while
+     * the first answer has already claimed a restore.
+     */
+    public static final ReentrantLock WRITE_LOCK = new ReentrantLock();
+
+    /**
      * One launch configuration as the guard addresses it: a memento, which identifies it, and the
-     * display name, which is only ever printed.
+     * display name, which is only ever printed. A configuration that could not be addressed by a
+     * memento is listed with an empty one; the snapshot names it as unprotected.
      */
     public static final class Configuration
     {
-        /** Identifies the configuration in the launch manager. */
+        /** Identifies the configuration in the launch manager; empty when it could not be had. */
         public final String memento;
 
         /** What the answer calls the configuration. */
@@ -80,9 +100,13 @@ public final class LaunchApplicationIds
     public interface Access
     {
         /**
-         * @return every launch configuration, in the manager's order
+         * @return every launch configuration, in the manager's order; a configuration that could
+         *         not be addressed by a memento is listed with an empty one
+         * @throws Exception when the configurations cannot be listed at all - the caller must not
+         *         read an empty answer as "the workspace has none"
          */
-        List<Configuration> configurations();
+        List<Configuration> configurations()
+            throws Exception;
 
         /**
          * @param memento the configuration's memento
@@ -105,7 +129,11 @@ public final class LaunchApplicationIds
     /** One configuration as it stood before the write. */
     public static final class SnapshotEntry
     {
-        /** The display name as it stood then: a memento survives a rename, a name does not. */
+        /**
+         * The display name as it stood then. The answer names the configuration by it: the
+         * memento encodes the {@code .launch} file's path and name, so a rename made during the
+         * write stops it from resolving and the guard can only name the configuration gone.
+         */
         public final String name;
 
         /** The application id that has to stand after the write. */
@@ -150,13 +178,20 @@ public final class LaunchApplicationIds
         public final List<String> failed = new ArrayList<>();
 
         /**
+         * Why the configurations could not be listed after the write, or <code>null</code> when
+         * they were. Nothing is put back when this is set: without the list the guard cannot tell
+         * a gone configuration from a stripped one.
+         */
+        public String listingFailed;
+
+        /**
          * @return whether the restore has nothing to report - no write, no conflict, no loss
          */
         public boolean isQuiet()
         {
             return restored.isEmpty() && changedMeanwhile.isEmpty() && gone.isEmpty()
                 && excludedStripped.isEmpty() && excludedKept.isEmpty() && lost.isEmpty()
-                && failed.isEmpty();
+                && failed.isEmpty() && listingFailed == null;
         }
 
         /**
@@ -168,6 +203,10 @@ public final class LaunchApplicationIds
         public String describe()
         {
             List<String> parts = new ArrayList<>();
+            if (listingFailed != null)
+            {
+                parts.add(listingFailed);
+            }
             if (!restored.isEmpty())
             {
                 parts.add("restored the application id of: " + String.join(", ", restored)); //$NON-NLS-1$ //$NON-NLS-2$
@@ -179,7 +218,8 @@ public final class LaunchApplicationIds
             }
             if (!gone.isEmpty())
             {
-                parts.add("found gone: " + String.join(", ", gone)); //$NON-NLS-1$ //$NON-NLS-2$
+                parts.add("found gone (renamed or deleted during the write): " //$NON-NLS-1$
+                    + String.join(", ", gone)); //$NON-NLS-1$
             }
             if (!excludedStripped.isEmpty())
             {
@@ -209,25 +249,95 @@ public final class LaunchApplicationIds
     }
 
     /**
+     * What the snapshot holds and what it could not protect, for the caller's answer. A snapshot
+     * that protects nothing says so: silence here would read as "nothing was at risk".
+     */
+    public static final class SnapshotResult
+    {
+        /** Configuration memento to what it held before the write, in the manager's order. */
+        public final Map<String, SnapshotEntry> held = new LinkedHashMap<>();
+
+        /**
+         * Configurations that could not be addressed by a memento, named so the answer can say
+         * the write protected nothing of theirs.
+         */
+        public final List<String> unprotected = new ArrayList<>();
+
+        /**
+         * Why the configurations could not be listed at all, or <code>null</code> when they were.
+         * Nothing is held when this is set.
+         */
+        public String listingFailed;
+
+        /**
+         * @return whether the snapshot ran clean - every configuration listed and addressed
+         */
+        public boolean isQuiet()
+        {
+            return listingFailed == null && unprotected.isEmpty();
+        }
+
+        /**
+         * The snapshot's own outcome as one sentence for a tool answer: what could not be listed,
+         * and what could not be addressed.
+         *
+         * @return the sentence; an empty string when the snapshot ran clean
+         */
+        public String describe()
+        {
+            List<String> parts = new ArrayList<>();
+            if (listingFailed != null)
+            {
+                parts.add(listingFailed);
+            }
+            if (!unprotected.isEmpty())
+            {
+                parts.add("not protected: no memento: " + String.join(", ", unprotected)); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return String.join("; ", parts); //$NON-NLS-1$
+        }
+    }
+
+    /**
      * Remembers the application id of every configuration that carries one. Call this before the
      * write that saves the infobase list.
      *
      * @param access the launch configurations
-     * @return configuration memento to what it held before the write, in the manager's order;
-     *         never <code>null</code>
+     * @return what the write must put back, and what the snapshot could not protect; never
+     *         <code>null</code>
      */
-    public static Map<String, SnapshotEntry> snapshot(Access access)
+    public static SnapshotResult snapshot(Access access)
     {
-        Map<String, SnapshotEntry> held = new LinkedHashMap<>();
-        for (Configuration configuration : access.configurations())
+        SnapshotResult result = new SnapshotResult();
+        List<Configuration> configurations;
+        try
         {
+            configurations = access.configurations();
+        }
+        catch (Exception e)
+        {
+            // A failed listing and an empty workspace look the same from here. Only the failure
+            // is reported, so a write that protected nothing is never mistaken for one that had
+            // nothing to protect.
+            result.listingFailed = "the launch configurations could not be listed before the write (" //$NON-NLS-1$
+                + message(e) + "), so the write protected nothing"; //$NON-NLS-1$
+            return result;
+        }
+        for (Configuration configuration : configurations)
+        {
+            if (configuration.memento == null || configuration.memento.isEmpty())
+            {
+                result.unprotected.add(configuration.name);
+                continue;
+            }
             String applicationId = access.readApplicationId(configuration.memento);
             if (applicationId != null && !applicationId.isEmpty())
             {
-                held.put(configuration.memento, new SnapshotEntry(configuration.name, applicationId));
+                result.held.put(configuration.memento,
+                    new SnapshotEntry(configuration.name, applicationId));
             }
         }
-        return held;
+        return result;
     }
 
     /**
@@ -236,11 +346,13 @@ public final class LaunchApplicationIds
      * whose attribute was set to another value after the snapshot keeps that value and is named
      * in the report instead. Every write is read back once all of them are done, and the report
      * is built from that reading: one that does not read back as written is named as lost rather
-     * than claimed.
+     * than claimed. When the configurations cannot be listed at all, nothing is written and the
+     * report names that failure instead.
      *
      * @param access the launch configurations
-     * @param snapshot what {@link #snapshot(Access)} returned before the write
-     * @return what was restored, kept, refused, lost and failed; never <code>null</code>
+     * @param snapshot the held map of what {@link #snapshot(Access)} returned before the write
+     * @return what was restored, kept, refused, lost and failed, or why nothing was; never
+     *         <code>null</code>
      */
     public static RestoreReport restore(Access access, Map<String, SnapshotEntry> snapshot)
     {
@@ -254,18 +366,35 @@ public final class LaunchApplicationIds
      * in two projects.
      *
      * @param access the launch configurations
-     * @param snapshot what {@link #snapshot(Access)} returned before the write
+     * @param snapshot the held map of what {@link #snapshot(Access)} returned before the write
      * @param excludedMementos configurations whose removed application id must stay removed
-     * @return what was restored, kept, refused, deliberately omitted, lost and failed
+     * @return what was restored, kept, refused, deliberately omitted, lost and failed, or why
+     *         nothing was
      */
     public static RestoreReport restore(Access access, Map<String, SnapshotEntry> snapshot,
         Set<String> excludedMementos)
     {
         RestoreReport report = new RestoreReport();
-        Set<String> present = new HashSet<>();
-        for (Configuration configuration : access.configurations())
+        List<Configuration> configurations;
+        try
         {
-            present.add(configuration.memento);
+            configurations = access.configurations();
+        }
+        catch (Exception e)
+        {
+            // Without the list the guard cannot tell a gone configuration from a stripped one. It
+            // writes nothing and names the failure rather than calling every configuration gone.
+            report.listingFailed = "the launch configurations could not be listed after the write (" //$NON-NLS-1$
+                + message(e) + "), so nothing was put back"; //$NON-NLS-1$
+            return report;
+        }
+        Set<String> present = new HashSet<>();
+        for (Configuration configuration : configurations)
+        {
+            if (configuration.memento != null && !configuration.memento.isEmpty())
+            {
+                present.add(configuration.memento);
+            }
         }
         // The mementos written to, in the order they were written: read back once, after all
         // writes, so what the report says is what the store holds when the guard is done.
@@ -326,5 +455,11 @@ public final class LaunchApplicationIds
             }
         }
         return report;
+    }
+
+    /** The message of a failure, or its class name when it carries none. */
+    private static String message(Throwable e)
+    {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 }

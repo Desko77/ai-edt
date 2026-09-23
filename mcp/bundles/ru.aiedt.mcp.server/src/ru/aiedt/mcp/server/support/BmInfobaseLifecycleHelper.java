@@ -9,7 +9,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -121,28 +120,38 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.ALREADY_EXISTS.wire();
             return r;
         }
-        LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
+        // The snapshot, the write and the restore run under the one write lock: a second
+        // infobase-list write at once would snapshot the ids this write already stripped.
+        LaunchApplicationIds.WRITE_LOCK.lock();
         try
         {
-            IInfobaseCreationOperation.Builder b = new IInfobaseCreationOperation.Builder()
-                .infobaseName(name)
-                .infobaseFile(Paths.get(filePath))
-                .platform(platform != null ? platform : ""); //$NON-NLS-1$
-            if (cfPath != null && !cfPath.isEmpty())
+            LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
+            try
             {
-                b.cfFile(Paths.get(cfPath));
+                IInfobaseCreationOperation.Builder b = new IInfobaseCreationOperation.Builder()
+                    .infobaseName(name)
+                    .infobaseFile(Paths.get(filePath))
+                    .platform(platform != null ? platform : ""); //$NON-NLS-1$
+                if (cfPath != null && !cfPath.isEmpty())
+                {
+                    b.cfFile(Paths.get(cfPath));
+                }
+                op.perform(b.build(), new NullProgressMonitor());
             }
-            op.perform(b.build(), new NullProgressMonitor());
-        }
-        catch (Throwable e)
-        {
+            catch (Throwable e)
+            {
+                r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
+                    DeletedBaseConfigurations.none(), "create_infobase"); //$NON-NLS-1$
+                classifyCreate(r, e);
+                return r;
+            }
             r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
                 DeletedBaseConfigurations.none(), "create_infobase"); //$NON-NLS-1$
-            classifyCreate(r, e);
-            return r;
         }
-        r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
-            DeletedBaseConfigurations.none(), "create_infobase"); //$NON-NLS-1$
+        finally
+        {
+            LaunchApplicationIds.WRITE_LOCK.unlock();
+        }
         r.ok = true;
         if (mgr != null)
         {
@@ -283,80 +292,91 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.INFOBASE_NOT_FOUND.wire();
             return r;
         }
-        LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
-        DeletedBaseConfigurations deletedConfigurations =
-            deletedBaseConfigurations(launchIds, PRODUCT, ref.get());
-        if (projectName != null && !projectName.isEmpty())
+        // The snapshot, the search, the dissociation, the delete and the restore run under the
+        // one write lock: a second infobase-list write at once would snapshot the ids this
+        // write already stripped.
+        LaunchApplicationIds.WRITE_LOCK.lock();
+        try
         {
-            IProject project = ProjectResolver.resolve(projectName);
-            IInfobaseAssociationManager am = Activator.getDefault() != null
-                ? Activator.getDefault().getInfobaseAssociationManager() : null;
-            if (project != null && am != null)
+            LaunchIds launchIds = snapshotLaunchApplicationIds(PRODUCT);
+            DeletedBaseConfigurations deletedConfigurations =
+                deletedBaseConfigurations(launchIds, PRODUCT, ref.get());
+            if (projectName != null && !projectName.isEmpty())
             {
-                // Every context the project has, the default one included: a binding made by an
-                // earlier build went to the default context whatever the branch, and one left
-                // behind keeps an application on a deleted infobase.
-                java.util.LinkedHashSet<InfobaseAssociationContext> contexts = new java.util.LinkedHashSet<>();
-                contexts.add(associationContextOf(project));
-                contexts.add(InfobaseAssociationContext.empty());
-                try
+                IProject project = ProjectResolver.resolve(projectName);
+                IInfobaseAssociationManager am = Activator.getDefault() != null
+                    ? Activator.getDefault().getInfobaseAssociationManager() : null;
+                if (project != null && am != null)
                 {
-                    contexts.addAll(am.getAssociationContexts(project));
-                }
-                catch (Throwable e)
-                {
-                    Activator.logWarning("delete_infobase: the association contexts of '" + projectName //$NON-NLS-1$
-                        + "' were not listed: " + msg(e)); //$NON-NLS-1$
-                }
-                Throwable failure = null;
-                for (InfobaseAssociationContext context : contexts)
-                {
+                    // Every context the project has, the default one included: a binding made by an
+                    // earlier build went to the default context whatever the branch, and one left
+                    // behind keeps an application on a deleted infobase.
+                    java.util.LinkedHashSet<InfobaseAssociationContext> contexts = new java.util.LinkedHashSet<>();
+                    contexts.add(associationContextOf(project));
+                    contexts.add(InfobaseAssociationContext.empty());
                     try
                     {
-                        Optional<?> association = am.getAssociation(project, context);
-                        if (association.isEmpty())
-                        {
-                            continue;
-                        }
-                        am.dissociate(project, ref.get(), context);
-                        r.dissociated = true;
+                        contexts.addAll(am.getAssociationContexts(project));
                     }
                     catch (Throwable e)
                     {
-                        // Non-fatal: the infobase may simply not be bound in this context.
-                        failure = e;
+                        Activator.logWarning("delete_infobase: the association contexts of '" + projectName //$NON-NLS-1$
+                            + "' were not listed: " + msg(e)); //$NON-NLS-1$
+                    }
+                    Throwable failure = null;
+                    for (InfobaseAssociationContext context : contexts)
+                    {
+                        try
+                        {
+                            Optional<?> association = am.getAssociation(project, context);
+                            if (association.isEmpty())
+                            {
+                                continue;
+                            }
+                            am.dissociate(project, ref.get(), context);
+                            r.dissociated = true;
+                        }
+                        catch (Throwable e)
+                        {
+                            // Non-fatal: the infobase may simply not be bound in this context.
+                            failure = e;
+                        }
+                    }
+                    if (!r.dissociated && failure != null)
+                    {
+                        // Surface a warning (deletion still proceeds) so a genuine dissociate failure
+                        // that leaves a dangling launch config is visible to the caller.
+                        r.dissociateWarning = "could not dissociate from '" + projectName //$NON-NLS-1$
+                            + "': " + msg(failure) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
+                            + "config may still reference the removed infobase)"; //$NON-NLS-1$
+                        Activator.logWarning("delete_infobase " + r.dissociateWarning); //$NON-NLS-1$
                     }
                 }
-                if (!r.dissociated && failure != null)
-                {
-                    // Surface a warning (deletion still proceeds) so a genuine dissociate failure
-                    // that leaves a dangling launch config is visible to the caller.
-                    r.dissociateWarning = "could not dissociate from '" + projectName //$NON-NLS-1$
-                        + "': " + msg(failure) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "config may still reference the removed infobase)"; //$NON-NLS-1$
-                    Activator.logWarning("delete_infobase " + r.dissociateWarning); //$NON-NLS-1$
-                }
             }
+            try
+            {
+                ISectionDeleteOperation.Descriptor d = new ISectionDeleteOperation.Builder()
+                    .infobaseNames(List.of(name))
+                    .deleteContent(deleteContent)
+                    .build();
+                delOp.perform(d, new NullProgressMonitor());
+                r.contentDeleted = deleteContent;
+            }
+            catch (Throwable e)
+            {
+                r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
+                    DeletedBaseConfigurations.none(), "delete_infobase"); //$NON-NLS-1$
+                r.error = "Failed to delete the infobase: " + msg(e); //$NON-NLS-1$
+                r.failureKind = ErrorTags.DELETE_FAILED.wire();
+                return r;
+            }
+            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, deletedConfigurations,
+                "delete_infobase"); //$NON-NLS-1$
         }
-        try
+        finally
         {
-            ISectionDeleteOperation.Descriptor d = new ISectionDeleteOperation.Builder()
-                .infobaseNames(List.of(name))
-                .deleteContent(deleteContent)
-                .build();
-            delOp.perform(d, new NullProgressMonitor());
-            r.contentDeleted = deleteContent;
+            LaunchApplicationIds.WRITE_LOCK.unlock();
         }
-        catch (Throwable e)
-        {
-            r.launchApplicationIds = restoreLaunchApplicationIds(launchIds,
-                DeletedBaseConfigurations.none(), "delete_infobase"); //$NON-NLS-1$
-            r.error = "Failed to delete the infobase: " + msg(e); //$NON-NLS-1$
-            r.failureKind = ErrorTags.DELETE_FAILED.wire();
-            return r;
-        }
-        r.launchApplicationIds = restoreLaunchApplicationIds(launchIds, deletedConfigurations,
-            "delete_infobase"); //$NON-NLS-1$
         r.ok = true;
         return r;
     }
@@ -366,10 +386,10 @@ public final class BmInfobaseLifecycleHelper
     {
         final ILaunchManager manager;
         final LaunchApplicationIds.Access access;
-        final Map<String, LaunchApplicationIds.SnapshotEntry> snapshot;
+        final LaunchApplicationIds.SnapshotResult snapshot;
 
         LaunchIds(ILaunchManager manager, LaunchApplicationIds.Access access,
-            Map<String, LaunchApplicationIds.SnapshotEntry> snapshot)
+            LaunchApplicationIds.SnapshotResult snapshot)
         {
             this.manager = manager;
             this.access = access;
@@ -381,16 +401,23 @@ public final class BmInfobaseLifecycleHelper
      * The launch configurations whose application belongs to the infobase that is going away, and
      * what the search could not establish.
      * <p>
-     * A configuration the search could not read is not excluded: it may belong to the deleted
-     * base, but nothing proves it, and the answer says so instead of the guard guessing.
+     * A configuration the search could not read or place is not restored: it may belong to the
+     * deleted base, and putting its id back could hand the deleted base's binding back. The
+     * answer names it instead of the guard guessing.
      * </p>
      */
     static final class DeletedBaseConfigurations
     {
-        /** Mementos of the configurations bound to the infobase being deleted. */
+        /**
+         * Mementos of the configurations whose removed application id must stay removed: the ones
+         * bound to the infobase being deleted, and the ones the search could not place anywhere.
+         */
         final Set<String> mementos = new LinkedHashSet<>();
 
-        /** Configurations the search could not read; named in the answer, and not excluded. */
+        /**
+         * Configurations the search could not read or place, named in the answer; where the
+         * memento was known, their binding is in {@link #mementos} and stays removed.
+         */
         final List<String> unidentified = new ArrayList<>();
 
         /**
@@ -417,8 +444,8 @@ public final class BmInfobaseLifecycleHelper
             {
                 return null;
             }
-            return "could not read these launch configurations, so they were restored as if " //$NON-NLS-1$
-                + "they did not belong to the deleted infobase: " + String.join(", ", unidentified); //$NON-NLS-1$ //$NON-NLS-2$
+            return "could not read these launch configurations, so they were not restored: " //$NON-NLS-1$
+                + String.join(", ", unidentified); //$NON-NLS-1$
         }
     }
 
@@ -465,14 +492,15 @@ public final class BmInfobaseLifecycleHelper
     {
         ILaunchManager manager = environment.launchManager();
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(manager);
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot =
+        LaunchApplicationIds.SnapshotResult snapshot =
             access == null ? null : LaunchApplicationIds.snapshot(access);
         return new LaunchIds(manager, access, snapshot);
     }
 
     /**
      * Puts the launch configurations' application ids back after the infobase-list write and
-     * composes what the operation answer says about it.
+     * composes what the operation answer says about it: what the snapshot could not protect, what
+     * the search could not establish, and what the restore did.
      *
      * @param launchIds what the guard captured before the write
      * @param deleted what the search established about the deleted base's configurations
@@ -483,10 +511,12 @@ public final class BmInfobaseLifecycleHelper
         DeletedBaseConfigurations deleted, String operation)
     {
         String search = deleted.describeSearch();
+        String snapshot = launchIds == null || launchIds.snapshot == null
+            || launchIds.snapshot.isQuiet() ? null : launchIds.snapshot.describe();
         if (deleted.searchFailed != null)
         {
             Activator.logWarning(operation + ": nothing was restored - " + deleted.searchFailed); //$NON-NLS-1$
-            return search;
+            return joinNotes(snapshot, search);
         }
         if (launchIds == null || launchIds.access == null || launchIds.snapshot == null)
         {
@@ -496,7 +526,7 @@ public final class BmInfobaseLifecycleHelper
         try
         {
             LaunchApplicationIds.RestoreReport restored = LaunchApplicationIds.restore(
-                launchIds.access, launchIds.snapshot, deleted.mementos);
+                launchIds.access, launchIds.snapshot.held, deleted.mementos);
             report = restored.isQuiet() ? null : restored.describe();
         }
         catch (Throwable e)
@@ -507,11 +537,21 @@ public final class BmInfobaseLifecycleHelper
                 + "restored: " + msg(e)); //$NON-NLS-1$
             report = "the launch configurations' application ids were not restored: " + msg(e); //$NON-NLS-1$
         }
-        if (report == null)
+        return joinNotes(snapshot, search, report);
+    }
+
+    /** Joins the answer's notes, skipping the ones there is nothing to say about. */
+    private static String joinNotes(String... notes)
+    {
+        List<String> present = new ArrayList<>();
+        for (String note : notes)
         {
-            return search;
+            if (note != null && !note.isEmpty())
+            {
+                present.add(note);
+            }
         }
-        return search == null ? report : report + "; " + search; //$NON-NLS-1$
+        return present.isEmpty() ? null : String.join("; ", present); //$NON-NLS-1$
     }
 
     /**
@@ -519,8 +559,11 @@ public final class BmInfobaseLifecycleHelper
      * <p>
      * Each configuration is read on its own: one unreadable {@code .launch} file names itself in
      * the answer and leaves the search running, instead of costing every other configuration its
-     * exclusion. When nothing can be identified at all - no application manager, or no launch
-     * configuration list - the answer says so and the guard puts nothing back.
+     * exclusion. A configuration whose project cannot be resolved - closed, or named nowhere -
+     * cannot be placed: its binding may be the deleted base's, so it is excluded like the
+     * identified ones, named in the answer, and its id stays removed. When nothing can be
+     * identified at all - no application manager, or no launch configuration list - the answer
+     * says so and the guard puts nothing back.
      * </p>
      *
      * @param launchIds what the guard captured before the write
@@ -562,16 +605,34 @@ public final class BmInfobaseLifecycleHelper
                 String projectName = configuration.getAttribute(LaunchConfigAccess.ATTR_PROJECT_NAME, ""); //$NON-NLS-1$
                 String applicationId = configuration.getAttribute(
                     LaunchConfigAccess.ATTR_APPLICATION_ID, ""); //$NON-NLS-1$
-                IProject project = projectName.isEmpty() ? null : environment.resolveProject(projectName);
-                if (project == null || applicationId.isEmpty())
+                if (applicationId.isEmpty())
                 {
+                    continue;
+                }
+                if (memento == null || memento.isEmpty())
+                {
+                    // Cannot be addressed, so it is not in the snapshot and nothing is restored
+                    // to it; the answer still names it.
+                    found.unidentified.add(nameOf(configuration));
+                    continue;
+                }
+                IProject project = projectName.isEmpty() ? null : environment.resolveProject(projectName);
+                if (project == null)
+                {
+                    // The binding cannot be placed: it may be the deleted base's. It stays
+                    // removed - putting it back could hand the deleted base's id back - and the
+                    // answer names it.
+                    found.mementos.add(memento);
+                    found.unidentified.add(nameOf(configuration));
+                    Activator.logWarning("delete_infobase: the launch configuration '" //$NON-NLS-1$
+                        + nameOf(configuration) + "' names project '" + projectName //$NON-NLS-1$
+                        + "', which does not resolve; its application id was not put back"); //$NON-NLS-1$
                     continue;
                 }
                 IApplication application = applicationManager.getApplication(project, applicationId)
                     .orElse(null);
                 if (application instanceof IInfobaseApplication
-                    && sameInfobase(((IInfobaseApplication)application).getInfobase(), infobase)
-                    && memento != null && !memento.isEmpty())
+                    && sameInfobase(((IInfobaseApplication)application).getInfobase(), infobase))
                 {
                     found.mementos.add(memento);
                 }

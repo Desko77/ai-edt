@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -66,6 +67,9 @@ public class LaunchApplicationIdsTest
         /** Mementos whose write is accepted and never reaches the store. */
         final Set<String> dropped = new LinkedHashSet<>();
 
+        /** When true, the store cannot be listed at all. */
+        boolean listingFails;
+
         void add(String memento, String name, String applicationId)
         {
             configs.put(memento, new LaunchApplicationIds.Configuration(memento, name));
@@ -89,7 +93,12 @@ public class LaunchApplicationIdsTest
 
         @Override
         public List<LaunchApplicationIds.Configuration> configurations()
+            throws Exception
         {
+            if (listingFails)
+            {
+                throw new Exception("the .launch store is unreadable"); //$NON-NLS-1$
+            }
             return new ArrayList<>(configs.values());
         }
 
@@ -124,9 +133,9 @@ public class LaunchApplicationIdsTest
         access.add("m-two", "app-two", "app-2"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-none", "no-application", null); //$NON-NLS-1$ //$NON-NLS-2$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("app-1", access.readApplicationId("m-one")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("app-2", access.readApplicationId("m-two")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -148,9 +157,9 @@ public class LaunchApplicationIdsTest
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-two", "app-two", "app-2"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.attributes.get("m-one").remove(APP_ID); //$NON-NLS-1$
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("app-1", access.readApplicationId("m-one")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(List.of("app-one"), report.restored); //$NON-NLS-1$
@@ -168,12 +177,12 @@ public class LaunchApplicationIdsTest
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-two", "app-two", "app-2"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
         // Between the snapshot and the restore somebody edits another configuration.
         access.attributes.get("m-two").put("clientType", "thick"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        LaunchApplicationIds.restore(access, snapshot);
+        LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("thick", access.attributes.get("m-two").get("clientType")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertEquals("p-app-one", access.attributes.get("m-one").get("project")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -189,17 +198,17 @@ public class LaunchApplicationIdsTest
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-two", "app-two", "app-2"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
-        LaunchApplicationIds.restore(access, snapshot);
+        LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("a fresh snapshot of the reread list is the one taken before the write", //$NON-NLS-1$
-            snapshot.keySet(), LaunchApplicationIds.snapshot(access).keySet());
-        Map<String, LaunchApplicationIds.SnapshotEntry> reread = LaunchApplicationIds.snapshot(access);
-        for (Map.Entry<String, LaunchApplicationIds.SnapshotEntry> entry : snapshot.entrySet())
+            snapshot.held.keySet(), LaunchApplicationIds.snapshot(access).held.keySet());
+        LaunchApplicationIds.SnapshotResult reread = LaunchApplicationIds.snapshot(access);
+        for (Map.Entry<String, LaunchApplicationIds.SnapshotEntry> entry : snapshot.held.entrySet())
         {
             assertEquals("the id read back after the restore is the snapshotted one", //$NON-NLS-1$
-                entry.getValue().applicationId, reread.get(entry.getKey()).applicationId);
+                entry.getValue().applicationId, reread.held.get(entry.getKey()).applicationId);
         }
     }
 
@@ -209,13 +218,13 @@ public class LaunchApplicationIdsTest
         FakeAccess access = new FakeAccess();
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
         // The attribute reappears with another value before the restore runs: somebody's edit,
         // not the guard's loss to repair.
         access.attributes.get("m-one").put(APP_ID, "app-edited"); //$NON-NLS-1$ //$NON-NLS-2$
 
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("the later value stands", "app-edited", access.readApplicationId("m-one")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertTrue(access.writes.isEmpty());
@@ -230,17 +239,19 @@ public class LaunchApplicationIdsTest
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-two", "app-two", "app-2"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
         access.configs.remove("m-two"); //$NON-NLS-1$
         access.attributes.remove("m-two"); //$NON-NLS-1$
 
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals(List.of("app-two"), report.gone); //$NON-NLS-1$
         assertFalse("the guard repairs an attribute, it does not resurrect a configuration", //$NON-NLS-1$
             access.attributes.containsKey("m-two")); //$NON-NLS-1$
         assertTrue(report.describe().contains("app-two")); //$NON-NLS-1$
+        assertTrue("a vanished memento is named for what it looks like: a rename during the write", //$NON-NLS-1$
+            report.describe().contains("gone (renamed or deleted during the write)")); //$NON-NLS-1$
     }
 
     @Test
@@ -249,8 +260,8 @@ public class LaunchApplicationIdsTest
         FakeAccess access = new FakeAccess();
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertTrue(report.isQuiet());
         assertEquals("", report.describe()); //$NON-NLS-1$
@@ -264,11 +275,11 @@ public class LaunchApplicationIdsTest
         FakeAccess access = new FakeAccess();
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
         access.unwritable.add("m-one"); //$NON-NLS-1$
 
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals(List.of("app-one"), report.failed); //$NON-NLS-1$
         assertTrue(report.restored.isEmpty());
@@ -284,11 +295,11 @@ public class LaunchApplicationIdsTest
         FakeAccess access = new FakeAccess();
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
         access.dropped.add("m-one"); //$NON-NLS-1$
 
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals(List.of("app-one"), report.lost); //$NON-NLS-1$
         assertTrue("a write that did not stay is not reported as restored", report.restored.isEmpty()); //$NON-NLS-1$
@@ -307,9 +318,9 @@ public class LaunchApplicationIdsTest
         access.add("m-remote", "Run one", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-local", "Run one", "app-deleted"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot, Set.of("m-local")); //$NON-NLS-1$
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held, Set.of("m-local")); //$NON-NLS-1$
 
         assertEquals("the foreign binding goes back even though the name was taken", //$NON-NLS-1$
             "app-foreign", access.readApplicationId("m-remote")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -328,9 +339,9 @@ public class LaunchApplicationIdsTest
         access.add("m-deleted", "Deleted base run", "app-deleted"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-foreign", "Foreign run", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.attributes.get("m-foreign").remove(APP_ID); //$NON-NLS-1$
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot, Set.of("m-deleted")); //$NON-NLS-1$
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held, Set.of("m-deleted")); //$NON-NLS-1$
 
         assertEquals(List.of("Deleted base run"), report.excludedKept); //$NON-NLS-1$
         assertTrue(report.excludedStripped.isEmpty());
@@ -346,9 +357,9 @@ public class LaunchApplicationIdsTest
         access.add("m-one", "foreign-one", "application-one"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-two", "foreign-two", "application-two"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals("application-one", access.readApplicationId("m-one")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("application-two", access.readApplicationId("m-two")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -363,9 +374,9 @@ public class LaunchApplicationIdsTest
         access.add("m-deleted", "deleted-base", "deleted-application"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.add("m-foreign", "foreign-base", "foreign-application"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.stripApplicationIds();
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot, Set.of("m-deleted")); //$NON-NLS-1$
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held, Set.of("m-deleted")); //$NON-NLS-1$
 
         assertNull(access.readApplicationId("m-deleted")); //$NON-NLS-1$
         assertEquals("foreign-application", access.readApplicationId("m-foreign")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -382,12 +393,71 @@ public class LaunchApplicationIdsTest
         FakeAccess access = new FakeAccess();
         access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        Map<String, LaunchApplicationIds.SnapshotEntry> snapshot = LaunchApplicationIds.snapshot(access);
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
         access.configs.put("m-one", new LaunchApplicationIds.Configuration("m-one", "renamed")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         access.stripApplicationIds();
-        RestoreReport report = LaunchApplicationIds.restore(access, snapshot);
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
 
         assertEquals(List.of("app-one"), report.restored); //$NON-NLS-1$
         assertEquals("app-1", access.readApplicationId("m-one")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aListingFailureAtTheSnapshotProtectsNothingAndSaysSo()
+    {
+        // A failed listing and an empty workspace are different answers: the write that follows
+        // protects nothing, and the answer has to say so rather than stay quiet.
+        FakeAccess access = new FakeAccess();
+        access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        access.listingFails = true;
+
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+
+        assertNotNull(snapshot.listingFailed);
+        assertTrue(snapshot.held.isEmpty());
+        assertFalse(snapshot.isQuiet());
+        assertTrue(snapshot.describe().contains("could not be listed")); //$NON-NLS-1$
+        assertTrue(snapshot.describe().contains("protected nothing")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aListingFailureAtTheRestoreNamesTheFailureAndClaimsNothingGone()
+    {
+        // The list answered at the snapshot and refuses at the restore: the guard cannot tell a
+        // gone configuration from a stripped one, so it writes nothing and says why - every
+        // configuration named "gone" would be a guess.
+        FakeAccess access = new FakeAccess();
+        access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+        access.stripApplicationIds();
+        access.listingFails = true;
+
+        RestoreReport report = LaunchApplicationIds.restore(access, snapshot.held);
+
+        assertNotNull(report.listingFailed);
+        assertTrue(report.gone.isEmpty());
+        assertTrue(access.writes.isEmpty());
+        assertFalse(report.isQuiet());
+        assertTrue(report.describe().contains("could not be listed after the write")); //$NON-NLS-1$
+        assertFalse(report.describe().contains("gone")); //$NON-NLS-1$
+        assertNull(access.readApplicationId("m-one")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aConfigurationWithoutMementoIsNamedNotProtected()
+    {
+        // A configuration the guard cannot address carries an id the write may strip; the
+        // snapshot names it instead of letting the loss pass silently.
+        FakeAccess access = new FakeAccess();
+        access.add("m-one", "app-one", "app-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        access.configs.put("", new LaunchApplicationIds.Configuration("", "no-memento")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        LaunchApplicationIds.SnapshotResult snapshot = LaunchApplicationIds.snapshot(access);
+
+        assertEquals("the addressable configuration is protected", 1, snapshot.held.size()); //$NON-NLS-1$
+        assertEquals(List.of("no-memento"), snapshot.unprotected); //$NON-NLS-1$
+        assertFalse(snapshot.isQuiet());
+        assertTrue(snapshot.describe().contains("not protected: no memento")); //$NON-NLS-1$
     }
 }
