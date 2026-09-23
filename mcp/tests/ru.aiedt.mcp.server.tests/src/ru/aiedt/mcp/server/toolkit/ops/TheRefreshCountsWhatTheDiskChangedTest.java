@@ -29,7 +29,10 @@ import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
 import org.eclipse.core.resources.IResourceChangeEvent;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IResourceChangeListener;
+import org.eclipse.core.resources.IResourceDelta;
+import org.eclipse.core.resources.IResourceDeltaVisitor;
 import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
@@ -284,11 +287,11 @@ public class TheRefreshCountsWhatTheDiskChangedTest
     }
 
     /**
-     * A workspace API write in another thread may overlap the refresh listener, but it belongs to
-     * that writer rather than to the refresh and must not enter this call's answer. The refresh
-     * runs against the real project of this workspace: with a stand-in project an implementation
-     * could drop the writer's event on a project mismatch and pass without ever exercising the
-     * thread rule.
+     * A workspace API write another thread makes while the refresh is registered belongs to that
+     * writer and does not enter this call's answer. The write needs the project's scheduling rule
+     * the refresh holds, so it lands after the refresh; a counter that kept listening past its own
+     * refresh - the settle window it replaced - counted it. The rule of the thread itself is pinned
+     * by {@link #anEventDeliveredOnAnotherThreadDuringTheRefreshIsNotCounted()}.
      *
      * @throws Exception when the coordinated write fails
      */
@@ -444,5 +447,102 @@ public class TheRefreshCountsWhatTheDiskChangedTest
             this.thread = thread;
             this.afterReturn = afterReturn;
         }
+    }
+
+    /**
+     * The counter takes an event only on the thread that is inside the refresh: an event for a
+     * watched project delivered on another thread while the refresh runs - a second watched project
+     * written concurrently, which the project rule does not serialize - is not this call's work. The
+     * same event on the refresh thread counts, so the refusal is the thread rule and nothing else.
+     *
+     * @throws Exception when the other thread cannot be joined
+     */
+    @Test
+    public void anEventDeliveredOnAnotherThreadDuringTheRefreshIsNotCounted() throws Exception
+    {
+        DatabaseUpdater.RefreshChangeCounter counter =
+            new DatabaseUpdater.RefreshChangeCounter(java.util.Collections.singleton(project));
+        IResourceChangeEvent event = postChangeAdding(project.getFile("OnAnotherThread.txt")); //$NON-NLS-1$
+        counter.beginRefresh();
+        try
+        {
+            Thread other = new Thread(() -> counter.resourceChanged(event), "aiedt-other-writer"); //$NON-NLS-1$
+            other.start();
+            other.join();
+            assertEquals("an event on another thread is not this refresh's", 0, counter.changed()); //$NON-NLS-1$
+
+            counter.resourceChanged(event);
+            assertEquals("the same event on the refresh thread counts", 1, counter.changed()); //$NON-NLS-1$
+        }
+        finally
+        {
+            counter.endRefresh();
+        }
+    }
+
+    /**
+     * A POST_CHANGE event whose delta adds one file under its project, the way the workspace
+     * reports it: the root, the project changed, the file added.
+     *
+     * @param file the file the delta adds
+     * @return the event
+     */
+    private static IResourceChangeEvent postChangeAdding(IFile file)
+    {
+        IResourceDelta added = delta(file, IResourceDelta.ADDED);
+        IResourceDelta changedProject = delta(file.getProject(), IResourceDelta.CHANGED, added);
+        IResourceDelta root = delta(file.getWorkspace().getRoot(), IResourceDelta.CHANGED, changedProject);
+        return (IResourceChangeEvent)Proxy.newProxyInstance(
+            TheRefreshCountsWhatTheDiskChangedTest.class.getClassLoader(),
+            new Class<?>[] { IResourceChangeEvent.class }, (proxy, method, args) -> {
+                switch (method.getName())
+                {
+                case "getDelta": //$NON-NLS-1$
+                    return root;
+                case "getType": //$NON-NLS-1$
+                    return Integer.valueOf(IResourceChangeEvent.POST_CHANGE);
+                default:
+                    return null;
+                }
+            });
+    }
+
+    /**
+     * One node of a delta tree that visits itself and then its children.
+     *
+     * @param resource the resource of the node
+     * @param kind the kind of the node
+     * @param children the child nodes
+     * @return the node
+     */
+    private static IResourceDelta delta(IResource resource, int kind, IResourceDelta... children)
+    {
+        return (IResourceDelta)Proxy.newProxyInstance(
+            TheRefreshCountsWhatTheDiskChangedTest.class.getClassLoader(),
+            new Class<?>[] { IResourceDelta.class }, (proxy, method, args) -> {
+                switch (method.getName())
+                {
+                case "accept": //$NON-NLS-1$
+                    IResourceDeltaVisitor visitor = (IResourceDeltaVisitor)args[0];
+                    if (visitor.visit((IResourceDelta)proxy))
+                    {
+                        for (IResourceDelta child : children)
+                        {
+                            child.accept(visitor);
+                        }
+                    }
+                    return null;
+                case "getResource": //$NON-NLS-1$
+                    return resource;
+                case "getKind": //$NON-NLS-1$
+                    return Integer.valueOf(kind);
+                case "getFlags": //$NON-NLS-1$
+                    return Integer.valueOf(0);
+                case "getAffectedChildren": //$NON-NLS-1$
+                    return children;
+                default:
+                    throw new UnsupportedOperationException(method.getName());
+                }
+            });
     }
 }

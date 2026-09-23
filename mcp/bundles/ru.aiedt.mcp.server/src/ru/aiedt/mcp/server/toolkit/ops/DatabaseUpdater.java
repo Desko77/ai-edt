@@ -1392,7 +1392,7 @@ public class DatabaseUpdater implements IMcpTool
      * refresh runs.
      * </p>
      */
-    private static final class RefreshChangeCounter implements IResourceChangeListener
+    static final class RefreshChangeCounter implements IResourceChangeListener
     {
         /** The counters registered right now; see {@link DatabaseUpdater#activeRefreshCounters()}. */
         private static final AtomicInteger ACTIVE = new AtomicInteger();
