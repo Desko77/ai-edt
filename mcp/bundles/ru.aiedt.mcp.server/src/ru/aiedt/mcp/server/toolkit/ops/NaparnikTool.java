@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
 import ru.aiedt.mcp.server.Activator;
@@ -21,6 +22,7 @@ import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.support.PendingEnvelope;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.naparnik.BundleCopy;
 import ru.aiedt.mcp.server.support.naparnik.NaparnikAccessException;
@@ -131,6 +133,13 @@ public class NaparnikTool
     private static final Object ADMISSION = new Object();
 
     private static final Map<String, LiveAsk> LIVE = new ConcurrentHashMap<>();
+
+    static
+    {
+        // tasks/cancel reaches this domain only through the stopper. Without it the registry
+        // drops the entry and the question keeps running.
+        PendingWorkRegistry.NAPARNIK.stopsWith(NaparnikTool::stopTheQuestion);
+    }
 
     private final NaparnikHost host;
 
@@ -724,7 +733,7 @@ public class NaparnikTool
                     .toJson();
             }
             LIVE.put(run, live);
-            entry = registry.getOrStart(run, () -> runQuestion(run, live, prepared.facade,
+            entry = registry.getOrStart(run, pending -> runQuestion(pending, run, live, prepared.facade,
                 prepared.source, project, trimmedQuestion, conversationId, replyTo, forceNew,
                 rounds.intValue(), allowed, timeout.intValue()));
         }
@@ -806,31 +815,161 @@ public class NaparnikTool
         return done;
     }
 
-    private String runQuestion(String runKey, LiveAsk live, Object facade, BundleCopy source,
-        Object project, String text, String conversationId, String replyTo, boolean forceNew,
-        int maxToolRounds, Set<String> allowed, int timeoutSeconds)
+    /**
+     * Stops the question a registry cancel names.
+     * <p>
+     * {@code tasks/cancel} asks this and nothing else. The call moves Naparnik's own token. It does
+     * not wait the future out: a tool call that already started can still be running, and saying it
+     * had stopped would be the wrong one of the three answers.
+     * </p>
+     *
+     * @param runKey the question's key
+     * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no question is live,
+     *         otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
+     */
+    private static PendingWorkRegistry.StopOutcome stopTheQuestion(String runKey)
+    {
+        LiveAsk live = LIVE.get(runKey);
+        if (live == null)
+        {
+            return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
+        }
+        live.userCancel = true;
+        RunningQuestion question = live.question;
+        if (question == null)
+        {
+            return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        }
+        question.cancel();
+        return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+    }
+
+    /**
+     * Whether the client has withdrawn this question.
+     * <p>
+     * The tool's own {@code cancel} sets {@link LiveAsk#userCancel}. {@code notifications/cancelled}
+     * only raises the flag the registry stored on the entry. Either one has to reach
+     * {@link RunningQuestion#cancel()}.
+     * </p>
+     *
+     * @param entry the registry entry, which holds the flag
+     * @param live the question's own marks
+     * @return whether the question should stop
+     */
+    private static boolean withdrawn(PendingWorkRegistry.PendingEntry entry, LiveAsk live)
+    {
+        if (live.userCancel)
+        {
+            return true;
+        }
+        ToolCallScope.Cancellation flag = entry == null ? null : entry.cancellation;
+        return flag != null && flag.isCancelled();
+    }
+
+    /**
+     * Watches the withdrawal flag while {@link RunningQuestion#await(long)} is blocked.
+     * <p>
+     * The wait is one call, and the flag arrives on another thread. Polling here is what makes a
+     * withdrawal during that call cancel the question instead of waiting out the timeout.
+     * </p>
+     *
+     * @param watching cleared when the wait is over
+     * @param entry the registry entry
+     * @param live the question's own marks; a withdrawal is written here so the answer says cancelled
+     * @param question the question to cancel
+     */
+    private static void watchForWithdrawal(AtomicBoolean watching, PendingWorkRegistry.PendingEntry entry,
+        LiveAsk live, RunningQuestion question)
+    {
+        while (watching.get())
+        {
+            if (withdrawn(entry, live))
+            {
+                live.userCancel = true;
+                question.cancel();
+                return;
+            }
+            try
+            {
+                Thread.sleep(20L);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private String runQuestion(PendingWorkRegistry.PendingEntry entry, String runKey, LiveAsk live,
+        Object facade, BundleCopy source, Object project, String text, String conversationId,
+        String replyTo, boolean forceNew, int maxToolRounds, Set<String> allowed, int timeoutSeconds)
     {
         long started = System.currentTimeMillis();
         try
         {
-            if (live.userCancel)
+            if (withdrawn(entry, live))
             {
+                live.userCancel = true;
                 return cancelled(live, System.currentTimeMillis() - started, List.of());
             }
             RunningQuestion question = host.ask(facade, source, new Question(project, text,
                 conversationId, replyTo, forceNew, SKILL_NAME, CHAT, maxToolRounds, allowed,
                 names -> notice(live, names, allowed)));
             live.question = question;
-            if (live.userCancel)
+            AtomicBoolean watching = new AtomicBoolean(true);
+            Thread watcher = new Thread(
+                () -> watchForWithdrawal(watching, entry, live, question), "naparnik-cancel-watch"); //$NON-NLS-1$
+            watcher.setDaemon(true);
+            watcher.start();
+            boolean finished;
+            try
             {
-                question.cancel();
+                if (withdrawn(entry, live))
+                {
+                    live.userCancel = true;
+                    question.cancel();
+                }
+                finished = question.await(timeoutSeconds * 1000L);
+                if (!finished)
+                {
+                    live.timedOut = true;
+                    question.cancel();
+                    finished = question.await(GRACE_MS);
+                }
+                // The grace is how long a cancel is given to finish the future. When it does not,
+                // this call stays here, so the registry entry stays unfinished and the next
+                // question is refused, until the future has actually stopped.
+                boolean stopAsked = false;
+                while (!finished)
+                {
+                    if (!stopAsked && withdrawn(entry, live))
+                    {
+                        live.userCancel = true;
+                        question.cancel();
+                        stopAsked = true;
+                    }
+                    finished = question.await(GRACE_MS);
+                    if (!finished)
+                    {
+                        try
+                        {
+                            Thread.sleep(20L);
+                        }
+                        catch (InterruptedException interrupted)
+                        {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                }
             }
-            boolean finished = question.await(timeoutSeconds * 1000L);
-            if (!finished)
+            finally
             {
-                live.timedOut = true;
-                question.cancel();
-                question.await(GRACE_MS);
+                watching.set(false);
+            }
+            if (withdrawn(entry, live))
+            {
+                live.userCancel = true;
             }
             long elapsed = System.currentTimeMillis() - started;
             List<String> called = question.toolsCalled();

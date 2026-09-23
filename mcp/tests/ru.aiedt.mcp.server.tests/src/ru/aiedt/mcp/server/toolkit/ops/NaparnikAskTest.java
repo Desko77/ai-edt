@@ -40,6 +40,7 @@ import com.google.gson.JsonParser;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
+import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.naparnik.BundleCopy;
 import ru.aiedt.mcp.server.support.naparnik.NaparnikAccessException;
 import ru.aiedt.mcp.server.support.naparnik.NaparnikHost;
@@ -433,6 +434,114 @@ public class NaparnikAskTest
         assertTrue(host.cancels >= 1);
     }
 
+    /**
+     * {@code tasks/cancel} goes through the registry, which only stops work the domain has named.
+     * Raising nothing leaves the question, and any tool it is running, going.
+     */
+    @Test
+    public void aRegistryCancelReachesTheRunningQuestion()
+        throws InterruptedException
+    {
+        host.stall = true;
+
+        JsonObject pending = ask("waitSeconds", "1", "timeoutSeconds", "30"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertEquals("Pending", pending.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
+        assertEquals(0, host.cancels);
+
+        PendingWorkRegistry.StopOutcome outcome = PendingWorkRegistry.NAPARNIK.cancelAndStop(runKey);
+
+        assertTrue("the registry has to ask the question to stop, not only drop the entry", //$NON-NLS-1$
+            outcome != PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP);
+        long deadline = System.currentTimeMillis() + 3000L;
+        while (host.cancels < 1 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(20L);
+        }
+        assertTrue("cancel through the registry must reach the question", host.cancels >= 1); //$NON-NLS-1$
+    }
+
+    /**
+     * {@code notifications/cancelled} only raises the flag the entry captured. The wait has to
+     * notice it and cancel the question; the question does not see that flag on its own.
+     */
+    @Test
+    public void aRaisedCancellationFlagReachesTheRunningQuestion()
+        throws InterruptedException
+    {
+        host.stall = true;
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        JsonObject pending;
+        try
+        {
+            pending = ask("waitSeconds", "1", "timeoutSeconds", "30"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+        assertEquals("Pending", pending.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(0, host.cancels);
+
+        flag.cancel("notifications/cancelled"); //$NON-NLS-1$
+        long deadline = System.currentTimeMillis() + 3000L;
+        while (host.cancels < 1 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(20L);
+        }
+        assertTrue("the flag raised on the registry entry must reach the question", //$NON-NLS-1$
+            host.cancels >= 1);
+
+        String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
+        JsonObject stopped = ask("runKey", runKey, "waitSeconds", "5"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertFalse(stopped.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(stopped.get("error").getAsString(), //$NON-NLS-1$
+            stopped.get("error").getAsString().contains("cancelled")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A timeout that asks the question to stop, and a future that keeps running anyway, must keep
+     * the slot until that future actually finishes. The next question is refused until then.
+     */
+    @Test
+    public void aFutureThatIgnoresCancelHoldsTheSlotUntilItStops()
+        throws InterruptedException
+    {
+        host.stall = true;
+        host.elapseImmediately = true;
+        host.surviveCancel = true;
+
+        JsonObject first = ask("waitSeconds", "1", "timeoutSeconds", "30"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue("cancel was asked and the future kept going", host.cancels >= 1); //$NON-NLS-1$
+
+        JsonObject second = ask();
+
+        assertFalse(second.get("success").getAsBoolean()); //$NON-NLS-1$
+        String error = second.get("error").getAsString(); //$NON-NLS-1$
+        assertTrue(error, error.contains("already in progress")); //$NON-NLS-1$
+        assertTrue(error, error.contains(first.get("runKey").getAsString())); //$NON-NLS-1$
+        assertEquals(1, host.sent.size());
+
+        String runKey = first.get("runKey").getAsString(); //$NON-NLS-1$
+        host.release = true;
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (PendingWorkRegistry.NAPARNIK.unfinishedKeys().contains(runKey)
+            && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(20L);
+        }
+        assertFalse(PendingWorkRegistry.NAPARNIK.unfinishedKeys().contains(runKey));
+        host.stall = false;
+        host.elapseImmediately = false;
+        host.surviveCancel = false;
+        host.release = false;
+
+        JsonObject third = ask();
+
+        assertTrue(third.toString(), third.get("success").getAsBoolean()); //$NON-NLS-1$
+    }
+
     @Test
     public void aPresetSwitchedDuringTheQuestionCancelsTheNextCall()
     {
@@ -760,7 +869,8 @@ public class NaparnikAskTest
      * run, and a cancel from the start notice stops the next call, not the one that just started.
      * A non-positive round limit is unlimited. The future is completed on the stand-in's thread.
      * {@code elapseImmediately} records the requested wait and returns as if it had elapsed, so a
-     * timeout test does not sleep.
+     * timeout test does not sleep. {@code surviveCancel} counts a cancel and leaves the future
+     * running until {@code release}.
      */
     private static final class FakeHost
         implements NaparnikHost
@@ -788,6 +898,8 @@ public class NaparnikAskTest
         private volatile boolean stall;
 
         private volatile boolean elapseImmediately;
+
+        private volatile boolean surviveCancel;
 
         private volatile boolean release;
 
@@ -1025,7 +1137,10 @@ public class NaparnikAskTest
             public void cancel()
             {
                 cancels++;
-                canceled = true;
+                if (!surviveCancel)
+                {
+                    canceled = true;
+                }
             }
 
             @Override
