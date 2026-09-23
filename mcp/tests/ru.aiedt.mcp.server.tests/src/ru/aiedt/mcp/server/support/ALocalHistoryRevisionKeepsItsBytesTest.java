@@ -444,6 +444,30 @@ public class ALocalHistoryRevisionKeepsItsBytesTest
         assertFalse(answer, answer.contains("Changes detected outside of methods")); //$NON-NLS-1$
     }
 
+    /**
+     * A module whose first line is empty keeps that line on both sides. Summary reports no
+     * changes, and the history text keeps the separator after the empty first line.
+     */
+    @Test
+    public void anUnchangedModuleStartingWithABlankLineReportsNoChanges() throws Exception
+    {
+        String path = "CommonModules/BlankFirst/Module.bsl"; //$NON-NLS-1$
+        byte[] same = (
+            "\n" //$NON-NLS-1$
+                + "Процедура Старая()\n" //$NON-NLS-1$
+                + "\tВозврат 1;\n" //$NON-NLS-1$
+                + "КонецПроцедуры\n").getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        assertEquals("\nПроцедура Старая()\n\tВозврат 1;\nКонецПроцедуры", //$NON-NLS-1$
+            GitDiffUtils.localHistoryText(same));
+        keep(path, same, same);
+
+        String answer = diff(path, "summary"); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("previousRevision: local history")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("hasChanges: false")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("Changes detected outside of methods")); //$NON-NLS-1$
+    }
+
     // -- Helpers --
 
     /**

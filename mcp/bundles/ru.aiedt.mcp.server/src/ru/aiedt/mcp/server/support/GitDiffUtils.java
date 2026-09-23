@@ -265,12 +265,16 @@ public final class GitDiffUtils
         {
             StringBuilder text = new StringBuilder();
             String line;
+            boolean first = true;
             while ((line = reader.readLine()) != null)
             {
-                if (text.length() > 0)
+                // A separator follows every line but the first, empty ones included: an empty
+                // first line is still a line, and the current side joins it the same way.
+                if (!first)
                 {
                     text.append("\n"); //$NON-NLS-1$
                 }
+                first = false;
                 text.append(line);
             }
             if (text.length() > 0 && text.codePointAt(0) == 0xFEFF)
