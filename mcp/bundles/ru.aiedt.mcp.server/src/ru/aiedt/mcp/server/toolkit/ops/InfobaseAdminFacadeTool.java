@@ -218,8 +218,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         rules.put("name", "sync_control release_support_snapshot: a protected snapshot is the only " //$NON-NLS-1$
             + "way back from a merge whose outcome is not known here; releasing it says that " //$NON-NLS-1$
             + "merge has been dealt with."); //$NON-NLS-1$
-        rules.put("confirm", "These are DANGEROUS - only on explicit user request and only when " //$NON-NLS-1$
-            + "certain of the state."); //$NON-NLS-1$
+        rules.put("confirm", "Must be true for reseed_baseline, mark_synchronized, " //$NON-NLS-1$
+            + "recover_stuck_merge and rebuild_dump_info. These are DANGEROUS - only on " //$NON-NLS-1$
+            + "explicit user request and only when certain of the state."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -245,6 +246,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .booleanProperty("ignoreBranchBinding", //$NON-NLS-1$
                 "update_database: update even when the branch is bound to another " //$NON-NLS-1$
                     + "application.") //$NON-NLS-1$
+            .booleanProperty("ignoreDumpInfoFormat", //$NON-NLS-1$
+                "update_database: update even when the stored ConfigDumpInfo.xml carries a " //$NON-NLS-1$
+                    + "format other than the one this infobase's Designer wrote - the answer names " //$NON-NLS-1$
+                    + "both formats when it stops you, and expects a FULL load when it does not.") //$NON-NLS-1$
             .stringProperty("branch", //$NON-NLS-1$
                 "branch_infobase: the branch to bind or unbind. Defaults to the branch the " //$NON-NLS-1$
                     + "project is on.") //$NON-NLS-1$
@@ -330,7 +335,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "(default false).") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "update_database: soft wait limit in seconds (5-120, default 30) before " //$NON-NLS-1$
-                    + "replying Pending with a runKey to resume.") //$NON-NLS-1$
+                    + "replying Pending with a runKey to resume. sync_control " //$NON-NLS-1$
+                    + "syncOperation=rebuild_dump_info: how long each Designer run is waited " //$NON-NLS-1$
+                    + "for (60-3600, default 600).") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "update_database: resumes a Pending update issued earlier with this runKey; " //$NON-NLS-1$
                     + "other params are ignored once runKey is supplied.") //$NON-NLS-1$
@@ -348,7 +355,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("syncOperation", //$NON-NLS-1$
                 "sync_control's OWN action - status / diagnose / diagnose_delta / suppress " //$NON-NLS-1$
                     + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
-                    + "recover_stuck_merge / list_support_snapshots / release_support_snapshot " //$NON-NLS-1$
+                    + "recover_stuck_merge / list_support_snapshots / release_support_snapshot / " //$NON-NLS-1$
+                    + "rebuild_dump_info " //$NON-NLS-1$
                     + "(required when operation=sync_control).") //$NON-NLS-1$
             .booleanProperty("enabled", //$NON-NLS-1$
                 "sync_control syncOperation=suppress: true = suppress synchronization for " //$NON-NLS-1$
@@ -358,8 +366,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "recover_stuck_merge: the target infobase (an infobaseUuid from " //$NON-NLS-1$
                     + "syncOperation=status / diagnose_stuck_locks).") //$NON-NLS-1$
             .booleanProperty("confirm", //$NON-NLS-1$
-                "sync_control syncOperation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$
-                    + "recover_stuck_merge: must be true to proceed.") //$NON-NLS-1$
+                "sync_control: reseed_baseline, mark_synchronized, recover_stuck_merge, " //$NON-NLS-1$
+                    + "rebuild_dump_info - must be true.") //$NON-NLS-1$
             .build();
     }
 
@@ -452,7 +460,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             return ToolResult.error("operation=sync_control requires syncOperation (status / " //$NON-NLS-1$
                 + "diagnose / diagnose_delta / suppress / reseed_baseline / " //$NON-NLS-1$
                 + "mark_synchronized / diagnose_stuck_locks / recover_stuck_merge / " //$NON-NLS-1$
-                + "list_support_snapshots / release_support_snapshot) - " //$NON-NLS-1$
+                + "list_support_snapshots / release_support_snapshot / rebuild_dump_info) - " //$NON-NLS-1$
                 + "sync_control has its own inner operation, kept separate from this facade's " //$NON-NLS-1$
                 + "routing operation.").toJson(); //$NON-NLS-1$
         }
@@ -508,7 +516,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("- **sync_control** - inspect and control EDT<->infobase " //$NON-NLS-1$
                 + "synchronization. Pass its own action as syncOperation, not operation; " //$NON-NLS-1$
                 + "some syncOperation values (reseed_baseline, mark_synchronized, " //$NON-NLS-1$
-                + "recover_stuck_merge) are DANGEROUS.\n"); //$NON-NLS-1$
+                + "recover_stuck_merge) are DANGEROUS. rebuild_dump_info rewrites the stored " //$NON-NLS-1$
+                + "ConfigDumpInfo.xml with the platform's own Designer dump.\n"); //$NON-NLS-1$
             sb.append("- **start_client** - start a 1C client from a launch configuration, " //$NON-NLS-1$
                 + "without a debugger. Use it instead of building a 1cv8.exe command line.\n"); //$NON-NLS-1$
             sb.append("- **branch_infobase** - bind a git branch to an application, so that " //$NON-NLS-1$

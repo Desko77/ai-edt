@@ -45,6 +45,7 @@ import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.BmExternalObjectDumpHelper;
 import ru.aiedt.mcp.server.support.ClientLaunchMode;
+import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -901,6 +902,26 @@ public final class DebugSessionStarter implements IMcpTool
 
     private String updateDatabase(IApplicationManager appManager, IApplication application)
     {
+        return updateDatabase(appManager, application, DatabaseUpdater.dumpInfoOf(application));
+    }
+
+    /**
+     * The pre-launch update. A foreign dump-info format returns before the manager is asked to
+     * check or to load.
+     *
+     * @param appManager the application manager
+     * @param application the application
+     * @param dumpInfo the stored dump-info reading, or {@code null} when there is nothing to compare
+     * @return the error sentence, or {@code null} when the update was not refused
+     */
+    static String updateDatabase(IApplicationManager appManager, IApplication application,
+        DumpInfoProbe.Reading dumpInfo)
+    {
+        String formatStop = DatabaseUpdater.launchUpdateRefusal(dumpInfo);
+        if (formatStop != null)
+        {
+            return formatStop + " Retry with updateBeforeLaunch=false to skip the update."; //$NON-NLS-1$
+        }
         try
         {
             ApplicationUpdateState updateState = appManager.getUpdateState(application);

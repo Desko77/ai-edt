@@ -264,6 +264,11 @@ public enum ErrorTags
      * Designer, so the conversion did not start. */
     INFOBASE_NOT_RELEASED("infobaseNotReleased"), //$NON-NLS-1$
 
+    /** update_database: the stored ConfigDumpInfo.xml carries a format the
+     * infobase's platform is known not to understand, so the update was
+     * stopped before anything was asked of the infobase. */
+    DUMP_INFO_FORMAT("dumpInfoFormat"), //$NON-NLS-1$
+
     /** set_infobase_credentials: writing the settings to secure storage
      * failed. */
     WRITE_FAILED("writeFailed"), //$NON-NLS-1$

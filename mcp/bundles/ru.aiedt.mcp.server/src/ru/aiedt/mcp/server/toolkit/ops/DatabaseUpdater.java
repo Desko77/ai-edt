@@ -31,12 +31,14 @@ import org.eclipse.debug.core.ILaunchManager;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 
+import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com.e1c.g5.dt.applications.ApplicationException;
 import com.e1c.g5.dt.applications.ApplicationUpdateState;
 import com.e1c.g5.dt.applications.ApplicationUpdateType;
 import com.e1c.g5.dt.applications.ExecutionContext;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
+import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -47,8 +49,10 @@ import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
+import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.BranchInfobaseBook;
+import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.GitBranch;
 import ru.aiedt.mcp.server.support.InfobaseHolders;
@@ -169,6 +173,13 @@ public class DatabaseUpdater implements IMcpTool
                 + "on is bound to a different application (see branch_infobase). Off by default: " //$NON-NLS-1$
                 + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
                 + "branch switch, which cannot be undone.") //$NON-NLS-1$
+            .booleanProperty("ignoreDumpInfoFormat", "Update even when the stored " //$NON-NLS-1$ //$NON-NLS-2$
+                + "ConfigDumpInfo.xml carries a format other than the one recorded for this " //$NON-NLS-1$
+                + "infobase by its own Designer (the answer names both formats when it stops you). " //$NON-NLS-1$
+                + "Off by default: a file of a foreign format makes the platform answer FullDump " //$NON-NLS-1$
+                + "and the update silently becomes a full configuration load. A base with no " //$NON-NLS-1$
+                + "recorded format is not compared at all. The way to actually fix the file is " //$NON-NLS-1$
+                + "sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
                 + "EDT-launched runtime-client sessions for this infobase, so an active client cannot keep " //$NON-NLS-1$
                 + "the infobase locked and block the update. Only runtime-client launches that match both this project " //$NON-NLS-1$
@@ -448,19 +459,42 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
+        final boolean fIgnoreDumpInfo =
+            JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
         // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
         // the key below is the one a real update under these arguments owns.
-        String runKey = PendingWorkRegistry.computeRunKey(fProjectName, fApplicationId,
-            String.valueOf(fFull), String.valueOf(fRestr), String.valueOf(fFree),
-            String.valueOf(fIgnoreBranch));
+        String runKey = runKeyFor(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+            fIgnoreDumpInfo);
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
         return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
                 fSkipValidation, checkOnly, params));
+    }
+
+    /**
+     * The key a run under these arguments coalesces on: every argument that changes what the run
+     * does is part of it, so two calls that would do different things never share one run's answer.
+     *
+     * @param projectName the project
+     * @param applicationId the application naming the infobase
+     * @param fullUpdate whether the update loads the whole configuration
+     * @param autoRestructure whether restructuring is left automatic
+     * @param autoFreeClients whether client sessions are freed
+     * @param ignoreBranchBinding whether the branch-binding check is bypassed
+     * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @return the run key
+     */
+    static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
+        boolean ignoreDumpInfoFormat)
+    {
+        return PendingWorkRegistry.computeRunKey(projectName, applicationId,
+            String.valueOf(fullUpdate), String.valueOf(autoRestructure), String.valueOf(autoFreeClients),
+            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat));
     }
 
     /**
@@ -631,6 +665,26 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
+     * What an update would face, reading only what cannot start one - without a dump-info reading.
+     *
+     * @param appManager the application manager
+     * @param application the application that would be updated
+     * @param refresh the workspace refresh to perform first, or {@code null} for none
+     * @param applicationId its id, as the answer names it
+     * @param projectName the project the call named
+     * @param viaParent whether the infobase belongs to the parent configuration
+     * @param infobaseOwnerName the project that owns the infobase - the parent, for an extension
+     * @return the answer
+     */
+    static String whatAnUpdateWouldFace(IApplicationManager appManager, IApplication application,
+        WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
+        String infobaseOwnerName)
+    {
+        return whatAnUpdateWouldFace(appManager, application, refresh, applicationId, projectName,
+            viaParent, infobaseOwnerName, null, false);
+    }
+
+    /**
      * What an update would face, reading only what cannot start one.
      * <p>
      * Two things are reachable without running an update: the update state the environment holds -
@@ -652,6 +706,10 @@ public class DatabaseUpdater implements IMcpTool
      * about it.
      * </p>
      * <p>
+     * A dump-info format mismatch is REPORTED here and stops nothing: a probe names what an update
+     * would be stopped by, and being told is the whole of what it asked for.
+     * </p>
+     * <p>
      * Nothing is claimed and nothing is recorded: no run, no infobase claim, no change to the update
      * state.
      * </p>
@@ -664,11 +722,13 @@ public class DatabaseUpdater implements IMcpTool
      * @param projectName the project the call named.
      * @param viaParent whether the infobase belongs to the parent configuration.
      * @param infobaseOwnerName the project that owns the infobase - the parent, for an extension.
+     * @param dumpInfo the stored dump-info reading, or {@code null} when there is nothing to compare
+     * @param ignoreDumpInfoFormat whether the caller said to go ahead over a mismatch
      * @return the answer
      */
     static String whatAnUpdateWouldFace(IApplicationManager appManager, IApplication application,
         WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
-        String infobaseOwnerName)
+        String infobaseOwnerName, DumpInfoProbe.Reading dumpInfo, boolean ignoreDumpInfoFormat)
     {
         JsonObject workspaceRefresh = refresh == null ? null : refresh.refresh();
         ApplicationUpdateState state;
@@ -699,6 +759,14 @@ public class DatabaseUpdater implements IMcpTool
             // below is only as current as the workspace this call just read.
             answer.put("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
         }
+        // Said here rather than acted on: a mismatch would STOP the update, and a probe that
+        // stopped things would not be a probe. Named only when there is something to compare -
+        // silence about a check that had nothing to read is not an overstatement.
+        String dumpInfoCheck = describeDumpInfoFormatCheck(dumpInfo, ignoreDumpInfoFormat);
+        if (dumpInfoCheck != null)
+        {
+            answer.put("dumpInfoFormatCheck", dumpInfoCheck); //$NON-NLS-1$
+        }
         return answer
             .put("notCheckedInDryRun", List.of("readiness", "exportValidation")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .put("notCheckedInDryRunNote", "The readiness check an update itself performs is not run " //$NON-NLS-1$ //$NON-NLS-2$
@@ -711,6 +779,182 @@ public class DatabaseUpdater implements IMcpTool
                 + "reports the state, not the objects an update would carry. " //$NON-NLS-1$
                 + "Nothing was claimed, started or recorded by this call.") //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * Reads the stored dump-info of an application's infobase and the format recorded for that base
+     * by its own Designer. Every leg that EDT may not be able to answer collapses to a reading with
+     * no expectation rather than to an exception: a check with nothing to compare is a fact the
+     * answer names, not a failure to run.
+     *
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension
+     * @param application the application the update targets
+     * @return the reading; its {@code expectedFormat} is {@code null} when this base has no record
+     */
+    static DumpInfoProbe.Reading readDumpInfoProbe(IProject infobaseProject, IApplication application)
+    {
+        if (!(application instanceof IInfobaseApplication))
+        {
+            return null;
+        }
+        InfobaseReference infobase = ((IInfobaseApplication)application).getInfobase();
+        if (infobase == null || infobase.getUuid() == null)
+        {
+            return null;
+        }
+        java.nio.file.Path stored = ru.aiedt.mcp.server.support.SyncBaseline
+            .indexOf(infobaseProject, infobase.getUuid().toString()).getParent()
+            .resolve(DumpInfoProbe.FILE_NAME);
+        String platformVersion =
+            ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.thickClientPlatformVersion(
+                infobaseProject, infobase);
+        String identity = ru.aiedt.mcp.server.support.InfobaseIdentity.of(infobase);
+        java.nio.file.Path state = DumpInfoProbe.stateFile();
+        String expected = DumpInfoProbe.applicableFormat(identity, state, platformVersion);
+        String notCompared = DumpInfoProbe.inapplicableReason(identity, state, platformVersion);
+        return DumpInfoProbe.reading(stored.toString(), DumpInfoProbe.formatOf(stored), expected,
+            platformVersion, notCompared);
+    }
+
+    /**
+     * The stored dump-info of an application, or {@code null} when it cannot be read. A launch that
+     * cannot read the store has nothing to compare, which is not a reason to refuse the update.
+     *
+     * @param application the application about to be updated
+     * @return the reading, or {@code null}
+     */
+    public static DumpInfoProbe.Reading dumpInfoOf(IApplication application)
+    {
+        if (application == null)
+        {
+            return null;
+        }
+        try
+        {
+            return readDumpInfoProbe(application.getProject(), application);
+        }
+        catch (Exception | LinkageError cannotRead)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * The sentence that stops a launch-time update on a foreign dump-info format, or {@code null}
+     * to go on. Launch paths do not take {@code ignoreDumpInfoFormat}; skipping the update is
+     * {@code updateBeforeLaunch=false}.
+     *
+     * @param dumpInfo the reading, or {@code null}
+     * @return the refusal sentence, or {@code null}
+     */
+    public static String launchUpdateRefusal(DumpInfoProbe.Reading dumpInfo)
+    {
+        String stop = stopOnForeignDumpInfoFormat(dumpInfo, false);
+        if (stop == null)
+        {
+            return null;
+        }
+        JsonObject body = com.google.gson.JsonParser.parseString(stop).getAsJsonObject();
+        return body.has("error") ? body.get("error").getAsString() : stop; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The update path's format gate. A foreign format returns before {@code askTheManager} runs, so
+     * a recording manager closed over by that supplier sees no {@code check} and no {@code update}.
+     * {@code updateDatabase} calls this and only then refreshes the workspace and asks the manager.
+     *
+     * @param manager the application manager the update would ask
+     * @param application the application the update would ask about
+     * @param dumpInfo the stored-file reading, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @param askTheManager what the update asks once the format allows it; not called on a refusal
+     * @return the refusal JSON, or whatever {@code askTheManager} returned
+     */
+    static String passTheFormatGate(IApplicationManager manager, IApplication application,
+        DumpInfoProbe.Reading dumpInfo, boolean ignore,
+        java.util.function.Supplier<String> askTheManager)
+    {
+        String stop = stopOnForeignDumpInfoFormat(dumpInfo, ignore);
+        if (stop != null)
+        {
+            return stop;
+        }
+        if (manager == null || application == null || askTheManager == null)
+        {
+            return null;
+        }
+        return askTheManager.get();
+    }
+
+    /**
+     * The refusal an update answers when the stored dump-info carries a foreign format, or
+     * <code>null</code> to go ahead - when the formats match, when this base has no recorded
+     * format, when there is no stored file, or when the caller said to ignore it.
+     *
+     * @param dumpInfo the reading of the stored file, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    static String stopOnForeignDumpInfoFormat(DumpInfoProbe.Reading dumpInfo, boolean ignore)
+    {
+        if (dumpInfo == null || !dumpInfo.mismatch() || ignore)
+        {
+            return null;
+        }
+        return ToolResult.error("The stored ConfigDumpInfo.xml carries format \"" //$NON-NLS-1$
+            + dumpInfo.actualFormat + "\" while the Designer of this infobase writes \"" //$NON-NLS-1$
+            + dumpInfo.expectedFormat + "\" (recorded for this base on platform " //$NON-NLS-1$
+            + dumpInfo.platformVersion + ") - an update would silently become a FULL " //$NON-NLS-1$
+            + "configuration load (the platform answers FullDump to a dump-info file it does not " //$NON-NLS-1$
+            + "understand), so it was not started. Rebuild the file with the platform's own " //$NON-NLS-1$
+            + "Designer dump: infobase_admin operation=sync_control syncOperation=rebuild_dump_info " //$NON-NLS-1$
+            + "projectName=<this project> confirm=true, or pass ignoreDumpInfoFormat=true to " //$NON-NLS-1$
+            + "update anyway.") //$NON-NLS-1$
+            .put("dumpInfoFile", dumpInfo.file) //$NON-NLS-1$
+            .put("dumpInfoFormat", dumpInfo.actualFormat) //$NON-NLS-1$
+            .put("expectedDumpInfoFormat", dumpInfo.expectedFormat) //$NON-NLS-1$
+            .put("platformVersion", dumpInfo.platformVersion) //$NON-NLS-1$
+            .put("tag", ErrorTags.DUMP_INFO_FORMAT.wire()) //$NON-NLS-1$
+            .put("nextStep", "sync_control syncOperation=rebuild_dump_info confirm=true") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
+
+    /**
+     * One sentence about the dump-info format check, for answers that went ahead: what was
+     * compared, what matched, what was overridden, or that nothing has been recorded for this base.
+     *
+     * @param dumpInfo the reading, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @return the sentence, or <code>null</code> when there is nothing to say (no file, or no
+     *         application of an infobase kind)
+     */
+    static String describeDumpInfoFormatCheck(DumpInfoProbe.Reading dumpInfo, boolean ignore)
+    {
+        if (dumpInfo == null || dumpInfo.actualFormat == null)
+        {
+            return null;
+        }
+        if (!dumpInfo.mismatch())
+        {
+            if (dumpInfo.expectedFormat == null)
+            {
+                if (dumpInfo.notComparedBecause != null)
+                {
+                    return dumpInfo.notComparedBecause;
+                }
+                return "not compared: no format has been recorded for this infobase yet (the " //$NON-NLS-1$
+                    + "file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
+                    + "\") - rebuild_dump_info records one from this base's own Designer"; //$NON-NLS-1$
+            }
+            return "matched: the file carries \"" + dumpInfo.expectedFormat //$NON-NLS-1$
+                + "\" as this infobase's own Designer writes"; //$NON-NLS-1$
+        }
+        return ignore
+            ? "OVERRIDDEN by ignoreDumpInfoFormat: the file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
+                + "\", this infobase's Designer writes \"" + dumpInfo.expectedFormat //$NON-NLS-1$
+                + "\" - expect a FULL configuration load" //$NON-NLS-1$
+            : "mismatch: file \"" + dumpInfo.actualFormat + "\", expected \"" //$NON-NLS-1$ //$NON-NLS-2$
+                + dumpInfo.expectedFormat + "\""; //$NON-NLS-1$
     }
 
     /**
@@ -890,6 +1134,15 @@ public class DatabaseUpdater implements IMcpTool
 
             IApplication application = appOpt.get();
 
+            // The stored ConfigDumpInfo.xml tells the platform's Designer what the last
+            // synchronization left behind, and the platform reads it from disk on every
+            // dump-files. A file of a format this platform does not understand makes it answer
+            // FullDump and the update silently becomes a full load - so the format is compared
+            // BEFORE anything is asked of the infobase, while the reason is still readable here.
+            DumpInfoProbe.Reading dumpInfo =
+                readDumpInfoProbe(infobaseProject, application);
+            boolean ignoreDumpInfoFormat =
+                JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
             if (checkOnly)
             {
                 // Answered here, and only here: the probe reaches this method on the caller's
@@ -898,7 +1151,13 @@ public class DatabaseUpdater implements IMcpTool
                 // synchronizes with the infobase.
                 return whatAnUpdateWouldFace(appManager, application,
                     refreshForProbe(params, project, infobaseProject), applicationId, projectName,
-                    viaParent, infobaseProject.getName());
+                    viaParent, infobaseProject.getName(), dumpInfo, ignoreDumpInfoFormat);
+            }
+            String formatStop = passTheFormatGate(appManager, application, dumpInfo,
+                ignoreDumpInfoFormat, () -> null);
+            if (formatStop != null)
+            {
+                return formatStop;
             }
 
             boolean refreshWorkspace =
@@ -1066,6 +1325,15 @@ public class DatabaseUpdater implements IMcpTool
                     + "infobase of its own. The infobase of the configuration it extends (" //$NON-NLS-1$
                     + infobaseProject.getName() + ") was updated, which is what carries the " //$NON-NLS-1$
                     + "extension's current code into the base."); //$NON-NLS-1$
+            }
+
+            // The check that stood before the update: matched, overridden, or without an
+            // expectation for this platform. Named only when there was a file to compare - a
+            // store without a dump-info file is EDT's own state to report, not this update's.
+            String formatCheckLine = describeDumpInfoFormatCheck(dumpInfo, ignoreDumpInfoFormat);
+            if (formatCheckLine != null)
+            {
+                result.put("dumpInfoFormatCheck", formatCheckLine); //$NON-NLS-1$
             }
 
             if (updateComplete)

@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -18,6 +19,8 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.Test;
+
+import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IThickClientLauncher;
 
 /**
  * The per-infobase lock is taken after the release and given back before the reconnection.
@@ -49,6 +52,13 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         {
             order.add("lock"); //$NON-NLS-1$
             super.lock();
+        }
+
+        @Override
+        public void lockInterruptibly() throws InterruptedException
+        {
+            order.add("lock"); //$NON-NLS-1$
+            super.lockInterruptibly();
         }
 
         @Override
@@ -188,5 +198,267 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         }
 
         assertEquals(Arrays.asList("release", "lock", "launcher", "unlock", "reconnect"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+    }
+
+    /**
+     * The dump-info-only Designer call holds the per-infobase lock for the call alone, and a failure
+     * thrown inside the reflected method reaches the caller as that failure rather than wrapped in
+     * {@link java.lang.reflect.InvocationTargetException}.
+     */
+    @Test
+    public void theDesignerCallRunsUnderTheInfobaseLockAndUnwrapsTheCause() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        Object target = new Object()
+        {
+            @SuppressWarnings("unused")
+            public void blow()
+            {
+                order.add(lock.isHeldByCurrentThread() ? "held" : "not-held"); //$NON-NLS-1$ //$NON-NLS-2$
+                throw new IllegalStateException("bad credentials"); //$NON-NLS-1$
+            }
+        };
+        java.lang.reflect.Method method = target.getClass().getDeclaredMethod("blow"); //$NON-NLS-1$
+        try
+        {
+            BmInfobaseExtensionHelper.invokeUnderInfobaseLock(lock, method, target);
+            fail("the cause has to reach the caller"); //$NON-NLS-1$
+        }
+        catch (IllegalStateException expected)
+        {
+            assertEquals("bad credentials", expected.getMessage()); //$NON-NLS-1$
+        }
+        assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * The full hierarchical dump - the rebuild's fallback - holds the same per-infobase lock
+     * around the launcher call as the dump-info-only run: without it this EDT's own thick-client
+     * callers run their Designer side by side with the dump.
+     */
+    @Test
+    public void theFullDumpHoldsTheInfobaseLockAroundTheCall() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+
+        BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+            java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+
+        assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A full dump that throws gives the lock back with the failure: the rebuild's failure path
+     * must not leave the infobase lock held against this EDT's own callers.
+     */
+    @Test
+    public void theFullDumpGivesTheLockBackWhenTheCallThrows() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock,
+            new IllegalStateException("the Designer exited with code 1")); //$NON-NLS-1$
+
+        try
+        {
+            BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            fail("the launcher's failure has to reach the caller"); //$NON-NLS-1$
+        }
+        catch (IllegalStateException expected)
+        {
+            assertEquals("the Designer exited with code 1", expected.getMessage()); //$NON-NLS-1$
+        }
+
+        assertEquals(Arrays.asList("lock", "held", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A rebuild abandoned while its full dump waits for the infobase lock never starts the dump:
+     * the worker is interrupted in the wait, and when the other caller lets the lock go the
+     * launcher is not called and the lock is not left held.
+     */
+    @Test
+    public void aFullDumpAbandonedWhileItWaitsForTheLockNeverStarts() throws Exception
+    {
+        List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+        java.util.concurrent.atomic.AtomicReference<Throwable> outcome =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+        lock.lock();
+        Thread worker = new Thread(() -> {
+            try
+            {
+                BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                    java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            }
+            catch (Throwable t)
+            {
+                outcome.set(t);
+            }
+        });
+        worker.start();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (!lock.hasQueuedThread(worker) && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5);
+        }
+        assertTrue("the worker waits for the lock", lock.hasQueuedThread(worker)); //$NON-NLS-1$
+        worker.interrupt();
+        worker.join(10000);
+        lock.unlock();
+
+        assertFalse("the worker finished", worker.isAlive()); //$NON-NLS-1$
+        assertTrue("the abandoned wait ends in an interrupt, not a dump: " + outcome.get(), //$NON-NLS-1$
+            outcome.get() instanceof InterruptedException);
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A worker interrupted before it asks for the lock starts no Designer run and holds no lock,
+     * on the full dump and on the dump-info-only call alike.
+     */
+    @Test
+    public void anInterruptedWorkerStartsNoRebuildRun() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+        java.lang.reflect.Method method = Object.class.getMethod("toString"); //$NON-NLS-1$
+
+        Thread.currentThread().interrupt();
+        try
+        {
+            BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            fail("an interrupted worker must not run the full dump"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the interrupt ends the call before the launcher
+        }
+        Thread.currentThread().interrupt();
+        try
+        {
+            BmInfobaseExtensionHelper.invokeUnderRebuildLock(ctx, method, new Object());
+            fail("an interrupted worker must not run the dump-info-only call"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the interrupt ends the call before the method
+        }
+        finally
+        {
+            Thread.interrupted();
+        }
+
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A launch boundary the abandonment claimed first is a run that never starts, on the full
+     * dump path: the worker acquires the lock, finds the boundary taken, and exits with
+     * InterruptedException before the launcher is called.
+     */
+    @Test
+    public void aBoundaryTheAbandonmentClaimedFirstStartsNoFullDump() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launcher = recordingLauncher(order, lock, null);
+        ctx.launchClaim.set(true); // the abandonment crossed the boundary first
+
+        try
+        {
+            BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx,
+                java.nio.file.Paths.get("dump")); //$NON-NLS-1$
+            fail("a run whose boundary the abandonment claimed starts no full dump"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the boundary refusal ends the run before the launcher
+        }
+
+        assertFalse("the launcher was never called", order.contains("held")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * The same refusal on the dump-info-only path: a reflected launcher call whose boundary the
+     * abandonment claimed first is never invoked, and the lock comes back with the refusal.
+     */
+    @Test
+    public void aBoundaryTheAbandonmentClaimedFirstStartsNoDumpInfoOnlyCall() throws Exception
+    {
+        List<String> order = new ArrayList<>();
+        RecordingLock lock = new RecordingLock(order);
+        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ctx.lock = lock;
+        ctx.launchClaim.set(true);
+        Object target = new Object()
+        {
+            @SuppressWarnings("unused")
+            public void invoke()
+            {
+                order.add("invoked"); //$NON-NLS-1$
+            }
+        };
+        java.lang.reflect.Method method = target.getClass().getDeclaredMethod("invoke"); //$NON-NLS-1$
+
+        try
+        {
+            BmInfobaseExtensionHelper.invokeUnderRebuildLock(ctx, method, target);
+            fail("a run whose boundary the abandonment claimed starts no dump-info-only call"); //$NON-NLS-1$
+        }
+        catch (InterruptedException expected)
+        {
+            // the boundary refusal ends the run before the method
+        }
+
+        assertFalse("the launcher was never called", order.contains("invoked")); //$NON-NLS-1$
+        assertFalse("the lock is not left held", lock.isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A launcher whose {@code exportFullXmlFromInfobase} records whether the lock was held while
+     * it ran, and answers or throws as told.
+     */
+    private static IThickClientLauncher recordingLauncher(List<String> order, RecordingLock lock,
+        RuntimeException failure)
+    {
+        return (IThickClientLauncher)Proxy.newProxyInstance(
+            IThickClientLauncher.class.getClassLoader(),
+            new Class<?>[] { IThickClientLauncher.class }, (proxy, method, args) -> {
+                if (!method.getName().equals("exportFullXmlFromInfobase")) //$NON-NLS-1$
+                {
+                    return null;
+                }
+                order.add(lock.isHeldByCurrentThread() ? "held" : "not-held"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (failure != null)
+                {
+                    throw failure;
+                }
+                return null;
+            });
     }
 }

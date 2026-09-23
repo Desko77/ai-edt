@@ -25,6 +25,7 @@ import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.toolkit.ops.DatabaseUpdater;
 // LaunchConfigAccess lives in same package - no import needed
 
 /**
@@ -227,6 +228,33 @@ public final class ApplicationUpdater
      * surfaces BEING_UPDATED, and auto-switches to FULL when state is FULL_UPDATE_REQUIRED.
      */
     public static Result updateIfNeeded(IApplicationManager appManager, IApplication application)
+    {
+        return updateIfNeeded(appManager, application, DatabaseUpdater.dumpInfoOf(application));
+    }
+
+    /**
+     * As {@link #updateIfNeeded(IApplicationManager, IApplication)}, with the dump-info reading
+     * handed in. A foreign format returns before the manager is asked anything.
+     *
+     * @param appManager the application manager
+     * @param application the application
+     * @param dumpInfo the stored dump-info reading, or {@code null} when there is nothing to compare
+     * @return the outcome
+     */
+    public static Result updateIfNeeded(IApplicationManager appManager, IApplication application,
+        DumpInfoProbe.Reading dumpInfo)
+    {
+        String formatStop = DatabaseUpdater.launchUpdateRefusal(dumpInfo);
+        if (formatStop != null)
+        {
+            return Result.failed(formatStop
+                + " Retry with updateBeforeLaunch=false to skip the update."); //$NON-NLS-1$
+        }
+        return updateWhenTheFormatAllows(appManager, application);
+    }
+
+    private static Result updateWhenTheFormatAllows(IApplicationManager appManager,
+        IApplication application)
     {
         try
         {

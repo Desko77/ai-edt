@@ -1295,13 +1295,14 @@ public final class BmInfobaseExtensionHelper
 
     /**
      * The release step that says when it failed. Same first half as {@link #disconnectForThickClient},
-     * without the second half that goes on regardless.
+     * without the second half that goes on regardless. Package-visible: the dump-info rebuild runs
+     * its Designer step under the same strict handshake as the strict conversion.
      *
      * @param ctx the resolved launcher context
      * @return <code>true</code> when the infobase was connected and is now released
      * @throws Exception when the release failed
      */
-    private static boolean releaseForThickClient(LauncherContext ctx) throws Exception
+    static boolean releaseForThickClient(LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1353,12 +1354,13 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
-     * The reconnection step that says when it failed.
+     * The reconnection step that says when it failed. Package-visible for the dump-info rebuild's
+     * strict handshake.
      *
      * @param ctx the resolved launcher context
      * @throws Exception when the reconnection failed
      */
-    private static void takeInfobaseBack(LauncherContext ctx) throws Exception
+    static void takeInfobaseBack(LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1369,6 +1371,207 @@ public final class BmInfobaseExtensionHelper
                 + "the infobase stays disconnected"); //$NON-NLS-1$
         }
         mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
+    }
+
+    /**
+     * Asks the platform for the dump-info file alone: the {@code -configDumpInfoOnly} dump, which
+     * writes one {@code ConfigDumpInfo.xml} instead of the whole configuration tree.
+     * <p>
+     * There is no first-class launcher verb for it - the format is a builder call and the flag is
+     * not - so the DESIGNER command
+     * ({@code exportXmlFromInfobase(dir).withFormat(HIERARCHICAL)} plus {@code -configDumpInfoOnly})
+     * is built and run through the same protected {@code executeRuntimeProcessCommand} the extension
+     * install uses, which appends the infobase access and captures the designer log.
+     * {@code additionalParameters} places its tokens after the export verb and its {@code -format}
+     * value and before the access settings, which is where a command line carries them
+     * (bytecode-verified on the EDT 2026.1 target).
+     * </p>
+     * <p>
+     * Runs inside the caller's handshake: the caller has released the infobase and holds the claim.
+     * This method takes the per-infobase lock around the Designer call alone, through
+     * {@link #invokeUnderRebuildLock}, and does not reconnect.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param tempDir the directory the dump-info file is written into
+     * @throws Exception when EDT does not expose the execution internals, or the Designer failed
+     */
+    static void runDesignerDumpInfoOnly(LauncherContext ctx, java.nio.file.Path tempDir)
+        throws Exception
+    {
+        java.lang.reflect.Method splitM =
+            findMethodUp(ctx.launcher.getClass(), "splitInfobaseConnection"); //$NON-NLS-1$
+        java.lang.reflect.Method execM = findMethodUp(ctx.launcher.getClass(),
+            "executeRuntimeProcessCommand", RuntimeExecutionCommandBuilder.class, //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        if (execM == null)
+        {
+            throw new IllegalStateException("This EDT runtime does not expose the thick-client " //$NON-NLS-1$
+                + "execution internals required to dump the configuration (" //$NON-NLS-1$
+                + (splitM == null ? "executeRuntimeProcessCommand / splitInfobaseConnection" //$NON-NLS-1$
+                    : "executeRuntimeProcessCommand") + ")."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        boolean split = splitM != null
+            && (Boolean)invokeUnderInfobaseLock(null, splitM, ctx.launcher);
+        RuntimeExecutionCommandBuilder command = new RuntimeExecutionCommandBuilder(
+            ctx.component.getFile(), RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
+        command.forInfobase(ctx.infobase, split).exportXmlFromInfobase(tempDir)
+            .withFormat(com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL)
+            .additionalParameters("-configDumpInfoOnly"); //$NON-NLS-1$
+        // The same per-infobase lock the strict conversion holds around its launcher call.
+        // Without it this EDT's own thick-client callers run the Designer side by side.
+        invokeUnderRebuildLock(ctx, execM, ctx.launcher, command,
+            ctx.component.getInstallation(), ctx.infobase, ctx.args);
+    }
+
+    /**
+     * The full hierarchical dump of the infobase - the rebuild's fallback for a quick
+     * dump-info-only run that left no file. Holds the same per-infobase lock around the launcher
+     * call as the dump-info-only run: without it this EDT's own thick-client callers run their
+     * Designer side by side with the dump. The lock wraps the call and nothing else - holding it
+     * across a reconnection deadlocks with EDT's own synchronization worker.
+     *
+     * @param ctx the resolved launcher context
+     * @param tempDir the directory the dump is written into
+     * @return the fresh dump-info file, or {@code null} for the conventional name
+     * @throws Exception when the Designer run failed
+     */
+    static java.nio.file.Path runFullDumpUnderInfobaseLock(LauncherContext ctx,
+        java.nio.file.Path tempDir) throws Exception
+    {
+        lockForRebuild(ctx);
+        try
+        {
+            return ctx.launcher.exportFullXmlFromInfobase(ctx.component, ctx.infobase,
+                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL,
+                com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesKind.PLAIN_FILES,
+                ctx.args, tempDir);
+        }
+        finally
+        {
+            if (ctx.lock != null)
+            {
+                ctx.lock.unlock();
+            }
+        }
+    }
+
+    /**
+     * Invokes a thick-client method under the per-infobase lock, and unwraps
+     * {@link java.lang.reflect.InvocationTargetException} to the cause the way the extension
+     * install does. The lock wraps the call and nothing else: holding it across a reconnect
+     * deadlocks with EDT's own synchronization worker.
+     *
+     * @param lock the per-infobase lock, or {@code null} when this runtime has none or the call is
+     *            not the Designer run
+     * @param method the method to invoke
+     * @param target the launcher
+     * @param args the method arguments
+     * @return whatever the method returned
+     * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}, or the
+     *             failure itself when it is already an exception
+     */
+    static Object invokeUnderInfobaseLock(java.util.concurrent.locks.Lock lock,
+        java.lang.reflect.Method method, Object target, Object... args) throws Exception
+    {
+        if (lock != null)
+        {
+            lock.lock();
+        }
+        return invokeAndRelease(lock, method, target, args);
+    }
+
+    /**
+     * Invokes a Designer run of the dump-info rebuild under the per-infobase lock. Differs from
+     * {@link #invokeUnderInfobaseLock} only in how the run is entered: see
+     * {@link #lockForRebuild(LauncherContext)}.
+     *
+     * @param ctx the launcher context of the rebuild's current run
+     * @param method the method to invoke
+     * @param target the launcher
+     * @param args the method arguments
+     * @return whatever the method returned
+     * @throws InterruptedException when the rebuild was abandoned before the run started
+     * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}
+     */
+    static Object invokeUnderRebuildLock(LauncherContext ctx,
+        java.lang.reflect.Method method, Object target, Object... args) throws Exception
+    {
+        lockForRebuild(ctx);
+        return invokeAndRelease(ctx.lock, method, target, args);
+    }
+
+    /**
+     * Takes the per-infobase lock and claims the launch boundary for a Designer run of the
+     * dump-info rebuild. The boundary is the one coordinated state the run and its abandonment
+     * cross: whichever side claims it first owns the launch. A worker that finds it claimed -
+     * abandoned while it waited for this lock, or in the gap between the lock and the launcher
+     * call - starts no Designer run at all, and a worker that claims it is a launch the
+     * abandonment waits out, so the lock wait itself is interruptible.
+     *
+     * @param ctx the launcher context of the rebuild's current run
+     * @throws InterruptedException when the run was abandoned before the boundary was claimed;
+     *             the lock is not held then
+     */
+    static void lockForRebuild(LauncherContext ctx) throws InterruptedException
+    {
+        if (ctx.lock != null)
+        {
+            ctx.lock.lockInterruptibly();
+        }
+        if (!ctx.launchClaim.compareAndSet(false, true))
+        {
+            if (ctx.lock != null)
+            {
+                ctx.lock.unlock();
+            }
+            throw new InterruptedException("the rebuild was abandoned before its Designer run " //$NON-NLS-1$
+                + "started"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Runs the method with the lock already held, unwraps
+     * {@link java.lang.reflect.InvocationTargetException} to its cause, and releases the lock.
+     *
+     * @param lock the held per-infobase lock, or {@code null}
+     * @param method the method to invoke
+     * @param target the launcher
+     * @param args the method arguments
+     * @return whatever the method returned
+     * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}, or the
+     *             failure itself when it is already an exception
+     */
+    private static Object invokeAndRelease(java.util.concurrent.locks.Lock lock,
+        java.lang.reflect.Method method, Object target, Object... args) throws Exception
+    {
+        try
+        {
+            try
+            {
+                return method.invoke(target, args);
+            }
+            catch (java.lang.reflect.InvocationTargetException wrapped)
+            {
+                Throwable cause = wrapped.getCause() != null ? wrapped.getCause() : wrapped;
+                if (cause instanceof Exception)
+                {
+                    throw (Exception)cause;
+                }
+                if (cause instanceof Error)
+                {
+                    throw (Error)cause;
+                }
+                throw new IllegalStateException(cause);
+            }
+        }
+        finally
+        {
+            if (lock != null)
+            {
+                lock.unlock();
+            }
+        }
     }
 
     private static void reconnectInfobase(LauncherContext ctx)
@@ -1389,7 +1592,8 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static final class LauncherContext
+    /** The resolved thick-client environment one launcher call runs in. */
+    static final class LauncherContext
     {
         IThickClientLauncher launcher;
         ILaunchableRuntimeComponent component;
@@ -1400,10 +1604,23 @@ public final class BmInfobaseExtensionHelper
         String infobaseName;
         String error;
         String failureKind;
+
+        /**
+         * The Designer launch boundary of the rebuild's current run, claimed once by whoever
+         * crosses it first: the worker under the per-infobase lock, right before it calls the
+         * launcher, or the abandonment side when it gives the run up. Fresh for every run - a
+         * rebuild asks twice, the quick dump and the fallback - so each launch is claimed or
+         * abandoned on its own.
+         */
+        java.util.concurrent.atomic.AtomicBoolean launchClaim =
+            new java.util.concurrent.atomic.AtomicBoolean();
     }
 
-    /** Resolves the ThickClient launcher + component + execution args for the IB. */
-    private static LauncherContext resolveLauncher(String projectName, String applicationId)
+    /**
+     * Resolves the ThickClient launcher + component + execution args for the IB. Package-visible:
+     * the dump-info rebuild in this package runs its Designer step through the same resolution.
+     */
+    static LauncherContext resolveLauncher(String projectName, String applicationId)
     {
         LauncherContext ctx = new LauncherContext();
         IProject project = ProjectResolver.resolve(projectName);
@@ -1488,6 +1705,41 @@ public final class BmInfobaseExtensionHelper
         }
         ctx.args = args;
         return ctx;
+    }
+
+    /**
+     * The platform version EDT's own update path runs against this infobase with - the version whose
+     * Designer reads and writes the stored {@code ConfigDumpInfo.xml} on every {@code dump-files}.
+     * Resolves the same runtime the update itself resolves, without reading credentials and without
+     * launching anything.
+     *
+     * @param project the project that owns the infobase
+     * @param infobase the infobase
+     * @return the version with build (for example {@code 8.3.27.2214}), or {@code null} when no
+     *         runtime resolves for it
+     */
+    public static String thickClientPlatformVersion(org.eclipse.core.resources.IProject project,
+        InfobaseReference infobase)
+    {
+        try
+        {
+            Activator a = Activator.getDefault();
+            IResolvableRuntimeInstallationManager riMgr =
+                a != null ? a.getResolvableRuntimeInstallationManager() : null;
+            if (riMgr == null)
+            {
+                return null;
+            }
+            IResolvableRuntimeInstallation resolvable = riMgr.resolveByProjectAndInfobase(
+                RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
+            RuntimeInstallation installation = resolvable.resolve(
+                Collections.singletonList(IRuntimeComponentTypes.THICK_CLIENT), infobase.getAppArch());
+            return installation.getVersionWithBuild();
+        }
+        catch (Throwable noRuntime)
+        {
+            return null;
+        }
     }
 
     private static InfobaseReference resolveInfobase(IProject project, String applicationId,
