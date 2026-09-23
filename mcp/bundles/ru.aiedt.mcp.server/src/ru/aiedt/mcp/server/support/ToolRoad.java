@@ -123,7 +123,7 @@ public final class ToolRoad
             : McpToolCatalog.getInstance().getTool(toolName);
         String canonical = named == null ? toolName : named.getName();
         String routed = named == null ? null : named.routesTo(arguments);
-        if (polled != null && !polled.isEmpty() && isOwnPoll(polled, canonical, routed))
+        if (polled != null && !polled.isEmpty() && isOwnPoll(polled, named, canonical, arguments))
         {
             // A poll waits on work that is already accounted for; charging it again would count
             // one run as many.
@@ -159,19 +159,45 @@ public final class ToolRoad
     }
 
     /**
-     * Whether a {@code runKey} argument names a run the called tool itself resumes: a live entry
-     * whose {@code startedBy} is the called name, or the standalone a facade routed it to.
+     * Whether a {@code runKey} argument names a run this call will actually resume.
+     * <p>
+     * A live entry is not enough, and neither is a name. The call resumes when the tool declares
+     * the starter it polls in that entry's domain and the entry was started under that name, or
+     * when the road's own generic wrapper runs the called tool by its own name and will poll the
+     * entry before {@code execute}. A facade that only routes to the starter and then calls
+     * {@code execute} declares nothing and starts a new traversal. A finished entry, still sitting
+     * in the registry until somebody collects it, is not a live run: polling it is a new call.
+     * </p>
      *
      * @param polled the key from the arguments; neither null nor empty
+     * @param named the called tool, or {@code null} when the catalogue has no such name
      * @param canonical the called tool's own name
-     * @param routed the tool a facade routes the call to, or {@code null}
+     * @param arguments the call arguments; may be {@code null}
      * @return whether polling the key is this call's own resumption path
      */
-    private static boolean isOwnPoll(String polled, String canonical, String routed)
+    private static boolean isOwnPoll(String polled, IMcpTool named, String canonical,
+        Map<String, String> arguments)
     {
         PendingWorkRegistry domain = PendingWorkRegistry.domainOf(polled);
         PendingWorkRegistry.PendingEntry entry = domain == null ? null : domain.get(polled);
-        return entry != null && (entry.resumableBy(canonical) || entry.resumableBy(routed));
+        if (entry == null || entry.completedAt > 0 || entry.isDone())
+        {
+            return false;
+        }
+        // The road wraps these tools itself, before execute, and that wrapper is what polls.
+        // A facade whose routesTo names one of them does not: it calls execute and starts again.
+        if (GenericPending.applies(canonical) && domain == PendingWorkRegistry.GENERIC
+            && entry.resumableBy(canonical))
+        {
+            return true;
+        }
+        if (named == null)
+        {
+            return false;
+        }
+        String operation = arguments == null ? null : arguments.get("operation"); //$NON-NLS-1$
+        String starter = named.resumes(domain.domain(), operation);
+        return starter != null && entry.resumableBy(starter);
     }
 
     /**
@@ -179,8 +205,8 @@ public final class ToolRoad
      * generic Pending flow for an allowlisted slow read, the tool itself for everything else.
      * <p>
      * The ticket is spent here. A synchronous answer releases it; a {@code Pending} envelope hands
-     * it to the entry the envelope names, and the permit comes back when that entry's future
-     * completes.
+     * it to the entry the envelope names, and the permit comes back when that entry's work leaves
+     * the executor.
      * </p>
      *
      * @param tool the resolved tool

@@ -160,6 +160,17 @@ public final class PendingWorkRegistry
 
     private final ConcurrentHashMap<String, PendingEntry> entries = new ConcurrentHashMap<>();
 
+    /**
+     * Runs inside a supplier before the body claims its start, when a test has set it.
+     * <p>
+     * Production leaves it {@code null}. The consumer is handed the entry so the test can cancel
+     * that run even when the supplier is still inside {@code computeIfAbsent}. A supplier parked
+     * here has been entered and has not yet begun, which is the window in which a cancel must
+     * either keep the body from running or keep the permit until the body leaves.
+     * </p>
+     */
+    static volatile java.util.function.Consumer<PendingEntry> beforeWorkClaim;
+
     private final ExecutorService executor;
 
     /**
@@ -279,9 +290,19 @@ public final class PendingWorkRegistry
             }
             entry.future = CompletableFuture.supplyAsync(() ->
             {
-                // Under the work-life lock, so a future completed before this body ran is told
-                // apart from one whose body is already in flight (see settleIfWorkNeverBegan).
-                entry.markWorkBegan();
+                // A test parks the supplier here, after it has been entered and before it claims
+                // the start: the window a cancel must close. Production leaves the gate unset.
+                java.util.function.Consumer<PendingEntry> gate = beforeWorkClaim;
+                if (gate != null)
+                {
+                    gate.accept(entry);
+                }
+                // The claim and a cancel's "never began" share one lock. Losing it means the body
+                // must not run: the permit, if any, was already returned.
+                if (!entry.claimWorkStart())
+                {
+                    return null;
+                }
                 ToolCallScope previous = ToolCallScope.current();
                 if (current != null)
                 {
@@ -896,13 +917,12 @@ public final class PendingWorkRegistry
         public volatile ToolCallScope scope;
 
         /**
-         * The call that may poll this run: the tool's own name, or the standalone a facade routed
-         * to it.
+         * The name a call must declare, through {@code IMcpTool.resumes}, to poll this run.
          * <p>
-         * A live {@code runKey} in a call's arguments exempts that call from the heavy-tool gates
-         * only when this field names it. Any known key used to exempt any call, which let a
-         * running work's key, passed as a stray argument to a heavy tool that reads no key, start
-         * ungated work beside it.
+         * A live {@code runKey} exempts a call from the heavy-tool gates only when that call
+         * declares this name for this entry's domain. The name is whoever actually polls - for a
+         * metadata batch that is {@code edit_metadata}, not the heavy operation the batch may
+         * carry. A matching route is not a declaration.
          * </p>
          */
         public volatile String startedBy;
@@ -995,15 +1015,27 @@ public final class PendingWorkRegistry
         }
 
         /**
-         * Marks the work as begun, under the lock that also decides whether a completed future
-         * ever ran its body.
+         * Marks the body as begun, or refuses when a cancel already settled this run.
+         * <p>
+         * The decision and the mark are one critical section with
+         * {@link #settleIfWorkNeverBegan()}. A supplier that loses the race leaves without
+         * running, so a permit handed to the entry cannot come back while the body is still
+         * alive - the body is not alive.
+         * </p>
+         *
+         * @return {@code false} when the body must not run
          */
-        void markWorkBegan()
+        boolean claimWorkStart()
         {
             synchronized (workLife)
             {
+                if (workExitSettled)
+                {
+                    return false;
+                }
                 beganAt = System.currentTimeMillis();
                 workBegan = true;
+                return true;
             }
         }
 
@@ -1053,31 +1085,48 @@ public final class PendingWorkRegistry
          * Settles the door for a future that completed without its body ever running, so a permit
          * transferred to a run cancelled before it began does not wait on an exit that never
          * comes.
+         * <p>
+         * The check and the settlement are the same critical section as {@link #claimWorkStart()}.
+         * A supplier that has not claimed yet either observes the settlement and does not run, or
+         * claims first and this method leaves the permit for the body's own exit.
+         * </p>
          */
         void settleIfWorkNeverBegan()
         {
+            List<Runnable> releases = null;
             synchronized (workLife)
             {
                 if (workBegan || workExitSettled)
                 {
                     return;
                 }
+                workExitSettled = true;
+                if (!onWorkExit.isEmpty())
+                {
+                    releases = new java.util.ArrayList<>(onWorkExit);
+                    onWorkExit.clear();
+                }
             }
-            // A body racing this check from its very first instruction loses the race exactly
-            // once: its own workExited finds the door settled and releases nothing.
-            for (Runnable release : settleWorkExit())
+            if (releases == null)
+            {
+                return;
+            }
+            for (Runnable release : releases)
             {
                 release.run();
             }
         }
 
         /**
-         * Whether a call under the given name resumes this run, so a poll by that name is the
-         * run's own rather than a stray key on an unrelated tool.
+         * Whether {@code name} is the starter this run was stamped with.
+         * <p>
+         * The road asks this only after the call has declared that it resumes that starter. A
+         * matching route is not a declaration, and this method does not treat one as such.
+         * </p>
          *
-         * @param name the called tool's own name, or the standalone a facade routed it to; may
-         *            be {@code null}
-         * @return {@code true} when this run belongs to that name's resumption path
+         * @param name the starter a call declared, or the tool the road's generic wrapper runs by
+         *            its own name; may be {@code null}
+         * @return {@code true} when this run was started under that name
          */
         public boolean resumableBy(String name)
         {

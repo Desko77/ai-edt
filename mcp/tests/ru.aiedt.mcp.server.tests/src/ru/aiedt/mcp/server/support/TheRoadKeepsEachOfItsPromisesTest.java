@@ -377,6 +377,14 @@ public class TheRoadKeepsEachOfItsPromisesTest
         }
 
         @Override
+        public String resumes(String domain, String operation)
+        {
+            // This probe polls through PendingExecutor. The road exempts that poll only because
+            // the probe says so; a matching name is no longer enough.
+            return PendingWorkRegistry.REFERENCES.domain().equals(domain) ? name : null;
+        }
+
+        @Override
         public String getDescription()
         {
             return "a probe"; //$NON-NLS-1$

@@ -356,6 +356,20 @@ public class ReferenceLocator implements IMcpTool
         return "references.md"; //$NON-NLS-1$
     }
 
+    /**
+     * Polls a reference search this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; a direct call names none
+     * @return {@code find_references} when the key is in the references registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        // A direct call carries no operation. A call that names one still polls this tool.
+        return PendingWorkRegistry.REFERENCES.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

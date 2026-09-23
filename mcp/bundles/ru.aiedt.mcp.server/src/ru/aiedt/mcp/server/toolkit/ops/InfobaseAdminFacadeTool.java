@@ -17,6 +17,7 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -93,6 +94,28 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         }
         Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
         return delegate == null ? null : delegate.get().getName();
+    }
+
+    /**
+     * Polls an update when the operation is {@code update_database}.
+     * <p>
+     * That operation calls {@link DatabaseUpdater#execute}, which reads {@code runKey}. The other
+     * operations do not, so a live update key must not exempt them.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; may be {@code null}
+     * @return {@code update_database} when this call polls one, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.UPDATE.domain().equals(domain))
+        {
+            return null;
+        }
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        return "update_database".equals(normalized) ? DatabaseUpdater.NAME : null; //$NON-NLS-1$
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()

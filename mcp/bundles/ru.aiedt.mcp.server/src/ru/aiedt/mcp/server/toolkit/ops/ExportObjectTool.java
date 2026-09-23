@@ -58,6 +58,19 @@ public class ExportObjectTool implements IMcpTool
         return NAME;
     }
 
+    /**
+     * Polls an export this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; a direct call names none, and the facade declares its own poll
+     * @return {@code export_object} when the key is in the export registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.EXPORT.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String getDescription()
     {

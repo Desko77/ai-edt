@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -229,6 +230,48 @@ public class CodeSearchTool implements IMcpTool
             .booleanProperty("includeSource", //$NON-NLS-1$
                 "resolve_symbol: include the resolved method's source code (default true).") //$NON-NLS-1$
             .build();
+    }
+
+    /**
+     * Only {@code object_references} polls a reference search.
+     * <p>
+     * {@code text_search} reaches {@code search_in_code}, which does not resume a
+     * {@code find_references} key. Routing every operation of this facade at that tool would let
+     * a text search start a new scan under a live reference key without a permit.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; may be {@code null}
+     * @return {@code find_references} when this call polls one, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.REFERENCES.domain().equals(domain))
+        {
+            return null;
+        }
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        return "object_references".equals(normalized) ? ReferenceLocator.NAME : null; //$NON-NLS-1$
+    }
+
+    /**
+     * Where an operation sends the call, for the one operation that resumes a heavy search.
+     * <p>
+     * {@code object_references} is {@code find_references}. The other operations stay here: this
+     * facade is already heavy under its own name, and routing {@code text_search} at
+     * {@code find_references} would name a resumption that search does not perform.
+     * </p>
+     *
+     * @param arguments the call arguments
+     * @return {@code find_references} for {@code object_references}, or {@code null}
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.normalizeOperationToken(
+            JsonUtils.extractStringArgument(arguments, "operation")); //$NON-NLS-1$
+        return "object_references".equals(operation) ? ReferenceLocator.NAME : null; //$NON-NLS-1$
     }
 
     @Override

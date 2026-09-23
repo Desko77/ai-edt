@@ -84,6 +84,19 @@ public class VanessaTool implements IMcpTool
         return NAME;
     }
 
+    /**
+     * Polls a scenario run this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; the tool names none
+     * @return {@code vanessa} when the key is in the scenario registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.VANESSA.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String getDescription()
     {
