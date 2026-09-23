@@ -411,10 +411,10 @@ public class NaparnikStatusTest
     @Test
     public void anUnknownOperationIsRefused()
     {
-        JsonObject doc = parse(new NaparnikTool(new FakeHost()).execute(Map.of("operation", "ask"))); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject doc = parse(new NaparnikTool(new FakeHost()).execute(Map.of("operation", "missing"))); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertFalse(doc.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(doc.get("error").getAsString().contains("ask")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(doc.get("error").getAsString().contains("missing")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Test
@@ -634,6 +634,13 @@ public class NaparnikStatusTest
                 throw new NaparnikAccessException(NaparnikHost.LINK_TOOLS, "tools failed", null); //$NON-NLS-1$
             }
             return tools;
+        }
+
+        @Override
+        public RunningQuestion ask(Object facade, BundleCopy source, Question question)
+            throws NaparnikAccessException
+        {
+            throw new NaparnikAccessException(NaparnikHost.LINK_ASK, "status does not ask", null); //$NON-NLS-1$
         }
     }
 
