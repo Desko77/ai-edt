@@ -6,7 +6,9 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -457,5 +459,34 @@ public final class ToolCallScope
         {
             return startedEntries.get(runKey);
         }
+    }
+
+    /**
+     * The background runs this call dispatched whose work has not left the executor.
+     * <p>
+     * The road reads them when the tool threw after {@link PendingWorkRegistry#getOrStart}: the
+     * registry notes each entry here before returning to the tool, so the permit can follow that
+     * work instead of returning with the throw. Liveness is the entry's own exit, not
+     * {@link PendingWorkRegistry.PendingEntry#isDone()}: a cancel or a detach completes the
+     * tracking future while the body continues. Every such run is returned, in the order this
+     * call started them, so each one can hold a share until it leaves.
+     * </p>
+     *
+     * @return the entries still inside; empty when this call started none that still run
+     */
+    List<PendingWorkRegistry.PendingEntry> workStillRunningHere()
+    {
+        List<PendingWorkRegistry.PendingEntry> live = new ArrayList<>();
+        synchronized (startedEntries)
+        {
+            for (PendingWorkRegistry.PendingEntry entry : startedEntries.values())
+            {
+                if (entry != null && !entry.workHasLeft())
+                {
+                    live.add(entry);
+                }
+            }
+        }
+        return live;
     }
 }

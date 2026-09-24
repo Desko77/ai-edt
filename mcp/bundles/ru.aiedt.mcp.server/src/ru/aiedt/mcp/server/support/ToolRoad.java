@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +44,10 @@ import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
  * <p>
  * A call that answers {@code Pending} hands its ticket to the registry entry: the permit comes
  * back when the entry's work leaves the executor, and never on the tracking future's completion
- * alone - a cancel completes that future without reaching work already running. The entry the
+ * alone - a cancel completes that future without reaching work already running. A call that
+ * throws after it has already dispatched a run hands the ticket over the same way, from
+ * {@link #runBody}, so the router's call and {@link #call} do it once: each run still inside
+ * receives a share, and the permit comes back when the last of them leaves. The entry the
  * answer names is not only the one the registry map still holds: work whose tracking was dropped
  * while it runs - a subject sweep, a cancel that cannot reach it - is found through the entry the
  * call's scope kept when it started the run, so its permit waits on the work and not on the
@@ -154,8 +159,14 @@ public final class ToolRoad
             // The limit counts concurrent callers, not reentry into them. The child takes a share
             // of that permit rather than a permit-less ride: work the child dispatches can go on
             // after the parent has returned, and the permit must stay held for as long as any of
-            // that work runs.
-            return Admission.admitted(scope.ticket().share());
+            // that work runs. The share refuses a count that has already fallen to zero, so a
+            // permit returned between this check and the increment is taken below, the ordinary
+            // way, instead of being resurrected.
+            Ticket shared = scope.ticket().share();
+            if (shared != null)
+            {
+                return Admission.admitted(shared);
+            }
         }
         if (!permits.tryAcquire())
         {
@@ -215,7 +226,8 @@ public final class ToolRoad
      * <p>
      * The ticket is spent here. A synchronous answer releases it; a {@code Pending} envelope hands
      * it to the entry the envelope names, and the permit comes back when that entry's work leaves
-     * the executor.
+     * the executor. A throw after work was dispatched hands the ticket to every run still inside,
+     * the same way, before this method leaves.
      * </p>
      *
      * @param tool the resolved tool
@@ -224,6 +236,33 @@ public final class ToolRoad
      * @return the finished result, or a {@code Pending} JSON with a runKey
      */
     public static String runBody(IMcpTool tool, Map<String, String> arguments, Ticket ticket)
+    {
+        try
+        {
+            return runBodyAndSpend(tool, arguments, ticket);
+        }
+        finally
+        {
+            // A throw never reaches spend. The hand-off lives here, on the path the router and
+            // call both take, so the HTTP worker's later release finds the ticket already given
+            // to work that is still inside. No live work leaves the ticket for that caller: an
+            // internal call releases from its own finally, and the worker releases directly.
+            if (ticket != null && !ticket.alreadySpent())
+            {
+                handOffToLiveWork(ticket, ToolCallScope.current());
+            }
+        }
+    }
+
+    /**
+     * The body of {@link #runBody}, spending the ticket on an answer that came back.
+     *
+     * @param tool the resolved tool
+     * @param arguments the flattened arguments
+     * @param ticket the call's permit ticket; may be {@code null} or permit-less
+     * @return the finished result, or a {@code Pending} JSON with a runKey
+     */
+    private static String runBodyAndSpend(IMcpTool tool, Map<String, String> arguments, Ticket ticket)
     {
         String name = tool.getName();
         // An optional client operationId makes an allowlisted mutator at-most-once: a repeat
@@ -393,9 +432,7 @@ public final class ToolRoad
                 finally
                 {
                     ToolCallScope.enter(parent);
-                    // The safety spend for a body that never answered: a ticket the road already
-                    // spent does nothing here.
-                    ticket.release();
+                    releaseUnlessDispatchedWorkStillRuns(ticket, childScope);
                 }
             }
             try
@@ -404,9 +441,7 @@ public final class ToolRoad
             }
             finally
             {
-                // The safety spend for a body that never answered: a ticket the road already spent
-                // does nothing here.
-                ticket.release();
+                releaseUnlessDispatchedWorkStillRuns(ticket, parent);
             }
         }
         ToolCallScope scope = ToolCallScope.create(null);
@@ -419,8 +454,73 @@ public final class ToolRoad
         finally
         {
             ToolCallScope.exit();
-            admission.ticket().release();
+            releaseUnlessDispatchedWorkStillRuns(admission.ticket(), scope);
         }
+    }
+
+    /**
+     * Returns a ticket the body did not spend, unless this call already dispatched work that is
+     * still running.
+     * <p>
+     * {@code getOrStart} notes each entry on the scope before it returns to the tool. A throw
+     * never reaches {@link #spend}. {@link #runBody} hands the ticket to that work before this
+     * runs; this is the same hand-off for a scope {@code runBody} was not looking at, and the
+     * release for a call that started nothing still running. A ticket already spent is left
+     * alone. One run receives the ticket. Each further run still inside receives a share taken
+     * before any of them is transferred, so the permit returns when the last of them leaves.
+     * </p>
+     *
+     * @param ticket the call's ticket; may be {@code null} or already spent
+     * @param scope the scope the body ran under; may be {@code null}
+     */
+    private static void releaseUnlessDispatchedWorkStillRuns(Ticket ticket, ToolCallScope scope)
+    {
+        if (ticket == null || ticket.alreadySpent())
+        {
+            return;
+        }
+        if (!handOffToLiveWork(ticket, scope))
+        {
+            ticket.release();
+        }
+    }
+
+    /**
+     * Gives the ticket to every run on {@code scope} whose body has not left.
+     * <p>
+     * Shares are taken before the first transfer. Transfer spends the ticket, and a share taken
+     * afterwards can meet a count the first exit has already brought to zero. An entry whose
+     * tracking future is done still counts while its body has not left.
+     * </p>
+     *
+     * @param ticket a ticket that has not been spent; not {@code null}
+     * @param scope the scope the body ran under; may be {@code null}
+     * @return whether the ticket was handed to work that is still running
+     */
+    private static boolean handOffToLiveWork(Ticket ticket, ToolCallScope scope)
+    {
+        List<PendingWorkRegistry.PendingEntry> live = scope == null ? Collections.emptyList()
+            : scope.workStillRunningHere();
+        if (live.isEmpty())
+        {
+            return false;
+        }
+        List<Ticket> holders = new ArrayList<>(live.size());
+        holders.add(ticket);
+        for (int i = 1; i < live.size(); i++)
+        {
+            Ticket share = ticket.share();
+            if (share == null)
+            {
+                break;
+            }
+            holders.add(share);
+        }
+        for (int i = 0; i < holders.size(); i++)
+        {
+            holders.get(i).transferTo(live.get(i));
+        }
+        return true;
     }
 
     /**
@@ -680,6 +780,14 @@ public final class ToolRoad
         }
 
         /**
+         * @return whether this ticket was already spent, by a release or a hand-off
+         */
+        private boolean alreadySpent()
+        {
+            return spent.get();
+        }
+
+        /**
          * Releases the permit, if this ticket holds one and it was not spent already.
          */
         public void release()
@@ -721,8 +829,8 @@ public final class ToolRoad
          * counted.
          * </p>
          *
-         * @return a ticket holding a share of this one's permit, or a permit-less ticket when
-         *         this one holds no permit
+         * @return a ticket holding a share of this one's permit, a permit-less ticket when this one
+         *         holds no permit, or {@code null} when the permit was already returned
          */
         Ticket share()
         {
@@ -734,8 +842,10 @@ public final class ToolRoad
      * One permit of the heavy-tool limiter and everyone still holding it.
      * <p>
      * The count starts at one - the call that took the permit - and grows by every share handed to
-     * a nested call. Each holder departs at most once (a ticket's spend is single-shot), so the
-     * count cannot pass zero, and the permit is returned at the one moment it reaches it.
+     * a nested call. A share is a compare-and-increment that leaves a zero count untouched, so a
+     * ticket whose last holder has already departed cannot be resurrected. Each holder departs at
+     * most once (a ticket's spend is single-shot), and the permit is returned at the one moment
+     * the count reaches zero.
      * </p>
      */
     private static final class Lease
@@ -762,9 +872,21 @@ public final class ToolRoad
             }
         }
 
+        /**
+         * @return a ticket sharing this permit, or {@code null} when the count is already zero
+         */
         Ticket share()
         {
-            holders.incrementAndGet();
+            int seen;
+            do
+            {
+                seen = holders.get();
+                if (seen <= 0)
+                {
+                    return null;
+                }
+            }
+            while (!holders.compareAndSet(seen, seen + 1));
             return new Ticket(this);
         }
 

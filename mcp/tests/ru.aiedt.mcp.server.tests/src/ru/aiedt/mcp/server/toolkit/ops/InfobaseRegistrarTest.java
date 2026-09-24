@@ -15,6 +15,8 @@ import java.util.Map;
 
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.McpHistory;
+import ru.aiedt.mcp.server.support.BmInfobaseCredentialsHelper;
 import ru.aiedt.mcp.server.support.BmInfobaseRegistrationHelper.RegisterResult;
 import ru.aiedt.mcp.server.support.ErrorTags;
 
@@ -181,5 +183,137 @@ public class InfobaseRegistrarTest
         assertTrue(json.contains("\"rolledBack\":true")); //$NON-NLS-1$
         assertTrue(json.contains( //$NON-NLS-1$
             "\"launchApplicationIds\":\"restored the application id of: Foreign run\"")); //$NON-NLS-1$
+        assertFalse("no access settings were written, so the field stays out", //$NON-NLS-1$
+            json.contains("accessSettings")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theFailureAnswerNamesWhatBecameOfTheAccessSettings()
+    {
+        RegisterResult r = new RegisterResult();
+        r.error = "Failed to associate the infobase to the project: refused. " //$NON-NLS-1$
+            + "The access settings of the reused entry were restored to what stood before the call."; //$NON-NLS-1$
+        r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
+        r.infobaseName = "existing-base"; //$NON-NLS-1$
+        r.accessSettings = "The access settings of the reused entry were restored to what " //$NON-NLS-1$
+            + "stood before the call."; //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json.contains("\"associateFailed\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"accessSettings\":")); //$NON-NLS-1$
+        assertTrue(json.contains("restored to what stood before the call")); //$NON-NLS-1$
+        assertFalse("the password itself is never in the answer", json.contains("s3cret")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void theFailureAnswerNamesTheAccessSettingsLeftBehindByTheRollback()
+    {
+        RegisterResult r = new RegisterResult();
+        r.error = "Failed to associate the infobase to the project: refused. " //$NON-NLS-1$
+            + "The list entry added for it was removed again; the infobase itself was not touched. " //$NON-NLS-1$
+            + "The access settings written for it stay behind in EDT's secure storage under the " //$NON-NLS-1$
+            + "removed entry's uuid, unreachable from the infobase list; deleting a list entry " //$NON-NLS-1$
+            + "does not remove them."; //$NON-NLS-1$
+        r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.rolledBack = true;
+        r.accessSettings = "The access settings written for it stay behind in EDT's secure " //$NON-NLS-1$
+            + "storage under the removed entry's uuid, unreachable from the infobase list; " //$NON-NLS-1$
+            + "deleting a list entry does not remove them."; //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json.contains("\"rolledBack\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"accessSettings\":")); //$NON-NLS-1$
+        // The JSON writer escapes an apostrophe, so the check reads a fragment without one.
+        assertTrue(json.contains("stay behind in EDT")); //$NON-NLS-1$
+        assertTrue(json.contains("unreachable from the infobase list")); //$NON-NLS-1$
+        assertFalse("the answer never claims the stored settings were erased", //$NON-NLS-1$
+            json.contains("removed with the list entry")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anUnknownAccessModeIsRefusedBeforeAnythingIsWritten()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("projectName", "project-one"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("path", "C:/bases/base"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("accessMode", "LDAP"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String result = new InfobaseRegistrar().execute(params);
+
+        assertTrue(result.contains("\"success\":false")); //$NON-NLS-1$
+        // Gson escapes the apostrophes of the refusal text, so the assertion stops before them.
+        assertTrue(result.contains("accessMode must be")); //$NON-NLS-1$
+        assertTrue(result.contains("LDAP")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theSuccessAnswerNamesWhatAccessWasStored()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.added = true;
+        BmInfobaseCredentialsHelper.CredentialResult credentials =
+            new BmInfobaseCredentialsHelper.CredentialResult();
+        credentials.ok = true;
+        credentials.access = "INFOBASE"; //$NON-NLS-1$
+        credentials.userName = "admin"; //$NON-NLS-1$
+        credentials.passwordStored = true;
+        r.credentials = credentials;
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"access\":\"INFOBASE\"")); //$NON-NLS-1$
+        assertTrue(json.contains("\"userName\":\"admin\"")); //$NON-NLS-1$
+        assertTrue(json.contains("\"passwordStored\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"verifiedByReadback\":true")); //$NON-NLS-1$
+        assertFalse("the password itself is never in the answer", //$NON-NLS-1$
+            json.contains("s3cret")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedConfirmationReadBackIsNamedNotClaimed()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.added = true;
+        BmInfobaseCredentialsHelper.CredentialResult credentials =
+            new BmInfobaseCredentialsHelper.CredentialResult();
+        credentials.ok = true;
+        credentials.failureKind = ErrorTags.READBACK_FAILED.wire();
+        r.credentials = credentials;
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"verifiedByReadback\":false")); //$NON-NLS-1$
+        assertTrue(json.contains("\"readbackFailed\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("the confirmation read-back")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aStoredPasswordIsMaskedInTheHistoryArgumentSummary()
+    {
+        // The masking is decided by the argument's NAME, so the same summary that hides
+        // set_infobase_credentials' password hides this operation's - pinned here so a
+        // rename of the argument or a change of the rule cannot slip past unnoticed.
+        Map<String, String> arguments = new HashMap<>();
+        arguments.put("operation", "register_infobase"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("projectName", "project-one"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("path", "C:/bases/base"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("userName", "admin"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("password", "s3cret"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        McpHistory.ArgsSummary summary = McpHistory.summarizeArguments(arguments, 2000);
+
+        assertFalse(summary.text, summary.text.contains("s3cret")); //$NON-NLS-1$
+        assertTrue("the summary shows the value was masked: " + summary.text, //$NON-NLS-1$
+            summary.text.contains("password=***")); //$NON-NLS-1$
+        assertTrue("the non-secret arguments stay readable", summary.text.contains("project-one")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

@@ -8,8 +8,10 @@ package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Test;
@@ -51,5 +53,33 @@ public class AShareOfAPermitOutlivesItsFirstHolderTest
         ticket.release();
         ticket.release();
         assertEquals(1, released.get());
+    }
+
+    /**
+     * A share taken after the count has already fallen to zero is refused, and the limiter does
+     * not rise above the permit it was given.
+     * <p>
+     * {@code share} used to increment unconditionally. A second thread that still saw the lease
+     * through a scope whose ticket was already spent could resurrect the count after the last
+     * holder had returned the permit, and the later departure released it again.
+     * </p>
+     */
+    @Test
+    public void aShareAfterThePermitWasReturnedRefuses()
+    {
+        Semaphore permits = new Semaphore(1);
+        assertTrue(permits.tryAcquire());
+        ToolRoad.Ticket ticket = new ToolRoad.Ticket(permits::release);
+        ticket.release();
+        assertEquals("the permit is back at the limit", 1, permits.availablePermits()); //$NON-NLS-1$
+
+        ToolRoad.Ticket share = ticket.share();
+        if (share != null)
+        {
+            share.release();
+        }
+        assertEquals("refusing the share leaves the limiter at its one permit", //$NON-NLS-1$
+            1, permits.availablePermits());
+        assertNull("a share of a returned permit is refused", share); //$NON-NLS-1$
     }
 }

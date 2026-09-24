@@ -24,6 +24,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
+import ru.aiedt.mcp.server.support.FormExtensionDataPathGuard;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.StandardCommandRegistry;
@@ -54,7 +55,7 @@ public class EditFormTool implements IMcpTool
         "addField", "addGroup", "addButton", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "addTable", "addDecoration", "removeItem")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-    /** Lazy-initialized singleton helper */
+    /** The helper of the request being served; see {@link #executeInternal} */
     private BmFormHelper helper;
 
     @Override
@@ -227,11 +228,9 @@ public class EditFormTool implements IMcpTool
     private String executeInternal(String projectName, String formFqn, String operation,
         Map<String, String> params)
     {
-        // Initialize helper (lazy singleton)
-        if (helper == null)
-        {
-            helper = new BmFormHelper();
-        }
+        // One helper per request: it holds the form the write works on and the
+        // base-form attributes that write borrowed, and neither may outlive it.
+        helper = new BmFormHelper();
         if (!helper.init())
         {
             return buildError("BmFormHelper initialization failed. " + //$NON-NLS-1$
@@ -357,12 +356,12 @@ public class EditFormTool implements IMcpTool
                 return buildError(error);
             }
             // It's a success message from the action
-            return error;
+            return helper.annotateAdopted(error);
         }
 
         // Default success
-        return buildSuccess(projectName, formFqn, operation, name, title, elementType,
-            dataPath, parentName);
+        return helper.annotateAdopted(buildSuccess(projectName, formFqn, operation, name, title,
+            elementType, dataPath, parentName));
     }
 
     // -----------------------------------------------------------------------
@@ -888,10 +887,25 @@ public class EditFormTool implements IMcpTool
         }
         catch (Exception e)
         {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            warnings.add("autogen failed: " + (cause.getMessage() != null //$NON-NLS-1$
-                ? cause.getMessage() : cause.getClass().getSimpleName()));
+            noteColumnFailure(e, warnings);
         }
+    }
+
+    /**
+     * Turns a failure of one generated column into the warning the caller reads
+     * - unless it is a data-path refusal: a refusal has to reach the caller and
+     * roll the whole write back, or the table and its earlier columns stay in a
+     * transaction that commits with no borrow to show for them.
+     *
+     * @param e the failure the column loop caught
+     * @param warnings where a failure that is not a refusal is noted
+     */
+    static void noteColumnFailure(Exception e, java.util.List<String> warnings)
+    {
+        FormExtensionDataPathGuard.rethrowIfRefusal(e);
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        warnings.add("autogen failed: " + (cause.getMessage() != null //$NON-NLS-1$
+            ? cause.getMessage() : cause.getClass().getSimpleName()));
     }
 
     /**

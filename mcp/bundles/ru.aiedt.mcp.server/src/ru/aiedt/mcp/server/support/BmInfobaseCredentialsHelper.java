@@ -107,17 +107,39 @@ public final class BmInfobaseCredentialsHelper
     public static CredentialResult setCredentials(IProject project, String applicationId,
         String accessMode, String userName, String password)
     {
-        CredentialResult r = new CredentialResult();
-
         InfobaseResolution res = resolveInfobase(project, applicationId);
         if (res.error != null)
         {
+            CredentialResult r = new CredentialResult();
             r.error = res.error;
             r.failureKind = res.notInfobaseApp ? ErrorTags.NOT_INFOBASE.wire() : ErrorTags.RESOLVE_FAILED.wire();
             return r;
         }
+        CredentialResult r = setCredentialsForInfobase(res.infobase, accessMode, userName, password);
         r.applicationId = res.applicationId;
-        r.infobaseName = res.infobaseName;
+        return r;
+    }
+
+    /**
+     * Writes the credentials for an infobase the caller has already resolved to a reference -
+     * the path {@code set_infobase_credentials} takes after resolving the application, and the
+     * one {@code register_infobase} takes for the list entry it has just added or reused, where
+     * no application exists yet to resolve through. Never throws; all failures land in the
+     * returned {@link CredentialResult}.
+     *
+     * @param infobase    the list entry the settings belong to
+     * @param accessMode  "OS" or "INFOBASE" (case-insensitive); null defaults to INFOBASE when a
+     *                    userName is given, else OS
+     * @param userName    infobase user (may be null for OS access)
+     * @param password    infobase password (may be null; never logged/returned)
+     * @return what was written and read back; {@link CredentialResult#applicationId} stays
+     *         {@code null} - there is no application on this path
+     */
+    public static CredentialResult setCredentialsForInfobase(InfobaseReference infobase,
+        String accessMode, String userName, String password)
+    {
+        CredentialResult r = new CredentialResult();
+        r.infobaseName = infobase.getName();
 
         IInfobaseAccessManager mgr = resolveManager();
         if (mgr == null)
@@ -153,7 +175,7 @@ public final class BmInfobaseCredentialsHelper
         String additionalParams = null;
         try
         {
-            IInfobaseAccessSettings current = mgr.resolveSettings(res.infobase);
+            IInfobaseAccessSettings current = mgr.resolveSettings(infobase);
             if (current != null)
             {
                 additionalParams = current.additionalProperties();
@@ -177,7 +199,7 @@ public final class BmInfobaseCredentialsHelper
         LaunchApplicationIds.underWriteLock(launches, applicationIds -> {
             try
             {
-                mgr.updateSettings(res.infobase, settings);
+                mgr.updateSettings(infobase, settings);
             }
             catch (Throwable e)
             {
@@ -197,7 +219,7 @@ public final class BmInfobaseCredentialsHelper
         // In-process readback to confirm what was persisted.
         try
         {
-            IInfobaseAccessSettings back = mgr.resolveSettings(res.infobase);
+            IInfobaseAccessSettings back = mgr.resolveSettings(infobase);
             r.ok = true;
             r.access = back.access() != null ? back.access().getName() : null;
             r.userName = back.userName();

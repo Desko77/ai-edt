@@ -14,6 +14,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,11 +28,15 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.debug.core.ILaunchManager;
 import org.junit.Test;
 
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
 import com._1c.g5.v8.dt.platform.services.model.FileConnectionString;
 import com._1c.g5.v8.dt.platform.services.model.Group;
+import com._1c.g5.v8.dt.platform.services.model.InfobaseAccess;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.model.ModelFactory;
 import com._1c.g5.v8.dt.platform.services.model.Section;
@@ -50,7 +55,9 @@ import ru.aiedt.mcp.server.support.BmInfobaseRegistrationHelper.RegistrationEnvi
  * infobase list ({@code add}, and {@code delete} for the rollback) reloads the list, and the
  * reload strips {@code ATTR_APPLICATION_ID} from the launch configurations of EVERY project in
  * the workspace - so the fake {@code IInfobaseManager} strips them on both writes, and the fake
- * {@code ILaunchManager} addresses configurations by memento only, never by display name.</p>
+ * {@code ILaunchManager} addresses configurations by memento only, never by display name.
+ * Associating the first application of a project makes it that project's default, the way EDT
+ * does during the binding.</p>
  */
 public class BmInfobaseRegistrationHelperTest
 {
@@ -71,11 +78,56 @@ public class BmInfobaseRegistrationHelperTest
         /** When set, the association throws with this message. */
         String associateFailure;
 
+        /** Whether {@code associate} ran at all. */
+        boolean associateRan;
+
+        /** When set, the access-settings write fails with this message. */
+        String accessWriteFailure;
+
+        /** The entry the last access-settings write was called for, or {@code null} when it never ran. */
+        InfobaseReference accessWriteInfobase;
+
+        /** The arguments the last access-settings write was called with. */
+        String accessWriteMode;
+        String accessWriteUser;
+        String accessWritePassword;
+
+        /** Whether the access-settings write ran before the association. */
+        boolean accessWriteBeforeAssociate;
+
+        /**
+         * The access settings keyed by the list entry, the way the secure store keys them by the
+         * infobase. A write replaces the entry; a restore puts the previous object back.
+         */
+        final Map<InfobaseReference, IInfobaseAccessSettings> accessSettings = new IdentityHashMap<>();
+
+        /** The order the secure store was primed and the access manager and the write were used
+         * in: prime, resolve, write, update. */
+        final List<String> accessTrace = new ArrayList<>();
+
+        /** When set, {@code updateSettings} throws with this message - a restore that fails. */
+        String accessRestoreFailure;
+
+        /** When set, {@code primeSecureStorage} fails with this message - an unprimed store. */
+        String primeFailure;
+
         /** When set, deleting the list entry throws with this message. */
         String deleteFailure;
 
         /** When set, reading the default application throws with this message. */
         String defaultReadFailure;
+
+        /**
+         * Whether {@code getDefaultApplication} ran while the write lock was held. The previous
+         * default has to be read there, before the association.
+         */
+        boolean defaultReadUnderWriteLock;
+
+        /**
+         * The default's name as that locked read saw it, or {@code null} when the project had
+         * none. Meaningful only when {@link #defaultReadUnderWriteLock} is true.
+         */
+        String defaultNameReadUnderWriteLock;
 
         /** Projects whose applications cannot be read: {@code getApplications} throws for them. */
         final Set<String> applicationsReadFailures = new LinkedHashSet<>();
@@ -169,11 +221,21 @@ public class BmInfobaseRegistrationHelperTest
                 new Class<?>[] { IInfobaseAssociationManager.class }, (proxy, method, args) -> {
                     if ("associate".equals(method.getName())) //$NON-NLS-1$
                     {
+                        associateRan = true;
                         if (associateFailure != null)
                         {
                             throw new IllegalStateException(associateFailure);
                         }
-                        bind(((IProject)args[0]).getName(), (InfobaseReference)args[1]);
+                        String projectName = ((IProject)args[0]).getName();
+                        boolean firstOfProject = !applications.containsKey(projectName)
+                            || applications.get(projectName).isEmpty();
+                        IInfobaseApplication created =
+                            bind(projectName, (InfobaseReference)args[1]);
+                        // EDT makes the first application of a project the default itself.
+                        if (firstOfProject)
+                        {
+                            defaultApplication = created;
+                        }
                     }
                     return FakeLaunchConfigurations.defaultValue(method.getReturnType());
                 });
@@ -198,6 +260,12 @@ public class BmInfobaseRegistrationHelperTest
                         return new ArrayList<IApplication>(
                             applications.getOrDefault(((IProject)args[0]).getName(), List.of()));
                     case "getDefaultApplication": //$NON-NLS-1$
+                        if (LaunchApplicationIds.WRITE_LOCK.isHeldByCurrentThread())
+                        {
+                            defaultReadUnderWriteLock = true;
+                            defaultNameReadUnderWriteLock = defaultApplication == null
+                                ? null : defaultApplication.getName();
+                        }
                         if (defaultReadFailure != null)
                         {
                             throw new IllegalStateException(defaultReadFailure);
@@ -249,6 +317,83 @@ public class BmInfobaseRegistrationHelperTest
             flagApplication = application;
             flagWanted = wanted;
             return flagOutcome;
+        }
+
+        @Override
+        public BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(
+            InfobaseReference infobase, String accessMode, String userName, String password)
+        {
+            accessTrace.add("write"); //$NON-NLS-1$
+            accessWriteBeforeAssociate = !associateRan;
+            accessWriteInfobase = infobase;
+            accessWriteMode = accessMode;
+            accessWriteUser = userName;
+            accessWritePassword = password;
+            BmInfobaseCredentialsHelper.CredentialResult r =
+                new BmInfobaseCredentialsHelper.CredentialResult();
+            if (accessWriteFailure != null)
+            {
+                r.error = accessWriteFailure;
+                r.failureKind = ErrorTags.WRITE_FAILED.wire();
+                return r;
+            }
+            // The read-back the real write confirms with: OS access stores no user/password.
+            // The store itself is what a later restore has to put back, so the write lands here
+            // the way IInfobaseAccessManager.updateSettings would.
+            InfobaseAccess mode = "OS".equalsIgnoreCase(accessMode) //$NON-NLS-1$
+                ? InfobaseAccess.OS : InfobaseAccess.INFOBASE;
+            String storedUser = mode == InfobaseAccess.OS ? null : userName;
+            String storedPassword = mode == InfobaseAccess.OS ? null : password;
+            IInfobaseAccessSettings stood = accessSettings.get(infobase);
+            accessSettings.put(infobase, new InfobaseAccessSettings(mode, storedUser, storedPassword,
+                stood == null ? null : stood.additionalProperties()));
+            r.ok = true;
+            r.access = accessMode;
+            r.userName = storedUser;
+            r.passwordStored = storedPassword != null && !storedPassword.isEmpty();
+            return r;
+        }
+
+        @Override
+        public String primeSecureStorage()
+        {
+            accessTrace.add("prime"); //$NON-NLS-1$
+            return primeFailure;
+        }
+
+        @Override
+        public IInfobaseAccessManager accessManager()
+        {
+            return (IInfobaseAccessManager)Proxy.newProxyInstance(FakeEnvironment.class.getClassLoader(),
+                new Class<?>[] { IInfobaseAccessManager.class }, (proxy, method, args) -> {
+                    switch (method.getName())
+                    {
+                    case "resolveSettings": //$NON-NLS-1$
+                        accessTrace.add("resolve"); //$NON-NLS-1$
+                        InfobaseReference asked = (InfobaseReference)args[0];
+                        IInfobaseAccessSettings stored = accessSettings.get(asked);
+                        if (stored != null)
+                        {
+                            return stored;
+                        }
+                        // Nothing stored yet: EDT's resolveSettings answers the OS default.
+                        return new InfobaseAccessSettings(InfobaseAccess.OS, null, null, null);
+                    case "updateSettings": //$NON-NLS-1$
+                        accessTrace.add("update"); //$NON-NLS-1$
+                        if (accessRestoreFailure != null)
+                        {
+                            throw new IllegalStateException(accessRestoreFailure);
+                        }
+                        accessSettings.put((InfobaseReference)args[0],
+                            (IInfobaseAccessSettings)args[1]);
+                        // What the real updateSettings does: saving the infobase list strips
+                        // the application id from every launch configuration.
+                        configs.stripApplicationIds();
+                        return null;
+                    default:
+                        return FakeLaunchConfigurations.defaultValue(method.getReturnType());
+                    }
+                });
         }
 
         private static IProject projectProxy(String name)
@@ -338,7 +483,12 @@ public class BmInfobaseRegistrationHelperTest
         assertNotNull(r.uuid);
         assertEquals("app-1", r.applicationId); //$NON-NLS-1$
         assertTrue("no default stood, so the new one becomes it", r.defaultApplication); //$NON-NLS-1$
-        assertNull(r.previousDefault);
+        assertNull("the default read before the binding saw none, so the new name is not " //$NON-NLS-1$
+            + "reported as the one that stood before", r.previousDefault); //$NON-NLS-1$
+        assertNull(r.defaultWarning);
+        assertTrue("the previous default is read under the write lock, before the binding", //$NON-NLS-1$
+            env.defaultReadUnderWriteLock);
+        assertNull("that read saw no default", env.defaultNameReadUnderWriteLock); //$NON-NLS-1$
         assertEquals(1, env.infobases.size());
         assertEquals("NewBase", env.infobases.get(0).getName()); //$NON-NLS-1$
         assertNotNull("the operation sets the uuid the factory leaves out", //$NON-NLS-1$
@@ -407,6 +557,10 @@ public class BmInfobaseRegistrationHelperTest
             r.defaultApplication);
         assertEquals("Old base", r.previousDefault); //$NON-NLS-1$
         assertNull("the standing default was not touched", env.defaultSet); //$NON-NLS-1$
+        assertTrue("the previous default is read under the write lock, before the binding", //$NON-NLS-1$
+            env.defaultReadUnderWriteLock);
+        assertEquals("that read saw the default that stood, not the application just bound", //$NON-NLS-1$
+            "Old base", env.defaultNameReadUnderWriteLock); //$NON-NLS-1$
     }
 
     @Test
@@ -546,7 +700,7 @@ public class BmInfobaseRegistrationHelperTest
     }
 
     @Test
-    public void anExplicitMakeDefaultFalseLeavesTheProjectWithoutADefault()
+    public void anExplicitMakeDefaultFalseNamesTheDefaultEdtSetWhenTheProjectHadNone()
     {
         FakeEnvironment env = new FakeEnvironment();
         env.project("project-one"); //$NON-NLS-1$
@@ -555,10 +709,17 @@ public class BmInfobaseRegistrationHelperTest
             "C:/bases/new", null, null, Boolean.FALSE, env); //$NON-NLS-1$
 
         assertTrue(r.error, r.ok);
-        assertFalse(r.defaultApplication);
-        assertNull("no default was set", env.defaultSet); //$NON-NLS-1$
-        assertNull("the project still has no default", env.defaultApplication); //$NON-NLS-1$
-        assertNull(r.defaultWarning);
+        assertNull("no default stood before the binding", r.previousDefault); //$NON-NLS-1$
+        assertTrue("EDT made the first application the default; the call does not undo it", //$NON-NLS-1$
+            r.defaultApplication);
+        assertNotNull(r.defaultWarning);
+        assertTrue(r.defaultWarning.contains("EDT")); //$NON-NLS-1$
+        assertTrue(r.defaultWarning.toLowerCase(Locale.ROOT).contains("associat")); //$NON-NLS-1$
+        assertNull("makeDefault false does not call setDefaultApplication", env.defaultSet); //$NON-NLS-1$
+        assertNotNull("the association itself set the default", env.defaultApplication); //$NON-NLS-1$
+        assertTrue("the previous default is read under the write lock, before the binding", //$NON-NLS-1$
+            env.defaultReadUnderWriteLock);
+        assertNull("that read saw no default", env.defaultNameReadUnderWriteLock); //$NON-NLS-1$
     }
 
     @Test
@@ -649,6 +810,10 @@ public class BmInfobaseRegistrationHelperTest
     {
         FakeEnvironment env = new FakeEnvironment();
         env.project("project-one"); //$NON-NLS-1$
+        // Already has an application, so this binding is not the project's first and EDT does
+        // not make it the default. The lookup is hidden and no default stands: two missing
+        // reads are not the one application.
+        env.bind("project-one", fileInfobase("C:/bases/other", "Other")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         env.hideApplications = true;
 
         RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
@@ -656,7 +821,9 @@ public class BmInfobaseRegistrationHelperTest
 
         assertTrue(r.error, r.ok);
         assertNull(r.applicationId);
+        assertNull(r.previousDefault);
         assertFalse("two missing reads are not the one application", r.defaultApplication); //$NON-NLS-1$
+        assertNull(r.defaultWarning);
     }
 
     @Test
@@ -712,5 +879,256 @@ public class BmInfobaseRegistrationHelperTest
         assertTrue(r.error, r.ok);
         assertTrue("the list is scanned for a duplicate under the lock that guards the write", //$NON-NLS-1$
             env.getAllUnderWriteLock);
+    }
+
+    @Test
+    public void accessSettingsAreWrittenAfterTheAddAndBeforeTheBinding()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(r.error, r.ok);
+        assertTrue("the access settings were written before the binding", //$NON-NLS-1$
+            env.accessWriteBeforeAssociate);
+        assertEquals("the settings were written for the entry the call added", //$NON-NLS-1$
+            "new", env.accessWriteInfobase.getName()); //$NON-NLS-1$
+        assertEquals("INFOBASE", env.accessWriteMode); //$NON-NLS-1$
+        assertEquals("admin", env.accessWriteUser); //$NON-NLS-1$
+        assertEquals("s3cret", env.accessWritePassword); //$NON-NLS-1$
+        assertNotNull("the answer carries what was stored", r.credentials); //$NON-NLS-1$
+        assertEquals("INFOBASE", r.credentials.access); //$NON-NLS-1$
+        assertEquals("admin", r.credentials.userName); //$NON-NLS-1$
+        assertTrue(r.credentials.passwordStored);
+    }
+
+    @Test
+    public void aReusedEntryGetsItsAccessSettingsBeforeTheBindingToo()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(r.error, r.ok);
+        assertFalse(r.added);
+        assertTrue("the reused entry's settings were written before the binding", //$NON-NLS-1$
+            env.accessWriteBeforeAssociate);
+        assertEquals("the settings were written for the reused entry", existing, //$NON-NLS-1$
+            env.accessWriteInfobase);
+        assertNotNull(r.credentials);
+    }
+
+    @Test
+    public void aCallWithoutAccessArgumentsWritesNoneAndKeepsThePreviousBehaviour()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env);
+
+        assertTrue(r.error, r.ok);
+        assertNull("no access write ran", env.accessWriteInfobase); //$NON-NLS-1$
+        assertNull("the answer names no stored access", r.credentials); //$NON-NLS-1$
+        assertTrue("the binding still goes ahead", env.associateRan); //$NON-NLS-1$
+        assertNotNull(r.applicationId);
+    }
+
+    @Test
+    public void aFailedAccessWriteRefusesBeforeTheBindingAndRollsTheAddedEntryBack()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.accessWriteFailure = "secure storage is locked"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.WRITE_FAILED.wire(), r.failureKind);
+        assertTrue("the answer carries the write's own reason: " + r.error, //$NON-NLS-1$
+            r.error.contains("secure storage is locked")); //$NON-NLS-1$
+        assertTrue("the answer says the binding did not run", //$NON-NLS-1$
+            r.error.contains("not bound to the project")); //$NON-NLS-1$
+        assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
+        assertTrue("the added entry was removed again", r.rolledBack); //$NON-NLS-1$
+        assertTrue("the entry is gone from the list", env.infobases.isEmpty()); //$NON-NLS-1$
+        assertNull("nothing stored is claimed", r.credentials); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedAccessWriteOnAReusedEntryLeavesItStanding()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.accessWriteFailure = "secure storage is locked"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.WRITE_FAILED.wire(), r.failureKind);
+        assertFalse("a reused entry is not rolled back", r.rolledBack); //$NON-NLS-1$
+        assertEquals("the reused entry stays in the list", 1, env.infobases.size()); //$NON-NLS-1$
+        assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedBindingOnAReusedEntryRestoresTheAccessSettingsThatStoodBefore()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.bind("project-two", existing); //$NON-NLS-1$
+        env.configs.add("m-foreign", "Foreign run", "project-two", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        env.accessSettings.put(existing, new InfobaseAccessSettings(InfobaseAccess.INFOBASE,
+            "keeper", "old-secret", "/Out -old")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        env.associateFailure = "the infobase is already associated with another project"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertFalse("a reused entry stays in the list", r.added); //$NON-NLS-1$
+        assertFalse(r.rolledBack);
+        assertEquals("the shared entry was not removed", 1, env.infobases.size()); //$NON-NLS-1$
+        assertEquals("the store was primed, the settings were read before the write, then put " //$NON-NLS-1$
+            + "back", List.of("prime", "resolve", "write", "update"), env.accessTrace); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        IInfobaseAccessSettings restored = env.accessSettings.get(existing);
+        assertEquals("the user that stood before is back", "keeper", restored.userName()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the password that stood before is back", "old-secret", restored.password()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(InfobaseAccess.INFOBASE, restored.access());
+        assertEquals("the additional parameters that stood before are back", //$NON-NLS-1$
+            "/Out -old", restored.additionalProperties()); //$NON-NLS-1$
+        assertNotNull("the answer names the restore", r.accessSettings); //$NON-NLS-1$
+        assertTrue(r.accessSettings, r.accessSettings.contains("restored")); //$NON-NLS-1$
+        assertTrue("the error answer carries the same sentence", //$NON-NLS-1$
+            r.error.contains(r.accessSettings));
+        assertNull("the new credentials are not reported as stored", r.credentials); //$NON-NLS-1$
+        assertEquals("the launch configuration stripped by the settings restore got its id back", //$NON-NLS-1$
+            "app-foreign", env.configs.byName("Foreign run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertAnswerHidesPasswords(r, "s3cret", "old-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aFailedBindingOnAnAddedEntryNamesTheAccessSettingsLeftBehind()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.associateFailure = "the association was refused"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertTrue("the added entry was removed again", r.rolledBack); //$NON-NLS-1$
+        assertTrue("the entry is gone from the list", env.infobases.isEmpty()); //$NON-NLS-1$
+        assertEquals("the stored settings stay behind under the removed entry's uuid, the way " //$NON-NLS-1$
+            + "the secure store keeps them", 1, env.accessSettings.size()); //$NON-NLS-1$
+        assertNotNull(r.accessSettings);
+        assertTrue("the answer names where the settings stayed: " + r.accessSettings, //$NON-NLS-1$
+            r.accessSettings.contains("stay behind in EDT's secure storage")); //$NON-NLS-1$
+        assertTrue("the answer names them unreachable from the list", //$NON-NLS-1$
+            r.accessSettings.contains("unreachable from the infobase list")); //$NON-NLS-1$
+        assertFalse("the answer does not claim the stored settings were erased", //$NON-NLS-1$
+            r.accessSettings.contains("removed with the list entry")); //$NON-NLS-1$
+        assertTrue("the error answer carries the same sentence", //$NON-NLS-1$
+            r.error.contains(r.accessSettings));
+        assertTrue("the list-entry rollback is still named", r.error.contains("removed again")); //$NON-NLS-1$
+        assertNull("the new credentials are not reported as stored", r.credentials); //$NON-NLS-1$
+        assertFalse("an added entry is not restored - there was nothing to put back", //$NON-NLS-1$
+            env.accessTrace.contains("update")); //$NON-NLS-1$
+        assertAnswerHidesPasswords(r, "s3cret"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void thePreviousSettingsAreReadOnlyAfterTheSecureStoreIsPrimed()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(r.error, r.ok);
+        assertEquals("the store is primed before the previous settings are read, and the read " //$NON-NLS-1$
+            + "stands before the write", //$NON-NLS-1$
+            List.of("prime", "resolve", "write"), env.accessTrace); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    @Test
+    public void aFailedPrimeSkipsTheReadOfThePreviousSettings()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.primeFailure = "secure storage could not be initialized without a prompt"; //$NON-NLS-1$
+        env.accessWriteFailure = "secure storage is locked"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertFalse("the previous settings are not read while the store is unprimed", //$NON-NLS-1$
+            env.accessTrace.contains("resolve")); //$NON-NLS-1$
+        assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedRestoreOfTheReusedEntryAccessSettingsIsNamed()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.accessSettings.put(existing, new InfobaseAccessSettings(InfobaseAccess.INFOBASE,
+            "keeper", "old-secret", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        env.associateFailure = "the infobase is already associated with another project"; //$NON-NLS-1$
+        env.accessRestoreFailure = "the secure store refused the write"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertFalse(r.rolledBack);
+        assertEquals("the reused entry stays", 1, env.infobases.size()); //$NON-NLS-1$
+        IInfobaseAccessSettings left = env.accessSettings.get(existing);
+        assertEquals("the restore did not put the previous user back", "admin", left.userName()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the restore did not put the previous password back", //$NON-NLS-1$
+            "s3cret", left.password()); //$NON-NLS-1$
+        assertNotNull(r.accessSettings);
+        assertTrue(r.accessSettings, r.accessSettings.contains("could NOT be restored")); //$NON-NLS-1$
+        assertTrue("the answer names why the restore failed", //$NON-NLS-1$
+            r.accessSettings.contains("the secure store refused the write")); //$NON-NLS-1$
+        assertTrue(r.error.contains(r.accessSettings));
+        assertNotNull("the new credentials are still what the entry carries", r.credentials); //$NON-NLS-1$
+        assertEquals("admin", r.credentials.userName); //$NON-NLS-1$
+        assertAnswerHidesPasswords(r, "s3cret", "old-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** The answer text never carries a password this call handled. */
+    private static void assertAnswerHidesPasswords(RegisterResult r, String... passwords)
+    {
+        String answer = (r.error == null ? "" : r.error) //$NON-NLS-1$
+            + (r.accessSettings == null ? "" : r.accessSettings); //$NON-NLS-1$
+        for (String password : passwords)
+        {
+            assertFalse("the password is in the answer: " + answer, answer.contains(password)); //$NON-NLS-1$
+        }
     }
 }

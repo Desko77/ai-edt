@@ -97,10 +97,28 @@ public class TheRoadRecordsTheInternalCallWithItsOriginTest
     @Test
     public void theRoadIsPublishedAsAService()
     {
+        // Publication runs on the whiteboard thread after its tracker opens, so a caller that
+        // arrives as the bundle becomes active may still be a moment early.
+        long deadline = System.currentTimeMillis() + 10_000L;
+        org.osgi.framework.ServiceReference<ru.aiedt.mcp.server.toolkit.IToolRoad> reference = null;
+        while (reference == null && System.currentTimeMillis() < deadline)
+        {
+            reference = context.getServiceReference(ru.aiedt.mcp.server.toolkit.IToolRoad.class);
+            if (reference == null)
+            {
+                try
+                {
+                    Thread.sleep(20L);
+                }
+                catch (InterruptedException interrupted)
+                {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
         ru.aiedt.mcp.server.toolkit.IToolRoad published =
-            context.getServiceReference(ru.aiedt.mcp.server.toolkit.IToolRoad.class) == null ? null
-                : context.getService(
-                    context.getServiceReference(ru.aiedt.mcp.server.toolkit.IToolRoad.class));
+            reference == null ? null : context.getService(reference);
         assertTrue("the road answers as its published service", published != null); //$NON-NLS-1$
         ru.aiedt.mcp.server.toolkit.ToolRoadOutcome refused =
             published.call("no_such_tool_at_all", Map.of(), "service-test"); //$NON-NLS-1$ //$NON-NLS-2$

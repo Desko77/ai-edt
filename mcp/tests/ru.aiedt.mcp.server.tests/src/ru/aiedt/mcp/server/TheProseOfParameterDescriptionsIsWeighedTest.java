@@ -242,8 +242,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
         // infobase is named by the string, and the flag says whether it becomes the default. And
         // for the dump-info work: the syncOperation value rebuild_dump_info, the rebuild's wait
-        // budget, and the update's format override.
-        PROSE.put("infobase_admin", Integer.valueOf(5711));
+        // budget, and the update's format override. And by 60 for naming register_infobase beside
+        // set_infobase_credentials on accessMode, userName and password: the credentials a base
+        // with users needs are passed to the registration itself, so a client that can see one
+        // operation store them can see the other take them.
+        PROSE.put("infobase_admin", Integer.valueOf(5771));
         PROSE.put("config_io", Integer.valueOf(3064));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
@@ -436,6 +439,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * the only place a client learns what the number means. Together with the twenty-third:
      * 91837.
      * </p>
+     * <p>
+     * And a twenty-fifth, by 60, for accessMode, userName and password on infobase_admin now
+     * naming register_infobase beside set_infobase_credentials: a base with users registers
+     * without an interactive login prompt only when the credentials reach the registration
+     * itself, and a client that builds its call from the schema has to see that it can pass
+     * them there. Together with the twenty-fourth: 91897.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91837;
+    private static final int DOCUMENT_PROSE = 91897;
 }

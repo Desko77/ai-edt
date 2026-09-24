@@ -14,8 +14,11 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.debug.core.ILaunchManager;
 
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences;
@@ -60,7 +63,35 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * When the project's configuration defaults to the ordinary application, the infobase's additional
  * launch parameters get {@code /RunModeOrdinaryApplication} for this EDT session (the same
  * in-memory reconciling {@code start_client} does); the answer says whether the flag was set and
- * why not when it was not. Never throws out; all failures land in the returned result.
+ * why not when it was not.
+ * </p>
+ * <p>
+ * When the call carries access arguments ({@code accessMode} / {@code userName} /
+ * {@code password}, the same contract {@code set_infobase_credentials} keeps), they are written
+ * through the same helper after the entry stands in the list and before the binding, so an
+ * infobase with users registers without an interactive login prompt; a failed write refuses the
+ * call before the binding and rolls an added entry back. The settings that stood on the entry
+ * are read ({@code resolveSettings}) before that write, after the secure store has been primed
+ * the same non-interactive way the write helper primes it, so the read cannot post a modal
+ * master-password dialog on this background thread and hang the call. When the binding then
+ * fails, a reused entry is put back to those settings, so the projects already bound to it keep
+ * the access they had; an entry this call added is removed as before, and the answer names the
+ * access settings it wrote as left behind: EDT keys the stored settings by the infobase
+ * reference's uuid in the secure store, and deleting a list entry does not remove that node, so
+ * after a rollback the stored settings stay behind under the removed entry's uuid, unreachable
+ * from the list, exactly as they do for {@code delete_infobase}. A restore that fails is named
+ * with the reason. The password is never part of the answer.
+ * </p>
+ * <p>
+ * The default that stood before the call is read under the write lock, before the association.
+ * EDT makes the first application of a project the default itself during that association, so a
+ * read afterwards would name the new application as the one that stood before.
+ * {@code makeDefault} and {@code previousDefault} follow the earlier read; a failed read leaves
+ * the default alone unless {@code makeDefault} is true, and the answer says so in
+ * {@code defaultWarning}. {@code defaultApplication} is read again after the association and
+ * after any default this call sets, and answers the state after the call. When the project had
+ * no default and the caller passed {@code makeDefault=false}, EDT's choice stands and the answer
+ * names it. Never throws out; all failures land in the returned result.
  * </p>
  */
 public final class BmInfobaseRegistrationHelper
@@ -74,7 +105,9 @@ public final class BmInfobaseRegistrationHelper
     {
         public boolean ok;
         public String error;
-        public String failureKind;   // projectNotFound / managerUnavailable / writeFailed / associateFailed
+        // projectNotFound / managerUnavailable / alreadyExists / writeFailed / associateFailed;
+        // a failed access-settings write carries that write's own kind (storageLocked / ...)
+        public String failureKind;
         /** The list entry's name - the one added, or the reused one's. */
         public String infobaseName;
         public String uuid;
@@ -85,7 +118,10 @@ public final class BmInfobaseRegistrationHelper
         public boolean defaultApplication;
         /** The default application that stood before, or {@code null} when there was none. */
         public String previousDefault;
-        /** Why the default was left alone, could not be set, or the one it replaced is not named. */
+        /**
+         * Why the default was left alone, could not be set, the one it replaced is not named, or
+         * EDT made the application the default while associating it.
+         */
         public String defaultWarning;
         /** Projects a reused entry was already bound to; {@code null} when it was bound nowhere else. */
         public List<String> alsoAssociatedWith;
@@ -98,6 +134,20 @@ public final class BmInfobaseRegistrationHelper
         /** Why the rollback itself failed, or {@code null}. */
         public String rollbackFailure;
         public String launchApplicationIds;
+        /**
+         * The access settings stored for the infobase before the binding, or {@code null} when
+         * the call carried no access arguments. Cleared when a failed binding undid that write.
+         * Never carries the password.
+         */
+        public BmInfobaseCredentialsHelper.CredentialResult credentials;
+        /**
+         * What became of access settings written before a failed binding: restored to what stood
+         * before, left behind in the secure store under the removed entry's uuid when the entry
+         * this call added was rolled back, or why the restore failed. {@code null} when the
+         * call wrote none, or the added entry could not be removed and so the settings were not
+         * undone. Never carries the password.
+         */
+        public String accessSettings;
     }
 
     /**
@@ -150,6 +200,40 @@ public final class BmInfobaseRegistrationHelper
          * @return what happened: {@code added}, {@code present}, or {@code not applied: ...}
          */
         String applyOrdinaryFlag(IApplication application, boolean wanted);
+
+        /**
+         * Stores the infobase access settings the call was asked to write, through the same code
+         * {@code set_infobase_credentials} uses. Called after the list entry was added or found
+         * and before the binding.
+         *
+         * @param infobase the list entry the settings belong to
+         * @param accessMode the effective mode, {@code OS} or {@code INFOBASE}
+         * @param userName the infobase user, or {@code null}
+         * @param password the infobase password, or {@code null}; never logged or returned
+         * @return what the write ended with; {@link BmInfobaseCredentialsHelper.CredentialResult#ok}
+         *         false refuses the registration before the binding
+         */
+        BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(InfobaseReference infobase,
+            String accessMode, String userName, String password);
+
+        /**
+         * Primes EDT's secure storage the same non-interactive way
+         * {@link BmInfobaseCredentialsHelper} primes it before its own reads and writes. The
+         * read of the settings that stood before a credentials write touches the secure store,
+         * and an unopened store would post a modal master-password dialog from this background
+         * thread and hang the call.
+         *
+         * @return {@code null} when the store is primed, or why it cannot be primed without a
+         *         prompt - the read of the previous settings is then skipped
+         */
+        String primeSecureStorage();
+
+        /**
+         * @return EDT's infobase access manager, or <code>null</code> when it is unavailable.
+         *         The registration reads the settings that stood before a credentials write
+         *         through it, and puts them back when a reused entry's binding fails
+         */
+        IInfobaseAccessManager accessManager();
     }
 
     /** What the product resolves; a test passes its own environment to the overload. */
@@ -211,6 +295,27 @@ public final class BmInfobaseRegistrationHelper
         {
             return ClientLaunchMode.reconcileFlag(application, wanted);
         }
+
+        @Override
+        public BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(
+            InfobaseReference infobase, String accessMode, String userName, String password)
+        {
+            return BmInfobaseCredentialsHelper.setCredentialsForInfobase(infobase, accessMode,
+                userName, password);
+        }
+
+        @Override
+        public String primeSecureStorage()
+        {
+            return BmInfobaseCredentialsHelper.primeSecureStorage();
+        }
+
+        @Override
+        public IInfobaseAccessManager accessManager()
+        {
+            Activator activator = Activator.getDefault();
+            return activator == null ? null : activator.getInfobaseAccessManager();
+        }
     };
 
     /**
@@ -225,13 +330,43 @@ public final class BmInfobaseRegistrationHelper
      *        directory name for a file one; {@code null} means "not passed"
      * @param makeDefault whether the application becomes the project's default; {@code null} means
      *        "true when the project has no default application, false otherwise" - and a default
-     *        that could not be read counts as standing, not as absent
+     *        that could not be read counts as standing, not as absent. {@code false} leaves a
+     *        standing default and does not undo one EDT set while associating the project's
+     *        first application
      * @return what was added or reused, bound and set as default; never <code>null</code>
      */
     public static RegisterResult registerInfobase(String projectName, String path,
         String connectionString, String name, Boolean makeDefault)
     {
-        return registerInfobase(projectName, path, connectionString, name, makeDefault, PRODUCT);
+        return registerInfobase(projectName, path, connectionString, name, makeDefault,
+            null, null, null, PRODUCT);
+    }
+
+    /**
+     * Registers an existing infobase to a project against the product's managers, storing the
+     * given access settings for it before the binding.
+     *
+     * @param projectName the project to associate the infobase to; required
+     * @param path absolute path of an existing FILE infobase directory; exactly one of path /
+     *        connectionString
+     * @param connectionString a SERVER infobase address, {@code Srvr=...;Ref=...}, without
+     *        credentials; exactly one of path / connectionString
+     * @param name the name in EDT's list; required for a server infobase, defaults to the
+     *        directory name for a file one; {@code null} means "not passed"
+     * @param makeDefault whether the application becomes the project's default; {@code null} means
+     *        "true when the project has no default application, false otherwise"
+     * @param accessMode the effective access mode, {@code OS} or {@code INFOBASE}; {@code null}
+     *        stores no access settings
+     * @param userName the infobase user, or {@code null}
+     * @param password the infobase password, or {@code null}; never logged or returned
+     * @return what was added or reused, bound and set as default; never <code>null</code>
+     */
+    public static RegisterResult registerInfobase(String projectName, String path,
+        String connectionString, String name, Boolean makeDefault, String accessMode,
+        String userName, String password)
+    {
+        return registerInfobase(projectName, path, connectionString, name, makeDefault,
+            accessMode, userName, password, PRODUCT);
     }
 
     /**
@@ -248,6 +383,31 @@ public final class BmInfobaseRegistrationHelper
      */
     public static RegisterResult registerInfobase(String projectName, String path,
         String connectionString, String name, Boolean makeDefault, RegistrationEnvironment env)
+    {
+        return registerInfobase(projectName, path, connectionString, name, makeDefault,
+            null, null, null, env);
+    }
+
+    /**
+     * Registers an existing infobase to a project, storing the given access settings for it
+     * before the binding; the environment is the seam a test fakes.
+     *
+     * @param projectName the project to associate the infobase to; required
+     * @param path absolute path of an existing FILE infobase directory
+     * @param connectionString a SERVER infobase address, {@code Srvr=...;Ref=...}
+     * @param name the list name, or {@code null} for the file-infobase default
+     * @param makeDefault whether the application becomes the project's default, or {@code null}
+     *        for the "only when the project has none" default
+     * @param accessMode the effective access mode, {@code OS} or {@code INFOBASE}; {@code null}
+     *        stores no access settings
+     * @param userName the infobase user, or {@code null}
+     * @param password the infobase password, or {@code null}; never logged or returned
+     * @param env where the managers and the project are read from
+     * @return what was added or reused, bound and set as default; never <code>null</code>
+     */
+    public static RegisterResult registerInfobase(String projectName, String path,
+        String connectionString, String name, Boolean makeDefault, String accessMode,
+        String userName, String password, RegistrationEnvironment env)
     {
         RegisterResult r = new RegisterResult();
         r.infobaseName = name;
@@ -292,6 +452,9 @@ public final class BmInfobaseRegistrationHelper
         ILaunchManager launchManager = env.launchManager();
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(launchManager);
         InfobaseReference[] target = new InfobaseReference[1];
+        DefaultRead[] previousReadBox = new DefaultRead[1];
+        IInfobaseAccessSettings[] previousAccess = new IInfobaseAccessSettings[1];
+        String[] previousAccessReadFailure = new String[1];
         LaunchApplicationIds.underWriteLock(access, snapshot -> {
             LaunchIds launchIds = new LaunchIds(launchManager, access, snapshot);
             // The duplicate search runs before any write: the same infobase under another
@@ -340,6 +503,36 @@ public final class BmInfobaseRegistrationHelper
                 r.alsoAssociatedWith = others.bound.isEmpty() ? null : others.bound;
                 r.associationCheckFailed = others.checkFailed.isEmpty() ? null : others.checkFailed;
             }
+            if (accessMode != null)
+            {
+                // The access settings are stored after the entry stands in the list (the write
+                // keys on the infobase reference) and before the binding, so a base with users
+                // registers without an interactive login prompt. The settings that stood before
+                // are read first, so a reused entry can be put back when the binding fails. A
+                // failed write refuses the call before the binding, and the entry this call
+                // added goes back out.
+                readAccessSettingsThatStood(env, found, previousAccess, previousAccessReadFailure,
+                    password);
+                BmInfobaseCredentialsHelper.CredentialResult credentials =
+                    env.writeAccessSettings(found, accessMode, userName, password);
+                if (!credentials.ok)
+                {
+                    rollBackAddedEntry(mgr, found, r);
+                    r.launchApplicationIds = restore(launchIds);
+                    r.error = "The infobase stands in EDT's list, but its access settings " //$NON-NLS-1$
+                        + "could not be stored, so it was not bound to the project: " //$NON-NLS-1$
+                        + credentials.error + rollbackNote(r);
+                    r.failureKind = credentials.failureKind != null ? credentials.failureKind
+                        : ErrorTags.WRITE_FAILED.wire();
+                    return r;
+                }
+                r.credentials = credentials;
+            }
+            // The default that stood before the binding. EDT makes the first application of a
+            // project the default during associate, so a read afterwards names the new
+            // application as the one that stood before. A failed read is kept: the omit rule
+            // must not treat it as "there is none".
+            previousReadBox[0] = defaultApplicationOf(appMgr, project);
             try
             {
                 am.associate(project, found,
@@ -347,26 +540,17 @@ public final class BmInfobaseRegistrationHelper
             }
             catch (Throwable e)
             {
-                if (r.added)
-                {
-                    try
-                    {
-                        mgr.delete(found);
-                        r.rolledBack = true;
-                    }
-                    catch (Throwable rollback)
-                    {
-                        r.rollbackFailure = msg(rollback);
-                    }
-                }
+                rollBackAddedEntry(mgr, found, r);
+                // Restoring access settings saves the infobase list, which strips the launch
+                // configurations' application ids; the guard puts them back afterwards.
+                settleAccessSettings(env, found, previousAccess[0], previousAccessReadFailure[0],
+                    password, r);
                 r.launchApplicationIds = restore(launchIds);
-                r.error = "Failed to associate the infobase to the project: " + msg(e) //$NON-NLS-1$
-                    + (r.rolledBack
-                        ? " The list entry added for it was removed again; the infobase itself was not touched." //$NON-NLS-1$
-                        : r.rollbackFailure != null
-                            ? " The list entry added for it could NOT be removed again: " //$NON-NLS-1$
-                                + r.rollbackFailure
-                            : ""); //$NON-NLS-1$
+                r.error = redactPasswords(
+                    "Failed to associate the infobase to the project: " + msg(e) //$NON-NLS-1$
+                        + rollbackNote(r) + accessSettingsSentence(r),
+                    password, previousAccess[0]);
+                r.accessSettings = redactPasswords(r.accessSettings, password, previousAccess[0]);
                 r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
                 return r;
             }
@@ -388,8 +572,13 @@ public final class BmInfobaseRegistrationHelper
             r.applicationId = application.getId();
         }
 
-        DefaultRead defaultRead = defaultApplicationOf(appMgr, project);
-        IApplication previousDefault = defaultRead.application;
+        DefaultRead previousRead = previousReadBox[0];
+        if (previousRead == null)
+        {
+            previousRead = new DefaultRead();
+            previousRead.failure = "the default was not read before the association"; //$NON-NLS-1$
+        }
+        IApplication previousDefault = previousRead.application;
         if (previousDefault != null)
         {
             r.previousDefault = previousDefault.getName();
@@ -397,7 +586,7 @@ public final class BmInfobaseRegistrationHelper
         // An unread default is not "there is none": the omit rule must not replace a default
         // the answer never saw.
         boolean makeItDefault = makeDefault != null ? makeDefault.booleanValue()
-            : previousDefault == null && defaultRead.failure == null;
+            : previousDefault == null && previousRead.failure == null;
         if (makeItDefault)
         {
             if (application != null)
@@ -405,7 +594,6 @@ public final class BmInfobaseRegistrationHelper
                 try
                 {
                     appMgr.setDefaultApplication(project, application);
-                    r.defaultApplication = true;
                 }
                 catch (Throwable e)
                 {
@@ -419,21 +607,32 @@ public final class BmInfobaseRegistrationHelper
                     + "applications, so it could not be made the default"; //$NON-NLS-1$
             }
         }
-        else
+        // The flag answers the state after the association and after any default this call set.
+        DefaultRead afterRead = defaultApplicationOf(appMgr, project);
+        if (afterRead.failure == null)
         {
-            // The flag answers "the application is the project's default after the call": a reused
-            // entry that already held that state keeps it without a write.
-            r.defaultApplication = defaultNamesInfobase(previousDefault, application, bound);
+            r.defaultApplication = defaultNamesInfobase(afterRead.application, application, bound);
         }
-        if (defaultRead.failure != null && r.defaultWarning == null)
+        else if (makeItDefault && r.defaultWarning == null)
+        {
+            // The set went through; the re-read of the result did not.
+            r.defaultApplication = true;
+        }
+        if (Boolean.FALSE.equals(makeDefault) && previousRead.failure == null
+            && previousDefault == null && r.defaultApplication && r.defaultWarning == null)
+        {
+            r.defaultWarning = "EDT made the application the project's default when associating " //$NON-NLS-1$
+                + "it, because the project had none; makeDefault false does not undo that"; //$NON-NLS-1$
+        }
+        if (previousRead.failure != null && r.defaultWarning == null)
         {
             // The text follows the outcome: a set that went through replaced a default the answer
             // never saw, so only the omission of its name is left to say; otherwise the standing
             // default was left alone.
             r.defaultWarning = r.defaultApplication
-                ? "the default that stood before could not be read (" + defaultRead.failure //$NON-NLS-1$
+                ? "the default that stood before could not be read (" + previousRead.failure //$NON-NLS-1$
                     + "), so the answer does not name it" //$NON-NLS-1$
-                : "the project's default application could not be read (" + defaultRead.failure //$NON-NLS-1$
+                : "the project's default application could not be read (" + previousRead.failure //$NON-NLS-1$
                     + "), so the standing default was left alone"; //$NON-NLS-1$
         }
 
@@ -609,6 +808,48 @@ public final class BmInfobaseRegistrationHelper
     }
 
     /**
+     * Removes the list entry this call added after a later step (the access-settings write or the
+     * binding) failed. A reused entry is left standing; the infobase files are never touched.
+     *
+     * @param mgr the infobase manager the entry was added through
+     * @param found the entry this call added
+     * @param r the result the rollback outcome lands in
+     */
+    private static void rollBackAddedEntry(IInfobaseManager mgr, InfobaseReference found,
+        RegisterResult r)
+    {
+        if (!r.added)
+        {
+            return;
+        }
+        try
+        {
+            mgr.delete(found);
+            r.rolledBack = true;
+        }
+        catch (Throwable rollback)
+        {
+            r.rollbackFailure = msg(rollback);
+        }
+    }
+
+    /**
+     * What the answer says about the rollback of the added entry: removed again, could not be
+     * removed, or nothing when the entry was reused.
+     *
+     * @param r the result carrying the rollback outcome
+     * @return the sentence for the answer, empty when there is nothing to say
+     */
+    private static String rollbackNote(RegisterResult r)
+    {
+        return r.rolledBack
+            ? " The list entry added for it was removed again; the infobase itself was not touched." //$NON-NLS-1$
+            : r.rollbackFailure != null
+                ? " The list entry added for it could NOT be removed again: " + r.rollbackFailure //$NON-NLS-1$
+                : ""; //$NON-NLS-1$
+    }
+
+    /**
      * An application of the project that points at the given infobase: how the new binding
      * materializes, and how a reused entry's other homes are found.
      *
@@ -743,11 +984,12 @@ public final class BmInfobaseRegistrationHelper
     }
 
     /**
-     * Whether the default that stood before the call names the infobase this call bound: the
-     * application just found, or - when that lookup found nothing - an infobase application
-     * pointing at the same list entry. A default the answer never read is not a match.
+     * Whether {@code previousDefault} names the infobase this call bound: the application just
+     * found, or - when that lookup found nothing - an infobase application pointing at the same
+     * list entry. A default the answer never read is not a match. Used for the default read
+     * after the call, which is the state {@code defaultApplication} reports.
      *
-     * @param previousDefault the default read before the call, or {@code null}
+     * @param previousDefault the default being compared, or {@code null}
      * @param application the application found after the binding, or {@code null}
      * @param bound the list entry the call bound
      * @return whether the project's default points at the bound infobase
@@ -828,6 +1070,172 @@ public final class BmInfobaseRegistrationHelper
         }
         String leftIdentity = InfobaseIdentity.of(left);
         return leftIdentity != null && leftIdentity.equals(InfobaseIdentity.of(right));
+    }
+
+    /**
+     * The access settings that stood on the entry before this call writes its own. The secure
+     * store is primed first, the way the write helper primes it: the read below touches the
+     * store, and an unopened one would post a modal master-password dialog on this background
+     * thread and hang the call. A failed read is kept: a later restore must not invent settings
+     * it never saw.
+     *
+     * @param env where the access manager is read from
+     * @param infobase the list entry about to be written
+     * @param previous the copy of the settings that stood, or {@code null} when they were not read
+     * @param failure why the read failed, or {@code null} when it succeeded
+     * @param password the password this call is about to write, redacted from a read failure
+     */
+    private static void readAccessSettingsThatStood(RegistrationEnvironment env,
+        InfobaseReference infobase, IInfobaseAccessSettings[] previous, String[] failure,
+        String password)
+    {
+        IInfobaseAccessManager accessMgr = env.accessManager();
+        if (accessMgr == null)
+        {
+            failure[0] = "IInfobaseAccessManager is not available on this EDT runtime."; //$NON-NLS-1$
+            return;
+        }
+        String primeFailure = env.primeSecureStorage();
+        if (primeFailure != null)
+        {
+            // The write below runs its own prime and refuses the call when it fails the same way.
+            failure[0] = redactPassword(primeFailure, password);
+            return;
+        }
+        try
+        {
+            previous[0] = copyAccessSettings(accessMgr.resolveSettings(infobase));
+            if (previous[0] == null)
+            {
+                failure[0] = "the settings that stood before were not read"; //$NON-NLS-1$
+            }
+        }
+        catch (Throwable e)
+        {
+            failure[0] = redactPassword(msg(e), password);
+            Activator.logWarning("register_infobase pre-read resolveSettings failed: " //$NON-NLS-1$
+                + failure[0]);
+        }
+    }
+
+    /**
+     * A copy of the settings, so a later write cannot change what a restore puts back.
+     * {@code null} when there is nothing to copy: a missing access mode cannot be written.
+     *
+     * @param current what {@code resolveSettings} returned
+     * @return the copy, or <code>null</code> when {@code current} carries no access mode
+     */
+    private static IInfobaseAccessSettings copyAccessSettings(IInfobaseAccessSettings current)
+    {
+        if (current == null || current.access() == null)
+        {
+            return null;
+        }
+        return new InfobaseAccessSettings(current.access(), current.userName(), current.password(),
+            current.additionalProperties());
+    }
+
+    /**
+     * Undoes the access settings this call wrote after the binding failed. A reused entry gets
+     * back what stood before; an added entry is already being removed, which leaves the settings
+     * behind in the secure store under its uuid - deleting a list entry does not remove that
+     * node, and EDT's access manager offers no delete - so the answer names them as left behind
+     * instead of claiming they were erased. The password is never written into the note.
+     *
+     * @param env where the access manager is read from
+     * @param infobase the entry the settings were written for
+     * @param previous the settings that stood before the write, or {@code null} when unread
+     * @param readFailure why that read failed, or {@code null} when it succeeded
+     * @param password the password this call wrote, redacted from a restore failure; never logged
+     * @param r the result the note lands in
+     */
+    private static void settleAccessSettings(RegistrationEnvironment env, InfobaseReference infobase,
+        IInfobaseAccessSettings previous, String readFailure, String password, RegisterResult r)
+    {
+        if (r.credentials == null || !r.credentials.ok)
+        {
+            return;
+        }
+        if (r.added)
+        {
+            if (r.rolledBack)
+            {
+                r.accessSettings = "The access settings written for it stay behind in EDT's " //$NON-NLS-1$
+                    + "secure storage under the removed entry's uuid, unreachable from the " //$NON-NLS-1$
+                    + "infobase list; deleting a list entry does not remove them."; //$NON-NLS-1$
+                r.credentials = null;
+            }
+            return;
+        }
+        if (readFailure != null || previous == null)
+        {
+            String why = readFailure != null ? readFailure
+                : "the settings that stood before were not read"; //$NON-NLS-1$
+            r.accessSettings = "The access settings of the reused entry could NOT be restored: " //$NON-NLS-1$
+                + redactPasswords(why, password, previous) + "."; //$NON-NLS-1$
+            return;
+        }
+        IInfobaseAccessManager accessMgr = env.accessManager();
+        if (accessMgr == null)
+        {
+            r.accessSettings = "The access settings of the reused entry could NOT be restored: " //$NON-NLS-1$
+                + "IInfobaseAccessManager is not available on this EDT runtime."; //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            accessMgr.updateSettings(infobase, previous);
+            r.accessSettings = "The access settings of the reused entry were restored to what " //$NON-NLS-1$
+                + "stood before the call."; //$NON-NLS-1$
+            r.credentials = null;
+        }
+        catch (Throwable e)
+        {
+            String why = redactPasswords(msg(e), password, previous);
+            Activator.logWarning("register_infobase restore of access settings failed: " + why); //$NON-NLS-1$
+            r.accessSettings = "The access settings of the reused entry could NOT be restored: " //$NON-NLS-1$
+                + why + "."; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The sentence the answer adds about access settings, or empty when there is nothing to say.
+     *
+     * @param r the result carrying {@link RegisterResult#accessSettings}
+     * @return the sentence, with a leading space, or empty
+     */
+    private static String accessSettingsSentence(RegisterResult r)
+    {
+        return r.accessSettings == null ? "" : " " + r.accessSettings; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The text with every password this call handled replaced, so a failure reason that echoes
+     * one cannot put it in the answer.
+     *
+     * @param text the text about to be answered
+     * @param password the password this call wrote, or {@code null}
+     * @param previous the settings that stood before, whose password is redacted too
+     * @return {@code text} with those passwords replaced by {@code ***}
+     */
+    private static String redactPasswords(String text, String password, IInfobaseAccessSettings previous)
+    {
+        String cleaned = redactPassword(text, password);
+        if (previous != null)
+        {
+            cleaned = redactPassword(cleaned, previous.password());
+        }
+        return cleaned;
+    }
+
+    /** One password replaced by {@code ***} wherever it stands in {@code text}. */
+    private static String redactPassword(String text, String password)
+    {
+        if (text == null || password == null || password.isEmpty() || !text.contains(password))
+        {
+            return text;
+        }
+        return text.replace(password, "***"); //$NON-NLS-1$
     }
 
     /** The message of a failure, or its class name when it carries none. */
