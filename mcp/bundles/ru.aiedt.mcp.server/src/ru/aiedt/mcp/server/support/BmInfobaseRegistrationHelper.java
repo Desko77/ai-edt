@@ -519,9 +519,9 @@ public final class BmInfobaseRegistrationHelper
                 {
                     rollBackAddedEntry(mgr, found, r);
                     r.launchApplicationIds = restore(launchIds);
-                    r.error = "The infobase stands in EDT's list, but its access settings " //$NON-NLS-1$
-                        + "could not be stored, so it was not bound to the project: " //$NON-NLS-1$
-                        + credentials.error + rollbackNote(r);
+                    r.error = redactPasswords("The infobase stands in EDT's list, but its access " //$NON-NLS-1$
+                        + "settings could not be stored, so it was not bound to the project: " //$NON-NLS-1$
+                        + credentials.error + rollbackNote(r), password, previousAccess[0]);
                     r.failureKind = credentials.failureKind != null ? credentials.failureKind
                         : ErrorTags.WRITE_FAILED.wire();
                     return r;
@@ -1211,7 +1211,9 @@ public final class BmInfobaseRegistrationHelper
 
     /**
      * The text with every password this call handled replaced, so a failure reason that echoes
-     * one cannot put it in the answer.
+     * one cannot put it in the answer. The longer secret goes first: masking the shorter one
+     * first would cut the longer one into a masked head and a bare tail ("s3cret" before
+     * "s3cret-old" leaves "***-old").
      *
      * @param text the text about to be answered
      * @param password the password this call wrote, or {@code null}
@@ -1220,12 +1222,13 @@ public final class BmInfobaseRegistrationHelper
      */
     private static String redactPasswords(String text, String password, IInfobaseAccessSettings previous)
     {
-        String cleaned = redactPassword(text, password);
-        if (previous != null)
+        String previousPassword = previous == null ? null : previous.password();
+        if (previousPassword != null && !previousPassword.isEmpty()
+            && (password == null || previousPassword.length() > password.length()))
         {
-            cleaned = redactPassword(cleaned, previous.password());
+            return redactPassword(redactPassword(text, previousPassword), password);
         }
-        return cleaned;
+        return redactPassword(redactPassword(text, password), previousPassword);
     }
 
     /** One password replaced by {@code ***} wherever it stands in {@code text}. */
