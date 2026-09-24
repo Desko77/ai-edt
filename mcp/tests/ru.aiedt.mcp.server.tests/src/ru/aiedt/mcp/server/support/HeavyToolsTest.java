@@ -35,6 +35,28 @@ public class HeavyToolsTest
             HeavyTools.isHeavy("import_configuration_from_binary")); //$NON-NLS-1$
     }
 
+    /**
+     * The tools and operations that start a Configuration process. Each name here is one a call
+     * reaches either as its own wire tool or as the answer of a facade's route; naming only one of
+     * the two leaves parallel calls starting a client each past the limiter.
+     */
+    @Test
+    public void thickClientSpawnsAreHeavy()
+    {
+        assertTrue("config_io dumps the whole configuration through a Designer", //$NON-NLS-1$
+            HeavyTools.isHeavy("export_configuration_to_cf")); //$NON-NLS-1$
+        assertTrue("the .epf/.erf conversion runs the Designer against the infobase", //$NON-NLS-1$
+            HeavyTools.isHeavy("unpack_external_binary")); //$NON-NLS-1$
+        assertTrue("the workshop reaches the same conversion", //$NON-NLS-1$
+            HeavyTools.isHeavy("import_external_object")); //$NON-NLS-1$
+        assertTrue("the physical creation is a CREATEINFOBASE child process", //$NON-NLS-1$
+            HeavyTools.isHeavy("create_infobase")); //$NON-NLS-1$
+        assertTrue("rebuild_dump_info releases the infobase to a Designer", //$NON-NLS-1$
+            HeavyTools.isHeavy("rebuild_dump_info")); //$NON-NLS-1$
+        assertTrue("the platform verdict loads a staging infobase through a Designer", //$NON-NLS-1$
+            HeavyTools.isHeavy("check_platform_verdict")); //$NON-NLS-1$
+    }
+
     @Test
     public void commonFastReadsAreNotHeavy()
     {

@@ -177,6 +177,36 @@ public class LaunchDebuggerTool implements IMcpTool
             .build();
     }
 
+    /**
+     * Names the database update a launch action runs before the client starts, so the road weighs
+     * the call by it.
+     * <p>
+     * The action is normalized exactly as {@link #execute} normalizes it. {@code launch} and
+     * {@code debug_launch} hand the call to {@link DebugSessionStarter}, which updates the infobase
+     * first unless {@code updateBeforeLaunch} opts out (default true, read the same way that tool
+     * reads it), and that update is the work {@code update_database} is weighed for; every other
+     * action starts no update and is answered with <code>null</code>, as before. The route cannot
+     * tell an Attach configuration from a runtime client, so a launch that names an Attach
+     * configuration is weighed although the update is skipped there.
+     * </p>
+     *
+     * @param arguments the call arguments, as the client sent them; may be <code>null</code>
+     * @return {@code update_database} when the call updates the infobase before launching,
+     *         <code>null</code> otherwise
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String action = JsonUtils.normalizeOperationToken(
+            JsonUtils.extractStringArgument(arguments, "action")); //$NON-NLS-1$
+        if (!"launch".equals(action) && !"debug_launch".equals(action)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return null;
+        }
+        return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", true) //$NON-NLS-1$
+            ? "update_database" : null; //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

@@ -93,13 +93,14 @@ public class ConfigIoFacadeTool implements IMcpTool
             return null;
         }
         String normalized = JsonUtils.normalizeOperationToken(operation);
-        if ("export_infobase_objects".equals(normalized)) //$NON-NLS-1$
+        if ("export_infobase_objects".equals(normalized) //$NON-NLS-1$
+            || "export_configuration_to_cf".equals(normalized)) //$NON-NLS-1$
         {
-            // The operation has no delegate to name: the facade runs it itself, through a
-            // Designer against the infobase. Its own name is the answer, so the road weighs the
-            // call by it (HeavyTools names it). DESCRIBED cannot hold it - that map is the
-            // delegate catalog the parameter help reads, and this case dispatches to none.
-            return "export_infobase_objects"; //$NON-NLS-1$
+            // Neither operation has a delegate to name: the facade runs both itself, through a
+            // Designer spawned against the infobase. Its own name is the answer, so the road weighs
+            // the call by it (HeavyTools names both). DESCRIBED cannot hold them - that map is the
+            // delegate catalog the parameter help reads, and these cases dispatch to none.
+            return normalized;
         }
         Supplier<IMcpTool> delegate = DESCRIBED.get(normalized);
         return delegate == null ? null : delegate.get().getName();
