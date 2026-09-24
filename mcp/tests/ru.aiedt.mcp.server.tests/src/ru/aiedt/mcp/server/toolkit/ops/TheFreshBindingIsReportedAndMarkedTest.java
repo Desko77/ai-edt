@@ -139,7 +139,13 @@ public class TheFreshBindingIsReportedAndMarkedTest
         assertTrue(status.toString(), status.get("success").getAsBoolean()); //$NON-NLS-1$
         assertEquals(status.toString(), "FULL", status.get("prediction").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(status.toString(), status.get("willTriggerFullReload").getAsBoolean()); //$NON-NLS-1$
-        assertEquals(WITH_BASELINE, status.getAsJsonObject("matchedBaseline").get("infobaseUuid").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        // Which of the matching baselines the scan reports is the first one it reads, and this
+        // suite writes more than one: the answer owes a baseline that matches the project, not a
+        // named one. That our own baseline is among them is asserted on the list below.
+        assertEquals(status.toString(), CONFIGURATION, //$NON-NLS-1$
+            status.getAsJsonObject("matchedBaseline").get("configurationUuid").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(status.toString(), baselineOf(status.getAsJsonArray("baselines"), WITH_BASELINE) //$NON-NLS-1$ //$NON-NLS-2$
+            .get("matchesProject").getAsBoolean()); //$NON-NLS-1$
 
         JsonObject bound = bindingOf(status.getAsJsonArray("bindings"), WITH_BASELINE); //$NON-NLS-1$
         assertTrue(bound.toString(), bound.get("hasBaseline").getAsBoolean()); //$NON-NLS-1$
@@ -235,8 +241,8 @@ public class TheFreshBindingIsReportedAndMarkedTest
         assertTrue(status.toString(), status.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(status.toString(), status.has("bindingsUnavailable")); //$NON-NLS-1$
         assertFalse(status.toString(), status.has("bindings")); //$NON-NLS-1$
-        assertEquals(status.toString(), WITH_BASELINE, //$NON-NLS-1$
-            status.getAsJsonObject("matchedBaseline").get("infobaseUuid").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(status.toString(), CONFIGURATION, //$NON-NLS-1$
+            status.getAsJsonObject("matchedBaseline").get("configurationUuid").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(status.toString(), "UNKNOWN", status.get("prediction").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(status.toString(), status.get("willTriggerFullReload").getAsBoolean()); //$NON-NLS-1$
         String summary = status.get("summary").getAsString(); //$NON-NLS-1$
@@ -274,6 +280,19 @@ public class TheFreshBindingIsReportedAndMarkedTest
             }
         }
         throw new AssertionError("the binding is not listed: " + bindings); //$NON-NLS-1$
+    }
+
+    private static JsonObject baselineOf(JsonArray baselines, String infobaseUuid)
+    {
+        for (int i = 0; i < baselines.size(); i++)
+        {
+            JsonObject entry = baselines.get(i).getAsJsonObject();
+            if (infobaseUuid.equals(entry.get("infobaseUuid").getAsString())) //$NON-NLS-1$
+            {
+                return entry;
+            }
+        }
+        throw new AssertionError("the baseline is not listed: " + baselines); //$NON-NLS-1$
     }
 
     /**
