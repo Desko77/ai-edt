@@ -1521,6 +1521,13 @@ public final class BmObjectHelper
     private static final List<String> CANONICAL_CHILD_KINDS = new ArrayList<>();
 
     /**
+     * The Russian spelling of each canonical kind, filled by the same {@link #put} that fills the
+     * getter map - a reverse view of the one table, not a second one. Declared before the getter
+     * map's initializer so {@code put} finds it built.
+     */
+    private static final Map<String, String> RUSSIAN_KIND_BY_CANONICAL = new HashMap<>();
+
+    /**
      * Every child kind an address or a borrow may name, in either language, and the getter that
      * returns that collection.
      * <p>
@@ -1587,7 +1594,28 @@ public final class BmObjectHelper
         for (String spelling : spellings)
         {
             kinds.put(spelling, getter);
+            // The one non-ASCII spelling is the Russian name the platform itself writes in full
+            // names; recorded here so the reverse view needs no table of its own.
+            if (!spelling.isEmpty() && spelling.codePointAt(0) > 0x7F)
+            {
+                RUSSIAN_KIND_BY_CANONICAL.putIfAbsent(canonical,
+                    Character.toUpperCase(spelling.charAt(0)) + spelling.substring(1));
+            }
         }
+    }
+
+    /**
+     * The Russian name of a child kind as the platform writes it in a full name, capitalized the
+     * way 1C capitalizes kind names ({@code Форма} for {@code Form}).
+     *
+     * @param canonicalKind the canonical English kind (e.g. {@code Form})
+     * @return the capitalized Russian name, or the canonical kind itself when the table records no
+     *         Russian spelling for it
+     */
+    public static String russianChildKindName(String canonicalKind)
+    {
+        String russian = canonicalKind == null ? null : RUSSIAN_KIND_BY_CANONICAL.get(canonicalKind);
+        return russian != null ? russian : canonicalKind;
     }
 
     /**

@@ -244,7 +244,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // for the dump-info work: the syncOperation value rebuild_dump_info, the rebuild's wait
         // budget, and the update's format override.
         PROSE.put("infobase_admin", Integer.valueOf(5711));
-        PROSE.put("config_io", Integer.valueOf(3064));
+        // Raised from 3064 for the objects argument of export_infobase_objects - the three
+        // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
+        // runKey gained naming that operation (measured 24.09: 3810).
+        PROSE.put("config_io", Integer.valueOf(3810));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
