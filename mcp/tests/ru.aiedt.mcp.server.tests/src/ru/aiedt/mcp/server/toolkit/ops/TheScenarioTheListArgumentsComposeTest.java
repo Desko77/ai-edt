@@ -439,6 +439,59 @@ public class TheScenarioTheListArgumentsComposeTest
     }
 
     /**
+     * A list action and formToOpen open a form. Left out, both client arguments are on; an
+     * explicit false of either is refused before the run starts. A call that does not drive a
+     * form keeps them off unless asked.
+     */
+    @Test
+    public void aFormDrivingRunTurnsTheClientOnAndRefusesFalse()
+    {
+        assertNull(VanessaTool.whyAFormDrivingRunRefusesTheClient(null, null));
+        assertNull(VanessaTool.whyAFormDrivingRunRefusesTheClient(Boolean.TRUE, Boolean.TRUE));
+        assertNull(VanessaTool.whyAFormDrivingRunRefusesTheClient(Boolean.TRUE, null));
+        String managerOff = VanessaTool.whyAFormDrivingRunRefusesTheClient(Boolean.FALSE, null);
+        assertNotNull(managerOff);
+        assertTrue(managerOff, managerOff.contains("testManager")); //$NON-NLS-1$
+        String clientOff = VanessaTool.whyAFormDrivingRunRefusesTheClient(null, Boolean.FALSE);
+        assertNotNull(clientOff);
+        assertTrue(clientOff, clientOff.contains("testClient")); //$NON-NLS-1$
+        String bothOff = VanessaTool.whyAFormDrivingRunRefusesTheClient(Boolean.FALSE, Boolean.FALSE);
+        assertTrue(bothOff, bothOff.contains("testManager")); //$NON-NLS-1$
+        assertTrue(bothOff, bothOff.contains("testClient")); //$NON-NLS-1$
+
+        assertTrue(VanessaTool.drivesAForm(true, false));
+        assertTrue(VanessaTool.drivesAForm(false, true));
+        assertFalse(VanessaTool.drivesAForm(false, false));
+        assertTrue(VanessaTool.wantsTheClientTheFormNeeds(true, null));
+        assertFalse(VanessaTool.wantsTheClientTheFormNeeds(false, null));
+        assertTrue(VanessaTool.wantsTheClientTheFormNeeds(false, Boolean.TRUE));
+        assertFalse(VanessaTool.wantsTheClientTheFormNeeds(true, Boolean.FALSE));
+    }
+
+    /**
+     * The refusal is the answer {@code execute} gives, before a client is started. A list action
+     * that turns the manager off, and a form that turns the client off, both stop there.
+     *
+     * @throws IOException when the stand-in files cannot be created
+     */
+    @Test
+    public void theRefusalIsTheAnswerBeforeAnythingIsLaunched() throws IOException
+    {
+        Map<String, String> list = given();
+        list.put("connectionString", "File=\"C:/bases/demo\";"); //$NON-NLS-1$ //$NON-NLS-2$
+        list.put("testManager", "false"); //$NON-NLS-1$ //$NON-NLS-2$
+        String listAnswer = answered(list);
+        assertTrue(listAnswer, listAnswer.contains("testManager")); //$NON-NLS-1$
+
+        Map<String, String> form = new HashMap<>();
+        form.put("connectionString", "File=\"C:/bases/demo\";"); //$NON-NLS-1$ //$NON-NLS-2$
+        form.put("formToOpen", "Справочник.Товары"); //$NON-NLS-1$ //$NON-NLS-2$
+        form.put("testClient", "false"); //$NON-NLS-1$ //$NON-NLS-2$
+        String formAnswer = answered(form);
+        assertTrue(formAnswer, formAnswer.contains("testClient")); //$NON-NLS-1$
+    }
+
+    /**
      * The keys this branch sets are barred from the passthrough, under the Russian names the
      * document carries and under the English names Vanessa's name table gives the same three: a
      * caller raising the asynchronous-step ceiling above the seconds they named, or turning the
