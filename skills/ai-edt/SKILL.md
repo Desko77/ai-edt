@@ -98,6 +98,7 @@ Reading and analysis without the server are fine. Writing into an EDT project wi
 A facade replaces a family of related tools: one name, with the action chosen by an `operation`
 parameter (`action` for the debugger). Most facades carry their own catalogue - call
 `operation=help`, and `operation=help topic=<operation>` for one operation's contract.
+`operation=help find=<words>` searches that help and names the topic to open for the whole section.
 
 | Facade | Use it for |
 |---|---|
