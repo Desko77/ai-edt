@@ -430,6 +430,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * schema is where a client learns that the documented default does not hold on those calls.
      * Together with the twenty-second: 91668.
      * </p>
+     * <p>
+     * And a twenty-fourth, by 169, for {@code smallScalePercent} on mxl_workshop: the argument
+     * itself (149 bytes) and the name appended to that facade's operation list. The argument is
+     * the only place a client learns what the number means. Together with the twenty-third:
+     * 91837.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91668;
+    private static final int DOCUMENT_PROSE = 91837;
 }

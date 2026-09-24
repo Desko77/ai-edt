@@ -29,6 +29,7 @@ import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.BmTemplateHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.TemplatePrintWidth;
 
 /**
  * MXL spreadsheet template constructor.
@@ -56,16 +57,19 @@ public class MxlWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "MXL spreadsheet template constructor. 10 operations: create_template, " //$NON-NLS-1$
+        return "MXL spreadsheet template constructor. 12 operations: create_template, " //$NON-NLS-1$
             + "set_cell, format_cells, merge_cells, draw, add_drawing, remove_drawing, " //$NON-NLS-1$
-            + "read_template, add_named_area, list_named_areas, remove_named_area. " //$NON-NLS-1$
+            + "read_template, add_named_area, list_named_areas, remove_named_area, " //$NON-NLS-1$
+            + "check_print_width. " //$NON-NLS-1$
             + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
             + "SpreadsheetDocument model directly. read_template returns dimensions, " //$NON-NLS-1$
             + "the populated cell map, merged ranges and drawing ids. " //$NON-NLS-1$
             + "Coordinates are 1-based. set_cell takes row/col/text; " //$NON-NLS-1$
             + "merge_cells takes fromRow/fromCol/toRow/toCol; draw takes a " //$NON-NLS-1$
             + "JSON layout with cells/merges arrays; add_drawing places a " //$NON-NLS-1$
-            + "Line/Rectangle/Ellipse/Text graphic anchored to begin/end cells."; //$NON-NLS-1$
+            + "Line/Rectangle/Ellipse/Text graphic anchored to begin/end cells. " //$NON-NLS-1$
+            + "check_print_width reads the model alone: whether the print area fits the sheet " //$NON-NLS-1$
+            + "by width, and which page defaults the answer took. It changes nothing."; //$NON-NLS-1$
     }
 
     @Override
@@ -73,7 +77,7 @@ public class MxlWorkshopTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / help", //$NON-NLS-1$
+                "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / check_print_width / help", //$NON-NLS-1$
                 true)
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("ownerFqn", //$NON-NLS-1$
@@ -130,6 +134,9 @@ public class MxlWorkshopTool implements IMcpTool
             .integerProperty("columnWidth", "format_cells: explicit column width.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("columnWidthWeight", //$NON-NLS-1$
                 "format_cells: this column's share when the available width is distributed.") //$NON-NLS-1$
+            .integerProperty("smallScalePercent", //$NON-NLS-1$
+                "check_print_width: print scale below which the answer warns of unreadable type " //$NON-NLS-1$
+                    + "(10..100, default 75). help topic=printWidth says where 75 comes from.") //$NON-NLS-1$
             .booleanProperty("dryRun", "Preview without applying (default false)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
@@ -184,6 +191,8 @@ public class MxlWorkshopTool implements IMcpTool
                 return opRemoveNamedArea(params);
             case "read_template": //$NON-NLS-1$
                 return opReadTemplate(params);
+            case "check_print_width": //$NON-NLS-1$
+                return opCheckPrintWidth(params);
             default:
                 return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
         }
@@ -1042,6 +1051,84 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     /**
+     * Whether the template's print area fits the sheet by width, from the model alone.
+     * <p>
+     * Read-only, and deliberately so: the width depends on a paper the model often does not name,
+     * so this is an operation a caller runs on demand rather than a check the platform runs on
+     * every save. Nothing is written back, not even by a get-or-create touch.
+     * </p>
+     *
+     * @param params the call parameters: projectName, ownerFqn, templateName and the optional
+     *            smallScalePercent.
+     * @return the answer as JSON, or a failure when the project or the template cannot be reached.
+     */
+    private String opCheckPrintWidth(Map<String, String> params)
+    {
+        boolean smallScaleSupplied = params != null && params.containsKey("smallScalePercent"); //$NON-NLS-1$
+        Integer smallScalePercent = JsonUtils.extractIntegerArgument(params, "smallScalePercent"); //$NON-NLS-1$
+        // Not a number, not a whole number, or outside 10..100: the same refusal for each. Taking
+        // the default silently instead would turn a caller's typo into a warning threshold nobody
+        // picked.
+        boolean refused = smallScalePercent == null ? smallScaleSupplied
+            : smallScalePercent.intValue() < 10 || smallScalePercent.intValue() > 100;
+        if (refused)
+        {
+            return ToolResult.error("smallScalePercent must be between 10 and 100") //$NON-NLS-1$
+                .toJson();
+        }
+        int threshold = smallScalePercent == null ? TemplatePrintWidth.DEFAULT_SMALL_SCALE_PERCENT
+            : smallScalePercent.intValue();
+
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("check_print_width"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        // The font measurement starts AWT, which has no business running inside a model
+        // transaction: it is taken here, before the task, and handed in.
+        final TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
+        @SuppressWarnings("unchecked")
+        final Map<String, Object>[] widthRef = new Map[] { null };
+        // Read-only: dryRun=true runs the reader lambda and rolls the get-or-create model touch back.
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                widthRef[0] = TemplatePrintWidth.check(doc, threshold, metrics);
+                return templateName;
+            });
+        if (!r.ok)
+        {
+            return formatResult(r, "check_print_width"); //$NON-NLS-1$
+        }
+        ToolResult ok = ToolResult.success()
+            .put("operation", "check_print_width") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("ownerFqn", ownerFqn) //$NON-NLS-1$
+            .put("templateName", templateName); //$NON-NLS-1$
+        Map<String, Object> width = widthRef[0];
+        if (width != null)
+        {
+            for (Map.Entry<String, Object> e : width.entrySet())
+            {
+                ok.put(e.getKey(), e.getValue());
+            }
+        }
+        return ok.toJson();
+    }
+
+    /**
      * Turns a write that never reached the file into a failure.
      * <p>
      * The mutation lands in the in-memory moxel model first and is then written to
@@ -1188,7 +1275,9 @@ public class MxlWorkshopTool implements IMcpTool
         if (topic == null || topic.isEmpty())
         {
             StringBuilder sb = new StringBuilder("# mxl_workshop\n\n"); //$NON-NLS-1$
-            sb.append("MXL spreadsheet template constructor. 7 native operations.\n\n"); //$NON-NLS-1$
+            // No count here: the list below is the operations worth naming at a glance, and a
+            // number beside it counts something else.
+            sb.append("MXL spreadsheet template constructor.\n\n"); //$NON-NLS-1$
             sb.append("**Operations:**\n"); //$NON-NLS-1$
             sb.append("- create_template - creates the Template MdObject (templateType=SpreadsheetDocument by default)\n"); //$NON-NLS-1$
             sb.append("- set_cell - sets a cell's text. Args: row, col, text, language (default 'ru')\n"); //$NON-NLS-1$
@@ -1201,6 +1290,11 @@ public class MxlWorkshopTool implements IMcpTool
                 + "drawings[{id}]. Indices are 1-based (row 1 = top, col 1 = left), the inverse of " //$NON-NLS-1$
                 + "set_cell/merge_cells - safe to round-trip a read result back into a write. " //$NON-NLS-1$
                 + "Args: ownerFqn, templateName, [language default 'ru']\n\n"); //$NON-NLS-1$
+            sb.append("- check_print_width - reads the model alone (read-only): whether the print area " //$NON-NLS-1$
+                + "fits the sheet by width. Args: ownerFqn, templateName, " //$NON-NLS-1$
+                + "[smallScalePercent 10..100 default 75]. Answers verdict fits / borderline / " //$NON-NLS-1$
+                + "overflows / smallPrint / empty, the widths in millimetres, and `assumed` - the " //$NON-NLS-1$
+                + "page defaults the answer took. Rule: help topic=printWidth\n\n"); //$NON-NLS-1$
             sb.append("**Coordinates are 1-based.** Row 1 = top row, Col 1 = leftmost column.\n\n"); //$NON-NLS-1$
             sb.append("**API discovery:**\n"); //$NON-NLS-1$
             sb.append("- SpreadsheetDocument: ").append(BmTemplateHelper.resolvedSpreadsheetClass()) //$NON-NLS-1$
@@ -1209,7 +1303,7 @@ public class MxlWorkshopTool implements IMcpTool
             sb.append("- Cell ops: ").append(BmTemplateHelper.cellOpsAvailable() //$NON-NLS-1$
                 ? "available (moxel)" : "unavailable - mxlApiNotFound tag will be returned") //$NON-NLS-1$ //$NON-NLS-2$
                 .append("\n\n"); //$NON-NLS-1$
-            sb.append("Topics: workflow, errorTags\n"); //$NON-NLS-1$
+            sb.append("Topics: workflow, errorTags, printWidth\n"); //$NON-NLS-1$
             return ToolResult.success().put("help", sb.toString()).toJson(); //$NON-NLS-1$
         }
         switch (topic.toLowerCase())
@@ -1228,6 +1322,52 @@ public class MxlWorkshopTool implements IMcpTool
                         + "toCol=1 - a template the load-data-from-a-file mechanism reads is read " //$NON-NLS-1$
                         + "by these: the area name becomes the loaded column name\n" //$NON-NLS-1$
                         + "6. list_named_areas reads them back; read_template reports them too\n") //$NON-NLS-1$
+                    .toJson();
+            case "printwidth": //$NON-NLS-1$
+                return ToolResult.success().put("topic", topic) //$NON-NLS-1$
+                    .put("text", "check_print_width - does the print area fit the sheet by width?\n" //$NON-NLS-1$
+                        + "Read from the moxel model alone; the platform is not run and nothing is " //$NON-NLS-1$
+                        + "written.\n\n" //$NON-NLS-1$
+                        + "Widths. Content width is the width of the column set the platform's " //$NON-NLS-1$
+                        + "paginator prints: the document's columns and every set a row carries " //$NON-NLS-1$
+                        + "are each measured over their first `size` columns - a set whose " //$NON-NLS-1$
+                        + "declared size runs past the last cell counts to the size - and the " //$NON-NLS-1$
+                        + "widest set wins. A columns print area is measured over begin..end " //$NON-NLS-1$
+                        + "with the columns of row 0, the row the paginator reads, not the set " //$NON-NLS-1$
+                        + "stored on the area. A rectangular print area is measured over " //$NON-NLS-1$
+                        + "x..x+width-1, the span the fit-to-width scale uses; when the platform " //$NON-NLS-1$
+                        + "paginates that rectangle it takes one column more. A column's width " //$NON-NLS-1$
+                        + "comes from its own format, then the " //$NON-NLS-1$
+                        + "format of its set of columns, then the document default, then 72 (the " //$NON-NLS-1$
+                        + "platform's default column, 9 characters). Format.width is held in " //$NON-NLS-1$
+                        + "eighths of a character; one character is measured as the advance of " //$NON-NLS-1$
+                        + "Arial 8 'X'. EDT measures that through SWT and gets the font the " //$NON-NLS-1$
+                        + "machine has; this measures the same character through the JDK - once " //$NON-NLS-1$
+                        + "per process, off any model transaction - and `charWidthSource` says " //$NON-NLS-1$
+                        + "which way it went (charWidthMm carries the number).\n\n" //$NON-NLS-1$
+                        + "Page. Printable width = the sheet (A4: 210 mm portrait, 297 landscape) " //$NON-NLS-1$
+                        + "minus the left and right margins. Every parameter the model leaves unset " //$NON-NLS-1$
+                        + "is taken the way EDT's fillMissingPrintSettings takes it - A4, portrait, " //$NON-NLS-1$
+                        + "10 mm margins, 100% scale - and each one taken is named in `assumed`. " //$NON-NLS-1$
+                        + "A paper declared as its own dimensions (code -1 with pageWidth and " //$NON-NLS-1$
+                        + "pageHeight, millimetres) is measured by those, orientation picking the " //$NON-NLS-1$
+                        + "side; another paper code is measured as A4 and `assumed` says so.\n\n" //$NON-NLS-1$
+                        + "Verdicts. Content within the printable width - fits. Wider by up to 5% - " //$NON-NLS-1$
+                        + "borderline: it prints, but a layout that close to the edge flips " //$NON-NLS-1$
+                        + "between fits and borderline with the font the machine has, so read " //$NON-NLS-1$
+                        + "marginMm rather than the single word. Wider still - " //$NON-NLS-1$
+                        + "overflows. No cells - empty. With fitToPage=true there is no overflow " //$NON-NLS-1$
+                        + "verdict: `requiredScalePercent` is min(100, printable/content*100) and " //$NON-NLS-1$
+                        + "`fontSizeAfterScale` is 8 points shrunk by it, and a scale below " //$NON-NLS-1$
+                        + "smallScalePercent reads as smallPrint. 75 is where that warning starts, " //$NON-NLS-1$
+                        + "not a platform norm - the platform publishes no minimum, so treat it as a " //$NON-NLS-1$
+                        + "judgement call and move it with the argument.\n\n" //$NON-NLS-1$
+                        + "What it does not do. A scale the template declares (printScalePercent) is " //$NON-NLS-1$
+                        + "reported but not applied to the width: the platform compares content " //$NON-NLS-1$
+                        + "against the printable width as it stands and scales later, at print " //$NON-NLS-1$
+                        + "time. Auto column width is read as the width stored in the file, not " //$NON-NLS-1$
+                        + "recomputed from the text. This is a warning at any verdict - the call " //$NON-NLS-1$
+                        + "succeeds whatever it answers.\n") //$NON-NLS-1$
                     .toJson();
             case "errortags": //$NON-NLS-1$
                 return ToolResult.success().put("topic", topic) //$NON-NLS-1$
@@ -1249,7 +1389,8 @@ public class MxlWorkshopTool implements IMcpTool
         for (String op : Arrays.asList("create_template", "set_cell", "format_cells", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "merge_cells", "draw", //$NON-NLS-1$ //$NON-NLS-2$
             "add_drawing", "remove_drawing", "read_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "add_named_area", "list_named_areas", "remove_named_area")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "add_named_area", "list_named_areas", "remove_named_area", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "check_print_width")) //$NON-NLS-1$
         {
             m.put(op, op);
         }
