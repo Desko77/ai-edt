@@ -634,7 +634,8 @@ final class FormItemsOps
         String result = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) ->
             helper.addFormAttributeColumn(form, parentAttributeName, name, title, dataPath,
                 type, project, colConfig, colQualifiers));
-        return EditMetadataTool.formatFormResultWithApiTag(result, "add_form_attribute_column", formFqn); //$NON-NLS-1$
+        return EditMetadataTool.formatFormResultWithApiTag(result, "add_form_attribute_column", //$NON-NLS-1$
+            formFqn, helper.getAdoptedFormAttributes(), helper.getNotAskedDataPathChecks());
     }
 
     /**
@@ -734,6 +735,13 @@ final class FormItemsOps
                 }
             }
         }
+        if (!helper.getNotAskedDataPathChecks().isEmpty())
+        {
+            // The table's data path was written without every check of the guard
+            // being asked: the answer says which one, so an unverified write is
+            // not read as a verified one.
+            tr.put("dataPathChecksNotPerformed", helper.getNotAskedDataPathChecks()); //$NON-NLS-1$
+        }
         return tr.toJson();
     }
 
@@ -802,6 +810,13 @@ final class FormItemsOps
                 .put("composerName", composerName != null ? composerName : "Composer") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("bslSnippetRu", scr.bslSnippetRu) //$NON-NLS-1$
                 .put("bslSnippetEn", scr.bslSnippetEn); //$NON-NLS-1$
+        }
+        if (!helper.getNotAskedDataPathChecks().isEmpty())
+        {
+            // Same as the dynamic-list table: the composer tables' data paths were
+            // written, and a check that could not be asked is named rather than
+            // passed over.
+            tr.put("dataPathChecksNotPerformed", helper.getNotAskedDataPathChecks()); //$NON-NLS-1$
         }
         return tr.toJson();
     }
@@ -1191,6 +1206,19 @@ final class FormItemsOps
         {
             tr.put("warning", warningTags.get(0)); //$NON-NLS-1$
         }
+        if (!helperFinal.getAdoptedFormAttributes().isEmpty())
+        {
+            // The write borrowed a base-form attribute into the extension so the
+            // path survives export. Reported, because it is a change to the form
+            // the caller did not ask for by name.
+            tr.put("adoptedFormAttributes", helperFinal.getAdoptedFormAttributes()); //$NON-NLS-1$
+        }
+        if (!helperFinal.getNotAskedDataPathChecks().isEmpty())
+        {
+            // Only some of the guard's checks were answered: the path is written,
+            // and the answer names what was not verified about it.
+            tr.put("dataPathChecksNotPerformed", helperFinal.getNotAskedDataPathChecks()); //$NON-NLS-1$
+        }
         return tr.toJson();
     }
 
@@ -1326,13 +1354,18 @@ final class FormItemsOps
      * error text. When the YamlFrontMatter cannot be parsed, the raw string is
      * wrapped as a success message (or error when it looks like one) so the
      * caller always receives valid JSON.
+     * <p>
+     * A successful answer also carries the {@code adoptedFormAttributes} line when
+     * {@link ru.aiedt.mcp.server.support.BmFormHelper#annotateAdopted(String)} wrote one,
+     * as a JSON array under the same key: a write that borrowed base-form attributes
+     * names them to the caller.
      *
      * @param markdown the raw EditFormTool response (YamlFrontMatter + body)
      * @param op the unified (snake_case) operation name for the response
      * @param formFqn the form FQN forwarded to EditFormTool (may be null)
      * @return a JSON string in EditMetadataTool's response shape
      */
-    private static String convertEditFormMarkdownToJson(String markdown, String op, String formFqn)
+    static String convertEditFormMarkdownToJson(String markdown, String op, String formFqn)
     {
         if (markdown == null)
         {
@@ -1341,6 +1374,8 @@ final class FormItemsOps
                 .toJson();
         }
         String status = null;
+        List<String> adopted = null;
+        List<String> notPerformed = null;
         String body = markdown;
         // Parse a leading YamlFrontMatter block: "---\n" <lines> "---\n" <body>.
         // Strip a leading UTF-8 BOM defensively (YamlFrontMatter.build() never emits
@@ -1364,13 +1399,23 @@ final class FormItemsOps
                     String key = line.substring(0, colon).trim();
                     if ("status".equals(key)) //$NON-NLS-1$
                     {
-                        // Strip optional surrounding quotes from the YAML scalar.
-                        String val = line.substring(colon + 1).trim();
-                        if (val.length() >= 2 && val.startsWith("\"") && val.endsWith("\"")) //$NON-NLS-1$ //$NON-NLS-2$
-                        {
-                            val = val.substring(1, val.length() - 1);
-                        }
-                        status = val;
+                        status = unquoteYamlScalar(line.substring(colon + 1).trim());
+                    }
+                    else if ("adoptedFormAttributes".equals(key)) //$NON-NLS-1$
+                    {
+                        // BmFormHelper.annotateAdopted writes the borrowed names as one
+                        // comma-separated scalar; the JSON answer names them as an array.
+                        // A list of one name is written bare, several names may arrive
+                        // quoted, and an empty scalar names nothing.
+                        adopted = parseScalarList(unquoteYamlScalar(line.substring(colon + 1).trim()));
+                    }
+                    else if ("dataPathChecksNotPerformed".equals(key)) //$NON-NLS-1$
+                    {
+                        // The same shape for the data-path checks the guard could not ask:
+                        // dropping the line here would make the JSON answer read as a path
+                        // every check passed.
+                        notPerformed = parseScalarList(
+                            unquoteYamlScalar(line.substring(colon + 1).trim()));
                     }
                 }
             }
@@ -1414,7 +1459,54 @@ final class FormItemsOps
         {
             ok.put("formFqn", formFqn); //$NON-NLS-1$
         }
+        if (adopted != null && !adopted.isEmpty())
+        {
+            ok.put("adoptedFormAttributes", adopted); //$NON-NLS-1$
+        }
+        if (notPerformed != null && !notPerformed.isEmpty())
+        {
+            ok.put("dataPathChecksNotPerformed", notPerformed); //$NON-NLS-1$
+        }
         return ok.toJson();
+    }
+
+    /**
+     * Splits a front-matter scalar naming a comma-separated list into its members.
+     *
+     * @param scalar the value as the front matter carries it, already unquoted
+     * @return the names in order, with empty members dropped
+     */
+    private static List<String> parseScalarList(String scalar)
+    {
+        List<String> names = new ArrayList<>();
+        for (String name : scalar.split(",")) //$NON-NLS-1$
+        {
+            if (!name.trim().isEmpty())
+            {
+                names.add(name.trim());
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Removes the quotes {@link YamlFrontMatter} puts around a scalar when it needs them.
+     * <p>
+     * A value carrying a comma or an empty value is written quoted, a bare word is not, so the
+     * parser has to accept both. Anything shorter than two characters is returned as it came - a
+     * single quote is a value, not a delimiter pair.
+     * </p>
+     *
+     * @param value the scalar as it stands in the front matter, already trimmed
+     * @return the value without its surrounding quotes
+     */
+    private static String unquoteYamlScalar(String value)
+    {
+        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     /**

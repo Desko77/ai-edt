@@ -123,6 +123,36 @@ public class BmFormHelper
     private int idCounter = 0;
 
     /**
+     * Base-form attributes borrowed into the extension while this helper
+     * assigned data paths of the write in progress. Reported back to the
+     * caller, so a write that changed the form in a second place says so
+     * instead of looking like it only set a path.
+     *
+     * <p>Belongs to one write, not to the helper: a tool keeps its helper for
+     * its lifetime, so the list is opened by {@link #beginWrite} and dropped by
+     * {@link #abandonWrite} rather than living as long as the object.
+     */
+    private final List<String> adoptedFormAttributes = new ArrayList<>();
+
+    /**
+     * Checks of the data-path guard that could not be asked during the write in
+     * progress, named by the guard's {@code CHECK_*} constants. An answer that
+     * performed a data-path write has to say what it did not verify: a check
+     * that failed and was dropped reads exactly like a check that passed, and the
+     * caller takes the write for verified.
+     *
+     * <p>Belongs to one write, like the borrowed names above.
+     */
+    private final List<String> notAskedDataPathChecks = new ArrayList<>();
+
+    /**
+     * The form the current {@code executeFormOperation} transaction works on.
+     * Set while the task runs; a call made outside a transaction sees null and
+     * the data-path guard stays out of it.
+     */
+    private Object currentForm;
+
+    /**
      * Functional interface for form transaction actions.
      * Executed inside a BM read-write transaction with access to the transaction
      * and the resolved form object.
@@ -308,6 +338,7 @@ public class BmFormHelper
     public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
         FormTransactionAction action)
     {
+        beginWrite(null);
         try
         {
             // Get BM model manager from Activator
@@ -415,6 +446,7 @@ public class BmFormHelper
                                 + "Re-run; if it persists, the form model may be stale (clean_project)."; //$NON-NLS-1$
                         }
 
+                        beginWrite(form);
                         Object actionResult = action.execute(transaction, form);
                         if (dryRun)
                         {
@@ -454,6 +486,9 @@ public class BmFormHelper
                 // reflective invoke wraps it (InvocationTargetException / UTE).
                 if (unwrapsTo(invokeEx, BmDcsHelper.DryRunAbort.class))
                 {
+                    // A dry run is a rollback: the model keeps none of what the
+                    // write borrowed, so the names go with the transaction.
+                    abandonWrite();
                     Object preview = dryRunPreview.get();
                     if (preview instanceof String && ((String) preview).startsWith("Error:")) //$NON-NLS-1$
                     {
@@ -478,6 +513,9 @@ public class BmFormHelper
             // "Error:" to surface a fatal condition (form not found, etc.).
             if (result instanceof String && ((String) result).startsWith("Error:")) //$NON-NLS-1$
             {
+                // The action ran but its result is an error, and the persist
+                // below is skipped: nothing of this write reached the file.
+                abandonWrite();
                 return (String) result;
             }
 
@@ -506,6 +544,19 @@ public class BmFormHelper
         }
         catch (Exception e)
         {
+            // The transaction rolled back: a form that was not written has no
+            // borrowed attributes, and naming them would describe a change the
+            // caller cannot find in the file.
+            abandonWrite();
+            // A data-path refusal is an expected answer, not a failure of the
+            // API: the transaction has already rolled back and the text the
+            // caller gets is the contract's, not a wrapped stack message.
+            FormExtensionDataPathGuard.RefusalException refusal =
+                FormExtensionDataPathGuard.findRefusal(e);
+            if (refusal != null)
+            {
+                return "Error: " + refusal.getOutcome().getRefusal(); //$NON-NLS-1$
+            }
             Activator.logError("BM form operation failed", e); //$NON-NLS-1$
             // 1.41: defensive unwrap so InvocationTargetException /
             // UndeclaredThrowableException do not strip the original
@@ -1741,6 +1792,7 @@ public class BmFormHelper
             }
             catch (Exception ignored)
             {
+                FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
                 // column may not be a DataItem
             }
         }
@@ -1968,6 +2020,7 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
+            FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
             // best-effort: dataPath wiring may need explicit setup later
         }
 
@@ -2058,6 +2111,7 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
+            FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
             // best-effort
         }
         Object userSettingsTable = createTable(userSettingsTableName, null);
@@ -2067,6 +2121,7 @@ public class BmFormHelper
         }
         catch (Exception ignored)
         {
+            FormExtensionDataPathGuard.rethrowIfRefusal(ignored);
             // best-effort
         }
 
@@ -2156,6 +2211,7 @@ public class BmFormHelper
             }
             catch (Exception e)
             {
+                FormExtensionDataPathGuard.rethrowIfRefusal(e);
                 return "Failed to set dataPath: " + e.getMessage(); //$NON-NLS-1$
             }
         }
@@ -2173,11 +2229,12 @@ public class BmFormHelper
         {
             try
             {
-                setDataPathProperty(item, itemDataPathSetter, value);
+                setDataPathProperty(item, itemDataPathSetter, value, itemName);
                 return null;
             }
             catch (Exception e)
             {
+                FormExtensionDataPathGuard.rethrowIfRefusal(e);
                 return "Failed to set " + property + ": " + e.getMessage(); //$NON-NLS-1$
             }
         }
@@ -2189,11 +2246,12 @@ public class BmFormHelper
             {
                 try
                 {
-                    setDataPathProperty(dataPathExtInfo, extDataPathSetter, value);
+                    setDataPathProperty(dataPathExtInfo, extDataPathSetter, value, itemName);
                     return null;
                 }
                 catch (Exception e)
                 {
+                    FormExtensionDataPathGuard.rethrowIfRefusal(e);
                     return "Failed to set " + property + ": " + e.getMessage(); //$NON-NLS-1$
                 }
             }
@@ -2591,6 +2649,171 @@ public class BmFormHelper
 
         Class<?> dataItemClass = Class.forName("com._1c.g5.v8.dt.form.model.DataItem"); //$NON-NLS-1$
         dataItemClass.getMethod("setDataPath", abstractDataPathClass).invoke(item, pathObj); //$NON-NLS-1$
+
+        guardDataPath(pathObj, dataPath, nameOfItem(item));
+    }
+
+    /**
+     * Runs the extension-form check for a data path just assigned, and refuses
+     * the whole write when the path would not reach the database.
+     *
+     * @param pathObj the assigned {@code AbstractDataPath}
+     * @param dataPath the dotted path as the caller wrote it
+     * @param elementName the name of the element the caller named, for the
+     *            refusal text
+     */
+    private void guardDataPath(Object pathObj, String dataPath, String elementName)
+    {
+        FormExtensionDataPathGuard.Outcome outcome = FormExtensionDataPathGuard.assign(
+            currentForm, pathObj, dataPath, elementName);
+        if (!outcome.isAccepted())
+        {
+            // The refusal throws out of the transaction action, so this write
+            // is rolled back whole: nothing of it was borrowed, and no name may
+            // survive into a later answer. A check that could not be asked never
+            // produces a refusal, so there is nothing to report beside it.
+            abandonWrite();
+            throw new FormExtensionDataPathGuard.RefusalException(outcome);
+        }
+        // A check that could not be asked is remembered: the answer names it, so
+        // a caller does not read an unverified path as a verified one.
+        adoptedFormAttributes.addAll(outcome.getAdoptedAttributes());
+        for (String check : outcome.getNotAskedChecks())
+        {
+            if (!notAskedDataPathChecks.contains(check))
+            {
+                notAskedDataPathChecks.add(check);
+            }
+        }
+    }
+
+    /**
+     * Opens a write: the borrowed names belong to one write, and the next one
+     * starts without them.
+     *
+     * @param form the form this write works on, or null when the form is not
+     *            resolved yet
+     */
+    private void beginWrite(Object form)
+    {
+        adoptedFormAttributes.clear();
+        notAskedDataPathChecks.clear();
+        currentForm = form;
+    }
+
+    /**
+     * Closes a write that will not reach the file - a refusal, a BM error, a
+     * dry run's rollback: the form is left as it was, so the names of what the
+     * write borrowed go with it.
+     */
+    private void abandonWrite()
+    {
+        adoptedFormAttributes.clear();
+        notAskedDataPathChecks.clear();
+    }
+
+    /**
+     * Points the helper at the form a direct call works on, for tests that
+     * exercise a write path outside a BM transaction. Opens a write on that
+     * form, the way {@link #executeFormOperation} does.
+     * <p>
+     * The operations do not call this: they get the form from
+     * {@link #executeFormOperation}, which is also what makes a rollback
+     * possible when the guard refuses.
+     *
+     * @param form the form the next direct call guards against
+     */
+    public void formForTest(Object form)
+    {
+        beginWrite(form);
+    }
+
+    /**
+     * @param item a form item, which may or may not carry a name
+     * @return the item's name, or null when it has none to read
+     */
+    private static String nameOfItem(Object item)
+    {
+        if (item == null)
+        {
+            return null;
+        }
+        try
+        {
+            Object name = item.getClass().getMethod("getName").invoke(item); //$NON-NLS-1$
+            return name instanceof String ? (String) name : null;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * @return base-form attributes borrowed by the write in progress, in the
+     *         order they were borrowed; empty once that write was abandoned
+     */
+    public List<String> getAdoptedFormAttributes()
+    {
+        return new ArrayList<>(adoptedFormAttributes);
+    }
+
+    /**
+     * @return the data-path checks the guard could not ask during the write in
+     *         progress, named by the guard's {@code CHECK_*} constants; empty
+     *         when every check answered
+     */
+    public List<String> getNotAskedDataPathChecks()
+    {
+        return new ArrayList<>(notAskedDataPathChecks);
+    }
+
+    /**
+     * Names the borrowed attributes and the checks that were not performed in an
+     * operation's answer.
+     *
+     * <p>A data path assigned on an extension form reaches the database only
+     * when the attribute it starts at belongs to the extension, so the write
+     * borrows it. That is a second change to the form beside the one the caller
+     * asked for, and the answer says so: a caller comparing files otherwise
+     * reads the borrowed attribute as someone else's edit.
+     *
+     * <p>A check the guard could not ask is named too, in
+     * {@code dataPathChecksNotPerformed}: on a runtime where the EDT service is
+     * not there, the path was written without the question being answered, and an
+     * answer that stays silent about it is read as a path that passed the check.
+     * Either field is absent when it has nothing to say.
+     *
+     * @param response the answer the operation already built
+     * @return the answer with the names, or unchanged when there are none
+     */
+    public String annotateAdopted(String response)
+    {
+        if (response == null || (adoptedFormAttributes.isEmpty() && notAskedDataPathChecks.isEmpty()))
+        {
+            return response;
+        }
+        // The front matter is what callers read the outcome from, so the names
+        // go there; an answer without one is already prose and is left alone.
+        int closing = response.indexOf("\n---\n"); //$NON-NLS-1$
+        if (closing < 0)
+        {
+            return response;
+        }
+        StringBuilder fields = new StringBuilder();
+        if (!adoptedFormAttributes.isEmpty())
+        {
+            fields.append("adoptedFormAttributes: ") //$NON-NLS-1$
+                .append(String.join(",", adoptedFormAttributes)) //$NON-NLS-1$
+                .append('\n');
+        }
+        if (!notAskedDataPathChecks.isEmpty())
+        {
+            fields.append("dataPathChecksNotPerformed: ") //$NON-NLS-1$
+                .append(String.join(",", notAskedDataPathChecks)) //$NON-NLS-1$
+                .append('\n');
+        }
+        return response.substring(0, closing + 1) + fields + response.substring(closing + 1);
     }
 
     /**
@@ -2644,9 +2867,12 @@ public class BmFormHelper
      * @param setter the {@code set<Property>(AbstractDataPath)} setter from
      *            {@link #findDataPathSetter}
      * @param value the dotted data path (e.g. "Object.Items.Sum"); empty clears it
+     * @param elementName the name of the item the caller named, for the refusal
+     *            text - the extInfo of a group carries no name of its own
      * @throws Exception if building or setting the path fails
      */
-    private void setDataPathProperty(Object item, Method setter, String value) throws Exception
+    private void setDataPathProperty(Object item, Method setter, String value, String elementName)
+        throws Exception
     {
         Class<?> abstractDataPathClass = Class.forName("com._1c.g5.v8.dt.form.model.AbstractDataPath"); //$NON-NLS-1$
         if (value == null || value.isEmpty())
@@ -2661,6 +2887,9 @@ public class BmFormHelper
             segments.getClass().getMethod("add", Object.class).invoke(segments, segment); //$NON-NLS-1$
         }
         setter.invoke(item, pathObj);
+
+        guardDataPath(pathObj, value,
+            elementName != null && !elementName.isEmpty() ? elementName : nameOfItem(item));
     }
 
     // -----------------------------------------------------------------------
