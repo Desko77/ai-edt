@@ -265,6 +265,42 @@ public class TheClientTheStartStepLooksForTest
     }
 
     /**
+     * A user name that contains a quote. The connection string writes that quote twice inside the
+     * delimiters. The client is given the same name: {@code /N} doubles the quote, because a
+     * quoted parameter of the platform command line carries a quote that way. Dropping every quote
+     * signs the client in as somebody else.
+     */
+    @Test
+    public void aUserNameWithAQuoteIsTheSameNameOnTheCommandLine()
+    {
+        String path = "File=\"C:/b\";"; //$NON-NLS-1$
+        assertBothBlocks(path + "Usr=\"Say \"\"Hi\";", path, "/N\"Say \"\"Hi\""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Spaces at the edges of a quoted user name are part of the name. Trimming them asks the
+     * client for a different user, and the login window waits out the run.
+     */
+    @Test
+    public void aUserNameKeepsTheSpacesInsideItsQuotes()
+    {
+        String path = "File=\"C:/b\";"; //$NON-NLS-1$
+        assertBothBlocks(path + "Usr=\" Admin \";", path, "/N\" Admin \""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A name with neither a quote nor a surrounding space. Quoted or not in the connection string,
+     * the client receives {@code /N"Admin"}, the form Vanessa writes for every user.
+     */
+    @Test
+    public void aSimpleUserNameIsQuotedOnTheCommandLine()
+    {
+        String path = "File=\"C:/b\";"; //$NON-NLS-1$
+        assertBothBlocks(path + "Usr=\"Admin\";", path, "/N\"Admin\""); //$NON-NLS-1$ //$NON-NLS-2$
+        assertBothBlocks(path + "Usr=Admin;", path, "/N\"Admin\""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Both client blocks of one document: the English one the settings loader merges, and the
      * Russian one the command-line runner writes over it.
      *

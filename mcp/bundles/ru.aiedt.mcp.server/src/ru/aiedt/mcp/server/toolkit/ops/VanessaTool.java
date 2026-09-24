@@ -1857,13 +1857,24 @@ public class VanessaTool implements IMcpTool
     /**
      * The additional parameters the test client is given.
      * <p>
-     * Empty when the string names no user. Otherwise {@code /N"user"}, the form Vanessa writes
-     * into {@code ДопПараметры} and appends to the client's command line. The value is the last
-     * {@code Usr} field, which is the user {@link #namingTheUser} appended.
+     * Empty when the string names no user. Otherwise {@code /N"..."}, the form Vanessa 1.2.042.19
+     * writes in {@code ЗаполнитьДанныеТекущейИнфобазы} (lines 42631 and 42640 of
+     * {@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl}) and in the step at
+     * {@code features/Libraries/VB/step_definitions/VBForm/Forms/Форма/Ext/Form/Module.bsl} line 144.
+     * {@code ПолучитьСтрокуЗапускаDesktopПриложение} appends {@code ДопПараметры} to the command
+     * line unchanged (42838-42844); {@code ЗапуститьСеанс1СЧерез1cv8} puts that line after the
+     * executable (42893) and {@code ВыполнитьКомандуОСБезПоказаЧерногоОкна} in
+     * {@code VanessaAutomation/Forms/ОбщегоНазначенияVA/Ext/Form/Module.bsl} writes it into a batch
+     * file as one line (711) after doubling {@code %} only (674). The characters inside {@code /N}
+     * are the decoded {@code Usr} value, the same name {@code /IBConnectionString} gives the test
+     * manager. A quote in the name is written twice: a quoted parameter of the platform command
+     * line carries a quote that way ({@code /IBName}, {@code /IBConnectionString}, {@code /C}), and
+     * Vanessa's filler does not add a second escaping pass. The value is the last {@code Usr}
+     * field.
      * </p>
      *
      * @param connectionString the manager's string, which may name a user, or <code>null</code>.
-     * @return {@code /N"user"}, or an empty string when there is no user
+     * @return {@code /N"..."}, or an empty string when there is no user
      */
     static String parametersTheTestClientReceives(String connectionString)
     {
@@ -1872,7 +1883,7 @@ public class VanessaTool implements IMcpTool
         {
             return ""; //$NON-NLS-1$
         }
-        return "/N\"" + user + "\""; //$NON-NLS-1$ //$NON-NLS-2$
+        return "/N\"" + user.replace("\"", "\"\"") + "\""; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     }
 
     /**
@@ -1983,10 +1994,15 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The value of a field, with the quotes that wrap it removed.
+     * The value of a field, read by the rules of a 1C connection string.
+     * <p>
+     * Quotes around the value are delimiters. A doubled quote inside them is one quote, and spaces
+     * inside them stay, including at the edges, because those spaces are part of the name. An
+     * unquoted value is trimmed: spaces outside quotes are not part of it.
+     * </p>
      *
      * @param field one field of a connection string.
-     * @return the value, trimmed, or an empty string when the field has no {@code =}
+     * @return the value, or an empty string when the field has no {@code =}
      */
     private static String valueOfField(CharSequence field)
     {
@@ -2010,16 +2026,43 @@ public class VanessaTool implements IMcpTool
         {
             return ""; //$NON-NLS-1$
         }
+        int start = separator + 1;
+        while (start < field.length() && field.charAt(start) <= ' ')
+        {
+            start++;
+        }
+        if (start >= field.length())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        if (field.charAt(start) != '"')
+        {
+            int end = field.length();
+            while (end > start && field.charAt(end - 1) <= ' ')
+            {
+                end--;
+            }
+            return field.subSequence(start, end).toString();
+        }
         StringBuilder value = new StringBuilder();
-        for (int i = separator + 1; i < field.length(); i++)
+        int i = start + 1;
+        while (i < field.length())
         {
             char c = field.charAt(i);
-            if (c != '"')
+            if (c == '"')
             {
-                value.append(c);
+                if (i + 1 < field.length() && field.charAt(i + 1) == '"')
+                {
+                    value.append('"');
+                    i += 2;
+                    continue;
+                }
+                break;
             }
+            value.append(c);
+            i++;
         }
-        return value.toString().trim();
+        return value.toString();
     }
 
     /**
