@@ -982,6 +982,46 @@ public class BmInfobaseRegistrationHelperTest
     }
 
     @Test
+    public void anAccessWriteFailureThatEchoesThePasswordIsAnsweredWithoutIt()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.accessWriteFailure = "secure storage refused the password s3cret"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.WRITE_FAILED.wire(), r.failureKind);
+        assertTrue("the write's own reason is still named: " + r.error, //$NON-NLS-1$
+            r.error.contains("secure storage refused the password")); //$NON-NLS-1$
+        assertAnswerHidesPasswords(r, "s3cret"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anOverlappingPreviousPasswordIsMaskedWholeNotByHalves()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.accessSettings.put(existing, new InfobaseAccessSettings(InfobaseAccess.INFOBASE,
+            "keeper", "s3cret-old", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        env.associateFailure = "the binding refused the password s3cret-old"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertAnswerHidesPasswords(r, "s3cret", "s3cret-old"); //$NON-NLS-1$ //$NON-NLS-2$
+        String answer = (r.error == null ? "" : r.error) //$NON-NLS-1$
+            + (r.accessSettings == null ? "" : r.accessSettings); //$NON-NLS-1$
+        assertFalse("the longer secret is not masked only in its head: " + answer, //$NON-NLS-1$
+            answer.contains("***-old")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aFailedBindingOnAReusedEntryRestoresTheAccessSettingsThatStoodBefore()
     {
         FakeEnvironment env = new FakeEnvironment();
