@@ -208,6 +208,34 @@ public class InfobaseRegistrarTest
     }
 
     @Test
+    public void theFailureAnswerNamesTheAccessSettingsLeftBehindByTheRollback()
+    {
+        RegisterResult r = new RegisterResult();
+        r.error = "Failed to associate the infobase to the project: refused. " //$NON-NLS-1$
+            + "The list entry added for it was removed again; the infobase itself was not touched. " //$NON-NLS-1$
+            + "The access settings written for it stay behind in EDT's secure storage under the " //$NON-NLS-1$
+            + "removed entry's uuid, unreachable from the infobase list; deleting a list entry " //$NON-NLS-1$
+            + "does not remove them."; //$NON-NLS-1$
+        r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.rolledBack = true;
+        r.accessSettings = "The access settings written for it stay behind in EDT's secure " //$NON-NLS-1$
+            + "storage under the removed entry's uuid, unreachable from the infobase list; " //$NON-NLS-1$
+            + "deleting a list entry does not remove them."; //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json.contains("\"rolledBack\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"accessSettings\":")); //$NON-NLS-1$
+        // The JSON writer escapes an apostrophe, so the check reads a fragment without one.
+        assertTrue(json.contains("stay behind in EDT")); //$NON-NLS-1$
+        assertTrue(json.contains("unreachable from the infobase list")); //$NON-NLS-1$
+        assertFalse("the answer never claims the stored settings were erased", //$NON-NLS-1$
+            json.contains("removed with the list entry")); //$NON-NLS-1$
+    }
+
+    @Test
     public void anUnknownAccessModeIsRefusedBeforeAnythingIsWritten()
     {
         Map<String, String> params = new HashMap<>();

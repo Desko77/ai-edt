@@ -101,11 +101,15 @@ public class BmInfobaseRegistrationHelperTest
          */
         final Map<InfobaseReference, IInfobaseAccessSettings> accessSettings = new IdentityHashMap<>();
 
-        /** The order the access manager and the write were used in: resolve, write, update. */
+        /** The order the secure store was primed and the access manager and the write were used
+         * in: prime, resolve, write, update. */
         final List<String> accessTrace = new ArrayList<>();
 
         /** When set, {@code updateSettings} throws with this message - a restore that fails. */
         String accessRestoreFailure;
+
+        /** When set, {@code primeSecureStorage} fails with this message - an unprimed store. */
+        String primeFailure;
 
         /** When set, deleting the list entry throws with this message. */
         String deleteFailure;
@@ -348,6 +352,13 @@ public class BmInfobaseRegistrationHelperTest
             r.userName = storedUser;
             r.passwordStored = storedPassword != null && !storedPassword.isEmpty();
             return r;
+        }
+
+        @Override
+        public String primeSecureStorage()
+        {
+            accessTrace.add("prime"); //$NON-NLS-1$
+            return primeFailure;
         }
 
         @Override
@@ -991,8 +1002,8 @@ public class BmInfobaseRegistrationHelperTest
         assertFalse("a reused entry stays in the list", r.added); //$NON-NLS-1$
         assertFalse(r.rolledBack);
         assertEquals("the shared entry was not removed", 1, env.infobases.size()); //$NON-NLS-1$
-        assertEquals("the settings were read before the write, then put back", //$NON-NLS-1$
-            List.of("resolve", "write", "update"), env.accessTrace); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals("the store was primed, the settings were read before the write, then put " //$NON-NLS-1$
+            + "back", List.of("prime", "resolve", "write", "update"), env.accessTrace); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         IInfobaseAccessSettings restored = env.accessSettings.get(existing);
         assertEquals("the user that stood before is back", "keeper", restored.userName()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("the password that stood before is back", "old-secret", restored.password()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1010,7 +1021,7 @@ public class BmInfobaseRegistrationHelperTest
     }
 
     @Test
-    public void aFailedBindingOnAnAddedEntryNamesTheAccessSettingsRemovedWithIt()
+    public void aFailedBindingOnAnAddedEntryNamesTheAccessSettingsLeftBehind()
     {
         FakeEnvironment env = new FakeEnvironment();
         env.project("project-one"); //$NON-NLS-1$
@@ -1023,8 +1034,15 @@ public class BmInfobaseRegistrationHelperTest
         assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
         assertTrue("the added entry was removed again", r.rolledBack); //$NON-NLS-1$
         assertTrue("the entry is gone from the list", env.infobases.isEmpty()); //$NON-NLS-1$
+        assertEquals("the stored settings stay behind under the removed entry's uuid, the way " //$NON-NLS-1$
+            + "the secure store keeps them", 1, env.accessSettings.size()); //$NON-NLS-1$
         assertNotNull(r.accessSettings);
-        assertTrue(r.accessSettings, r.accessSettings.contains("removed with the list entry")); //$NON-NLS-1$
+        assertTrue("the answer names where the settings stayed: " + r.accessSettings, //$NON-NLS-1$
+            r.accessSettings.contains("stay behind in EDT's secure storage")); //$NON-NLS-1$
+        assertTrue("the answer names them unreachable from the list", //$NON-NLS-1$
+            r.accessSettings.contains("unreachable from the infobase list")); //$NON-NLS-1$
+        assertFalse("the answer does not claim the stored settings were erased", //$NON-NLS-1$
+            r.accessSettings.contains("removed with the list entry")); //$NON-NLS-1$
         assertTrue("the error answer carries the same sentence", //$NON-NLS-1$
             r.error.contains(r.accessSettings));
         assertTrue("the list-entry rollback is still named", r.error.contains("removed again")); //$NON-NLS-1$
@@ -1032,6 +1050,42 @@ public class BmInfobaseRegistrationHelperTest
         assertFalse("an added entry is not restored - there was nothing to put back", //$NON-NLS-1$
             env.accessTrace.contains("update")); //$NON-NLS-1$
         assertAnswerHidesPasswords(r, "s3cret"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void thePreviousSettingsAreReadOnlyAfterTheSecureStoreIsPrimed()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(r.error, r.ok);
+        assertEquals("the store is primed before the previous settings are read, and the read " //$NON-NLS-1$
+            + "stands before the write", //$NON-NLS-1$
+            List.of("prime", "resolve", "write"), env.accessTrace); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    @Test
+    public void aFailedPrimeSkipsTheReadOfThePreviousSettings()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.primeFailure = "secure storage could not be initialized without a prompt"; //$NON-NLS-1$
+        env.accessWriteFailure = "secure storage is locked"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertFalse("the previous settings are not read while the store is unprimed", //$NON-NLS-1$
+            env.accessTrace.contains("resolve")); //$NON-NLS-1$
+        assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
     }
 
     @Test

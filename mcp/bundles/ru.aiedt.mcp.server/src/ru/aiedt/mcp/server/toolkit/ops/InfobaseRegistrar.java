@@ -26,8 +26,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * {@code password}) are stored in EDT's encrypted store after the list entry and before the
  * binding, through the same code {@code set_infobase_credentials} uses; a failed write refuses
  * the call before the binding. A failed binding puts a reused entry's access settings back to
- * what stood before the write, and the answer names that, the removal of the settings with an
- * added entry, or a restore that failed. The password is never part of the answer.
+ * what stood before the write, and the answer names that, the settings left behind in the secure
+ * store when the added entry was removed (deleting a list entry does not remove them), or a
+ * restore that failed. The password is never part of the answer.
  */
 public class InfobaseRegistrar implements IMcpTool
 {

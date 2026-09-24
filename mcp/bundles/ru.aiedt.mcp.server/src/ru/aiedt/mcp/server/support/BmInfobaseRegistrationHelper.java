@@ -71,14 +71,16 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * through the same helper after the entry stands in the list and before the binding, so an
  * infobase with users registers without an interactive login prompt; a failed write refuses the
  * call before the binding and rolls an added entry back. The settings that stood on the entry
- * are read ({@code resolveSettings}) before that write. When the binding then fails, a reused
- * entry is put back to those settings, so the projects already bound to it keep the access they
- * had; an entry this call added is removed as before and the answer names the access settings
- * as removed with it. A restore that fails is named with the reason. The password is never part
- * of the answer. EDT keys the stored settings by the infobase reference's uuid in the secure
- * store, and deleting a list entry does not remove that node - so after a rollback the stored
- * settings stay behind under the removed entry's uuid, unreachable from the list, exactly as
- * they do for {@code delete_infobase}.
+ * are read ({@code resolveSettings}) before that write, after the secure store has been primed
+ * the same non-interactive way the write helper primes it, so the read cannot post a modal
+ * master-password dialog on this background thread and hang the call. When the binding then
+ * fails, a reused entry is put back to those settings, so the projects already bound to it keep
+ * the access they had; an entry this call added is removed as before, and the answer names the
+ * access settings it wrote as left behind: EDT keys the stored settings by the infobase
+ * reference's uuid in the secure store, and deleting a list entry does not remove that node, so
+ * after a rollback the stored settings stay behind under the removed entry's uuid, unreachable
+ * from the list, exactly as they do for {@code delete_infobase}. A restore that fails is named
+ * with the reason. The password is never part of the answer.
  * </p>
  * <p>
  * The default that stood before the call is read under the write lock, before the association.
@@ -140,7 +142,8 @@ public final class BmInfobaseRegistrationHelper
         public BmInfobaseCredentialsHelper.CredentialResult credentials;
         /**
          * What became of access settings written before a failed binding: restored to what stood
-         * before, removed with the list entry, or why the restore failed. {@code null} when the
+         * before, left behind in the secure store under the removed entry's uuid when the entry
+         * this call added was rolled back, or why the restore failed. {@code null} when the
          * call wrote none, or the added entry could not be removed and so the settings were not
          * undone. Never carries the password.
          */
@@ -212,6 +215,18 @@ public final class BmInfobaseRegistrationHelper
          */
         BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(InfobaseReference infobase,
             String accessMode, String userName, String password);
+
+        /**
+         * Primes EDT's secure storage the same non-interactive way
+         * {@link BmInfobaseCredentialsHelper} primes it before its own reads and writes. The
+         * read of the settings that stood before a credentials write touches the secure store,
+         * and an unopened store would post a modal master-password dialog from this background
+         * thread and hang the call.
+         *
+         * @return {@code null} when the store is primed, or why it cannot be primed without a
+         *         prompt - the read of the previous settings is then skipped
+         */
+        String primeSecureStorage();
 
         /**
          * @return EDT's infobase access manager, or <code>null</code> when it is unavailable.
@@ -287,6 +302,12 @@ public final class BmInfobaseRegistrationHelper
         {
             return BmInfobaseCredentialsHelper.setCredentialsForInfobase(infobase, accessMode,
                 userName, password);
+        }
+
+        @Override
+        public String primeSecureStorage()
+        {
+            return BmInfobaseCredentialsHelper.primeSecureStorage();
         }
 
         @Override
@@ -1052,8 +1073,11 @@ public final class BmInfobaseRegistrationHelper
     }
 
     /**
-     * The access settings that stood on the entry before this call writes its own. A failed read
-     * is kept: a later restore must not invent settings it never saw.
+     * The access settings that stood on the entry before this call writes its own. The secure
+     * store is primed first, the way the write helper primes it: the read below touches the
+     * store, and an unopened one would post a modal master-password dialog on this background
+     * thread and hang the call. A failed read is kept: a later restore must not invent settings
+     * it never saw.
      *
      * @param env where the access manager is read from
      * @param infobase the list entry about to be written
@@ -1069,6 +1093,13 @@ public final class BmInfobaseRegistrationHelper
         if (accessMgr == null)
         {
             failure[0] = "IInfobaseAccessManager is not available on this EDT runtime."; //$NON-NLS-1$
+            return;
+        }
+        String primeFailure = env.primeSecureStorage();
+        if (primeFailure != null)
+        {
+            // The write below runs its own prime and refuses the call when it fails the same way.
+            failure[0] = redactPassword(primeFailure, password);
             return;
         }
         try
@@ -1106,8 +1137,10 @@ public final class BmInfobaseRegistrationHelper
 
     /**
      * Undoes the access settings this call wrote after the binding failed. A reused entry gets
-     * back what stood before; an added entry is already being removed, and the answer names the
-     * settings as removed with it. The password is never written into the note.
+     * back what stood before; an added entry is already being removed, which leaves the settings
+     * behind in the secure store under its uuid - deleting a list entry does not remove that
+     * node, and EDT's access manager offers no delete - so the answer names them as left behind
+     * instead of claiming they were erased. The password is never written into the note.
      *
      * @param env where the access manager is read from
      * @param infobase the entry the settings were written for
@@ -1127,8 +1160,9 @@ public final class BmInfobaseRegistrationHelper
         {
             if (r.rolledBack)
             {
-                r.accessSettings = "The access settings written for it were removed with the " //$NON-NLS-1$
-                    + "list entry."; //$NON-NLS-1$
+                r.accessSettings = "The access settings written for it stay behind in EDT's " //$NON-NLS-1$
+                    + "secure storage under the removed entry's uuid, unreachable from the " //$NON-NLS-1$
+                    + "infobase list; deleting a list entry does not remove them."; //$NON-NLS-1$
                 r.credentials = null;
             }
             return;
