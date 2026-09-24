@@ -64,6 +64,12 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🧪 **Run a data processor under the debugger** | Open an external data processor or report in the client that starts under the debugger, so its code runs with the breakpoints already set. |
 | 🔔 **See that the IDE is waiting for an answer** | Read the modal dialog holding a call - title, message and buttons - and press a named one instead of waiting for a person at the keyboard. |
 | 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind: `update_database` with `dryRun=true` answers with the update state and starts nothing. Readiness and the export validation are not run this way - the answer names them in `notCheckedInDryRun`. |
+| 🧷 **Connect an existing infobase** | Add a file infobase by path or a server one by connection string to EDT's list and bind it to the project in one call - with the infobase user and password, without the access prompt: `infobase_admin operation=register_infobase`. |
+| 📤 **Take an object from the infobase, not the project** | Export a form or an object of the infobase configuration to Designer XML (`config_io operation=export_infobase_objects`) - for example, to compare with the project what was edited in Designer. |
+| 🧰 **Get incremental updates back** | Rebuild the stored dump-info file with Designer's own dump (`sync_control operation=rebuild_dump_info`) when `update_database` refuses a foreign file format, and mark synchronized an infobase binding that has no baseline yet (`mark_synchronized`). |
+| 🖨️ **Check a print form before printing** | Learn from the template model whether the print area fits the page width and by what margin: `mxl_workshop operation=check_print_width`, no platform run. |
+| 🎬 **Check an action in a running 1C** | Open a list, go to a row, press a button and get a screen capture with the test client's window after the action: `vanessa` with the list arguments. |
+| 🤝 **Ask 1C:Naparnik** | Put a question to Naparnik from the agent (`naparnik operation=ask`) with the bridge on; by default Naparnik gets read-only tools. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
 
@@ -434,6 +440,8 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 
 Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
 
+A facade's help is `operation=help`, one operation or argument with `topic`; `find=<words>` searches the help and names the topic to open for the whole section.
+
 ![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
 
 ### Long-running operations
@@ -443,6 +451,8 @@ A call that does not finish within the wait returns `status=Pending` and a `runK
 An `edit_metadata batch` answer also carries `progress`: how many operations are done, applied and rejected, and which one is running. A batch commits each operation separately, so the ones it reports as applied are already written.
 
 A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
+
+Heavy calls - an infobase update, including one before a client starts, configuration export and import, a Designer run, infobase creation, project-wide scans - run at most three at a time, and once more than 92 % of EDT's heap survives a collection a new heavy call is refused before any work starts. An external client gets `503` with `Retry-After`. A `Pending` answer holds its permit until the background work ends; polling a `runKey` takes no permit.
 
 ### Withdrawing a call
 
