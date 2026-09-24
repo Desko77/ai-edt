@@ -2323,9 +2323,11 @@ public class McpHttpEndpoint
                     // Release the heavy permit (if any) before signalling completion, so a following
                     // heavy call cannot briefly see the slot as still taken. The road spends the
                     // ticket itself when the body answers - a synchronous answer releases it, a
-                    // Pending answer hands it to the background run - so this is the safety net for
-                    // the answers that never reach a body: a refusal the router answered itself, a
-                    // document that did not parse. A spent ticket does nothing here.
+                    // Pending answer hands it to the background run - and a throw after the body
+                    // has dispatched work hands it to that work from runBody, before this line. So
+                    // this is the safety net for the answers that never reach a body: a refusal
+                    // the router answered itself, a document that did not parse. A spent ticket
+                    // does nothing here.
                     ticket.release();
                 }
                 finally

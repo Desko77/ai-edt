@@ -1047,6 +1047,25 @@ public final class PendingWorkRegistry
         }
 
         /**
+         * Whether the body has left the executor, or was settled as never having begun.
+         * <p>
+         * The tracking future is a different fact. A cancel or a detach completes it while a
+         * body that already claimed its start keeps running, so {@link #isDone()} is then true
+         * for work that still holds the session. A permit follows this, not the future.
+         * </p>
+         *
+         * @return {@code true} once {@link #workExited()} or {@link #settleIfWorkNeverBegan()}
+         *         has settled the run
+         */
+        boolean workHasLeft()
+        {
+            synchronized (workLife)
+            {
+                return workExitSettled;
+            }
+        }
+
+        /**
          * Marks the body as begun, or refuses when a cancel already settled this run.
          * <p>
          * The decision and the mark are one critical section with
