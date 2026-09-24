@@ -22,10 +22,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 /**
- * The step "Я запускаю сценарий открытия TestClient" starts the client named in the TestClient
- * block of VAParams. With no block the step reaches Vanessa with nothing to start and answers
- * "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0 - the
- * UI-testing types exist only once a client runs under the test manager.
+ * The step "Я запускаю сценарий открытия TestClient" launches the current row of the client
+ * table. {@code КлиентыТестирования} is what makes that row the client of the run; the
+ * {@code TestClient} block is the same profile under the English names the settings loader
+ * merges, and by itself it does not change the current row. With no client the step reaches
+ * Vanessa with nothing to start and answers "Тип не определен (ТестируемаяГруппаФормы)" with
+ * an empty client type and PID 0 - the UI-testing types exist only once a client runs under
+ * the test manager.
  */
 public class TheClientTheStartStepLooksForTest
 {
@@ -214,7 +217,47 @@ public class TheClientTheStartStepLooksForTest
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
             new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, BUDGET_SEC, false, null);
-        assertNull(JsonParser.parseString(json).getAsJsonObject().get("TestClient")); //$NON-NLS-1$
+        JsonObject document = JsonParser.parseString(json).getAsJsonObject();
+        assertNull(document.get("TestClient")); //$NON-NLS-1$
+        assertNull(document.get("КлиентыТестирования")); //$NON-NLS-1$
+    }
+
+    /**
+     * The start step launches the current row. That row is this profile, on the infobase of the
+     * run, and it is the same name {@code datatestclients} carries, so the two tables are one
+     * client rather than a second one the step never reaches.
+     */
+    @Test
+    public void theStartStepActivatesTheClientOfTheRun()
+    {
+        JsonObject document = params();
+        JsonArray table = document.getAsJsonArray("КлиентыТестирования"); //$NON-NLS-1$
+        assertEquals(1, table.size());
+        JsonObject row = table.get(0).getAsJsonObject();
+        assertEquals(VanessaTool.TEST_CLIENT_PROFILE, row.get("Имя").getAsString()); //$NON-NLS-1$
+        assertEquals(CONNECTION, row.get("ПутьКИнфобазе").getAsString()); //$NON-NLS-1$
+        assertEquals(PORT, row.get("ПортЗапускаТестКлиента").getAsInt()); //$NON-NLS-1$
+        assertEquals("", row.get("ДопПараметры").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Тонкий", row.get("ТипКлиента").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("localhost", row.get("ИмяКомпьютера").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(row.get("АктивизироватьСтроку").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(row.get("Имя").getAsString(), onlyClient(document).get("Name").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The English alias is not the key the command-line runner reads, and a passthrough carrying
+     * either name would replace the row this tool activated.
+     */
+    @Test
+    public void theClientTableIsBarredFromThePassthrough()
+    {
+        for (String key : new String[] { "КлиентыТестирования", "testclienttable" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            String[] refusal = new String[1];
+            VanessaTool.extraParams("{\"" + key + "\": []}", refusal); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNotNull(key + " is ours to set", refusal[0]); //$NON-NLS-1$
+            assertTrue(refusal[0], refusal[0].contains("set by this tool")); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -413,6 +456,7 @@ public class TheClientTheStartStepLooksForTest
         if (withTestClient)
         {
             read.add("TestClient"); //$NON-NLS-1$
+            read.add("КлиентыТестирования"); //$NON-NLS-1$
         }
         if (named)
         {

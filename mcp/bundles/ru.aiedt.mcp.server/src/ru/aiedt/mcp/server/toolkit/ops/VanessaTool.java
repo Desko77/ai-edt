@@ -109,6 +109,9 @@ public class VanessaTool implements IMcpTool
             + "with listName opens the list, column with columnValue goes to the row, buttonTitle " //$NON-NLS-1$
             + "or buttonName presses the form's button, and the window it opens is waited for - " //$NON-NLS-1$
             + "windowWaitSeconds - and captured. " //$NON-NLS-1$
+            + "On a list action and on formToOpen, testManager and testClient are turned on when " //$NON-NLS-1$
+            + "left out, and false is refused: the start step then activates the client that " //$NON-NLS-1$
+            + "opens the infobase of the run. " //$NON-NLS-1$
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
             + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
             + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
@@ -206,11 +209,15 @@ public class VanessaTool implements IMcpTool
             .booleanProperty("testManager", //$NON-NLS-1$
                 "Start the client as a test manager (default false). The UI-testing types a " //$NON-NLS-1$
                     + "form-driving scenario needs exist only in a client started this way; " //$NON-NLS-1$
-                    + "without it such a step answers Тип не определен.") //$NON-NLS-1$
+                    + "without it such a step answers Тип не определен. " //$NON-NLS-1$
+                    + "On a list action and on formToOpen, left out means on, and false is " //$NON-NLS-1$
+                    + "refused.") //$NON-NLS-1$
             .booleanProperty("testClient", //$NON-NLS-1$
                 "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
                     + "The step that starts TestClient has no client to start without it and " //$NON-NLS-1$
-                    + "answers with an empty client type and PID 0.") //$NON-NLS-1$
+                    + "answers with an empty client type and PID 0. " //$NON-NLS-1$
+                    + "On a list action and on formToOpen, left out means on, and false is " //$NON-NLS-1$
+                    + "refused.") //$NON-NLS-1$
             .integerProperty("testClientPort", //$NON-NLS-1$
                 "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
                     + "run or another EDT already holds it.") //$NON-NLS-1$
@@ -477,10 +484,23 @@ public class VanessaTool implements IMcpTool
                 + "a port is 1 to " + HIGHEST_PORT + ". Read as a number it cannot be, the " //$NON-NLS-1$ //$NON-NLS-2$
                 + "run would have started on the default port instead of the one named.").toJson(); //$NON-NLS-1$
         }
-        final boolean settledWantsManager =
-            JsonUtils.extractBooleanArgument(params, "testManager", false); //$NON-NLS-1$
-        final boolean settledWantsTestClient =
-            JsonUtils.extractBooleanArgument(params, "testClient", false); //$NON-NLS-1$
+        Boolean askedManager = JsonUtils.extractBooleanArgumentNullable(params, "testManager"); //$NON-NLS-1$
+        Boolean askedClient = JsonUtils.extractBooleanArgumentNullable(params, "testClient"); //$NON-NLS-1$
+        // A list action and formToOpen both open a form. The step that starts TestClient has
+        // nothing to start unless this run is a test manager and names the client, so an omitted
+        // argument is turned on and an explicit false is refused before anything is launched.
+        // A file or a text the caller wrote keeps the old default: off unless they ask.
+        boolean drivesForm = drivesAForm(listAction != null, hasForm);
+        if (drivesForm)
+        {
+            String clientRefusal = whyAFormDrivingRunRefusesTheClient(askedManager, askedClient);
+            if (clientRefusal != null)
+            {
+                return ToolResult.error(clientRefusal).toJson();
+            }
+        }
+        final boolean settledWantsManager = wantsTheClientTheFormNeeds(drivesForm, askedManager);
+        final boolean settledWantsTestClient = wantsTheClientTheFormNeeds(drivesForm, askedClient);
         final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
         String portRefusal = whyThePortCannotBeUsed(settledClientPort);
         if (portRefusal != null)
@@ -1181,6 +1201,87 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
+     * Whether this call opens a form, so the step that starts TestClient has to have a client.
+     * <p>
+     * A list action and {@code formToOpen} both compose a scenario that begins with that step and
+     * then opens a form. A file or a text the caller wrote does not, and keeps the old default.
+     * </p>
+     *
+     * @param hasListAction whether the call carried the list arguments
+     * @param hasForm whether the call named {@code formToOpen}
+     * @return whether the run drives a form
+     */
+    static boolean drivesAForm(boolean hasListAction, boolean hasForm)
+    {
+        return hasListAction || hasForm;
+    }
+
+    /**
+     * Why a form-driving run cannot start, or <code>null</code> when it can.
+     * <p>
+     * An omitted argument is not a refusal: the run turns it on. An explicit {@code false} is,
+     * because the step that starts TestClient then has no client to start. The UI-testing types
+     * exist only under a test manager, and the start step launches the client this tool names.
+     * </p>
+     *
+     * @param testManager what the caller passed, or <code>null</code> when left out
+     * @param testClient what the caller passed, or <code>null</code> when left out
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyAFormDrivingRunRefusesTheClient(Boolean testManager, Boolean testClient)
+    {
+        boolean managerOff = Boolean.FALSE.equals(testManager);
+        boolean clientOff = Boolean.FALSE.equals(testClient);
+        if (!managerOff && !clientOff)
+        {
+            return null;
+        }
+        String which;
+        if (managerOff && clientOff)
+        {
+            which = "testManager and testClient are false"; //$NON-NLS-1$
+        }
+        else if (managerOff)
+        {
+            which = "testManager is false"; //$NON-NLS-1$
+        }
+        else
+        {
+            which = "testClient is false"; //$NON-NLS-1$
+        }
+        return which + ". A list action and formToOpen open a form, and the step that starts " //$NON-NLS-1$
+            + "TestClient has no client to start without both: the UI-testing types exist only " //$NON-NLS-1$
+            + "under a test manager, and the start step launches the client this tool names, " //$NON-NLS-1$
+            + "the one that opens the infobase of the run. Leave either argument out and it is " //$NON-NLS-1$
+            + "turned on."; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether the run starts as a test manager, or names a test client.
+     * <p>
+     * On a form-driving call an omitted argument is on. An explicit false stays false, so a
+     * refusal that was skipped cannot be turned into a run that claims the opposite. On any other
+     * call the argument is off unless the caller asked.
+     * </p>
+     *
+     * @param drivesForm whether this call opens a form
+     * @param asked what the caller passed, or <code>null</code> when left out
+     * @return whether the flag is on for the run
+     */
+    static boolean wantsTheClientTheFormNeeds(boolean drivesForm, Boolean asked)
+    {
+        if (Boolean.TRUE.equals(asked))
+        {
+            return true;
+        }
+        if (Boolean.FALSE.equals(asked))
+        {
+            return false;
+        }
+        return drivesForm;
+    }
+
+    /**
      * The two keys without which the {@code @screenshot} tag captures nothing.
      * <p>
      * Vanessa photographs the step that follows the tag only when its add-in is attached or an
@@ -1826,6 +1927,12 @@ public class VanessaTool implements IMcpTool
         {
             o.add("TestClient", //$NON-NLS-1$
                 testClient(connectionString, clientPort, clientWaitWithin(clientTimeoutSec)));
+            // datatestclients only adds a row. The start step launches the current row, which
+            // stays "Этот клиент" unless КлиентыТестирования names the row and activates it.
+            // The command-line runner reads that key after the settings load, by the Russian
+            // name, and the client type is stored as given - "Thin" would launch the thick client.
+            o.add("КлиентыТестирования", //$NON-NLS-1$
+                clientTheStartStepActivates(connectionString, clientPort));
         }
         // Without this Vanessa opens its own window and waits there. Every run then spends its
         // whole time budget on a form nobody is looking at, ends killed, and writes no report -
@@ -1881,6 +1988,16 @@ public class VanessaTool implements IMcpTool
 
     /** The port the test client listens on when the caller names none. */
     static final int TEST_CLIENT_PORT = 48010;
+
+    /**
+     * The profile name both client tables carry, so they name one row.
+     * <p>
+     * {@code datatestclients} merges by this name, and {@code КлиентыТестирования} finds the same
+     * row and makes it the current one. A second name would be a second client the start step
+     * never launches.
+     * </p>
+     */
+    static final String TEST_CLIENT_PROFILE = "AiEdt"; //$NON-NLS-1$
 
     /**
      * The longest the run waits for the test client to answer. A client that has not come up
@@ -1954,7 +2071,7 @@ public class VanessaTool implements IMcpTool
     static JsonObject testClient(String connectionString, int clientPort, int clientTimeoutSec)
     {
         JsonObject client = new JsonObject();
-        client.addProperty("Name", "AiEdt"); //$NON-NLS-1$ //$NON-NLS-2$
+        client.addProperty("Name", TEST_CLIENT_PROFILE); //$NON-NLS-1$
         client.addProperty("PathToInfobase", connectionString); //$NON-NLS-1$
         client.addProperty("PortTestClient", clientPort); //$NON-NLS-1$
         // Vanessa spells this key with that capital I. Correcting it leaves the key unread.
@@ -1968,6 +2085,38 @@ public class VanessaTool implements IMcpTool
         block.addProperty("testclienttimeout", clientTimeoutSec); //$NON-NLS-1$
         block.add("datatestclients", clients); //$NON-NLS-1$
         return block;
+    }
+
+    /**
+     * The row the start step launches: the same profile as {@code datatestclients}, made current.
+     * <p>
+     * Vanessa 1.2.042.19 reads {@code КлиентыТестирования} by that name
+     * ({@code ПолучитьЗначениеПараметра} matches the key or its upper case, not the English
+     * alias) and requires {@code Имя}, {@code ТипКлиента}, {@code ПутьКИнфобазе},
+     * {@code ДопПараметры} and {@code ИмяКомпьютера}. {@code АктивизироватьСтроку} defaults to
+     * true and sets the current row, which is the row
+     * {@code ЯЗапускаюСценарийОткрытияTestClientИлиПодключаюУжеСуществующий} launches.
+     * {@code ТипКлиента} is stored as given, so it is {@code Тонкий} and not {@code Thin}.
+     * </p>
+     *
+     * @param connectionString the infobase the client opens.
+     * @param clientPort the port the client listens on.
+     * @return one row, ready to be the value of {@code КлиентыТестирования}
+     */
+    static com.google.gson.JsonArray clientTheStartStepActivates(String connectionString,
+        int clientPort)
+    {
+        JsonObject row = new JsonObject();
+        row.addProperty("Имя", TEST_CLIENT_PROFILE); //$NON-NLS-1$
+        row.addProperty("ПутьКИнфобазе", connectionString); //$NON-NLS-1$
+        row.addProperty("ПортЗапускаТестКлиента", clientPort); //$NON-NLS-1$
+        row.addProperty("ДопПараметры", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        row.addProperty("ТипКлиента", "Тонкий"); //$NON-NLS-1$ //$NON-NLS-2$
+        row.addProperty("ИмяКомпьютера", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
+        row.addProperty("АктивизироватьСтроку", true); //$NON-NLS-1$
+        com.google.gson.JsonArray rows = new com.google.gson.JsonArray();
+        rows.add(row);
+        return rows;
     }
 
     /**
@@ -1988,6 +2137,9 @@ public class VanessaTool implements IMcpTool
         // needs; what it can carry is a value that replaces the block with something the start step
         // cannot use. Its port and its deadline are arguments of this tool instead.
         "TestClient", //$NON-NLS-1$
+        // The row the start step launches. A passthrough replacing it would leave the current
+        // row on "Этот клиент" while the answer still said the run opened the project's base.
+        "КлиентыТестирования", //$NON-NLS-1$
         // These come from arguments of this tool. Letting the passthrough set them too would mean
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
@@ -2001,19 +2153,22 @@ public class VanessaTool implements IMcpTool
         "ТаймаутДляАсинхронныхШагов"); //$NON-NLS-1$
 
     /**
-     * The English names Vanessa's name table gives three keys this tool sets, lower-cased.
+     * The English names Vanessa's name table gives keys this tool sets, lower-cased.
      * <p>
      * {@code ТаблицаИменНоваяСтрока} reads {@code useaddin} as
      * {@code ИспользоватьКомпонентуVanessaExt}, {@code useaddinforscreencapture} as
-     * {@code ИспользоватьВнешнююКомпонентуДляСкриншотов}, and {@code timeoutforasynchronoussteps}
-     * as {@code ТаймаутДляАсинхронныхШагов}. They are not keys this tool writes - the document
-     * carries the Russian names - so they do not belong in {@link #OURS_TO_SET}, whose census is
-     * the keys that were written. A passthrough carrying one is merged after those keys and would
-     * raise the wait, or turn the capture off, under a name the answer does not mention.
+     * {@code ИспользоватьВнешнююКомпонентуДляСкриншотов}, {@code timeoutforasynchronoussteps}
+     * as {@code ТаймаутДляАсинхронныхШагов}, and {@code testclienttable} as
+     * {@code КлиентыТестирования}. They are not keys this tool writes - the document carries the
+     * Russian names - so they do not belong in {@link #OURS_TO_SET}, whose census is the keys
+     * that were written. A passthrough carrying one is merged after those keys. The settings
+     * loader then skips {@code клиентытестирования}, so the English name would be dropped and
+     * the current row would stay whatever it was.
      * </p>
      */
     static final java.util.Set<String> OURS_BY_ENGLISH_NAME = lowerCased(
-        "useaddin", "useaddinforscreencapture", "timeoutforasynchronoussteps"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "useaddin", "useaddinforscreencapture", "timeoutforasynchronoussteps", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "testclienttable"); //$NON-NLS-1$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.

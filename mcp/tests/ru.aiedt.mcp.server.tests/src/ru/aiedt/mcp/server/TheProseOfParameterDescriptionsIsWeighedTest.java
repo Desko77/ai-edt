@@ -424,6 +424,18 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * value rebuild_dump_info, the rebuild's wait budget and the update's format override. Together
      * with the twenty-first: 91514.
      * </p>
+     * <p>
+     * And a twenty-third, by 154, for one sentence each on testManager and testClient (77 bytes):
+     * on a list action and on formToOpen an omitted argument is on and false is refused. The
+     * schema is where a client learns that the documented default does not hold on those calls.
+     * Together with the twenty-second: 91668.
+     * </p>
+     * <p>
+     * And a twenty-fourth, by 169, for {@code smallScalePercent} on mxl_workshop: the argument
+     * itself (149 bytes) and the name appended to that facade's operation list. The argument is
+     * the only place a client learns what the number means. Together with the twenty-third:
+     * 91837.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91514;
+    private static final int DOCUMENT_PROSE = 91837;
 }
