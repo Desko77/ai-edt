@@ -6,7 +6,9 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -460,27 +462,31 @@ public final class ToolCallScope
     }
 
     /**
-     * A background run this call dispatched whose work has not left the executor.
+     * The background runs this call dispatched whose work has not left the executor.
      * <p>
-     * The road reads it from the call's {@code finally} when the tool threw after
-     * {@link PendingWorkRegistry#getOrStart}: the registry notes the entry here before returning
-     * to the tool, so the permit can follow that work instead of returning with the throw.
+     * The road reads them when the tool threw after {@link PendingWorkRegistry#getOrStart}: the
+     * registry notes each entry here before returning to the tool, so the permit can follow that
+     * work instead of returning with the throw. Liveness is the entry's own exit, not
+     * {@link PendingWorkRegistry.PendingEntry#isDone()}: a cancel or a detach completes the
+     * tracking future while the body continues. Every such run is returned, in the order this
+     * call started them, so each one can hold a share until it leaves.
      * </p>
      *
-     * @return one such entry, or {@code null} when this call started none that still runs
+     * @return the entries still inside; empty when this call started none that still run
      */
-    PendingWorkRegistry.PendingEntry workStillRunningHere()
+    List<PendingWorkRegistry.PendingEntry> workStillRunningHere()
     {
+        List<PendingWorkRegistry.PendingEntry> live = new ArrayList<>();
         synchronized (startedEntries)
         {
             for (PendingWorkRegistry.PendingEntry entry : startedEntries.values())
             {
-                if (entry != null && !entry.isDone())
+                if (entry != null && !entry.workHasLeft())
                 {
-                    return entry;
+                    live.add(entry);
                 }
             }
-            return null;
         }
+        return live;
     }
 }
