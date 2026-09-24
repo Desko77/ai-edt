@@ -93,7 +93,16 @@ public class ConfigIoFacadeTool implements IMcpTool
         {
             return null;
         }
-        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        String normalized = operation.trim().toLowerCase(Locale.ROOT);
+        if ("export_infobase_objects".equals(normalized)) //$NON-NLS-1$
+        {
+            // The operation has no delegate to name: the facade runs it itself, through a
+            // Designer against the infobase. Its own name is the answer, so the road weighs the
+            // call by it (HeavyTools names it). DESCRIBED cannot hold it - that map is the
+            // delegate catalog the parameter help reads, and this case dispatches to none.
+            return "export_infobase_objects"; //$NON-NLS-1$
+        }
+        Supplier<IMcpTool> delegate = DESCRIBED.get(normalized);
         return delegate == null ? null : delegate.get().getName();
     }
 

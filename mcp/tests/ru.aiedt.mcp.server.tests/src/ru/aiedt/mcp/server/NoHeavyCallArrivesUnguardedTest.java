@@ -63,7 +63,7 @@ public class NoHeavyCallArrivesUnguardedTest
             "find_rls_violations", "sensitive_data_scan"}); //$NON-NLS-1$ //$NON-NLS-2$
         ROUTES_TO_CHECK.put(new ConfigIoFacadeTool(), new String[] {"export_object", //$NON-NLS-1$
             "export_configuration_to_xml", "import_configuration_from_xml", //$NON-NLS-1$ //$NON-NLS-2$
-            "import_configuration_from_binary"}); //$NON-NLS-1$
+            "import_configuration_from_binary", "export_infobase_objects"}); //$NON-NLS-1$ //$NON-NLS-2$
         ROUTES_TO_CHECK.put(new DiagnosticsFacadeTool(), new String[] {"clean_project", "revalidate_objects", //$NON-NLS-1$ //$NON-NLS-2$
             "validate_for_export"}); //$NON-NLS-1$
         ROUTES_TO_CHECK.put(new InfobaseAdminFacadeTool(), new String[] {"update_database"}); //$NON-NLS-1$
