@@ -19,9 +19,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -33,6 +36,8 @@ import org.junit.Test;
 import ru.aiedt.mcp.server.support.DumpInfoRebuilder.Abandoned;
 import ru.aiedt.mcp.server.support.InfobaseObjectsExporter.ExportIo;
 import ru.aiedt.mcp.server.support.InfobaseObjectsExporter.Outcome;
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
 
 /**
  * The infobase-objects export runs its steps in an order, and every failure of that order leaves
@@ -670,6 +675,74 @@ public class TheExportRunsItsStepsInOrderTest
         finally
         {
             InfobaseObjectsExporter.beforeHoldResolution = null;
+        }
+    }
+
+    /**
+     * The heavy permit a call took is held until the abandoned Designer process has actually
+     * returned, not only until the export's work body has answered. The body's exit is what the
+     * registry uses to return a transferred permit; the deferral the hold branch registers has to
+     * hold a share of the same ticket, or the next call acquires the slot and starts a second
+     * Designer past the limit while this one still runs.
+     */
+    @Test
+    public void anAbandonedRunHoldsTheHeavyPermitUntilTheProcessReturns()
+    {
+        StandIn io = new StandIn();
+        List<Runnable> registered = new ArrayList<>();
+        io.designer = (dir, listFile) -> {
+            writeFiles(dir, io.writtenFiles);
+            throw new Abandoned("the Designer export did not finish within 600s", true, //$NON-NLS-1$
+                registered::add);
+        };
+        McpToolCatalog catalog = McpToolCatalog.getInstance();
+        catalog.register(new ConfigIoFacadeTool());
+        Semaphore permits = new Semaphore(1);
+        ToolRoad road = new ToolRoad(permits);
+        ToolRoad.Admission admission = road.admit(ConfigIoFacadeTool.NAME,
+            Map.of("operation", "export_infobase_objects")); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            assertNull("the export is admitted: " + admission.refusal(), admission.refusal()); //$NON-NLS-1$
+            // What the road does on a Pending answer: the permit leaves with the entry and comes
+            // back at the body's own exit, never on the tracking future's completion.
+            PendingWorkRegistry.PendingEntry entry = new PendingWorkRegistry.PendingEntry(
+                "eio-permit-test"); //$NON-NLS-1$
+            entry.future = new CompletableFuture<>();
+            admission.ticket().transferTo(entry);
+            ToolCallScope scope = ToolCallScope.create(null);
+            scope.adoptTicket(admission.ticket());
+            ToolCallScope.enter(scope);
+            try
+            {
+                Outcome outcome = InfobaseObjectsExporter.performExport(io, addresses(),
+                    outputPath, () -> false, 0L);
+
+                assertFalse(outcome.ok);
+                assertTrue("the grace answered left-behind", outcome.lockHeldForProcess); //$NON-NLS-1$
+                assertEquals("the settle and the deferral both registered", 2, registered.size()); //$NON-NLS-1$
+
+                // The registry's body exit: what returns a permit transferred to the entry.
+                entry.workExited();
+                assertTrue("the permit is held while the abandoned process still runs", //$NON-NLS-1$
+                    admission.ticket().holdsPermit());
+                assertEquals("the limiter still counts the abandoned Designer", 0, //$NON-NLS-1$
+                    permits.availablePermits());
+
+                // The process returns: the deferral runs, and the share it held goes with it.
+                registered.get(1).run();
+                assertFalse("the permit returns once the process has", //$NON-NLS-1$
+                    admission.ticket().holdsPermit());
+                assertEquals(1, permits.availablePermits());
+            }
+            finally
+            {
+                ToolCallScope.exit();
+            }
+        }
+        finally
+        {
+            catalog.unregister(ConfigIoFacadeTool.NAME);
         }
     }
 

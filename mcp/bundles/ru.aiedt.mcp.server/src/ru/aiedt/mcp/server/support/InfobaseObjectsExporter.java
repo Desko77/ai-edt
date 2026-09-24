@@ -794,7 +794,20 @@ public final class InfobaseObjectsExporter
             {
                 Path left = serviceDir;
                 final boolean reconnectOwed = handshake.released;
-                ((Abandoned)handshake.workError).whenFinished(() -> {
+                // The permit names a Designer slot, and this run's Designer is still alive past
+                // the answer. The body's own exit - about to happen, and what returns a permit
+                // transferred to the entry - must not free the slot while the process runs, so
+                // the deferral takes a share of the call's ticket and returns it only once the
+                // process has. Without the share, the next call acquires the slot and starts a
+                // second Designer past the concurrency limit while this one still runs.
+                ToolRoad.Ticket permitShare = shareOfTheCurrentCall();
+                boolean deferred = ((Abandoned)handshake.workError).whenFinished(() -> {
+                    // The task runs once the process returned - the moment the slot is genuinely
+                    // free. Released first, so nothing the cleanup throws can strand the permit.
+                    if (permitShare != null)
+                    {
+                        permitShare.release();
+                    }
                     if (left != null)
                     {
                         io.deleteDirectory(left);
@@ -812,10 +825,33 @@ public final class InfobaseObjectsExporter
                     }
                     io.releaseLock();
                 });
+                if (!deferred && permitShare != null)
+                {
+                    // A stand-in with nothing to wait for drops the task; the share returns here
+                    // rather than outliving a deferral that will never run.
+                    permitShare.release();
+                }
             }
             out.elapsedMs = System.currentTimeMillis() - startedAt;
         }
         return out;
+    }
+
+    /**
+     * A share of the heavy-permit ticket the call this export runs under holds, or {@code null}
+     * when no call on this thread holds one.
+     * <p>
+     * The share is what deferred work outlives the export's body with: the permit returns when
+     * the last holder departs, so a share taken for the deferral keeps the Designer slot counted
+     * until the deferred task releases it - past the body's own exit.
+     * </p>
+     *
+     * @return the share, or {@code null} when there is no permit to share
+     */
+    private static ToolRoad.Ticket shareOfTheCurrentCall()
+    {
+        ToolCallScope scope = ToolCallScope.current();
+        return scope != null && scope.holdsHeavyPermit() ? scope.ticket().share() : null;
     }
 
     /**
