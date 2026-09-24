@@ -108,9 +108,8 @@ public class VanessaTool implements IMcpTool
             + "or connectionString to name another. Or compose the action right here: listKind " //$NON-NLS-1$
             + "with listName opens the list, column with columnValue goes to the row, buttonTitle " //$NON-NLS-1$
             + "or buttonName presses the form's button, and the window it opens is waited for " //$NON-NLS-1$
-            + "(windowWaitSeconds). The frame is a screenshot of the whole screen taken after " //$NON-NLS-1$
-            + "the test client's window is brought to the front, so that window is what the " //$NON-NLS-1$
-            + "screen shows. " //$NON-NLS-1$
+            + "(windowWaitSeconds). The frame is the top window of the test client, saved by " //$NON-NLS-1$
+            + "the VanessaExt add-in, so it shows that window whatever covers it. " //$NON-NLS-1$
             + "On a list action and on formToOpen, testManager and testClient are turned on when " //$NON-NLS-1$
             + "left out, and false is refused: the start step then activates the client that " //$NON-NLS-1$
             + "opens the infobase of the run. " //$NON-NLS-1$
@@ -140,7 +139,8 @@ public class VanessaTool implements IMcpTool
                 "The form to open and photograph, in the words the opening step expects - a " //$NON-NLS-1$
                     + "common form's name, a catalog's FQN, whatever the step takes. The scenario " //$NON-NLS-1$
                     + "is composed from it, so neither featurePath nor scenarioText is passed " //$NON-NLS-1$
-                    + "with it. The frame is the whole screen with the test client's window in front.") //$NON-NLS-1$
+                    + "with it. The frame is the top window of the test client, drawn into the " //$NON-NLS-1$
+                    + "file by the add-in, whatever covers that window.") //$NON-NLS-1$
             .stringProperty("openStep", //$NON-NLS-1$
                 "The step that opens the form, with {form} where the name goes. Defaults to " //$NON-NLS-1$
                     + "opening a common form. A list form, an object form and an extension's " //$NON-NLS-1$
@@ -535,8 +535,9 @@ public class VanessaTool implements IMcpTool
         final File settledExe = exeFile;
         final File settledEpf = epfFile;
         final File settledFeature = featurePath;
-        // The keys each composing branch sets for itself: the screenshot pair wherever the tag
-        // stands, and the asynchronous-step ceiling on the branch whose step carries a wait.
+        // The keys each composing branch sets for itself: the capture keys wherever the
+        // composed scenario saves its frame, and the asynchronous-step ceiling on the branch
+        // whose step carries a wait.
         final JsonObject settledOurs = listAction != null ? listAction.ourKeys()
             : (hasForm ? screenshotKeys() : null);
         final JsonObject settledSought = listAction != null ? listAction.sought() : null;
@@ -681,7 +682,7 @@ public class VanessaTool implements IMcpTool
                 // Recorded before the write, not after: a write that throws halfway leaves a
                 // partial scenario, and nothing would be tracking it to remove.
                 composedFile = playing;
-                writeUtf8Bom(playing, composedScenario);
+                writeUtf8Bom(playing, withTheFramePath(composedScenario, shotsDir));
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
@@ -1032,11 +1033,12 @@ public class VanessaTool implements IMcpTool
     /**
      * A scenario that opens one form and has it photographed.
      * <p>
-     * The snapshot is not a step. Vanessa takes one before and after the step that follows the
-     * {@code @screenshot} tag, writing them where {@code КаталогOutputСкриншоты} points - which
-     * this tool already sets for every run, and which the report reader already groups by step.
-     * The tag photographs the whole screen, so the lines in {@link #frameAfterTheAction()} bring
-     * the test client's window to the front first and hold it there for both frames.
+     * The frame is saved by the step {@code И я сохраняю скриншот}, written by
+     * {@link #frameAfterTheAction()}, into the run's screenshots directory - where
+     * {@code КаталогOutputСкриншоты} points, which this tool already sets for every run, and
+     * whose images the report reader already hands back. VanessaExt draws the test client's top
+     * window into the file itself, so the frame is that window and not the screen, whatever
+     * covers it.
      * </p>
      * <p>
      * Both step wordings are arguments with a default rather than text built into this file. They
@@ -1185,10 +1187,10 @@ public class VanessaTool implements IMcpTool
     /**
      * Why the capture cannot be switched off on the list action, or <code>null</code> when it is on.
      * <p>
-     * The frame of the window the button opened is the point of the call, and the frame is taken
-     * by the {@code @screenshot} tag - which captures only while the run's screenshots are on. A
-     * caller switching them off would be answered with an empty screenshots list and no word about
-     * why, which reads as a capture that failed.
+     * The frame of the window the button opened is the point of the call, and the run's own
+     * captures are what photograph a step that failed on the way to it. A caller switching them
+     * off would be answered with a failure no picture was taken of - a run that looks fine until
+     * the report says otherwise.
      * </p>
      *
      * @param screenshots whether the call asked for screenshots.
@@ -1200,10 +1202,10 @@ public class VanessaTool implements IMcpTool
         {
             return null;
         }
-        return "screenshots=false leaves nothing for the @screenshot tag to capture with: the " //$NON-NLS-1$
-            + "step after the tag is photographed only while the run's screenshots are on. Leave " //$NON-NLS-1$
-            + "the argument out or pass true - the frame, taken with the window the button opened " //$NON-NLS-1$
-            + "in front, is the point of this call."; //$NON-NLS-1$
+        return "screenshots=false leaves a failing step photographed by nothing: the frame " //$NON-NLS-1$
+            + "after the action would be the only image the run writes, and a failure would be " //$NON-NLS-1$
+            + "reported without a picture of what was on screen. Leave the argument out or pass " //$NON-NLS-1$
+            + "true - the frame of the window the button opened is the point of this call."; //$NON-NLS-1$
     }
 
     /**
@@ -1293,22 +1295,22 @@ public class VanessaTool implements IMcpTool
      * Vanessa 1.2.042.19, the choice list on the screenshots page
      * ({@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form.xml}): 0 is the whole screen,
      * 1 is the current test client window, 2 is every window of the test client. A failure
-     * screenshot reads this number off the settings. The {@code @screenshot} tag does not: it
-     * passes 0, so the frames that tag takes stay a capture of the whole screen.
+     * screenshot reads this number off the settings, and so does the frame-saving step: it
+     * passes no capture method of its own, so the frame the composed scenario saves is the test
+     * client's top window rather than the screen.
      * </p>
      */
     static final int CLIENT_WINDOW = 1;
 
     /**
-     * The two keys without which the {@code @screenshot} tag captures nothing, and the capture
-     * method a failure screenshot honors.
+     * The keys that decide what the frame-saving step captures.
      * <p>
-     * Vanessa photographs the step that follows the tag only when its add-in is attached or an
-     * external command is named, and a command would name a program this tool has no reason to
-     * assume is installed on the machine. The add-in pair is what remains, and it is written on
-     * every branch that composes a scenario carrying the tag. {@link #CLIENT_WINDOW} is written
-     * with them: a failure screenshot, which does not pass its own method, then photographs the
-     * test client's current window rather than the screen. The tag's own frames do not read it.
+     * With the add-in pair written, Vanessa saves the frame through VanessaExt, and the step
+     * reads {@link #CLIENT_WINDOW} off the settings as its capture method: the frame is the test
+     * client's top window rather than the screen, whatever covers it. A screenshot command would
+     * name a program this tool has no reason to assume is installed on the machine, so the add-in
+     * is what these branches rely on. The keys are written on every branch that composes a
+     * scenario carrying the frame step, and a failure screenshot honors the same method.
      * </p>
      *
      * @return the keys, ready to be merged into the run's document
@@ -1323,25 +1325,52 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The lines that photograph the window the action opened, once it is open.
+     * The line that saves the frame of the window the action opened, once it is open.
      * <p>
-     * Vanessa 1.2.042.19 takes the {@code @screenshot} frames with
-     * {@code ПолучитьСнимокЭкрана}: {@code СнятьСкриншотШагаЕслиЭтоНеобходимо} passes 0, and 0
-     * is the whole screen, including whatever window is in front and the taskbar. The step
-     * before the tag is Vanessa's own
-     * {@code И я активизирую окно текущего клиента тестирования}, which brings the test
-     * client's main window forward through VanessaExt and does not return until that call has.
-     * The step the tag photographs is {@code И Пауза 1}, so both frames - before that step and
-     * after it - are taken while the client stays in front. The frame remains a screen capture.
+     * Vanessa's own step {@code И я сохраняю скриншот} (1.2.042.19,
+     * {@code features/Libraries/РаботаСФайлами/РаботаСФайлами/Forms/Форма/Ext/Form/Module.bsl}):
+     * the file name carries an extension and the file's directory has to exist, which is why the
+     * run creates its screenshots directory before the scenario is written. The step passes no
+     * capture method of its own, so VanessaExt reads {@link #CLIENT_WINDOW} off the settings and
+     * draws the test client's top window into the file itself - the frame is that window and not
+     * the screen, whatever covers it. The path stands here as {@link #FRAME_PATH_TOKEN}, settled
+     * by {@link #withTheFramePath(String, File)} once the run's directory exists.
      * </p>
      *
-     * @return the three lines, each already indented and terminated
+     * @return the line, already indented and terminated
      */
     static String frameAfterTheAction()
     {
-        return "    И я активизирую окно текущего клиента тестирования\n" //$NON-NLS-1$
-            + "    @screenshot\n" //$NON-NLS-1$
-            + "    И Пауза 1\n"; //$NON-NLS-1$
+        return "    И я сохраняю скриншот \"" + FRAME_PATH_TOKEN + "\"\n"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** Where the frame file's path stands in a composed scenario until the run's directory exists. */
+    static final String FRAME_PATH_TOKEN = "$AI-EDT-FRAME-PATH$"; //$NON-NLS-1$
+
+    /** The frame file's name inside the run's screenshots directory. */
+    static final String FRAME_FILE_NAME = "frame-after-action.png"; //$NON-NLS-1$
+
+    /**
+     * Puts the run's frame file where the composed scenario left the placeholder.
+     * <p>
+     * The scenario is composed before the run's directory exists, and the step takes an absolute
+     * path whose directory has to be there. The whole path lands inside the step's own quotes, so
+     * a directory name with spaces or Cyrillic in it stays one value of one step. A scenario
+     * without the placeholder - one the caller wrote - is passed through unchanged.
+     * </p>
+     *
+     * @param composedScenario the scenario text, or <code>null</code>.
+     * @param shotsDir the run's screenshots directory, already created.
+     * @return the scenario text with the frame path settled, or the text unchanged
+     */
+    static String withTheFramePath(String composedScenario, File shotsDir)
+    {
+        if (composedScenario == null || !composedScenario.contains(FRAME_PATH_TOKEN))
+        {
+            return composedScenario;
+        }
+        return composedScenario.replace(FRAME_PATH_TOKEN,
+            new File(shotsDir, FRAME_FILE_NAME).getAbsolutePath());
     }
 
     /**
@@ -1726,10 +1755,10 @@ public class VanessaTool implements IMcpTool
          * The scenario the arguments compose.
          * <p>
          * Every step is the wording of Vanessa's own step library, verbatim; what this method adds
-         * is the order and the tag. The row is demanded to be the only one before the move unless
-         * {@code whenSeveral=first} said otherwise, the button is pressed by name or by title, and
-         * the window is waited for, and {@link #frameAfterTheAction()} then brings the test
-         * client's window forward and photographs the screen while it stays there.
+         * is the order and the frame file. The row is demanded to be the only one before the move
+         * unless {@code whenSeveral=first} said otherwise, the button is pressed by name or by
+         * title, and the window is waited for, and {@link #frameAfterTheAction()} then saves the
+         * frame of the window it opened into the run's screenshots directory.
          * </p>
          *
          * @param startStep how to get a client, or <code>null</code> for {@link #START_STEP}.
@@ -2201,8 +2230,8 @@ public class VanessaTool implements IMcpTool
      * @param clientTimeoutSec the whole budget of the run.
      * @param withTestClient whether to name a test client for the start step to launch.
      * @param extra what the caller added to the Vanessa document, merged last.
-     * @param ours the keys this tool sets on the branch the call took - the screenshot pair
-     *            wherever it composes a scenario with the {@code @screenshot} tag, and the
+     * @param ours the keys this tool sets on the branch the call took - the capture keys
+     *            wherever it composes a scenario that saves a frame, and the
      *            asynchronous-step ceiling on the branch whose step carries a wait - or
      *            <code>null</code> on a branch that composes none.
      * @return the document, ready to be written
