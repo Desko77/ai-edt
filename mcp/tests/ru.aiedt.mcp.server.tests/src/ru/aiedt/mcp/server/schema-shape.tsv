@@ -98,7 +98,7 @@ project_metrics	required=[projectName] type="object" format{type="string"} inclu
 read_event_log	required=[projectName] type="object" applicationId{type="string"} event{type="string"} from{type="string"} limit{type="integer"} projectName{type="string"} severity{type="string"} to{type="string"} user{type="string"}
 read_method_source	required=[methodName,modulePath,projectName] type="object" includeDoc{type="boolean"} methodName{type="string"} modulePath{type="string"} projectName{type="string"}
 read_module_source	required=[modulePath,projectName] type="object" endLine{type="integer"} modulePath{type="string"} projectName{type="string"} startLine{type="integer"}
-register_infobase	required=[projectName] type="object" connectionString{type="string"} makeDefault{type="boolean"} name{type="string"} path{type="string"} projectName{type="string"}
+register_infobase	required=[projectName] type="object" accessMode{type="string"} connectionString{type="string"} makeDefault{type="boolean"} name{type="string"} password{type="string"} path{type="string"} projectName{type="string"} userName{type="string"}
 remove_breakpoint	required=[] type="object" all{type="boolean"} allOfModule{type="boolean"} breakpointId{type="integer"} breakpointIds{type="string"} lineNumber{type="integer"} module{type="string"} projectName{type="string"}
 rename_metadata_object	required=[newName,objectFqn,projectName] type="object" confirm{type="boolean"} disableIndices{type="string"} maxResults{type="integer"} newName{type="string"} objectFqn{type="string"} projectName{type="string"} scanLeftovers{type="boolean"}
 restart_edt	required=[] type="object" action{type="string"} delayMs{type="integer"}
