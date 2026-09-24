@@ -24,6 +24,7 @@ import java.util.Map;
 import org.osgi.service.prefs.BackingStoreException;
 
 import ru.aiedt.mcp.server.settings.McpAuth;
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 
 /**
  * A real endpoint on a free port, for tests that need the wire rather than a method call.
@@ -299,6 +300,11 @@ final class LiveServer
         }
     }
 
+    /**
+     * Stops the server and puts back what {@link #start()} changed. Starting registered every tool
+     * of the server in the JVM-wide catalogue and stopping leaves them there, so the catalogue is
+     * cleared: a test that runs afterwards finds it as a bare test JVM holds it.
+     */
     @Override
     public void close()
     {
@@ -308,6 +314,7 @@ final class LiveServer
         }
         finally
         {
+            McpToolCatalog.getInstance().clear();
             McpAuth.useStore(null);
             McpAuth.forgetPublished();
             restoreRegistry(previousRegistryDir);

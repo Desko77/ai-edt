@@ -11,11 +11,19 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 
 /**
  * Covers the preset-gated deployment operations of {@code extension_workshop} ({@code install_extension},
@@ -29,15 +37,42 @@ import com.google.gson.JsonParser;
  * </p>
  * <p>
  * {@code gateOrNull} asks {@code McpToolCatalog.isToolEnabled} = {@code tools.containsKey(name) && !disabled}.
- * A bare JUnit run never registers a tool into the JVM-wide catalog, so containsKey is always false and the
- * gate deterministically trips here - which is why these assertions see the disabled branch. The enabled
- * route and a genuine user-disabled preset are live-verify items. {@code execute} is called directly: it
- * reaches the gated switch cases without touching {@code PlatformUI} first, and a tripped gate returns
- * before the standalone tool (which would need EDT) is ever constructed.
+ * The four names are switched off in the tool settings before each test and the settings are put back
+ * after, so the gate trips whatever the JVM-wide catalogue holds at that moment. The enabled route is a
+ * live-verify item. {@code execute} is called directly: it reaches the gated switch cases without
+ * touching {@code PlatformUI} first, and a tripped gate returns before the standalone tool (which would
+ * need EDT) is ever constructed.
  * </p>
  */
 public class ExtensionWorkshopToolTest
 {
+    private static final Set<String> GATED = Set.of("install_extension", "uninstall_extension", //$NON-NLS-1$ //$NON-NLS-2$
+        "list_extension", "export_extension"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    private IPreferenceStore store;
+
+    private String presetBefore;
+
+    private String disabledBefore;
+
+    /** Switches the four gated names off, remembering the settings they replace. */
+    @Before
+    public void theGatedOperationsAreSwitchedOff()
+    {
+        store = Activator.getDefault().getPreferenceStore();
+        presetBefore = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        disabledBefore = store.getString(PrefKeys.PREF_DISABLED_TOOLS);
+        ToolSettingsStore.getInstance().setDisabledTools(GATED);
+    }
+
+    /** Puts the tool settings back as they were before the test. */
+    @After
+    public void theSettingsGoBack()
+    {
+        store.setValue(PrefKeys.PREF_DISABLED_TOOLS, disabledBefore);
+        store.setValue(PrefKeys.PREF_TOOL_PRESET, presetBefore);
+    }
+
     private static String run(String op)
     {
         Map<String, String> params = new HashMap<>();
