@@ -57,7 +57,9 @@ import ru.aiedt.mcp.server.toolkit.ops.NaparnikTool.ProjectDoor;
  * each scripted call. An empty allowed set does not lift the filter: nothing from the published
  * list stays defined. Cancelling the token completes the future normally, with the calls that
  * already started, and does not run the next one. The tool's own timeout test records the wait it
- * asked for and returns at once, so the suite does not sleep for the thirty-second floor.
+ * asked for and returns at once, so the suite does not sleep for the thirty-second floor. The
+ * answer text is what {@code answerText} holds; blanked, it plays the empty answer the service
+ * was measured to return.
  * </p>
  */
 public class NaparnikAskTest
@@ -738,8 +740,49 @@ public class NaparnikAskTest
         assertEquals("conv-created", doc.get("conversationId").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(2, doc.get("assistantMessages").getAsInt()); //$NON-NLS-1$
         assertEquals("the answer", doc.get("answer").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(doc.has("answerEmpty")); //$NON-NLS-1$
         assertFalse(doc.has("reasoning")); //$NON-NLS-1$
         assertFalse(doc.toString().contains("secret-reasoning")); //$NON-NLS-1$
+    }
+
+    /**
+     * A completed question that carried neither answer text nor a tool call is the empty answer
+     * the service was measured to return, and a refusal - not a success with nothing in it. The
+     * conversation ids stay in the document so the caller can put the question again.
+     */
+    @Test
+    public void anEmptyAnswerWithoutToolCallsIsRefusedAndKeepsTheConversation()
+    {
+        host.answerText = ""; //$NON-NLS-1$
+        host.script = List.of();
+
+        JsonObject doc = ask("conversationId", "conv-1", "replyTo", "msg-1"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        String error = doc.get("error").getAsString(); //$NON-NLS-1$
+        assertTrue(error, error.contains("empty answer")); //$NON-NLS-1$
+        assertTrue(error, error.contains("conversationId")); //$NON-NLS-1$
+        assertEquals("conv-1", doc.get("conversationId").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("msg-1", doc.get("replyTo").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(List.of(), strings(doc, "toolsCalled")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Tool calls ran and the service still said nothing: that is an answer, not a refusal, and
+     * {@code answerEmpty} says the text is absent rather than trimmed away.
+     */
+    @Test
+    public void anEmptyAnswerWithToolCallsSucceedsAndFlagsTheMissingText()
+    {
+        host.answerText = "  "; //$NON-NLS-1$
+        host.script = List.of("Read"); //$NON-NLS-1$
+
+        JsonObject doc = ask();
+
+        assertTrue(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(doc.get("answerEmpty").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(List.of("Read"), strings(doc, "toolsCalled")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("conv-created", doc.get("conversationId").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Test
@@ -1044,6 +1087,9 @@ public class NaparnikAskTest
 
         private List<String> script = List.of();
 
+        /** What {@code text()} answers; a test blanks it to play the measured empty answer. */
+        private volatile String answerText = "the answer"; //$NON-NLS-1$
+
         private Consumer<String> beforeTool;
 
         private volatile boolean stall;
@@ -1303,7 +1349,7 @@ public class NaparnikAskTest
             @Override
             public String text()
             {
-                return "the answer"; //$NON-NLS-1$
+                return answerText;
             }
 
             @Override
