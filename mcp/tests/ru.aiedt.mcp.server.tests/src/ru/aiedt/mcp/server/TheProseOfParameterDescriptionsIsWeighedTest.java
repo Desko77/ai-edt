@@ -446,6 +446,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * itself, and a client that builds its call from the schema has to see that it can pass
      * them there. Together with the twenty-fourth: 91897.
      * </p>
+     * <p>
+     * And a twenty-sixth, by 20, for the formToOpen sentence that says the frame is the whole
+     * screen with the test client's window in front. The tag photographs the screen; the sentence
+     * is where a client reading that argument learns it. Together with the twenty-fifth: 91917.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91897;
+    private static final int DOCUMENT_PROSE = 91917;
 }
