@@ -11,10 +11,13 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.Optional;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
@@ -25,6 +28,8 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.e1c.g5.dt.applications.IApplication;
+import com.e1c.g5.dt.applications.IApplicationManager;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -105,7 +110,7 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
     @Test
     public void theWorkspaceStoreIsListedAndReseeded() throws Exception
     {
-        SyncControlTool tool = new SyncControlTool();
+        SyncControlTool tool = new ProbeTool();
         JsonObject status = JsonParser.parseString(tool.execute(Map.of("operation", "status", "projectName", PROJECT))) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .getAsJsonObject();
         assertTrue(status.toString(), status.get("success").getAsBoolean()); //$NON-NLS-1$
@@ -132,6 +137,34 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
         assertEquals(2, after.getAsJsonObject("matchedBaseline").get("signatureCount").getAsInt()); //$NON-NLS-1$
         assertTrue(new String(rewritten, 0, 5, StandardCharsets.ISO_8859_1).endsWith("1.0")); //$NON-NLS-1$
         assertTrue(new String(rewritten, StandardCharsets.ISO_8859_1).contains("0f7a0c5e-1c1d-4f3e-9a1e-4b2c8d9e0f11")); //$NON-NLS-1$
+    }
+
+    /**
+     * The tool with the project's applications answered as none, which is what this test is about:
+     * the store on disk decides the prediction, and the answer must not change with whether the
+     * runtime running the test happens to offer an application manager.
+     */
+    private static final class ProbeTool extends SyncControlTool
+    {
+        @Override
+        IApplicationManager applicationManager()
+        {
+            return (IApplicationManager)Proxy.newProxyInstance(
+                TheSyncStoreIsReadWhereEdtKeepsItTest.class.getClassLoader(),
+                new Class<?>[] { IApplicationManager.class },
+                (proxy, method, args) ->
+                {
+                    if ("getApplications".equals(method.getName())) //$NON-NLS-1$
+                    {
+                        return new ArrayList<IApplication>();
+                    }
+                    if ("getDefaultApplication".equals(method.getName())) //$NON-NLS-1$
+                    {
+                        return Optional.empty();
+                    }
+                    return null;
+                });
+        }
     }
 
     private static JsonObject baselineOf(JsonArray baselines)

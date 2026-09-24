@@ -406,6 +406,11 @@ public class SyncControlTool implements IMcpTool
             }
         }
 
+        // The store scan says a matching baseline exists, but not which binding owns it: a binding
+        // of this project with no baseline of its own is carried whole however well the scan reads.
+        // With the bindings unread that question stays open, so the shared prediction cannot be
+        // INCREMENTAL - it answers UNKNOWN instead of promising an update nobody has checked.
+        boolean bindingsUnread = bindings == null;
         String summary;
         if (withoutBaseline > 0 || mismatched > 0)
         {
@@ -437,7 +442,20 @@ public class SyncControlTool implements IMcpTool
             }
             summary = text.toString();
         }
-        else if (matched != null)
+        else if (matched == null)
+        {
+            summary = noMatchingBaselineText(liveUuid, all.size());
+        }
+        else if (bindingsUnread)
+        {
+            summary = "A baseline matching this configuration UUID exists (infobase " //$NON-NLS-1$
+                + matched.get("infobaseUuid") + ", " + matched.get("signatureCount") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " signatures), but the project's applications were not read in this runtime, so which " //$NON-NLS-1$
+                + "binding that baseline belongs to is unknown. The prediction covers the sync store only - a " //$NON-NLS-1$
+                + "binding of this project with no baseline of its own would still make its next update a FULL " //$NON-NLS-1$
+                + "configuration reload. See bindingsUnavailable."; //$NON-NLS-1$
+        }
+        else
         {
             summary = "A baseline matching this configuration UUID exists (infobase " //$NON-NLS-1$
                 + matched.get("infobaseUuid") + ", " + matched.get("signatureCount") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -446,12 +464,10 @@ public class SyncControlTool implements IMcpTool
                     ? " All " + bindings.size() + " application(s) of this project hold a baseline of their own." //$NON-NLS-1$ //$NON-NLS-2$
                     : ""); //$NON-NLS-1$
         }
-        else
-        {
-            summary = noMatchingBaselineText(liveUuid, all.size());
-        }
-        res.put("prediction", willBeFull ? "FULL" : "INCREMENTAL"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        res.put("willTriggerFullReload", willBeFull); //$NON-NLS-1$
+        res.put("prediction", willBeFull ? "FULL" : bindingsUnread ? "UNKNOWN" : "INCREMENTAL"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        // Unread bindings are on the pessimistic side of the boolean too: "no full reload" is a
+        // promise only a complete reading can make.
+        res.put("willTriggerFullReload", willBeFull || bindingsUnread); //$NON-NLS-1$
         res.put("summary", summary); //$NON-NLS-1$
         return res.toJson();
     }
@@ -471,6 +487,25 @@ public class SyncControlTool implements IMcpTool
             + "FULL configuration reload. Causes: no prior successful EDT sync for this infobase, the sync " //$NON-NLS-1$
             + "store was wiped (OneDrive/manual cleanup or a crashed sync flow), or the configuration " //$NON-NLS-1$
             + "identity differs (e.g. the infobase was changed via Designer/repository outside EDT)."; //$NON-NLS-1$
+    }
+
+    /**
+     * What a baseline re-read after a call records, as a phrase a refusal or a message can carry.
+     *
+     * @param after the baseline as re-read after the call; {@code null} when none could be read
+     * @param idx the index path the baseline was read from
+     * @return the recorded configuration id, that none is recorded, or that no baseline was
+     *         readable at all
+     */
+    private static String recordedIdText(IndexInfo after, Path idx)
+    {
+        if (after == null)
+        {
+            return "no readable baseline (no index.idx at " + idx + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return after.configurationUuid.isEmpty()
+            ? "no configuration id" //$NON-NLS-1$
+            : "configuration id " + after.configurationUuid; //$NON-NLS-1$
     }
 
     /**
@@ -1611,6 +1646,12 @@ public class SyncControlTool implements IMcpTool
      * onto the fresh baseline afterwards through the same delegate
      * ({@code forceConfigurationUUID(InfobaseReference, IProject, UUID)}). An infobase that is NOT among the
      * project's applications is refused with the list of the ones that are.
+     *
+     * <p>A baseline that exists and records an EMPTY configuration id is treated as that same fresh case
+     * rather than as one belonging to another configuration: it is the state a failed stamp leaves behind,
+     * and refusing it would turn down the only call that repairs it. Every mark re-stamps such a baseline.
+     * A stamp that fails is answered as a failed call carrying what the baseline now records and the repair
+     * - the baseline itself exists by then and cannot be un-written.</p>
      */
     private String doMarkSynchronized(IProject project, Map<String, String> params)
     {
@@ -1661,14 +1702,24 @@ public class SyncControlTool implements IMcpTool
         // nothing to re-sign, and forceEdtSynchronization is what creates one. An infobase that is
         // NOT an application of this project is a different answer - nothing can be stamped for a
         // binding that does not exist, and the caller needs the list of the ones that do.
+        //
+        // A baseline that exists but records NO configuration id is the same case, not the
+        // "different configuration" one: that is the state forceEdtSynchronization leaves behind
+        // when a stamp failed, and reading it as a foreign configuration would refuse the only
+        // call that can repair it. Such a baseline is stamped again on every mark_synchronized.
         boolean freshBinding = false;
-        if (before == null)
+        if (before == null || before.configurationUuid.isEmpty())
         {
             List<String> applications = bindingUuids(project, liveUuid);
             if (applications == null || !applications.contains(infobaseUuid.trim()))
             {
-                return ToolResult.error("No baseline at infobase " + infobaseUuid //$NON-NLS-1$
-                    + " (index.idx missing) and it is not one of the project's applications (" //$NON-NLS-1$
+                // Whichever of the two states this baseline is in, it is still re-signed only for a
+                // binding of this project - the application list is what says the infobase is one.
+                String opening = before == null
+                    ? "No baseline at infobase " + infobaseUuid + " (index.idx missing)" //$NON-NLS-1$ //$NON-NLS-2$
+                    : "The baseline at infobase " + infobaseUuid + " records no configuration id"; //$NON-NLS-1$ //$NON-NLS-2$
+                return ToolResult.error(opening
+                    + ", and it is not one of the project's applications (" //$NON-NLS-1$
                     + (applications == null ? "the application list could not be read in this runtime" //$NON-NLS-1$
                         : project.getName() + ": " + (applications.isEmpty() ? "none" : String.join(", ", applications))) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                     + "). A baseline is re-signed only for an infobase this project is bound to. To bind " //$NON-NLS-1$
@@ -1742,9 +1793,10 @@ public class SyncControlTool implements IMcpTool
                 }
                 catch (Exception e)
                 {
-                    // The baseline now exists and carries the current signatures; only its
-                    // configuration id is not this project's. Report that, do not fail the call -
-                    // the holder was already rewritten and its effect cannot be rolled back.
+                    // The holder was already rewritten by the call above and that effect cannot be
+                    // rolled back, but the baseline is left in the state this stamp exists to
+                    // prevent. Record the failure here and read the on-disk result below, so the
+                    // refusal can say what was written; the call is then answered as failed.
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
                     stampError = TextSuggest.safeMessage(cause);
                     Activator.logWarning("sync_control mark_synchronized: forceConfigurationUUID failed for " //$NON-NLS-1$
@@ -1774,24 +1826,55 @@ public class SyncControlTool implements IMcpTool
             IndexInfo after = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
             int newCount = after != null ? after.signatureCount : -1;
             int beforeCount = before != null ? before.signatureCount : -1;
+            // What the baseline records is read back from disk, not inferred from the call having
+            // returned: forceConfigurationUUID refreshing only the in-memory holder leaves the file
+            // on disk unchanged, and that file is what the next update compares against.
+            boolean idRecorded = after != null && liveUuid.equals(after.configurationUuid);
 
             Activator.logInfo("sync_control mark_synchronized (forceEdtSynchronization): " + project.getName() //$NON-NLS-1$
                 + " infobase " + infobaseUuid + " signatures " + beforeCount + " -> " + newCount //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 + " equalityAfter=" + equalityAfter + " freshBinding=" + freshBinding //$NON-NLS-1$ //$NON-NLS-2$
-                + " uuidStamped=" + uuidStamped); //$NON-NLS-1$
+                + " uuidStamped=" + uuidStamped + " idRecorded=" + idRecorded); //$NON-NLS-1$ //$NON-NLS-2$
+            if (stampError != null)
+            {
+                // The mark itself applied, but the baseline is left exactly as the stamp exists to
+                // prevent it: carrying the current signatures and no configuration id. Answered as
+                // a failure, with the repair named - a success here reads as "the next update is
+                // incremental" for a binding that will instead be carried whole.
+                return ToolResult.error("forceEdtSynchronization wrote the baseline for infobase " + infobaseUuid //$NON-NLS-1$
+                    + " (" + newCount + " signatures), but stamping the project's configuration id " + liveUuid //$NON-NLS-1$ //$NON-NLS-2$
+                    + " on it failed (" + stampError + "). The baseline records " + recordedIdText(after, idx) //$NON-NLS-1$ //$NON-NLS-2$
+                    + ", which the next update reads as a different configuration and answers with a FULL reload. " //$NON-NLS-1$
+                    + "Re-run mark_synchronized for this infobase: a baseline without a configuration id is stamped " //$NON-NLS-1$
+                    + "again, and the retry leaves it carrying the project's id. Alternatively run " //$NON-NLS-1$
+                    + "operation=reseed_baseline infobaseUuid=" + infobaseUuid + " confirm=true, which rewrites the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "recorded id on a populated baseline.") //$NON-NLS-1$
+                    .put("operation", "mark_synchronized") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("projectName", project.getName()) //$NON-NLS-1$
+                    .put("infobaseUuid", infobaseUuid) //$NON-NLS-1$
+                    .put("baselineExisted", before != null) //$NON-NLS-1$
+                    .put("previousSignatureCount", beforeCount) //$NON-NLS-1$
+                    .put("newSignatureCount", newCount) //$NON-NLS-1$
+                    .put("configurationUuidStamped", false) //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("stampError", stampError) //$NON-NLS-1$
+                    .toJson();
+            }
             String message;
             if (freshBinding)
             {
-                message = "This infobase had no baseline; forceEdtSynchronization created one from the current " //$NON-NLS-1$
-                    + "project state (" + newCount + " signatures). " //$NON-NLS-1$ //$NON-NLS-2$
-                    + (uuidStamped
-                        ? "The project's configuration id " + liveUuid + " is stamped on it, so the next update " //$NON-NLS-1$ //$NON-NLS-2$
+                message = (before == null
+                    ? "This infobase had no baseline; forceEdtSynchronization created one from the current " //$NON-NLS-1$
+                        + "project state (" + newCount + " signatures). " //$NON-NLS-1$ //$NON-NLS-2$
+                    : "The baseline at this infobase recorded no configuration id; forceEdtSynchronization " //$NON-NLS-1$
+                        + "rewrote it from the current project state (" + newCount + " signatures). ") //$NON-NLS-1$ //$NON-NLS-2$
+                    + (idRecorded
+                        ? "The project's configuration id " + liveUuid + " is recorded on it, so the next update " //$NON-NLS-1$ //$NON-NLS-2$
                             + "of this binding stays INCREMENTAL (no full reload). Nothing was pushed to the " //$NON-NLS-1$
                             + "infobase; if the project actually differed, those differences are NOT pushed." //$NON-NLS-1$
-                        : "Stamping the project's configuration id failed (" + stampError + "), so the baseline " //$NON-NLS-1$ //$NON-NLS-2$
-                            + "records no configuration and the next update of this binding will still be a FULL " //$NON-NLS-1$
-                            + "configuration reload. Run update_database fullUpdate=true to write a baseline " //$NON-NLS-1$
-                            + "carrying the project's id."); //$NON-NLS-1$
+                        : "The baseline records " + recordedIdText(after, idx) + ", not the project's " + liveUuid //$NON-NLS-1$ //$NON-NLS-2$
+                            + ", so the next update of this binding will still be a FULL configuration reload. " //$NON-NLS-1$
+                            + "Re-run mark_synchronized for this infobase, or run operation=reseed_baseline " //$NON-NLS-1$
+                            + "infobaseUuid=" + infobaseUuid + " confirm=true."); //$NON-NLS-1$ //$NON-NLS-2$
             }
             else if (nowEqual)
             {
@@ -1825,11 +1908,9 @@ public class SyncControlTool implements IMcpTool
                 .put("message", message); //$NON-NLS-1$
             if (freshBinding)
             {
-                ok.put("configurationUuidStamped", uuidStamped); //$NON-NLS-1$
-            }
-            if (stampError != null)
-            {
-                ok.put("stampError", stampError); //$NON-NLS-1$
+                // The outcome, not the call: a stamp that returned while the file on disk still
+                // records something else has not stamped this baseline.
+                ok.put("configurationUuidStamped", idRecorded); //$NON-NLS-1$
             }
             if (verifyError != null)
             {

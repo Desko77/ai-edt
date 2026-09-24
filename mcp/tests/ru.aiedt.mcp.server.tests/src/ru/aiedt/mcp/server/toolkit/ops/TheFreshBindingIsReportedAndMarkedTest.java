@@ -42,16 +42,22 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.SyncBaseline;
+
 /**
  * A project bound to two infobases: one it has a baseline for and one it was just registered
  * against. {@code status} answers for each binding separately and does not promise an incremental
- * update while one of them carries no baseline; {@code mark_synchronized} accepts the fresh
- * binding, creates its baseline and stamps the project's configuration id on it.
+ * update while one of them carries no baseline, nor while the bindings could not be read at all;
+ * {@code mark_synchronized} accepts the fresh binding, creates its baseline and stamps the
+ * project's configuration id on it - and refuses the call when that stamp fails, because the
+ * baseline it leaves behind records no configuration and the next update would be a full reload.
  *
  * <p>The two platform readings the tool makes - the applications of the project and the
  * synchronization delegate it calls - are answered by this test through the tool's package-private
- * seams, because neither exists outside a running EDT. The store, the baseline layout, the
- * prediction and the refusal wording are the production code.</p>
+ * seams, because neither exists outside a running EDT. The delegate writes the baseline file the
+ * way EDT's own writer does, to the path the production code resolves, so what these tests assert
+ * about the state on disk is read back through the production reader. The store, the baseline
+ * layout, the prediction and the refusal wording are the production code.</p>
  */
 public class TheFreshBindingIsReportedAndMarkedTest
 {
@@ -64,6 +70,12 @@ public class TheFreshBindingIsReportedAndMarkedTest
     private static final String WITH_BASELINE = UUID.randomUUID().toString();
 
     private static final String FRESH = UUID.randomUUID().toString();
+
+    // One infobase per mark test: each of them ends up carrying a baseline that matches this
+    // project, and a shared id would let the tests change each other's starting state.
+    private static final String FRESH_MARK = UUID.randomUUID().toString();
+
+    private static final String FRESH_STAMP_FAIL = UUID.randomUUID().toString();
 
     private static final String NOT_OURS = UUID.randomUUID().toString();
 
@@ -91,7 +103,7 @@ public class TheFreshBindingIsReportedAndMarkedTest
         Path store = project.getWorkingLocation("com._1c.g5.v8.dt.platform.services.core").toFile().toPath() //$NON-NLS-1$
             .resolve("ib-sync").resolve("ss").resolve(WITH_BASELINE); //$NON-NLS-1$ //$NON-NLS-2$
         Files.createDirectories(store);
-        writeIndex(store.resolve("index.idx")); //$NON-NLS-1$
+        writeIndex(store.resolve("index.idx"), CONFIGURATION); //$NON-NLS-1$
     }
 
     @AfterClass
@@ -118,10 +130,12 @@ public class TheFreshBindingIsReportedAndMarkedTest
     @Test
     public void statusAnswersForEachBindingAndKeepsThePessimisticPrediction() throws Exception
     {
-        SyncControlTool tool = new ProbeTool(applicationsOf(WITH_BASELINE, FRESH), new RecordingDelegate());
+        List<String> asked = new ArrayList<>();
+        SyncControlTool tool = new ProbeTool(applicationsOf(asked, WITH_BASELINE, FRESH), new RecordingDelegate());
         JsonObject status = JsonParser.parseString(tool.execute(Map.of("operation", "status", "projectName", PROJECT))) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .getAsJsonObject();
 
+        assertEquals(status.toString(), List.of(PROJECT), asked);
         assertTrue(status.toString(), status.get("success").getAsBoolean()); //$NON-NLS-1$
         assertEquals(status.toString(), "FULL", status.get("prediction").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(status.toString(), status.get("willTriggerFullReload").getAsBoolean()); //$NON-NLS-1$
@@ -145,22 +159,88 @@ public class TheFreshBindingIsReportedAndMarkedTest
     /**
      * The operation the brief is about: the binding has no baseline, so it is not refused - the
      * delegate is called, and because the fresh store reads back an undefined state, the
-     * project's configuration id is stamped afterwards, in that order.
+     * project's configuration id is stamped afterwards, in that order. The stamp is checked where
+     * it counts: in the baseline file the next update reads, not in the call having returned.
      */
     @Test
     public void aFreshBindingIsMarkedAndItsConfigurationIdStamped() throws Exception
     {
         RecordingDelegate delegate = new RecordingDelegate();
-        SyncControlTool tool = new ProbeTool(applicationsOf(FRESH), delegate);
+        SyncControlTool tool = new ProbeTool(applicationsOf(FRESH_MARK), delegate);
         JsonObject marked = JsonParser.parseString(tool.execute(Map.of("operation", "mark_synchronized", //$NON-NLS-1$ //$NON-NLS-2$
-            "projectName", PROJECT, "infobaseUuid", FRESH, "confirm", "true"))).getAsJsonObject(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "projectName", PROJECT, "infobaseUuid", FRESH_MARK, "confirm", "true"))).getAsJsonObject(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
 
         assertTrue(marked.toString(), marked.get("success").getAsBoolean()); //$NON-NLS-1$
         assertFalse(marked.toString(), marked.get("baselineExisted").getAsBoolean()); //$NON-NLS-1$
         assertTrue(marked.toString(), marked.get("configurationUuidStamped").getAsBoolean()); //$NON-NLS-1$
-        assertEquals(List.of("forceEdtSynchronization", "forceConfigurationUUID"), delegate.calls); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals(FRESH, delegate.stampedInfobase.getUuid().toString());
+        assertEquals(
+            List.of("forceEdtSynchronization", "forceConfigurationUUID"), delegate.calls); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(FRESH_MARK, delegate.stampedInfobase.getUuid().toString());
         assertEquals(CONFIGURATION, delegate.stampedUuid.toString());
+        assertEquals(CONFIGURATION, recordedConfigurationUuid(FRESH_MARK));
+    }
+
+    /**
+     * A stamp that fails leaves a baseline with no configuration id - the state the stamp exists
+     * to prevent, because the next update reads it as a different configuration and answers with a
+     * full reload. The call is therefore refused with what the baseline now records, and the
+     * refusal names the repair; a second mark_synchronized stamps that same baseline instead of
+     * being turned down as a foreign configuration.
+     */
+    @Test
+    public void aFailedStampIsRefusedAndTheSecondMarkStampsIt() throws Exception
+    {
+        RecordingDelegate delegate = new RecordingDelegate();
+        delegate.failStamp = true;
+        SyncControlTool tool = new ProbeTool(applicationsOf(FRESH_STAMP_FAIL), delegate);
+        JsonObject refused = JsonParser.parseString(tool.execute(Map.of("operation", "mark_synchronized", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", PROJECT, "infobaseUuid", FRESH_STAMP_FAIL, "confirm", "true"))).getAsJsonObject(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        assertFalse(refused.toString(), refused.get("success").getAsBoolean()); //$NON-NLS-1$
+        String refusal = refused.toString();
+        assertTrue(refusal, refusal.contains("no configuration id")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("FULL reload")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("reseed_baseline")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains(FRESH_STAMP_FAIL));
+        assertFalse(refusal, refused.get("configurationUuidStamped").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(refusal, 2, refused.get("newSignatureCount").getAsInt()); //$NON-NLS-1$
+        assertEquals("", recordedConfigurationUuid(FRESH_STAMP_FAIL)); //$NON-NLS-1$
+
+        delegate.failStamp = false;
+        JsonObject marked = JsonParser.parseString(tool.execute(Map.of("operation", "mark_synchronized", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", PROJECT, "infobaseUuid", FRESH_STAMP_FAIL, "confirm", "true"))).getAsJsonObject(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        assertTrue(marked.toString(), marked.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(marked.toString(), marked.get("baselineExisted").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(marked.toString(), marked.get("configurationUuidStamped").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(marked.toString(), 2, marked.get("previousSignatureCount").getAsInt()); //$NON-NLS-1$
+        assertEquals(CONFIGURATION, recordedConfigurationUuid(FRESH_STAMP_FAIL));
+        assertEquals(List.of("forceEdtSynchronization", "forceConfigurationUUID", //$NON-NLS-1$ //$NON-NLS-2$
+            "forceEdtSynchronization", "forceConfigurationUUID"), delegate.calls); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Without the application list nothing says which binding a matching baseline belongs to, so
+     * the store scan alone cannot promise an incremental update: the answer is UNKNOWN and names
+     * the reading that is missing, rather than reporting INCREMENTAL over a binding nobody looked
+     * at.
+     */
+    @Test
+    public void statusDoesNotPromiseIncrementalWhileTheApplicationsAreNotRead() throws Exception
+    {
+        SyncControlTool tool = new ProbeTool(null, new RecordingDelegate());
+        JsonObject status = JsonParser.parseString(tool.execute(Map.of("operation", "status", "projectName", PROJECT))) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .getAsJsonObject();
+
+        assertTrue(status.toString(), status.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(status.toString(), status.has("bindingsUnavailable")); //$NON-NLS-1$
+        assertFalse(status.toString(), status.has("bindings")); //$NON-NLS-1$
+        assertEquals(status.toString(), WITH_BASELINE, //$NON-NLS-1$
+            status.getAsJsonObject("matchedBaseline").get("infobaseUuid").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(status.toString(), "UNKNOWN", status.get("prediction").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(status.toString(), status.get("willTriggerFullReload").getAsBoolean()); //$NON-NLS-1$
+        String summary = status.get("summary").getAsString(); //$NON-NLS-1$
+        assertTrue(summary, summary.contains("were not read")); //$NON-NLS-1$
     }
 
     /**
@@ -197,11 +277,29 @@ public class TheFreshBindingIsReportedAndMarkedTest
     }
 
     /**
-     * Writes the index in the layout EDT 2026 writes, with this project's configuration id, so the
-     * binding reads back as matched.
+     * The baseline path the production code resolves for an infobase - the same call the tool
+     * makes, so the file this test reads back is the one the tool read.
      */
-    private static void writeIndex(Path file) throws Exception
+    private static Path indexOf(String infobaseUuid)
     {
+        return SyncBaseline.indexOf(project, infobaseUuid);
+    }
+
+    /**
+     * The configuration id recorded in a binding's baseline, read with the production reader.
+     */
+    private static String recordedConfigurationUuid(String infobaseUuid) throws Exception
+    {
+        return SyncBaseline.read(indexOf(infobaseUuid)).configurationUuid;
+    }
+
+    /**
+     * Writes the index in the layout EDT 2026 writes, carrying the configuration id given - an
+     * empty one is what EDT's own writer records for a store that held nothing.
+     */
+    private static void writeIndex(Path file, String configurationUuid) throws Exception
+    {
+        Files.createDirectories(file.getParent());
         try (DataOutputStream out = new DataOutputStream(new FileOutputStream(file.toFile())))
         {
             out.writeUTF("1.0"); //$NON-NLS-1$
@@ -216,22 +314,44 @@ public class TheFreshBindingIsReportedAndMarkedTest
             out.write(new byte[] { 3, 4 });
             out.writeBoolean(false);
             out.writeUTF("generation-1"); //$NON-NLS-1$
-            out.writeUTF(CONFIGURATION);
+            out.writeUTF(configurationUuid);
         }
     }
 
     /**
-     * An application manager answering one project's applications with the infobases given.
+     * An application manager that answers per project: the infobases given are the applications of
+     * {@link #PROJECT}, any other project has none. Which projects were asked is recorded, so a
+     * regression that reads the applications of the wrong project - or that takes the extension
+     * fallback for a configuration project - fails here instead of passing on the same list.
      */
     private static IApplicationManager applicationsOf(String... infobaseUuids)
     {
+        return applicationsOf(new ArrayList<>(), infobaseUuids);
+    }
+
+    /**
+     * The same manager, reporting the projects it was asked about into {@code asked}.
+     *
+     * @param asked collects the name of every project the tool resolved applications for
+     * @param infobaseUuids the applications of {@link #PROJECT}
+     * @return the manager
+     */
+    private static IApplicationManager applicationsOf(List<String> asked, String... infobaseUuids)
+    {
+        List<String> uuids = List.of(infobaseUuids);
         return (IApplicationManager)Proxy.newProxyInstance(loader(), new Class<?>[] { IApplicationManager.class },
             (proxy, method, args) ->
             {
                 if ("getApplications".equals(method.getName())) //$NON-NLS-1$
                 {
+                    String askedProject = ((IProject)args[0]).getName();
+                    asked.add(askedProject);
+                    if (!PROJECT.equals(askedProject))
+                    {
+                        return new ArrayList<IApplication>();
+                    }
                     List<IApplication> applications = new ArrayList<>();
-                    for (String uuid : infobaseUuids)
+                    for (String uuid : uuids)
                     {
                         applications.add(application(uuid));
                     }
@@ -318,8 +438,11 @@ public class TheFreshBindingIsReportedAndMarkedTest
 
     /**
      * The delegate behind the sync state manager, recording what the tool calls and with what. It
-     * writes no baseline - the production code reads the file back only to report the signature
-     * count, and a fake store would prove nothing about EDT's own writer.
+     * writes the baseline the way EDT's writer does: {@code forceEdtSynchronization} writes one
+     * for the current state, which carries no configuration id when the store held nothing, and
+     * {@code forceConfigurationUUID} rewrites that id - or, with {@link #failStamp}, fails without
+     * touching the file, which is the state the stamp-failure rule is about. The tool reads these
+     * bytes back, so this is what makes the outcome assertable on disk.
      */
     public static final class RecordingDelegate
     {
@@ -329,16 +452,25 @@ public class TheFreshBindingIsReportedAndMarkedTest
 
         InfobaseReference stampedInfobase;
 
-        public void forceEdtSynchronization(InfobaseReference infobase, IProject project)
+        /** When true, the stamp call fails instead of writing the id. */
+        boolean failStamp;
+
+        public void forceEdtSynchronization(InfobaseReference infobase, IProject project) throws Exception
         {
             calls.add("forceEdtSynchronization"); //$NON-NLS-1$
+            writeIndex(indexOf(infobase.getUuid().toString()), ""); //$NON-NLS-1$
         }
 
-        public void forceConfigurationUUID(InfobaseReference infobase, IProject project, UUID uuid)
+        public void forceConfigurationUUID(InfobaseReference infobase, IProject project, UUID uuid) throws Exception
         {
             calls.add("forceConfigurationUUID"); //$NON-NLS-1$
+            if (failStamp)
+            {
+                throw new IllegalStateException("the stand-in refuses to stamp"); //$NON-NLS-1$
+            }
             stampedInfobase = infobase;
             stampedUuid = uuid;
+            writeIndex(indexOf(infobase.getUuid().toString()), uuid.toString());
         }
     }
 
