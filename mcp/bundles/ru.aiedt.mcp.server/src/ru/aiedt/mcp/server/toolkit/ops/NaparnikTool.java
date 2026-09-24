@@ -104,7 +104,7 @@ public class NaparnikTool
      * when it starts with one of these. They are not local EDT tools, so they are not sent in
      * {@code allowedTools}: the installation rejects a name it does not publish, and these run in
      * the service. The veto allows a matching name. Any other {@code mcp__} name stays outside
-     * the read set.
+     * the read set. {@code status} and {@code ask} report this list as {@code allowedServiceTools}.
      */
     static final List<String> ALLOWED_SERVICE_TOOLS = List.of(
         "mcp__knowledge-hub__Search_", //$NON-NLS-1$
@@ -313,7 +313,8 @@ public class NaparnikTool
             .put("bridgeEnabled", bridgeEnabled()) //$NON-NLS-1$
             .put("supportedVersion", SUPPORTED_VERSION) //$NON-NLS-1$
             .put("inPolicy", survey.inPolicy) //$NON-NLS-1$
-            .put("bundles", survey.bundles); //$NON-NLS-1$
+            .put("bundles", survey.bundles) //$NON-NLS-1$
+            .put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
         if (survey.refusal != null)
         {
             result.put("refusal", survey.refusal); //$NON-NLS-1$
@@ -622,6 +623,7 @@ public class NaparnikTool
         Map<String, Object> tools = new LinkedHashMap<>();
         tools.put("available", available); //$NON-NLS-1$
         tools.put("allowed", ALLOWED_TOOLS); //$NON-NLS-1$
+        tools.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
         tools.put("missing", missing); //$NON-NLS-1$
         return tools;
     }
@@ -1109,6 +1111,7 @@ public class NaparnikTool
         {
             result.put("allowedTools", live.allowedSent); //$NON-NLS-1$
         }
+        result.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
         return result.toJson();
     }
 
@@ -1175,6 +1178,7 @@ public class NaparnikTool
         {
             result.put("allowedTools", live.allowedSent); //$NON-NLS-1$
         }
+        result.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
         return result.toJson();
     }
 
