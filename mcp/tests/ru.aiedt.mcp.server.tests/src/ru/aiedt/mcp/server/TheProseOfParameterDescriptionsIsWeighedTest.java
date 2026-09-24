@@ -304,7 +304,8 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("generate_event_handlers", Integer.valueOf(299));
         PROSE.put("code_template", Integer.valueOf(171));
         // naparnik grew from 216 to 783 when ask advertised its arguments: the question, the
-        // project, the conversation, the round limit, the timeout and the pending key.
+        // project, the conversation, the round limit, the timeout and the pending key. The
+        // knowledge-base sentence is the tool description, which this budget does not count.
         PROSE.put("naparnik", Integer.valueOf(783));
         PROSE.put("get_mcp_history", Integer.valueOf(145));
         PROSE.put("get_command_interface", Integer.valueOf(98));
@@ -465,6 +466,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And a twenty-eighth, by 42, for the formToOpen sentence rewritten once the frame became
      * the test client's top window drawn into the file by the add-in, not the whole screen with
      * that window in front. Together with the twenty-seventh: 92481.
+     * </p>
+     * <p>
+     * And a twenty-ninth: the knowledge-base sentence on naparnik is the tool description, 122
+     * bytes, and this budget weighs parameter descriptions only. Measured addition: 0. The list
+     * budget records the sentence. Together with the twenty-eighth: 92481.
      * </p>
      */
     private static final int DOCUMENT_PROSE = 92481;

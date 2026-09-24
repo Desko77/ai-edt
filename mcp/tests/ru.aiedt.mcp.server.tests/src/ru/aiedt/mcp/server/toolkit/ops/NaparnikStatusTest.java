@@ -249,6 +249,24 @@ public class NaparnikStatusTest
         assertFalse(missing.contains("Read")); //$NON-NLS-1$
         assertFalse(missing.contains("Execute")); //$NON-NLS-1$
         assertEquals(1, host.injectors);
+        assertEquals(NaparnikTool.ALLOWED_SERVICE_TOOLS,
+            texts(tools.getAsJsonArray("allowedServiceTools"))); //$NON-NLS-1$
+    }
+
+    @Test
+    public void statusNamesTheKnowledgeBasePrefixesWithAndWithoutProbe()
+    {
+        FakeHost host = installation(SUPPORTED, "RESOLVED"); //$NON-NLS-1$
+
+        JsonObject passive = status(host, false);
+        JsonObject probed = status(host, true);
+
+        assertFalse(passive.has("links")); //$NON-NLS-1$
+        assertEquals(NaparnikTool.ALLOWED_SERVICE_TOOLS,
+            texts(passive.getAsJsonArray("allowedServiceTools"))); //$NON-NLS-1$
+        assertEquals(NaparnikTool.ALLOWED_SERVICE_TOOLS,
+            texts(probed.getAsJsonArray("allowedServiceTools"))); //$NON-NLS-1$
+        assertTrue(probed.has("links")); //$NON-NLS-1$
     }
 
     @Test

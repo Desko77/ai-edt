@@ -364,7 +364,95 @@ public class NaparnikAskTest
         assertTrue(error, error.contains("Execute")); //$NON-NLS-1$
         assertTrue(error, error.contains("outside the read set")); //$NON-NLS-1$
         assertEquals(List.of("Read", "Execute"), strings(doc, "toolsCalled")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertTrue(error, error.contains("mcpNaparnikAllToolsEnabled")); //$NON-NLS-1$
         assertTrue(host.cancels >= 1);
+    }
+
+    @Test
+    public void aKnowledgeHubSearchDoesNotCancelInReadMode()
+    {
+        host.script = List.of("GetProjects", "mcp__knowledge-hub__Search_Documentation"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject doc = ask();
+
+        assertTrue(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(0, host.cancels);
+        assertEquals(List.of("GetProjects", "mcp__knowledge-hub__Search_Documentation"), //$NON-NLS-1$ //$NON-NLS-2$
+            strings(doc, "toolsCalled")); //$NON-NLS-1$
+        assertEquals(NaparnikTool.ALLOWED_TOOLS, strings(doc, "allowedTools")); //$NON-NLS-1$
+        assertEquals(NaparnikTool.ALLOWED_SERVICE_TOOLS, strings(doc, "allowedServiceTools")); //$NON-NLS-1$
+        assertFalse(new ArrayList<>(host.sent.get(0).allowedTools())
+            .contains("mcp__knowledge-hub__Search_Documentation")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aKnowledgeHubFetchDoesNotCancelInReadMode()
+    {
+        host.script = List.of("1C_Find", "mcp__knowledge-hub__Fetch_ITS"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject doc = ask();
+
+        assertTrue(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(0, host.cancels);
+        assertEquals(List.of("1C_Find", "mcp__knowledge-hub__Fetch_ITS"), strings(doc, "toolsCalled")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    @Test
+    public void aKnowledgeHubDiffAndGetDoNotCancelInReadMode()
+    {
+        host.script = List.of("mcp__knowledge-hub__Diff_Article", "mcp__knowledge-hub__Get_Page"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject doc = ask();
+
+        assertTrue(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(0, host.cancels);
+        assertEquals(List.of("mcp__knowledge-hub__Diff_Article", "mcp__knowledge-hub__Get_Page"), //$NON-NLS-1$ //$NON-NLS-2$
+            strings(doc, "toolsCalled")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aKnowledgeHubWriteCancelsInReadMode()
+    {
+        JsonObject doc = askOutside("mcp__knowledge-hub__Write_Something"); //$NON-NLS-1$
+
+        assertCancelledOutside(doc, "mcp__knowledge-hub__Write_Something"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anotherServersSearchCancelsInReadMode()
+    {
+        JsonObject doc = askOutside("mcp__other__Search_X"); //$NON-NLS-1$
+
+        assertCancelledOutside(doc, "mcp__other__Search_X"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void writeCancelsInReadMode()
+    {
+        JsonObject doc = askOutside("Write"); //$NON-NLS-1$
+
+        assertCancelledOutside(doc, "Write"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theFullSetDoesNotCancelKnowledgeHubOrForeignTools()
+    {
+        allTools.set(true);
+        host.script = List.of(
+            "mcp__knowledge-hub__Write_Something", //$NON-NLS-1$
+            "mcp__other__Search_X", //$NON-NLS-1$
+            "Write", //$NON-NLS-1$
+            "mcp__knowledge-hub__Search_Documentation"); //$NON-NLS-1$
+
+        JsonObject doc = ask();
+
+        assertTrue(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("all", doc.get("toolPolicy").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(doc.has("allowedTools")); //$NON-NLS-1$
+        assertNull(host.sent.get(0).allowedTools());
+        assertEquals(0, host.cancels);
+        assertEquals(host.script, strings(doc, "toolsCalled")); //$NON-NLS-1$
+        assertEquals(NaparnikTool.ALLOWED_SERVICE_TOOLS, strings(doc, "allowedServiceTools")); //$NON-NLS-1$
     }
 
     @Test
@@ -771,6 +859,9 @@ public class NaparnikAskTest
         assertTrue(text, text.contains("mcpNaparnikAllToolsEnabled")); //$NON-NLS-1$
         assertTrue(description, description.contains("1C:Naparnik service")); //$NON-NLS-1$
         assertTrue(description, description.contains("mcpNaparnikAllToolsEnabled")); //$NON-NLS-1$
+        assertTrue(description, description.contains("mcp__knowledge-hub__")); //$NON-NLS-1$
+        assertTrue(description, description.contains("Search_")); //$NON-NLS-1$
+        assertTrue(text, text.contains("mcp__knowledge-hub__")); //$NON-NLS-1$
     }
 
     @Test
@@ -800,6 +891,24 @@ public class NaparnikAskTest
         host.add("com.e1c.edt.ai.ui.common", version, state); //$NON-NLS-1$
         host.facadeOwner = host.ai;
         host.activatorOwner = host.ui;
+    }
+
+    private JsonObject askOutside(String name)
+    {
+        host.script = List.of(name);
+        return ask();
+    }
+
+    private void assertCancelledOutside(JsonObject doc, String name)
+    {
+        assertFalse(doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        String error = doc.get("error").getAsString(); //$NON-NLS-1$
+        assertTrue(error, error.contains(name));
+        assertTrue(error, error.contains("outside the read set")); //$NON-NLS-1$
+        assertTrue(error, error.contains("mcpNaparnikAllToolsEnabled")); //$NON-NLS-1$
+        assertEquals(List.of(name), strings(doc, "toolsCalled")); //$NON-NLS-1$
+        assertEquals(NaparnikTool.ALLOWED_SERVICE_TOOLS, strings(doc, "allowedServiceTools")); //$NON-NLS-1$
+        assertTrue(host.cancels >= 1);
     }
 
     private JsonObject ask(String... pairs)
