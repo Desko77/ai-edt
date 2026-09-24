@@ -627,6 +627,52 @@ public class TheExportRunsItsStepsInOrderTest
         }
     }
 
+    /**
+     * A process that returns in the window between the grace's last check and the cleanup's hold
+     * decision is still taken back: the deferral is registered and runs the reconnection, rather
+     * than the hold unmaking itself, the cleanup running inline and the reconnection being owed
+     * to nobody.
+     */
+    @Test
+    public void aProcessReturningAtTheGraceBoundaryIsStillTakenBackByTheDeferral()
+    {
+        StandIn io = new StandIn();
+        List<Runnable> registered = new ArrayList<>();
+        io.designer = (dir, listFile) -> {
+            writeFiles(dir, io.writtenFiles);
+            throw new Abandoned("the Designer export did not finish within 600s", true, //$NON-NLS-1$
+                registered::add);
+        };
+        // The grace is given nothing, and the process "returns" exactly at the boundary the
+        // hold is resolved at - after the grace's last check, before the deferral decision.
+        InfobaseObjectsExporter.beforeHoldResolution = () -> registered.get(0).run();
+        try
+        {
+            Outcome outcome = InfobaseObjectsExporter.performExport(io, addresses(), outputPath,
+                () -> false, 0L);
+
+            assertFalse(outcome.ok);
+            assertNotNull("the grace answered left-behind", outcome.leftBehind); //$NON-NLS-1$
+            assertTrue(outcome.lockHeldForProcess);
+            assertEquals("the settle and the deferral both registered", 2, registered.size()); //$NON-NLS-1$
+            assertFalse("the boundary did not clean up inline", io.asked.contains("unlock")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse("the reconnection is owed to the deferral, not to the answer", //$NON-NLS-1$
+                io.asked.contains("reconnect")); //$NON-NLS-1$
+            assertTrue("the claim stays with the run", io.lockHeld); //$NON-NLS-1$
+
+            registered.get(1).run();
+            assertTrue("the returned process runs the deferral, which takes the base back", //$NON-NLS-1$
+                io.asked.contains("reconnect")); //$NON-NLS-1$
+            assertFalse(io.lockHeld);
+            assertFalse("the service directory is deleted by the deferral", //$NON-NLS-1$
+                Files.exists(io.serviceDir));
+        }
+        finally
+        {
+            InfobaseObjectsExporter.beforeHoldResolution = null;
+        }
+    }
+
     // ---- the release and the reconnection ---------------------------------------------------
 
     /**

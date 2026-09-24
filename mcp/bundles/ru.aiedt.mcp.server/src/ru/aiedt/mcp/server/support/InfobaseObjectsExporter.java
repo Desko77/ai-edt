@@ -512,10 +512,7 @@ public final class InfobaseObjectsExporter
     }
 
     /**
-     * Runs the export: identify, claim, service directory, list file, release the infobase, run
-     * the Designer, take the infobase back, verify, place the result, clean up. The destination is
-     * touched only through the place step: everything the Designer writes goes into the service
-     * directory beside it, and the destination receives the result by one rename.
+     * Runs the export with the grace an abandoned process is given by the release.
      *
      * @param io the environment, step by step
      * @param lines the validated list-file lines, in order
@@ -526,6 +523,27 @@ public final class InfobaseObjectsExporter
      */
     public static Outcome performExport(ExportIo io, List<String> lines, Path outputPath,
         BooleanSupplier cancelled)
+    {
+        return performExport(io, lines, outputPath, cancelled, PROCESS_EXIT_GRACE_MS);
+    }
+
+    /**
+     * Runs the export: identify, claim, service directory, list file, release the infobase, run
+     * the Designer, take the infobase back, verify, place the result, clean up. The destination is
+     * touched only through the place step: everything the Designer writes goes into the service
+     * directory beside it, and the destination receives the result by one rename.
+     *
+     * @param io the environment, step by step
+     * @param lines the validated list-file lines, in order
+     * @param outputPath the destination the caller named
+     * @param cancelled whether the caller's cancellation flag has been raised; checked before the
+     *            Designer is started and handed to the run
+     * @param graceMs how long an abandoned run's process is waited for before the answer names
+     *            the service directory left behind; the public entry passes the release constant
+     * @return the outcome, with the step sequence in it
+     */
+    static Outcome performExport(ExportIo io, List<String> lines, Path outputPath,
+        BooleanSupplier cancelled, long graceMs)
     {
         long startedAt = System.currentTimeMillis();
         Outcome out = new Outcome();
@@ -632,7 +650,7 @@ public final class InfobaseObjectsExporter
                 AtomicBoolean settled = deferredSettled;
                 Abandoned abandoned = (Abandoned)handshake.workError;
                 abandoned.whenFinished(() -> settled.set(true));
-                long deadline = System.currentTimeMillis() + PROCESS_EXIT_GRACE_MS;
+                long deadline = System.currentTimeMillis() + graceMs;
                 while (!settled.get() && System.currentTimeMillis() < deadline)
                 {
                     sleep(100L);
@@ -736,7 +754,20 @@ public final class InfobaseObjectsExporter
         }
         finally
         {
-            boolean hold = out.lockHeldForProcess && !deferredSettled.get();
+            Runnable boundary = beforeHoldResolution;
+            if (boundary != null)
+            {
+                boundary.run();
+            }
+            // One decision, written once by this thread: the grace branch that saw the process
+            // return took the settlement for itself and left this flag down. Re-reading the
+            // settle flag here would reopen the boundary - a process that returns between the
+            // grace's last check and this line flips the flag, the hold becomes false, the
+            // cleanup and the unlock run inline, and the deferred reconnection is never
+            // registered, so the base the handshake released stays disconnected. The deferral
+            // is registered whenever the grace answered left-behind, and it runs the moment the
+            // process returns - for one that already returned, at once.
+            boolean hold = out.lockHeldForProcess;
             if (listFile != null)
             {
                 out.sequence.add("deleteListFile"); //$NON-NLS-1$
@@ -763,9 +794,7 @@ public final class InfobaseObjectsExporter
             {
                 Path left = serviceDir;
                 final boolean reconnectOwed = handshake.released;
-                AtomicBoolean settled = deferredSettled;
                 ((Abandoned)handshake.workError).whenFinished(() -> {
-                    settled.set(true);
                     if (left != null)
                     {
                         io.deleteDirectory(left);
@@ -1013,6 +1042,18 @@ public final class InfobaseObjectsExporter
         /** Counted down by the stopper; the run's wait polls it. */
         final CountDownLatch stopped = new CountDownLatch(1);
     }
+
+    /**
+     * Parks the cleanup right before it decides whether the deferral owns the run, when a test
+     * has set it.
+     * <p>
+     * Production leaves it {@code null}. By the time it runs the grace has already answered and
+     * the settle flag may still flip - the exact window an abandoned process returns in - so
+     * this is the seam the boundary race is pinned through: what the hold then resolves to must
+     * not depend on that flip.
+     * </p>
+     */
+    static volatile Runnable beforeHoldResolution;
 
     static
     {
