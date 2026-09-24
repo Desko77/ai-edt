@@ -107,8 +107,10 @@ public class VanessaTool implements IMcpTool
             + "projectName - the infobase the project is bound to is the one played against, " //$NON-NLS-1$
             + "or connectionString to name another. Or compose the action right here: listKind " //$NON-NLS-1$
             + "with listName opens the list, column with columnValue goes to the row, buttonTitle " //$NON-NLS-1$
-            + "or buttonName presses the form's button, and the window it opens is waited for - " //$NON-NLS-1$
-            + "windowWaitSeconds - and captured. " //$NON-NLS-1$
+            + "or buttonName presses the form's button, and the window it opens is waited for " //$NON-NLS-1$
+            + "(windowWaitSeconds). The frame is a screenshot of the whole screen taken after " //$NON-NLS-1$
+            + "the test client's window is brought to the front, so that window is what the " //$NON-NLS-1$
+            + "screen shows. " //$NON-NLS-1$
             + "On a list action and on formToOpen, testManager and testClient are turned on when " //$NON-NLS-1$
             + "left out, and false is refused: the start step then activates the client that " //$NON-NLS-1$
             + "opens the infobase of the run. " //$NON-NLS-1$
@@ -138,7 +140,7 @@ public class VanessaTool implements IMcpTool
                 "The form to open and photograph, in the words the opening step expects - a " //$NON-NLS-1$
                     + "common form's name, a catalog's FQN, whatever the step takes. The scenario " //$NON-NLS-1$
                     + "is composed from it, so neither featurePath nor scenarioText is passed " //$NON-NLS-1$
-                    + "with it. The snapshot arrives among the run's screenshots.") //$NON-NLS-1$
+                    + "with it. The frame is the whole screen with the test client's window in front.") //$NON-NLS-1$
             .stringProperty("openStep", //$NON-NLS-1$
                 "The step that opens the form, with {form} where the name goes. Defaults to " //$NON-NLS-1$
                     + "opening a common form. A list form, an object form and an extension's " //$NON-NLS-1$
@@ -1033,6 +1035,8 @@ public class VanessaTool implements IMcpTool
      * The snapshot is not a step. Vanessa takes one before and after the step that follows the
      * {@code @screenshot} tag, writing them where {@code КаталогOutputСкриншоты} points - which
      * this tool already sets for every run, and which the report reader already groups by step.
+     * The tag photographs the whole screen, so the lines in {@link #frameAfterTheAction()} bring
+     * the test client's window to the front first and hold it there for both frames.
      * </p>
      * <p>
      * Both step wordings are arguments with a default rather than text built into this file. They
@@ -1055,8 +1059,8 @@ public class VanessaTool implements IMcpTool
             + "Контекст:\n" //$NON-NLS-1$
             + "    Дано " + starting + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$
             + "Сценарий: Снимок формы " + form + "\n" //$NON-NLS-1$ //$NON-NLS-2$
-            + "    @screenshot\n" //$NON-NLS-1$
             + "    Когда " + opening.replace("{form}", form) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + frameAfterTheAction()
             + "    И Я закрываю все окна клиентского приложения\n"; //$NON-NLS-1$
     }
 
@@ -1198,8 +1202,8 @@ public class VanessaTool implements IMcpTool
         }
         return "screenshots=false leaves nothing for the @screenshot tag to capture with: the " //$NON-NLS-1$
             + "step after the tag is photographed only while the run's screenshots are on. Leave " //$NON-NLS-1$
-            + "the argument out or pass true - the frame of the window the button opened is the " //$NON-NLS-1$
-            + "point of this call."; //$NON-NLS-1$
+            + "the argument out or pass true - the frame, taken with the window the button opened " //$NON-NLS-1$
+            + "in front, is the point of this call."; //$NON-NLS-1$
     }
 
     /**
@@ -1284,12 +1288,27 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The two keys without which the {@code @screenshot} tag captures nothing.
+     * {@code СпособСнятияСкриншотовВнешнейКомпонентой}: the current window of the test client.
+     * <p>
+     * Vanessa 1.2.042.19, the choice list on the screenshots page
+     * ({@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form.xml}): 0 is the whole screen,
+     * 1 is the current test client window, 2 is every window of the test client. A failure
+     * screenshot reads this number off the settings. The {@code @screenshot} tag does not: it
+     * passes 0, so the frames that tag takes stay a capture of the whole screen.
+     * </p>
+     */
+    static final int CLIENT_WINDOW = 1;
+
+    /**
+     * The two keys without which the {@code @screenshot} tag captures nothing, and the capture
+     * method a failure screenshot honors.
      * <p>
      * Vanessa photographs the step that follows the tag only when its add-in is attached or an
      * external command is named, and a command would name a program this tool has no reason to
      * assume is installed on the machine. The add-in pair is what remains, and it is written on
-     * every branch that composes a scenario carrying the tag.
+     * every branch that composes a scenario carrying the tag. {@link #CLIENT_WINDOW} is written
+     * with them: a failure screenshot, which does not pass its own method, then photographs the
+     * test client's current window rather than the screen. The tag's own frames do not read it.
      * </p>
      *
      * @return the keys, ready to be merged into the run's document
@@ -1299,7 +1318,30 @@ public class VanessaTool implements IMcpTool
         JsonObject o = new JsonObject();
         o.addProperty("ИспользоватьКомпонентуVanessaExt", true); //$NON-NLS-1$
         o.addProperty("ИспользоватьВнешнююКомпонентуДляСкриншотов", true); //$NON-NLS-1$
+        o.addProperty("СпособСнятияСкриншотовВнешнейКомпонентой", CLIENT_WINDOW); //$NON-NLS-1$
         return o;
+    }
+
+    /**
+     * The lines that photograph the window the action opened, once it is open.
+     * <p>
+     * Vanessa 1.2.042.19 takes the {@code @screenshot} frames with
+     * {@code ПолучитьСнимокЭкрана}: {@code СнятьСкриншотШагаЕслиЭтоНеобходимо} passes 0, and 0
+     * is the whole screen, including whatever window is in front and the taskbar. The step
+     * before the tag is Vanessa's own
+     * {@code И я активизирую окно текущего клиента тестирования}, which brings the test
+     * client's main window forward through VanessaExt and does not return until that call has.
+     * The step the tag photographs is {@code И Пауза 1}, so both frames - before that step and
+     * after it - are taken while the client stays in front. The frame remains a screen capture.
+     * </p>
+     *
+     * @return the three lines, each already indented and terminated
+     */
+    static String frameAfterTheAction()
+    {
+        return "    И я активизирую окно текущего клиента тестирования\n" //$NON-NLS-1$
+            + "    @screenshot\n" //$NON-NLS-1$
+            + "    И Пауза 1\n"; //$NON-NLS-1$
     }
 
     /**
@@ -1686,8 +1728,8 @@ public class VanessaTool implements IMcpTool
          * Every step is the wording of Vanessa's own step library, verbatim; what this method adds
          * is the order and the tag. The row is demanded to be the only one before the move unless
          * {@code whenSeveral=first} said otherwise, the button is pressed by name or by title, and
-         * the waiting step carries the {@code @screenshot} tag so the opened window is captured -
-         * after the step when it passed, before it when it failed.
+         * the window is waited for, and {@link #frameAfterTheAction()} then brings the test
+         * client's window forward and photographs the screen while it stays there.
          * </p>
          *
          * @param startStep how to get a client, or <code>null</code> for {@link #START_STEP}.
@@ -1728,7 +1770,6 @@ public class VanessaTool implements IMcpTool
             {
                 s.append("    И я нажимаю на кнопку \"").append(buttonTitle).append("\"\n"); //$NON-NLS-1$ //$NON-NLS-2$
             }
-            s.append("    @screenshot\n"); //$NON-NLS-1$
             if (windowTitle != null)
             {
                 s.append("    И я жду открытия окна \"").append(windowTitle) //$NON-NLS-1$
@@ -1739,6 +1780,7 @@ public class VanessaTool implements IMcpTool
                 s.append("    И я жду открытия окна отличного от \"$ОкноДо$\" в течение ") //$NON-NLS-1$
                     .append(waitSeconds).append(" секунд\n"); //$NON-NLS-1$
             }
+            s.append(frameAfterTheAction());
             s.append("    И Я закрываю все окна клиентского приложения\n"); //$NON-NLS-1$
             return s.toString();
         }
@@ -2405,11 +2447,13 @@ public class VanessaTool implements IMcpTool
         // ran with screenshots while it did not.
         "КаталогФич", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
         "КаталогOutputСкриншоты", "СписокФичДляВыполнения", //$NON-NLS-1$ //$NON-NLS-2$
-        // The screenshot pair and the asynchronous-step ceiling, set by the branches that compose
-        // a scenario of their own. Letting the passthrough carry any of them would raise the
-        // ceiling above the seconds the caller named, or turn the capture off while the answer
-        // still promised a frame.
+        // The screenshot pair, the capture method and the asynchronous-step ceiling, set by the
+        // branches that compose a scenario of their own. Letting the passthrough carry any of
+        // them would raise the ceiling above the seconds the caller named, turn the capture off
+        // while the answer still promised a frame, or put the whole screen back where a failure
+        // screenshot was asked for the test client's window.
         "ИспользоватьКомпонентуVanessaExt", "ИспользоватьВнешнююКомпонентуДляСкриншотов", //$NON-NLS-1$ //$NON-NLS-2$
+        "СпособСнятияСкриншотовВнешнейКомпонентой", //$NON-NLS-1$
         "ТаймаутДляАсинхронныхШагов"); //$NON-NLS-1$
 
     /**
@@ -2417,18 +2461,20 @@ public class VanessaTool implements IMcpTool
      * <p>
      * {@code ТаблицаИменНоваяСтрока} reads {@code useaddin} as
      * {@code ИспользоватьКомпонентуVanessaExt}, {@code useaddinforscreencapture} as
-     * {@code ИспользоватьВнешнююКомпонентуДляСкриншотов}, {@code timeoutforasynchronoussteps}
+     * {@code ИспользоватьВнешнююКомпонентуДляСкриншотов}, {@code screencaptureaddinmethod} as
+     * {@code СпособСнятияСкриншотовВнешнейКомпонентой}, {@code timeoutforasynchronoussteps}
      * as {@code ТаймаутДляАсинхронныхШагов}, and {@code testclienttable} as
      * {@code КлиентыТестирования}. They are not keys this tool writes - the document carries the
      * Russian names - so they do not belong in {@link #OURS_TO_SET}, whose census is the keys
      * that were written. A passthrough carrying one is merged after those keys. The settings
      * loader then skips {@code клиентытестирования}, so the English name would be dropped and
-     * the current row would stay whatever it was.
+     * the current row would stay whatever it was. The capture method is the exception it does
+     * assign by the Russian name, which is why the English alias is barred here too.
      * </p>
      */
     static final java.util.Set<String> OURS_BY_ENGLISH_NAME = lowerCased(
-        "useaddin", "useaddinforscreencapture", "timeoutforasynchronoussteps", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "testclienttable"); //$NON-NLS-1$
+        "useaddin", "useaddinforscreencapture", "screencaptureaddinmethod", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "timeoutforasynchronoussteps", "testclienttable"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.

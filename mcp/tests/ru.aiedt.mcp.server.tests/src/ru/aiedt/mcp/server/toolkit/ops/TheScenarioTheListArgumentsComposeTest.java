@@ -303,6 +303,9 @@ public class TheScenarioTheListArgumentsComposeTest
         String named = accepted(p).scenario(null);
         assertTrue("the waiting step carries the title and the seconds: " + named, //$NON-NLS-1$
             named.contains("И я жду открытия окна \"Печатная форма\" в течение 20 секунд")); //$NON-NLS-1$
+        assertTrue("the client window is brought forward after that wait", //$NON-NLS-1$
+            named.indexOf("в течение 20 секунд") < named.indexOf("активизирую окно")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(named.contains(VanessaTool.frameAfterTheAction()));
         assertTrue("a named window needs no remembered one", //$NON-NLS-1$
             !named.contains("запоминаю заголовок")); //$NON-NLS-1$
 
@@ -353,17 +356,24 @@ public class TheScenarioTheListArgumentsComposeTest
     }
 
     /**
-     * The tag that captures stands on the waiting step, and the scenario keeps the steps' order:
-     * open, count, move, press, wait.
+     * The window is waited for first, then the test client's window is brought forward, and the
+     * tag stands on the pause that holds it there. Open, count, move and press stay in that order.
      */
     @Test
-    public void theCaptureStandsOnTheWaitingStep()
+    public void theCaptureStandsOnceTheClientWindowIsInFront()
     {
         String scenario = accepted(given()).scenario(null);
-        assertTrue("the tag photographs the step that follows it: " + scenario, //$NON-NLS-1$
-            scenario.indexOf("@screenshot") < scenario.indexOf("жду открытия окна")); //$NON-NLS-1$ //$NON-NLS-2$
+        int waited = scenario.indexOf("жду открытия окна"); //$NON-NLS-1$
+        int forward = scenario.indexOf("активизирую окно текущего клиента тестирования"); //$NON-NLS-1$
+        int tag = scenario.indexOf("@screenshot"); //$NON-NLS-1$
+        int held = scenario.indexOf("Пауза 1"); //$NON-NLS-1$
+        assertTrue("the window is open before it is brought forward: " + scenario, //$NON-NLS-1$
+            waited >= 0 && waited < forward);
+        assertTrue("the tag photographs the pause, after the window is in front: " + scenario, //$NON-NLS-1$
+            forward < tag && tag < held);
+        assertTrue(scenario.contains(VanessaTool.frameAfterTheAction()));
         assertTrue(scenario.indexOf("перехожу к строке") < scenario.indexOf("нажимаю на кнопку")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(scenario.indexOf("нажимаю на кнопку") < scenario.indexOf("жду открытия окна")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(scenario.indexOf("нажимаю на кнопку") < waited); //$NON-NLS-1$
         assertTrue("a scenario needs a client to work in", //$NON-NLS-1$
             scenario.contains(VanessaTool.START_STEP));
     }
@@ -493,18 +503,21 @@ public class TheScenarioTheListArgumentsComposeTest
 
     /**
      * The keys this branch sets are barred from the passthrough, under the Russian names the
-     * document carries and under the English names Vanessa's name table gives the same three: a
-     * caller raising the asynchronous-step ceiling above the seconds they named, or turning the
-     * capture machinery off, would be answered with a run that did not happen the way it says.
+     * document carries and under the English names Vanessa's name table gives them: a caller
+     * raising the asynchronous-step ceiling above the seconds they named, turning the capture
+     * machinery off, or putting the whole screen back where a failure screenshot was asked for
+     * the test client's window, would be answered with a run that did not happen the way it says.
      */
     @Test
     public void theThreeKeysAreRefusedInThePassthrough()
     {
         for (String key : new String[] {"ИспользоватьКомпонентуVanessaExt", //$NON-NLS-1$
             "ИспользоватьВнешнююКомпонентуДляСкриншотов", "ТаймаутДляАсинхронныхШагов", //$NON-NLS-1$ //$NON-NLS-2$
-            // The name table's English names of those three. A different case is the same name:
-            // Vanessa folds it before it reads.
-            "useaddin", "useaddinforscreencapture", "TimeoutForAsynchronousSteps"}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "СпособСнятияСкриншотовВнешнейКомпонентой", //$NON-NLS-1$
+            // The name table's English names. A different case is the same name: Vanessa folds
+            // it before it reads.
+            "useaddin", "useaddinforscreencapture", "TimeoutForAsynchronousSteps", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "screencaptureaddinmethod"}) //$NON-NLS-1$
         {
             String[] refusalOfPassthrough = new String[1];
             VanessaTool.extraParams("{\"" + key + "\": true}", refusalOfPassthrough); //$NON-NLS-1$ //$NON-NLS-2$
@@ -513,8 +526,9 @@ public class TheScenarioTheListArgumentsComposeTest
     }
 
     /**
-     * The document carries the three keys on this branch and only the screenshot pair on the
-     * formToOpen branch - and neither anywhere else.
+     * The document carries the capture keys on this branch, including the method a failure
+     * screenshot reads, and the same capture keys without the wait ceiling on the formToOpen
+     * branch - and none of them on a call that composes no scenario of its own.
      */
     @Test
     public void theDocumentCarriesTheKeysOfItsOwnBranch()
@@ -529,6 +543,8 @@ public class TheScenarioTheListArgumentsComposeTest
             .getAsJsonObject();
         assertTrue(ofList.get("ИспользоватьКомпонентуVanessaExt").getAsBoolean()); //$NON-NLS-1$
         assertTrue(ofList.get("ИспользоватьВнешнююКомпонентуДляСкриншотов").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(VanessaTool.CLIENT_WINDOW,
+            ofList.get("СпособСнятияСкриншотовВнешнейКомпонентой").getAsInt()); //$NON-NLS-1$
         assertEquals(10, ofList.get("ТаймаутДляАсинхронныхШагов").getAsInt()); //$NON-NLS-1$
 
         JsonObject ofForm = JsonParser.parseString(VanessaTool.buildVaParams(feature, junit,
@@ -536,6 +552,9 @@ public class TheScenarioTheListArgumentsComposeTest
             .getAsJsonObject();
         assertTrue(ofForm.get("ИспользоватьКомпонентуVanessaExt").getAsBoolean()); //$NON-NLS-1$
         assertTrue(ofForm.get("ИспользоватьВнешнююКомпонентуДляСкриншотов").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("a failure screenshot on this branch asks for the client window too", //$NON-NLS-1$
+            VanessaTool.CLIENT_WINDOW,
+            ofForm.get("СпособСнятияСкриншотовВнешнейКомпонентой").getAsInt()); //$NON-NLS-1$
         assertTrue("the ceiling belongs to the branch whose step carries a wait", //$NON-NLS-1$
             !ofForm.has("ТаймаутДляАсинхронныхШагов")); //$NON-NLS-1$
 
@@ -544,6 +563,7 @@ public class TheScenarioTheListArgumentsComposeTest
         assertTrue("a call that composes no scenario of its own sets no capture keys", //$NON-NLS-1$
             !plain.has("ИспользоватьКомпонентуVanessaExt") //$NON-NLS-1$
                 && !plain.has("ИспользоватьВнешнююКомпонентуДляСкриншотов") //$NON-NLS-1$
+                && !plain.has("СпособСнятияСкриншотовВнешнейКомпонентой") //$NON-NLS-1$
                 && !plain.has("ТаймаутДляАсинхронныхШагов")); //$NON-NLS-1$
     }
 
@@ -595,8 +615,10 @@ public class TheScenarioTheListArgumentsComposeTest
             "        | 'Наименование' |", //$NON-NLS-1$
             "        | 'Стол письменный' |", //$NON-NLS-1$
             "    И я нажимаю на кнопку \"Печать\"", //$NON-NLS-1$
-            "    @screenshot", //$NON-NLS-1$
             "    И я жду открытия окна отличного от \"$ОкноДо$\" в течение 10 секунд", //$NON-NLS-1$
+            "    И я активизирую окно текущего клиента тестирования", //$NON-NLS-1$
+            "    @screenshot", //$NON-NLS-1$
+            "    И Пауза 1", //$NON-NLS-1$
             "    И Я закрываю все окна клиентского приложения", //$NON-NLS-1$
             "", //$NON-NLS-1$
         };
