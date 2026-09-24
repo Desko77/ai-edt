@@ -1141,7 +1141,7 @@ public class NaparnikTool
         {
             reason = "Naparnik called " + live.veto //$NON-NLS-1$
                 + ", which is outside the read set. The question was cancelled; that call may " //$NON-NLS-1$
-                + "already have run."; //$NON-NLS-1$
+                + "already have run. Turn on mcpNaparnikAllToolsEnabled to lift the read set."; //$NON-NLS-1$
         }
         return refusal(live, reason, elapsed, called);
     }
