@@ -43,8 +43,10 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * question. The question, and whatever Naparnik's own tools read, goes to the 1C:Naparnik service.
  * The bridge preference is off by default; {@code status} answers either way. With the bridge on,
  * the question allows only the read set unless {@code mcpNaparnikAllToolsEnabled} is on, in which
- * case Naparnik may change metadata, write files and execute code in EDT. Read-only presets
- * disable the tool by name in both modes.
+ * case Naparnik may change metadata, write files and execute code in EDT. A service knowledge-base
+ * tool is in that read set when its name is {@code mcp__knowledge-hub__} followed by
+ * {@code Search_}, {@code Fetch_}, {@code Diff_} or {@code Get_}. Other {@code mcp__} names are
+ * not. Read-only presets disable the tool by name in both modes.
  * </p>
  */
 public class NaparnikTool
@@ -96,6 +98,19 @@ public class NaparnikTool
         "GetMarkers", //$NON-NLS-1$
         "1C_Find", //$NON-NLS-1$
         "1C_GetObject"); //$NON-NLS-1$
+
+    /**
+     * Read-only tools of the 1C:Naparnik service knowledge base. A called name is in the read set
+     * when it starts with one of these. They are not local EDT tools, so they are not sent in
+     * {@code allowedTools}: the installation rejects a name it does not publish, and these run in
+     * the service. The veto allows a matching name. Any other {@code mcp__} name stays outside
+     * the read set. {@code status} and {@code ask} report this list as {@code allowedServiceTools}.
+     */
+    static final List<String> ALLOWED_SERVICE_TOOLS = List.of(
+        "mcp__knowledge-hub__Search_", //$NON-NLS-1$
+        "mcp__knowledge-hub__Fetch_", //$NON-NLS-1$
+        "mcp__knowledge-hub__Diff_", //$NON-NLS-1$
+        "mcp__knowledge-hub__Get_"); //$NON-NLS-1$
 
     /** What {@code DevAutopilot} writes for an unset skill before the 9-argument constructor. */
     static final String SKILL_NAME = "custom"; //$NON-NLS-1$
@@ -195,7 +210,9 @@ public class NaparnikTool
             + "Naparnik's tools read, goes to the 1C:Naparnik service. The bridge " //$NON-NLS-1$
             + "(mcpNaparnikBridgeEnabled) is off by default. With it on, ask allows only read tools " //$NON-NLS-1$
             + "unless mcpNaparnikAllToolsEnabled is on, in which case Naparnik may change metadata, " //$NON-NLS-1$
-            + "write files and execute code in EDT. Read-only presets disable this tool either way."; //$NON-NLS-1$
+            + "write files and execute code in EDT. Service knowledge-base reads named " //$NON-NLS-1$
+            + "mcp__knowledge-hub__ and starting Search_, Fetch_, Diff_ or Get_ stay in the read set. " //$NON-NLS-1$
+            + "Read-only presets disable this tool either way."; //$NON-NLS-1$
     }
 
     @Override
@@ -278,7 +295,9 @@ public class NaparnikTool
             + "replyTo (only with conversationId), maxToolRounds (1..30, default 10), " //$NON-NLS-1$
             + "timeoutSeconds (30..1800, default 300), waitSeconds (1..120, default 30), runKey, " //$NON-NLS-1$
             + "cancel (only with runKey). With the bridge on and mcpNaparnikAllToolsEnabled off " //$NON-NLS-1$
-            + "(the default), ask allows only the read tools. With mcpNaparnikAllToolsEnabled on, " //$NON-NLS-1$
+            + "(the default), ask allows only the read tools. Service knowledge-base reads named " //$NON-NLS-1$
+            + "mcp__knowledge-hub__ and starting Search_, Fetch_, Diff_ or Get_ stay in that set. " //$NON-NLS-1$
+            + "With mcpNaparnikAllToolsEnabled on, " //$NON-NLS-1$
             + "the question is sent with no tool filter, and Naparnik may change metadata, write " //$NON-NLS-1$
             + "files and execute code in EDT. One question runs at a time. A question that outlives " //$NON-NLS-1$
             + "waitSeconds answers Pending with a runKey; come back with that runKey, or with " //$NON-NLS-1$
@@ -298,7 +317,8 @@ public class NaparnikTool
             .put("bridgeEnabled", bridgeEnabled()) //$NON-NLS-1$
             .put("supportedVersion", SUPPORTED_VERSION) //$NON-NLS-1$
             .put("inPolicy", survey.inPolicy) //$NON-NLS-1$
-            .put("bundles", survey.bundles); //$NON-NLS-1$
+            .put("bundles", survey.bundles) //$NON-NLS-1$
+            .put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
         if (survey.refusal != null)
         {
             result.put("refusal", survey.refusal); //$NON-NLS-1$
@@ -607,6 +627,7 @@ public class NaparnikTool
         Map<String, Object> tools = new LinkedHashMap<>();
         tools.put("available", available); //$NON-NLS-1$
         tools.put("allowed", ALLOWED_TOOLS); //$NON-NLS-1$
+        tools.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
         tools.put("missing", missing); //$NON-NLS-1$
         return tools;
     }
@@ -1035,7 +1056,7 @@ public class NaparnikTool
         {
             for (String name : names)
             {
-                if (!allowed.contains(name))
+                if (!allowed.contains(name) && !serviceRead(name))
                 {
                     live.veto = name;
                     return name;
@@ -1055,12 +1076,52 @@ public class NaparnikTool
         return null;
     }
 
+    /**
+     * Whether {@code name} is a read of the service knowledge base. The verb is the part after
+     * {@code mcp__knowledge-hub__}, and only {@code Search_}, {@code Fetch_}, {@code Diff_} and
+     * {@code Get_} read. A different server, or a different verb on this server, is not.
+     */
+    private static boolean serviceRead(String name)
+    {
+        if (name == null)
+        {
+            return false;
+        }
+        for (String prefix : ALLOWED_SERVICE_TOOLS)
+        {
+            if (name.startsWith(prefix))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Builds the success answer for a completed question. A question that ended with neither
+     * answer text nor a tool call is the empty answer the service was measured to return, and it
+     * is refused rather than handed over as a success with nothing in it. Text that is blank
+     * after tool calls ran is still an answer; {@code answerEmpty} says the text is absent.
+     *
+     * @param live the question's own marks
+     * @param runKey the question's key
+     * @param question the completed question
+     * @param elapsed how long the question ran
+     * @param called the tool names that started, in order
+     * @return the answer document
+     */
     private String answered(LiveAsk live, String runKey, RunningQuestion question, long elapsed,
         List<String> called)
     {
+        String text = question.text();
+        boolean blank = text == null || text.isBlank();
+        if (blank && called.isEmpty())
+        {
+            return emptyAnswer(live, question, elapsed);
+        }
         ToolResult result = ToolResult.success()
             .put("operation", "ask") //$NON-NLS-1$ //$NON-NLS-2$
-            .put("answer", question.text()) //$NON-NLS-1$
+            .put("answer", text) //$NON-NLS-1$
             .put("conversationId", question.conversationId()) //$NON-NLS-1$
             .put("replyTo", question.replyTo()) //$NON-NLS-1$
             .put("assistantMessages", question.assistantMessages()) //$NON-NLS-1$
@@ -1069,23 +1130,50 @@ public class NaparnikTool
             .put("naparnikVersion", live.version) //$NON-NLS-1$
             .put("toolPolicy", live.policy) //$NON-NLS-1$
             .put("runKey", runKey); //$NON-NLS-1$
+        if (blank)
+        {
+            result.put("answerEmpty", Boolean.TRUE); //$NON-NLS-1$
+        }
         if (POLICY_READ.equals(live.policy))
         {
             result.put("allowedTools", live.allowedSent); //$NON-NLS-1$
         }
+        result.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
+        return result.toJson();
+    }
+
+    /**
+     * The refusal for a question that completed with neither answer text nor a tool call. The
+     * conversation ids stay in the document so the caller can put the question again into the
+     * same conversation, or start a new one.
+     *
+     * @param live the question's own marks
+     * @param question the completed question, which carries the conversation ids
+     * @param elapsed how long the question ran
+     * @return the refusal document
+     */
+    private static String emptyAnswer(LiveAsk live, RunningQuestion question, long elapsed)
+    {
+        ToolResult result = refusal(live, "1C:Naparnik returned an empty answer: no text and no " //$NON-NLS-1$
+            + "tool call. Ask the question again with conversationId and replyTo from this " //$NON-NLS-1$
+            + "answer to continue that conversation, or without conversationId to start a new " //$NON-NLS-1$
+            + "one.", //$NON-NLS-1$
+            elapsed, List.of());
+        result.put("conversationId", question.conversationId()); //$NON-NLS-1$
+        result.put("replyTo", question.replyTo()); //$NON-NLS-1$
         return result.toJson();
     }
 
     private static String cancelled(LiveAsk live, long elapsed, List<String> called)
     {
-        return refusal(live, "cancelled", elapsed, called); //$NON-NLS-1$
+        return refusal(live, "cancelled", elapsed, called).toJson(); //$NON-NLS-1$
     }
 
     private static String timedOut(LiveAsk live, long elapsed, int timeoutSeconds, List<String> called)
     {
         String names = called.isEmpty() ? "none" : String.join(", ", called); //$NON-NLS-1$ //$NON-NLS-2$
         return refusal(live, "timed out after " + timeoutSeconds + "s (" + elapsed + " ms), tools called: " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + names, elapsed, called);
+            + names, elapsed, called).toJson();
     }
 
     private static String vetoed(LiveAsk live, long elapsed, List<String> called)
@@ -1105,9 +1193,9 @@ public class NaparnikTool
         {
             reason = "Naparnik called " + live.veto //$NON-NLS-1$
                 + ", which is outside the read set. The question was cancelled; that call may " //$NON-NLS-1$
-                + "already have run."; //$NON-NLS-1$
+                + "already have run. Turn on mcpNaparnikAllToolsEnabled to lift the read set."; //$NON-NLS-1$
         }
-        return refusal(live, reason, elapsed, called);
+        return refusal(live, reason, elapsed, called).toJson();
     }
 
     private static String failed(LiveAsk live, long elapsed, List<String> called, Throwable failure,
@@ -1124,10 +1212,19 @@ public class NaparnikTool
         {
             text = failure.getClass().getName() + ": " + message; //$NON-NLS-1$
         }
-        return refusal(live, text, elapsed, called);
+        return refusal(live, text, elapsed, called).toJson();
     }
 
-    private static String refusal(LiveAsk live, String message, long elapsed, List<String> called)
+    /**
+     * The refusal shape every stopped or failed question answers with.
+     *
+     * @param live the question's own marks
+     * @param message what went wrong
+     * @param elapsed how long the question ran
+     * @param called the tool names that started, in order
+     * @return the failed result, still open for the fields a particular refusal adds
+     */
+    private static ToolResult refusal(LiveAsk live, String message, long elapsed, List<String> called)
     {
         ToolResult result = ToolResult.error(message)
             .put("operation", "ask") //$NON-NLS-1$ //$NON-NLS-2$
@@ -1139,7 +1236,8 @@ public class NaparnikTool
         {
             result.put("allowedTools", live.allowedSent); //$NON-NLS-1$
         }
-        return result.toJson();
+        result.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
+        return result;
     }
 
     private static String unknownRun(String runKey)

@@ -69,7 +69,7 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🧰 **Get incremental updates back** | Rebuild the stored dump-info file with Designer's own dump (`sync_control operation=rebuild_dump_info`) when `update_database` refuses a foreign file format, and mark synchronized an infobase binding that has no baseline yet (`mark_synchronized`). |
 | 🖨️ **Check a print form before printing** | Learn from the template model whether the print area fits the page width and by what margin: `mxl_workshop operation=check_print_width`, no platform run. |
 | 🎬 **Check an action in a running 1C** | Open a list, go to a row, press a button and get a screen capture with the test client's window after the action: `vanessa` with the list arguments. |
-| 🤝 **Ask 1C:Naparnik** | Put a question to Naparnik from the agent (`naparnik operation=ask`) with the bridge on; by default Naparnik gets read-only tools. |
+| 🤝 **Ask 1C:Naparnik** | Put a question to Naparnik from the agent (`naparnik operation=ask`) with the bridge on; by default Naparnik gets read-only tools, including search over the platform documentation and ITS in the service's knowledge base. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
 
