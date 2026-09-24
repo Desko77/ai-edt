@@ -51,10 +51,12 @@ import ru.aiedt.mcp.server.Activator;
  * the form's own resolution of the path ({@code findPropertyInfo} walks every
  * segment, ignoring case and the {@code [...]} index of a collection), and that
  * is the question the refusal hangs on. A path that resolves but that the
- * extension still cannot reference - a segment of another engine - is left to
- * EDT's own {@code form-data-path} marker, which runs after the write and
- * reports exactly that; the list that would decide it is the same derived data
- * the guard cannot see.
+ * extension still cannot reference - a segment of another engine, a tail
+ * past the borrowed attribute - is accepted: the referred-object list that
+ * would decide it is the same derived data the guard cannot see, and no EDT
+ * check reports it either - {@code form-data-path} fires only on a segment
+ * nothing resolves. Such a path is written and can be dropped on export
+ * without a marker to warn about it.
  *
  * <p>A form of a configuration project is left alone: the services are not
  * asked at all, because the guard recognises an extension form by its non-null
@@ -567,8 +569,13 @@ public final class FormExtensionDataPathGuard
      * must not block a write, and it must not claim either that the path was
      * checked. What was not asked travels to the caller in the outcome of the
      * assignment.
+     *
+     * <p>Where the services come from is a seam ({@link ServiceLookup}): the
+     * runtime reaches them through the OSGi registry and the plugin injector,
+     * and a test installs its own lookup to drive the branches a live EDT
+     * reaches only when a service is absent or a call fails.
      */
-    private static final class EdtPort implements Port
+    static final class EdtPort implements Port
     {
         private static final String MANAGEMENT_SERVICE =
             "com.e1c.g5.v8.dt.form.extension.IFormExtensionManagementService"; //$NON-NLS-1$
@@ -589,7 +596,40 @@ public final class FormExtensionDataPathGuard
 
         private static final String FORM_PLUGIN = "com._1c.g5.v8.dt.internal.form.FormPlugin"; //$NON-NLS-1$
 
+        /**
+         * Where the three EDT services come from. The implementation answers
+         * only; what is done with a missing service belongs to the question
+         * methods of the port.
+         */
+        interface ServiceLookup
+        {
+            /**
+             * @param serviceName the interface the service is registered under
+             * @param bundleName the bundle to ask the injector of when the
+             *            service registry has nothing
+             * @param pluginName the plugin class holding that injector
+             * @return the service instance, or null when this EDT has none
+             */
+            Object find(String serviceName, String bundleName, String pluginName);
+        }
+
         private static volatile EdtPort instance;
+
+        private final ServiceLookup services;
+
+        /** The port the runtime uses: the services come from the registry and the injector. */
+        EdtPort()
+        {
+            this(EdtPort::service);
+        }
+
+        /**
+         * @param services where the three EDT services come from
+         */
+        EdtPort(ServiceLookup services)
+        {
+            this.services = services;
+        }
 
         static EdtPort instance()
         {
@@ -615,7 +655,7 @@ public final class FormExtensionDataPathGuard
          * @param pluginName the plugin class holding that injector
          * @return the service instance, or null when this EDT has none
          */
-        private Object service(String serviceName, String bundleName, String pluginName)
+        private static Object service(String serviceName, String bundleName, String pluginName)
         {
             try
             {
@@ -648,7 +688,7 @@ public final class FormExtensionDataPathGuard
          * @return the bound instance, or null when the bundle or the binding is
          *         absent
          */
-        private Object fromInjector(String serviceName, String bundleName, String pluginName)
+        private static Object fromInjector(String serviceName, String bundleName, String pluginName)
         {
             try
             {
@@ -685,17 +725,17 @@ public final class FormExtensionDataPathGuard
 
         private Object management()
         {
-            return service(MANAGEMENT_SERVICE, MANAGEMENT_BUNDLE, MANAGEMENT_PLUGIN);
+            return services.find(MANAGEMENT_SERVICE, MANAGEMENT_BUNDLE, MANAGEMENT_PLUGIN);
         }
 
         private Object extension()
         {
-            return service(EXTENSION_SERVICE, FORM_BUNDLE, FORM_PLUGIN);
+            return services.find(EXTENSION_SERVICE, FORM_BUNDLE, FORM_PLUGIN);
         }
 
         private Object dataSourceInfo()
         {
-            return service(DATASOURCE_INFO_SERVICE, FORM_BUNDLE, FORM_PLUGIN);
+            return services.find(DATASOURCE_INFO_SERVICE, FORM_BUNDLE, FORM_PLUGIN);
         }
 
         @Override

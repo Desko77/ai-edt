@@ -2723,7 +2723,7 @@ public class BmFormHelper
      *
      * @param form the form the next direct call guards against
      */
-    void formForTest(Object form)
+    public void formForTest(Object form)
     {
         beginWrite(form);
     }

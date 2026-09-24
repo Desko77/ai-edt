@@ -55,7 +55,10 @@ than all of them.
   that attribute in the same write, and the response names it in `adoptedFormAttributes`. A path
   EDT does not export with the extension form **and** the form does not resolve is refused before
   anything is written - the refusal names the element, the path and the reason, and the form is left
-  as it was. A path an operation creates itself (the table of `add_dynamic_list_table`, the tables
+  as it was. A path the form resolves but that the extension cannot reference - a segment of
+  another engine, a tail past the borrowed attribute - is accepted, and EDT can drop it on export
+  with no marker to warn about it: `form-data-path` fires only on a segment nothing resolves. A
+  path an operation creates itself (the table of `add_dynamic_list_table`, the tables
   of `setup_settings_composer_on_form`) is not asked about resolution: the object is the write's
   own. When a check cannot be asked at all - the EDT service is absent or the call failed - nothing
   is refused and the response names the check in `dataPathChecksNotPerformed`

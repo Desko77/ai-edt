@@ -887,15 +887,25 @@ public class EditFormTool implements IMcpTool
         }
         catch (Exception e)
         {
-            // A refused data path is not a column that could not be generated:
-            // the refusal has to reach the caller and roll the whole write back,
-            // or the table and its earlier columns stay in a transaction that
-            // commits with no borrow to show for them.
-            FormExtensionDataPathGuard.rethrowIfRefusal(e);
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            warnings.add("autogen failed: " + (cause.getMessage() != null //$NON-NLS-1$
-                ? cause.getMessage() : cause.getClass().getSimpleName()));
+            noteColumnFailure(e, warnings);
         }
+    }
+
+    /**
+     * Turns a failure of one generated column into the warning the caller reads
+     * - unless it is a data-path refusal: a refusal has to reach the caller and
+     * roll the whole write back, or the table and its earlier columns stay in a
+     * transaction that commits with no borrow to show for them.
+     *
+     * @param e the failure the column loop caught
+     * @param warnings where a failure that is not a refusal is noted
+     */
+    static void noteColumnFailure(Exception e, java.util.List<String> warnings)
+    {
+        FormExtensionDataPathGuard.rethrowIfRefusal(e);
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        warnings.add("autogen failed: " + (cause.getMessage() != null //$NON-NLS-1$
+            ? cause.getMessage() : cause.getClass().getSimpleName()));
     }
 
     /**
