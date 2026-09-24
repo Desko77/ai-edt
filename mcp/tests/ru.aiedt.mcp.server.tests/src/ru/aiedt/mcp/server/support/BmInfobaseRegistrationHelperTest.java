@@ -73,6 +73,23 @@ public class BmInfobaseRegistrationHelperTest
         /** When set, the association throws with this message. */
         String associateFailure;
 
+        /** Whether {@code associate} ran at all. */
+        boolean associateRan;
+
+        /** When set, the access-settings write fails with this message. */
+        String accessWriteFailure;
+
+        /** The entry the last access-settings write was called for, or {@code null} when it never ran. */
+        InfobaseReference accessWriteInfobase;
+
+        /** The arguments the last access-settings write was called with. */
+        String accessWriteMode;
+        String accessWriteUser;
+        String accessWritePassword;
+
+        /** Whether the access-settings write ran before the association. */
+        boolean accessWriteBeforeAssociate;
+
         /** When set, deleting the list entry throws with this message. */
         String deleteFailure;
 
@@ -183,6 +200,7 @@ public class BmInfobaseRegistrationHelperTest
                 new Class<?>[] { IInfobaseAssociationManager.class }, (proxy, method, args) -> {
                     if ("associate".equals(method.getName())) //$NON-NLS-1$
                     {
+                        associateRan = true;
                         if (associateFailure != null)
                         {
                             throw new IllegalStateException(associateFailure);
@@ -278,6 +296,32 @@ public class BmInfobaseRegistrationHelperTest
             flagApplication = application;
             flagWanted = wanted;
             return flagOutcome;
+        }
+
+        @Override
+        public BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(
+            InfobaseReference infobase, String accessMode, String userName, String password)
+        {
+            accessWriteBeforeAssociate = !associateRan;
+            accessWriteInfobase = infobase;
+            accessWriteMode = accessMode;
+            accessWriteUser = userName;
+            accessWritePassword = password;
+            BmInfobaseCredentialsHelper.CredentialResult r =
+                new BmInfobaseCredentialsHelper.CredentialResult();
+            if (accessWriteFailure != null)
+            {
+                r.error = accessWriteFailure;
+                r.failureKind = ErrorTags.WRITE_FAILED.wire();
+                return r;
+            }
+            // The read-back the real write confirms with: OS access stores no user/password.
+            r.ok = true;
+            r.access = accessMode;
+            r.userName = "OS".equalsIgnoreCase(accessMode) ? null : userName; //$NON-NLS-1$
+            r.passwordStored = !"OS".equalsIgnoreCase(accessMode) //$NON-NLS-1$
+                && password != null && !password.isEmpty();
+            return r;
         }
 
         private static IProject projectProxy(String name)
@@ -763,5 +807,105 @@ public class BmInfobaseRegistrationHelperTest
         assertTrue(r.error, r.ok);
         assertTrue("the list is scanned for a duplicate under the lock that guards the write", //$NON-NLS-1$
             env.getAllUnderWriteLock);
+    }
+
+    @Test
+    public void accessSettingsAreWrittenAfterTheAddAndBeforeTheBinding()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(r.error, r.ok);
+        assertTrue("the access settings were written before the binding", //$NON-NLS-1$
+            env.accessWriteBeforeAssociate);
+        assertEquals("the settings were written for the entry the call added", //$NON-NLS-1$
+            "new", env.accessWriteInfobase.getName()); //$NON-NLS-1$
+        assertEquals("INFOBASE", env.accessWriteMode); //$NON-NLS-1$
+        assertEquals("admin", env.accessWriteUser); //$NON-NLS-1$
+        assertEquals("s3cret", env.accessWritePassword); //$NON-NLS-1$
+        assertNotNull("the answer carries what was stored", r.credentials); //$NON-NLS-1$
+        assertEquals("INFOBASE", r.credentials.access); //$NON-NLS-1$
+        assertEquals("admin", r.credentials.userName); //$NON-NLS-1$
+        assertTrue(r.credentials.passwordStored);
+    }
+
+    @Test
+    public void aReusedEntryGetsItsAccessSettingsBeforeTheBindingToo()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(r.error, r.ok);
+        assertFalse(r.added);
+        assertTrue("the reused entry's settings were written before the binding", //$NON-NLS-1$
+            env.accessWriteBeforeAssociate);
+        assertEquals("the settings were written for the reused entry", existing, //$NON-NLS-1$
+            env.accessWriteInfobase);
+        assertNotNull(r.credentials);
+    }
+
+    @Test
+    public void aCallWithoutAccessArgumentsWritesNoneAndKeepsThePreviousBehaviour()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env);
+
+        assertTrue(r.error, r.ok);
+        assertNull("no access write ran", env.accessWriteInfobase); //$NON-NLS-1$
+        assertNull("the answer names no stored access", r.credentials); //$NON-NLS-1$
+        assertTrue("the binding still goes ahead", env.associateRan); //$NON-NLS-1$
+        assertNotNull(r.applicationId);
+    }
+
+    @Test
+    public void aFailedAccessWriteRefusesBeforeTheBindingAndRollsTheAddedEntryBack()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.accessWriteFailure = "secure storage is locked"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.WRITE_FAILED.wire(), r.failureKind);
+        assertTrue("the answer carries the write's own reason: " + r.error, //$NON-NLS-1$
+            r.error.contains("secure storage is locked")); //$NON-NLS-1$
+        assertTrue("the answer says the binding did not run", //$NON-NLS-1$
+            r.error.contains("not bound to the project")); //$NON-NLS-1$
+        assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
+        assertTrue("the added entry was removed again", r.rolledBack); //$NON-NLS-1$
+        assertTrue("the entry is gone from the list", env.infobases.isEmpty()); //$NON-NLS-1$
+        assertNull("nothing stored is claimed", r.credentials); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedAccessWriteOnAReusedEntryLeavesItStanding()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.accessWriteFailure = "secure storage is locked"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.WRITE_FAILED.wire(), r.failureKind);
+        assertFalse("a reused entry is not rolled back", r.rolledBack); //$NON-NLS-1$
+        assertEquals("the reused entry stays in the list", 1, env.infobases.size()); //$NON-NLS-1$
+        assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
     }
 }

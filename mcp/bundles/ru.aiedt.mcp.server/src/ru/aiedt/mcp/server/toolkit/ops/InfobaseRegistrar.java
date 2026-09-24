@@ -10,6 +10,7 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.support.BmInfobaseRegistrationHelper;
 import ru.aiedt.mcp.server.support.BmInfobaseRegistrationHelper.RegisterResult;
+import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -21,7 +22,10 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * the list entry and the project binding are written. A duplicate address is reused, not added
  * twice, and the answer names the projects the reused entry was already bound to, plus the
  * projects whose applications could not be read, where the binding check did not run; a failed
- * binding rolls the added entry back.
+ * binding rolls the added entry back. Access arguments ({@code accessMode} / {@code userName} /
+ * {@code password}) are stored in EDT's encrypted store after the list entry and before the
+ * binding, through the same code {@code set_infobase_credentials} uses; a failed write refuses
+ * the call before the binding.
  */
 public class InfobaseRegistrar implements IMcpTool
 {
@@ -44,8 +48,12 @@ public class InfobaseRegistrar implements IMcpTool
             + "set_infobase_credentials). name is required for a server infobase and defaults to " //$NON-NLS-1$
             + "the directory name for a file one. An entry already in the list under the same " //$NON-NLS-1$
             + "address is reused, not duplicated. makeDefault makes the application the project's " //$NON-NLS-1$
-            + "default (by default only when the project has none). Use create_infobase to CREATE " //$NON-NLS-1$
-            + "a new file infobase instead."; //$NON-NLS-1$
+            + "default (by default only when the project has none). accessMode / userName / " //$NON-NLS-1$
+            + "password store the infobase credentials in EDT's encrypted store as part of the " //$NON-NLS-1$
+            + "call - written after the list entry and before the binding, so a base with users " //$NON-NLS-1$
+            + "registers without an interactive login prompt; the same contract as " //$NON-NLS-1$
+            + "set_infobase_credentials. Use create_infobase to CREATE a " //$NON-NLS-1$
+            + "new file infobase instead."; //$NON-NLS-1$
     }
 
     @Override
@@ -68,6 +76,16 @@ public class InfobaseRegistrar implements IMcpTool
                 "Make the application the project's default (default true when the project has " //$NON-NLS-1$
                     + "no default application, else false). The answer names the default that " //$NON-NLS-1$
                     + "stood before.") //$NON-NLS-1$
+            .stringProperty("accessMode", //$NON-NLS-1$
+                "Authentication mode to store for the infobase: 'INFOBASE' (user + password) or " //$NON-NLS-1$
+                    + "'OS' (operating system / pass-through, no user/password). Optional - " //$NON-NLS-1$
+                    + "defaults to INFOBASE when a userName is supplied, else OS. Stored after " //$NON-NLS-1$
+                    + "the list entry and before the binding.") //$NON-NLS-1$
+            .stringProperty("userName", //$NON-NLS-1$
+                "Infobase user name to store (for INFOBASE access).") //$NON-NLS-1$
+            .stringProperty("password", //$NON-NLS-1$
+                "Infobase password to store (for INFOBASE access). Stored encrypted; never " //$NON-NLS-1$
+                    + "logged or returned.") //$NON-NLS-1$
             .build();
     }
 
@@ -85,17 +103,40 @@ public class InfobaseRegistrar implements IMcpTool
         String connectionString = JsonUtils.extractStringArgument(params, "connectionString"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         Boolean makeDefault = JsonUtils.extractBooleanArgumentNullable(params, "makeDefault"); //$NON-NLS-1$
+        String accessMode = JsonUtils.extractStringArgument(params, "accessMode"); //$NON-NLS-1$
+        String userName = JsonUtils.extractStringArgument(params, "userName"); //$NON-NLS-1$
+        String password = JsonUtils.extractStringArgument(params, "password"); //$NON-NLS-1$
+
+        // The same checks and the same defaulting set_infobase_credentials keeps.
+        if (accessMode != null && !accessMode.isEmpty()
+            && !"OS".equalsIgnoreCase(accessMode) && !"INFOBASE".equalsIgnoreCase(accessMode)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return ToolResult.error("accessMode must be 'OS' or 'INFOBASE' (got '" //$NON-NLS-1$
+                + accessMode + "').").toJson(); //$NON-NLS-1$
+        }
+        boolean wantsAccess = accessMode != null && !accessMode.isEmpty()
+            || userName != null && !userName.isEmpty()
+            || password != null && !password.isEmpty();
+        if (wantsAccess && (accessMode == null || accessMode.isEmpty()))
+        {
+            accessMode = userName != null && !userName.isEmpty() ? "INFOBASE" : "OS"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!wantsAccess)
+        {
+            accessMode = null;
+        }
 
         RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase(projectName, path,
-            connectionString, name, makeDefault);
+            connectionString, name, makeDefault, accessMode, userName, password);
 
         return response(r);
     }
 
     /**
      * Builds the answer: what was added or reused, the application it bound, the projects a reused
-     * entry was already bound to, the default and the run-mode flag outcomes, and what the
-     * launch-configuration guard repaired.
+     * entry was already bound to, the default and the run-mode flag outcomes, what the
+     * launch-configuration guard repaired, and - when access arguments were carried - what access
+     * settings were stored (never the password).
      *
      * @param r what the registration did
      * @return the answer JSON
@@ -158,6 +199,22 @@ public class InfobaseRegistrar implements IMcpTool
         if (r.launchApplicationIds != null)
         {
             ok.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
+        }
+        if (r.credentials != null)
+        {
+            // The fields set_infobase_credentials answers with; the password itself is never
+            // among them.
+            ok.put("access", r.credentials.access); //$NON-NLS-1$
+            ok.put("userName", r.credentials.userName != null ? r.credentials.userName : ""); //$NON-NLS-1$ //$NON-NLS-2$
+            ok.put("passwordStored", r.credentials.passwordStored); //$NON-NLS-1$
+            boolean readback = !ErrorTags.READBACK_FAILED.wire().equals(r.credentials.failureKind);
+            ok.put("verifiedByReadback", readback); //$NON-NLS-1$
+            if (!readback)
+            {
+                ok.put(ErrorTags.READBACK_FAILED.wire(), Boolean.TRUE)
+                    .put("note", "Credentials were stored, but the confirmation read-back " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "failed; verify manually if a later connect still prompts."); //$NON-NLS-1$
+            }
         }
         return ok.toJson();
     }

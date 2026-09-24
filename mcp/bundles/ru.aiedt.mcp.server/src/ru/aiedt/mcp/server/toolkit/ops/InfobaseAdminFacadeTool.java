@@ -36,7 +36,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *   <li>{@code create_infobase} - create a FILE infobase and register it in
  *       EDT's list (delegates to {@link InfobaseCreator}; MUTATING)</li>
  *   <li>{@code register_infobase} - register an EXISTING infobase (file or
- *       server) in EDT's list and associate it to a project (delegates to
+ *       server) in EDT's list and associate it to a project, optionally storing
+ *       its access credentials before the binding (delegates to
  *       {@link InfobaseRegistrar}; MUTATING)</li>
  *   <li>{@code delete_infobase} - remove an infobase from EDT's list, optionally
  *       its .1CD on disk (delegates to {@link InfobaseRemover}; MUTATING,
@@ -286,13 +287,14 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "create_launch_config: name of an existing infobase in EDT's list to " //$NON-NLS-1$
                     + "associate (required for that operation).") //$NON-NLS-1$
             .stringProperty("accessMode", //$NON-NLS-1$
-                "set_infobase_credentials: INFOBASE (user + password) or OS (pass-through, " //$NON-NLS-1$
-                    + "no user/password).") //$NON-NLS-1$
+                "set_infobase_credentials / register_infobase: INFOBASE (user + password) or " //$NON-NLS-1$
+                    + "OS (pass-through, no user/password).") //$NON-NLS-1$
             .stringProperty("userName", //$NON-NLS-1$
-                "set_infobase_credentials: infobase user name (for INFOBASE access).") //$NON-NLS-1$
+                "set_infobase_credentials / register_infobase: infobase user name (for " //$NON-NLS-1$
+                    + "INFOBASE access).") //$NON-NLS-1$
             .stringProperty("password", //$NON-NLS-1$
-                "set_infobase_credentials: infobase password (for INFOBASE access). Stored " //$NON-NLS-1$
-                    + "encrypted; never logged or returned.") //$NON-NLS-1$
+                "set_infobase_credentials / register_infobase: infobase password (for INFOBASE " //$NON-NLS-1$
+                    + "access). Stored encrypted; never logged or returned.") //$NON-NLS-1$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
                 "update_database / start_client: exact name of an existing EDT runtime-client " //$NON-NLS-1$
                     + "launch configuration (preferred over projectName + applicationId - see " //$NON-NLS-1$

@@ -63,6 +63,16 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * why not when it was not.
  * </p>
  * <p>
+ * When the call carries access arguments ({@code accessMode} / {@code userName} /
+ * {@code password}, the same contract {@code set_infobase_credentials} keeps), they are written
+ * through the same helper after the entry stands in the list and before the binding, so an
+ * infobase with users registers without an interactive login prompt; a failed write refuses the
+ * call before the binding and rolls an added entry back. EDT keys the stored settings by the
+ * infobase reference's uuid in the secure store, and deleting a list entry does not remove that
+ * node - so after a rollback the stored settings stay behind under the removed entry's uuid,
+ * unreachable from the list, exactly as they do for {@code delete_infobase}.
+ * </p>
+ * <p>
  * The default that stood before the call is read under the write lock, before the association.
  * EDT makes the first application of a project the default itself during that association, so a
  * read afterwards would name the new application as the one that stood before.
@@ -85,7 +95,9 @@ public final class BmInfobaseRegistrationHelper
     {
         public boolean ok;
         public String error;
-        public String failureKind;   // projectNotFound / managerUnavailable / writeFailed / associateFailed
+        // projectNotFound / managerUnavailable / alreadyExists / writeFailed / associateFailed;
+        // a failed access-settings write carries that write's own kind (storageLocked / ...)
+        public String failureKind;
         /** The list entry's name - the one added, or the reused one's. */
         public String infobaseName;
         public String uuid;
@@ -112,6 +124,11 @@ public final class BmInfobaseRegistrationHelper
         /** Why the rollback itself failed, or {@code null}. */
         public String rollbackFailure;
         public String launchApplicationIds;
+        /**
+         * The access settings stored for the infobase before the binding, or {@code null} when
+         * the call carried no access arguments. Never carries the password.
+         */
+        public BmInfobaseCredentialsHelper.CredentialResult credentials;
     }
 
     /**
@@ -164,6 +181,21 @@ public final class BmInfobaseRegistrationHelper
          * @return what happened: {@code added}, {@code present}, or {@code not applied: ...}
          */
         String applyOrdinaryFlag(IApplication application, boolean wanted);
+
+        /**
+         * Stores the infobase access settings the call was asked to write, through the same code
+         * {@code set_infobase_credentials} uses. Called after the list entry was added or found
+         * and before the binding.
+         *
+         * @param infobase the list entry the settings belong to
+         * @param accessMode the effective mode, {@code OS} or {@code INFOBASE}
+         * @param userName the infobase user, or {@code null}
+         * @param password the infobase password, or {@code null}; never logged or returned
+         * @return what the write ended with; {@link BmInfobaseCredentialsHelper.CredentialResult#ok}
+         *         false refuses the registration before the binding
+         */
+        BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(InfobaseReference infobase,
+            String accessMode, String userName, String password);
     }
 
     /** What the product resolves; a test passes its own environment to the overload. */
@@ -225,6 +257,14 @@ public final class BmInfobaseRegistrationHelper
         {
             return ClientLaunchMode.reconcileFlag(application, wanted);
         }
+
+        @Override
+        public BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(
+            InfobaseReference infobase, String accessMode, String userName, String password)
+        {
+            return BmInfobaseCredentialsHelper.setCredentialsForInfobase(infobase, accessMode,
+                userName, password);
+        }
     };
 
     /**
@@ -247,7 +287,35 @@ public final class BmInfobaseRegistrationHelper
     public static RegisterResult registerInfobase(String projectName, String path,
         String connectionString, String name, Boolean makeDefault)
     {
-        return registerInfobase(projectName, path, connectionString, name, makeDefault, PRODUCT);
+        return registerInfobase(projectName, path, connectionString, name, makeDefault,
+            null, null, null, PRODUCT);
+    }
+
+    /**
+     * Registers an existing infobase to a project against the product's managers, storing the
+     * given access settings for it before the binding.
+     *
+     * @param projectName the project to associate the infobase to; required
+     * @param path absolute path of an existing FILE infobase directory; exactly one of path /
+     *        connectionString
+     * @param connectionString a SERVER infobase address, {@code Srvr=...;Ref=...}, without
+     *        credentials; exactly one of path / connectionString
+     * @param name the name in EDT's list; required for a server infobase, defaults to the
+     *        directory name for a file one; {@code null} means "not passed"
+     * @param makeDefault whether the application becomes the project's default; {@code null} means
+     *        "true when the project has no default application, false otherwise"
+     * @param accessMode the effective access mode, {@code OS} or {@code INFOBASE}; {@code null}
+     *        stores no access settings
+     * @param userName the infobase user, or {@code null}
+     * @param password the infobase password, or {@code null}; never logged or returned
+     * @return what was added or reused, bound and set as default; never <code>null</code>
+     */
+    public static RegisterResult registerInfobase(String projectName, String path,
+        String connectionString, String name, Boolean makeDefault, String accessMode,
+        String userName, String password)
+    {
+        return registerInfobase(projectName, path, connectionString, name, makeDefault,
+            accessMode, userName, password, PRODUCT);
     }
 
     /**
@@ -264,6 +332,31 @@ public final class BmInfobaseRegistrationHelper
      */
     public static RegisterResult registerInfobase(String projectName, String path,
         String connectionString, String name, Boolean makeDefault, RegistrationEnvironment env)
+    {
+        return registerInfobase(projectName, path, connectionString, name, makeDefault,
+            null, null, null, env);
+    }
+
+    /**
+     * Registers an existing infobase to a project, storing the given access settings for it
+     * before the binding; the environment is the seam a test fakes.
+     *
+     * @param projectName the project to associate the infobase to; required
+     * @param path absolute path of an existing FILE infobase directory
+     * @param connectionString a SERVER infobase address, {@code Srvr=...;Ref=...}
+     * @param name the list name, or {@code null} for the file-infobase default
+     * @param makeDefault whether the application becomes the project's default, or {@code null}
+     *        for the "only when the project has none" default
+     * @param accessMode the effective access mode, {@code OS} or {@code INFOBASE}; {@code null}
+     *        stores no access settings
+     * @param userName the infobase user, or {@code null}
+     * @param password the infobase password, or {@code null}; never logged or returned
+     * @param env where the managers and the project are read from
+     * @return what was added or reused, bound and set as default; never <code>null</code>
+     */
+    public static RegisterResult registerInfobase(String projectName, String path,
+        String connectionString, String name, Boolean makeDefault, String accessMode,
+        String userName, String password, RegistrationEnvironment env)
     {
         RegisterResult r = new RegisterResult();
         r.infobaseName = name;
@@ -357,6 +450,27 @@ public final class BmInfobaseRegistrationHelper
                 r.alsoAssociatedWith = others.bound.isEmpty() ? null : others.bound;
                 r.associationCheckFailed = others.checkFailed.isEmpty() ? null : others.checkFailed;
             }
+            if (accessMode != null)
+            {
+                // The access settings are stored after the entry stands in the list (the write
+                // keys on the infobase reference) and before the binding, so a base with users
+                // registers without an interactive login prompt. A failed write refuses the call
+                // before the binding, and the entry this call added goes back out.
+                BmInfobaseCredentialsHelper.CredentialResult credentials =
+                    env.writeAccessSettings(found, accessMode, userName, password);
+                if (!credentials.ok)
+                {
+                    rollBackAddedEntry(mgr, found, r);
+                    r.launchApplicationIds = restore(launchIds);
+                    r.error = "The infobase stands in EDT's list, but its access settings " //$NON-NLS-1$
+                        + "could not be stored, so it was not bound to the project: " //$NON-NLS-1$
+                        + credentials.error + rollbackNote(r);
+                    r.failureKind = credentials.failureKind != null ? credentials.failureKind
+                        : ErrorTags.WRITE_FAILED.wire();
+                    return r;
+                }
+                r.credentials = credentials;
+            }
             // The default that stood before the binding. EDT makes the first application of a
             // project the default during associate, so a read afterwards names the new
             // application as the one that stood before. A failed read is kept: the omit rule
@@ -369,26 +483,10 @@ public final class BmInfobaseRegistrationHelper
             }
             catch (Throwable e)
             {
-                if (r.added)
-                {
-                    try
-                    {
-                        mgr.delete(found);
-                        r.rolledBack = true;
-                    }
-                    catch (Throwable rollback)
-                    {
-                        r.rollbackFailure = msg(rollback);
-                    }
-                }
+                rollBackAddedEntry(mgr, found, r);
                 r.launchApplicationIds = restore(launchIds);
                 r.error = "Failed to associate the infobase to the project: " + msg(e) //$NON-NLS-1$
-                    + (r.rolledBack
-                        ? " The list entry added for it was removed again; the infobase itself was not touched." //$NON-NLS-1$
-                        : r.rollbackFailure != null
-                            ? " The list entry added for it could NOT be removed again: " //$NON-NLS-1$
-                                + r.rollbackFailure
-                            : ""); //$NON-NLS-1$
+                    + rollbackNote(r);
                 r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
                 return r;
             }
@@ -643,6 +741,48 @@ public final class BmInfobaseRegistrationHelper
     {
         return BmInfobaseLifecycleHelper.restoreLaunchApplicationIds(launchIds,
             DeletedBaseConfigurations.none(), "register_infobase"); //$NON-NLS-1$
+    }
+
+    /**
+     * Removes the list entry this call added after a later step (the access-settings write or the
+     * binding) failed. A reused entry is left standing; the infobase files are never touched.
+     *
+     * @param mgr the infobase manager the entry was added through
+     * @param found the entry this call added
+     * @param r the result the rollback outcome lands in
+     */
+    private static void rollBackAddedEntry(IInfobaseManager mgr, InfobaseReference found,
+        RegisterResult r)
+    {
+        if (!r.added)
+        {
+            return;
+        }
+        try
+        {
+            mgr.delete(found);
+            r.rolledBack = true;
+        }
+        catch (Throwable rollback)
+        {
+            r.rollbackFailure = msg(rollback);
+        }
+    }
+
+    /**
+     * What the answer says about the rollback of the added entry: removed again, could not be
+     * removed, or nothing when the entry was reused.
+     *
+     * @param r the result carrying the rollback outcome
+     * @return the sentence for the answer, empty when there is nothing to say
+     */
+    private static String rollbackNote(RegisterResult r)
+    {
+        return r.rolledBack
+            ? " The list entry added for it was removed again; the infobase itself was not touched." //$NON-NLS-1$
+            : r.rollbackFailure != null
+                ? " The list entry added for it could NOT be removed again: " + r.rollbackFailure //$NON-NLS-1$
+                : ""; //$NON-NLS-1$
     }
 
     /**

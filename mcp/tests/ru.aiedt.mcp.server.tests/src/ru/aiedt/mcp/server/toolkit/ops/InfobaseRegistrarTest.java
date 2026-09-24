@@ -15,6 +15,8 @@ import java.util.Map;
 
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.McpHistory;
+import ru.aiedt.mcp.server.support.BmInfobaseCredentialsHelper;
 import ru.aiedt.mcp.server.support.BmInfobaseRegistrationHelper.RegisterResult;
 import ru.aiedt.mcp.server.support.ErrorTags;
 
@@ -181,5 +183,87 @@ public class InfobaseRegistrarTest
         assertTrue(json.contains("\"rolledBack\":true")); //$NON-NLS-1$
         assertTrue(json.contains( //$NON-NLS-1$
             "\"launchApplicationIds\":\"restored the application id of: Foreign run\"")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anUnknownAccessModeIsRefusedBeforeAnythingIsWritten()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("projectName", "project-one"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("path", "C:/bases/base"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("accessMode", "LDAP"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String result = new InfobaseRegistrar().execute(params);
+
+        assertTrue(result.contains("\"success\":false")); //$NON-NLS-1$
+        // Gson escapes the apostrophes of the refusal text, so the assertion stops before them.
+        assertTrue(result.contains("accessMode must be")); //$NON-NLS-1$
+        assertTrue(result.contains("LDAP")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theSuccessAnswerNamesWhatAccessWasStored()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.added = true;
+        BmInfobaseCredentialsHelper.CredentialResult credentials =
+            new BmInfobaseCredentialsHelper.CredentialResult();
+        credentials.ok = true;
+        credentials.access = "INFOBASE"; //$NON-NLS-1$
+        credentials.userName = "admin"; //$NON-NLS-1$
+        credentials.passwordStored = true;
+        r.credentials = credentials;
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"access\":\"INFOBASE\"")); //$NON-NLS-1$
+        assertTrue(json.contains("\"userName\":\"admin\"")); //$NON-NLS-1$
+        assertTrue(json.contains("\"passwordStored\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"verifiedByReadback\":true")); //$NON-NLS-1$
+        assertFalse("the password itself is never in the answer", //$NON-NLS-1$
+            json.contains("s3cret")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedConfirmationReadBackIsNamedNotClaimed()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.added = true;
+        BmInfobaseCredentialsHelper.CredentialResult credentials =
+            new BmInfobaseCredentialsHelper.CredentialResult();
+        credentials.ok = true;
+        credentials.failureKind = ErrorTags.READBACK_FAILED.wire();
+        r.credentials = credentials;
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"verifiedByReadback\":false")); //$NON-NLS-1$
+        assertTrue(json.contains("\"readbackFailed\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("the confirmation read-back")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aStoredPasswordIsMaskedInTheHistoryArgumentSummary()
+    {
+        // The masking is decided by the argument's NAME, so the same summary that hides
+        // set_infobase_credentials' password hides this operation's - pinned here so a
+        // rename of the argument or a change of the rule cannot slip past unnoticed.
+        Map<String, String> arguments = new HashMap<>();
+        arguments.put("operation", "register_infobase"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("projectName", "project-one"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("path", "C:/bases/base"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("userName", "admin"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("password", "s3cret"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        McpHistory.ArgsSummary summary = McpHistory.summarizeArguments(arguments, 2000);
+
+        assertFalse(summary.text, summary.text.contains("s3cret")); //$NON-NLS-1$
+        assertTrue("the summary shows the value was masked: " + summary.text, //$NON-NLS-1$
+            summary.text.contains("password=***")); //$NON-NLS-1$
+        assertTrue("the non-secret arguments stay readable", summary.text.contains("project-one")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }
