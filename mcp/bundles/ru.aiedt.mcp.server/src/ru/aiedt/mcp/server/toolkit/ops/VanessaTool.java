@@ -367,8 +367,10 @@ public class VanessaTool implements IMcpTool
                 + "directly. A project with no infobase application, or one bound to a server " //$NON-NLS-1$
                 + "infobase, has to be named directly.").toJson(); //$NON-NLS-1$
         }
-        // Appended to the string, not passed as /N: the test client the start step launches is
-        // given its own PathToInfobase, and a string carries the user into both.
+        // The test manager is started with /IBConnectionString, which reads Usr= in this string.
+        // The test client does not. Vanessa reads the client's path as File= or Srvr=/Ref=, and a
+        // Usr field in that path becomes part of the catalog it looks for. The client blocks take
+        // the user back out and pass it as /N in the additional parameters.
         connectionString = namingTheUser(connectionString,
             JsonUtils.extractStringArgument(params, "infobaseUser")); //$NON-NLS-1$
         String secretRefusal = whyASecretCannotBePassed(connectionString);
@@ -1791,11 +1793,30 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The connection string with the user named in it.
+     * The connection string with the user named in it, for the test manager.
      * <p>
-     * In the string rather than as {@code /N}: the test client the start step launches is given
-     * its own {@code PathToInfobase}, and a string carries the user into both clients where the
-     * argument would reach only one.
+     * The manager is started with {@code /IBConnectionString}, and that switch reads {@code Usr=}
+     * in the string. The test client the start step launches does not. Vanessa 1.2.042.19,
+     * {@code ПолучитьСтрокуЗапускаDesktopПриложение} in
+     * {@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl}, treats
+     * {@code ПутьКИнфобазе} as a path. A string containing {@code File=} has {@code File=} removed,
+     * every semicolon removed and one surrounding pair of quotes removed, and that result is
+     * checked as a directory (lines 42778-42783, {@code УбратьКавычки} at 42685-42691). A missing
+     * directory is {@code Каталог <%1> не найден} at 43058-43060. {@code Srvr=} becomes {@code /S}
+     * and {@code ";Ref="} becomes a backslash (42786-42788), so a {@code Usr} field after
+     * {@code Ref} stays on the server argument. A bare catalog, with no {@code =} and no semicolon,
+     * is wrapped as {@code File="...";} when the directory exists (42946-42949). {@code ws=}
+     * becomes {@code /WS} (42789-42790). The user reaches that client as {@code /N"..."} in
+     * {@code ДопПараметры}, which the same procedure appends to the command line (42838-42844).
+     * Vanessa writes that form itself: {@code ЗаполнитьДанныеТекущейИнфобазы} at 42631 and 42640,
+     * and {@code features/Libraries/VB/step_definitions/VBForm/Forms/Форма/Ext/Form/Module.bsl}
+     * line 144. The settings loader reads {@code TestClient.datatestclients} first
+     * ({@code PathToInfobase} and {@code AddItionalParameters}, lines 51809 and 53172-53202, the
+     * name table at 53407 and 53544) and the command-line runner then overwrites the row from
+     * {@code КлиентыТестирования} (51872-51876, {@code ПрочитатьДанныеКлиентовТестирования} at
+     * 27735-27736), so both blocks carry the same path and the same parameters.
+     * {@link #pathTheTestClientOpens} and {@link #parametersTheTestClientReceives} take the user
+     * back out of the string this method built.
      * </p>
      *
      * @param connectionString the infobase.
@@ -1814,6 +1835,191 @@ public class VanessaTool implements IMcpTool
             said = said + ";"; //$NON-NLS-1$
         }
         return said + "Usr=\"" + user.trim() + "\";"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The path the test client is given: the connection string without its {@code Usr} field.
+     * <p>
+     * {@code File="catalog";} and {@code Srvr="server";Ref="base";} are the forms Vanessa converts
+     * into a launch argument. A {@code Usr} field in either one is not a user to Vanessa; see
+     * {@link #namingTheUser}. Quotes stay, including a semicolon inside them, because the field
+     * split that drops them turns a path into a different path.
+     * </p>
+     *
+     * @param connectionString the manager's string, which may name a user, or <code>null</code>.
+     * @return the path, or <code>null</code> when there was no string
+     */
+    static String pathTheTestClientOpens(String connectionString)
+    {
+        return pathAndUser(connectionString)[0];
+    }
+
+    /**
+     * The additional parameters the test client is given.
+     * <p>
+     * Empty when the string names no user. Otherwise {@code /N"user"}, the form Vanessa writes
+     * into {@code ДопПараметры} and appends to the client's command line. The value is the last
+     * {@code Usr} field, which is the user {@link #namingTheUser} appended.
+     * </p>
+     *
+     * @param connectionString the manager's string, which may name a user, or <code>null</code>.
+     * @return {@code /N"user"}, or an empty string when there is no user
+     */
+    static String parametersTheTestClientReceives(String connectionString)
+    {
+        String user = pathAndUser(connectionString)[1];
+        if (user == null || user.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return "/N\"" + user + "\""; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The connection string split into the path and the last user named in it.
+     *
+     * @param connectionString the string, or <code>null</code>.
+     * @return the path at {@code [0]} and the user at {@code [1]}, the user <code>null</code>
+     *         when none is named
+     */
+    private static String[] pathAndUser(String connectionString)
+    {
+        if (connectionString == null)
+        {
+            return new String[] {null, null};
+        }
+        StringBuilder kept = new StringBuilder();
+        StringBuilder field = new StringBuilder();
+        String user = null;
+        boolean quoted = false;
+        for (int i = 0; i < connectionString.length(); i++)
+        {
+            char c = connectionString.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                field.append(c);
+                continue;
+            }
+            if (c == ';' && !quoted)
+            {
+                user = keepOrDrop(field, kept, user, true);
+                continue;
+            }
+            field.append(c);
+        }
+        user = keepOrDrop(field, kept, user, false);
+        return new String[] {kept.toString(), user};
+    }
+
+    /**
+     * Keeps one field, or remembers it when it is the user.
+     *
+     * @param field the field, quotes included, with no separator.
+     * @param kept the path so far.
+     * @param user the last user seen, or <code>null</code>.
+     * @param hadSeparator whether a semicolon ended this field.
+     * @return the user, replaced when this field names one
+     */
+    private static String keepOrDrop(StringBuilder field, StringBuilder kept, String user,
+        boolean hadSeparator)
+    {
+        if (isUserField(field))
+        {
+            String value = valueOfField(field);
+            if (!value.isEmpty())
+            {
+                user = value;
+            }
+        }
+        else
+        {
+            kept.append(field);
+            if (hadSeparator)
+            {
+                kept.append(';');
+            }
+        }
+        field.setLength(0);
+        return user;
+    }
+
+    /**
+     * Whether this field is {@code Usr}, rather than a path that happens to contain those letters.
+     *
+     * @param field one field of a connection string.
+     * @return true when the name before {@code =} is {@code Usr}
+     */
+    private static boolean isUserField(CharSequence field)
+    {
+        return "usr".equals(fieldName(field).toLowerCase(java.util.Locale.ROOT)); //$NON-NLS-1$
+    }
+
+    /**
+     * The name of a field, up to the first {@code =} that is not inside quotes.
+     *
+     * @param field one field of a connection string.
+     * @return the name, trimmed, quotes removed
+     */
+    private static String fieldName(CharSequence field)
+    {
+        StringBuilder name = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < field.length(); i++)
+        {
+            char c = field.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (c == '=' && !quoted)
+            {
+                break;
+            }
+            name.append(c);
+        }
+        return name.toString().trim();
+    }
+
+    /**
+     * The value of a field, with the quotes that wrap it removed.
+     *
+     * @param field one field of a connection string.
+     * @return the value, trimmed, or an empty string when the field has no {@code =}
+     */
+    private static String valueOfField(CharSequence field)
+    {
+        int separator = -1;
+        boolean quoted = false;
+        for (int i = 0; i < field.length(); i++)
+        {
+            char c = field.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (c == '=' && !quoted)
+            {
+                separator = i;
+                break;
+            }
+        }
+        if (separator < 0)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        StringBuilder value = new StringBuilder();
+        for (int i = separator + 1; i < field.length(); i++)
+        {
+            char c = field.charAt(i);
+            if (c != '"')
+            {
+                value.append(c);
+            }
+        }
+        return value.toString().trim();
     }
 
     /**
@@ -1879,7 +2085,8 @@ public class VanessaTool implements IMcpTool
      * @param shotsDir where Vanessa writes failure screenshots.
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
-     * @param connectionString the infobase the test client opens.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the test client's path and passed as {@code /N}.
      * @param clientPort the port the test client listens on.
      * @param clientTimeoutSec the whole budget of the run; the client share of it is taken by
      *            {@link #clientWaitWithin(int)}.
@@ -1903,7 +2110,8 @@ public class VanessaTool implements IMcpTool
      * @param shotsDir where Vanessa writes failure screenshots.
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
-     * @param connectionString the infobase the test client opens.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the test client's path and passed as {@code /N}.
      * @param clientPort the port the test client listens on.
      * @param clientTimeoutSec the whole budget of the run.
      * @param withTestClient whether to name a test client for the start step to launch.
@@ -2062,7 +2270,8 @@ public class VanessaTool implements IMcpTool
      * The {@code TestClient} block of VAParams: which infobase the client opens, on which port and
      * as which client type.
      *
-     * @param connectionString the infobase the test client opens.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the test client's path and passed as {@code /N}.
      * @param clientPort the port the client listens on.
      * @param clientTimeoutSec seconds Vanessa waits for the client to answer. Taken from the
      *            run's own budget up to {@link #TEST_CLIENT_WAIT_CEILING_SEC}.
@@ -2072,10 +2281,14 @@ public class VanessaTool implements IMcpTool
     {
         JsonObject client = new JsonObject();
         client.addProperty("Name", TEST_CLIENT_PROFILE); //$NON-NLS-1$
-        client.addProperty("PathToInfobase", connectionString); //$NON-NLS-1$
+        client.addProperty("PathToInfobase", pathTheTestClientOpens(connectionString)); //$NON-NLS-1$
         client.addProperty("PortTestClient", clientPort); //$NON-NLS-1$
         // Vanessa spells this key with that capital I. Correcting it leaves the key unread.
-        client.addProperty("AddItionalParameters", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        // The value is /N"user" when the connection string names one, and empty when it does not.
+        // Usr stays out of the path: Vanessa derives a directory from File= and a server argument
+        // from Srvr= and Ref=, and a user field in that string becomes part of either.
+        client.addProperty("AddItionalParameters", //$NON-NLS-1$
+            parametersTheTestClientReceives(connectionString));
         client.addProperty("ClientType", "Thin"); //$NON-NLS-1$ //$NON-NLS-2$
         client.addProperty("ComputerName", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
         com.google.gson.JsonArray clients = new com.google.gson.JsonArray();
@@ -2097,9 +2310,13 @@ public class VanessaTool implements IMcpTool
      * true and sets the current row, which is the row
      * {@code ЯЗапускаюСценарийОткрытияTestClientИлиПодключаюУжеСуществующий} launches.
      * {@code ТипКлиента} is stored as given, so it is {@code Тонкий} and not {@code Thin}.
+     * {@code ПутьКИнфобазе} is {@link #pathTheTestClientOpens} and {@code ДопПараметры} is
+     * {@link #parametersTheTestClientReceives}, the same split the English block carries: the
+     * command-line runner overwrites the row from this block after the English one has loaded.
      * </p>
      *
-     * @param connectionString the infobase the client opens.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the path and passed as {@code /N}.
      * @param clientPort the port the client listens on.
      * @return one row, ready to be the value of {@code КлиентыТестирования}
      */
@@ -2108,9 +2325,9 @@ public class VanessaTool implements IMcpTool
     {
         JsonObject row = new JsonObject();
         row.addProperty("Имя", TEST_CLIENT_PROFILE); //$NON-NLS-1$
-        row.addProperty("ПутьКИнфобазе", connectionString); //$NON-NLS-1$
+        row.addProperty("ПутьКИнфобазе", pathTheTestClientOpens(connectionString)); //$NON-NLS-1$
         row.addProperty("ПортЗапускаТестКлиента", clientPort); //$NON-NLS-1$
-        row.addProperty("ДопПараметры", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        row.addProperty("ДопПараметры", parametersTheTestClientReceives(connectionString)); //$NON-NLS-1$
         row.addProperty("ТипКлиента", "Тонкий"); //$NON-NLS-1$ //$NON-NLS-2$
         row.addProperty("ИмяКомпьютера", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
         row.addProperty("АктивизироватьСтроку", true); //$NON-NLS-1$

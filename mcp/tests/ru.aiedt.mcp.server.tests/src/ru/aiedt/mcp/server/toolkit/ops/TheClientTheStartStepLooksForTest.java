@@ -184,8 +184,9 @@ public class TheClientTheStartStepLooksForTest
 
     /**
      * A base with users defined meets a client that names none with a login window, and the run
-     * then waits out its whole deadline. The user goes into the connection string, so it reaches
-     * the test client the start step launches as well.
+     * then waits out its whole deadline. The user goes into the connection string the test manager
+     * is started with. The test client does not read that string; its blocks are checked apart
+     * from this.
      */
     @Test
     public void theUserGoesIntoTheConnectionString()
@@ -208,6 +209,81 @@ public class TheClientTheStartStepLooksForTest
     {
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, null));
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, "   ")); //$NON-NLS-1$
+    }
+
+    /**
+     * A file base with a user. Vanessa checks the catalog it derives from {@code File=}, and a
+     * {@code Usr} field in that string becomes part of the catalog, so the path in both blocks is
+     * the file string alone. The user travels as {@code /N}, which is what Vanessa appends from
+     * the additional parameters. A semicolon inside the path's quotes is part of the path.
+     */
+    @Test
+    public void aFileBaseWithAUserKeepsTheUserOutOfBothClientBlocks()
+    {
+        String manager = VanessaTool.namingTheUser(CONNECTION, "Администратор"); //$NON-NLS-1$
+        assertTrue(manager.contains("Usr=\"Администратор\"")); //$NON-NLS-1$
+        assertBothBlocks(manager, CONNECTION, "/N\"Администратор\""); //$NON-NLS-1$
+
+        String spaced = "File=\"C:/bases/demo base\";"; //$NON-NLS-1$
+        assertBothBlocks(VanessaTool.namingTheUser(spaced, "Администратор"), //$NON-NLS-1$
+            spaced, "/N\"Администратор\""); //$NON-NLS-1$
+
+        String quotedSemicolon = "File=\"C:/bases/demo;old\";"; //$NON-NLS-1$
+        assertBothBlocks(VanessaTool.namingTheUser(quotedSemicolon, "Админ"), //$NON-NLS-1$
+            quotedSemicolon, "/N\"Админ\""); //$NON-NLS-1$
+
+        assertBothBlocks(VanessaTool.namingTheUser("File=\"C:/b\"", "A"), //$NON-NLS-1$ //$NON-NLS-2$
+            "File=\"C:/b\";", "/N\"A\""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A file base with no user. The path Vanessa already accepts stays the path, in both blocks,
+     * and neither parameter field grows a {@code /N}.
+     */
+    @Test
+    public void aFileBaseWithoutAUserLeavesBothClientBlocksOnThePath()
+    {
+        assertBothBlocks(CONNECTION, CONNECTION, ""); //$NON-NLS-1$
+        assertBothBlocks(VanessaTool.namingTheUser(CONNECTION, "   "), CONNECTION, ""); //$NON-NLS-1$ //$NON-NLS-2$
+        String quotedSemicolon = "File=\"C:/bases/demo;old\";"; //$NON-NLS-1$
+        assertBothBlocks(quotedSemicolon, quotedSemicolon, ""); //$NON-NLS-1$
+    }
+
+    /**
+     * A server base. Vanessa turns {@code Srvr=} and {@code ";Ref="} into {@code /S}, so the path
+     * in both blocks is that pair and nothing after it. The user is {@code /N} in both parameter
+     * fields. With no user, the pair is unchanged.
+     */
+    @Test
+    public void aServerBaseKeepsTheServerAndTheBaseAndPutsTheUserBesideThem()
+    {
+        String server = "Srvr=\"srv1\";Ref=\"base\";"; //$NON-NLS-1$
+        assertBothBlocks(server, server, ""); //$NON-NLS-1$
+        String manager = VanessaTool.namingTheUser(server, "Администратор"); //$NON-NLS-1$
+        assertTrue(manager.contains("Usr=\"Администратор\"")); //$NON-NLS-1$
+        assertBothBlocks(manager, server, "/N\"Администратор\""); //$NON-NLS-1$
+    }
+
+    /**
+     * Both client blocks of one document: the English one the settings loader merges, and the
+     * Russian one the command-line runner writes over it.
+     *
+     * @param connectionString the string the run was given, user included when one was named.
+     * @param path what both path fields must carry.
+     * @param parameters what both parameter fields must carry.
+     */
+    private static void assertBothBlocks(String connectionString, String path, String parameters)
+    {
+        String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
+            connectionString, PORT, BUDGET_SEC, true, null);
+        JsonObject document = JsonParser.parseString(json).getAsJsonObject();
+        JsonObject client = onlyClient(document);
+        assertEquals(path, client.get("PathToInfobase").getAsString()); //$NON-NLS-1$
+        assertEquals(parameters, client.get("AddItionalParameters").getAsString()); //$NON-NLS-1$
+        JsonObject row = document.getAsJsonArray("КлиентыТестирования").get(0).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals(path, row.get("ПутьКИнфобазе").getAsString()); //$NON-NLS-1$
+        assertEquals(parameters, row.get("ДопПараметры").getAsString()); //$NON-NLS-1$
     }
 
     /** Off unless asked for: a run that drives no form needs no client of its own. */
