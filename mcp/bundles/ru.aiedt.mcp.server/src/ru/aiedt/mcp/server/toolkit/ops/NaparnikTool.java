@@ -210,7 +210,9 @@ public class NaparnikTool
             + "Naparnik's tools read, goes to the 1C:Naparnik service. The bridge " //$NON-NLS-1$
             + "(mcpNaparnikBridgeEnabled) is off by default. With it on, ask allows only read tools " //$NON-NLS-1$
             + "unless mcpNaparnikAllToolsEnabled is on, in which case Naparnik may change metadata, " //$NON-NLS-1$
-            + "write files and execute code in EDT. Read-only presets disable this tool either way."; //$NON-NLS-1$
+            + "write files and execute code in EDT. Service knowledge-base reads named " //$NON-NLS-1$
+            + "mcp__knowledge-hub__ and starting Search_, Fetch_, Diff_ or Get_ stay in the read set. " //$NON-NLS-1$
+            + "Read-only presets disable this tool either way."; //$NON-NLS-1$
     }
 
     @Override
@@ -293,7 +295,9 @@ public class NaparnikTool
             + "replyTo (only with conversationId), maxToolRounds (1..30, default 10), " //$NON-NLS-1$
             + "timeoutSeconds (30..1800, default 300), waitSeconds (1..120, default 30), runKey, " //$NON-NLS-1$
             + "cancel (only with runKey). With the bridge on and mcpNaparnikAllToolsEnabled off " //$NON-NLS-1$
-            + "(the default), ask allows only the read tools. With mcpNaparnikAllToolsEnabled on, " //$NON-NLS-1$
+            + "(the default), ask allows only the read tools. Service knowledge-base reads named " //$NON-NLS-1$
+            + "mcp__knowledge-hub__ and starting Search_, Fetch_, Diff_ or Get_ stay in that set. " //$NON-NLS-1$
+            + "With mcpNaparnikAllToolsEnabled on, " //$NON-NLS-1$
             + "the question is sent with no tool filter, and Naparnik may change metadata, write " //$NON-NLS-1$
             + "files and execute code in EDT. One question runs at a time. A question that outlives " //$NON-NLS-1$
             + "waitSeconds answers Pending with a runKey; come back with that runKey, or with " //$NON-NLS-1$

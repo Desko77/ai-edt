@@ -859,6 +859,9 @@ public class NaparnikAskTest
         assertTrue(text, text.contains("mcpNaparnikAllToolsEnabled")); //$NON-NLS-1$
         assertTrue(description, description.contains("1C:Naparnik service")); //$NON-NLS-1$
         assertTrue(description, description.contains("mcpNaparnikAllToolsEnabled")); //$NON-NLS-1$
+        assertTrue(description, description.contains("mcp__knowledge-hub__")); //$NON-NLS-1$
+        assertTrue(description, description.contains("Search_")); //$NON-NLS-1$
+        assertTrue(text, text.contains("mcp__knowledge-hub__")); //$NON-NLS-1$
     }
 
     @Test
