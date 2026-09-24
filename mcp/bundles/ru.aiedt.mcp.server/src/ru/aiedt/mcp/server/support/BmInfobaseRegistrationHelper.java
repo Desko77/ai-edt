@@ -14,8 +14,11 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.debug.core.ILaunchManager;
 
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences;
@@ -67,10 +70,15 @@ import ru.aiedt.mcp.server.support.BmInfobaseLifecycleHelper.LaunchIds;
  * {@code password}, the same contract {@code set_infobase_credentials} keeps), they are written
  * through the same helper after the entry stands in the list and before the binding, so an
  * infobase with users registers without an interactive login prompt; a failed write refuses the
- * call before the binding and rolls an added entry back. EDT keys the stored settings by the
- * infobase reference's uuid in the secure store, and deleting a list entry does not remove that
- * node - so after a rollback the stored settings stay behind under the removed entry's uuid,
- * unreachable from the list, exactly as they do for {@code delete_infobase}.
+ * call before the binding and rolls an added entry back. The settings that stood on the entry
+ * are read ({@code resolveSettings}) before that write. When the binding then fails, a reused
+ * entry is put back to those settings, so the projects already bound to it keep the access they
+ * had; an entry this call added is removed as before and the answer names the access settings
+ * as removed with it. A restore that fails is named with the reason. The password is never part
+ * of the answer. EDT keys the stored settings by the infobase reference's uuid in the secure
+ * store, and deleting a list entry does not remove that node - so after a rollback the stored
+ * settings stay behind under the removed entry's uuid, unreachable from the list, exactly as
+ * they do for {@code delete_infobase}.
  * </p>
  * <p>
  * The default that stood before the call is read under the write lock, before the association.
@@ -126,9 +134,17 @@ public final class BmInfobaseRegistrationHelper
         public String launchApplicationIds;
         /**
          * The access settings stored for the infobase before the binding, or {@code null} when
-         * the call carried no access arguments. Never carries the password.
+         * the call carried no access arguments. Cleared when a failed binding undid that write.
+         * Never carries the password.
          */
         public BmInfobaseCredentialsHelper.CredentialResult credentials;
+        /**
+         * What became of access settings written before a failed binding: restored to what stood
+         * before, removed with the list entry, or why the restore failed. {@code null} when the
+         * call wrote none, or the added entry could not be removed and so the settings were not
+         * undone. Never carries the password.
+         */
+        public String accessSettings;
     }
 
     /**
@@ -196,6 +212,13 @@ public final class BmInfobaseRegistrationHelper
          */
         BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(InfobaseReference infobase,
             String accessMode, String userName, String password);
+
+        /**
+         * @return EDT's infobase access manager, or <code>null</code> when it is unavailable.
+         *         The registration reads the settings that stood before a credentials write
+         *         through it, and puts them back when a reused entry's binding fails
+         */
+        IInfobaseAccessManager accessManager();
     }
 
     /** What the product resolves; a test passes its own environment to the overload. */
@@ -264,6 +287,13 @@ public final class BmInfobaseRegistrationHelper
         {
             return BmInfobaseCredentialsHelper.setCredentialsForInfobase(infobase, accessMode,
                 userName, password);
+        }
+
+        @Override
+        public IInfobaseAccessManager accessManager()
+        {
+            Activator activator = Activator.getDefault();
+            return activator == null ? null : activator.getInfobaseAccessManager();
         }
     };
 
@@ -402,6 +432,8 @@ public final class BmInfobaseRegistrationHelper
         LaunchApplicationIds.Access access = LaunchConfigAccess.applicationIdAccess(launchManager);
         InfobaseReference[] target = new InfobaseReference[1];
         DefaultRead[] previousReadBox = new DefaultRead[1];
+        IInfobaseAccessSettings[] previousAccess = new IInfobaseAccessSettings[1];
+        String[] previousAccessReadFailure = new String[1];
         LaunchApplicationIds.underWriteLock(access, snapshot -> {
             LaunchIds launchIds = new LaunchIds(launchManager, access, snapshot);
             // The duplicate search runs before any write: the same infobase under another
@@ -454,8 +486,12 @@ public final class BmInfobaseRegistrationHelper
             {
                 // The access settings are stored after the entry stands in the list (the write
                 // keys on the infobase reference) and before the binding, so a base with users
-                // registers without an interactive login prompt. A failed write refuses the call
-                // before the binding, and the entry this call added goes back out.
+                // registers without an interactive login prompt. The settings that stood before
+                // are read first, so a reused entry can be put back when the binding fails. A
+                // failed write refuses the call before the binding, and the entry this call
+                // added goes back out.
+                readAccessSettingsThatStood(env, found, previousAccess, previousAccessReadFailure,
+                    password);
                 BmInfobaseCredentialsHelper.CredentialResult credentials =
                     env.writeAccessSettings(found, accessMode, userName, password);
                 if (!credentials.ok)
@@ -484,9 +520,16 @@ public final class BmInfobaseRegistrationHelper
             catch (Throwable e)
             {
                 rollBackAddedEntry(mgr, found, r);
+                // Restoring access settings saves the infobase list, which strips the launch
+                // configurations' application ids; the guard puts them back afterwards.
+                settleAccessSettings(env, found, previousAccess[0], previousAccessReadFailure[0],
+                    password, r);
                 r.launchApplicationIds = restore(launchIds);
-                r.error = "Failed to associate the infobase to the project: " + msg(e) //$NON-NLS-1$
-                    + rollbackNote(r);
+                r.error = redactPasswords(
+                    "Failed to associate the infobase to the project: " + msg(e) //$NON-NLS-1$
+                        + rollbackNote(r) + accessSettingsSentence(r),
+                    password, previousAccess[0]);
+                r.accessSettings = redactPasswords(r.accessSettings, password, previousAccess[0]);
                 r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
                 return r;
             }
@@ -1006,6 +1049,159 @@ public final class BmInfobaseRegistrationHelper
         }
         String leftIdentity = InfobaseIdentity.of(left);
         return leftIdentity != null && leftIdentity.equals(InfobaseIdentity.of(right));
+    }
+
+    /**
+     * The access settings that stood on the entry before this call writes its own. A failed read
+     * is kept: a later restore must not invent settings it never saw.
+     *
+     * @param env where the access manager is read from
+     * @param infobase the list entry about to be written
+     * @param previous the copy of the settings that stood, or {@code null} when they were not read
+     * @param failure why the read failed, or {@code null} when it succeeded
+     * @param password the password this call is about to write, redacted from a read failure
+     */
+    private static void readAccessSettingsThatStood(RegistrationEnvironment env,
+        InfobaseReference infobase, IInfobaseAccessSettings[] previous, String[] failure,
+        String password)
+    {
+        IInfobaseAccessManager accessMgr = env.accessManager();
+        if (accessMgr == null)
+        {
+            failure[0] = "IInfobaseAccessManager is not available on this EDT runtime."; //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            previous[0] = copyAccessSettings(accessMgr.resolveSettings(infobase));
+            if (previous[0] == null)
+            {
+                failure[0] = "the settings that stood before were not read"; //$NON-NLS-1$
+            }
+        }
+        catch (Throwable e)
+        {
+            failure[0] = redactPassword(msg(e), password);
+            Activator.logWarning("register_infobase pre-read resolveSettings failed: " //$NON-NLS-1$
+                + failure[0]);
+        }
+    }
+
+    /**
+     * A copy of the settings, so a later write cannot change what a restore puts back.
+     * {@code null} when there is nothing to copy: a missing access mode cannot be written.
+     *
+     * @param current what {@code resolveSettings} returned
+     * @return the copy, or <code>null</code> when {@code current} carries no access mode
+     */
+    private static IInfobaseAccessSettings copyAccessSettings(IInfobaseAccessSettings current)
+    {
+        if (current == null || current.access() == null)
+        {
+            return null;
+        }
+        return new InfobaseAccessSettings(current.access(), current.userName(), current.password(),
+            current.additionalProperties());
+    }
+
+    /**
+     * Undoes the access settings this call wrote after the binding failed. A reused entry gets
+     * back what stood before; an added entry is already being removed, and the answer names the
+     * settings as removed with it. The password is never written into the note.
+     *
+     * @param env where the access manager is read from
+     * @param infobase the entry the settings were written for
+     * @param previous the settings that stood before the write, or {@code null} when unread
+     * @param readFailure why that read failed, or {@code null} when it succeeded
+     * @param password the password this call wrote, redacted from a restore failure; never logged
+     * @param r the result the note lands in
+     */
+    private static void settleAccessSettings(RegistrationEnvironment env, InfobaseReference infobase,
+        IInfobaseAccessSettings previous, String readFailure, String password, RegisterResult r)
+    {
+        if (r.credentials == null || !r.credentials.ok)
+        {
+            return;
+        }
+        if (r.added)
+        {
+            if (r.rolledBack)
+            {
+                r.accessSettings = "The access settings written for it were removed with the " //$NON-NLS-1$
+                    + "list entry."; //$NON-NLS-1$
+                r.credentials = null;
+            }
+            return;
+        }
+        if (readFailure != null || previous == null)
+        {
+            String why = readFailure != null ? readFailure
+                : "the settings that stood before were not read"; //$NON-NLS-1$
+            r.accessSettings = "The access settings of the reused entry could NOT be restored: " //$NON-NLS-1$
+                + redactPasswords(why, password, previous) + "."; //$NON-NLS-1$
+            return;
+        }
+        IInfobaseAccessManager accessMgr = env.accessManager();
+        if (accessMgr == null)
+        {
+            r.accessSettings = "The access settings of the reused entry could NOT be restored: " //$NON-NLS-1$
+                + "IInfobaseAccessManager is not available on this EDT runtime."; //$NON-NLS-1$
+            return;
+        }
+        try
+        {
+            accessMgr.updateSettings(infobase, previous);
+            r.accessSettings = "The access settings of the reused entry were restored to what " //$NON-NLS-1$
+                + "stood before the call."; //$NON-NLS-1$
+            r.credentials = null;
+        }
+        catch (Throwable e)
+        {
+            String why = redactPasswords(msg(e), password, previous);
+            Activator.logWarning("register_infobase restore of access settings failed: " + why); //$NON-NLS-1$
+            r.accessSettings = "The access settings of the reused entry could NOT be restored: " //$NON-NLS-1$
+                + why + "."; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The sentence the answer adds about access settings, or empty when there is nothing to say.
+     *
+     * @param r the result carrying {@link RegisterResult#accessSettings}
+     * @return the sentence, with a leading space, or empty
+     */
+    private static String accessSettingsSentence(RegisterResult r)
+    {
+        return r.accessSettings == null ? "" : " " + r.accessSettings; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The text with every password this call handled replaced, so a failure reason that echoes
+     * one cannot put it in the answer.
+     *
+     * @param text the text about to be answered
+     * @param password the password this call wrote, or {@code null}
+     * @param previous the settings that stood before, whose password is redacted too
+     * @return {@code text} with those passwords replaced by {@code ***}
+     */
+    private static String redactPasswords(String text, String password, IInfobaseAccessSettings previous)
+    {
+        String cleaned = redactPassword(text, password);
+        if (previous != null)
+        {
+            cleaned = redactPassword(cleaned, previous.password());
+        }
+        return cleaned;
+    }
+
+    /** One password replaced by {@code ***} wherever it stands in {@code text}. */
+    private static String redactPassword(String text, String password)
+    {
+        if (text == null || password == null || password.isEmpty() || !text.contains(password))
+        {
+            return text;
+        }
+        return text.replace(password, "***"); //$NON-NLS-1$
     }
 
     /** The message of a failure, or its class name when it carries none. */

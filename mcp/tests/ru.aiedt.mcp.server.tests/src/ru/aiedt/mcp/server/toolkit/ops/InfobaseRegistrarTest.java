@@ -183,6 +183,28 @@ public class InfobaseRegistrarTest
         assertTrue(json.contains("\"rolledBack\":true")); //$NON-NLS-1$
         assertTrue(json.contains( //$NON-NLS-1$
             "\"launchApplicationIds\":\"restored the application id of: Foreign run\"")); //$NON-NLS-1$
+        assertFalse("no access settings were written, so the field stays out", //$NON-NLS-1$
+            json.contains("accessSettings")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theFailureAnswerNamesWhatBecameOfTheAccessSettings()
+    {
+        RegisterResult r = new RegisterResult();
+        r.error = "Failed to associate the infobase to the project: refused. " //$NON-NLS-1$
+            + "The access settings of the reused entry were restored to what stood before the call."; //$NON-NLS-1$
+        r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
+        r.infobaseName = "existing-base"; //$NON-NLS-1$
+        r.accessSettings = "The access settings of the reused entry were restored to what " //$NON-NLS-1$
+            + "stood before the call."; //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json.contains("\"associateFailed\":true")); //$NON-NLS-1$
+        assertTrue(json.contains("\"accessSettings\":")); //$NON-NLS-1$
+        assertTrue(json.contains("restored to what stood before the call")); //$NON-NLS-1$
+        assertFalse("the password itself is never in the answer", json.contains("s3cret")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Test

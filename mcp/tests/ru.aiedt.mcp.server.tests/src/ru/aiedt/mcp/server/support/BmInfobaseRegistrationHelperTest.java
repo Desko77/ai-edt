@@ -14,6 +14,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,11 +28,15 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.debug.core.ILaunchManager;
 import org.junit.Test;
 
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
 import com._1c.g5.v8.dt.platform.services.model.FileConnectionString;
 import com._1c.g5.v8.dt.platform.services.model.Group;
+import com._1c.g5.v8.dt.platform.services.model.InfobaseAccess;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.model.ModelFactory;
 import com._1c.g5.v8.dt.platform.services.model.Section;
@@ -89,6 +94,18 @@ public class BmInfobaseRegistrationHelperTest
 
         /** Whether the access-settings write ran before the association. */
         boolean accessWriteBeforeAssociate;
+
+        /**
+         * The access settings keyed by the list entry, the way the secure store keys them by the
+         * infobase. A write replaces the entry; a restore puts the previous object back.
+         */
+        final Map<InfobaseReference, IInfobaseAccessSettings> accessSettings = new IdentityHashMap<>();
+
+        /** The order the access manager and the write were used in: resolve, write, update. */
+        final List<String> accessTrace = new ArrayList<>();
+
+        /** When set, {@code updateSettings} throws with this message - a restore that fails. */
+        String accessRestoreFailure;
 
         /** When set, deleting the list entry throws with this message. */
         String deleteFailure;
@@ -302,6 +319,7 @@ public class BmInfobaseRegistrationHelperTest
         public BmInfobaseCredentialsHelper.CredentialResult writeAccessSettings(
             InfobaseReference infobase, String accessMode, String userName, String password)
         {
+            accessTrace.add("write"); //$NON-NLS-1$
             accessWriteBeforeAssociate = !associateRan;
             accessWriteInfobase = infobase;
             accessWriteMode = accessMode;
@@ -316,12 +334,55 @@ public class BmInfobaseRegistrationHelperTest
                 return r;
             }
             // The read-back the real write confirms with: OS access stores no user/password.
+            // The store itself is what a later restore has to put back, so the write lands here
+            // the way IInfobaseAccessManager.updateSettings would.
+            InfobaseAccess mode = "OS".equalsIgnoreCase(accessMode) //$NON-NLS-1$
+                ? InfobaseAccess.OS : InfobaseAccess.INFOBASE;
+            String storedUser = mode == InfobaseAccess.OS ? null : userName;
+            String storedPassword = mode == InfobaseAccess.OS ? null : password;
+            IInfobaseAccessSettings stood = accessSettings.get(infobase);
+            accessSettings.put(infobase, new InfobaseAccessSettings(mode, storedUser, storedPassword,
+                stood == null ? null : stood.additionalProperties()));
             r.ok = true;
             r.access = accessMode;
-            r.userName = "OS".equalsIgnoreCase(accessMode) ? null : userName; //$NON-NLS-1$
-            r.passwordStored = !"OS".equalsIgnoreCase(accessMode) //$NON-NLS-1$
-                && password != null && !password.isEmpty();
+            r.userName = storedUser;
+            r.passwordStored = storedPassword != null && !storedPassword.isEmpty();
             return r;
+        }
+
+        @Override
+        public IInfobaseAccessManager accessManager()
+        {
+            return (IInfobaseAccessManager)Proxy.newProxyInstance(FakeEnvironment.class.getClassLoader(),
+                new Class<?>[] { IInfobaseAccessManager.class }, (proxy, method, args) -> {
+                    switch (method.getName())
+                    {
+                    case "resolveSettings": //$NON-NLS-1$
+                        accessTrace.add("resolve"); //$NON-NLS-1$
+                        InfobaseReference asked = (InfobaseReference)args[0];
+                        IInfobaseAccessSettings stored = accessSettings.get(asked);
+                        if (stored != null)
+                        {
+                            return stored;
+                        }
+                        // Nothing stored yet: EDT's resolveSettings answers the OS default.
+                        return new InfobaseAccessSettings(InfobaseAccess.OS, null, null, null);
+                    case "updateSettings": //$NON-NLS-1$
+                        accessTrace.add("update"); //$NON-NLS-1$
+                        if (accessRestoreFailure != null)
+                        {
+                            throw new IllegalStateException(accessRestoreFailure);
+                        }
+                        accessSettings.put((InfobaseReference)args[0],
+                            (IInfobaseAccessSettings)args[1]);
+                        // What the real updateSettings does: saving the infobase list strips
+                        // the application id from every launch configuration.
+                        configs.stripApplicationIds();
+                        return null;
+                    default:
+                        return FakeLaunchConfigurations.defaultValue(method.getReturnType());
+                    }
+                });
         }
 
         private static IProject projectProxy(String name)
@@ -907,5 +968,113 @@ public class BmInfobaseRegistrationHelperTest
         assertFalse("a reused entry is not rolled back", r.rolledBack); //$NON-NLS-1$
         assertEquals("the reused entry stays in the list", 1, env.infobases.size()); //$NON-NLS-1$
         assertFalse("the binding never ran", env.associateRan); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedBindingOnAReusedEntryRestoresTheAccessSettingsThatStoodBefore()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.bind("project-two", existing); //$NON-NLS-1$
+        env.configs.add("m-foreign", "Foreign run", "project-two", "app-foreign"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        env.accessSettings.put(existing, new InfobaseAccessSettings(InfobaseAccess.INFOBASE,
+            "keeper", "old-secret", "/Out -old")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        env.associateFailure = "the infobase is already associated with another project"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertFalse("a reused entry stays in the list", r.added); //$NON-NLS-1$
+        assertFalse(r.rolledBack);
+        assertEquals("the shared entry was not removed", 1, env.infobases.size()); //$NON-NLS-1$
+        assertEquals("the settings were read before the write, then put back", //$NON-NLS-1$
+            List.of("resolve", "write", "update"), env.accessTrace); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        IInfobaseAccessSettings restored = env.accessSettings.get(existing);
+        assertEquals("the user that stood before is back", "keeper", restored.userName()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the password that stood before is back", "old-secret", restored.password()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(InfobaseAccess.INFOBASE, restored.access());
+        assertEquals("the additional parameters that stood before are back", //$NON-NLS-1$
+            "/Out -old", restored.additionalProperties()); //$NON-NLS-1$
+        assertNotNull("the answer names the restore", r.accessSettings); //$NON-NLS-1$
+        assertTrue(r.accessSettings, r.accessSettings.contains("restored")); //$NON-NLS-1$
+        assertTrue("the error answer carries the same sentence", //$NON-NLS-1$
+            r.error.contains(r.accessSettings));
+        assertNull("the new credentials are not reported as stored", r.credentials); //$NON-NLS-1$
+        assertEquals("the launch configuration stripped by the settings restore got its id back", //$NON-NLS-1$
+            "app-foreign", env.configs.byName("Foreign run").applicationId()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertAnswerHidesPasswords(r, "s3cret", "old-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aFailedBindingOnAnAddedEntryNamesTheAccessSettingsRemovedWithIt()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.associateFailure = "the association was refused"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertTrue("the added entry was removed again", r.rolledBack); //$NON-NLS-1$
+        assertTrue("the entry is gone from the list", env.infobases.isEmpty()); //$NON-NLS-1$
+        assertNotNull(r.accessSettings);
+        assertTrue(r.accessSettings, r.accessSettings.contains("removed with the list entry")); //$NON-NLS-1$
+        assertTrue("the error answer carries the same sentence", //$NON-NLS-1$
+            r.error.contains(r.accessSettings));
+        assertTrue("the list-entry rollback is still named", r.error.contains("removed again")); //$NON-NLS-1$
+        assertNull("the new credentials are not reported as stored", r.credentials); //$NON-NLS-1$
+        assertFalse("an added entry is not restored - there was nothing to put back", //$NON-NLS-1$
+            env.accessTrace.contains("update")); //$NON-NLS-1$
+        assertAnswerHidesPasswords(r, "s3cret"); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailedRestoreOfTheReusedEntryAccessSettingsIsNamed()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseReference existing = fileInfobase("C:/bases/existing", "Existing base"); //$NON-NLS-1$ //$NON-NLS-2$
+        env.infobases.add(existing);
+        env.accessSettings.put(existing, new InfobaseAccessSettings(InfobaseAccess.INFOBASE,
+            "keeper", "old-secret", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        env.associateFailure = "the infobase is already associated with another project"; //$NON-NLS-1$
+        env.accessRestoreFailure = "the secure store refused the write"; //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/existing", null, null, null, "INFOBASE", "admin", "s3cret", env); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertFalse(r.ok);
+        assertEquals(ErrorTags.ASSOCIATE_FAILED.wire(), r.failureKind);
+        assertFalse(r.rolledBack);
+        assertEquals("the reused entry stays", 1, env.infobases.size()); //$NON-NLS-1$
+        IInfobaseAccessSettings left = env.accessSettings.get(existing);
+        assertEquals("the restore did not put the previous user back", "admin", left.userName()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the restore did not put the previous password back", //$NON-NLS-1$
+            "s3cret", left.password()); //$NON-NLS-1$
+        assertNotNull(r.accessSettings);
+        assertTrue(r.accessSettings, r.accessSettings.contains("could NOT be restored")); //$NON-NLS-1$
+        assertTrue("the answer names why the restore failed", //$NON-NLS-1$
+            r.accessSettings.contains("the secure store refused the write")); //$NON-NLS-1$
+        assertTrue(r.error.contains(r.accessSettings));
+        assertNotNull("the new credentials are still what the entry carries", r.credentials); //$NON-NLS-1$
+        assertEquals("admin", r.credentials.userName); //$NON-NLS-1$
+        assertAnswerHidesPasswords(r, "s3cret", "old-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** The answer text never carries a password this call handled. */
+    private static void assertAnswerHidesPasswords(RegisterResult r, String... passwords)
+    {
+        String answer = (r.error == null ? "" : r.error) //$NON-NLS-1$
+            + (r.accessSettings == null ? "" : r.accessSettings); //$NON-NLS-1$
+        for (String password : passwords)
+        {
+            assertFalse("the password is in the answer: " + answer, answer.contains(password)); //$NON-NLS-1$
+        }
     }
 }

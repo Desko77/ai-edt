@@ -25,7 +25,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * binding rolls the added entry back. Access arguments ({@code accessMode} / {@code userName} /
  * {@code password}) are stored in EDT's encrypted store after the list entry and before the
  * binding, through the same code {@code set_infobase_credentials} uses; a failed write refuses
- * the call before the binding.
+ * the call before the binding. A failed binding puts a reused entry's access settings back to
+ * what stood before the write, and the answer names that, the removal of the settings with an
+ * added entry, or a restore that failed. The password is never part of the answer.
  */
 public class InfobaseRegistrar implements IMcpTool
 {
@@ -136,7 +138,8 @@ public class InfobaseRegistrar implements IMcpTool
      * Builds the answer: what was added or reused, the application it bound, the projects a reused
      * entry was already bound to, the default and the run-mode flag outcomes, what the
      * launch-configuration guard repaired, and - when access arguments were carried - what access
-     * settings were stored (never the password).
+     * settings were stored (never the password). A failed binding names what became of those
+     * settings in {@code accessSettings}, and that text never carries the password.
      *
      * @param r what the registration did
      * @return the answer JSON
@@ -159,6 +162,10 @@ public class InfobaseRegistrar implements IMcpTool
             if (r.launchApplicationIds != null)
             {
                 err.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
+            }
+            if (r.accessSettings != null)
+            {
+                err.put("accessSettings", r.accessSettings); //$NON-NLS-1$
             }
             return err.toJson();
         }
