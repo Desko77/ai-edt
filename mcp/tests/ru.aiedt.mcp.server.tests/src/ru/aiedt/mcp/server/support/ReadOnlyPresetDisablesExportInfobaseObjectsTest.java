@@ -11,10 +11,15 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
+import org.eclipse.jface.preference.IPreferenceStore;
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
+import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
 
 /**
@@ -51,8 +56,9 @@ public class ReadOnlyPresetDisablesExportInfobaseObjectsTest
 
     /**
      * The facade gates the operation by the grouped export's enablement: with the standalone not
-     * enabled, the operation is refused before any work starts. A bare test JVM registers no
-     * tools, which makes the gate's answer deterministic here.
+     * enabled, the operation is refused before any work starts. The test switches the grouped
+     * export off in the tool settings and puts the settings back after, so the answer does not
+     * depend on what the JVM-wide catalogue holds when it runs.
      */
     @Test
     public void theFacadeRefusesTheOperationWhenTheGroupedExportIsNotEnabled()
@@ -62,11 +68,22 @@ public class ReadOnlyPresetDisablesExportInfobaseObjectsTest
         params.put("projectName", "Проект"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("objects", "Catalog.Банки"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("outputPath", "C:/nowhere/result"); //$NON-NLS-1$ //$NON-NLS-2$
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        String presetBefore = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        String disabledBefore = store.getString(PrefKeys.PREF_DISABLED_TOOLS);
+        ToolSettingsStore.getInstance().setDisabledTools(Set.of("export_configuration_to_xml")); //$NON-NLS-1$
+        try
+        {
+            String answer = new ConfigIoFacadeTool().execute(params);
 
-        String answer = new ConfigIoFacadeTool().execute(params);
-
-        assertFalse(answer.isEmpty());
-        assertTrue("the operation is refused while the grouped export is not enabled: " + answer, //$NON-NLS-1$
-            answer.contains("is disabled and was not executed")); //$NON-NLS-1$
+            assertFalse(answer.isEmpty());
+            assertTrue("the operation is refused while the grouped export is not enabled: " + answer, //$NON-NLS-1$
+                answer.contains("is disabled and was not executed")); //$NON-NLS-1$
+        }
+        finally
+        {
+            store.setValue(PrefKeys.PREF_DISABLED_TOOLS, disabledBefore);
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, presetBefore);
+        }
     }
 }
