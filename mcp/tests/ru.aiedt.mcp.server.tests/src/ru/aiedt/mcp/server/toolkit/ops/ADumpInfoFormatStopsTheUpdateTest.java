@@ -22,14 +22,18 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
+import org.junit.Assume;
 import org.junit.Test;
 
 import com.e1c.g5.dt.applications.ApplicationCheckUnknownStateTreatment;
@@ -297,12 +301,61 @@ public class ADumpInfoFormatStopsTheUpdateTest
     }
 
     /**
-     * A failed write leaves the previous records in place. Opening the destination first would
-     * truncate it, and every base would lose its record.
+     * A failed write leaves the previous records in place and no temporary file behind. Opening the
+     * destination first would truncate it, and every base would lose its record. The replacing step
+     * fails through {@link DumpInfoProbe#recordFileMove}, the same way on any file system.
      */
     @Test
     public void aFailedRecordWriteLeavesThePreviousRecords() throws IOException
     {
+        Path pairs = Files.createTempFile("dump-info-formats", ".properties"); //$NON-NLS-1$ //$NON-NLS-2$
+        DumpInfoProbe.RecordFileMove production = DumpInfoProbe.recordFileMove;
+        try
+        {
+            DumpInfoProbe.rememberPair("file:e:/bases/one", "2.7", "8.3.27.2214", pairs); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            DumpInfoProbe.recordFileMove = (temporary, destination) -> {
+                throw new IOException("the destination cannot be replaced"); //$NON-NLS-1$
+            };
+            try
+            {
+                DumpInfoProbe.rememberPair("file:e:/bases/two", "2.20", "8.3.27.2214", pairs); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                throw new AssertionError("a write that cannot replace the file must fail"); //$NON-NLS-1$
+            }
+            catch (IOException expected)
+            {
+                assertEquals("the destination cannot be replaced", expected.getMessage()); //$NON-NLS-1$
+            }
+            finally
+            {
+                DumpInfoProbe.recordFileMove = production;
+            }
+            assertEquals("2.7", DumpInfoProbe.expectedFormat("file:e:/bases/one", pairs)); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull(DumpInfoProbe.expectedFormat("file:e:/bases/two", pairs)); //$NON-NLS-1$
+            String prefix = pairs.getFileName().toString();
+            try (Stream<Path> siblings = Files.list(pairs.getParent()))
+            {
+                assertEquals(List.of(), siblings.map(sibling -> sibling.getFileName().toString())
+                    .filter(name -> name.startsWith(prefix) && name.endsWith(".tmp")) //$NON-NLS-1$
+                    .collect(Collectors.toList()));
+            }
+        }
+        finally
+        {
+            DumpInfoProbe.recordFileMove = production;
+            Files.deleteIfExists(pairs);
+            Files.deleteIfExists(pairs.resolveSibling(pairs.getFileName() + ".lock")); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * On Windows a record file that another handle holds locked cannot be replaced: the write fails
+     * and the previous records stand. Elsewhere the lock is advisory and does not stop the move, so
+     * the test runs on Windows only.
+     */
+    @Test
+    public void aLockedRecordFileIsLeftAsItWasOnWindows() throws IOException
+    {
+        Assume.assumeTrue(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Path pairs = Files.createTempFile("dump-info-formats", ".properties"); //$NON-NLS-1$ //$NON-NLS-2$
         try
         {
@@ -333,6 +386,7 @@ public class ADumpInfoFormatStopsTheUpdateTest
         finally
         {
             Files.deleteIfExists(pairs);
+            Files.deleteIfExists(pairs.resolveSibling(pairs.getFileName() + ".lock")); //$NON-NLS-1$
         }
     }
 
