@@ -62,6 +62,26 @@ public final class DumpInfoProbe
         // nothing
     };
 
+    /**
+     * Puts the written temporary file in place of the record file. Tests replace it to make that
+     * step fail on any file system; production moves atomically where the file system allows it.
+     */
+    public static RecordFileMove recordFileMove = DumpInfoProbe::moveIntoPlace;
+
+    /** The step that replaces the record file with the written temporary file. */
+    @FunctionalInterface
+    public interface RecordFileMove
+    {
+        /**
+         * Replaces the destination with the temporary file.
+         *
+         * @param temporary the written temporary file, in the destination's directory
+         * @param destination the record file
+         * @throws IOException when the destination cannot be replaced; it is left as it was
+         */
+        void move(Path temporary, Path destination) throws IOException;
+    }
+
     private DumpInfoProbe()
     {
         // static utility
@@ -486,15 +506,7 @@ public final class DumpInfoProbe
             {
                 recorded.store(out, "ConfigDumpInfo formats written by the Designer of an infobase"); //$NON-NLS-1$
             }
-            try
-            {
-                Files.move(temporary, absolute, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            catch (AtomicMoveNotSupportedException unsupported)
-            {
-                Files.move(temporary, absolute, StandardCopyOption.REPLACE_EXISTING);
-            }
+            recordFileMove.move(temporary, absolute);
         }
         catch (IOException failed)
         {
@@ -507,6 +519,27 @@ public final class DumpInfoProbe
                 // The destination was not opened, so the previous records still stand.
             }
             throw failed;
+        }
+    }
+
+    /**
+     * Replaces the destination with the temporary file: atomically, or with a plain replacing move
+     * where the file system has no atomic move.
+     *
+     * @param temporary the written temporary file
+     * @param destination the record file
+     * @throws IOException when the destination cannot be replaced
+     */
+    private static void moveIntoPlace(Path temporary, Path destination) throws IOException
+    {
+        try
+        {
+            Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
+        }
+        catch (AtomicMoveNotSupportedException unsupported)
+        {
+            Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
