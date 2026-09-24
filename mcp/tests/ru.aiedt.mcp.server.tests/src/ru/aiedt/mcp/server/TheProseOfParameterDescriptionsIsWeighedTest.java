@@ -254,8 +254,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
-        // the schema.
-        PROSE.put("vanessa", Integer.valueOf(4600));
+        // the schema. And by 42 for the formToOpen sentence rewritten once the frame became the
+        // test client's top window drawn into the file by the add-in, not the whole screen with
+        // that window in front.
+        PROSE.put("vanessa", Integer.valueOf(4642));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
         // Raised from 2710 for three arguments the debugger gained in 0.2.49, each of which a
         // caller cannot reach without being told it exists: the debug server port (on a
@@ -459,6 +461,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And a twenty-seventh, by 20, for the formToOpen sentence that says the frame is the whole
      * screen with the test client's window in front. Together with the twenty-sixth: 92439.
      * </p>
+     * <p>
+     * And a twenty-eighth, by 42, for the formToOpen sentence rewritten once the frame became
+     * the test client's top window drawn into the file by the add-in, not the whole screen with
+     * that window in front. Together with the twenty-seventh: 92481.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92439;
+    private static final int DOCUMENT_PROSE = 92481;
 }

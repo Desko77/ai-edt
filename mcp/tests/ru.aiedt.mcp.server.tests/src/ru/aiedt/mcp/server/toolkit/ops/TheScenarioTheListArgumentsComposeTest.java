@@ -14,7 +14,9 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -23,13 +25,15 @@ import org.junit.Test;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.FailureScreenshots;
+import ru.aiedt.mcp.server.support.JUnitRunOutcome;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 /**
  * The scenario the list arguments compose: open the list, go to the row, press the button, wait
- * for the window, capture it with a tag.
+ * for the window, save its frame.
  * <p>
  * Every step is Vanessa's own wording, and each argument picks its part of that wording. The tests
  * here hold each argument to the three duties the specification gives it: the value reaches the
@@ -303,8 +307,8 @@ public class TheScenarioTheListArgumentsComposeTest
         String named = accepted(p).scenario(null);
         assertTrue("the waiting step carries the title and the seconds: " + named, //$NON-NLS-1$
             named.contains("И я жду открытия окна \"Печатная форма\" в течение 20 секунд")); //$NON-NLS-1$
-        assertTrue("the client window is brought forward after that wait", //$NON-NLS-1$
-            named.indexOf("в течение 20 секунд") < named.indexOf("активизирую окно")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the frame is saved after that wait", //$NON-NLS-1$
+            named.indexOf("в течение 20 секунд") < named.indexOf("сохраняю скриншот")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(named.contains(VanessaTool.frameAfterTheAction()));
         assertTrue("a named window needs no remembered one", //$NON-NLS-1$
             !named.contains("запоминаю заголовок")); //$NON-NLS-1$
@@ -356,26 +360,90 @@ public class TheScenarioTheListArgumentsComposeTest
     }
 
     /**
-     * The window is waited for first, then the test client's window is brought forward, and the
-     * tag stands on the pause that holds it there. Open, count, move and press stay in that order.
+     * The window is waited for first, then the frame of the window it opened is saved into the
+     * run's screenshots directory - by a step of its own, with no tag, no activation and no
+     * pause. Open, count, move and press stay in that order.
      */
     @Test
-    public void theCaptureStandsOnceTheClientWindowIsInFront()
+    public void theFrameIsSavedOnceTheWindowIsOpen()
     {
         String scenario = accepted(given()).scenario(null);
         int waited = scenario.indexOf("жду открытия окна"); //$NON-NLS-1$
-        int forward = scenario.indexOf("активизирую окно текущего клиента тестирования"); //$NON-NLS-1$
-        int tag = scenario.indexOf("@screenshot"); //$NON-NLS-1$
-        int held = scenario.indexOf("Пауза 1"); //$NON-NLS-1$
-        assertTrue("the window is open before it is brought forward: " + scenario, //$NON-NLS-1$
-            waited >= 0 && waited < forward);
-        assertTrue("the tag photographs the pause, after the window is in front: " + scenario, //$NON-NLS-1$
-            forward < tag && tag < held);
+        int saved = scenario.indexOf("сохраняю скриншот"); //$NON-NLS-1$
+        assertTrue("the window is open before its frame is saved: " + scenario, //$NON-NLS-1$
+            waited >= 0 && waited < saved);
+        assertTrue("no tag stands on a pause any more: " + scenario, //$NON-NLS-1$
+            !scenario.contains("@screenshot") && !scenario.contains("Пауза 1") //$NON-NLS-1$ //$NON-NLS-2$
+                && !scenario.contains("активизирую окно")); //$NON-NLS-1$
         assertTrue(scenario.contains(VanessaTool.frameAfterTheAction()));
         assertTrue(scenario.indexOf("перехожу к строке") < scenario.indexOf("нажимаю на кнопку")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(scenario.indexOf("нажимаю на кнопку") < waited); //$NON-NLS-1$
         assertTrue("a scenario needs a client to work in", //$NON-NLS-1$
             scenario.contains(VanessaTool.START_STEP));
+    }
+
+    /**
+     * The frame step's path stands inside the step's own quotes, so a run directory with spaces
+     * and Cyrillic in its name stays one value of one step. A scenario the caller wrote carries
+     * no placeholder and passes through unchanged.
+     */
+    @Test
+    public void theFramePathWithSpacesAndCyrillicStaysOneStepValue()
+    {
+        File shots = new File("C:/Temp/каталог с пробелами/screenshots"); //$NON-NLS-1$
+
+        String scenario = VanessaTool.withTheFramePath(accepted(given()).scenario(null), shots);
+
+        String expected = "    И я сохраняю скриншот \"" //$NON-NLS-1$
+            + new File(shots, "frame-after-action.png").getAbsolutePath() + "\""; //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the whole path stands inside the step's quotes: " + scenario, //$NON-NLS-1$
+            scenario.contains(expected));
+        assertTrue("and the placeholder is gone", //$NON-NLS-1$
+            !scenario.contains(VanessaTool.FRAME_PATH_TOKEN));
+        assertEquals("a scenario the caller wrote has no placeholder to settle", //$NON-NLS-1$
+            "Сценарий: свой", VanessaTool.withTheFramePath("Сценарий: свой", shots)); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The frame file reaches the answer: it is a .png in the run's screenshots directory, so the
+     * collector hands it back with every other image the run wrote - under the very name the
+     * composed scenario's step saves it. No broken step's text names it, so it is reported as
+     * not attributed to a step rather than hung on one.
+     *
+     * @throws Exception when the stand-in files cannot be created
+     */
+    @Test
+    public void theFrameFileReachesTheAnswer() throws Exception
+    {
+        File shots = java.nio.file.Files.createTempDirectory("vanessa-shots").toFile(); //$NON-NLS-1$
+        File frame = new File(shots, VanessaTool.FRAME_FILE_NAME);
+        try
+        {
+            java.nio.file.Files.write(frame.toPath(), new byte[] { 1 });
+
+            List<String> collected = VanessaTool.collectScreenshots(shots);
+
+            assertTrue("the frame the step saved is one of the run's images: " + collected, //$NON-NLS-1$
+                collected.contains(frame.getAbsolutePath()));
+
+            List<JUnitRunOutcome.TestCase> broken = Collections.singletonList(
+                new JUnitRunOutcome.TestCase("И я жду открытия окна", //$NON-NLS-1$
+                    "Ожидали в течение <10> секунд, что откроется окно", null));
+            FailureScreenshots attributed = FailureScreenshots.attribute(broken,
+                Collections.singletonList(frame.getName()));
+            assertTrue("no broken step's name is in the frame's file name: " //$NON-NLS-1$
+                + attributed.byStep(), attributed.byStep().isEmpty());
+            assertEquals("so the frame is reported as not attributed", //$NON-NLS-1$
+                Collections.singletonList(frame.getName()), attributed.unattributed());
+            assertTrue("and it is listed in the markdown all the same", //$NON-NLS-1$
+                attributed.toMarkdown(Collections.singletonMap(frame.getName(),
+                    frame.getAbsolutePath())).contains(frame.getAbsolutePath()));
+        }
+        finally
+        {
+            frame.delete();
+            shots.delete();
+        }
     }
 
     /**
@@ -410,7 +478,7 @@ public class TheScenarioTheListArgumentsComposeTest
 
     /**
      * The capture cannot be switched off on this call: the frame of the opened window is the point
-     * of it, and the tag captures only while the run's screenshots are on.
+     * of it, and the run's own captures are what photograph a step that fails on the way to it.
      */
     @Test
     public void theCaptureCannotBeSwitchedOff()
@@ -616,9 +684,7 @@ public class TheScenarioTheListArgumentsComposeTest
             "        | 'Стол письменный' |", //$NON-NLS-1$
             "    И я нажимаю на кнопку \"Печать\"", //$NON-NLS-1$
             "    И я жду открытия окна отличного от \"$ОкноДо$\" в течение 10 секунд", //$NON-NLS-1$
-            "    И я активизирую окно текущего клиента тестирования", //$NON-NLS-1$
-            "    @screenshot", //$NON-NLS-1$
-            "    И Пауза 1", //$NON-NLS-1$
+            "    И я сохраняю скриншот \"" + VanessaTool.FRAME_PATH_TOKEN + "\"", //$NON-NLS-1$ //$NON-NLS-2$
             "    И Я закрываю все окна клиентского приложения", //$NON-NLS-1$
             "", //$NON-NLS-1$
         };
