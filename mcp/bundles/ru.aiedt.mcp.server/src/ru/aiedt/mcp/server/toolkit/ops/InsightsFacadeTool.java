@@ -11,7 +11,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -381,7 +380,7 @@ public class InsightsFacadeTool implements IMcpTool
         {
             return null;
         }
-        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        Supplier<IMcpTool> delegate = DESCRIBED.get(JsonUtils.normalizeOperationToken(operation));
         return delegate == null ? null : delegate.get().getName();
     }
 

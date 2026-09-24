@@ -87,13 +87,16 @@ public final class DumpInfoRebuilder
          * {@link #Abandoned(String)} has nothing to wait for, and the lock stays held.
          *
          * @param cleanup delete the temporary directory, reconnect, release the claim
+         * @return whether the task will run; {@code false} when there is nothing to wait for
          */
-        void whenFinished(Runnable cleanup)
+        boolean whenFinished(Runnable cleanup)
         {
             if (onFinished != null && cleanup != null)
             {
                 onFinished.accept(cleanup);
+                return true;
             }
+            return false;
         }
     }
 

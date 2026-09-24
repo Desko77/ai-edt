@@ -89,7 +89,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         }
         assertTrue(String.join("\n", grown), grown.isEmpty());
         assertTrue("the parameter descriptions weigh " + document + " bytes, past "
-            + DOCUMENT_PROSE, document <= DOCUMENT_PROSE);
+            + DOCUMENT_PROSE + "; per tool: " + prose, document <= DOCUMENT_PROSE);
     }
 
     @Test
@@ -247,7 +247,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // with users needs are passed to the registration itself, so a client that can see one
         // operation store them can see the other take them.
         PROSE.put("infobase_admin", Integer.valueOf(5771));
-        PROSE.put("config_io", Integer.valueOf(3064));
+        // Raised from 3064 for the objects argument of export_infobase_objects - the three
+        // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
+        // runKey gained naming that operation (measured 24.09: 3810).
+        PROSE.put("config_io", Integer.valueOf(3810));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
@@ -446,6 +449,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * itself, and a client that builds its call from the schema has to see that it can pass
      * them there. Together with the twenty-fourth: 91897.
      * </p>
+     * <p>
+     * And a twenty-sixth, by 522, for export_infobase_objects on config_io: the objects argument
+     * with the three address shapes a caller cannot guess, and the sentences outputPath,
+     * timeoutSeconds and runKey gained naming that operation. Together with the twenty-fifth:
+     * 92419.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91897;
+    private static final int DOCUMENT_PROSE = 92419;
 }

@@ -1425,6 +1425,60 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
+     * Asks the platform for the objects a list file names: the partial
+     * {@code DumpConfigToFiles} with {@code -listFile}, which writes only those objects into the
+     * target directory in the hierarchical format.
+     * <p>
+     * There is no first-class launcher verb for the pair, so the DESIGNER command
+     * ({@code exportXmlFromInfobase(dir).withFormat(HIERARCHICAL)} plus the list file) is built
+     * and run through the same protected {@code executeRuntimeProcessCommand} the dump-info-only
+     * run uses. The list file reaches the command line through the builder's own
+     * {@code fileList(Path)} verb - bytecode-verified on the EDT 2026.1 target: the verb appends
+     * {@code -listFile} and the absolutized path as two separate command tokens, which is exactly
+     * the form {@code additionalParameters} would have to split a quoted string to produce.
+     * </p>
+     * <p>
+     * Runs inside the caller's handshake: the caller has released the infobase and holds the claim,
+     * and this method neither takes the lock nor reconnects.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param targetDir the directory the objects are written into
+     * @param listFile the UTF-8-with-BOM list file of Russian full names
+     * @return the Designer's log, or {@code null} when it left none
+     * @throws Exception when EDT does not expose the execution internals, or the Designer failed
+     */
+    static String runDesignerExportList(
+        BmInfobaseExtensionHelper.LauncherContext ctx, java.nio.file.Path targetDir,
+        java.nio.file.Path listFile) throws Exception
+    {
+        java.lang.reflect.Method splitM =
+            findMethodUp(ctx.launcher.getClass(), "splitInfobaseConnection"); //$NON-NLS-1$
+        java.lang.reflect.Method execM = findMethodUp(ctx.launcher.getClass(),
+            "executeRuntimeProcessCommand", RuntimeExecutionCommandBuilder.class, //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        if (execM == null)
+        {
+            throw new IllegalStateException("This EDT runtime does not expose the thick-client " //$NON-NLS-1$
+                + "execution internals required to export the objects (" //$NON-NLS-1$
+                + (splitM == null ? "executeRuntimeProcessCommand / splitInfobaseConnection" //$NON-NLS-1$
+                    : "executeRuntimeProcessCommand") + ")."); //$NON-NLS-1$
+        }
+        boolean split = splitM != null
+            && (Boolean)invokeUnderInfobaseLock(null, splitM, ctx.launcher);
+        RuntimeExecutionCommandBuilder command = new RuntimeExecutionCommandBuilder(
+            ctx.component.getFile(), RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
+        command.forInfobase(ctx.infobase, split).exportXmlFromInfobase(targetDir)
+            .withFormat(com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ConfigurationFilesFormat.HIERARCHICAL)
+            .fileList(listFile);
+        // The same per-infobase lock and launch boundary the dump-info-only run holds: without it
+        // this EDT's own thick-client callers run the Designer side by side with the export.
+        Object out = invokeUnderRebuildLock(ctx, execM, ctx.launcher, command,
+            ctx.component.getInstallation(), ctx.infobase, ctx.args);
+        return out == null ? null : (String)out;
+    }
+
+    /**
      * The full hierarchical dump of the infobase - the rebuild's fallback for a quick
      * dump-info-only run that left no file. Holds the same per-infobase lock around the launcher
      * call as the dump-info-only run: without it this EDT's own thick-client callers run their

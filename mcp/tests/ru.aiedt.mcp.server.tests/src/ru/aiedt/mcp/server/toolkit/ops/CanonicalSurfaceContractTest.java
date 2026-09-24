@@ -221,10 +221,11 @@ public class CanonicalSurfaceContractTest
             "sync_control", "help"));
 
         // config_io (ConfigIoFacadeTool.execute + its OPS catalog): four operations, all
-        // literally the standalone names they replace, plus help.
+        // literally the standalone names they replace, plus help, plus the two the facade runs
+        // itself (export_configuration_to_cf, export_infobase_objects).
         m.put("config_io", Set.of(
             "export_configuration_to_xml", "import_configuration_from_xml", "export_object",
-            "export_common_picture", "export_configuration_to_cf",
+            "export_common_picture", "export_configuration_to_cf", "export_infobase_objects",
             "unpack_external_binary", "import_configuration_from_binary", "help"));
 
         // git (GitTool.execute): a plain switch on "operation". The two write doors are reached
