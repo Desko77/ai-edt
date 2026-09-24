@@ -91,6 +91,25 @@ public class ExternalObjectWorkshopTool implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * Names the Designer conversion behind {@code import_external_object} so the road weighs the
+     * call by it.
+     * <p>
+     * {@code create} scaffolds a DT project in-process and is deliberately answered with
+     * <code>null</code>: weighing it would throttle a cheap call. The action is matched exactly,
+     * as the dispatch below accepts it.
+     * </p>
+     *
+     * @param arguments the call arguments, as the client sent them; may be <code>null</code>
+     * @return {@code import_external_object} for that action, <code>null</code> otherwise
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
+        return "import_external_object".equals(operation) ? "import_external_object" : null; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

@@ -182,7 +182,9 @@ public class ExtensionWorkshopTool implements IMcpTool
      * <p>
      * Read off the dispatch below one case at a time: these five construct another tool and hand it
      * the call, and four of the five are heavy enough that the server has to know before it starts.
-     * The rest is work this facade does itself, and answers <code>null</code>.
+     * {@code check_platform_verdict} is work this facade does itself, but through a staging
+     * infobase and a Designer, so it answers its own name for the road to weigh. The rest is work
+     * this facade does itself, and answers <code>null</code>.
      * </p>
      *
      * @param arguments the call arguments
@@ -208,6 +210,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             return "export_extension"; //$NON-NLS-1$
         case "list_interceptors": //$NON-NLS-1$
             return "list_interceptors"; //$NON-NLS-1$
+        case "check_platform_verdict": //$NON-NLS-1$
+            return "check_platform_verdict"; //$NON-NLS-1$
         default:
             return null;
         }
