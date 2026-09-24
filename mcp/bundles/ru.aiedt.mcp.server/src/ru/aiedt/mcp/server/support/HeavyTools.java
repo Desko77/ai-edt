@@ -39,6 +39,11 @@ public final class HeavyTools
         "export_configuration_to_xml", //$NON-NLS-1$
         "import_configuration_from_xml", //$NON-NLS-1$
         "import_configuration_from_binary", //$NON-NLS-1$
+        // config_io's export_infobase_objects: the facade runs it itself - there is no standalone
+        // tool whose name a call arrives under - and its Designer spawn against the infobase is
+        // the same weight as the grouped export's. Named by the operation because that is the
+        // name the facade's route answers for it.
+        "export_infobase_objects", //$NON-NLS-1$
         "export_extension", //$NON-NLS-1$
         "install_extension", //$NON-NLS-1$
         "uninstall_extension", //$NON-NLS-1$

@@ -108,11 +108,19 @@ form edits are chained with other metadata edits.
 
 `config_io`: `export_configuration_to_xml`, `import_configuration_from_xml`,
 `import_configuration_from_binary`, `export_object` (an `.epf` or `.erf`), `export_common_picture`,
-`export_configuration_to_cf`, `unpack_external_binary`.
+`export_configuration_to_cf`, `export_infobase_objects`, `unpack_external_binary`.
 
 An external processor or report takes two steps, not one: `unpack_external_binary` turns a binary
 `.epf` / `.erf` into Designer-XML, then `import_configuration_from_xml` turns that directory into a
 project.
+
+`export_infobase_objects` reads the objects out of the INFOBASE's own configuration, not out of the
+EDT project - use it when the Configurator (or anything else outside EDT) changed the base and the
+project has not seen the change. `objects` takes whole top objects, forms and common forms
+(`Catalog.Банки`, `Catalog.Банки.Form.ФормаЭлемента`, `CommonForm.Имя`; Russian kind spellings
+work), verified against the project's model before anything starts. `outputPath` is a directory
+that must be absent or empty; the result is placed there in one rename and the answer lists the
+files. A slow run answers `Pending` with a `runKey`; the Designer itself is given 600 seconds.
 
 A whole configuration or extension delivered as one `.cf` or `.cfe` takes a single call:
 `import_configuration_from_binary`. It does not touch any infobase of yours - it creates a

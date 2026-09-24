@@ -88,6 +88,18 @@ public final class PendingWorkRegistry
         "import_configuration_from_binary", "import-binary-async"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * Async backend for {@code export_infobase_objects} infobase exports.
+     * <p>
+     * Not {@link #EXPORT}: that one belongs to {@code export_object}'s .epf/.erf builds. This
+     * operation writes files and disconnects EDT from an infobase, so its runKeys are unique per
+     * call - two identical calls are two runs, never one coalesced future and never a replayed
+     * cached answer.
+     * </p>
+     */
+    public static final PendingWorkRegistry EXPORT_INFOBASE = new PendingWorkRegistry(
+        "export_infobase_objects", "export-infobase-async"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * TTL for the scenario domain, whose longest accepted run is an hour.
      * <p>
      * The default would evict a run that is still executing: its entry and its eventual result
@@ -449,7 +461,8 @@ public final class PendingWorkRegistry
     public static List<PendingWorkRegistry> domains()
     {
         return Collections.unmodifiableList(
-            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, VANESSA, NAPARNIK, GENERIC));
+            Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, REFERENCES, IMPORT_BINARY, VANESSA,
+                NAPARNIK, GENERIC));
     }
 
     /**
