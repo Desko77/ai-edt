@@ -43,8 +43,10 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * question. The question, and whatever Naparnik's own tools read, goes to the 1C:Naparnik service.
  * The bridge preference is off by default; {@code status} answers either way. With the bridge on,
  * the question allows only the read set unless {@code mcpNaparnikAllToolsEnabled} is on, in which
- * case Naparnik may change metadata, write files and execute code in EDT. Read-only presets
- * disable the tool by name in both modes.
+ * case Naparnik may change metadata, write files and execute code in EDT. A service knowledge-base
+ * tool is in that read set when its name is {@code mcp__knowledge-hub__} followed by
+ * {@code Search_}, {@code Fetch_}, {@code Diff_} or {@code Get_}. Other {@code mcp__} names are
+ * not. Read-only presets disable the tool by name in both modes.
  * </p>
  */
 public class NaparnikTool
@@ -96,6 +98,19 @@ public class NaparnikTool
         "GetMarkers", //$NON-NLS-1$
         "1C_Find", //$NON-NLS-1$
         "1C_GetObject"); //$NON-NLS-1$
+
+    /**
+     * Read-only tools of the 1C:Naparnik service knowledge base. A called name is in the read set
+     * when it starts with one of these. They are not local EDT tools, so they are not sent in
+     * {@code allowedTools}: the installation rejects a name it does not publish, and these run in
+     * the service. The veto allows a matching name. Any other {@code mcp__} name stays outside
+     * the read set.
+     */
+    static final List<String> ALLOWED_SERVICE_TOOLS = List.of(
+        "mcp__knowledge-hub__Search_", //$NON-NLS-1$
+        "mcp__knowledge-hub__Fetch_", //$NON-NLS-1$
+        "mcp__knowledge-hub__Diff_", //$NON-NLS-1$
+        "mcp__knowledge-hub__Get_"); //$NON-NLS-1$
 
     /** What {@code DevAutopilot} writes for an unset skill before the 9-argument constructor. */
     static final String SKILL_NAME = "custom"; //$NON-NLS-1$
@@ -1035,7 +1050,7 @@ public class NaparnikTool
         {
             for (String name : names)
             {
-                if (!allowed.contains(name))
+                if (!allowed.contains(name) && !serviceRead(name))
                 {
                     live.veto = name;
                     return name;
@@ -1053,6 +1068,27 @@ public class NaparnikTool
             return live.veto;
         }
         return null;
+    }
+
+    /**
+     * Whether {@code name} is a read of the service knowledge base. The verb is the part after
+     * {@code mcp__knowledge-hub__}, and only {@code Search_}, {@code Fetch_}, {@code Diff_} and
+     * {@code Get_} read. A different server, or a different verb on this server, is not.
+     */
+    private static boolean serviceRead(String name)
+    {
+        if (name == null)
+        {
+            return false;
+        }
+        for (String prefix : ALLOWED_SERVICE_TOOLS)
+        {
+            if (name.startsWith(prefix))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String answered(LiveAsk live, String runKey, RunningQuestion question, long elapsed,
