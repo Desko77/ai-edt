@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 122 | a test class named after it |
-| exercised | 150 | reached by some other test |
+| exercised | 151 | reached by some other test |
 | tool-sweep | 62 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 47 | needs a display or an extension point |
 | workspace-bound | 45 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **426** | across 376 test classes |
+| **total** | **427** | across 382 test classes |
 
 ## untested (0)
 
@@ -219,7 +219,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (150)
+## exercised (151)
 
 **(root)**
 - Activator
@@ -285,6 +285,7 @@ _none_
 - GitRepositoryAccess
 - HistoryFullText
 - InfobaseAddress
+- InfobaseObjectsExporter
 - JUnitRunOutcome
 - LaunchConfigAccess
 - MetadataDiffEngine
@@ -565,9 +566,9 @@ closes.
 | 9-16 | 52 |
 | 17+ | 18 |
 
-3305 test methods across 376 test classes; 122 classes have a test of their own, median 9 methods each.
+3338 test methods across 382 test classes; 122 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 122 of 426 classes have one: 62 are covered by the registry-wide contract sweep and 45 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 122 of 427 classes have one: 62 are covered by the registry-wide contract sweep and 45 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (0)
 

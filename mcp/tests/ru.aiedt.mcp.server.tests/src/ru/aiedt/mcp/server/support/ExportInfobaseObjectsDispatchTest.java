@@ -294,7 +294,10 @@ public class ExportInfobaseObjectsDispatchTest
     }
 
     /**
-     * Two identical calls in a row are two runs: two environments, two placements.
+     * Two identical calls in a row are two runs: two environments, two placements. The destination
+     * belongs to the caller and the operation never empties it, so between the calls the caller
+     * removes the placed result - the second identical call would otherwise be refused for a
+     * destination that is no longer vacant, which is the directory rule, not coalescing.
      */
     @Test
     public void twoIdenticalCallsAreTwoRuns() throws IOException
@@ -304,6 +307,7 @@ public class ExportInfobaseObjectsDispatchTest
 
         assertTrue(JsonParser.parseString(dispatch(params)).getAsJsonObject().get("ok") //$NON-NLS-1$
             .getAsBoolean());
+        deleteTree(outputPath);
         assertTrue(JsonParser.parseString(dispatch(params)).getAsJsonObject().get("ok") //$NON-NLS-1$
             .getAsBoolean());
         assertEquals("each call ran its own environment", 2, ios.size()); //$NON-NLS-1$

@@ -122,13 +122,15 @@ public class TheExportAddressListTest
 
     /**
      * The Russian kind name comes from the same child-kind table the address walk uses, with the
-     * capitalization 1C writes in full names.
+     * capitalization 1C writes in full names. A kind the table has no Russian spelling for comes
+     * back unchanged, the contract the caller relies on for kinds this table never translated.
      */
     @Test
     public void theFormKindCarriesTheRussianNameThePlatformWrites()
     {
         assertEquals("Форма", BmObjectHelper.russianChildKindName("Form")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("Form", BmObjectHelper.russianChildKindName("NoSuchKind")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("NoSuchKind", //$NON-NLS-1$
+            BmObjectHelper.russianChildKindName("NoSuchKind")); //$NON-NLS-1$
     }
 
     /**
@@ -162,7 +164,12 @@ public class TheExportAddressListTest
         return address -> new Resolved(null, null, null, "nothing is known to this resolver"); //$NON-NLS-1$
     }
 
-    /** A resolver that knows one catalog by the name Банки, its form, and nothing else. */
+    /**
+     * A resolver that knows one catalog by the name Банки, its form, and nothing else. The name is
+     * compared the way the production resolver's model lookup compares it
+     * ({@code MetadataTypeCatalog.findObject}), case-insensitively - a lower-case spelling of an
+     * object that exists is the same object, not an unknown one.
+     */
     private static ModelResolver known(String russianLine, String formName)
     {
         return address -> {
@@ -171,7 +178,7 @@ public class TheExportAddressListTest
             {
                 return new Resolved(null, null, null, "no form in this resolver"); //$NON-NLS-1$
             }
-            if (!address.objectName.equals("Банки")) //$NON-NLS-1$
+            if (!address.objectName.equalsIgnoreCase("Банки")) //$NON-NLS-1$
             {
                 return new Resolved(null, null, null,
                     "no " + address.typeEnglish + " named '" + address.objectName //$NON-NLS-1$ //$NON-NLS-2$

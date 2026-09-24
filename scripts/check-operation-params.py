@@ -57,7 +57,7 @@ DELEGATE = re.compile(r"new\s+(\w+)\(\)\.execute\(")
 READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalInt", "boolArg",
                   "intArg", "isTrue", "parseNumericArgument", "objectArgumentProblem")
 NOT_READERS = ("addContentEntry", "addTypedCollectionChild", "bind", "unbind", "branchArgument",
-               "doBorrow", "pathOf", "put", "removeContentEntry", "withMode")
+               "dispatchExport", "doBorrow", "pathOf", "put", "removeContentEntry", "withMode")
 READERS = r"\b(?:extract\w*|" + "|".join(READER_HELPERS) + r")"
 HELPER_SIGNATURE = re.compile(r"\b(\w+)\(Map<String, ?String> \w+, String \w+")
 SRC = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server"

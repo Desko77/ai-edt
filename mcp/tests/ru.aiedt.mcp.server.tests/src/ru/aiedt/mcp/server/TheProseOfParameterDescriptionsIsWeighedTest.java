@@ -89,7 +89,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         }
         assertTrue(String.join("\n", grown), grown.isEmpty());
         assertTrue("the parameter descriptions weigh " + document + " bytes, past "
-            + DOCUMENT_PROSE, document <= DOCUMENT_PROSE);
+            + DOCUMENT_PROSE + "; per tool: " + prose, document <= DOCUMENT_PROSE);
     }
 
     @Test
@@ -427,6 +427,14 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * value rebuild_dump_info, the rebuild's wait budget and the update's format override. Together
      * with the twenty-first: 91514.
      * </p>
+     * <p>
+     * And a twenty-third, by 522, for export_infobase_objects on config_io: the objects argument
+     * with the three address shapes a caller cannot guess, and the sentences outputPath,
+     * timeoutSeconds and runKey gained naming that operation. The operation's own prose grew by 746
+     * (3064 to 3810, measured 24.09); the document moved by the net 522 this raise records, the
+     * rest being sentences other sprint work moved either way. Together with the twenty-second:
+     * 92036.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 91514;
+    private static final int DOCUMENT_PROSE = 92036;
 }
