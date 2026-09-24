@@ -1097,12 +1097,31 @@ public class NaparnikTool
         return false;
     }
 
+    /**
+     * Builds the success answer for a completed question. A question that ended with neither
+     * answer text nor a tool call is the empty answer the service was measured to return, and it
+     * is refused rather than handed over as a success with nothing in it. Text that is blank
+     * after tool calls ran is still an answer; {@code answerEmpty} says the text is absent.
+     *
+     * @param live the question's own marks
+     * @param runKey the question's key
+     * @param question the completed question
+     * @param elapsed how long the question ran
+     * @param called the tool names that started, in order
+     * @return the answer document
+     */
     private String answered(LiveAsk live, String runKey, RunningQuestion question, long elapsed,
         List<String> called)
     {
+        String text = question.text();
+        boolean blank = text == null || text.isBlank();
+        if (blank && called.isEmpty())
+        {
+            return emptyAnswer(live, question, elapsed);
+        }
         ToolResult result = ToolResult.success()
             .put("operation", "ask") //$NON-NLS-1$ //$NON-NLS-2$
-            .put("answer", question.text()) //$NON-NLS-1$
+            .put("answer", text) //$NON-NLS-1$
             .put("conversationId", question.conversationId()) //$NON-NLS-1$
             .put("replyTo", question.replyTo()) //$NON-NLS-1$
             .put("assistantMessages", question.assistantMessages()) //$NON-NLS-1$
@@ -1111,6 +1130,10 @@ public class NaparnikTool
             .put("naparnikVersion", live.version) //$NON-NLS-1$
             .put("toolPolicy", live.policy) //$NON-NLS-1$
             .put("runKey", runKey); //$NON-NLS-1$
+        if (blank)
+        {
+            result.put("answerEmpty", Boolean.TRUE); //$NON-NLS-1$
+        }
         if (POLICY_READ.equals(live.policy))
         {
             result.put("allowedTools", live.allowedSent); //$NON-NLS-1$
@@ -1119,16 +1142,38 @@ public class NaparnikTool
         return result.toJson();
     }
 
+    /**
+     * The refusal for a question that completed with neither answer text nor a tool call. The
+     * conversation ids stay in the document so the caller can put the question again into the
+     * same conversation, or start a new one.
+     *
+     * @param live the question's own marks
+     * @param question the completed question, which carries the conversation ids
+     * @param elapsed how long the question ran
+     * @return the refusal document
+     */
+    private static String emptyAnswer(LiveAsk live, RunningQuestion question, long elapsed)
+    {
+        ToolResult result = refusal(live, "1C:Naparnik returned an empty answer: no text and no " //$NON-NLS-1$
+            + "tool call. Ask the question again with conversationId and replyTo from this " //$NON-NLS-1$
+            + "answer to continue that conversation, or without conversationId to start a new " //$NON-NLS-1$
+            + "one.", //$NON-NLS-1$
+            elapsed, List.of());
+        result.put("conversationId", question.conversationId()); //$NON-NLS-1$
+        result.put("replyTo", question.replyTo()); //$NON-NLS-1$
+        return result.toJson();
+    }
+
     private static String cancelled(LiveAsk live, long elapsed, List<String> called)
     {
-        return refusal(live, "cancelled", elapsed, called); //$NON-NLS-1$
+        return refusal(live, "cancelled", elapsed, called).toJson(); //$NON-NLS-1$
     }
 
     private static String timedOut(LiveAsk live, long elapsed, int timeoutSeconds, List<String> called)
     {
         String names = called.isEmpty() ? "none" : String.join(", ", called); //$NON-NLS-1$ //$NON-NLS-2$
         return refusal(live, "timed out after " + timeoutSeconds + "s (" + elapsed + " ms), tools called: " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + names, elapsed, called);
+            + names, elapsed, called).toJson();
     }
 
     private static String vetoed(LiveAsk live, long elapsed, List<String> called)
@@ -1150,7 +1195,7 @@ public class NaparnikTool
                 + ", which is outside the read set. The question was cancelled; that call may " //$NON-NLS-1$
                 + "already have run. Turn on mcpNaparnikAllToolsEnabled to lift the read set."; //$NON-NLS-1$
         }
-        return refusal(live, reason, elapsed, called);
+        return refusal(live, reason, elapsed, called).toJson();
     }
 
     private static String failed(LiveAsk live, long elapsed, List<String> called, Throwable failure,
@@ -1167,10 +1212,19 @@ public class NaparnikTool
         {
             text = failure.getClass().getName() + ": " + message; //$NON-NLS-1$
         }
-        return refusal(live, text, elapsed, called);
+        return refusal(live, text, elapsed, called).toJson();
     }
 
-    private static String refusal(LiveAsk live, String message, long elapsed, List<String> called)
+    /**
+     * The refusal shape every stopped or failed question answers with.
+     *
+     * @param live the question's own marks
+     * @param message what went wrong
+     * @param elapsed how long the question ran
+     * @param called the tool names that started, in order
+     * @return the failed result, still open for the fields a particular refusal adds
+     */
+    private static ToolResult refusal(LiveAsk live, String message, long elapsed, List<String> called)
     {
         ToolResult result = ToolResult.error(message)
             .put("operation", "ask") //$NON-NLS-1$ //$NON-NLS-2$
@@ -1183,7 +1237,7 @@ public class NaparnikTool
             result.put("allowedTools", live.allowedSent); //$NON-NLS-1$
         }
         result.put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
-        return result.toJson();
+        return result;
     }
 
     private static String unknownRun(String runKey)
