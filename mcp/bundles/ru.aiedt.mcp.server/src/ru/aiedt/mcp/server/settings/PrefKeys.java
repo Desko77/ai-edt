@@ -60,6 +60,19 @@ public final class PrefKeys
     public static final String PREF_VANESSA_1C_EXE = "mcpVanessa1cExe"; //$NON-NLS-1$
 
     /**
+     * Whether a question may be sent to 1C:Naparnik. Off, {@code naparnik} still reports status.
+     * Read-only presets disable the tool on their own.
+     */
+    public static final String PREF_NAPARNIK_BRIDGE_ENABLED = "mcpNaparnikBridgeEnabled"; //$NON-NLS-1$
+
+    /**
+     * Whether a question may hand 1C:Naparnik its full tool set. Off, the bridge allows only the
+     * read set. On, Naparnik may change metadata, write files and execute code in EDT. Off by
+     * default. Read-only presets disable {@code naparnik} either way.
+     */
+    public static final String PREF_NAPARNIK_ALL_TOOLS_ENABLED = "mcpNaparnikAllToolsEnabled"; //$NON-NLS-1$
+
+    /**
      * Whether <code>/mcp</code> demands the bearer token. Off, a request without a token is
      * accepted while the socket is on loopback; a socket open to every interface demands the
      * token whatever this holds.
@@ -339,6 +352,14 @@ public final class PrefKeys
 
     /** Shipped Vanessa thick client: none. */
     public static final String DEFAULT_VANESSA_1C_EXE = ""; //$NON-NLS-1$
+
+    /** Shipped 1C:Naparnik bridge: off. {@code status} still answers. */
+    public static final boolean DEFAULT_NAPARNIK_BRIDGE_ENABLED = false;
+
+    /**
+     * Shipped full tool set: off. A question allows only the read set until this is turned on.
+     */
+    public static final boolean DEFAULT_NAPARNIK_ALL_TOOLS_ENABLED = false;
 
     /** Shipped: a socket on loopback answers without the token; the token is created all the same. */
     public static final boolean DEFAULT_AUTH_ENABLED = false;

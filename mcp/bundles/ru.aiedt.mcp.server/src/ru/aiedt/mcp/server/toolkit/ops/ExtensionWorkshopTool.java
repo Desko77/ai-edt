@@ -26,6 +26,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmExtensionProjectHelper;
+import ru.aiedt.mcp.server.support.ChildBorrow;
+import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
@@ -121,6 +123,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             .stringProperty("formName", //$NON-NLS-1$
                 "borrow_form_item: which form, when objectFqn names the owner rather than " //$NON-NLS-1$
                     + "the form.") //$NON-NLS-1$
+            .booleanProperty("includeChildren", //$NON-NLS-1$
+                "borrow_object: also borrow that object's own children. Default false.") //$NON-NLS-1$
             .stringProperty("moduleType", //$NON-NLS-1$
                 "borrow_module: ObjectModule / ManagerModule / RecordSetModule / " //$NON-NLS-1$
                     + "CommandModule / ValueModule") //$NON-NLS-1$
@@ -178,7 +182,11 @@ public class ExtensionWorkshopTool implements IMcpTool
      * <p>
      * Read off the dispatch below one case at a time: these five construct another tool and hand it
      * the call, and four of the five are heavy enough that the server has to know before it starts.
-     * The rest is work this facade does itself, and answers <code>null</code>.
+     * {@code check_platform_verdict} is work this facade does itself, but through a staging
+     * infobase and a Designer, so it answers its own name for the road to weigh. The rest is work
+     * this facade does itself, and answers <code>null</code>. The operation is compared exactly,
+     * as the dispatch accepts it: a spelling the dispatch would refuse - uppercase, padded - routes
+     * nowhere, and a route that weighed it would take a permit for a call that never runs.
      * </p>
      *
      * @param arguments the call arguments
@@ -192,7 +200,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         {
             return null;
         }
-        switch (operation.trim().toLowerCase(java.util.Locale.ROOT))
+        switch (operation)
         {
         case "install_extension": //$NON-NLS-1$
             return "install_extension"; //$NON-NLS-1$
@@ -204,6 +212,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             return "export_extension"; //$NON-NLS-1$
         case "list_interceptors": //$NON-NLS-1$
             return "list_interceptors"; //$NON-NLS-1$
+        case "check_platform_verdict": //$NON-NLS-1$
+            return "check_platform_verdict"; //$NON-NLS-1$
         default:
             return null;
         }
@@ -230,7 +240,12 @@ public class ExtensionWorkshopTool implements IMcpTool
         switch (op)
         {
             case "borrow_object": //$NON-NLS-1$
-                return doBorrow(params, op, null);
+                String refused = refuseBadIncludeChildren(params);
+                if (refused != null)
+                {
+                    return refused;
+                }
+                return doBorrow(params, op, null, includeChildrenRequested(params));
             case "borrow_child": //$NON-NLS-1$
                 return doBorrow(params, op,
                     JsonUtils.extractStringArgument(params, "childKind")); //$NON-NLS-1$
@@ -448,7 +463,8 @@ public class ExtensionWorkshopTool implements IMcpTool
         return gate != null ? ToolResult.error(gate).put("operation", op).toJson() : run.get(); //$NON-NLS-1$
     }
 
-    private String doBorrow(Map<String, String> params, String op, String childKind)
+    private String doBorrow(Map<String, String> params, String op, String childKind,
+        boolean includeChildren)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String baseProjectName = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
@@ -473,7 +489,63 @@ public class ExtensionWorkshopTool implements IMcpTool
         }
         BmExtensionHelper.BorrowResult r = BmExtensionHelper.attemptBorrow(project,
             baseProjectName, borrowFqn, childKind);
+        if (includeChildren && r.ok)
+        {
+            return ChildBorrow.finish(op, borrowFqn, r, project, baseProjectName,
+                fqn -> ChildBorrow.fromBorrow(BmExtensionHelper.attemptBorrow(project,
+                    baseProjectName, fqn, null)));
+        }
         return formatResult(r, op, borrowFqn);
+    }
+
+    /**
+     * The borrow the other operations use: the named object only.
+     *
+     * @param params the call
+     * @param op the operation
+     * @param childKind the child kind, or <code>null</code> for a top object
+     * @return the answer
+     */
+    private String doBorrow(Map<String, String> params, String op, String childKind)
+    {
+        return doBorrow(params, op, childKind, false);
+    }
+
+    /**
+     * Refuses a value of includeChildren that is not a boolean, before any borrow.
+     * <p>
+     * Absent is the default and is not a refusal. A typo must not borrow the one object and
+     * look like success.
+     * </p>
+     *
+     * @param params the call
+     * @return the refusal, or <code>null</code> when the value is absent or a boolean
+     */
+    private static String refuseBadIncludeChildren(Map<String, String> params)
+    {
+        String raw = JsonUtils.extractStringArgument(params, "includeChildren"); //$NON-NLS-1$
+        if (raw == null)
+        {
+            return null;
+        }
+        if (JsonUtils.extractBooleanArgumentNullable(params, "includeChildren") != null) //$NON-NLS-1$
+        {
+            return null;
+        }
+        return ToolResult.error("includeChildren must be true or false (also 1, 0, yes, no); '" //$NON-NLS-1$
+            + raw + "' is not one of those, and nothing was borrowed.").toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether this borrow_object call asked for the object's own children.
+     *
+     * @param params the call
+     * @return <code>true</code> only for a recognized true
+     */
+    private static boolean includeChildrenRequested(Map<String, String> params)
+    {
+        return Boolean.TRUE.equals(
+            JsonUtils.extractBooleanArgumentNullable(params, "includeChildren")); //$NON-NLS-1$
     }
 
     /**
@@ -790,7 +862,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             sb.append("Authoring:\n"); //$NON-NLS-1$
             sb.append("- create_extension_project - create a NEW extension project from a " //$NON-NLS-1$
                 + "base configuration (projectName=new name, baseProjectName=base config)\n"); //$NON-NLS-1$
-            sb.append("- borrow_object - borrow a single FQN (Catalog/Document/etc.)\n"); //$NON-NLS-1$
+            sb.append("- borrow_object - borrow a single FQN (Catalog/Document/etc.); " //$NON-NLS-1$
+                + "includeChildren also borrows its own children\n"); //$NON-NLS-1$
             sb.append("- borrow_objects - batch borrow with per-FQN results\n"); //$NON-NLS-1$
             sb.append("- borrow_child - borrow a single attribute/tabular section/form/template\n"); //$NON-NLS-1$
             sb.append("- borrow_form_item - borrow a single form item by name\n"); //$NON-NLS-1$
@@ -837,6 +910,8 @@ public class ExtensionWorkshopTool implements IMcpTool
                             + "extension's parent config); pass it only to borrow from a non-default base.\n" //$NON-NLS-1$
                             + "3. Top-level borrow (baseProjectName omitted = auto-resolve):\n" //$NON-NLS-1$
                             + "   borrow_object projectName=MyExt objectFqn=Catalog.Products\n" //$NON-NLS-1$
+                            + "   includeChildren=true also borrows that object's own children " //$NON-NLS-1$
+                            + "(not modules, not objects reached only by type).\n" //$NON-NLS-1$
                             + "4. Child borrow (form / attribute / tabular section / template / command / dimension / resource):\n" //$NON-NLS-1$
                             + "   borrow_child projectName=MyExt baseProjectName=BaseCfg " //$NON-NLS-1$
                             + "objectFqn=Catalog.Products.Form.ItemForm childKind=Form\n" //$NON-NLS-1$
@@ -872,8 +947,48 @@ public class ExtensionWorkshopTool implements IMcpTool
                             + "- batchResults [...] - one entry per FQN in borrow_objects.\n")
                     .toJson();
             default:
+                String operation = topic.toLowerCase(java.util.Locale.ROOT);
+                if (OPS.containsKey(operation))
+                {
+                    String text = FacadeParameterHelp.fromTheMap(operation, "ExtensionWorkshopTool", //$NON-NLS-1$
+                        getInputSchema(), includeChildrenDetail(operation));
+                    if (!"borrow_object".equals(operation)) //$NON-NLS-1$
+                    {
+                        text = text + "\nincludeChildren applies only to borrow_object; this " //$NON-NLS-1$
+                            + "operation does not read it.\n"; //$NON-NLS-1$
+                    }
+                    return ToolResult.success().put("topic", topic).put("text", text).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                }
                 return ToolResult.error("Unknown topic: " + topic).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The rules the one-sentence schema description of includeChildren no longer carries.
+     *
+     * @param operation the operation being described
+     * @return parameter name to those rules, empty for every operation but borrow_object
+     */
+    private static Map<String, String> includeChildrenDetail(String operation)
+    {
+        Map<String, String> detail = new LinkedHashMap<>();
+        if ("borrow_object".equals(operation)) //$NON-NLS-1$
+        {
+            detail.put("includeChildren", //$NON-NLS-1$
+                "Absent or false borrows only the named object and the answer is unchanged: " //$NON-NLS-1$
+                    + "no children, skipped or pulledByType. A value other than true, false, 1, 0, " //$NON-NLS-1$
+                    + "yes or no is refused, naming includeChildren, before anything is borrowed. " //$NON-NLS-1$
+                    + "true walks that object's own collections, including attributes of tabular " //$NON-NLS-1$
+                    + "sections and nested subsystems, and does not follow a reference to another " //$NON-NLS-1$
+                    + "object. Modules are not overridden and predefined items are not included. A " //$NON-NLS-1$
+                    + "standard attribute is skipped with reason notAdoptable. Objects EDT brings " //$NON-NLS-1$
+                    + "in because an attribute type refers to them are listed in pulledByType (an " //$NON-NLS-1$
+                    + "empty list when none were, pulledByTypeUnverified with a reason when the " //$NON-NLS-1$
+                    + "snapshot could not be taken), and their children are not borrowed. A root " //$NON-NLS-1$
+                    + "that is already borrowed stays a success and the children are still walked. " //$NON-NLS-1$
+                    + "borrow_objects does not read this argument."); //$NON-NLS-1$
+        }
+        return detail;
     }
 
     private static Map<String, String> buildOpsCatalog()

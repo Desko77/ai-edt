@@ -209,21 +209,23 @@ public class CanonicalSurfaceContractTest
             "create_project", "delete_project", "resync_to_disk", "restart_edt",
             "answer_dialog", "self_upkeep", "list_subsystems", "help"));
 
-        // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): nine operations,
+        // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): ten operations,
         // all literally the standalone names they replace, plus help. sync_control's own inner
         // action travels as a separate "syncOperation" parameter and is not part of this
         // vocabulary.
         m.put("infobase_admin", Set.of(
-            "get_applications", "read_event_log", "create_infobase", "delete_infobase",
+            "get_applications", "read_event_log", "create_infobase", "register_infobase",
+            "delete_infobase",
             "set_infobase_credentials", "create_launch_config", "start_client", "branch_infobase",
             "update_database",
             "sync_control", "help"));
 
         // config_io (ConfigIoFacadeTool.execute + its OPS catalog): four operations, all
-        // literally the standalone names they replace, plus help.
+        // literally the standalone names they replace, plus help, plus the two the facade runs
+        // itself (export_configuration_to_cf, export_infobase_objects).
         m.put("config_io", Set.of(
             "export_configuration_to_xml", "import_configuration_from_xml", "export_object",
-            "export_common_picture", "export_configuration_to_cf",
+            "export_common_picture", "export_configuration_to_cf", "export_infobase_objects",
             "unpack_external_binary", "import_configuration_from_binary", "help"));
 
         // git (GitTool.execute): a plain switch on "operation". The two write doors are reached
@@ -335,7 +337,8 @@ public class CanonicalSurfaceContractTest
         // Tripwire 1: exactly how many standalone names CANONICAL currently hides. A change here
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
-        assertEquals(86, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-09-23 register_infobase joined the infobase_admin coverage (+1 -> 87).
+        assertEquals(87, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

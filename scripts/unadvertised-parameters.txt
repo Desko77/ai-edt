@@ -20,6 +20,10 @@ EditMetadataTool:composerName
 EditMetadataTool:customSignature
 EditMetadataTool:eventName
 EditMetadataTool:filter
+# The form operations forward the call to EditFormTool whole, so the derivation hands them that
+# tool's whole schema - and find belongs to its help alone: outside operation=help nothing reads
+# it, and edit_metadata's own help does not search.
+EditMetadataTool:find
 EditMetadataTool:format
 EditMetadataTool:index
 EditMetadataTool:kind
@@ -43,17 +47,12 @@ InsightsFacadeTool:batchSize
 # schema does name, so the capability is discoverable here and only this spelling of it is not.
 InsightsFacadeTool:help
 InsightsFacadeTool:includeStandard
-InsightsFacadeTool:methodName
 LaunchDebuggerTool:kind
 LaunchDebuggerTool:timeoutMs
 ProjectAdminFacadeTool:confirm
 ProjectAdminFacadeTool:restart
 SecurityAuditFacadeTool:apply
-SecurityAuditFacadeTool:methodName
-SecurityAuditFacadeTool:moduleFqn
 SecurityAuditFacadeTool:objectFqn
-SecurityAuditFacadeTool:scope
-SecurityAuditFacadeTool:subsystemName
 
 # The composition parameters. edit_metadata runs 51 composition operations by renaming the
 # operation and handing the call to dcs_workshop, whose schema advertises every one of these.

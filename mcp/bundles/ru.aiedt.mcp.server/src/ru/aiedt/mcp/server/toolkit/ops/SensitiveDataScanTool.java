@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
+import org.eclipse.core.runtime.Path;
 
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
@@ -36,7 +37,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.SensitivePatternLibrary;
+import ru.aiedt.mcp.server.support.SubsystemMembership;
 import ru.aiedt.mcp.server.support.UiSync;
+import ru.aiedt.mcp.server.support.WalkNarrowing;
 
 /**
  * Scans the project for potential personal-data / secret leaks: attribute
@@ -45,6 +48,9 @@ import ru.aiedt.mcp.server.support.UiSync;
 public class SensitiveDataScanTool implements IMcpTool
 {
     public static final String NAME = "sensitive_data_scan"; //$NON-NLS-1$
+
+    private static final java.util.List<String> SCOPES = java.util.List.of(
+        WalkNarrowing.PROJECT, WalkNarrowing.SUBSYSTEM, WalkNarrowing.MODULE);
 
     private static final Pattern STRING_LITERAL = Pattern.compile("\"([^\"]*)\""); //$NON-NLS-1$
 
@@ -69,7 +75,11 @@ public class SensitiveDataScanTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("scope", "project | subsystem | module (default project)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("scope", //$NON-NLS-1$
+                "project | subsystem | module, and absent, the selectors decide the area.") //$NON-NLS-1$
+            .stringProperty("moduleFqn", //$NON-NLS-1$
+                "Module FQN, for example CommonModule.Sales.") //$NON-NLS-1$
+            .stringProperty("subsystemName", "Subsystem name.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("checks", //$NON-NLS-1$
                 "Comma-separated: ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, LOG_SENSITIVE") //$NON-NLS-1$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -93,6 +103,12 @@ public class SensitiveDataScanTool implements IMcpTool
         {
             return ToolResult.error("projectName is required").toJson(); //$NON-NLS-1$
         }
+        WalkNarrowing.Decision decision = WalkNarrowing.decide(params, SCOPES,
+            WalkNarrowing.Selectors.MODULE_AND_SUBSYSTEM);
+        if (decision.refused())
+        {
+            return ToolResult.error(decision.refusal()).toJson();
+        }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
@@ -103,7 +119,7 @@ public class SensitiveDataScanTool implements IMcpTool
             return UiSync.call(() -> {
                 try
                 {
-                    return runScan(project, params);
+                    return runScan(project, params, decision);
                 }
                 catch (Exception e)
                 {
@@ -118,7 +134,16 @@ public class SensitiveDataScanTool implements IMcpTool
         }
     }
 
-    private String runScan(IProject project, Map<String, String> params) throws Exception
+    /**
+     * The scan itself, without the UI-thread hop {@link #execute} wraps it in.
+     *
+     * @param project the project
+     * @param params the call arguments
+     * @param decision the accepted walk
+     * @return the JSON answer
+     */
+    String runScan(IProject project, Map<String, String> params, WalkNarrowing.Decision decision)
+        throws Exception
     {
         Set<String> checks = parseChecks(JsonUtils.extractStringArgument(params, "checks")); //$NON-NLS-1$
         String severity = orDefault(JsonUtils.extractStringArgument(params, "severity_filter"), //$NON-NLS-1$
@@ -132,20 +157,47 @@ public class SensitiveDataScanTool implements IMcpTool
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
         Set<Pattern> custom = parseCustomPatterns(
             JsonUtils.extractStringArgument(params, "customPatterns")); //$NON-NLS-1$
+        SubsystemMembership membership = null;
+        IFile onlyModule = null;
+        if (WalkNarrowing.SUBSYSTEM.equals(decision.area()))
+        {
+            membership = SubsystemMembership.resolve(project,
+                SubsystemMembership.configurationOf(project), decision.subsystemName());
+            if (membership.refused())
+            {
+                return ToolResult.error(membership.refusal()).toJson();
+            }
+        }
+        else if (WalkNarrowing.MODULE.equals(decision.area()))
+        {
+            BslModuleAccess.ModulePathResolution resolution =
+                BslModuleAccess.resolveModulePath(project, decision.moduleFqn());
+            if (!resolution.isResolved())
+            {
+                return ToolResult.error(resolution.getHint()).toJson();
+            }
+            onlyModule = project.getFile(new Path("src").append(resolution.getPath())); //$NON-NLS-1$
+            if (!onlyModule.exists())
+            {
+                return ToolResult.error("Module '" + decision.moduleFqn() + "' was not found.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
         List<Map<String, Object>> findings = new ArrayList<>();
         // One watch for the whole call: both scans walk the same project, and an operator
         // who cancels means the call, not one of its halves.
         WatchForCancel watch = WatchForCancel.begin();
 
-        if (isEnabled("ATTRIBUTE_NAME", checks)) //$NON-NLS-1$
+        // Attribute names live on metadata, not in a module. A module walk does not report them;
+        // a subsystem walk reports them only for objects in the composition.
+        if (isEnabled("ATTRIBUTE_NAME", checks) && onlyModule == null) //$NON-NLS-1$
         {
-            scanAttributes(project, custom, findings, watch);
+            scanAttributes(project, custom, findings, watch, membership);
         }
         if (isEnabled("HARDCODED_SECRET", checks) //$NON-NLS-1$
             || isEnabled("COMMENT_LEAK", checks) //$NON-NLS-1$
             || isEnabled("LOG_SENSITIVE", checks)) //$NON-NLS-1$
         {
-            scanBslFiles(project, checks, findings, watch);
+            scanBslFiles(project, checks, findings, watch, membership, onlyModule);
         }
 
         // Severity filter
@@ -164,23 +216,36 @@ public class SensitiveDataScanTool implements IMcpTool
         // files - so the unit names both. "files" would report a count of objects as a count of
         // files whenever ATTRIBUTE_NAME is on, which it is by default.
         String cancelled = watch.note("objects and modules"); //$NON-NLS-1$
+        ToolResult result = composition(ToolResult.success(), membership).put("scope", decision.area()); //$NON-NLS-1$
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
-            return ToolResult.success()
+            return result
                 .put("statistics", stats) //$NON-NLS-1$
                 .put("text", renderMarkdown(filtered, stats, cancelled)) //$NON-NLS-1$
                 .put("cancelled", cancelled) //$NON-NLS-1$
                 .toJson();
         }
-        return ToolResult.success()
+        return result
             .put("statistics", stats) //$NON-NLS-1$
             .put("findings", filtered) //$NON-NLS-1$
             .put("cancelled", cancelled) //$NON-NLS-1$
             .toJson();
     }
 
+    private static ToolResult composition(ToolResult result, SubsystemMembership membership)
+    {
+        if (membership == null)
+        {
+            return result;
+        }
+        return result.put("subsystemName", membership.subsystemName()) //$NON-NLS-1$
+            .put("nestedSubsystemsIncluded", true) //$NON-NLS-1$
+            .put("compositionSize", membership.compositionSize()) //$NON-NLS-1$
+            .put("composition", membership.compositionNote()); //$NON-NLS-1$
+    }
+
     private void scanAttributes(IProject project, Set<Pattern> custom,
-        List<Map<String, Object>> findings, WatchForCancel watch)
+        List<Map<String, Object>> findings, WatchForCancel watch, SubsystemMembership membership)
     {
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
         if (provider == null)
@@ -226,7 +291,13 @@ public class SensitiveDataScanTool implements IMcpTool
                         }
                         if (item instanceof MdObject)
                         {
-                            scanMdObjectAttributes((MdObject) item, custom, findings);
+                            MdObject object = (MdObject) item;
+                            String owner = object.eClass().getName() + "." + object.getName(); //$NON-NLS-1$
+                            if (membership != null && !membership.coversObject(owner))
+                            {
+                                continue;
+                            }
+                            scanMdObjectAttributes(object, custom, findings);
                         }
                     }
                 }
@@ -310,10 +381,25 @@ public class SensitiveDataScanTool implements IMcpTool
     }
 
     private void scanBslFiles(IProject project, Set<String> checks,
-        List<Map<String, Object>> findings, WatchForCancel watch) throws Exception
+        List<Map<String, Object>> findings, WatchForCancel watch, SubsystemMembership membership,
+        IFile onlyModule) throws Exception
     {
+        if (onlyModule != null)
+        {
+            // Asked before the file is read. The project and subsystem walks poll at each file;
+            // this branch is the one file, and skipping the poll scans it after a cancel and
+            // leaves the answer without the stop.
+            if (watch.stopHere())
+            {
+                return;
+            }
+            scanBslFile(onlyModule, checks, findings);
+            return;
+        }
         org.eclipse.core.resources.IResourceVisitor visitor = resource -> {
-            if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
+            if (resource instanceof IFile && resource.getName().endsWith(".bsl") //$NON-NLS-1$
+                && (membership == null || membership.coversPath(
+                    resource.getProjectRelativePath().toString())))
             {
                 if (watch.stopHere())
                 {

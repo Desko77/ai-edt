@@ -6,10 +6,14 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -142,6 +146,7 @@ public class CodeSearchTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help: workflow or the name of an operation. " //$NON-NLS-1$
                     + "Without it, every operation with a one-line summary.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
@@ -231,6 +236,48 @@ public class CodeSearchTool implements IMcpTool
             .build();
     }
 
+    /**
+     * Only {@code object_references} polls a reference search.
+     * <p>
+     * {@code text_search} reaches {@code search_in_code}, which does not resume a
+     * {@code find_references} key. Routing every operation of this facade at that tool would let
+     * a text search start a new scan under a live reference key without a permit.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; may be {@code null}
+     * @return {@code find_references} when this call polls one, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.REFERENCES.domain().equals(domain))
+        {
+            return null;
+        }
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        return "object_references".equals(normalized) ? ReferenceLocator.NAME : null; //$NON-NLS-1$
+    }
+
+    /**
+     * Where an operation sends the call, for the one operation that resumes a heavy search.
+     * <p>
+     * {@code object_references} is {@code find_references}. The other operations stay here: this
+     * facade is already heavy under its own name, and routing {@code text_search} at
+     * {@code find_references} would name a resumption that search does not perform.
+     * </p>
+     *
+     * @param arguments the call arguments
+     * @return {@code find_references} for {@code object_references}, or {@code null}
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.normalizeOperationToken(
+            JsonUtils.extractStringArgument(arguments, "operation")); //$NON-NLS-1$
+        return "object_references".equals(operation) ? ReferenceLocator.NAME : null; //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
@@ -271,11 +318,15 @@ public class CodeSearchTool implements IMcpTool
                 // Same objectName -> objectFqn alias as object_references.
                 return new OutgoingStructuresReader().execute(rewriteForObjectReferences(params));
             case "help": //$NON-NLS-1$
-                return buildHelp(JsonUtils.extractStringArgument(params, "topic")); //$NON-NLS-1$
+                return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                    JsonUtils.extractStringArgument(params, "find")); //$NON-NLS-1$
             default:
                 return ToolResult.error(
-                    "Unknown operation '" + operation //$NON-NLS-1$
-                        + "'. Allowed: text_search / object_references / method_references / " //$NON-NLS-1$
+                    "Unknown operation '" + operation + "'." //$NON-NLS-1$
+                        + FacadeHelpSearch.closestMatches(operation,
+                            FacadeHelpSearch.describe(buildHelp(null, null)).keySet(),
+                            FacadeHelpSearch.describe(buildHelp(null, null)))
+                        + "\n\nAllowed: text_search / object_references / method_references / " //$NON-NLS-1$
                         + "resolve_symbol / call_hierarchy / symbol_info / content_assist / " //$NON-NLS-1$
                         + "outgoing_structures / help.").toJson(); //$NON-NLS-1$
         }
@@ -488,8 +539,48 @@ public class CodeSearchTool implements IMcpTool
             routed.getInputSchema(), PARAMETER_RULES);
     }
 
-    private static String buildHelp(String topic)
+    /**
+     * The operations this facade dispatches, in the order the catalog names them: each is asked
+     * for its parameters, so {@code find} searches it one argument at a time.
+     */
+    private static final List<String> HELP_OPERATIONS = helpOperations();
+
+    /** Every help topic, in the order the catalog names them: operations, then named topics. */
+    private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics that name one of the operations.
+     *
+     * @return the operation names, never <code>null</code>
+     */
+    private static List<String> helpOperations()
     {
+        List<String> operations = new ArrayList<>();
+        Collections.addAll(operations, "text_search", "object_references", //$NON-NLS-1$ //$NON-NLS-2$
+            "method_references", "resolve_symbol", "call_hierarchy", "symbol_info", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "content_assist", "outgoing_structures"); //$NON-NLS-1$ //$NON-NLS-2$
+        return Collections.unmodifiableList(operations);
+    }
+
+    /**
+     * The topics {@code find} searches, catalog first by the caller, these after.
+     *
+     * @return the topic names, never <code>null</code>
+     */
+    private static List<String> helpTopics()
+    {
+        List<String> topics = new ArrayList<>(HELP_OPERATIONS);
+        topics.add("workflow"); //$NON-NLS-1$
+        return Collections.unmodifiableList(topics);
+    }
+
+    private static String buildHelp(String topic, String find)
+    {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS, HELP_OPERATIONS,
+                asked -> buildHelp(asked, null));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         StringBuilder sb = new StringBuilder();
         if (topic == null || topic.isEmpty())
@@ -579,7 +670,10 @@ public class CodeSearchTool implements IMcpTool
                     + "Returns the metadata the object points at (its outbound references).\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             default:
-                return "# Unknown topic '" + topic + "'.\n\nAvailable: workflow, " //$NON-NLS-1$ //$NON-NLS-2$
+                return "# Unknown topic '" + topic + "'." //$NON-NLS-1$
+                    + FacadeHelpSearch.closestMatches(topic, HELP_TOPICS,
+                        FacadeHelpSearch.describe(buildHelp(null, null)))
+                    + "\n\nAvailable: workflow, " //$NON-NLS-1$
                     + "text_search, object_references, method_references, resolve_symbol, " //$NON-NLS-1$
                     + "call_hierarchy, symbol_info, content_assist, outgoing_structures.\n"; //$NON-NLS-1$
         }

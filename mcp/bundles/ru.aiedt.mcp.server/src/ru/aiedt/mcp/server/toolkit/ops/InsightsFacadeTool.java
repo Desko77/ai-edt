@@ -6,16 +6,18 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -69,6 +71,12 @@ public class InsightsFacadeTool implements IMcpTool
 
     private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
 
+    /**
+     * Which combination of scope and selectors is a walk and which is a refusal. The schema
+     * keeps one sentence per parameter; {@code operation=help topic=} the operation returns these.
+     */
+    private static final Map<String, Map<String, String>> NARROWING_RULES = buildNarrowingRules();
+
     @Override
     public String getName()
     {
@@ -108,6 +116,7 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
@@ -123,6 +132,8 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("moduleFqn", //$NON-NLS-1$
                 "Module FQN when scope=module (dependency_graph) or scope=module/method " //$NON-NLS-1$
                     + "(detect_query_anti_patterns).") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "detect_query_anti_patterns: method inside moduleFqn.") //$NON-NLS-1$
             .stringProperty("level", //$NON-NLS-1$
                 "dependency_graph: metadata / modules / mixed (default metadata) - what " //$NON-NLS-1$
                     + "the graph nodes are. compare_configurations: object / attribute / module " //$NON-NLS-1$
@@ -131,6 +142,9 @@ public class InsightsFacadeTool implements IMcpTool
                 "dependency_graph: BFS depth, 1-5 (default 2).") //$NON-NLS-1$
             .stringProperty("direction", //$NON-NLS-1$
                 "dependency_graph: in / out / both (default both).") //$NON-NLS-1$
+            .stringProperty("edgeKinds", //$NON-NLS-1$
+                "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
+                    + "Omit to keep every kind.") //$NON-NLS-1$
             .integerProperty("maxNodes", //$NON-NLS-1$
                 "dependency_graph: cap on nodes visited by the BFS (default 200).") //$NON-NLS-1$
             .integerProperty("maxEdges", //$NON-NLS-1$
@@ -273,12 +287,15 @@ public class InsightsFacadeTool implements IMcpTool
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                JsonUtils.extractStringArgument(params, "find"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
-            return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
-                + "'. Allowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
+            return ToolResult.error("Unknown operation '" + operation + "'." //$NON-NLS-1$ //$NON-NLS-2$
+                + FacadeHelpSearch.closestMatches(operation, OPS.keySet(),
+                    FacadeHelpSearch.describe(buildHelp(null, null, getInputSchema())))
+                + "\n\nAllowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
                 + " / help.").toJson(); //$NON-NLS-1$
         }
         // One gate for every operation this facade folds in. Reaching a tool through a facade is
@@ -363,7 +380,7 @@ public class InsightsFacadeTool implements IMcpTool
         {
             return null;
         }
-        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        Supplier<IMcpTool> delegate = DESCRIBED.get(JsonUtils.normalizeOperationToken(operation));
         return delegate == null ? null : delegate.get().getName();
     }
 
@@ -383,8 +400,28 @@ public class InsightsFacadeTool implements IMcpTool
         return Collections.unmodifiableMap(m);
     }
 
-    private static String buildHelp(String topic, String schema)
+    /** Every help topic, in the order the catalog names them: operations, then named topics. */
+    private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics {@code find} searches, catalog first by the caller, these after.
+     *
+     * @return the topic names, never <code>null</code>
+     */
+    private static List<String> helpTopics()
     {
+        List<String> topics = new ArrayList<>(OPS.keySet());
+        topics.add("workflow"); //$NON-NLS-1$
+        return Collections.unmodifiableList(topics);
+    }
+
+    private static String buildHelp(String topic, String find, String schema)
+    {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS, OPS.keySet(),
+                asked -> buildHelp(asked, null, schema));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
         {
@@ -445,8 +482,61 @@ public class InsightsFacadeTool implements IMcpTool
         // it routes to, and this facade's own schema does not repeat them. Without this, the detail
         // is reachable only by calling the standalone tool - which a caller who found the operation
         // here has no reason to know exists.
+        Map<String, String> rules = NARROWING_RULES.get(topic);
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
-            "workflow", "InsightsFacadeTool", schema); //$NON-NLS-1$
+            "workflow", "InsightsFacadeTool", schema, //$NON-NLS-1$ //$NON-NLS-2$
+            rules == null ? Collections.emptyMap() : rules, buildHelp(null, null, schema));
+    }
+
+    /**
+     * The rules a narrowing parameter's one-sentence description no longer carries.
+     *
+     * @return operation name to parameter name to the rules
+     */
+    private static Map<String, Map<String, String>> buildNarrowingRules()
+    {
+        Map<String, Map<String, String>> rules = new LinkedHashMap<>();
+        Map<String, String> metrics = new LinkedHashMap<>();
+        metrics.put("scope", //$NON-NLS-1$
+            "scope=project rejects subsystemName. scope=subsystem requires it. An unknown " //$NON-NLS-1$
+                + "subsystem or scope word is refused by name and the project is not scanned."); //$NON-NLS-1$
+        metrics.put("subsystemName", //$NON-NLS-1$
+            "Required for scope=subsystem. Without scope it selects the subsystem on its own. " //$NON-NLS-1$
+                + "Nested subsystems are included; the answer names that and how many objects " //$NON-NLS-1$
+                + "the composition holds. An unknown subsystem is refused by name."); //$NON-NLS-1$
+        rules.put("project_metrics", Collections.unmodifiableMap(metrics)); //$NON-NLS-1$
+        Map<String, String> queries = new LinkedHashMap<>();
+        queries.put("scope", //$NON-NLS-1$
+            "scope=project rejects every selector. scope=module requires moduleFqn and rejects " //$NON-NLS-1$
+                + "methodName. scope=method requires both. An unknown module, method or scope " //$NON-NLS-1$
+                + "word is refused by name and the project is not scanned."); //$NON-NLS-1$
+        queries.put("moduleFqn", //$NON-NLS-1$
+            "Required for scope=module and scope=method. Without scope it selects the module " //$NON-NLS-1$
+                + "on its own. Refused when that module is unknown."); //$NON-NLS-1$
+        queries.put("methodName", //$NON-NLS-1$
+            "Required for scope=method. Refused when moduleFqn is absent, and refused when the " //$NON-NLS-1$
+                + "method is not in the module. Without scope, moduleFqn plus methodName selects " //$NON-NLS-1$
+                + "that method."); //$NON-NLS-1$
+        rules.put("detect_query_anti_patterns", Collections.unmodifiableMap(queries)); //$NON-NLS-1$
+        Map<String, String> graph = new LinkedHashMap<>();
+        graph.put("edgeKinds", //$NON-NLS-1$
+            "On metadata and mixed an edge is judged on BOTH ends: an end that is not an object " //$NON-NLS-1$
+                + "of the level is dropped, as the target and as the source, and is not queued; " //$NON-NLS-1$
+                + "internalEdgesDropped counts the dropped edges when any were. A root that is " //$NON-NLS-1$
+                + "not an object of the level is no node either, and the answer names it in " //$NON-NLS-1$
+                + "internalRootsDropped. The metadata level carries metadata objects; the mixed " //$NON-NLS-1$
+                + "level carries metadata objects and BSL modules, so a module end is kept on " //$NON-NLS-1$
+                + "mixed and dropped on metadata. Edges with the same from, to and via become one " //$NON-NLS-1$
+                + "edge, and count is written when it is greater than 1. maxEdges counts after " //$NON-NLS-1$
+                + "that merge. This argument keeps only the named via values; any other kind is " //$NON-NLS-1$
+                + "not queued on its own, and a target already reached by a kept kind stays. The " //$NON-NLS-1$
+                + "answer repeats edgeKinds as understood, edgesDroppedByKind, and unmatchedKinds " //$NON-NLS-1$
+                + "for a named kind the walk never saw - that is not a refusal. Omit the argument " //$NON-NLS-1$
+                + "to keep every kind. On level=modules the argument is not applied and the " //$NON-NLS-1$
+                + "answer says notApplied; calls edges merge the same way. Other operations do " //$NON-NLS-1$
+                + "not read it."); //$NON-NLS-1$
+        rules.put("dependency_graph", Collections.unmodifiableMap(graph)); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
     }
 
     private static Map<String, String> buildOpsCatalog()

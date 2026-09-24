@@ -89,7 +89,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         }
         assertTrue(String.join("\n", grown), grown.isEmpty());
         assertTrue("the parameter descriptions weigh " + document + " bytes, past "
-            + DOCUMENT_PROSE, document <= DOCUMENT_PROSE);
+            + DOCUMENT_PROSE + "; per tool: " + prose, document <= DOCUMENT_PROSE);
     }
 
     @Test
@@ -214,6 +214,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * line, so the caller names the mode and the client and the launch puts them where they are
      * read. A client that cannot see the two arguments starts the managed client every time.
      * </p>
+     * <p>
+     * And by 463 on infobase_admin for connectionString and makeDefault, and for name, which is
+     * declared once and names every operation that reads it: a caller registering an existing
+     * server infobase has no way to name the server and the infobase without the string, and no
+     * way to say whether the new application becomes the project's default without the flag.
+     * Their rules live in the operation help.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
@@ -226,13 +233,31 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // and whether to create it).
         PROSE.put("git", Integer.valueOf(875));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
-        PROSE.put("insights", Integer.valueOf(5393));
+        // Raised from 5393 by 52: detect_query_anti_patterns names methodName, one sentence.
+        // The combination rules (what walks, what is refused) moved to operation help.
+        PROSE.put("insights", Integer.valueOf(5445));
         PROSE.put("dcs_workshop", Integer.valueOf(4249));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
-        PROSE.put("infobase_admin", Integer.valueOf(4900));
-        PROSE.put("config_io", Integer.valueOf(3064));
-        PROSE.put("vanessa", Integer.valueOf(3607));
+        // Raised by 463 for connectionString, makeDefault and name: registering an existing server
+        // infobase is named by the string, and the flag says whether it becomes the default. And
+        // for the dump-info work: the syncOperation value rebuild_dump_info, the rebuild's wait
+        // budget, and the update's format override. And by 60 for naming register_infobase beside
+        // set_infobase_credentials on accessMode, userName and password: the credentials a base
+        // with users needs are passed to the registration itself, so a client that can see one
+        // operation store them can see the other take them.
+        PROSE.put("infobase_admin", Integer.valueOf(5771));
+        // Raised from 3064 for the objects argument of export_infobase_objects - the three
+        // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
+        // runKey gained naming that operation (measured 24.09: 3810).
+        PROSE.put("config_io", Integer.valueOf(3810));
+        // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
+        // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
+        // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
+        // the schema. And by 42 for the formToOpen sentence rewritten once the frame became the
+        // test client's top window drawn into the file by the add-in, not the whole screen with
+        // that window in front.
+        PROSE.put("vanessa", Integer.valueOf(4642));
         PROSE.put("extension_workshop", Integer.valueOf(3269));
         // Raised from 2710 for three arguments the debugger gained in 0.2.49, each of which a
         // caller cannot reach without being told it exists: the debug server port (on a
@@ -253,7 +278,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("external_object_workshop", Integer.valueOf(1429));
         PROSE.put("validate_query", Integer.valueOf(1319));
         PROSE.put("external_data_source_workshop", Integer.valueOf(1265));
-        PROSE.put("security_audit", Integer.valueOf(1170));
+        // Raised from 1170 by 235: find_rls_violations and sensitive_data_scan advertise scope,
+        // moduleFqn, methodName and subsystemName, one sentence each. The sentences that say
+        // which combination is a walk and which is a refusal moved to operation help.
+        PROSE.put("security_audit", Integer.valueOf(1405));
         PROSE.put("xdto_workshop", Integer.valueOf(1155));
         PROSE.put("get_form_screenshot", Integer.valueOf(1154));
         PROSE.put("code_review", Integer.valueOf(1129));
@@ -275,6 +303,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("dcs_search", Integer.valueOf(305));
         PROSE.put("generate_event_handlers", Integer.valueOf(299));
         PROSE.put("code_template", Integer.valueOf(171));
+        // naparnik grew from 216 to 783 when ask advertised its arguments: the question, the
+        // project, the conversation, the round limit, the timeout and the pending key. The
+        // knowledge-base sentence is the tool description, which this budget does not count.
+        PROSE.put("naparnik", Integer.valueOf(783));
         PROSE.put("get_mcp_history", Integer.valueOf(145));
         PROSE.put("get_command_interface", Integer.valueOf(98));
         PROSE.put("get_edt_version", Integer.valueOf(0));
@@ -358,6 +390,88 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * because the platform reads the last mode flag on the command line and the launch puts the
      * caller's there.
      * </p>
+     * <p>
+     * And a fifteenth, by 287, for the one sentence each selector a query, metrics or security
+     * scan is narrowed by. The sentences that refuse a selector the scope does not accept moved
+     * to operation help. Measured at 87113.
+     * </p>
+     * <p>
+     * And a sixteenth, by 216, for naparnik: the operation, and probe, which starts the Naparnik
+     * UI bundle. Together with the fifteenth: 87329.
+     * </p>
+     * <p>
+     * And a seventeenth, by 1800, for find on the twelve facades whose help it searches: an agent
+     * that cannot see the argument reads the whole catalog and every topic to answer "where does
+     * this facade say X". Each copy is one shared sentence
+     * ({@code FacadeHelpSearch.FIND_DESCRIPTION}, 150 bytes), the rest of the rule having been cut
+     * to keep this raise the remainder it is. Together with the sixteenth: 89129.
+     * </p>
+     * <p>
+     * And an eighteenth, by 164, for one sentence each on includeChildren (extension_workshop,
+     * 69 bytes) and edgeKinds (insights, 95 bytes). What is walked, what is skipped, which
+     * graph edges are dropped and how a kind filter answers live in operation help. Together
+     * with the seventeenth: 89293.
+     * </p>
+     * <p>
+     * And a nineteenth, by 993, for the ten list-action arguments of vanessa, one sentence each:
+     * the capture of a window a button opened is a call a client cannot build without being told
+     * its parts exist. Together with the eighteenth: 90286.
+     * </p>
+     * <p>
+     * And a twentieth, by 567, for ask on naparnik (to 783): projectName, question,
+     * conversationId, replyTo, maxToolRounds, timeoutSeconds, waitSeconds, runKey and cancel, and
+     * the operation sentence that now names ask. Together with the nineteenth: 90853.
+     * </p>
+     * <p>
+     * And a twenty-first, by 313, for connectionString and makeDefault on infobase_admin and for
+     * its name, declared once for every operation that reads it: an existing server infobase is
+     * named by the connection string and the flag says whether it becomes the project's default
+     * application. Together with the twentieth: 91166.
+     * </p>
+     * <p>
+     * And a twenty-second, by 348, for the dump-info work on infobase_admin: the syncOperation
+     * value rebuild_dump_info, the rebuild's wait budget and the update's format override. Together
+     * with the twenty-first: 91514.
+     * </p>
+     * <p>
+     * And a twenty-third, by 154, for one sentence each on testManager and testClient (77 bytes):
+     * on a list action and on formToOpen an omitted argument is on and false is refused. The
+     * schema is where a client learns that the documented default does not hold on those calls.
+     * Together with the twenty-second: 91668.
+     * </p>
+     * <p>
+     * And a twenty-fourth, by 169, for {@code smallScalePercent} on mxl_workshop: the argument
+     * itself (149 bytes) and the name appended to that facade's operation list. The argument is
+     * the only place a client learns what the number means. Together with the twenty-third:
+     * 91837.
+     * </p>
+     * <p>
+     * And a twenty-fifth, by 60, for accessMode, userName and password on infobase_admin now
+     * naming register_infobase beside set_infobase_credentials: a base with users registers
+     * without an interactive login prompt only when the credentials reach the registration
+     * itself, and a client that builds its call from the schema has to see that it can pass
+     * them there. Together with the twenty-fourth: 91897.
+     * </p>
+     * <p>
+     * And a twenty-sixth, by 522, for export_infobase_objects on config_io: the objects argument
+     * with the three address shapes a caller cannot guess, and the sentences outputPath,
+     * timeoutSeconds and runKey gained naming that operation. Together with the twenty-fifth:
+     * 92419.
+     * </p>
+     * <p>
+     * And a twenty-seventh, by 20, for the formToOpen sentence that says the frame is the whole
+     * screen with the test client's window in front. Together with the twenty-sixth: 92439.
+     * </p>
+     * <p>
+     * And a twenty-eighth, by 42, for the formToOpen sentence rewritten once the frame became
+     * the test client's top window drawn into the file by the add-in, not the whole screen with
+     * that window in front. Together with the twenty-seventh: 92481.
+     * </p>
+     * <p>
+     * And a twenty-ninth: the knowledge-base sentence on naparnik is the tool description, 122
+     * bytes, and this budget weighs parameter descriptions only. Measured addition: 0. The list
+     * budget records the sentence. Together with the twenty-eighth: 92481.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 86826;
+    private static final int DOCUMENT_PROSE = 92481;
 }

@@ -133,6 +133,26 @@ public class ClientSessionStarter
         return ResponseType.JSON;
     }
 
+    /**
+     * Names the database update this start runs before the client starts, so the road weighs the
+     * call by it.
+     * <p>
+     * The update runs only when {@code updateBeforeLaunch} asks for it (default false, read exactly
+     * as {@link #execute} reads it), and it is the work {@code update_database} is weighed for.
+     * The client itself, which outlives the call, is deliberately not weighed.
+     * </p>
+     *
+     * @param arguments the call arguments, as the client sent them; may be <code>null</code>
+     * @return {@code update_database} when the call updates the infobase before starting,
+     *         <code>null</code> otherwise
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", false) //$NON-NLS-1$
+            ? "update_database" : null; //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

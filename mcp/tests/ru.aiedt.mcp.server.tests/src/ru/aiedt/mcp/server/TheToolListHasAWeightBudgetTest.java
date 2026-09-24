@@ -202,10 +202,16 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("code_search", Integer.valueOf(7248)); //$NON-NLS-1$
         // Raised by 787 for runMode and clientType on start_client: a configuration on ordinary
         // forms starts under the thick client in the ordinary run mode, and the caller names both.
-        BUDGETS.put("infobase_admin", Integer.valueOf(7942)); //$NON-NLS-1$
+        // Raised by 707 for register_infobase: an existing infobase is registered in EDT's list
+        // and bound to the project in one call, and the facade's schema is where a client learns
+        // the operation and its two new arguments exist. And by 407 for the dump-info work: the
+        // syncOperation value rebuild_dump_info, the rebuild's wait budget, the format override.
+        BUDGETS.put("infobase_admin", Integer.valueOf(9056)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
-        BUDGETS.put("vanessa", Integer.valueOf(5405)); //$NON-NLS-1$
+        // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
+        // sentence in the tool's own description that names the way they compose an action.
+        BUDGETS.put("vanessa", Integer.valueOf(7160)); //$NON-NLS-1$
         BUDGETS.put("extension_workshop", Integer.valueOf(5402)); //$NON-NLS-1$
         // Raised from 5400 for startupOption: the startup string is how an object opened at
         // startup receives its parameters, and the test runners already pass theirs the same way.
@@ -223,7 +229,11 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("docs_lookup", Integer.valueOf(2547)); //$NON-NLS-1$
         BUDGETS.put("validate_query", Integer.valueOf(2460)); //$NON-NLS-1$
         BUDGETS.put("yaxunit_tests", Integer.valueOf(2395)); //$NON-NLS-1$
-        BUDGETS.put("security_audit", Integer.valueOf(2295)); //$NON-NLS-1$
+        // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
+        // subsystemName, one sentence each. The sentences that say which combination is a walk
+        // and which is a refusal live in operation help, not in this schema. 3008 is what remains
+        // after that move (the four sentences are 235 bytes; the rest is the properties themselves).
+        BUDGETS.put("security_audit", Integer.valueOf(3008)); //$NON-NLS-1$
         BUDGETS.put("code_review", Integer.valueOf(2209)); //$NON-NLS-1$
         BUDGETS.put("find_dead_code", Integer.valueOf(1867)); //$NON-NLS-1$
         BUDGETS.put("diff_module", Integer.valueOf(1816)); //$NON-NLS-1$
@@ -245,6 +255,10 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("get_command_interface", Integer.valueOf(790)); //$NON-NLS-1$
         BUDGETS.put("self_status", Integer.valueOf(762)); //$NON-NLS-1$
         BUDGETS.put("code_template", Integer.valueOf(746)); //$NON-NLS-1$
+        // First weigh of naparnik: status, help and probe. Raised by 122 for the sentence that
+        // keeps service knowledge-base reads (mcp__knowledge-hub__ Search_, Fetch_, Diff_ or
+        // Get_) in the read set. The sentence is the tool description.
+        BUDGETS.put("naparnik", Integer.valueOf(1922)); //$NON-NLS-1$
         BUDGETS.put("get_mcp_history", Integer.valueOf(676)); //$NON-NLS-1$
         BUDGETS.put("get_edt_version", Integer.valueOf(123)); //$NON-NLS-1$
     }

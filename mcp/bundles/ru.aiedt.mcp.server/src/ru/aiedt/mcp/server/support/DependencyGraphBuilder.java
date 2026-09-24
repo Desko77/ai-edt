@@ -102,6 +102,10 @@ public final class DependencyGraphBuilder
             {
                 edge.put("via", e.featureName); //$NON-NLS-1$
             }
+            if (e.count > 1)
+            {
+                edge.put("count", Integer.valueOf(e.count)); //$NON-NLS-1$
+            }
             result.add(edge);
         }
         return result;

@@ -63,7 +63,13 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
 | 🧪 **Run a data processor under the debugger** | Open an external data processor or report in the client that starts under the debugger, so its code runs with the breakpoints already set. |
 | 🔔 **See that the IDE is waiting for an answer** | Read the modal dialog holding a call - title, message and buttons - and press a named one instead of waiting for a person at the keyboard. |
-| 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind, whether it is ready for one, and what stands in the way: `update_database` with `dryRun=true` answers and starts nothing. |
+| 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind: `update_database` with `dryRun=true` answers with the update state and starts nothing. Readiness and the export validation are not run this way - the answer names them in `notCheckedInDryRun`. |
+| 🧷 **Connect an existing infobase** | Add a file infobase by path or a server one by connection string to EDT's list and bind it to the project in one call - with the infobase user and password, without the access prompt: `infobase_admin operation=register_infobase`. |
+| 📤 **Take an object from the infobase, not the project** | Export a form or an object of the infobase configuration to Designer XML (`config_io operation=export_infobase_objects`) - for example, to compare with the project what was edited in Designer. |
+| 🧰 **Get incremental updates back** | Rebuild the stored dump-info file with Designer's own dump (`sync_control operation=rebuild_dump_info`) when `update_database` refuses a foreign file format, and mark synchronized an infobase binding that has no baseline yet (`mark_synchronized`). |
+| 🖨️ **Check a print form before printing** | Learn from the template model whether the print area fits the page width and by what margin: `mxl_workshop operation=check_print_width`, no platform run. |
+| 🎬 **Check an action in a running 1C** | Open a list, go to a row, press a button and get a screen capture with the test client's window after the action: `vanessa` with the list arguments. |
+| 🤝 **Ask 1C:Naparnik** | Put a question to Naparnik from the agent (`naparnik operation=ask`) with the bridge on; by default Naparnik gets read-only tools, including search over the platform documentation and ITS in the service's knowledge base. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
 
@@ -79,7 +85,7 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **And what that query returns, too.** With `describeResult=true` the same tool reports the columns of each result and their types, taken from EDT's query-wizard model rather than read off the text. A package is worked through whole: temporary tables are not passed off as results, but they keep their position in `ВыполнитьПакет()`, so the indexes match the real ones. A type that cannot be determined is left out entirely - a confident wrong answer would cost more than an honest gap. The assistant stops guessing column names, and a whole class of errors that otherwise survives until run time goes with them.
 
-**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` - which also reports the composition settings of every dynamic list on the form: order, filter, groupings and conditional appearance - and looked at through `get_form_screenshot` - in the editor, and through `vanessa` with `formToOpen` in a running 1C as well, where a scenario opens the form and photographs it as a user sees it - while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration; `update_database` runs that same scan itself and refuses on a finding rather than letting the platform meet it.
+**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` - which also reports the composition settings of every dynamic list on the form: order, filter, groupings and conditional appearance - and looked at through `get_form_screenshot` - in the editor, and through `vanessa` with `formToOpen` in a running 1C as well, where a scenario opens the form and saves a frame of the test client's top window, which the add-in draws into the file whatever covers it - while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration; `update_database` runs that same scan itself and refuses on a finding rather than letting the platform meet it.
 
 ## 🔄 A typical agent loop
 
@@ -434,6 +440,8 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 
 Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
 
+A facade's help is `operation=help`, one operation or argument with `topic`; `find=<words>` searches the help and names the topic to open for the whole section.
+
 ![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
 
 ### Long-running operations
@@ -443,6 +451,8 @@ A call that does not finish within the wait returns `status=Pending` and a `runK
 An `edit_metadata batch` answer also carries `progress`: how many operations are done, applied and rejected, and which one is running. A batch commits each operation separately, so the ones it reports as applied are already written.
 
 A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
+
+Heavy calls - an infobase update, including one before a client starts, configuration export and import, a Designer run, infobase creation, project-wide scans - run at most three at a time, and once more than 92 % of EDT's heap survives a collection a new heavy call is refused before any work starts. An external client gets `503` with `Retry-After`. A `Pending` answer holds its permit until the background work ends; polling a `runKey` takes no permit.
 
 ### Withdrawing a call
 

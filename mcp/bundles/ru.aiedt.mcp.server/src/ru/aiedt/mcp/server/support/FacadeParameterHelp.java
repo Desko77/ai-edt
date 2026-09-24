@@ -49,15 +49,37 @@ public final class FacadeParameterHelp
         Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema)
     {
         return answer(topic, described, dispatched, namedTopics, facadeClass, facadeSchema,
-            java.util.Collections.emptyMap());
+            java.util.Collections.<String, String> emptyMap(), null);
+    }
+
+    /**
+     * The same, with the facade's catalog so a refusal can name the closest topics.
+     *
+     * @param topic the topic asked for, already normalized; may be <code>null</code>.
+     * @param described operation name to the tool it routes to.
+     * @param dispatched every operation the facade accepts, described or not.
+     * @param namedTopics the facade's own topics, for the refusal - for example "workflow".
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param facadeSchema the schema the facade declares.
+     * @param catalog the facade's answer to help without a topic, for the refusal's nearest
+     *            names.
+     * @return the parameters of that operation, or a refusal naming what can be asked for
+     */
+    public static String answer(String topic, Map<String, Supplier<IMcpTool>> described,
+        Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema,
+        String catalog)
+    {
+        return answer(topic, described, dispatched, namedTopics, facadeClass, facadeSchema,
+            java.util.Collections.<String, String> emptyMap(), catalog);
     }
 
     /**
      * The same, with the rules the facade's own descriptions no longer carry.
      * <p>
-     * They reach an operation the facade handles itself, whose help is rendered from the facade's
-     * schema. An operation that routes to a tool is answered from that tool's schema, which carries
-     * its own detail and needs none from here.
+     * They reach an operation the facade handles itself, rendered from the facade's schema, and an
+     * operation that routes to a tool, rendered from that tool's schema. A rule is shown on a
+     * parameter the rendered schema actually declares; a name only the facade's own schema has
+     * stays with the operations the facade handles itself.
      * </p>
      *
      * @param topic the operation asked about.
@@ -73,13 +95,38 @@ public final class FacadeParameterHelp
         Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema,
         Map<String, String> detail)
     {
+        return answer(topic, described, dispatched, namedTopics, facadeClass, facadeSchema,
+            detail, null);
+    }
+
+    /**
+     * The same, with the facade's catalog so a refusal can name the closest topics with what they
+     * do.
+     *
+     * @param topic the operation asked about.
+     * @param described the operations this facade routes to a tool.
+     * @param dispatched every operation it offers.
+     * @param namedTopics the topics it offers besides operations.
+     * @param facadeClass the simple name of the facade class, as the map keys it.
+     * @param facadeSchema the schema the facade declares.
+     * @param detail parameter name to the rules its description no longer carries.
+     * @param catalog the facade's answer to help without a topic; <code>null</code> leaves the
+     *            refusal without nearest names.
+     * @return markdown, or a line saying why there is none
+     */
+    public static String answer(String topic, Map<String, Supplier<IMcpTool>> described,
+        Set<String> dispatched, String namedTopics, String facadeClass, String facadeSchema,
+        Map<String, String> detail, String catalog)
+    {
         Supplier<IMcpTool> known = topic == null ? null : described.get(topic);
         if (known != null)
         {
             IMcpTool routed = known.get();
             // Rendered under the name the caller used. An operation and the tool behind it usually
-            // share a name, and where they do not the caller asked by the operation's.
-            return ParameterHelp.render(topic, routed.getInputSchema());
+            // share a name, and where they do not the caller asked by the operation's. The detail
+            // continues a description the schema keeps to one sentence.
+            return ParameterHelp.render(topic, routed.getInputSchema(),
+                detail == null ? java.util.Collections.emptyMap() : detail);
         }
         if (topic != null && dispatched != null && dispatched.contains(topic))
         {
@@ -88,8 +135,30 @@ public final class FacadeParameterHelp
             // operation they just found in the catalog learns the wrong thing.
             return fromTheMap(topic, facadeClass, facadeSchema, detail);
         }
-        return "# Unknown topic '" + topic + "'.\n\nAvailable: " + namedTopics //$NON-NLS-1$ //$NON-NLS-2$
-            + ", or the name of an operation for its parameters.\n"; //$NON-NLS-1$
+        StringBuilder refusal = new StringBuilder("# Unknown topic '").append(topic) //$NON-NLS-1$
+            .append("'."); //$NON-NLS-1$
+        if (catalog != null)
+        {
+            // The nearest names with what they do, before the whole list: a caller who mistyped
+            // finds what they meant without scanning the catalog by eye.
+            Set<String> candidates = new LinkedHashSet<>();
+            for (String named : namedTopics.split(", ")) //$NON-NLS-1$
+            {
+                if (!named.isEmpty())
+                {
+                    candidates.add(named);
+                }
+            }
+            if (dispatched != null)
+            {
+                candidates.addAll(dispatched);
+            }
+            refusal.append(FacadeHelpSearch.closestMatches(topic, candidates,
+                FacadeHelpSearch.describe(catalog)));
+        }
+        return refusal
+            .append("\n\nAvailable: ").append(namedTopics) //$NON-NLS-1$
+            .append(", or the name of an operation for its parameters.\n").toString(); //$NON-NLS-1$
     }
 
     /**

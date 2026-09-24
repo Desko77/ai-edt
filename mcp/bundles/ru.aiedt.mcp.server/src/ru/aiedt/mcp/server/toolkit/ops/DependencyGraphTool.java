@@ -10,8 +10,10 @@ import ru.aiedt.mcp.server.support.WatchForCancel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
@@ -88,6 +90,9 @@ public class DependencyGraphTool implements IMcpTool
             .integerProperty("depth", "BFS depth (1-5, default 2)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | mermaid | plantuml | dot (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("direction", "in | out | both (default both)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("edgeKinds", //$NON-NLS-1$
+                "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
+                    + "Omit to keep every kind.") //$NON-NLS-1$
             .integerProperty("maxNodes", "Cap for BFS (default 200)") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("maxEdges", "Cap for edges (default 500)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
@@ -124,6 +129,7 @@ public class DependencyGraphTool implements IMcpTool
         int depth = clamp(parseInt(params, "depth", 2), 1, 5); //$NON-NLS-1$
         int maxNodes = Math.max(1, parseInt(params, "maxNodes", 200)); //$NON-NLS-1$
         int maxEdges = Math.max(1, parseInt(params, "maxEdges", 500)); //$NON-NLS-1$
+        List<String> edgeKinds = understoodEdgeKinds(params);
 
         Level level = parseLevel(levelStr);
         if (level == null)
@@ -150,7 +156,7 @@ public class DependencyGraphTool implements IMcpTool
                 try
                 {
                     return buildGraph(project, level, scopeStr, params, direction, depth,
-                        maxNodes, maxEdges, format);
+                        maxNodes, maxEdges, format, edgeKinds);
                 }
                 catch (Exception e)
                 {
@@ -167,7 +173,8 @@ public class DependencyGraphTool implements IMcpTool
 
     private String buildGraph(IProject project, Level level, String scopeStr,
         Map<String, String> params, BmReferencesHelper.Direction direction, int depth,
-        int maxNodes, int maxEdges, DependencyGraphBuilder.Format format) throws Exception
+        int maxNodes, int maxEdges, DependencyGraphBuilder.Format format,
+        List<String> edgeKinds) throws Exception
     {
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         if (configProvider == null)
@@ -217,9 +224,11 @@ public class DependencyGraphTool implements IMcpTool
                     }
                     else
                     {
+                        Set<String> keep = edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
+                        BmReferencesHelper.EdgePolicy policy = edgePolicy(level, keep);
                         result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots, direction,
                             maxNodes, maxEdges, depth,
-                            () -> monitor.isCanceled() || watch.stopHere());
+                            () -> monitor.isCanceled() || watch.stopHere(), policy);
                     }
                     bfsRef.set(result);
                 }
@@ -249,7 +258,69 @@ public class DependencyGraphTool implements IMcpTool
         tr.put("cancelled", watch.note("nodes")); //$NON-NLS-1$ //$NON-NLS-2$
         tr.put("level", level.name().toLowerCase()); //$NON-NLS-1$
         tr.put("depth", depth); //$NON-NLS-1$
+        for (Map.Entry<String, Object> extra : BmReferencesHelper.edgeKindFields(
+            level.name().toLowerCase(java.util.Locale.ROOT), edgeKinds, bfs).entrySet())
+        {
+            tr.put(extra.getKey(), extra.getValue());
+        }
         return tr.toJson();
+    }
+
+    /**
+     * The filter of the walk a level makes.
+     * <p>
+     * The metadata level is a graph between metadata objects, and the mixed level shows both halves
+     * of a project, so a BSL module is an object of that graph as well. An EDT service object is an
+     * object of neither level and is refused at whichever end reports it and as a root.
+     * </p>
+     *
+     * @param level the level asked for
+     * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+     * @return the filter
+     */
+    static BmReferencesHelper.EdgePolicy edgePolicy(Level level, Set<String> keepKinds)
+    {
+        return level == Level.MIXED
+            ? BmReferencesHelper.EdgePolicy.mixed(keepKinds)
+            : BmReferencesHelper.EdgePolicy.metadata(keepKinds);
+    }
+
+    /**
+     * The via values to keep, in the order given, with blanks and repeats dropped.
+     * <p>
+     * Absent is <code>null</code> and keeps every kind. Present and empty keeps none: an empty
+     * list and a missing argument are different, and the reader of a list returns
+     * <code>null</code> for both, so the key itself is what tells them apart.
+     * </p>
+     *
+     * @param params the call
+     * @return the kinds, an empty list when the argument was present and named nothing, or
+     *         <code>null</code> when it was absent
+     */
+    private static List<String> understoodEdgeKinds(Map<String, String> params)
+    {
+        if (params == null || !params.containsKey("edgeKinds")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        List<String> raw = JsonUtils.extractArrayArgument(params, "edgeKinds"); //$NON-NLS-1$
+        List<String> understood = new ArrayList<>();
+        if (raw != null)
+        {
+            for (String item : raw)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+                String trimmed = item.trim();
+                if (!trimmed.isEmpty() && !understood.contains(trimmed))
+                {
+                    understood.add(trimmed);
+                }
+            }
+        }
+        return understood;
     }
 
     private BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
@@ -306,13 +377,16 @@ public class DependencyGraphTool implements IMcpTool
                     direction == BmReferencesHelper.Direction.OUT
                         || direction == BmReferencesHelper.Direction.BOTH,
                     edge -> {
-                        if (result.edges.size() >= maxEdges)
+                        // Which half of the call graph reported this edge: the module being walked
+                        // is the source of an outgoing one and the target of an incoming one.
+                        BmReferencesHelper.Side side = selfFqn != null
+                            && selfFqn.equals(edge.fromFqn)
+                                ? BmReferencesHelper.Side.FORWARD
+                                : BmReferencesHelper.Side.BACKWARD;
+                        if (!addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
                         {
-                            result.truncated = true;
                             return;
                         }
-                        result.edges.add(new BmReferencesHelper.Edge(edge.fromFqn, edge.toFqn,
-                            "calls")); //$NON-NLS-1$
                         addModuleNodeIfNew(result, queue, visited, tx, edge.fromFqn, maxNodes);
                         addModuleNodeIfNew(result, queue, visited, tx, edge.toFqn, maxNodes);
                     });
@@ -321,6 +395,51 @@ public class DependencyGraphTool implements IMcpTool
         }
         return result;
     }
+
+    /**
+     * Records one {@code calls} edge, merging it with the same edge already recorded.
+     * <p>
+     * The two halves of the call graph name the same connection between two modules: walking the
+     * caller reports it as an outgoing one and walking the callee reports it as an incoming one.
+     * Added as they came, one connection was two rows under {@code direction=both}. Merging is by
+     * {@code from} / {@code to} / {@code via}, as on the other levels, and each half is tallied on
+     * its own there, so the pair stands for one reference either way.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param fromFqn the caller's FQN
+     * @param toFqn the callee's FQN
+     * @param side which half of the call graph reported the edge
+     * @param maxEdges the edge cap, counted after merging
+     * @return <code>true</code> when the edge is in the graph afterwards
+     */
+    static boolean addModuleEdge(BmReferencesHelper.BfsResult result, String fromFqn, String toFqn,
+        BmReferencesHelper.Side side, int maxEdges)
+    {
+        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        {
+            return false;
+        }
+        for (BmReferencesHelper.Edge existing : result.edges)
+        {
+            if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                && CALLS.equals(existing.featureName))
+            {
+                existing.observe(side);
+                return true;
+            }
+        }
+        if (result.edges.size() >= maxEdges)
+        {
+            result.truncated = true;
+            return false;
+        }
+        result.edges.add(new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, side));
+        return true;
+    }
+
+    /** The {@code via} of every edge of the module level. */
+    private static final String CALLS = "calls"; //$NON-NLS-1$
 
     /**
      * Records a module the walk has just found, and puts it in the queue so the next ring walks it.
@@ -670,7 +789,8 @@ public class DependencyGraphTool implements IMcpTool
         return Math.max(min, Math.min(max, value));
     }
 
-    private enum Level
+    /** What the nodes of the graph are. Visible to this package so the choice it drives is testable. */
+    enum Level
     {
         METADATA, MODULES, MIXED
     }

@@ -74,6 +74,12 @@ public final class BmInfobaseCredentialsHelper
         /** True when a non-empty password is stored (the value is never exposed). */
         public boolean passwordStored;
         public String additionalParameters;
+        /**
+         * What the launch-configuration guard did after the list write (the save strips the
+         * application id of every launch configuration; the guard puts it back), or null when
+         * there was nothing to report. Never carries attribute values, only configuration names.
+         */
+        public String launchApplicationIds;
     }
 
     /** Internal infobase resolution. */
@@ -101,21 +107,42 @@ public final class BmInfobaseCredentialsHelper
     public static CredentialResult setCredentials(IProject project, String applicationId,
         String accessMode, String userName, String password)
     {
-        CredentialResult r = new CredentialResult();
-
         InfobaseResolution res = resolveInfobase(project, applicationId);
         if (res.error != null)
         {
+            CredentialResult r = new CredentialResult();
             r.error = res.error;
             r.failureKind = res.notInfobaseApp ? ErrorTags.NOT_INFOBASE.wire() : ErrorTags.RESOLVE_FAILED.wire();
             return r;
         }
+        CredentialResult r = setCredentialsForInfobase(res.infobase, accessMode, userName, password);
         r.applicationId = res.applicationId;
-        r.infobaseName = res.infobaseName;
+        return r;
+    }
 
+    /**
+     * Writes the credentials for an infobase the caller has already resolved to a reference -
+     * the path {@code set_infobase_credentials} takes after resolving the application, and the
+     * one {@code register_infobase} takes for the list entry it has just added or reused, where
+     * no application exists yet to resolve through. Never throws; all failures land in the
+     * returned {@link CredentialResult}.
+     *
+     * @param infobase    the list entry the settings belong to
+     * @param accessMode  "OS" or "INFOBASE" (case-insensitive); null defaults to INFOBASE when a
+     *                    userName is given, else OS
+     * @param userName    infobase user (may be null for OS access)
+     * @param password    infobase password (may be null; never logged/returned)
+     * @return what was written and read back; {@link CredentialResult#applicationId} stays
+     *         {@code null} - there is no application on this path
+     */
+    public static CredentialResult setCredentialsForInfobase(InfobaseReference infobase,
+        String accessMode, String userName, String password)
+    {
         IInfobaseAccessManager mgr = resolveManager();
         if (mgr == null)
         {
+            CredentialResult r = new CredentialResult();
+            r.infobaseName = infobase.getName();
             r.error = "IInfobaseAccessManager is not available on this EDT runtime."; //$NON-NLS-1$
             r.failureKind = ErrorTags.MANAGER_UNAVAILABLE.wire();
             return r;
@@ -123,7 +150,32 @@ public final class BmInfobaseCredentialsHelper
 
         // Prime the shared secure-storage root so the read/write below cannot pop
         // a modal master-password dialog on this background thread.
-        String primeErr = primeSecureStorage();
+        return setCredentialsForInfobase(infobase, accessMode, userName, password, mgr,
+            primeSecureStorage());
+    }
+
+    /**
+     * The write itself, against a manager and a prime outcome the caller resolved: the product
+     * path resolves both from the running EDT, a test supplies its own. Never throws; all
+     * failures land in the returned {@link CredentialResult}.
+     *
+     * @param infobase    the list entry the settings belong to
+     * @param accessMode  "OS" or "INFOBASE" (case-insensitive); null defaults to INFOBASE when a
+     *                    userName is given, else OS
+     * @param userName    infobase user (may be null for OS access)
+     * @param password    infobase password (may be null; never logged/returned)
+     * @param mgr         the access manager the write goes through
+     * @param primeErr    what the secure-storage prime answered, or {@code null} when primed
+     * @return what was written and read back; {@link CredentialResult#applicationId} stays
+     *         {@code null} - there is no application on this path
+     */
+    static CredentialResult setCredentialsForInfobase(InfobaseReference infobase,
+        String accessMode, String userName, String password, IInfobaseAccessManager mgr,
+        String primeErr)
+    {
+        CredentialResult r = new CredentialResult();
+        r.infobaseName = infobase.getName();
+
         if (primeErr != null)
         {
             r.error = primeErr;
@@ -143,14 +195,18 @@ public final class BmInfobaseCredentialsHelper
         }
 
         // Preserve the current additionalParameters so updateSettings (which also
-        // persists them back to the infobase model) does not clobber them.
+        // persists them back to the infobase model) does not clobber them. The password
+        // that stood before is kept only so a failure text can be masked with it; it is
+        // never logged and never answered.
         String additionalParams = null;
+        String[] previousPassword = new String[1];
         try
         {
-            IInfobaseAccessSettings current = mgr.resolveSettings(res.infobase);
+            IInfobaseAccessSettings current = mgr.resolveSettings(infobase);
             if (current != null)
             {
                 additionalParams = current.additionalProperties();
+                previousPassword[0] = current.password();
             }
         }
         catch (Throwable e)
@@ -159,22 +215,42 @@ public final class BmInfobaseCredentialsHelper
                 + msg(e));
         }
 
-        try
+        // updateSettings saves the infobase list, and the reload that follows strips
+        // ATTR_APPLICATION_ID from every launch configuration (see LaunchApplicationIds).
+        // Remember the ids before the write and put them back after it, failure included. The
+        // snapshot, the write and the restore run under the one write lock: a second
+        // infobase-list write at once would snapshot the ids this write already stripped.
+        LaunchApplicationIds.Access launches =
+            LaunchConfigAccess.applicationIdAccess(LaunchConfigAccess.getLaunchManager());
+        InfobaseAccessSettings settings =
+            new InfobaseAccessSettings(access, userName, password, additionalParams);
+        // The write below runs in a lambda, which cannot capture the reassigned parameter.
+        String newPassword = password;
+        LaunchApplicationIds.underWriteLock(launches, applicationIds -> {
+            try
+            {
+                mgr.updateSettings(infobase, settings);
+            }
+            catch (Throwable e)
+            {
+                r.error = redactPasswords("Failed to store the credentials in secure storage: " //$NON-NLS-1$
+                    + msg(e), newPassword, previousPassword[0]);
+                r.failureKind = ErrorTags.WRITE_FAILED.wire();
+                restoreApplicationIds(launches, applicationIds, r);
+                return r;
+            }
+            restoreApplicationIds(launches, applicationIds, r);
+            return r;
+        });
+        if (r.error != null)
         {
-            mgr.updateSettings(res.infobase,
-                new InfobaseAccessSettings(access, userName, password, additionalParams));
-        }
-        catch (Throwable e)
-        {
-            r.error = "Failed to store the credentials in secure storage: " + msg(e); //$NON-NLS-1$
-            r.failureKind = ErrorTags.WRITE_FAILED.wire();
             return r;
         }
 
         // In-process readback to confirm what was persisted.
         try
         {
-            IInfobaseAccessSettings back = mgr.resolveSettings(res.infobase);
+            IInfobaseAccessSettings back = mgr.resolveSettings(infobase);
             r.ok = true;
             r.access = back.access() != null ? back.access().getName() : null;
             r.userName = back.userName();
@@ -287,8 +363,8 @@ public final class BmInfobaseCredentialsHelper
             if (!(app instanceof IInfobaseApplication))
             {
                 r.notInfobaseApp = true;
-                r.error = "No application named '" + applicationId + "' is not an infobase " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "application; credentials apply only to infobase applications."; //$NON-NLS-1$
+                r.error = "Application '" + applicationId + "' is not an infobase application; " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "credentials apply only to infobase applications."; //$NON-NLS-1$
                 return r;
             }
             InfobaseReference ib = ((IInfobaseApplication) app).getInfobase();
@@ -307,6 +383,82 @@ public final class BmInfobaseCredentialsHelper
             r.error = "Failed to resolve the infobase application: " + msg(e); //$NON-NLS-1$
             return r;
         }
+    }
+
+    /**
+     * Puts the launch configurations' application ids back after the infobase list write, and
+     * names in the result what the snapshot could not protect and what was restored, refused or
+     * lost. Best effort: a guard failure is logged, never thrown back into the credentials answer.
+     *
+     * @param launches the launch configurations, or null when there is no launch manager
+     * @param snapshot what {@link LaunchApplicationIds#snapshot} returned before the write
+     * @param r the result the report lands in
+     */
+    private static void restoreApplicationIds(LaunchApplicationIds.Access launches,
+        LaunchApplicationIds.SnapshotResult snapshot, CredentialResult r)
+    {
+        if (launches == null || snapshot == null)
+        {
+            return;
+        }
+        try
+        {
+            String snapshotNote = snapshot.isQuiet() ? null : snapshot.describe();
+            LaunchApplicationIds.RestoreReport report = LaunchApplicationIds.restore(launches, snapshot.held);
+            String reportNote = report.isQuiet() ? null : report.describe();
+            if (snapshotNote != null && reportNote != null)
+            {
+                r.launchApplicationIds = snapshotNote + "; " + reportNote; //$NON-NLS-1$
+            }
+            else if (snapshotNote != null)
+            {
+                r.launchApplicationIds = snapshotNote;
+            }
+            else
+            {
+                r.launchApplicationIds = reportNote;
+            }
+        }
+        catch (Throwable e)
+        {
+            // The guard itself failed: the ids are where the write left them, and the caller is
+            // told rather than handed silence.
+            Activator.logWarning("set_infobase_credentials: the launch configurations' application " //$NON-NLS-1$
+                + "ids were not restored: " + msg(e)); //$NON-NLS-1$
+            r.launchApplicationIds = "the launch configurations' application ids were not restored: " //$NON-NLS-1$
+                + msg(e);
+        }
+    }
+
+    /**
+     * The text with both passwords this call handled replaced, so a failure reason that echoes
+     * one cannot put it in the answer. The longer secret goes first: masking the shorter one
+     * first would cut the longer one into a masked head and a bare tail ("s3cret" before
+     * "s3cret-old" leaves "***-old").
+     *
+     * @param text the text about to be answered
+     * @param password the password this call writes, or {@code null}
+     * @param previousPassword the password that stood before, or {@code null} when it was not read
+     * @return {@code text} with those passwords replaced by {@code ***}
+     */
+    private static String redactPasswords(String text, String password, String previousPassword)
+    {
+        if (previousPassword != null && !previousPassword.isEmpty()
+            && (password == null || previousPassword.length() > password.length()))
+        {
+            return redactPassword(redactPassword(text, previousPassword), password);
+        }
+        return redactPassword(redactPassword(text, password), previousPassword);
+    }
+
+    /** One password replaced by {@code ***} wherever it stands in {@code text}. */
+    private static String redactPassword(String text, String password)
+    {
+        if (text == null || password == null || password.isEmpty() || !text.contains(password))
+        {
+            return text;
+        }
+        return text.replace(password, "***"); //$NON-NLS-1$
     }
 
     private static String msg(Throwable e)

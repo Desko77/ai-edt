@@ -1022,6 +1022,49 @@ public final class BmExtensionHelper
     }
 
     /**
+     * The base-configuration object a child walk starts from.
+     * <p>
+     * The adopted shell in the extension has no children of its own, so the walk reads the base
+     * object. An explicit base project is used when the caller named one; otherwise the
+     * extension's parent configuration, the same one a borrow derives.
+     * </p>
+     *
+     * @param extension the extension project the object was borrowed into
+     * @param baseProjectName the base configuration, or empty to derive it
+     * @param fqn the object, as the borrow named it
+     * @return the base object, or <code>null</code> when it cannot be read
+     */
+    public static EObject sourceObject(IProject extension, String baseProjectName, String fqn)
+    {
+        if (extension == null || fqn == null || fqn.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            IProject base;
+            if (baseProjectName != null && !baseProjectName.isEmpty())
+            {
+                base = org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot()
+                    .getProject(baseProjectName);
+            }
+            else
+            {
+                base = deriveParentProject(resolveExtensionProject(extension));
+            }
+            if (base == null || !base.exists())
+            {
+                return null;
+            }
+            return resolveSourceEObject(base, fqn);
+        }
+        catch (RuntimeException | LinkageError failed)
+        {
+            return null;
+        }
+    }
+
+    /**
      * Resolves an EObject by FQN inside the base project's configuration.
      * <p>
      * Supported FQN forms:

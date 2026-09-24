@@ -40,12 +40,30 @@ than all of them.
   `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
   extend the one it came from, and says so on the response; call borrow again on an object
   borrowed by an older build and it repairs the link in place. Do not hand-edit the `.mdo` for
-  this.
+  this. `includeChildren=true` on `borrow_object` also borrows that object's own children
+  (attributes, including those of a tabular section, forms, templates, commands, nested
+  subsystems) and lists what was taken, skipped, and what EDT pulled in by attribute type.
+  It does not override modules and does not walk other objects by reference. Default false
+  borrows only the named object. `borrow_objects` does not read the argument.
 
   To widen the type of something the extension has adopted, use
   `edit_metadata operation=extend_object_type` - **not** `set_object_type`. Setting a type
   replaces a composition the adopted object does not have; extending adds an entry marked
   `Extended` where an adopted object really keeps its types, and leaves the inherited ones alone.
+
+  A form element of an extension that takes a data path starting at a base-form attribute borrows
+  that attribute in the same write, and the response names it in `adoptedFormAttributes`. A path
+  EDT does not export with the extension form **and** the form does not resolve is refused before
+  anything is written - the refusal names the element, the path and the reason, and the form is left
+  as it was. A path the form resolves but that the extension cannot reference - a segment of
+  another engine, a tail past the borrowed attribute - is accepted, and EDT can drop it on export
+  with no marker to warn about it: `form-data-path` fires only on a segment nothing resolves. A
+  path an operation creates itself (the table of `add_dynamic_list_table`, the tables
+  of `setup_settings_composer_on_form`) is not asked about resolution: the object is the write's
+  own. When a check cannot be asked at all - the EDT service is absent or the call failed - nothing
+  is refused and the response names the check in `dataPathChecksNotPerformed`
+  (`attributeBelongsToExtension`, `exportOfExtensionForm`, `pathResolutionInForm`), because a
+  response that stays silent about it reads as a path that passed it.
 
 - **When a parameter's description reads like one line and you need the rules.**
   `edit_metadata operation=help topic=parameters` carries the full text of the parameters whose
@@ -80,6 +98,7 @@ Reading and analysis without the server are fine. Writing into an EDT project wi
 A facade replaces a family of related tools: one name, with the action chosen by an `operation`
 parameter (`action` for the debugger). Most facades carry their own catalogue - call
 `operation=help`, and `operation=help topic=<operation>` for one operation's contract.
+`operation=help find=<words>` searches that help and names the topic to open for the whole section.
 
 | Facade | Use it for |
 |---|---|

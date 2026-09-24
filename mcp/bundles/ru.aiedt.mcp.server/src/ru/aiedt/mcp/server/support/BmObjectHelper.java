@@ -1515,6 +1515,19 @@ public final class BmObjectHelper
     }
 
     /**
+     * Filled while {@link #CHILD_KIND_GETTERS} is built, so the walk and the address list cannot
+     * drift apart. Not published: {@link #CHILD_COLLECTION_KINDS} is the copy callers see.
+     */
+    private static final List<String> CANONICAL_CHILD_KINDS = new ArrayList<>();
+
+    /**
+     * The Russian spelling of each canonical kind, filled by the same {@link #put} that fills the
+     * getter map - a reverse view of the one table, not a second one. Declared before the getter
+     * map's initializer so {@code put} finds it built.
+     */
+    private static final Map<String, String> RUSSIAN_KIND_BY_CANONICAL = new HashMap<>();
+
+    /**
      * Every child kind an address or a borrow may name, in either language, and the getter that
      * returns that collection.
      * <p>
@@ -1530,48 +1543,94 @@ public final class BmObjectHelper
      */
     private static final Map<String, String> CHILD_KIND_GETTERS = buildChildKindGetters();
 
+    /** The canonical English kind of each collection, in walk order. */
+    private static final List<String> CHILD_COLLECTION_KINDS =
+        java.util.Collections.unmodifiableList(new ArrayList<>(CANONICAL_CHILD_KINDS));
+
     /**
-     * Builds the child-kind map.
+     * Builds the child-kind map and records each canonical English name as it goes.
      *
      * @return kind in lower case to the getter of its collection
      */
     private static Map<String, String> buildChildKindGetters()
     {
         Map<String, String> kinds = new HashMap<>();
-        put(kinds, "getAttributes", "attribute", "реквизит"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getTabularSections", "tabularsection", "табличнаячасть"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getDimensions", "dimension", "измерение"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getResources", "resource", "ресурс"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getAccountingFlags", "accountingflag", "признакучета"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getExtDimensionAccountingFlags", "extdimensionaccountingflag", //$NON-NLS-1$ //$NON-NLS-2$
-            "признакучетасубконто"); //$NON-NLS-1$
-        put(kinds, "getCommands", "command", "команда"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getEnumValues", "enumvalue", "значениеперечисления"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getAddressingAttributes", "addressingattribute", "реквизитадресации"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getColumns", "column", "графа"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getStandardAttributes", "standardattribute", "стандартныйреквизит"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getSubsystems", "subsystem", "подсистема"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getForms", "form", "форма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getTemplates", "template", "макет"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getUrlTemplates", "urltemplate", "шаблонurl"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getMethods", "method", "метод"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        put(kinds, "getOperations", "operation", "операция"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        put(kinds, "getAttributes", "Attribute", "attribute", "реквизит"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getTabularSections", "TabularSection", "tabularsection", "табличнаячасть"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getDimensions", "Dimension", "dimension", "измерение"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getResources", "Resource", "resource", "ресурс"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getAccountingFlags", "AccountingFlag", "accountingflag", "признакучета"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getExtDimensionAccountingFlags", "ExtDimensionAccountingFlag", //$NON-NLS-1$ //$NON-NLS-2$
+            "extdimensionaccountingflag", "признакучетасубконто"); //$NON-NLS-1$ //$NON-NLS-2$
+        put(kinds, "getCommands", "Command", "command", "команда"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getEnumValues", "EnumValue", "enumvalue", "значениеперечисления"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getAddressingAttributes", "AddressingAttribute", "addressingattribute", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "реквизитадресации"); //$NON-NLS-1$
+        put(kinds, "getColumns", "Column", "column", "графа"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getStandardAttributes", "StandardAttribute", "standardattribute", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "стандартныйреквизит"); //$NON-NLS-1$
+        put(kinds, "getSubsystems", "Subsystem", "subsystem", "подсистема"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getForms", "Form", "form", "форма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getTemplates", "Template", "template", "макет"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getUrlTemplates", "URLTemplate", "urltemplate", "шаблонurl"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getMethods", "Method", "method", "метод"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        put(kinds, "getOperations", "Operation", "operation", "операция"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         return kinds;
     }
 
     /**
-     * Records one kind under each spelling it is written in.
+     * Records one kind under its canonical English name and each spelling a caller may write.
      *
      * @param kinds the map being built
      * @param getter the getter of that collection
+     * @param canonical the English kind a child address uses, as in {@code Attribute}
      * @param spellings the kind as a caller may write it, lower case
      */
-    private static void put(Map<String, String> kinds, String getter, String... spellings)
+    private static void put(Map<String, String> kinds, String getter, String canonical,
+        String... spellings)
     {
+        CANONICAL_CHILD_KINDS.add(canonical);
+        kinds.put(canonical.toLowerCase(java.util.Locale.ROOT), getter);
         for (String spelling : spellings)
         {
             kinds.put(spelling, getter);
+            // The one non-ASCII spelling is the Russian name the platform itself writes in full
+            // names; recorded here so the reverse view needs no table of its own.
+            if (!spelling.isEmpty() && spelling.codePointAt(0) > 0x7F)
+            {
+                RUSSIAN_KIND_BY_CANONICAL.putIfAbsent(canonical,
+                    Character.toUpperCase(spelling.charAt(0)) + spelling.substring(1));
+            }
         }
+    }
+
+    /**
+     * The Russian name of a child kind as the platform writes it in a full name, capitalized the
+     * way 1C capitalizes kind names ({@code Форма} for {@code Form}).
+     *
+     * @param canonicalKind the canonical English kind (e.g. {@code Form})
+     * @return the capitalized Russian name, or the canonical kind itself when the table records no
+     *         Russian spelling for it
+     */
+    public static String russianChildKindName(String canonicalKind)
+    {
+        String russian = canonicalKind == null ? null : RUSSIAN_KIND_BY_CANONICAL.get(canonicalKind);
+        return russian != null ? russian : canonicalKind;
+    }
+
+    /**
+     * The English kind of every containment collection, in the order a child walk visits them.
+     * <p>
+     * The same list {@link #childKindGetter} is built from. A kind an address can name is a kind
+     * the walk visits, and a kind the list does not have - a module, a predefined item - is not
+     * visited.
+     * </p>
+     *
+     * @return the canonical English kinds
+     */
+    public static List<String> childCollectionKinds()
+    {
+        return CHILD_COLLECTION_KINDS;
     }
 
     /** {@code true} when the segment names a known child kind (see {@link #childKindGetter}). */

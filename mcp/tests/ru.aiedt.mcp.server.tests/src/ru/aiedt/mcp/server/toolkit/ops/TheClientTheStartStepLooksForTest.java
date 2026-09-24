@@ -22,10 +22,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 /**
- * The step "Я запускаю сценарий открытия TestClient" starts the client named in the TestClient
- * block of VAParams. With no block the step reaches Vanessa with nothing to start and answers
- * "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0 - the
- * UI-testing types exist only once a client runs under the test manager.
+ * The step "Я запускаю сценарий открытия TestClient" launches the current row of the client
+ * table. {@code КлиентыТестирования} is what makes that row the client of the run; the
+ * {@code TestClient} block is the same profile under the English names the settings loader
+ * merges, and by itself it does not change the current row. With no client the step reaches
+ * Vanessa with nothing to start and answers "Тип не определен (ТестируемаяГруппаФормы)" with
+ * an empty client type and PID 0 - the UI-testing types exist only once a client runs under
+ * the test manager.
  */
 public class TheClientTheStartStepLooksForTest
 {
@@ -181,8 +184,9 @@ public class TheClientTheStartStepLooksForTest
 
     /**
      * A base with users defined meets a client that names none with a login window, and the run
-     * then waits out its whole deadline. The user goes into the connection string, so it reaches
-     * the test client the start step launches as well.
+     * then waits out its whole deadline. The user goes into the connection string the test manager
+     * is started with. The test client does not read that string; its blocks are checked apart
+     * from this.
      */
     @Test
     public void theUserGoesIntoTheConnectionString()
@@ -207,6 +211,117 @@ public class TheClientTheStartStepLooksForTest
         assertEquals(CONNECTION, VanessaTool.namingTheUser(CONNECTION, "   ")); //$NON-NLS-1$
     }
 
+    /**
+     * A file base with a user. Vanessa checks the catalog it derives from {@code File=}, and a
+     * {@code Usr} field in that string becomes part of the catalog, so the path in both blocks is
+     * the file string alone. The user travels as {@code /N}, which is what Vanessa appends from
+     * the additional parameters. A semicolon inside the path's quotes is part of the path.
+     */
+    @Test
+    public void aFileBaseWithAUserKeepsTheUserOutOfBothClientBlocks()
+    {
+        String manager = VanessaTool.namingTheUser(CONNECTION, "Администратор"); //$NON-NLS-1$
+        assertTrue(manager.contains("Usr=\"Администратор\"")); //$NON-NLS-1$
+        assertBothBlocks(manager, CONNECTION, "/N\"Администратор\""); //$NON-NLS-1$
+
+        String spaced = "File=\"C:/bases/demo base\";"; //$NON-NLS-1$
+        assertBothBlocks(VanessaTool.namingTheUser(spaced, "Администратор"), //$NON-NLS-1$
+            spaced, "/N\"Администратор\""); //$NON-NLS-1$
+
+        String quotedSemicolon = "File=\"C:/bases/demo;old\";"; //$NON-NLS-1$
+        assertBothBlocks(VanessaTool.namingTheUser(quotedSemicolon, "Админ"), //$NON-NLS-1$
+            quotedSemicolon, "/N\"Админ\""); //$NON-NLS-1$
+
+        assertBothBlocks(VanessaTool.namingTheUser("File=\"C:/b\"", "A"), //$NON-NLS-1$ //$NON-NLS-2$
+            "File=\"C:/b\";", "/N\"A\""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A file base with no user. The path Vanessa already accepts stays the path, in both blocks,
+     * and neither parameter field grows a {@code /N}.
+     */
+    @Test
+    public void aFileBaseWithoutAUserLeavesBothClientBlocksOnThePath()
+    {
+        assertBothBlocks(CONNECTION, CONNECTION, ""); //$NON-NLS-1$
+        assertBothBlocks(VanessaTool.namingTheUser(CONNECTION, "   "), CONNECTION, ""); //$NON-NLS-1$ //$NON-NLS-2$
+        String quotedSemicolon = "File=\"C:/bases/demo;old\";"; //$NON-NLS-1$
+        assertBothBlocks(quotedSemicolon, quotedSemicolon, ""); //$NON-NLS-1$
+    }
+
+    /**
+     * A server base. Vanessa turns {@code Srvr=} and {@code ";Ref="} into {@code /S}, so the path
+     * in both blocks is that pair and nothing after it. The user is {@code /N} in both parameter
+     * fields. With no user, the pair is unchanged.
+     */
+    @Test
+    public void aServerBaseKeepsTheServerAndTheBaseAndPutsTheUserBesideThem()
+    {
+        String server = "Srvr=\"srv1\";Ref=\"base\";"; //$NON-NLS-1$
+        assertBothBlocks(server, server, ""); //$NON-NLS-1$
+        String manager = VanessaTool.namingTheUser(server, "Администратор"); //$NON-NLS-1$
+        assertTrue(manager.contains("Usr=\"Администратор\"")); //$NON-NLS-1$
+        assertBothBlocks(manager, server, "/N\"Администратор\""); //$NON-NLS-1$
+    }
+
+    /**
+     * A user name that contains a quote. The connection string writes that quote twice inside the
+     * delimiters. The client is given the same name: {@code /N} doubles the quote, because a
+     * quoted parameter of the platform command line carries a quote that way. Dropping every quote
+     * signs the client in as somebody else.
+     */
+    @Test
+    public void aUserNameWithAQuoteIsTheSameNameOnTheCommandLine()
+    {
+        String path = "File=\"C:/b\";"; //$NON-NLS-1$
+        assertBothBlocks(path + "Usr=\"Say \"\"Hi\";", path, "/N\"Say \"\"Hi\""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Spaces at the edges of a quoted user name are part of the name. Trimming them asks the
+     * client for a different user, and the login window waits out the run.
+     */
+    @Test
+    public void aUserNameKeepsTheSpacesInsideItsQuotes()
+    {
+        String path = "File=\"C:/b\";"; //$NON-NLS-1$
+        assertBothBlocks(path + "Usr=\" Admin \";", path, "/N\" Admin \""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A name with neither a quote nor a surrounding space. Quoted or not in the connection string,
+     * the client receives {@code /N"Admin"}, the form Vanessa writes for every user.
+     */
+    @Test
+    public void aSimpleUserNameIsQuotedOnTheCommandLine()
+    {
+        String path = "File=\"C:/b\";"; //$NON-NLS-1$
+        assertBothBlocks(path + "Usr=\"Admin\";", path, "/N\"Admin\""); //$NON-NLS-1$ //$NON-NLS-2$
+        assertBothBlocks(path + "Usr=Admin;", path, "/N\"Admin\""); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Both client blocks of one document: the English one the settings loader merges, and the
+     * Russian one the command-line runner writes over it.
+     *
+     * @param connectionString the string the run was given, user included when one was named.
+     * @param path what both path fields must carry.
+     * @param parameters what both parameter fields must carry.
+     */
+    private static void assertBothBlocks(String connectionString, String path, String parameters)
+    {
+        String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
+            new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
+            connectionString, PORT, BUDGET_SEC, true, null);
+        JsonObject document = JsonParser.parseString(json).getAsJsonObject();
+        JsonObject client = onlyClient(document);
+        assertEquals(path, client.get("PathToInfobase").getAsString()); //$NON-NLS-1$
+        assertEquals(parameters, client.get("AddItionalParameters").getAsString()); //$NON-NLS-1$
+        JsonObject row = document.getAsJsonArray("КлиентыТестирования").get(0).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals(path, row.get("ПутьКИнфобазе").getAsString()); //$NON-NLS-1$
+        assertEquals(parameters, row.get("ДопПараметры").getAsString()); //$NON-NLS-1$
+    }
+
     /** Off unless asked for: a run that drives no form needs no client of its own. */
     @Test
     public void theBlockIsAbsentUnlessTheCallerAsksForIt()
@@ -214,7 +329,47 @@ public class TheClientTheStartStepLooksForTest
         String json = VanessaTool.buildVaParams(new File("C:/run/one.feature"), //$NON-NLS-1$
             new File("C:/run/junit.xml"), new File("C:/run/shots"), true, false, //$NON-NLS-1$ //$NON-NLS-2$
             CONNECTION, PORT, BUDGET_SEC, false, null);
-        assertNull(JsonParser.parseString(json).getAsJsonObject().get("TestClient")); //$NON-NLS-1$
+        JsonObject document = JsonParser.parseString(json).getAsJsonObject();
+        assertNull(document.get("TestClient")); //$NON-NLS-1$
+        assertNull(document.get("КлиентыТестирования")); //$NON-NLS-1$
+    }
+
+    /**
+     * The start step launches the current row. That row is this profile, on the infobase of the
+     * run, and it is the same name {@code datatestclients} carries, so the two tables are one
+     * client rather than a second one the step never reaches.
+     */
+    @Test
+    public void theStartStepActivatesTheClientOfTheRun()
+    {
+        JsonObject document = params();
+        JsonArray table = document.getAsJsonArray("КлиентыТестирования"); //$NON-NLS-1$
+        assertEquals(1, table.size());
+        JsonObject row = table.get(0).getAsJsonObject();
+        assertEquals(VanessaTool.TEST_CLIENT_PROFILE, row.get("Имя").getAsString()); //$NON-NLS-1$
+        assertEquals(CONNECTION, row.get("ПутьКИнфобазе").getAsString()); //$NON-NLS-1$
+        assertEquals(PORT, row.get("ПортЗапускаТестКлиента").getAsInt()); //$NON-NLS-1$
+        assertEquals("", row.get("ДопПараметры").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Тонкий", row.get("ТипКлиента").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("localhost", row.get("ИмяКомпьютера").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(row.get("АктивизироватьСтроку").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(row.get("Имя").getAsString(), onlyClient(document).get("Name").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The English alias is not the key the command-line runner reads, and a passthrough carrying
+     * either name would replace the row this tool activated.
+     */
+    @Test
+    public void theClientTableIsBarredFromThePassthrough()
+    {
+        for (String key : new String[] { "КлиентыТестирования", "testclienttable" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            String[] refusal = new String[1];
+            VanessaTool.extraParams("{\"" + key + "\": []}", refusal); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNotNull(key + " is ours to set", refusal[0]); //$NON-NLS-1$
+            assertTrue(refusal[0], refusal[0].contains("set by this tool")); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -293,14 +448,20 @@ public class TheClientTheStartStepLooksForTest
         Files.write(one.toPath(), new byte[0]);
         try
         {
+            JsonObject full = VanessaTool.screenshotKeys();
+            full.addProperty("ТаймаутДляАсинхронныхШагов", BUDGET_SEC); //$NON-NLS-1$
             for (boolean withTestClient : new boolean[] {true, false})
             {
                 for (boolean shots : new boolean[] {true, false})
                 {
                     for (boolean keepOpen : new boolean[] {true, false})
                     {
-                        census(one, withTestClient, shots, keepOpen, true);
-                        census(dir, withTestClient, shots, keepOpen, false);
+                        for (JsonObject ours : new JsonObject[] {null,
+                            VanessaTool.screenshotKeys(), full})
+                        {
+                            census(one, withTestClient, shots, keepOpen, true, ours);
+                            census(dir, withTestClient, shots, keepOpen, false, ours);
+                        }
                         censusWithExtra(one, withTestClient, shots, keepOpen);
                     }
                 }
@@ -316,8 +477,9 @@ public class TheClientTheStartStepLooksForTest
     /**
      * The two lists are one. A key this tool sets and does not bar from the passthrough can be
      * replaced by the caller, and the merge happens last, so the replacement wins while the answer
-     * still describes what the argument asked for. Comparing the set the guard holds with the keys
-     * a fully populated document carries is what keeps a new key from arriving unguarded.
+     * still describes what the argument asked for. The keys are gathered from every branch that
+     * builds the document - the plain one and each composing branch - because a key set on one
+     * branch only would slip past a census that never built that branch.
      *
      * @throws IOException if the temporary feature file cannot be written
      */
@@ -329,13 +491,18 @@ public class TheClientTheStartStepLooksForTest
         Files.write(one.toPath(), new byte[0]);
         try
         {
+            JsonObject full = VanessaTool.screenshotKeys();
+            full.addProperty("ТаймаутДляАсинхронныхШагов", BUDGET_SEC); //$NON-NLS-1$
             java.util.Set<String> written = new java.util.TreeSet<>();
-            for (String key : JsonParser.parseString(
-                VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
-                    new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
-                    true, null)).getAsJsonObject().keySet())
+            for (JsonObject ours : new JsonObject[] {null, VanessaTool.screenshotKeys(), full})
             {
-                written.add(key.toLowerCase(java.util.Locale.ROOT));
+                for (String key : JsonParser.parseString(
+                    VanessaTool.buildVaParams(one, new File("C:/run/junit.xml"), //$NON-NLS-1$
+                        new File("C:/run/shots"), true, false, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
+                        true, null, ours)).getAsJsonObject().keySet())
+                {
+                    written.add(key.toLowerCase(java.util.Locale.ROOT));
+                }
             }
             assertEquals("a key this tool sets is not barred from the passthrough", //$NON-NLS-1$
                 new java.util.TreeSet<>(VanessaTool.OURS_TO_SET), written);
@@ -385,13 +552,14 @@ public class TheClientTheStartStepLooksForTest
      * @param shots whether a screenshot is taken on failure.
      * @param keepOpen whether the client is left running.
      * @param named whether the feature path is a file, which is named to Vanessa on its own.
+     * @param ours the keys of the call's own branch, or null for the branch that composes none.
      */
     private static void census(File featurePath, boolean withTestClient, boolean shots,
-        boolean keepOpen, boolean named)
+        boolean keepOpen, boolean named, JsonObject ours)
     {
         String json = VanessaTool.buildVaParams(featurePath, new File("C:/run/junit.xml"), //$NON-NLS-1$
             new File("C:/run/shots"), shots, keepOpen, CONNECTION, PORT, BUDGET_SEC, //$NON-NLS-1$
-            withTestClient, null);
+            withTestClient, null, ours);
         java.util.Set<String> read = new java.util.TreeSet<>(java.util.Arrays.asList(
             "ВыполнитьСценарии", "КаталогФич", "ДелатьОтчетВФорматеАллюр", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "КаталогOutputAllureБазовый", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
@@ -400,10 +568,15 @@ public class TheClientTheStartStepLooksForTest
         if (withTestClient)
         {
             read.add("TestClient"); //$NON-NLS-1$
+            read.add("КлиентыТестирования"); //$NON-NLS-1$
         }
         if (named)
         {
             read.add("СписокФичДляВыполнения"); //$NON-NLS-1$
+        }
+        if (ours != null)
+        {
+            read.addAll(ours.keySet());
         }
         java.util.Set<String> written = new java.util.TreeSet<>(
             JsonParser.parseString(json).getAsJsonObject().keySet());

@@ -6,6 +6,10 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -123,7 +127,7 @@ public final class ToolCallScope
 
     private final Cancellation cancellation;
 
-    private final AtomicBoolean clientGone = new AtomicBoolean();
+    private final AtomicBoolean clientGone;
 
     private final RunningToolCall runningCall;
 
@@ -133,15 +137,75 @@ public final class ToolCallScope
 
     private volatile long timeoutSeconds = UNSET;
 
+    /**
+     * Entries of background runs this call started, by runKey.
+     * <p>
+     * The registry map is where a {@code runKey} is normally resolved, but tracking can be dropped
+     * while the work still runs - a subject sweep, a cancel that cannot reach it - and the permit
+     * that work holds must then wait on something other than the map. The starter keeps a direct
+     * reference here for that case. Guarded by itself because the work re-enters this scope on
+     * the executor thread while the starting thread is still inside the call.
+     * </p>
+     */
+    private final Map<String, PendingWorkRegistry.PendingEntry> startedEntries = new LinkedHashMap<>();
+
+    /**
+     * The call's hold on the heavy-tool limiter, when it has one.
+     * <p>
+     * Present for two readers: the road, which lets a nested heavy call inherit its caller's
+     * permit instead of taking a second one, and the router, which hands the ticket to the body so
+     * a {@code Pending} answer can keep the permit until the background work finishes.
+     * </p>
+     */
+    private volatile ToolRoad.Ticket ticket;
+
     private ToolCallScope(RunningToolCall runningCall, Cancellation cancellation)
     {
         this.runningCall = runningCall;
+        this.clientGone = new AtomicBoolean();
         // Share the call's own Cancellation so a cancel arriving on the request thread (via the call)
         // and a checkpoint reading it on the worker thread see one and the same flag - no second
         // instance, no attach race. Tests may pass a null call, in which case the scope owns one.
         this.cancellation = cancellation != null ? cancellation
             : (runningCall != null && runningCall.cancellation() != null)
                 ? runningCall.cancellation() : new Cancellation();
+    }
+
+    /**
+     * A scope for the body of a nested call, carrying this one's state with only the permit
+     * ticket replaced.
+     *
+     * @param caller the scope on the thread, whose state the derived scope shares
+     * @param ticket the nested call's own hold on the limiter
+     */
+    private ToolCallScope(ToolCallScope caller, ToolRoad.Ticket ticket)
+    {
+        this.runningCall = caller.runningCall;
+        this.cancellation = caller.cancellation;
+        this.clientGone = caller.clientGone;
+        this.responseByteLimit = caller.responseByteLimit;
+        this.operationId = caller.operationId;
+        this.timeoutSeconds = caller.timeoutSeconds;
+        this.ticket = ticket;
+    }
+
+    /**
+     * A scope like this one whose heavy-permit ticket is the given one, for the body of a nested
+     * call that took a permit its caller did not have.
+     * <p>
+     * A light caller can still make a heavy nested call, and that call's permit is the one the
+     * work under it must inherit: a grandchild asked under the caller's own scope would see no
+     * permit and take a second one, which the limit refuses. The derived scope shares this one's
+     * cancellation flag, call record and client-gone flag, so a cancel still reaches the whole
+     * call tree; only the ticket differs, and only for the body's duration.
+     * </p>
+     *
+     * @param ticket the nested call's permit ticket; must not be {@code null}
+     * @return a scope like this one carrying that ticket
+     */
+    public ToolCallScope withTicket(ToolRoad.Ticket ticket)
+    {
+        return new ToolCallScope(this, Objects.requireNonNull(ticket, "ticket")); //$NON-NLS-1$
     }
 
     /**
@@ -327,5 +391,102 @@ public final class ToolCallScope
     public void setTimeoutSeconds(long seconds)
     {
         this.timeoutSeconds = seconds;
+    }
+
+    /**
+     * Binds the call's heavy-permit ticket to this scope, so the body can hand it to a background
+     * run and a nested heavy call can inherit it.
+     *
+     * @param ticket the ticket the admission produced; may be {@code null} or permit-less
+     */
+    public void adoptTicket(ToolRoad.Ticket ticket)
+    {
+        this.ticket = ticket;
+    }
+
+    /**
+     * @return the heavy-permit ticket bound to this scope, or {@code null} when the call took none
+     */
+    public ToolRoad.Ticket ticket()
+    {
+        return this.ticket;
+    }
+
+    /**
+     * @return whether the call this scope carries still holds a permit of the heavy-tool limiter -
+     *         its own or a share another holder has not departed
+     */
+    public boolean holdsHeavyPermit()
+    {
+        ToolRoad.Ticket held = this.ticket;
+        return held != null && held.holdsPermit();
+    }
+
+    /**
+     * Records a background run this call started.
+     * <p>
+     * Written by the registry when it dispatches the work, read by the road when the call's answer
+     * names the run: the registry map answers first, and this answers for the run whose tracking
+     * was dropped while its work still runs.
+     * </p>
+     *
+     * @param runKey the key the run is addressable by
+     * @param entry the entry that runs the work
+     */
+    void notePendingEntry(String runKey, PendingWorkRegistry.PendingEntry entry)
+    {
+        if (runKey == null || entry == null)
+        {
+            return;
+        }
+        synchronized (startedEntries)
+        {
+            startedEntries.put(runKey, entry);
+        }
+    }
+
+    /**
+     * @param runKey the key a {@code Pending} answer named
+     * @return the entry this call started under that key, or {@code null} when it started none
+     */
+    PendingWorkRegistry.PendingEntry pendingEntryStartedHere(String runKey)
+    {
+        if (runKey == null)
+        {
+            return null;
+        }
+        synchronized (startedEntries)
+        {
+            return startedEntries.get(runKey);
+        }
+    }
+
+    /**
+     * The background runs this call dispatched whose work has not left the executor.
+     * <p>
+     * The road reads them when the tool threw after {@link PendingWorkRegistry#getOrStart}: the
+     * registry notes each entry here before returning to the tool, so the permit can follow that
+     * work instead of returning with the throw. Liveness is the entry's own exit, not
+     * {@link PendingWorkRegistry.PendingEntry#isDone()}: a cancel or a detach completes the
+     * tracking future while the body continues. Every such run is returned, in the order this
+     * call started them, so each one can hold a share until it leaves.
+     * </p>
+     *
+     * @return the entries still inside; empty when this call started none that still run
+     */
+    List<PendingWorkRegistry.PendingEntry> workStillRunningHere()
+    {
+        List<PendingWorkRegistry.PendingEntry> live = new ArrayList<>();
+        synchronized (startedEntries)
+        {
+            for (PendingWorkRegistry.PendingEntry entry : startedEntries.values())
+            {
+                if (entry != null && !entry.workHasLeft())
+                {
+                    live.add(entry);
+                }
+            }
+        }
+        return live;
     }
 }

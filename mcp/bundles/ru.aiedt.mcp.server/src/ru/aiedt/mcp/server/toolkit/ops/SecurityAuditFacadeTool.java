@@ -7,11 +7,13 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.function.Supplier;
+import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FacadeParameterHelp;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -53,6 +55,12 @@ public class SecurityAuditFacadeTool implements IMcpTool
     private static final Map<String, Supplier<IMcpTool>> DESCRIBED = buildDescribed();
 
     /**
+     * Which combination of scope and selectors is a walk and which is a refusal. The schema
+     * keeps one sentence per parameter; {@code operation=help topic=} the operation returns these.
+     */
+    private static final Map<String, Map<String, String>> NARROWING_RULES = buildNarrowingRules();
+
+    /**
      * The tool each operation routes to, for describing it rather than running it.
      * <p>
      * A map and not a second switch on the same word: the operation-parameter census reads
@@ -76,7 +84,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
         {
             return null;
         }
-        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        Supplier<IMcpTool> delegate = DESCRIBED.get(JsonUtils.normalizeOperationToken(operation));
         return delegate == null ? null : delegate.get().getName();
     }
 
@@ -124,8 +132,18 @@ public class SecurityAuditFacadeTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
+            .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name. Required for all three operations.") //$NON-NLS-1$
+            .stringProperty("scope", //$NON-NLS-1$
+                "find_rls_violations: project / module / method; sensitive_data_scan: project / " //$NON-NLS-1$
+                    + "subsystem / module.") //$NON-NLS-1$
+            .stringProperty("moduleFqn", //$NON-NLS-1$
+                "find_rls_violations and sensitive_data_scan: module FQN.") //$NON-NLS-1$
+            .stringProperty("methodName", //$NON-NLS-1$
+                "find_rls_violations: method inside moduleFqn.") //$NON-NLS-1$
+            .stringProperty("subsystemName", //$NON-NLS-1$
+                "sensitive_data_scan: subsystem name.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
                 "audit_role_rights: rights / missing / conflicts / impact (default rights).") //$NON-NLS-1$
             .stringProperty("roleName", //$NON-NLS-1$
@@ -172,12 +190,15 @@ public class SecurityAuditFacadeTool implements IMcpTool
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
         {
-            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), getInputSchema()); //$NON-NLS-1$
+            return buildHelp(JsonUtils.extractStringArgument(params, "topic"), //$NON-NLS-1$
+                JsonUtils.extractStringArgument(params, "find"), getInputSchema()); //$NON-NLS-1$
         }
         if (!OPS.containsKey(operation))
         {
-            return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
-                + "'. Allowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
+            return ToolResult.error("Unknown operation '" + operation + "'." //$NON-NLS-1$ //$NON-NLS-2$
+                + FacadeHelpSearch.closestMatches(operation, OPS.keySet(),
+                    FacadeHelpSearch.describe(buildHelp(null, null, getInputSchema())))
+                + "\n\nAllowed: " + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
                 + " / help.").toJson(); //$NON-NLS-1$
         }
         // One gate for every operation this facade folds in. Reaching a tool through a facade is
@@ -202,8 +223,28 @@ public class SecurityAuditFacadeTool implements IMcpTool
         }
     }
 
-    private static String buildHelp(String topic, String schema)
+    /** Every help topic, in the order the catalog names them: operations, then named topics. */
+    private static final List<String> HELP_TOPICS = helpTopics();
+
+    /**
+     * The topics {@code find} searches, catalog first by the caller, these after.
+     *
+     * @return the topic names, never <code>null</code>
+     */
+    private static List<String> helpTopics()
     {
+        List<String> topics = new ArrayList<>(OPS.keySet());
+        topics.add("workflow"); //$NON-NLS-1$
+        return Collections.unmodifiableList(topics);
+    }
+
+    private static String buildHelp(String topic, String find, String schema)
+    {
+        if (find != null && !find.isBlank())
+        {
+            return FacadeHelpSearch.search(NAME, find, topic, HELP_TOPICS, OPS.keySet(),
+                asked -> buildHelp(asked, null, schema));
+        }
         topic = JsonUtils.normalizeOperationToken(topic);
         if (topic == null || topic.isEmpty())
         {
@@ -234,8 +275,49 @@ public class SecurityAuditFacadeTool implements IMcpTool
                 + "comment or a log | sensitive_data_scan |\n"); //$NON-NLS-1$
             return sb.toString();
         }
+        Map<String, String> rules = NARROWING_RULES.get(topic);
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
-            "workflow", "SecurityAuditFacadeTool", schema); //$NON-NLS-1$
+            "workflow", "SecurityAuditFacadeTool", schema, //$NON-NLS-1$ //$NON-NLS-2$
+            rules == null ? Collections.emptyMap() : rules, buildHelp(null, null, schema));
+    }
+
+    /**
+     * The rules a narrowing parameter's one-sentence description no longer carries.
+     *
+     * @return operation name to parameter name to the rules
+     */
+    private static Map<String, Map<String, String>> buildNarrowingRules()
+    {
+        Map<String, Map<String, String>> rules = new LinkedHashMap<>();
+        Map<String, String> rls = new LinkedHashMap<>();
+        rls.put("scope", //$NON-NLS-1$
+            "Absent, the selectors decide the area. scope=project rejects every selector. " //$NON-NLS-1$
+                + "scope=module requires moduleFqn and rejects methodName. scope=method requires " //$NON-NLS-1$
+                + "both. An unknown module, method or scope word is refused by name and the " //$NON-NLS-1$
+                + "project is not scanned."); //$NON-NLS-1$
+        rls.put("moduleFqn", //$NON-NLS-1$
+            "Required for scope=module and for scope=method. Refused when the module is unknown."); //$NON-NLS-1$
+        rls.put("methodName", //$NON-NLS-1$
+            "Required for scope=method. Refused without moduleFqn, and refused when the method " //$NON-NLS-1$
+                + "is not in the module."); //$NON-NLS-1$
+        rules.put("find_rls_violations", Collections.unmodifiableMap(rls)); //$NON-NLS-1$
+        Map<String, String> sensitive = new LinkedHashMap<>();
+        sensitive.put("scope", //$NON-NLS-1$
+            "Absent, the selectors decide the area. moduleFqn together with subsystemName is " //$NON-NLS-1$
+                + "refused: they name different areas. scope=project rejects every selector. " //$NON-NLS-1$
+                + "scope=module requires moduleFqn. scope=subsystem requires subsystemName and " //$NON-NLS-1$
+                + "rejects moduleFqn. An unknown module, subsystem or scope word is refused by " //$NON-NLS-1$
+                + "name and the project is not scanned."); //$NON-NLS-1$
+        sensitive.put("moduleFqn", //$NON-NLS-1$
+            "Required for scope=module. Without scope it selects the module on its own. Refused " //$NON-NLS-1$
+                + "together with subsystemName."); //$NON-NLS-1$
+        sensitive.put("subsystemName", //$NON-NLS-1$
+            "Required for scope=subsystem. Without scope it selects the subsystem on its own. " //$NON-NLS-1$
+                + "Nested subsystems are included; the answer names that and how many objects " //$NON-NLS-1$
+                + "the composition holds. Refused when the subsystem is unknown, and refused " //$NON-NLS-1$
+                + "together with moduleFqn."); //$NON-NLS-1$
+        rules.put("sensitive_data_scan", Collections.unmodifiableMap(sensitive)); //$NON-NLS-1$
+        return Collections.unmodifiableMap(rules);
     }
 
     private static Map<String, String> buildOpsCatalog()

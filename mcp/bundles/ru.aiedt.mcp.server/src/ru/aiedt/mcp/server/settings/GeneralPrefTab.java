@@ -103,6 +103,10 @@ public class GeneralPrefTab
 
     private Text vanessa1cExeText;
 
+    private Button naparnikBridgeCheck;
+
+    private Button naparnikAllToolsCheck;
+
     private Button plainTextCheck;
 
     private Button bindAllCheck;
@@ -297,6 +301,8 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_BSL_LS_JAVA, bslLsJavaText.getText().trim());
         store.setValue(PrefKeys.PREF_VANESSA_EPF, vanessaEpfText.getText().trim());
         store.setValue(PrefKeys.PREF_VANESSA_1C_EXE, vanessa1cExeText.getText().trim());
+        store.setValue(PrefKeys.PREF_NAPARNIK_BRIDGE_ENABLED, naparnikBridgeCheck.getSelection());
+        store.setValue(PrefKeys.PREF_NAPARNIK_ALL_TOOLS_ENABLED, naparnikAllToolsCheck.getSelection());
         store.setValue(PrefKeys.PREF_PLAIN_TEXT_MODE, plainTextCheck.getSelection());
         store.setValue(PrefKeys.PREF_BIND_ALL_INTERFACES, bindAllCheck.getSelection());
         store.setValue(PrefKeys.PREF_ALLOW_NULL_ORIGIN, allowNullOriginCheck.getSelection());
@@ -368,6 +374,10 @@ public class GeneralPrefTab
         checksFolderText.setText(store.getDefaultString(PrefKeys.PREF_CHECKS_FOLDER));
         bslLsJarText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAR));
         bslLsJavaText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAVA));
+        naparnikBridgeCheck.setSelection(
+            store.getDefaultBoolean(PrefKeys.PREF_NAPARNIK_BRIDGE_ENABLED));
+        naparnikAllToolsCheck.setSelection(
+            store.getDefaultBoolean(PrefKeys.PREF_NAPARNIK_ALL_TOOLS_ENABLED));
         plainTextCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_PLAIN_TEXT_MODE));
         bindAllCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES));
         allowNullOriginCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
@@ -595,6 +605,27 @@ public class GeneralPrefTab
                 + "not the thin 1cv8c.exe). Empty = vanessa disabled.", //$NON-NLS-1$
             PrefKeys.PREF_VANESSA_1C_EXE);
         addFileBrowse(section, vanessa1cExeText, "Select 1cv8.exe (thick client)", new String[]{"*.exe"}); //$NON-NLS-1$ //$NON-NLS-2$
+
+        naparnikBridgeCheck = new Button(section, SWT.CHECK);
+        naparnikBridgeCheck.setText("Enable the 1C:Naparnik bridge (naparnik)"); //$NON-NLS-1$
+        naparnikBridgeCheck.setLayoutData(span(section, 3));
+        naparnikBridgeCheck.setToolTipText("Off by default. status still reports whether 1C:Naparnik " //$NON-NLS-1$
+            + "is installed. probe=true starts the Naparnik UI bundle and creates its injector. " //$NON-NLS-1$
+            + "A question sent through the bridge, and whatever Naparnik's tools read, leaves the " //$NON-NLS-1$
+            + "IDE for the 1C:Naparnik service. Read-only presets disable the tool."); //$NON-NLS-1$
+        naparnikBridgeCheck.setSelection(store.getBoolean(PrefKeys.PREF_NAPARNIK_BRIDGE_ENABLED));
+
+        naparnikAllToolsCheck = new Button(section, SWT.CHECK);
+        naparnikAllToolsCheck.setText(
+            "1C:Naparnik may change metadata, write files and execute code in EDT"); //$NON-NLS-1$
+        naparnikAllToolsCheck.setLayoutData(span(section, 3));
+        naparnikAllToolsCheck.setToolTipText("Off by default (mcpNaparnikAllToolsEnabled). Off, a " //$NON-NLS-1$
+            + "question allows only Naparnik's read tools. On, the question is sent with no tool " //$NON-NLS-1$
+            + "filter, so Naparnik may change metadata, write files and execute code in EDT. " //$NON-NLS-1$
+            + "Read-only presets disable naparnik either way. The bridge switch above has to be " //$NON-NLS-1$
+            + "on as well."); //$NON-NLS-1$
+        naparnikAllToolsCheck.setSelection(
+            store.getBoolean(PrefKeys.PREF_NAPARNIK_ALL_TOOLS_ENABLED));
     }
 
     private void createUpdatesSection(Composite parent)

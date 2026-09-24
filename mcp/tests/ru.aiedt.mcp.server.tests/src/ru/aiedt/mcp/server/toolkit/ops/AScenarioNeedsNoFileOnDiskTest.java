@@ -77,14 +77,19 @@ public class AScenarioNeedsNoFileOnDiskTest
     }
 
     @Test
-    public void aFormIsPhotographedByATagRatherThanAStep()
+    public void aFormIsPhotographedByAStepRatherThanATag()
     {
         String scenario = VanessaTool.scenarioForForm("ИИА_Агент", null, null); //$NON-NLS-1$
 
-        assertTrue("the snapshot is a tag on the step that follows, not a step of its own: " //$NON-NLS-1$
-            + scenario, scenario.contains("@screenshot")); //$NON-NLS-1$
-        assertTrue("the tag stands before the step it photographs", //$NON-NLS-1$
-            scenario.indexOf("@screenshot") < scenario.indexOf("Я открываю")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the frame is saved by a step of its own: " + scenario, //$NON-NLS-1$
+            scenario.contains("И я сохраняю скриншот \"")); //$NON-NLS-1$
+        assertTrue("no tag stands on a pause any more: " + scenario, //$NON-NLS-1$
+            !scenario.contains("@screenshot") && !scenario.contains("Пауза 1") //$NON-NLS-1$ //$NON-NLS-2$
+                && !scenario.contains("активизирую окно")); //$NON-NLS-1$
+        int opened = scenario.indexOf("Я открываю"); //$NON-NLS-1$
+        int saved = scenario.indexOf("сохраняю скриншот"); //$NON-NLS-1$
+        assertTrue("the form is open, then its frame is saved: " + scenario, //$NON-NLS-1$
+            opened >= 0 && opened < saved);
         assertTrue("the form the caller named belongs in the step: " + scenario, //$NON-NLS-1$
             scenario.contains("\"ИИА_Агент\"")); //$NON-NLS-1$
         assertTrue("a scenario needs a client to work in", //$NON-NLS-1$

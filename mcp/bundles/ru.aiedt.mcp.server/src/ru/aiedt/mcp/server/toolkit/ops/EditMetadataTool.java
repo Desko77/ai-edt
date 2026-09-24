@@ -655,6 +655,30 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * Polls this facade's own run in the update registry.
+     * <p>
+     * A batch and every single operation both wait on an entry this facade started. The operation
+     * argument does not choose a different starter: {@code rename_metadata_object} is only where
+     * the heavy gates look, and that tool does not read the key.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; unused, a batch names none and every single
+     *            operation polls the same way
+     * @return {@code edit_metadata} when the key is in the update registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.UPDATE.domain().equals(domain))
+        {
+            return null;
+        }
+        // A batch names no operation; every single operation polls the same entry.
+        return NAME;
+    }
+
+    /**
      * Where an operation sends the call.
      * <p>
      * Renaming an object walks every reference in the configuration, so it is heavy; a batch may
@@ -677,7 +701,7 @@ public class EditMetadataTool implements IMcpTool
         {
             return null;
         }
-        return "rename_metadata_object".equals(operation.trim().toLowerCase(java.util.Locale.ROOT)) //$NON-NLS-1$
+        return "rename_metadata_object".equals(JsonUtils.normalizeOperationToken(operation)) //$NON-NLS-1$
             ? "rename_metadata_object" //$NON-NLS-1$
             : null;
     }
@@ -790,7 +814,10 @@ public class EditMetadataTool implements IMcpTool
             // The registry is shared with update_database: stamped, a status read of either kind
             // cannot name this entry as the other, and a key handed back resumes work of its own
             // kind rather than any entry the key happens to resolve.
-            entry.workKind = "edit_metadata"; //$NON-NLS-1$
+            entry.workKind = NAME;
+            // The poll arrives as edit_metadata. Stamping the heavy operation instead would let a
+            // direct rename_metadata_object, which never reads the key, pass the heavy gates.
+            entry.startedBy = NAME;
         }
 
         String result = entry.await(softTimeoutMs);
@@ -968,6 +995,15 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * Parks the batch body before it applies anything, when a test has set it.
+     * <p>
+     * Production leaves it {@code null}. By the time it runs, the entry already carries
+     * {@code startedBy}, so a poll can be admitted while the body has not applied an operation.
+     * </p>
+     */
+    static volatile Runnable beforeBatchApply;
+
+    /**
      * Sequential batch mode: applies a list of operations one by one. Each
      * sub-operation runs in its own BM transaction; on per-op failure the
      * batch continues by default and records the failure in {@code batchResults}.
@@ -985,6 +1021,11 @@ public class EditMetadataTool implements IMcpTool
     private String executeBatch(Map<String, String> params,
         PendingWorkRegistry.PendingEntry job)
     {
+        Runnable pause = beforeBatchApply;
+        if (pause != null)
+        {
+            pause.run();
+        }
         String operationsRaw = JsonUtils.extractStringArgument(params, "operations"); //$NON-NLS-1$
         if (operationsRaw == null || operationsRaw.isEmpty())
         {
@@ -1199,6 +1240,14 @@ public class EditMetadataTool implements IMcpTool
                 return ToolResult.error("runKey not found - the batch either completed and its result " //$NON-NLS-1$
                     + "was already retrieved, or it expired. Re-issue the batch without runKey.").toJson(); //$NON-NLS-1$
             }
+            if (entry.workKind != null && !NAME.equals(entry.workKind))
+            {
+                // The registry is shared, and a key that names an update must not be waited on and
+                // then removed as a batch. Resuming the wrong work is worse than not finding the key.
+                return ToolResult.error("runKey belongs to " + entry.workKind //$NON-NLS-1$
+                    + ", not to edit_metadata. Poll it with that tool - resuming it here would " //$NON-NLS-1$
+                    + "answer for work this call never started.").toJson(); //$NON-NLS-1$
+            }
         }
         else
         {
@@ -1210,7 +1259,17 @@ public class EditMetadataTool implements IMcpTool
             {
                 reg.remove(runKey);
             }
-            entry = reg.getOrStart(runKey, job -> executeBatch(params, job));
+            entry = reg.getOrStart(runKey, job -> {
+                // Stamped before the body pauses, so a poll can see whose run this is even when
+                // the worker entered before getOrStart returned to the caller.
+                job.workKind = NAME;
+                job.startedBy = NAME;
+                return executeBatch(params, job);
+            });
+            entry.workKind = NAME;
+            // The poll arrives as edit_metadata, including a batch that routes onward only so the
+            // heavy gates know a rename may be inside. rename_metadata_object does not read the key.
+            entry.startedBy = NAME;
         }
 
         String result = entry.await(softTimeoutMs);
@@ -1984,15 +2043,49 @@ public class EditMetadataTool implements IMcpTool
      */
     static String formatFormResultWithApiTag(String helperResult, String op, String formFqn)
     {
+        return formatFormResultWithApiTag(helperResult, op, formFqn, null);
+    }
+
+    /**
+     * Same as {@link #formatFormResultWithApiTag(String, String, String)}, naming the base-form
+     * attributes a successful write borrowed into the extension.
+     *
+     * @param helperResult the result text of the form operation
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @return the JSON answer
+     */
+    static String formatFormResultWithApiTag(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes)
+    {
+        return formatFormResultWithApiTag(helperResult, op, formFqn, adoptedFormAttributes, null);
+    }
+
+    /**
+     * Same as
+     * {@link #formatFormResultWithApiTag(String, String, String, List)}, naming the data-path checks
+     * that could not be performed.
+     *
+     * @param helperResult the result text of the form operation
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @param checksNotPerformed the data-path checks the guard could not ask, or null
+     * @return the JSON answer
+     */
+    static String formatFormResultWithApiTag(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes, List<String> checksNotPerformed)
+    {
         String body = stripErrorEnvelope(helperResult);
         if (body == null)
         {
-            return formatFormResult(helperResult, op, formFqn);
+            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes, checksNotPerformed);
         }
         int idx = body.indexOf("formApiNotFound:"); //$NON-NLS-1$
         if (idx < 0)
         {
-            return formatFormResult(helperResult, op, formFqn);
+            return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes, checksNotPerformed);
         }
         String missing = body.substring(idx + "formApiNotFound:".length()).trim(); //$NON-NLS-1$
         // 1.41: trim trailing closing parens that come from upstream
@@ -2018,16 +2111,61 @@ public class EditMetadataTool implements IMcpTool
 
     static String formatFormResult(String helperResult, String op, String formFqn)
     {
+        return formatFormResult(helperResult, op, formFqn, null);
+    }
+
+    /**
+     * Builds the JSON answer of a form operation, naming the base-form attributes a successful
+     * write borrowed into an extension.
+     * <p>
+     * A form element of an extension whose data path starts at a base-form attribute borrows that
+     * attribute in the same write. The caller did not ask for it by name, so a successful answer
+     * carries {@code adoptedFormAttributes}; the key is absent when nothing was borrowed, and an
+     * error answer carries it not at all, because a refused write rolls back.
+     * </p>
+     *
+     * @param helperResult the result text of the form operation; null counts as success
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @return the JSON answer
+     */
+    static String formatFormResult(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes)
+    {
+        return formatFormResult(helperResult, op, formFqn, adoptedFormAttributes, null);
+    }
+
+    /**
+     * Same as {@link #formatFormResult(String, String, String, List)}, naming the data-path checks
+     * that were not performed.
+     * <p>
+     * A data-path write on an extension form is verified by checks the runtime answers through EDT
+     * services. When one of them cannot be asked, the write still stands - the path is written as if
+     * the guard were not there - and that is what the answer has to say: an answer that stays silent
+     * about a check that never ran is read as a path that passed it.
+     * </p>
+     *
+     * @param helperResult the result text of the form operation; null counts as success
+     * @param op the operation name for the answer
+     * @param formFqn the form FQN for the answer
+     * @param adoptedFormAttributes the borrowed attribute names, or null
+     * @param checksNotPerformed the data-path checks the guard could not ask, or null
+     * @return the JSON answer
+     */
+    static String formatFormResult(String helperResult, String op, String formFqn,
+        List<String> adoptedFormAttributes, List<String> checksNotPerformed)
+    {
         // Row 42 note: a pending/failed disk flush is appended to helperResult as
         // a plain-text note by BmFormHelper.executeFormOperation, so it flows
         // through the "message" field here (and at every other form-op response
         // builder) with no special handling.
         if (helperResult == null)
         {
-            return ToolResult.success()
+            return putNotAsked(putAdopted(ToolResult.success()
                 .put("operation", op) //$NON-NLS-1$
                 .put("formFqn", formFqn) //$NON-NLS-1$
-                .put("message", "ok") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("message", "ok"), adoptedFormAttributes), checksNotPerformed) //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
         }
         if (isErrorOutcome(helperResult))
@@ -2037,11 +2175,44 @@ public class EditMetadataTool implements IMcpTool
                 .put("formFqn", formFqn) //$NON-NLS-1$
                 .toJson();
         }
-        return ToolResult.success()
+        return putNotAsked(putAdopted(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
             .put("formFqn", formFqn) //$NON-NLS-1$
-            .put("message", helperResult) //$NON-NLS-1$
+            .put("message", helperResult), adoptedFormAttributes), checksNotPerformed) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * Adds {@code adoptedFormAttributes} to an answer when names were borrowed.
+     *
+     * @param result the answer being built
+     * @param adoptedFormAttributes the borrowed base-form attribute names, or null
+     * @return the answer with the names, or unchanged when nothing was borrowed
+     */
+    private static ToolResult putAdopted(ToolResult result, List<String> adoptedFormAttributes)
+    {
+        if (adoptedFormAttributes == null || adoptedFormAttributes.isEmpty())
+        {
+            return result;
+        }
+        return result.put("adoptedFormAttributes", adoptedFormAttributes); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds {@code dataPathChecksNotPerformed} to an answer when a data-path check could not be
+     * asked.
+     *
+     * @param result the answer being built
+     * @param checksNotPerformed the checks the guard could not ask, or null
+     * @return the answer with the names, or unchanged when every check ran
+     */
+    private static ToolResult putNotAsked(ToolResult result, List<String> checksNotPerformed)
+    {
+        if (checksNotPerformed == null || checksNotPerformed.isEmpty())
+        {
+            return result;
+        }
+        return result.put("dataPathChecksNotPerformed", checksNotPerformed); //$NON-NLS-1$
     }
 
     /**
@@ -2238,6 +2409,12 @@ public class EditMetadataTool implements IMcpTool
             + "    was expected (use 'Arial,12,bold' / '#RRGGBB' instead).\n" //$NON-NLS-1$
             + "- `autoBorrowed` [fqn, ...] - extension auto-borrowed objects (the owner, its tabular " //$NON-NLS-1$
             + "section, and any referenced metadata targets)\n" //$NON-NLS-1$
+            + "    (success path).\n" //$NON-NLS-1$
+            + "- `settingsWarnings` [ { variant, path, kind, name, comparisonType } ] - a DCS settings\n" //$NON-NLS-1$
+            + "    write went through and left a filter item switched on that compares against nothing\n" //$NON-NLS-1$
+            + "    (`emptyFilterValue`), or a data parameter holding a standard period with no dates\n" //$NON-NLS-1$
+            + "    (`emptyPeriod`). `variant` is the settings variant, or `default` for the schema's own\n" //$NON-NLS-1$
+            + "    settings and for a dynamic list. A warning, not a refusal; absent when there is none\n" //$NON-NLS-1$
             + "    (success path).\n\n" //$NON-NLS-1$
             + "AI agent pattern: branch on `response.alreadyExists` etc. instead of parsing\n" //$NON-NLS-1$
             + "the human-readable `error` text.\n"; //$NON-NLS-1$

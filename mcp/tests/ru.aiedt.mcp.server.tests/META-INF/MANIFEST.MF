@@ -9,4 +9,5 @@ Bundle-RequiredExecutionEnvironment: JavaSE-17
 Automatic-Module-Name: ru.aiedt.mcp.server.tests
 Import-Package: org.junit;version="4.13.0",
  org.junit.runner;version="4.13.0",
- org.junit.runners;version="4.13.0"
+ org.junit.runners;version="4.13.0",
+ org.eclipse.debug.core.sourcelookup

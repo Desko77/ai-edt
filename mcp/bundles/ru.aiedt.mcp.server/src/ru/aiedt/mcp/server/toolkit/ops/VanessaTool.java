@@ -84,6 +84,19 @@ public class VanessaTool implements IMcpTool
         return NAME;
     }
 
+    /**
+     * Polls a scenario run this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; the tool names none
+     * @return {@code vanessa} when the key is in the scenario registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.VANESSA.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String getDescription()
     {
@@ -92,7 +105,14 @@ public class VanessaTool implements IMcpTool
             + "screenshots). Complements yaxunit_tests (code from the inside) by driving the UI " //$NON-NLS-1$
             + "from the outside. Pass featurePath (a .feature file or a directory of them) and " //$NON-NLS-1$
             + "projectName - the infobase the project is bound to is the one played against, " //$NON-NLS-1$
-            + "or connectionString to name another. " //$NON-NLS-1$
+            + "or connectionString to name another. Or compose the action right here: listKind " //$NON-NLS-1$
+            + "with listName opens the list, column with columnValue goes to the row, buttonTitle " //$NON-NLS-1$
+            + "or buttonName presses the form's button, and the window it opens is waited for " //$NON-NLS-1$
+            + "(windowWaitSeconds). The frame is the top window of the test client, saved by " //$NON-NLS-1$
+            + "the VanessaExt add-in, so it shows that window whatever covers it. " //$NON-NLS-1$
+            + "On a list action and on formToOpen, testManager and testClient are turned on when " //$NON-NLS-1$
+            + "left out, and false is refused: the start step then activates the client that " //$NON-NLS-1$
+            + "opens the infobase of the run. " //$NON-NLS-1$
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
             + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
             + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
@@ -119,7 +139,8 @@ public class VanessaTool implements IMcpTool
                 "The form to open and photograph, in the words the opening step expects - a " //$NON-NLS-1$
                     + "common form's name, a catalog's FQN, whatever the step takes. The scenario " //$NON-NLS-1$
                     + "is composed from it, so neither featurePath nor scenarioText is passed " //$NON-NLS-1$
-                    + "with it. The snapshot arrives among the run's screenshots.") //$NON-NLS-1$
+                    + "with it. The frame is the top window of the test client, drawn into the " //$NON-NLS-1$
+                    + "file by the add-in, whatever covers that window.") //$NON-NLS-1$
             .stringProperty("openStep", //$NON-NLS-1$
                 "The step that opens the form, with {form} where the name goes. Defaults to " //$NON-NLS-1$
                     + "opening a common form. A list form, an object form and an extension's " //$NON-NLS-1$
@@ -128,6 +149,31 @@ public class VanessaTool implements IMcpTool
             .stringProperty("startStep", //$NON-NLS-1$
                 "The step that gets a client to work in. Defaults to launching TestClient or " //$NON-NLS-1$
                     + "attaching to one already running.") //$NON-NLS-1$
+            .stringProperty("listKind", //$NON-NLS-1$
+                "Metadata kind of the list the scenario opens, one of: catalog, document, " //$NON-NLS-1$
+                    + "documentJournal, chartOfCharacteristicTypes, chartOfAccounts, " //$NON-NLS-1$
+                    + "chartOfCalculationTypes, informationRegister, accumulationRegister, " //$NON-NLS-1$
+                    + "accountingRegister, calculationRegister.") //$NON-NLS-1$
+            .stringProperty("listName", //$NON-NLS-1$
+                "Name of the metadata object whose list form the scenario opens.") //$NON-NLS-1$
+            .stringProperty("tableName", //$NON-NLS-1$
+                "Name of the list's table on the form the steps address (default Список).") //$NON-NLS-1$
+            .stringProperty("column", //$NON-NLS-1$
+                "Caption of the column the row to act on is found by.") //$NON-NLS-1$
+            .stringProperty("columnValue", //$NON-NLS-1$
+                "Value of that column; an empty string is a value and is looked for as empty.") //$NON-NLS-1$
+            .stringProperty("whenSeveral", //$NON-NLS-1$
+                "When several rows carry the value: unique (default) demands exactly one before " //$NON-NLS-1$
+                    + "moving, first moves to the first of them.") //$NON-NLS-1$
+            .stringProperty("buttonTitle", //$NON-NLS-1$
+                "Title of the form's button to press - exactly one of buttonTitle and buttonName.") //$NON-NLS-1$
+            .stringProperty("buttonName", //$NON-NLS-1$
+                "Name of the form's button to press - exactly one of buttonTitle and buttonName.") //$NON-NLS-1$
+            .stringProperty("windowTitle", //$NON-NLS-1$
+                "Title of the window the button is expected to open; without it the run waits " //$NON-NLS-1$
+                    + "for a window whose title differs from the one before the click.") //$NON-NLS-1$
+            .integerProperty("windowWaitSeconds", //$NON-NLS-1$
+                "Seconds the step that waits for the window waits (default 10).") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "1C infobase connection string, e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
                     + "'Srvr=\"host\";Ref=\"base\";'. Omitted, the infobase the named project is " //$NON-NLS-1$
@@ -165,11 +211,15 @@ public class VanessaTool implements IMcpTool
             .booleanProperty("testManager", //$NON-NLS-1$
                 "Start the client as a test manager (default false). The UI-testing types a " //$NON-NLS-1$
                     + "form-driving scenario needs exist only in a client started this way; " //$NON-NLS-1$
-                    + "without it such a step answers Тип не определен.") //$NON-NLS-1$
+                    + "without it such a step answers Тип не определен. " //$NON-NLS-1$
+                    + "On a list action and on formToOpen, left out means on, and false is " //$NON-NLS-1$
+                    + "refused.") //$NON-NLS-1$
             .booleanProperty("testClient", //$NON-NLS-1$
                 "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
                     + "The step that starts TestClient has no client to start without it and " //$NON-NLS-1$
-                    + "answers with an empty client type and PID 0.") //$NON-NLS-1$
+                    + "answers with an empty client type and PID 0. " //$NON-NLS-1$
+                    + "On a list action and on formToOpen, left out means on, and false is " //$NON-NLS-1$
+                    + "refused.") //$NON-NLS-1$
             .integerProperty("testClientPort", //$NON-NLS-1$
                 "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
                     + "run or another EDT already holds it.") //$NON-NLS-1$
@@ -319,8 +369,10 @@ public class VanessaTool implements IMcpTool
                 + "directly. A project with no infobase application, or one bound to a server " //$NON-NLS-1$
                 + "infobase, has to be named directly.").toJson(); //$NON-NLS-1$
         }
-        // Appended to the string, not passed as /N: the test client the start step launches is
-        // given its own PathToInfobase, and a string carries the user into both.
+        // The test manager is started with /IBConnectionString, which reads Usr= in this string.
+        // The test client does not. Vanessa reads the client's path as File= or Srvr=/Ref=, and a
+        // Usr field in that path becomes part of the catalog it looks for. The client blocks take
+        // the user back out and pass it as /N in the additional parameters.
         connectionString = namingTheUser(connectionString,
             JsonUtils.extractStringArgument(params, "infobaseUser")); //$NON-NLS-1$
         String secretRefusal = whyASecretCannotBePassed(connectionString);
@@ -341,21 +393,50 @@ public class VanessaTool implements IMcpTool
         boolean hasPath = featurePathArg != null && !featurePathArg.trim().isEmpty();
         boolean hasText = scenarioText != null && !scenarioText.trim().isEmpty();
         boolean hasForm = formToOpen != null && !formToOpen.trim().isEmpty();
-        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText, hasForm);
+        // The list arguments are a fourth way of naming the scenario. Counted with the other
+        // three, a call that brings only them reaches the composition below; counted afterwards,
+        // that call has named nothing and is refused before any of it runs.
+        boolean hasList = anyListArgumentGiven(params);
+        String badlyNamed = whyTheScenarioIsNotNamed(hasPath, hasText, hasForm, hasList);
         if (badlyNamed != null)
         {
             return ToolResult.error(badlyNamed).toJson();
         }
+        String openStep = JsonUtils.extractStringArgument(params, "openStep"); //$NON-NLS-1$
+        String startStep = JsonUtils.extractStringArgument(params, "startStep"); //$NON-NLS-1$
+        if (hasList)
+        {
+            String badlyMixed = whyTheListWayIsNotTheOnlyOne(hasPath, hasText, hasForm, openStep);
+            if (badlyMixed != null)
+            {
+                return ToolResult.error(badlyMixed).toJson();
+            }
+            String notOneLine = whyStartStepIsNotOneLine(startStep);
+            if (notOneLine != null)
+            {
+                return ToolResult.error(notOneLine).toJson();
+            }
+        }
         if (hasForm)
         {
-            String openStep = JsonUtils.extractStringArgument(params, "openStep"); //$NON-NLS-1$
-            String startStep = JsonUtils.extractStringArgument(params, "startStep"); //$NON-NLS-1$
             String badlyFormed = whyTheFormCannotBeNamed(formToOpen, openStep, startStep);
             if (badlyFormed != null)
             {
                 return ToolResult.error(badlyFormed).toJson();
             }
             scenarioText = scenarioForForm(formToOpen.trim(), startStep, openStep);
+            hasText = true;
+        }
+        ListActionArgs listAction = null;
+        if (hasList)
+        {
+            String[] refused = new String[1];
+            listAction = ListActionArgs.read(params, refused);
+            if (refused[0] != null)
+            {
+                return ToolResult.error(refused[0]).toJson();
+            }
+            scenarioText = listAction.scenario(startStep);
             hasText = true;
         }
 
@@ -390,6 +471,14 @@ public class VanessaTool implements IMcpTool
         final String settledConnection = connectionString;
 
         boolean screenshots = JsonUtils.extractBooleanArgument(params, "screenshots", true); //$NON-NLS-1$
+        if (listAction != null)
+        {
+            String captureOff = whyTheCaptureCannotBeOff(screenshots);
+            if (captureOff != null)
+            {
+                return ToolResult.error(captureOff).toJson();
+            }
+        }
         boolean keepOpen = JsonUtils.extractBooleanArgument(params, "keepOpen", false); //$NON-NLS-1$
         int timeoutSec = JsonUtils.extractIntArgument(params, "timeoutSeconds", DEFAULT_TIMEOUT_SEC); //$NON-NLS-1$
         Integer namedPort = JsonUtils.extractIntegerArgument(params, "testClientPort"); //$NON-NLS-1$
@@ -399,10 +488,23 @@ public class VanessaTool implements IMcpTool
                 + "a port is 1 to " + HIGHEST_PORT + ". Read as a number it cannot be, the " //$NON-NLS-1$ //$NON-NLS-2$
                 + "run would have started on the default port instead of the one named.").toJson(); //$NON-NLS-1$
         }
-        final boolean settledWantsManager =
-            JsonUtils.extractBooleanArgument(params, "testManager", false); //$NON-NLS-1$
-        final boolean settledWantsTestClient =
-            JsonUtils.extractBooleanArgument(params, "testClient", false); //$NON-NLS-1$
+        Boolean askedManager = JsonUtils.extractBooleanArgumentNullable(params, "testManager"); //$NON-NLS-1$
+        Boolean askedClient = JsonUtils.extractBooleanArgumentNullable(params, "testClient"); //$NON-NLS-1$
+        // A list action and formToOpen both open a form. The step that starts TestClient has
+        // nothing to start unless this run is a test manager and names the client, so an omitted
+        // argument is turned on and an explicit false is refused before anything is launched.
+        // A file or a text the caller wrote keeps the old default: off unless they ask.
+        boolean drivesForm = drivesAForm(listAction != null, hasForm);
+        if (drivesForm)
+        {
+            String clientRefusal = whyAFormDrivingRunRefusesTheClient(askedManager, askedClient);
+            if (clientRefusal != null)
+            {
+                return ToolResult.error(clientRefusal).toJson();
+            }
+        }
+        final boolean settledWantsManager = wantsTheClientTheFormNeeds(drivesForm, askedManager);
+        final boolean settledWantsTestClient = wantsTheClientTheFormNeeds(drivesForm, askedClient);
         final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
         String portRefusal = whyThePortCannotBeUsed(settledClientPort);
         if (portRefusal != null)
@@ -417,6 +519,14 @@ public class VanessaTool implements IMcpTool
         {
             timeoutSec = MAX_TIMEOUT_SEC;
         }
+        if (listAction != null && listAction.waitSeconds > timeoutSec)
+        {
+            return ToolResult.error("windowWaitSeconds is " + listAction.waitSeconds //$NON-NLS-1$
+                + ", above the run's own timeoutSeconds of " + timeoutSec //$NON-NLS-1$
+                + ". The run would be killed before the step gave up waiting, and the answer " //$NON-NLS-1$
+                + "would read as a stuck run rather than a window that never opened. Raise " //$NON-NLS-1$
+                + "timeoutSeconds or lower windowWaitSeconds.").toJson(); //$NON-NLS-1$
+        }
 
         // Everything the run needs is settled by now, so it can be handed to a job as it is.
         // Settled copies, because a job closes over what it is given and the timeout above is
@@ -425,6 +535,12 @@ public class VanessaTool implements IMcpTool
         final File settledExe = exeFile;
         final File settledEpf = epfFile;
         final File settledFeature = featurePath;
+        // The keys each composing branch sets for itself: the capture keys wherever the
+        // composed scenario saves its frame, and the asynchronous-step ceiling on the branch
+        // whose step carries a wait.
+        final JsonObject settledOurs = listAction != null ? listAction.ourKeys()
+            : (hasForm ? screenshotKeys() : null);
+        final JsonObject settledSought = listAction != null ? listAction.sought() : null;
         // One key per run, not one per set of arguments. Coalescing belongs to reads whose
         // result can be handed to a second caller; a run drives a client against an infobase, so
         // two identical calls are two runs - and the second is refused below while the first goes.
@@ -441,8 +557,8 @@ public class VanessaTool implements IMcpTool
             // cancel meant for that run destroy this client instead.
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
                 screenshots, keepOpen, settledTimeout, settledClientPort,
-                extraVaParams, runDirForJob, null, settledInfobase, settledAddress,
-                settledWantsTestClient, settledWantsManager);
+                extraVaParams, settledOurs, settledSought, runDirForJob, null, settledInfobase,
+                settledAddress, settledWantsTestClient, settledWantsManager);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -460,8 +576,12 @@ public class VanessaTool implements IMcpTool
             entry = registry.getOrStart(jobKey,
                 () -> play(settledExe, settledEpf, settledConnection, settledFeature,
                     composedScenario, screenshots, keepOpen, settledTimeout,
-                    settledClientPort, extraVaParams, runDirForJob, jobKey, settledInfobase,
-                    settledAddress, settledWantsTestClient, settledWantsManager));
+                    settledClientPort, extraVaParams, settledOurs, settledSought, runDirForJob,
+                    jobKey, settledInfobase, settledAddress, settledWantsTestClient,
+                    settledWantsManager));
+            // The name a poll of this run arrives under, so a live key exempts only this tool's
+            // own resumption path from the heavy gates.
+            entry.startedBy = NAME;
         }
         String done = entry.await(ASYNC_FIRST_WAIT_MS);
         if (done != null)
@@ -496,6 +616,10 @@ public class VanessaTool implements IMcpTool
      * @param timeoutSec how long to wait for the run.
      * @param clientPort the port the test client listens on.
      * @param extraVaParams what the caller added to the Vanessa document.
+     * @param oursVaParams the keys this tool sets on the branch the call took, or
+     *            <code>null</code> on a branch that composes no scenario of its own.
+     * @param sought what the composed scenario was after, named back in the answer, or
+     *            <code>null</code> on a branch that composes none.
      * @param workingDir where to run.
      * @param jobKey the key this run is cancelled by.
      * @param infobaseName the infobase this resolved from the project, or <code>null</code>
@@ -508,7 +632,8 @@ public class VanessaTool implements IMcpTool
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
         String composedScenario, boolean screenshots, boolean keepOpen,
-        int timeoutSec, int clientPort, JsonObject extraVaParams, File workingDir, String jobKey,
+        int timeoutSec, int clientPort, JsonObject extraVaParams, JsonObject oursVaParams,
+        JsonObject sought, File workingDir, String jobKey,
         String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
         boolean asTestManager)
     {
@@ -557,12 +682,12 @@ public class VanessaTool implements IMcpTool
                 // Recorded before the write, not after: a write that throws halfway leaves a
                 // partial scenario, and nothing would be tracking it to remove.
                 composedFile = playing;
-                writeUtf8Bom(playing, composedScenario);
+                writeUtf8Bom(playing, withTheFramePath(composedScenario, shotsDir));
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
                 keepOpen, connectionString, clientPort, timeoutSec, withTestClient,
-                extraVaParams);
+                extraVaParams, oursVaParams);
             writeUtf8Bom(paramsFile, vaParamsJson);
 
             File runDir = workingDir != null ? workingDir : outDir.toFile();
@@ -682,6 +807,21 @@ public class VanessaTool implements IMcpTool
                 .put("screenshotsNotAttributed", attributed.unattributed()) //$NON-NLS-1$
                 .put("markdown", JUnitReportFormatter.format(results) //$NON-NLS-1$
                     + attributed.toMarkdown(pathByName));
+            if (sought != null)
+            {
+                ok.put("sought", sought); //$NON-NLS-1$
+                if (!results.isPassed())
+                {
+                    // A scenario that failed is a run that happened, not a call that went wrong:
+                    // what was sought and what was on screen belong in the answer the same way.
+                    String onScreen = onScreenOf(firstFailureOf(results));
+                    ok.put("onScreen", onScreen); //$NON-NLS-1$
+                    if (onScreen.isEmpty())
+                    {
+                        ok.put("onScreenNote", ON_SCREEN_EMPTY_NOTE); //$NON-NLS-1$
+                    }
+                }
+            }
             return ok.toJson();
         }
         catch (Exception e)
@@ -729,26 +869,50 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * Why this call does not say what to play, or <code>null</code> when it does.
+     * Why this call does not say what to play, when the list arguments are not part of the question.
      *
      * @param hasPath whether a file or directory was named.
      * @param hasText whether the scenario itself was given.
      * @param hasForm whether a form to open was named, from which a scenario is composed.
      * @return the refusal, or <code>null</code>
+     * @see #whyTheScenarioIsNotNamed(boolean, boolean, boolean, boolean)
      */
     static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText, boolean hasForm)
     {
-        int named = (hasPath ? 1 : 0) + (hasText ? 1 : 0) + (hasForm ? 1 : 0);
+        return whyTheScenarioIsNotNamed(hasPath, hasText, hasForm, false);
+    }
+
+    /**
+     * Why this call does not say what to play, or <code>null</code> when it does.
+     * <p>
+     * Four ways name a scenario, and a call carries exactly one of them: a file, the scenario
+     * text, a form to open, or the list arguments that compose an action in a list. None of them,
+     * and there is nothing to play; more than one, and the call does not say which was meant.
+     * </p>
+     *
+     * @param hasPath whether a file or directory was named.
+     * @param hasText whether the scenario itself was given.
+     * @param hasForm whether a form to open was named, from which a scenario is composed.
+     * @param hasList whether any list argument is present, which composes a scenario of its own.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheScenarioIsNotNamed(boolean hasPath, boolean hasText, boolean hasForm,
+        boolean hasList)
+    {
+        int named = (hasPath ? 1 : 0) + (hasText ? 1 : 0) + (hasForm ? 1 : 0) + (hasList ? 1 : 0);
         if (named > 1)
         {
-            return "featurePath, scenarioText and formToOpen each name what to play, and only " //$NON-NLS-1$
-                + "one of them can be it. Pass the path to a file that exists, the scenario text " //$NON-NLS-1$
-                + "to be written for this run, or the form to open and snapshot."; //$NON-NLS-1$
+            return "featurePath, scenarioText, formToOpen and the list arguments each name what " //$NON-NLS-1$
+                + "to play, and only one of them can be it. Pass the path to a file that exists, " //$NON-NLS-1$
+                + "the scenario text to be written for this run, the form to open and snapshot, " //$NON-NLS-1$
+                + "or the list arguments."; //$NON-NLS-1$
         }
         if (named == 0)
         {
             return "featurePath is required (a .feature file or a directory), or scenarioText " //$NON-NLS-1$
-                + "with the scenario itself, or formToOpen with the form to open and snapshot."; //$NON-NLS-1$
+                + "with the scenario itself, or formToOpen with the form to open and snapshot, or " //$NON-NLS-1$
+                + "the list arguments (listKind, listName, column, columnValue and a button) to " //$NON-NLS-1$
+                + "open a list, go to a row and capture what a button opened."; //$NON-NLS-1$
         }
         return null;
     }
@@ -869,9 +1033,12 @@ public class VanessaTool implements IMcpTool
     /**
      * A scenario that opens one form and has it photographed.
      * <p>
-     * The snapshot is not a step. Vanessa takes one before and after the step that follows the
-     * {@code @screenshot} tag, writing them where {@code КаталогOutputСкриншоты} points - which
-     * this tool already sets for every run, and which the report reader already groups by step.
+     * The frame is saved by the step {@code И я сохраняю скриншот}, written by
+     * {@link #frameAfterTheAction()}, into the run's screenshots directory - where
+     * {@code КаталогOutputСкриншоты} points, which this tool already sets for every run, and
+     * whose images the report reader already hands back. VanessaExt draws the test client's top
+     * window into the file itself, so the frame is that window and not the screen, whatever
+     * covers it.
      * </p>
      * <p>
      * Both step wordings are arguments with a default rather than text built into this file. They
@@ -894,17 +1061,833 @@ public class VanessaTool implements IMcpTool
             + "Контекст:\n" //$NON-NLS-1$
             + "    Дано " + starting + "\n\n" //$NON-NLS-1$ //$NON-NLS-2$
             + "Сценарий: Снимок формы " + form + "\n" //$NON-NLS-1$ //$NON-NLS-2$
-            + "    @screenshot\n" //$NON-NLS-1$
             + "    Когда " + opening.replace("{form}", form) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + frameAfterTheAction()
             + "    И Я закрываю все окна клиентского приложения\n"; //$NON-NLS-1$
     }
 
     /**
-     * The connection string with the user named in it.
+     * The words each metadata kind's list is opened by, with {@code {list}} where the name goes.
      * <p>
-     * In the string rather than as {@code /N}: the test client the start step launches is given
-     * its own {@code PathToInfobase}, and a string carries the user into both clients where the
-     * argument would reach only one.
+     * Vanessa has no single "open a list" step: each kind is opened by its own wording, and the
+     * words belong to Vanessa and differ between its versions. The map holds the spellings of the
+     * step library this tool was verified against, one entry per kind it can open.
+     * </p>
+     */
+    static final java.util.Map<String, String> LIST_OPEN_STEPS = listOpenSteps();
+
+    /**
+     * Fills {@link #LIST_OPEN_STEPS}.
+     *
+     * @return the kind to wording map, unmodifiable
+     */
+    private static java.util.Map<String, String> listOpenSteps()
+    {
+        java.util.Map<String, String> steps = new java.util.LinkedHashMap<>();
+        steps.put("catalog", "Я открываю основную форму списка справочника \"{list}\""); //$NON-NLS-1$ //$NON-NLS-2$
+        steps.put("document", "Я открываю основную форму списка документа \"{list}\""); //$NON-NLS-1$ //$NON-NLS-2$
+        steps.put("documentJournal", "Я открываю основную форму журнала документов \"{list}\""); //$NON-NLS-1$ //$NON-NLS-2$
+        steps.put("chartOfCharacteristicTypes", //$NON-NLS-1$
+            "Я открываю основную форму списка плана видов характеристик \"{list}\""); //$NON-NLS-1$
+        steps.put("chartOfAccounts", "Я открываю основную форму списка плана счетов \"{list}\""); //$NON-NLS-1$ //$NON-NLS-2$
+        steps.put("chartOfCalculationTypes", //$NON-NLS-1$
+            "Я открываю основную форму списка плана видов расчета \"{list}\""); //$NON-NLS-1$
+        steps.put("informationRegister", //$NON-NLS-1$
+            "Я открываю основную форму списка регистра сведений \"{list}\""); //$NON-NLS-1$
+        steps.put("accumulationRegister", //$NON-NLS-1$
+            "Я открываю основную форму списка регистра накопления \"{list}\""); //$NON-NLS-1$
+        steps.put("accountingRegister", //$NON-NLS-1$
+            "Я открываю основную форму списка регистра бухгалтерии \"{list}\""); //$NON-NLS-1$
+        steps.put("calculationRegister", //$NON-NLS-1$
+            "Я открываю основную форму списка регистра расчета \"{list}\""); //$NON-NLS-1$
+        return java.util.Collections.unmodifiableMap(steps);
+    }
+
+    /** The names of the arguments that compose the list action; present means the branch is taken. */
+    private static final String[] LIST_ARGUMENTS = {
+        "listKind", "listName", "tableName", "column", "columnValue", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "whenSeveral", "buttonTitle", "buttonName", "windowTitle", "windowWaitSeconds"}; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+    /**
+     * Whether the call carries any of the list arguments, and so asks for the action they compose.
+     * <p>
+     * Asked by presence and not by validity: an empty {@code listKind} still names the branch, and
+     * the refusal it earns is the one about the branch it asked for.
+     * </p>
+     *
+     * @param params the call's arguments.
+     * @return true when at least one list argument is present
+     */
+    static boolean anyListArgumentGiven(Map<String, String> params)
+    {
+        if (params == null)
+        {
+            return false;
+        }
+        for (String name : LIST_ARGUMENTS)
+        {
+            if (params.containsKey(name))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Why the list arguments cannot share the call with another way of naming what to play, or
+     * <code>null</code> when they are alone.
+     * <p>
+     * One call, one way: the list arguments compose a scenario of their own, and a call that also
+     * named a file, a text or a form says nothing about which of the two it meant to play - the
+     * same refusal the older pairings earn. {@code openStep} is refused for the narrower reason
+     * that it names one way of opening a form while {@code listKind} names another, and the
+     * composed scenario opens the list by its own words.
+     * </p>
+     *
+     * @param hasPath whether a feature path was given.
+     * @param hasText whether the scenario itself was given.
+     * @param hasForm whether a form to open was given.
+     * @param openStep the wording the caller gave for opening, or <code>null</code>.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheListWayIsNotTheOnlyOne(boolean hasPath, boolean hasText, boolean hasForm,
+        String openStep)
+    {
+        if (hasPath || hasText || hasForm)
+        {
+            return "The list arguments (listKind, listName and the rest) compose the scenario on " //$NON-NLS-1$
+                + "their own, and featurePath, scenarioText and formToOpen each name what to play " //$NON-NLS-1$
+                + "as well. Pass one way: the list arguments, or one of those."; //$NON-NLS-1$
+        }
+        if (openStep != null && !openStep.trim().isEmpty())
+        {
+            return "openStep names one way of opening a form and listKind names another: the " //$NON-NLS-1$
+                + "scenario composed from the list arguments opens the list by its own words. " //$NON-NLS-1$
+                + "Leave openStep out, or write the whole scenario in scenarioText."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Why the step that gets a client cannot span lines, or <code>null</code> when it is one line.
+     *
+     * @param startStep the wording the caller gave, or <code>null</code>.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyStartStepIsNotOneLine(String startStep)
+    {
+        if (startStep != null && (startStep.indexOf('\n') >= 0 || startStep.indexOf('\r') >= 0))
+        {
+            return "startStep is one step and therefore one line."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Why the capture cannot be switched off on the list action, or <code>null</code> when it is on.
+     * <p>
+     * The frame of the window the button opened is the point of the call, and the run's own
+     * captures are what photograph a step that failed on the way to it. A caller switching them
+     * off would be answered with a failure no picture was taken of - a run that looks fine until
+     * the report says otherwise.
+     * </p>
+     *
+     * @param screenshots whether the call asked for screenshots.
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyTheCaptureCannotBeOff(boolean screenshots)
+    {
+        if (screenshots)
+        {
+            return null;
+        }
+        return "screenshots=false leaves a failing step photographed by nothing: the frame " //$NON-NLS-1$
+            + "after the action would be the only image the run writes, and a failure would be " //$NON-NLS-1$
+            + "reported without a picture of what was on screen. Leave the argument out or pass " //$NON-NLS-1$
+            + "true - the frame of the window the button opened is the point of this call."; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether this call opens a form, so the step that starts TestClient has to have a client.
+     * <p>
+     * A list action and {@code formToOpen} both compose a scenario that begins with that step and
+     * then opens a form. A file or a text the caller wrote does not, and keeps the old default.
+     * </p>
+     *
+     * @param hasListAction whether the call carried the list arguments
+     * @param hasForm whether the call named {@code formToOpen}
+     * @return whether the run drives a form
+     */
+    static boolean drivesAForm(boolean hasListAction, boolean hasForm)
+    {
+        return hasListAction || hasForm;
+    }
+
+    /**
+     * Why a form-driving run cannot start, or <code>null</code> when it can.
+     * <p>
+     * An omitted argument is not a refusal: the run turns it on. An explicit {@code false} is,
+     * because the step that starts TestClient then has no client to start. The UI-testing types
+     * exist only under a test manager, and the start step launches the client this tool names.
+     * </p>
+     *
+     * @param testManager what the caller passed, or <code>null</code> when left out
+     * @param testClient what the caller passed, or <code>null</code> when left out
+     * @return the refusal, or <code>null</code>
+     */
+    static String whyAFormDrivingRunRefusesTheClient(Boolean testManager, Boolean testClient)
+    {
+        boolean managerOff = Boolean.FALSE.equals(testManager);
+        boolean clientOff = Boolean.FALSE.equals(testClient);
+        if (!managerOff && !clientOff)
+        {
+            return null;
+        }
+        String which;
+        if (managerOff && clientOff)
+        {
+            which = "testManager and testClient are false"; //$NON-NLS-1$
+        }
+        else if (managerOff)
+        {
+            which = "testManager is false"; //$NON-NLS-1$
+        }
+        else
+        {
+            which = "testClient is false"; //$NON-NLS-1$
+        }
+        return which + ". A list action and formToOpen open a form, and the step that starts " //$NON-NLS-1$
+            + "TestClient has no client to start without both: the UI-testing types exist only " //$NON-NLS-1$
+            + "under a test manager, and the start step launches the client this tool names, " //$NON-NLS-1$
+            + "the one that opens the infobase of the run. Leave either argument out and it is " //$NON-NLS-1$
+            + "turned on."; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether the run starts as a test manager, or names a test client.
+     * <p>
+     * On a form-driving call an omitted argument is on. An explicit false stays false, so a
+     * refusal that was skipped cannot be turned into a run that claims the opposite. On any other
+     * call the argument is off unless the caller asked.
+     * </p>
+     *
+     * @param drivesForm whether this call opens a form
+     * @param asked what the caller passed, or <code>null</code> when left out
+     * @return whether the flag is on for the run
+     */
+    static boolean wantsTheClientTheFormNeeds(boolean drivesForm, Boolean asked)
+    {
+        if (Boolean.TRUE.equals(asked))
+        {
+            return true;
+        }
+        if (Boolean.FALSE.equals(asked))
+        {
+            return false;
+        }
+        return drivesForm;
+    }
+
+    /**
+     * {@code СпособСнятияСкриншотовВнешнейКомпонентой}: the current window of the test client.
+     * <p>
+     * Vanessa 1.2.042.19, the choice list on the screenshots page
+     * ({@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form.xml}): 0 is the whole screen,
+     * 1 is the current test client window, 2 is every window of the test client. A failure
+     * screenshot reads this number off the settings, and so does the frame-saving step: it
+     * passes no capture method of its own, so the frame the composed scenario saves is the test
+     * client's top window rather than the screen.
+     * </p>
+     */
+    static final int CLIENT_WINDOW = 1;
+
+    /**
+     * The keys that decide what the frame-saving step captures.
+     * <p>
+     * With the add-in pair written, Vanessa saves the frame through VanessaExt, and the step
+     * reads {@link #CLIENT_WINDOW} off the settings as its capture method: the frame is the test
+     * client's top window rather than the screen, whatever covers it. A screenshot command would
+     * name a program this tool has no reason to assume is installed on the machine, so the add-in
+     * is what these branches rely on. The keys are written on every branch that composes a
+     * scenario carrying the frame step, and a failure screenshot honors the same method.
+     * </p>
+     *
+     * @return the keys, ready to be merged into the run's document
+     */
+    static JsonObject screenshotKeys()
+    {
+        JsonObject o = new JsonObject();
+        o.addProperty("ИспользоватьКомпонентуVanessaExt", true); //$NON-NLS-1$
+        o.addProperty("ИспользоватьВнешнююКомпонентуДляСкриншотов", true); //$NON-NLS-1$
+        o.addProperty("СпособСнятияСкриншотовВнешнейКомпонентой", CLIENT_WINDOW); //$NON-NLS-1$
+        return o;
+    }
+
+    /**
+     * The line that saves the frame of the window the action opened, once it is open.
+     * <p>
+     * Vanessa's own step {@code И я сохраняю скриншот} (1.2.042.19,
+     * {@code features/Libraries/РаботаСФайлами/РаботаСФайлами/Forms/Форма/Ext/Form/Module.bsl}):
+     * the file name carries an extension and the file's directory has to exist, which is why the
+     * run creates its screenshots directory before the scenario is written. The step passes no
+     * capture method of its own, so VanessaExt reads {@link #CLIENT_WINDOW} off the settings and
+     * draws the test client's top window into the file itself - the frame is that window and not
+     * the screen, whatever covers it. The path stands here as {@link #FRAME_PATH_TOKEN}, settled
+     * by {@link #withTheFramePath(String, File)} once the run's directory exists.
+     * </p>
+     *
+     * @return the line, already indented and terminated
+     */
+    static String frameAfterTheAction()
+    {
+        return "    И я сохраняю скриншот \"" + FRAME_PATH_TOKEN + "\"\n"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** Where the frame file's path stands in a composed scenario until the run's directory exists. */
+    static final String FRAME_PATH_TOKEN = "$AI-EDT-FRAME-PATH$"; //$NON-NLS-1$
+
+    /** The frame file's name inside the run's screenshots directory. */
+    static final String FRAME_FILE_NAME = "frame-after-action.png"; //$NON-NLS-1$
+
+    /**
+     * Puts the run's frame file where the composed scenario left the placeholder.
+     * <p>
+     * The scenario is composed before the run's directory exists, and the step takes an absolute
+     * path whose directory has to be there. The whole path lands inside the step's own quotes, so
+     * a directory name with spaces or Cyrillic in it stays one value of one step. A scenario
+     * without the placeholder - one the caller wrote - is passed through unchanged.
+     * </p>
+     *
+     * @param composedScenario the scenario text, or <code>null</code>.
+     * @param shotsDir the run's screenshots directory, already created.
+     * @return the scenario text with the frame path settled, or the text unchanged
+     */
+    static String withTheFramePath(String composedScenario, File shotsDir)
+    {
+        if (composedScenario == null || !composedScenario.contains(FRAME_PATH_TOKEN))
+        {
+            return composedScenario;
+        }
+        return composedScenario.replace(FRAME_PATH_TOKEN,
+            new File(shotsDir, FRAME_FILE_NAME).getAbsolutePath());
+    }
+
+    /**
+     * The window the failing step's own text names, or an empty string when it names none.
+     * <p>
+     * Two step families name one: a button that was not found writes {@code ТекущееОкно=} followed
+     * by the active window's title, and a window that never opened is reported as
+     * {@code Текущее окно <%3>.} - the title inside angle brackets, then the full stop that closes
+     * the sentence. The brackets and that stop belong to Vanessa's sentence and are not part of
+     * the title. Everything else Vanessa writes about a failure names no window at all, and an
+     * empty string is what that honestly reads as - a title guessed at from anywhere else would
+     * put a window on screen the run never saw.
+     * </p>
+     *
+     * @param failureText the message of the failing step, as the report carries it.
+     * @return the window title, or an empty string
+     */
+    static String onScreenOf(String failureText)
+    {
+        if (failureText == null || failureText.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        int buttonWindow = failureText.indexOf("ТекущееОкно="); //$NON-NLS-1$
+        if (buttonWindow >= 0)
+        {
+            return restOfTheLine(failureText, buttonWindow + "ТекущееОкно=".length()); //$NON-NLS-1$
+        }
+        int waitedWindow = failureText.indexOf("Текущее окно "); //$NON-NLS-1$
+        if (waitedWindow >= 0)
+        {
+            return titleInsideTheSentenceBrackets(
+                restOfTheLine(failureText, waitedWindow + "Текущее окно ".length())); //$NON-NLS-1$
+        }
+        return ""; //$NON-NLS-1$
+    }
+
+    /**
+     * The title Vanessa wrapped as {@code <%3>}, or the text unchanged when it is not wrapped.
+     * <p>
+     * The waiting step's refusal puts the active window's title between angle brackets. Those
+     * brackets are the sentence's, the same shape as the count step's {@code <%1>}, and a caller
+     * reading them back would be told the window is named {@code <Реализация товаров>} when its
+     * title is {@code Реализация товаров}.
+     * </p>
+     *
+     * @param value the remainder of the sentence, already without the closing full stop.
+     * @return the title
+     */
+    private static String titleInsideTheSentenceBrackets(String value)
+    {
+        if (value.length() >= 2 && value.charAt(0) == '<' && value.charAt(value.length() - 1) == '>')
+        {
+            return value.substring(1, value.length() - 1).trim();
+        }
+        return value;
+    }
+
+    /**
+     * The text from a position to the end of its line, without the full stop that closes the
+     * sentence it was read out of.
+     * <p>
+     * Vanessa ends the waiting step's refusal with a full stop after the title it names; the stop
+     * closes Vanessa's sentence and is not part of the title. A title that genuinely ends in one
+     * loses it, which is the cheaper of the two readings.
+     * </p>
+     *
+     * @param text the text to cut from.
+     * @param from where the wanted part starts.
+     * @return the rest of that line, trimmed
+     */
+    private static String restOfTheLine(String text, int from)
+    {
+        int end = text.indexOf('\n', from);
+        int cr = text.indexOf('\r', from);
+        if (cr >= 0 && (end < 0 || cr < end))
+        {
+            end = cr;
+        }
+        String value = (end < 0 ? text.substring(from) : text.substring(from, end)).trim();
+        if (value.endsWith(".")) //$NON-NLS-1$
+        {
+            return value.substring(0, value.length() - 1).trim();
+        }
+        return value;
+    }
+
+    /**
+     * The message of the first step that did not pass, or <code>null</code> when the report names
+     * none.
+     *
+     * @param results the parsed report.
+     * @return that message, or <code>null</code>
+     */
+    static String firstFailureOf(JUnitRunOutcome results)
+    {
+        if (!results.getFailureDetails().isEmpty())
+        {
+            return results.getFailureDetails().get(0).message;
+        }
+        if (!results.getErrorDetails().isEmpty())
+        {
+            return results.getErrorDetails().get(0).message;
+        }
+        return null;
+    }
+
+    /** Said beside an empty onScreen, so an honest empty is not read as a missing read. */
+    static final String ON_SCREEN_EMPTY_NOTE =
+        "The failing step's own text names no window, and no other is guessed at: onScreen is " //$NON-NLS-1$
+            + "empty because Vanessa wrote nothing to read one from."; //$NON-NLS-1$
+
+    /** Seconds the window-waiting step waits when the caller names none. */
+    static final int DEFAULT_WINDOW_WAIT_SEC = 10;
+
+    /**
+     * The arguments of the list action, settled and validated as one thing.
+     * <p>
+     * Ten arguments that only mean anything together are read once, refused once and composed
+     * once, rather than threaded through the caller a parameter at a time. What they settle into:
+     * the scenario, the {@code sought} the answer names back, and the Vanessa keys the branch
+     * needs for its capture.
+     * </p>
+     */
+    static final class ListActionArgs
+    {
+        final String listKind;
+        final String listName;
+        final String tableName;
+        final String column;
+        final String columnValue;
+        final boolean requireOne;
+        final String buttonName;
+        final String buttonTitle;
+        final String windowTitle;
+        final int waitSeconds;
+
+        ListActionArgs(String listKind, String listName, String tableName, String column,
+            String columnValue, boolean requireOne, String buttonName, String buttonTitle,
+            String windowTitle, int waitSeconds)
+        {
+            this.listKind = listKind;
+            this.listName = listName;
+            this.tableName = tableName;
+            this.column = column;
+            this.columnValue = columnValue;
+            this.requireOne = requireOne;
+            this.buttonName = buttonName;
+            this.buttonTitle = buttonTitle;
+            this.windowTitle = windowTitle;
+            this.waitSeconds = waitSeconds;
+        }
+
+        /**
+         * Reads and settles the list arguments, or fills the refusal when they do not make a
+         * scenario.
+         * <p>
+         * Every value lands inside a step's quotes - double quotes in most steps, single quotes in
+         * a Gherkin table row - so a value carrying the quote it is wrapped in, or a line break,
+         * is refused rather than composed into a scenario Vanessa would read as something else.
+         * {@code column} and {@code columnValue} also land in a table cell, and a Gherkin table
+         * splits that cell on every vertical bar, so a bar is refused there too. The one value
+         * read exactly as given is {@code columnValue}: an empty string is a value there, looked
+         * for as empty.
+         * </p>
+         *
+         * @param params the call's arguments.
+         * @param refusal filled with why the call cannot proceed, when it cannot.
+         * @return the settled arguments, or <code>null</code> with the refusal filled
+         */
+        static ListActionArgs read(Map<String, String> params, String[] refusal)
+        {
+            String listKind = JsonUtils.extractStringArgument(params, "listKind"); //$NON-NLS-1$
+            if (listKind == null || listKind.trim().isEmpty())
+            {
+                refusal[0] = "listKind is empty. Name the metadata kind of the list the scenario " //$NON-NLS-1$
+                    + "opens: " + String.join(", ", LIST_OPEN_STEPS.keySet()) + "."; //$NON-NLS-1$ //$NON-NLS-2$
+                return null;
+            }
+            listKind = listKind.trim();
+            if (!LIST_OPEN_STEPS.containsKey(listKind))
+            {
+                refusal[0] = "listKind '" + listKind + "' names no metadata kind this tool can " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "open a list of: " + String.join(", ", LIST_OPEN_STEPS.keySet()) + "."; //$NON-NLS-1$ //$NON-NLS-2$
+                return null;
+            }
+            String listName = JsonUtils.extractStringArgument(params, "listName"); //$NON-NLS-1$
+            if (listName == null || listName.trim().isEmpty())
+            {
+                refusal[0] = "listName is empty. Name the metadata object whose list the " //$NON-NLS-1$
+                    + "scenario opens."; //$NON-NLS-1$
+                return null;
+            }
+            listName = listName.trim();
+            String namedBadly = whyItCannotGoIntoAStep("listName", listName, false, '"'); //$NON-NLS-1$
+            if (namedBadly != null)
+            {
+                refusal[0] = namedBadly;
+                return null;
+            }
+            String tableName = JsonUtils.extractStringArgument(params, "tableName"); //$NON-NLS-1$
+            if (tableName == null)
+            {
+                tableName = "Список"; //$NON-NLS-1$
+            }
+            else if (tableName.trim().isEmpty())
+            {
+                refusal[0] = "tableName is an empty string. The steps address the list's table by " //$NON-NLS-1$
+                    + "name, and an empty one addresses nothing - leave the argument out and the " //$NON-NLS-1$
+                    + "usual Список is used."; //$NON-NLS-1$
+                return null;
+            }
+            else
+            {
+                tableName = tableName.trim();
+                String tableBadly = whyItCannotGoIntoAStep("tableName", tableName, false, '"'); //$NON-NLS-1$
+                if (tableBadly != null)
+                {
+                    refusal[0] = tableBadly;
+                    return null;
+                }
+            }
+            String column = JsonUtils.extractStringArgument(params, "column"); //$NON-NLS-1$
+            if (column == null || column.trim().isEmpty())
+            {
+                refusal[0] = "column is empty. Name the caption of the column the row to act on " //$NON-NLS-1$
+                    + "is found by."; //$NON-NLS-1$
+                return null;
+            }
+            column = column.trim();
+            // Both quote kinds: the column stands inside a Gherkin table row in single quotes and
+            // inside the counting step's own double quotes. The bar is the table's own separator.
+            String columnBadly = whyItCannotGoIntoAStep("column", column, true, '"', '\''); //$NON-NLS-1$
+            if (columnBadly != null)
+            {
+                refusal[0] = columnBadly;
+                return null;
+            }
+            String columnValue = JsonUtils.extractStringArgument(params, "columnValue"); //$NON-NLS-1$
+            if (columnValue == null)
+            {
+                refusal[0] = "columnValue is missing. Name the value of the column the row is " //$NON-NLS-1$
+                    + "found by - an empty string is a value and is looked for as empty, but the " //$NON-NLS-1$
+                    + "argument has to be there to carry it."; //$NON-NLS-1$
+                return null;
+            }
+            String valueBadly = whyItCannotGoIntoAStep("columnValue", columnValue, true, '"', '\''); //$NON-NLS-1$
+            if (valueBadly != null)
+            {
+                refusal[0] = valueBadly;
+                return null;
+            }
+            String whenSeveral = JsonUtils.extractStringArgument(params, "whenSeveral"); //$NON-NLS-1$
+            boolean requireOne = true;
+            if (whenSeveral != null && !whenSeveral.trim().isEmpty())
+            {
+                String asked = whenSeveral.trim();
+                if ("first".equals(asked)) //$NON-NLS-1$
+                {
+                    requireOne = false;
+                }
+                else if (!"unique".equals(asked)) //$NON-NLS-1$
+                {
+                    refusal[0] = "whenSeveral '" + asked + "' is neither unique nor first. unique " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "(the default) demands exactly one matching row before moving to it; " //$NON-NLS-1$
+                        + "first moves to the first match Vanessa meets and says nothing about " //$NON-NLS-1$
+                        + "how many there were."; //$NON-NLS-1$
+                    return null;
+                }
+            }
+            String buttonName = JsonUtils.extractStringArgument(params, "buttonName"); //$NON-NLS-1$
+            String buttonTitle = JsonUtils.extractStringArgument(params, "buttonTitle"); //$NON-NLS-1$
+            boolean nameGiven = buttonName != null && !buttonName.trim().isEmpty();
+            boolean titleGiven = buttonTitle != null && !buttonTitle.trim().isEmpty();
+            if (nameGiven && titleGiven)
+            {
+                refusal[0] = "buttonTitle and buttonName both name the button to press. Pass one " //$NON-NLS-1$
+                    + "of them: the scenario presses by title or by name, never both."; //$NON-NLS-1$
+                return null;
+            }
+            if (!nameGiven && !titleGiven)
+            {
+                refusal[0] = "Neither buttonTitle nor buttonName names the button the scenario " //$NON-NLS-1$
+                    + "presses. Pass one of them."; //$NON-NLS-1$
+                return null;
+            }
+            if (nameGiven)
+            {
+                buttonName = buttonName.trim();
+                buttonTitle = null;
+                String nameBadly = whyItCannotGoIntoAStep("buttonName", buttonName, false, '\''); //$NON-NLS-1$
+                if (nameBadly != null)
+                {
+                    refusal[0] = nameBadly;
+                    return null;
+                }
+            }
+            else
+            {
+                buttonTitle = buttonTitle.trim();
+                buttonName = null;
+                String titleBadly = whyItCannotGoIntoAStep("buttonTitle", buttonTitle, false, '"'); //$NON-NLS-1$
+                if (titleBadly != null)
+                {
+                    refusal[0] = titleBadly;
+                    return null;
+                }
+            }
+            String windowTitle = JsonUtils.extractStringArgument(params, "windowTitle"); //$NON-NLS-1$
+            if (windowTitle != null && !windowTitle.trim().isEmpty())
+            {
+                windowTitle = windowTitle.trim();
+                String windowBadly = whyItCannotGoIntoAStep("windowTitle", windowTitle, false, '"'); //$NON-NLS-1$
+                if (windowBadly != null)
+                {
+                    refusal[0] = windowBadly;
+                    return null;
+                }
+            }
+            else
+            {
+                windowTitle = null;
+            }
+            Integer named = JsonUtils.extractIntegerArgument(params, "windowWaitSeconds"); //$NON-NLS-1$
+            if (named == null && params != null && params.containsKey("windowWaitSeconds")) //$NON-NLS-1$
+            {
+                refusal[0] = "windowWaitSeconds is not a whole number of seconds, and the " //$NON-NLS-1$
+                    + "window-waiting step carries exactly that many in its text. Vanessa would " //$NON-NLS-1$
+                    + "read whatever it was given, or nothing, and wait for a time nobody asked " //$NON-NLS-1$
+                    + "for."; //$NON-NLS-1$
+                return null;
+            }
+            int waitSeconds = named != null ? named.intValue() : DEFAULT_WINDOW_WAIT_SEC;
+            if (waitSeconds < 1)
+            {
+                refusal[0] = "windowWaitSeconds is " + waitSeconds + ", and a window cannot be " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "waited for less than a second."; //$NON-NLS-1$
+                return null;
+            }
+            return new ListActionArgs(listKind, listName, tableName, column, columnValue,
+                requireOne, buttonName, buttonTitle, windowTitle, waitSeconds);
+        }
+
+        /**
+         * Why a value cannot go into the step it is destined for, or <code>null</code> when it can.
+         *
+         * @param argument the argument the value came under, for the refusal to name.
+         * @param value the value as it will be substituted.
+         * @param inATableCell whether the value is written into a Gherkin table cell, which splits
+         *            on every vertical bar.
+         * @param quotes the quote characters the steps wrap this value in.
+         * @return the refusal, or <code>null</code>
+         */
+        private static String whyItCannotGoIntoAStep(String argument, String value,
+            boolean inATableCell, char... quotes)
+        {
+            for (char quote : quotes)
+            {
+                if (value.indexOf(quote) >= 0)
+                {
+                    return argument + " carries a quote, and the value goes inside that very " //$NON-NLS-1$
+                        + "quote in a step. Pass the value alone, or write the whole scenario in " //$NON-NLS-1$
+                        + "scenarioText."; //$NON-NLS-1$
+                }
+            }
+            if (value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0)
+            {
+                return argument + " spans lines, and a step is one line of a scenario. Pass the " //$NON-NLS-1$
+                    + "value alone, or write the whole scenario in scenarioText."; //$NON-NLS-1$
+            }
+            if (inATableCell && value.indexOf('|') >= 0)
+            {
+                return argument + " carries a vertical bar, and the value goes into a cell of a " //$NON-NLS-1$
+                    + "Gherkin table, which splits the row on every bar. The step would look for " //$NON-NLS-1$
+                    + "something other than the value that was passed. Pass the value alone, or " //$NON-NLS-1$
+                    + "write the whole scenario in scenarioText."; //$NON-NLS-1$
+            }
+            return null;
+        }
+
+        /**
+         * The scenario the arguments compose.
+         * <p>
+         * Every step is the wording of Vanessa's own step library, verbatim; what this method adds
+         * is the order and the frame file. The row is demanded to be the only one before the move
+         * unless {@code whenSeveral=first} said otherwise, the button is pressed by name or by
+         * title, and the window is waited for, and {@link #frameAfterTheAction()} then saves the
+         * frame of the window it opened into the run's screenshots directory.
+         * </p>
+         *
+         * @param startStep how to get a client, or <code>null</code> for {@link #START_STEP}.
+         * @return the scenario text
+         */
+        String scenario(String startStep)
+        {
+            String starting = startStep == null || startStep.trim().isEmpty()
+                ? START_STEP : startStep.trim();
+            StringBuilder s = new StringBuilder();
+            s.append("#language: ru\n\n"); //$NON-NLS-1$
+            s.append("Функционал: Снимок после действия\n\n"); //$NON-NLS-1$
+            s.append("Контекст:\n"); //$NON-NLS-1$
+            s.append("    Дано ").append(starting).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            s.append("Сценарий: Действие в списке ").append(listName).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            s.append("    Когда ") //$NON-NLS-1$
+                .append(LIST_OPEN_STEPS.get(listKind).replace("{list}", listName)).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (windowTitle == null)
+            {
+                // The remembered title is what the different-from wait compares against; with a
+                // named window there is nothing to remember.
+                s.append("    И я запоминаю заголовок текущего окна как \"ОкноДо\"\n"); //$NON-NLS-1$
+            }
+            if (requireOne)
+            {
+                s.append("    И в таблице \"").append(tableName).append("\" 1 строк, у которых ") //$NON-NLS-1$ //$NON-NLS-2$
+                    .append("колонка \"").append(column).append("\" \"Равно\" \"") //$NON-NLS-1$ //$NON-NLS-2$
+                    .append(columnValue).append("\"\n"); //$NON-NLS-1$
+            }
+            s.append("    И в таблице \"").append(tableName).append("\" я перехожу к строке\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            s.append("        | '").append(column).append("' |\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            s.append("        | '").append(columnValue).append("' |\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (buttonName != null)
+            {
+                s.append("    И я нажимаю на кнопку с именем '").append(buttonName).append("'\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            else
+            {
+                s.append("    И я нажимаю на кнопку \"").append(buttonTitle).append("\"\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (windowTitle != null)
+            {
+                s.append("    И я жду открытия окна \"").append(windowTitle) //$NON-NLS-1$
+                    .append("\" в течение ").append(waitSeconds).append(" секунд\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            else
+            {
+                s.append("    И я жду открытия окна отличного от \"$ОкноДо$\" в течение ") //$NON-NLS-1$
+                    .append(waitSeconds).append(" секунд\n"); //$NON-NLS-1$
+            }
+            s.append(frameAfterTheAction());
+            s.append("    И Я закрываю все окна клиентского приложения\n"); //$NON-NLS-1$
+            return s.toString();
+        }
+
+        /**
+         * What the answer names back as sought.
+         * <p>
+         * The button appears as the one value it was given - the title or the name - and the
+         * window as either its named title or the remembered title it had to differ from.
+         * </p>
+         *
+         * @return the sought object, ready for the answer
+         */
+        JsonObject sought()
+        {
+            JsonObject o = new JsonObject();
+            o.addProperty("listKind", listKind); //$NON-NLS-1$
+            o.addProperty("listName", listName); //$NON-NLS-1$
+            o.addProperty("tableName", tableName); //$NON-NLS-1$
+            o.addProperty("column", column); //$NON-NLS-1$
+            o.addProperty("columnValue", columnValue); //$NON-NLS-1$
+            o.addProperty("button", buttonName != null ? buttonName : buttonTitle); //$NON-NLS-1$
+            if (windowTitle != null)
+            {
+                o.addProperty("windowTitle", windowTitle); //$NON-NLS-1$
+            }
+            else
+            {
+                o.addProperty("differentFrom", "$ОкноДо$"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            o.addProperty("windowWaitSeconds", waitSeconds); //$NON-NLS-1$
+            return o;
+        }
+
+        /**
+         * The Vanessa keys this branch of the call sets for itself.
+         * <p>
+         * The screenshot pair, and the asynchronous-step ceiling set to the same number the
+         * waiting step carries in its text: Vanessa waits the greater of the key and the step's
+         * own seconds, so a document from anywhere else with a larger key would hold the wait
+         * above what the caller asked for.
+         * </p>
+         *
+         * @return the keys, ready to be merged into the run's document
+         */
+        JsonObject ourKeys()
+        {
+            JsonObject o = screenshotKeys();
+            o.addProperty("ТаймаутДляАсинхронныхШагов", waitSeconds); //$NON-NLS-1$
+            return o;
+        }
+    }
+
+    /**
+     * The connection string with the user named in it, for the test manager.
+     * <p>
+     * The manager is started with {@code /IBConnectionString}, and that switch reads {@code Usr=}
+     * in the string. The test client the start step launches does not. Vanessa 1.2.042.19,
+     * {@code ПолучитьСтрокуЗапускаDesktopПриложение} in
+     * {@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl}, treats
+     * {@code ПутьКИнфобазе} as a path. A string containing {@code File=} has {@code File=} removed,
+     * every semicolon removed and one surrounding pair of quotes removed, and that result is
+     * checked as a directory (lines 42778-42783, {@code УбратьКавычки} at 42685-42691). A missing
+     * directory is {@code Каталог <%1> не найден} at 43058-43060. {@code Srvr=} becomes {@code /S}
+     * and {@code ";Ref="} becomes a backslash (42786-42788), so a {@code Usr} field after
+     * {@code Ref} stays on the server argument. A bare catalog, with no {@code =} and no semicolon,
+     * is wrapped as {@code File="...";} when the directory exists (42946-42949). {@code ws=}
+     * becomes {@code /WS} (42789-42790). The user reaches that client as {@code /N"..."} in
+     * {@code ДопПараметры}, which the same procedure appends to the command line (42838-42844).
+     * Vanessa writes that form itself: {@code ЗаполнитьДанныеТекущейИнфобазы} at 42631 and 42640,
+     * and {@code features/Libraries/VB/step_definitions/VBForm/Forms/Форма/Ext/Form/Module.bsl}
+     * line 144. The settings loader reads {@code TestClient.datatestclients} first
+     * ({@code PathToInfobase} and {@code AddItionalParameters}, lines 51809 and 53172-53202, the
+     * name table at 53407 and 53544) and the command-line runner then overwrites the row from
+     * {@code КлиентыТестирования} (51872-51876, {@code ПрочитатьДанныеКлиентовТестирования} at
+     * 27735-27736), so both blocks carry the same path and the same parameters.
+     * {@link #pathTheTestClientOpens} and {@link #parametersTheTestClientReceives} take the user
+     * back out of the string this method built.
      * </p>
      *
      * @param connectionString the infobase.
@@ -923,6 +1906,234 @@ public class VanessaTool implements IMcpTool
             said = said + ";"; //$NON-NLS-1$
         }
         return said + "Usr=\"" + user.trim() + "\";"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The path the test client is given: the connection string without its {@code Usr} field.
+     * <p>
+     * {@code File="catalog";} and {@code Srvr="server";Ref="base";} are the forms Vanessa converts
+     * into a launch argument. A {@code Usr} field in either one is not a user to Vanessa; see
+     * {@link #namingTheUser}. Quotes stay, including a semicolon inside them, because the field
+     * split that drops them turns a path into a different path.
+     * </p>
+     *
+     * @param connectionString the manager's string, which may name a user, or <code>null</code>.
+     * @return the path, or <code>null</code> when there was no string
+     */
+    static String pathTheTestClientOpens(String connectionString)
+    {
+        return pathAndUser(connectionString)[0];
+    }
+
+    /**
+     * The additional parameters the test client is given.
+     * <p>
+     * Empty when the string names no user. Otherwise {@code /N"..."}, the form Vanessa 1.2.042.19
+     * writes in {@code ЗаполнитьДанныеТекущейИнфобазы} (lines 42631 and 42640 of
+     * {@code VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl}) and in the step at
+     * {@code features/Libraries/VB/step_definitions/VBForm/Forms/Форма/Ext/Form/Module.bsl} line 144.
+     * {@code ПолучитьСтрокуЗапускаDesktopПриложение} appends {@code ДопПараметры} to the command
+     * line unchanged (42838-42844); {@code ЗапуститьСеанс1СЧерез1cv8} puts that line after the
+     * executable (42893) and {@code ВыполнитьКомандуОСБезПоказаЧерногоОкна} in
+     * {@code VanessaAutomation/Forms/ОбщегоНазначенияVA/Ext/Form/Module.bsl} writes it into a batch
+     * file as one line (711) after doubling {@code %} only (674). The characters inside {@code /N}
+     * are the decoded {@code Usr} value, the same name {@code /IBConnectionString} gives the test
+     * manager. A quote in the name is written twice: a quoted parameter of the platform command
+     * line carries a quote that way ({@code /IBName}, {@code /IBConnectionString}, {@code /C}), and
+     * Vanessa's filler does not add a second escaping pass. The value is the last {@code Usr}
+     * field.
+     * </p>
+     *
+     * @param connectionString the manager's string, which may name a user, or <code>null</code>.
+     * @return {@code /N"..."}, or an empty string when there is no user
+     */
+    static String parametersTheTestClientReceives(String connectionString)
+    {
+        String user = pathAndUser(connectionString)[1];
+        if (user == null || user.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return "/N\"" + user.replace("\"", "\"\"") + "\""; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    }
+
+    /**
+     * The connection string split into the path and the last user named in it.
+     *
+     * @param connectionString the string, or <code>null</code>.
+     * @return the path at {@code [0]} and the user at {@code [1]}, the user <code>null</code>
+     *         when none is named
+     */
+    private static String[] pathAndUser(String connectionString)
+    {
+        if (connectionString == null)
+        {
+            return new String[] {null, null};
+        }
+        StringBuilder kept = new StringBuilder();
+        StringBuilder field = new StringBuilder();
+        String user = null;
+        boolean quoted = false;
+        for (int i = 0; i < connectionString.length(); i++)
+        {
+            char c = connectionString.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                field.append(c);
+                continue;
+            }
+            if (c == ';' && !quoted)
+            {
+                user = keepOrDrop(field, kept, user, true);
+                continue;
+            }
+            field.append(c);
+        }
+        user = keepOrDrop(field, kept, user, false);
+        return new String[] {kept.toString(), user};
+    }
+
+    /**
+     * Keeps one field, or remembers it when it is the user.
+     *
+     * @param field the field, quotes included, with no separator.
+     * @param kept the path so far.
+     * @param user the last user seen, or <code>null</code>.
+     * @param hadSeparator whether a semicolon ended this field.
+     * @return the user, replaced when this field names one
+     */
+    private static String keepOrDrop(StringBuilder field, StringBuilder kept, String user,
+        boolean hadSeparator)
+    {
+        if (isUserField(field))
+        {
+            String value = valueOfField(field);
+            if (!value.isEmpty())
+            {
+                user = value;
+            }
+        }
+        else
+        {
+            kept.append(field);
+            if (hadSeparator)
+            {
+                kept.append(';');
+            }
+        }
+        field.setLength(0);
+        return user;
+    }
+
+    /**
+     * Whether this field is {@code Usr}, rather than a path that happens to contain those letters.
+     *
+     * @param field one field of a connection string.
+     * @return true when the name before {@code =} is {@code Usr}
+     */
+    private static boolean isUserField(CharSequence field)
+    {
+        return "usr".equals(fieldName(field).toLowerCase(java.util.Locale.ROOT)); //$NON-NLS-1$
+    }
+
+    /**
+     * The name of a field, up to the first {@code =} that is not inside quotes.
+     *
+     * @param field one field of a connection string.
+     * @return the name, trimmed, quotes removed
+     */
+    private static String fieldName(CharSequence field)
+    {
+        StringBuilder name = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < field.length(); i++)
+        {
+            char c = field.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (c == '=' && !quoted)
+            {
+                break;
+            }
+            name.append(c);
+        }
+        return name.toString().trim();
+    }
+
+    /**
+     * The value of a field, read by the rules of a 1C connection string.
+     * <p>
+     * Quotes around the value are delimiters. A doubled quote inside them is one quote, and spaces
+     * inside them stay, including at the edges, because those spaces are part of the name. An
+     * unquoted value is trimmed: spaces outside quotes are not part of it.
+     * </p>
+     *
+     * @param field one field of a connection string.
+     * @return the value, or an empty string when the field has no {@code =}
+     */
+    private static String valueOfField(CharSequence field)
+    {
+        int separator = -1;
+        boolean quoted = false;
+        for (int i = 0; i < field.length(); i++)
+        {
+            char c = field.charAt(i);
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (c == '=' && !quoted)
+            {
+                separator = i;
+                break;
+            }
+        }
+        if (separator < 0)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        int start = separator + 1;
+        while (start < field.length() && field.charAt(start) <= ' ')
+        {
+            start++;
+        }
+        if (start >= field.length())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        if (field.charAt(start) != '"')
+        {
+            int end = field.length();
+            while (end > start && field.charAt(end - 1) <= ' ')
+            {
+                end--;
+            }
+            return field.subSequence(start, end).toString();
+        }
+        StringBuilder value = new StringBuilder();
+        int i = start + 1;
+        while (i < field.length())
+        {
+            char c = field.charAt(i);
+            if (c == '"')
+            {
+                if (i + 1 < field.length() && field.charAt(i + 1) == '"')
+                {
+                    value.append('"');
+                    i += 2;
+                    continue;
+                }
+                break;
+            }
+            value.append(c);
+            i++;
+        }
+        return value.toString();
     }
 
     /**
@@ -988,7 +2199,8 @@ public class VanessaTool implements IMcpTool
      * @param shotsDir where Vanessa writes failure screenshots.
      * @param screenshots whether to capture one when a step fails.
      * @param keepOpen whether to leave the client running afterwards.
-     * @param connectionString the infobase the test client opens.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the test client's path and passed as {@code /N}.
      * @param clientPort the port the test client listens on.
      * @param clientTimeoutSec the whole budget of the run; the client share of it is taken by
      *            {@link #clientWaitWithin(int)}.
@@ -1000,6 +2212,35 @@ public class VanessaTool implements IMcpTool
         boolean screenshots, boolean keepOpen, String connectionString,
         int clientPort, int clientTimeoutSec, boolean withTestClient, JsonObject extra)
     {
+        return buildVaParams(featurePath, junitFile, shotsDir, screenshots, keepOpen,
+            connectionString, clientPort, clientTimeoutSec, withTestClient, extra, null);
+    }
+
+    /**
+     * The Vanessa {@code VAParams.json}, with the keys of this call's own branch.
+     *
+     * @param featurePath the scenarios, a file or a directory of them.
+     * @param junitFile where Vanessa writes the report this run is read from.
+     * @param shotsDir where Vanessa writes failure screenshots.
+     * @param screenshots whether to capture one when a step fails.
+     * @param keepOpen whether to leave the client running afterwards.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the test client's path and passed as {@code /N}.
+     * @param clientPort the port the test client listens on.
+     * @param clientTimeoutSec the whole budget of the run.
+     * @param withTestClient whether to name a test client for the start step to launch.
+     * @param extra what the caller added to the Vanessa document, merged last.
+     * @param ours the keys this tool sets on the branch the call took - the capture keys
+     *            wherever it composes a scenario that saves a frame, and the
+     *            asynchronous-step ceiling on the branch whose step carries a wait - or
+     *            <code>null</code> on a branch that composes none.
+     * @return the document, ready to be written
+     */
+    static String buildVaParams(File featurePath, File junitFile, File shotsDir,
+        boolean screenshots, boolean keepOpen, String connectionString,
+        int clientPort, int clientTimeoutSec, boolean withTestClient, JsonObject extra,
+        JsonObject ours)
+    {
         JsonObject o = new JsonObject();
         // The step that starts TestClient has no client to start without this block: the run
         // answers "Тип не определен (ТестируемаяГруппаФормы)" with an empty client type and PID 0,
@@ -1008,6 +2249,12 @@ public class VanessaTool implements IMcpTool
         {
             o.add("TestClient", //$NON-NLS-1$
                 testClient(connectionString, clientPort, clientWaitWithin(clientTimeoutSec)));
+            // datatestclients only adds a row. The start step launches the current row, which
+            // stays "Этот клиент" unless КлиентыТестирования names the row and activates it.
+            // The command-line runner reads that key after the settings load, by the Russian
+            // name, and the client type is stored as given - "Thin" would launch the thick client.
+            o.add("КлиентыТестирования", //$NON-NLS-1$
+                clientTheStartStepActivates(connectionString, clientPort));
         }
         // Without this Vanessa opens its own window and waits there. Every run then spends its
         // whole time budget on a form nobody is looking at, ends killed, and writes no report -
@@ -1042,6 +2289,15 @@ public class VanessaTool implements IMcpTool
         // decides to, and the test client it started is left behind.
         o.addProperty("ЗакрытьTestClientПослеЗапускаСценариев", !keepOpen); //$NON-NLS-1$
         o.addProperty("ЗавершитьРаботуСистемы", !keepOpen); //$NON-NLS-1$
+        if (ours != null)
+        {
+            // Merged before the caller's own, though the passthrough is barred from carrying these
+            // names anyway: the order is a statement about whose keys these are, not a defence.
+            for (java.util.Map.Entry<String, com.google.gson.JsonElement> e : ours.entrySet())
+            {
+                o.add(e.getKey(), e.getValue());
+            }
+        }
         if (extra != null)
         {
             for (java.util.Map.Entry<String, com.google.gson.JsonElement> e : extra.entrySet())
@@ -1054,6 +2310,16 @@ public class VanessaTool implements IMcpTool
 
     /** The port the test client listens on when the caller names none. */
     static final int TEST_CLIENT_PORT = 48010;
+
+    /**
+     * The profile name both client tables carry, so they name one row.
+     * <p>
+     * {@code datatestclients} merges by this name, and {@code КлиентыТестирования} finds the same
+     * row and makes it the current one. A second name would be a second client the start step
+     * never launches.
+     * </p>
+     */
+    static final String TEST_CLIENT_PROFILE = "AiEdt"; //$NON-NLS-1$
 
     /**
      * The longest the run waits for the test client to answer. A client that has not come up
@@ -1118,7 +2384,8 @@ public class VanessaTool implements IMcpTool
      * The {@code TestClient} block of VAParams: which infobase the client opens, on which port and
      * as which client type.
      *
-     * @param connectionString the infobase the test client opens.
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the test client's path and passed as {@code /N}.
      * @param clientPort the port the client listens on.
      * @param clientTimeoutSec seconds Vanessa waits for the client to answer. Taken from the
      *            run's own budget up to {@link #TEST_CLIENT_WAIT_CEILING_SEC}.
@@ -1127,11 +2394,15 @@ public class VanessaTool implements IMcpTool
     static JsonObject testClient(String connectionString, int clientPort, int clientTimeoutSec)
     {
         JsonObject client = new JsonObject();
-        client.addProperty("Name", "AiEdt"); //$NON-NLS-1$ //$NON-NLS-2$
-        client.addProperty("PathToInfobase", connectionString); //$NON-NLS-1$
+        client.addProperty("Name", TEST_CLIENT_PROFILE); //$NON-NLS-1$
+        client.addProperty("PathToInfobase", pathTheTestClientOpens(connectionString)); //$NON-NLS-1$
         client.addProperty("PortTestClient", clientPort); //$NON-NLS-1$
         // Vanessa spells this key with that capital I. Correcting it leaves the key unread.
-        client.addProperty("AddItionalParameters", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        // The value is /N"user" when the connection string names one, and empty when it does not.
+        // Usr stays out of the path: Vanessa derives a directory from File= and a server argument
+        // from Srvr= and Ref=, and a user field in that string becomes part of either.
+        client.addProperty("AddItionalParameters", //$NON-NLS-1$
+            parametersTheTestClientReceives(connectionString));
         client.addProperty("ClientType", "Thin"); //$NON-NLS-1$ //$NON-NLS-2$
         client.addProperty("ComputerName", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
         com.google.gson.JsonArray clients = new com.google.gson.JsonArray();
@@ -1141,6 +2412,42 @@ public class VanessaTool implements IMcpTool
         block.addProperty("testclienttimeout", clientTimeoutSec); //$NON-NLS-1$
         block.add("datatestclients", clients); //$NON-NLS-1$
         return block;
+    }
+
+    /**
+     * The row the start step launches: the same profile as {@code datatestclients}, made current.
+     * <p>
+     * Vanessa 1.2.042.19 reads {@code КлиентыТестирования} by that name
+     * ({@code ПолучитьЗначениеПараметра} matches the key or its upper case, not the English
+     * alias) and requires {@code Имя}, {@code ТипКлиента}, {@code ПутьКИнфобазе},
+     * {@code ДопПараметры} and {@code ИмяКомпьютера}. {@code АктивизироватьСтроку} defaults to
+     * true and sets the current row, which is the row
+     * {@code ЯЗапускаюСценарийОткрытияTestClientИлиПодключаюУжеСуществующий} launches.
+     * {@code ТипКлиента} is stored as given, so it is {@code Тонкий} and not {@code Thin}.
+     * {@code ПутьКИнфобазе} is {@link #pathTheTestClientOpens} and {@code ДопПараметры} is
+     * {@link #parametersTheTestClientReceives}, the same split the English block carries: the
+     * command-line runner overwrites the row from this block after the English one has loaded.
+     * </p>
+     *
+     * @param connectionString the infobase, as the test manager is started with it. {@code Usr} in
+     *            it is taken out of the path and passed as {@code /N}.
+     * @param clientPort the port the client listens on.
+     * @return one row, ready to be the value of {@code КлиентыТестирования}
+     */
+    static com.google.gson.JsonArray clientTheStartStepActivates(String connectionString,
+        int clientPort)
+    {
+        JsonObject row = new JsonObject();
+        row.addProperty("Имя", TEST_CLIENT_PROFILE); //$NON-NLS-1$
+        row.addProperty("ПутьКИнфобазе", pathTheTestClientOpens(connectionString)); //$NON-NLS-1$
+        row.addProperty("ПортЗапускаТестКлиента", clientPort); //$NON-NLS-1$
+        row.addProperty("ДопПараметры", parametersTheTestClientReceives(connectionString)); //$NON-NLS-1$
+        row.addProperty("ТипКлиента", "Тонкий"); //$NON-NLS-1$ //$NON-NLS-2$
+        row.addProperty("ИмяКомпьютера", "localhost"); //$NON-NLS-1$ //$NON-NLS-2$
+        row.addProperty("АктивизироватьСтроку", true); //$NON-NLS-1$
+        com.google.gson.JsonArray rows = new com.google.gson.JsonArray();
+        rows.add(row);
+        return rows;
     }
 
     /**
@@ -1161,11 +2468,42 @@ public class VanessaTool implements IMcpTool
         // needs; what it can carry is a value that replaces the block with something the start step
         // cannot use. Its port and its deadline are arguments of this tool instead.
         "TestClient", //$NON-NLS-1$
+        // The row the start step launches. A passthrough replacing it would leave the current
+        // row on "Этот клиент" while the answer still said the run opened the project's base.
+        "КлиентыТестирования", //$NON-NLS-1$
         // These come from arguments of this tool. Letting the passthrough set them too would mean
         // the later one silently wins, and the caller who passed screenshots=true would be told it
         // ran with screenshots while it did not.
         "КаталогФич", "ДелатьСкриншотПриВозникновенииОшибки", //$NON-NLS-1$ //$NON-NLS-2$
-        "КаталогOutputСкриншоты", "СписокФичДляВыполнения"); //$NON-NLS-1$ //$NON-NLS-2$
+        "КаталогOutputСкриншоты", "СписокФичДляВыполнения", //$NON-NLS-1$ //$NON-NLS-2$
+        // The screenshot pair, the capture method and the asynchronous-step ceiling, set by the
+        // branches that compose a scenario of their own. Letting the passthrough carry any of
+        // them would raise the ceiling above the seconds the caller named, turn the capture off
+        // while the answer still promised a frame, or put the whole screen back where a failure
+        // screenshot was asked for the test client's window.
+        "ИспользоватьКомпонентуVanessaExt", "ИспользоватьВнешнююКомпонентуДляСкриншотов", //$NON-NLS-1$ //$NON-NLS-2$
+        "СпособСнятияСкриншотовВнешнейКомпонентой", //$NON-NLS-1$
+        "ТаймаутДляАсинхронныхШагов"); //$NON-NLS-1$
+
+    /**
+     * The English names Vanessa's name table gives keys this tool sets, lower-cased.
+     * <p>
+     * {@code ТаблицаИменНоваяСтрока} reads {@code useaddin} as
+     * {@code ИспользоватьКомпонентуVanessaExt}, {@code useaddinforscreencapture} as
+     * {@code ИспользоватьВнешнююКомпонентуДляСкриншотов}, {@code screencaptureaddinmethod} as
+     * {@code СпособСнятияСкриншотовВнешнейКомпонентой}, {@code timeoutforasynchronoussteps}
+     * as {@code ТаймаутДляАсинхронныхШагов}, and {@code testclienttable} as
+     * {@code КлиентыТестирования}. They are not keys this tool writes - the document carries the
+     * Russian names - so they do not belong in {@link #OURS_TO_SET}, whose census is the keys
+     * that were written. A passthrough carrying one is merged after those keys. The settings
+     * loader then skips {@code клиентытестирования}, so the English name would be dropped and
+     * the current row would stay whatever it was. The capture method is the exception it does
+     * assign by the Russian name, which is why the English alias is barred here too.
+     * </p>
+     */
+    static final java.util.Set<String> OURS_BY_ENGLISH_NAME = lowerCased(
+        "useaddin", "useaddinforscreencapture", "screencaptureaddinmethod", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "timeoutforasynchronoussteps", "testclienttable"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Field names a connection string carries a password under that no rule would catch.
@@ -1270,8 +2608,10 @@ public class VanessaTool implements IMcpTool
         for (String key : given.keySet())
         {
             // Without a locale, lower-casing turns I into a dotless letter where the machine is
-            // set to Turkish, and a protected name stops matching.
-            if (OURS_TO_SET.contains(key.toLowerCase(java.util.Locale.ROOT)))
+            // set to Turkish, and a protected name stops matching. The English names are the same
+            // settings under the names Vanessa's own table gives them.
+            String lower = key.toLowerCase(java.util.Locale.ROOT);
+            if (OURS_TO_SET.contains(lower) || OURS_BY_ENGLISH_NAME.contains(lower))
             {
                 refusal[0] = "'" + key + "' is set by this tool, from its own " //$NON-NLS-1$ //$NON-NLS-2$
                     + "arguments. Passing it here as well would leave the answer describing a " //$NON-NLS-1$

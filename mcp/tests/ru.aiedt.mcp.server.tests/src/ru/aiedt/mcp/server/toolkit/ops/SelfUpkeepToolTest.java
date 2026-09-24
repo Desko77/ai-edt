@@ -13,9 +13,14 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
+import org.eclipse.jface.preference.IPreferenceStore;
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.upkeep.ReleaseOffer;
 
@@ -160,17 +165,28 @@ public class SelfUpkeepToolTest
     @Test
     public void theFacadeIsNotAWayPastTheToolBeingSwitchedOff()
     {
-        // The catalog decides, and in this runtime nothing is registered, so it says no. That is
-        // the branch worth pinning: a preset that switches self_upkeep off must not be bypassable
-        // by asking project_admin for the same operation, and without the gate the facade would
-        // simply run it.
+        // The catalog decides, and with self_upkeep switched off in the tool settings it says no
+        // whatever is registered. That is the branch worth pinning: a preset that switches
+        // self_upkeep off must not be bypassable by asking project_admin for the same operation,
+        // and without the gate the facade would simply run it.
         Map<String, String> params = new HashMap<>();
         params.put("operation", "self_upkeep"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("action", "status"); //$NON-NLS-1$ //$NON-NLS-2$
-
-        String json = new ProjectAdminFacadeTool().execute(params);
-        assertTrue(json, json.contains("is disabled and was not executed")); //$NON-NLS-1$
-        assertTrue(json, json.contains("self_upkeep")); //$NON-NLS-1$
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        String presetBefore = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        String disabledBefore = store.getString(PrefKeys.PREF_DISABLED_TOOLS);
+        ToolSettingsStore.getInstance().setDisabledTools(Set.of("self_upkeep")); //$NON-NLS-1$
+        try
+        {
+            String json = new ProjectAdminFacadeTool().execute(params);
+            assertTrue(json, json.contains("is disabled and was not executed")); //$NON-NLS-1$
+            assertTrue(json, json.contains("self_upkeep")); //$NON-NLS-1$
+        }
+        finally
+        {
+            store.setValue(PrefKeys.PREF_DISABLED_TOOLS, disabledBefore);
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, presetBefore);
+        }
     }
 
     private static Map<String, String> params(String action)

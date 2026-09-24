@@ -33,6 +33,13 @@ public final class ToolWhiteboard
     /** Service property of an {@link IMcpTool}: whether the tool writes. */
     public static final String WRITES = "ru.aiedt.mcp.tool.writes"; //$NON-NLS-1$
 
+    /**
+     * Service property of an {@link IMcpTool}: whether one call of the tool can be genuinely
+     * expensive, so the heap gate and the heavy-tool limiter apply to it. Absent, the tool counts
+     * as light.
+     */
+    public static final String HEAVY = "ru.aiedt.mcp.tool.heavy"; //$NON-NLS-1$
+
     private ServiceTracker<IMcpTool, IMcpTool> tools;
 
     private ServiceTracker<IModuleSourceProvider, IModuleSourceProvider> providers;
@@ -52,7 +59,31 @@ public final class ToolWhiteboard
      */
     public void openInBackground(BundleContext context)
     {
-        Thread opener = new Thread(() -> open(context), "AI-EDT whiteboard"); //$NON-NLS-1$
+        openInBackground(context, null);
+    }
+
+    /**
+     * Starts watching on a thread of its own, then runs {@code afterOpen} on that same thread
+     * once {@link #open} has returned.
+     * <p>
+     * The activator publishes the road from this callback. A tracker that receives the road then
+     * already sees the external tools this open collected. The activating thread must not join
+     * the opener: opening a tracker there re-enters the SCR cycle described on
+     * {@link #openInBackground(BundleContext)}.
+     * </p>
+     *
+     * @param context this bundle's context
+     * @param afterOpen run after the trackers are open; may be {@code null}
+     */
+    public void openInBackground(BundleContext context, Runnable afterOpen)
+    {
+        Thread opener = new Thread(() -> {
+            open(context);
+            if (afterOpen != null)
+            {
+                afterOpen.run();
+            }
+        }, "AI-EDT whiteboard"); //$NON-NLS-1$
         opener.setDaemon(true);
         opener.start();
     }
@@ -76,7 +107,8 @@ public final class ToolWhiteboard
                 IMcpTool tool = context.getService(reference);
                 if (tool != null)
                 {
-                    McpToolCatalog.getInstance().registerExternal(tool, writes(reference));
+                    McpToolCatalog.getInstance().registerExternal(tool, writes(reference),
+                        heavy(reference));
                     Activator.logInfo("tool from " + reference.getBundle().getSymbolicName() + ": " + tool.getName()); //$NON-NLS-1$ //$NON-NLS-2$
                 }
                 else
@@ -90,7 +122,7 @@ public final class ToolWhiteboard
             @Override
             public void modifiedService(ServiceReference<IMcpTool> reference, IMcpTool tool)
             {
-                McpToolCatalog.getInstance().registerExternal(tool, writes(reference));
+                McpToolCatalog.getInstance().registerExternal(tool, writes(reference), heavy(reference));
             }
 
             @Override
@@ -164,5 +196,17 @@ public final class ToolWhiteboard
         }
         // A tool that does not say counts as a writer: the safe side of a preset that blocks writes.
         return value == null || !"false".equalsIgnoreCase(String.valueOf(value)); //$NON-NLS-1$
+    }
+
+    private static boolean heavy(ServiceReference<?> reference)
+    {
+        Object value = reference.getProperty(HEAVY);
+        if (value instanceof Boolean)
+        {
+            return ((Boolean)value).booleanValue();
+        }
+        // A tool that does not say counts as light, the same as this server's own tool the heavy
+        // list does not name.
+        return value != null && "true".equalsIgnoreCase(String.valueOf(value)); //$NON-NLS-1$
     }
 }

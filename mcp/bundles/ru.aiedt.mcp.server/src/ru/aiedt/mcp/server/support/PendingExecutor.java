@@ -149,6 +149,12 @@ public final class PendingExecutor
             }
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey, work);
+        // The name a poll must declare. The road's generic wrapper resumes a tool called by this
+        // name; any other call resumes the entry only when it declares the name itself.
+        if (entry.startedBy == null)
+        {
+            entry.startedBy = operationName;
+        }
         String result = entry.await(waitMs);
         if (result != null)
         {

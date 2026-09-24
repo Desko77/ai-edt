@@ -21,16 +21,24 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.v2.IInfobaseSynchronizationStateManager;
+import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.wiring.ServiceAccess;
+import com.e1c.g5.dt.applications.IApplication;
+import com.e1c.g5.dt.applications.IApplicationManager;
+import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -76,6 +84,29 @@ public final class SyncBaseline
      * be moved by the writer that did not fill it.
      */
     private static final Object WRITE_LOCK = new Object();
+
+    /**
+     * Why {@link #indexes(IProject)} left the per-user store unread on this thread, or {@code null}
+     * when that store was read. Set on every call, so a later success does not keep an earlier failure.
+     */
+    private static final ThreadLocal<String> PER_USER_STORE_OMISSION = new ThreadLocal<>();
+
+    /** Named when the application manager cannot be asked. */
+    private static final String PER_USER_STORE_UNAVAILABLE =
+        "the per-user sync store was not read: the application manager is unavailable"; //$NON-NLS-1$
+
+    /**
+     * The per-user store {@link #indexes(IProject)} reads. {@code null} uses {@link #roamingStore()}.
+     * Tests point this at a temporary directory so a real per-user baseline is never consulted.
+     */
+    static volatile Path sharedStoreForTests;
+
+    /**
+     * The application manager {@link #indexes(IProject)} asks. {@code null} asks EDT. A callable that
+     * returns {@code null} is an unavailable manager; one that throws is a manager that failed.
+     * Tests install one and clear it afterwards.
+     */
+    static volatile Callable<IApplicationManager> applicationsForTests;
 
     /** The content of an {@code index.idx}, in either layout. */
     public static final class Index
@@ -278,8 +309,9 @@ public final class SyncBaseline
 
     /**
      * The root {@code uuid} of {@code src/Configuration/Configuration.mdo} - the id EDT's update
-     * flow compares with the one a baseline recorded, and so the id that ties a baseline in the
-     * per-user store to a project.
+     * flow compares with the one a baseline recorded. {@code sync_control} status uses that
+     * comparison to predict a full reload. It does not select which baselines belong to the
+     * project; {@link #indexes(IProject)} does that from the project's applications.
      *
      * @param project the project
      * @return the id, or {@code null} when the file is missing or carries none
@@ -386,9 +418,14 @@ public final class SyncBaseline
     }
 
     /**
-     * The indexes of the project's own infobases: every one in the workspace store, which is
-     * the project's alone, and the ones in the per-user store of older EDT whose recorded
-     * configuration id is the project's.
+     * The indexes of the infobases this project is bound to. Every index in the workspace store is
+     * included: that store belongs to this project alone. From the per-user store, only an index
+     * whose directory name is the uuid of an infobase application of this project. The recorded
+     * configuration id is not consulted.
+     *
+     * <p>When the application manager is unavailable or throws, the per-user store is not read at
+     * all and {@link #perUserStoreOmission()} returns the reason, for the caller to name in its
+     * answer. Otherwise that method returns {@code null}.</p>
      *
      * @param project the project
      * @return the existing index files; the infobase id is the parent directory's name
@@ -396,8 +433,27 @@ public final class SyncBaseline
     public static List<Path> indexes(IProject project)
     {
         List<Path> indexes = workspaceIndexes(project);
-        indexes.addAll(matchingIndexes(roamingStore(), configurationUuid(project)));
+        ProjectApplications applications = projectApplications(project);
+        PER_USER_STORE_OMISSION.set(applications.omission);
+        if (applications.omission != null)
+        {
+            Activator.logWarning(applications.omission);
+            return indexes;
+        }
+        indexes.addAll(indexesNamed(sharedStore(), applications.uuids));
         return indexes;
+    }
+
+    /**
+     * Why the last {@link #indexes(IProject)} on this thread left the per-user store unread, or
+     * {@code null} when that store was read. The caller names a non-null reason in its answer, so an
+     * unavailable application manager is not mistaken for a project with no per-user baselines.
+     *
+     * @return the reason, or {@code null}
+     */
+    public static String perUserStoreOmission()
+    {
+        return PER_USER_STORE_OMISSION.get();
     }
 
     /**
@@ -427,8 +483,12 @@ public final class SyncBaseline
     }
 
     /**
-     * The indexes of a store shared between projects whose recorded configuration id is the
-     * given one. An index that does not read is left out.
+     * The indexes in a store whose recorded configuration id equals the given one. An index that
+     * does not read is left out. {@code null} matches nothing.
+     *
+     * <p>This is the comparison {@code sync_control} status shows as {@code matchesProject}: whether
+     * a stored baseline was recorded for this configuration. It is not the set of baselines that
+     * belong to a project. {@link #indexes(IProject)} does not use it.</p>
      *
      * @param store the store, {@code ib-sync/ss}; it need not exist
      * @param configurationUuid the id to match; {@code null} matches nothing
@@ -591,5 +651,147 @@ public final class SyncBaseline
             }
         }
         return null;
+    }
+
+    /** The per-user store {@link #indexes(IProject)} reads, or the test double standing in for it. */
+    private static Path sharedStore()
+    {
+        Path override = sharedStoreForTests;
+        return override != null ? override : roamingStore();
+    }
+
+    /**
+     * The infobases the project is bound to, or why that question could not be asked.
+     * A failure here is the whole answer: a partial list would still hand a foreign baseline to a
+     * caller that blanks every path it is given.
+     */
+    private static ProjectApplications projectApplications(IProject project)
+    {
+        IApplicationManager manager;
+        try
+        {
+            manager = applicationManager();
+        }
+        catch (Exception failed)
+        {
+            return ProjectApplications.omitted(applicationManagerFailed(failed));
+        }
+        if (manager == null)
+        {
+            return ProjectApplications.omitted(PER_USER_STORE_UNAVAILABLE);
+        }
+        try
+        {
+            return ProjectApplications.read(infobaseUuids(manager.getApplications(project)));
+        }
+        catch (Exception failed)
+        {
+            return ProjectApplications.omitted(applicationManagerFailed(failed));
+        }
+    }
+
+    private static IApplicationManager applicationManager() throws Exception
+    {
+        Callable<IApplicationManager> installed = applicationsForTests;
+        if (installed != null)
+        {
+            return installed.call();
+        }
+        Activator activator = Activator.getDefault();
+        return activator == null ? null : activator.getApplicationManager();
+    }
+
+    private static Set<String> infobaseUuids(List<IApplication> applications)
+    {
+        Set<String> uuids = new HashSet<>();
+        if (applications == null)
+        {
+            return uuids;
+        }
+        for (IApplication application : applications)
+        {
+            if (!(application instanceof IInfobaseApplication))
+            {
+                continue;
+            }
+            InfobaseReference infobase = ((IInfobaseApplication)application).getInfobase();
+            if (infobase == null || infobase.getUuid() == null)
+            {
+                continue;
+            }
+            uuids.add(infobase.getUuid().toString());
+        }
+        return uuids;
+    }
+
+    private static String applicationManagerFailed(Exception failed)
+    {
+        return "the per-user sync store was not read: the application manager failed (" //$NON-NLS-1$
+            + TextSuggest.safeMessage(failed) + ")"; //$NON-NLS-1$
+    }
+
+    /**
+     * Indexes in {@code store} whose directory name is one of {@code infobaseUuids}. The recorded
+     * configuration id is not read.
+     */
+    private static List<Path> indexesNamed(Path store, Set<String> infobaseUuids)
+    {
+        List<Path> indexes = new ArrayList<>();
+        if (infobaseUuids == null || infobaseUuids.isEmpty() || !store.toFile().isDirectory())
+        {
+            return indexes;
+        }
+        Set<String> wanted = new HashSet<>();
+        for (String uuid : infobaseUuids)
+        {
+            if (uuid != null)
+            {
+                wanted.add(uuid.toLowerCase(Locale.ROOT));
+            }
+        }
+        File[] dirs = store.toFile().listFiles(File::isDirectory);
+        if (dirs == null)
+        {
+            return indexes;
+        }
+        for (File dir : dirs)
+        {
+            if (!wanted.contains(dir.getName().toLowerCase(Locale.ROOT)))
+            {
+                continue;
+            }
+            File idx = new File(dir, INDEX_FILE);
+            if (idx.isFile())
+            {
+                indexes.add(idx.toPath());
+            }
+        }
+        return indexes;
+    }
+
+    /** Infobase uuids of the project's applications, or why they could not be asked. */
+    private static final class ProjectApplications
+    {
+        /** Present when {@link #omission} is {@code null}. */
+        final Set<String> uuids;
+
+        /** Why the per-user store stays unread, or {@code null} when it may be read. */
+        final String omission;
+
+        private ProjectApplications(Set<String> uuids, String omission)
+        {
+            this.uuids = uuids;
+            this.omission = omission;
+        }
+
+        static ProjectApplications read(Set<String> uuids)
+        {
+            return new ProjectApplications(uuids, null);
+        }
+
+        static ProjectApplications omitted(String omission)
+        {
+            return new ProjectApplications(Set.of(), omission);
+        }
     }
 }

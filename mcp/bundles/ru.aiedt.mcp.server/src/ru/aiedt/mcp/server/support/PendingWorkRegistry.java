@@ -88,6 +88,18 @@ public final class PendingWorkRegistry
         "import_configuration_from_binary", "import-binary-async"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * Async backend for {@code export_infobase_objects} infobase exports.
+     * <p>
+     * Not {@link #EXPORT}: that one belongs to {@code export_object}'s .epf/.erf builds. This
+     * operation writes files and disconnects EDT from an infobase, so its runKeys are unique per
+     * call - two identical calls are two runs, never one coalesced future and never a replayed
+     * cached answer.
+     * </p>
+     */
+    public static final PendingWorkRegistry EXPORT_INFOBASE = new PendingWorkRegistry(
+        "export_infobase_objects", "export-infobase-async"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * TTL for the scenario domain, whose longest accepted run is an hour.
      * <p>
      * The default would evict a run that is still executing: its entry and its eventual result
@@ -106,6 +118,26 @@ public final class PendingWorkRegistry
      */
     public static final PendingWorkRegistry VANESSA = new PendingWorkRegistry(
         "vanessa", "vanessa-async", 1, VANESSA_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * How long a question that nobody came back for is kept.
+     * <p>
+     * The longest accepted question is {@code timeoutSeconds} of 1800. The entry has to outlive
+     * that, plus a margin, or a question still running is dropped and a later poll reports it
+     * missing.
+     * </p>
+     */
+    private static final long NAPARNIK_ABANDONED_TTL_MS = 40L * 60L * 1000L;
+
+    /**
+     * Questions sent to 1C:Naparnik.
+     * <p>
+     * One at a time, on one thread. The key is unique per question: two identical questions are
+     * two runs, and a finished answer is not replayed for a later one.
+     * </p>
+     */
+    public static final PendingWorkRegistry NAPARNIK = new PendingWorkRegistry(
+        "naparnik", "naparnik-async", 1, NAPARNIK_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Shared async backend for the slow read-only analysis tools that are wrapped
@@ -159,6 +191,17 @@ public final class PendingWorkRegistry
     private final long abandonedTtlMs;
 
     private final ConcurrentHashMap<String, PendingEntry> entries = new ConcurrentHashMap<>();
+
+    /**
+     * Runs inside a supplier before the body claims its start, when a test has set it.
+     * <p>
+     * Production leaves it {@code null}. The consumer is handed the entry so the test can cancel
+     * that run even when the supplier is still inside {@code computeIfAbsent}. A supplier parked
+     * here has been entered and has not yet begun, which is the window in which a cancel must
+     * either keep the body from running or keep the permit until the body leaves.
+     * </p>
+     */
+    static volatile java.util.function.Consumer<PendingEntry> beforeWorkClaim;
 
     private final ExecutorService executor;
 
@@ -241,6 +284,10 @@ public final class PendingWorkRegistry
 
     /**
      * As {@link #getOrStart(String, Supplier)}, for work that reports its progress.
+     * <p>
+     * When a call scope is current, the entry it dispatches is also noted on that scope, so the
+     * caller's answer can find the run again after the registry's own tracking of it is dropped.
+     * </p>
      *
      * @param runKey the coalescing key, never {@code null}
      * @param work the body, handed the entry it runs under so it can set
@@ -249,29 +296,27 @@ public final class PendingWorkRegistry
      */
     public PendingEntry getOrStart(String runKey, Function<PendingEntry, String> work)
     {
-        // Capture just the calling (worker) thread's cancellation flag so the async work can expose
-        // it and a cooperative loop on the executor thread bails out when the operator cancels. We
-        // capture the flag, not the whole scope, so the future does not pin the RunningToolCall (and
-        // its HttpExchange) alive for the run's duration.
+        // Capture the calling (worker) thread's whole call scope and re-enter it on the executor
+        // thread for the duration of the work. The scope carries more than the cancellation flag
+        // now: it carries the heavy-permit ticket a nested heavy call inherits, and the work runs
+        // under the permit its call holds. The call graph - the RunningToolCall and its
+        // HttpExchange - stays reachable for the run's duration with it; a run that answers Pending
+        // goes on after its exchange is closed, and everything a cancel or a nested call needs has
+        // to outlive that exchange with it.
         //
-        // On coalesce the first caller's flag wins - a later caller's cancel does not reach the shared
-        // work. That is right for a read whose result the later caller still wants; it also means a
-        // second caller cannot cancel the first's work.
-        //
-        // REFERENCES now carries cancellation checkpoints, so this is visible rather than theoretical:
-        // find_references answers Pending past its await timeout, and a cancel arriving on the resumed
-        // call reaches that caller's own flag while the work runs under the first one's. Closing it
-        // needs the entry to hold the flag the work reads and every waiter to be able to raise it -
-        // a change to this registry, not to the tools.
+        // On coalesce the first caller's scope wins - a later caller's cancel does not reach the
+        // shared work. That is right for a read whose result the later caller still wants; it also
+        // means a second caller cannot cancel the first's work.
         ToolCallScope current = ToolCallScope.current();
         ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
         ru.aiedt.mcp.server.RunningToolCall starter = current != null ? current.runningCall() : null;
-        return entries.computeIfAbsent(runKey, k ->
+        PendingEntry started = entries.computeIfAbsent(runKey, k ->
         {
             PendingEntry entry = new PendingEntry(k);
-            // The flag the work reads, kept where it outlives the request that made it. A run that
-            // answers Pending goes on after its exchange is closed, and until the entry held this
-            // there was nothing left for a withdrawal to raise.
+            // The scope the work runs under, kept where it outlives the request that made it. A
+            // run that answers Pending goes on after its exchange is closed, and until the entry
+            // held this there was nothing left for a withdrawal to raise.
+            entry.scope = current;
             entry.cancellation = dispatchCancellation;
             if (starter != null)
             {
@@ -281,14 +326,26 @@ public final class PendingWorkRegistry
             }
             entry.future = CompletableFuture.supplyAsync(() ->
             {
-                ToolCallScope previous = ToolCallScope.current();
-                if (dispatchCancellation != null)
+                // A test parks the supplier here, after it has been entered and before it claims
+                // the start: the window a cancel must close. Production leaves the gate unset.
+                java.util.function.Consumer<PendingEntry> gate = beforeWorkClaim;
+                if (gate != null)
                 {
-                    ToolCallScope.enter(ToolCallScope.forCancellation(dispatchCancellation));
+                    gate.accept(entry);
+                }
+                // The claim and a cancel's "never began" share one lock. Losing it means the body
+                // must not run: the permit, if any, was already returned.
+                if (!entry.claimWorkStart())
+                {
+                    return null;
+                }
+                ToolCallScope previous = ToolCallScope.current();
+                if (current != null)
+                {
+                    ToolCallScope.enter(current);
                 }
                 try
                 {
-                    entry.beganAt = System.currentTimeMillis();
                     return work.apply(entry);
                 }
                 catch (Throwable t)
@@ -301,7 +358,7 @@ public final class PendingWorkRegistry
                     // Restore whatever was bound before. On a fresh executor thread nothing was, so
                     // exit; but CallerRunsPolicy runs this inline on the submitting tool-worker thread,
                     // whose own scope must survive - re-enter it rather than clearing it.
-                    if (dispatchCancellation != null)
+                    if (current != null)
                     {
                         if (previous != null)
                         {
@@ -312,6 +369,11 @@ public final class PendingWorkRegistry
                             ToolCallScope.exit();
                         }
                     }
+                    // The signal a transferred permit waits on. The body's own exit, not the
+                    // future's completion: a cancel completes the future without reaching work
+                    // that is already running, and the permit belongs to the work, not to the
+                    // tracking of it.
+                    entry.workExited();
                 }
             }, executor);
             entry.future.whenComplete((result, throwable) ->
@@ -320,9 +382,25 @@ public final class PendingWorkRegistry
                 entry.cachedResult = cached;
                 entry.oversized = cached.length() > MAX_CACHED_RESULT_CHARS;
                 entry.completedAt = System.currentTimeMillis();
+                // The call graph the scope carries - the run record and its exchange - is done
+                // with once the run completes. Held here, a completed-not-retrieved entry pinned
+                // it until somebody came to collect or the TTL threw it out.
+                entry.scope = null;
+                // A future cancelled before its task left the queue never runs the body whose
+                // exit would return a transferred permit; this is the only door left for that
+                // permit, and the lock tells it apart from a body already in flight.
+                entry.settleIfWorkNeverBegan();
             });
             return entry;
         });
+        if (current != null)
+        {
+            // The starter keeps a direct reference to the run it started: a permit spent on the
+            // answer that names this key must wait on the work's own exit even when the tracking
+            // - this map's entry - is dropped while the work still runs.
+            current.notePendingEntry(runKey, started);
+        }
+        return started;
     }
 
     /**
@@ -383,7 +461,8 @@ public final class PendingWorkRegistry
     public static List<PendingWorkRegistry> domains()
     {
         return Collections.unmodifiableList(
-            Arrays.asList(UPDATE, EXPORT, REFERENCES, IMPORT_BINARY, VANESSA, GENERIC));
+            Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, REFERENCES, IMPORT_BINARY, VANESSA,
+                NAPARNIK, GENERIC));
     }
 
     /**
@@ -872,6 +951,40 @@ public final class PendingWorkRegistry
         public volatile String progressNote;
 
         /**
+         * The scope the work runs under, held where it outlives the request that started the run.
+         * <p>
+         * A run that answers Pending continues after its exchange is closed. The scope is what the
+         * work re-enters on the executor thread: its cancellation flag is what a withdrawal raises,
+         * and its heavy-permit ticket is what a nested heavy call inside the work inherits. Null
+         * when the work was started outside a tool call.
+         * </p>
+         */
+        public volatile ToolCallScope scope;
+
+        /**
+         * The name a call must declare, through {@code IMcpTool.resumes}, to poll this run.
+         * <p>
+         * A live {@code runKey} exempts a call from the heavy-tool gates only when that call
+         * declares this name for this entry's domain. The name is whoever actually polls - for a
+         * metadata batch that is {@code edit_metadata}, not the heavy operation the batch may
+         * carry. A matching route is not a declaration.
+         * </p>
+         */
+        public volatile String startedBy;
+
+        /**
+         * Coordinates the work's begin and exit with a permit handed over mid-run, so the permit
+         * is returned exactly once whichever of the two arrives first.
+         */
+        private final Object workLife = new Object();
+
+        private boolean workBegan;
+
+        private boolean workExitSettled;
+
+        private final List<Runnable> onWorkExit = new java.util.ArrayList<>(2);
+
+        /**
          * The flag the work watches, held where it outlives the request that started the run.
          * <p>
          * A run that answers Pending continues after its exchange is closed, and the flag belonged
@@ -944,6 +1057,163 @@ public final class PendingWorkRegistry
         public boolean isDone()
         {
             return cachedResult != null || (future != null && future.isDone());
+        }
+
+        /**
+         * Whether the body has left the executor, or was settled as never having begun.
+         * <p>
+         * The tracking future is a different fact. A cancel or a detach completes it while a
+         * body that already claimed its start keeps running, so {@link #isDone()} is then true
+         * for work that still holds the session. A permit follows this, not the future.
+         * </p>
+         *
+         * @return {@code true} once {@link #workExited()} or {@link #settleIfWorkNeverBegan()}
+         *         has settled the run
+         */
+        boolean workHasLeft()
+        {
+            synchronized (workLife)
+            {
+                return workExitSettled;
+            }
+        }
+
+        /**
+         * Marks the body as begun, or refuses when a cancel already settled this run.
+         * <p>
+         * The decision and the mark are one critical section with
+         * {@link #settleIfWorkNeverBegan()}. A supplier that loses the race leaves without
+         * running, so a permit handed to the entry cannot come back while the body is still
+         * alive - the body is not alive.
+         * </p>
+         *
+         * @return {@code false} when the body must not run
+         */
+        boolean claimWorkStart()
+        {
+            synchronized (workLife)
+            {
+                if (workExitSettled)
+                {
+                    return false;
+                }
+                beganAt = System.currentTimeMillis();
+                workBegan = true;
+                return true;
+            }
+        }
+
+        /**
+         * Hands a permit release to the work's own exit.
+         * <p>
+         * The release runs when the body leaves the executor - in success, in failure, or after a
+         * cancel that could not reach it - and never on the tracking future's completion alone,
+         * which a cancel moves while the body still runs.
+         * </p>
+         *
+         * @param release what returns the permit; runs immediately when the work already left
+         */
+        void attachWorkExit(Runnable release)
+        {
+            boolean settled;
+            synchronized (workLife)
+            {
+                settled = workExitSettled;
+                if (!settled)
+                {
+                    onWorkExit.add(release);
+                }
+            }
+            if (settled)
+            {
+                release.run();
+            }
+        }
+
+        /**
+         * The body's exit: settles the work-life door and returns every permit handed to it.
+         * <p>
+         * Called from the executor body's {@code finally} - the one place that knows the work
+         * stopped consuming the session's resources.
+         * </p>
+         */
+        void workExited()
+        {
+            for (Runnable release : settleWorkExit())
+            {
+                release.run();
+            }
+        }
+
+        /**
+         * Settles the door for a future that completed without its body ever running, so a permit
+         * transferred to a run cancelled before it began does not wait on an exit that never
+         * comes.
+         * <p>
+         * The check and the settlement are the same critical section as {@link #claimWorkStart()}.
+         * A supplier that has not claimed yet either observes the settlement and does not run, or
+         * claims first and this method leaves the permit for the body's own exit.
+         * </p>
+         */
+        void settleIfWorkNeverBegan()
+        {
+            List<Runnable> releases = null;
+            synchronized (workLife)
+            {
+                if (workBegan || workExitSettled)
+                {
+                    return;
+                }
+                workExitSettled = true;
+                if (!onWorkExit.isEmpty())
+                {
+                    releases = new java.util.ArrayList<>(onWorkExit);
+                    onWorkExit.clear();
+                }
+            }
+            if (releases == null)
+            {
+                return;
+            }
+            for (Runnable release : releases)
+            {
+                release.run();
+            }
+        }
+
+        /**
+         * Whether {@code name} is the starter this run was stamped with.
+         * <p>
+         * The road asks this only after the call has declared that it resumes that starter. A
+         * matching route is not a declaration, and this method does not treat one as such.
+         * </p>
+         *
+         * @param name the starter a call declared, or the tool the road's generic wrapper runs by
+         *            its own name; may be {@code null}
+         * @return {@code true} when this run was started under that name
+         */
+        public boolean resumableBy(String name)
+        {
+            return name != null && name.equals(startedBy);
+        }
+
+        private List<Runnable> settleWorkExit()
+        {
+            synchronized (workLife)
+            {
+                if (workExitSettled)
+                {
+                    return Collections.emptyList();
+                }
+                workExitSettled = true;
+                if (onWorkExit.isEmpty())
+                {
+                    return Collections.emptyList();
+                }
+                List<Runnable> toRun = new java.util.ArrayList<>(onWorkExit);
+                onWorkExit.clear();
+                return toRun;
+            }
         }
 
         public long elapsedMs()

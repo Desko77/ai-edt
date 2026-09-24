@@ -6,12 +6,15 @@
 
 package ru.aiedt.mcp.server;
 
+import java.util.concurrent.CountDownLatch;
+
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.ServiceRegistration;
 import org.osgi.util.tracker.ServiceTracker;
 
 import com._1c.g5.v8.dt.bm.xtext.BmAwareResourceSetProvider;
@@ -57,6 +60,8 @@ import ru.aiedt.mcp.server.support.DebugLog;
 import ru.aiedt.mcp.server.support.IdleComparisonSweep;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
+import ru.aiedt.mcp.server.toolkit.IToolRoad;
+import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.upkeep.ReleaseSweep;
 
 /**
@@ -99,6 +104,33 @@ public class Activator
     private static Activator plugin;
 
     private McpHttpEndpoint mcpServer;
+
+    /**
+     * The road every tool call takes, published to other bundles. Unregistered before the server
+     * stops, so a bundle holding the service never calls a road whose limiter is being torn down.
+     */
+    private ServiceRegistration<IToolRoad> toolRoadRegistration;
+
+    /**
+     * The thread that published the road. A test reads it to check that publication happened on
+     * the whiteboard opener, after external tools were tracked.
+     */
+    private volatile String roadPublishedOn;
+
+    /**
+     * Opens when the catalogue the road should see is settled. The whiteboard thread publishes
+     * the road after awaiting this and after its own {@code open} has returned. The activating
+     * thread counts it down and never waits for that publication.
+     */
+    private final CountDownLatch roadCatalogueReady = new CountDownLatch(1);
+
+    /**
+     * Set when the road must not be published: the bundle is stopping, or startup failed before
+     * the built-in catalogue was registered.
+     */
+    private boolean roadPublicationSuppressed;
+
+    private final Object roadPublicationLock = new Object();
 
     private IClusterManager clusterService;
 
@@ -180,19 +212,29 @@ public class Activator
         super.start(context);
         plugin = this;
 
+        // The launcher may be updated while EDT is running. Keep the block that produced this
+        // process so restart_edt can separate it from arguments the user supplied, while letting
+        // the next launcher invocation read the current .ini for itself.
+        RestartEdtTool.captureIniVmArgumentsAtStartup();
+
         mcpServer = new McpHttpEndpoint();
 
         // Plain OSGi, safe under any runtime: a tool or a module source another bundle publishes
         // reaches the catalogue and the module registry whether or not the UI comes up, and the
         // catalogue re-registers the tools it has been given at every clear. Off this thread,
-        // because the activation may be the one a component of that bundle triggered.
-        whiteboard.openInBackground(context);
+        // because the activation may be the one a component of that bundle triggered. The road
+        // is published from that same thread, after open() returns, so a tracker that receives
+        // it already sees those external tools. This thread does not join the opener.
+        whiteboard.openInBackground(context, () -> publishRoad(context));
 
         if (isHeadless())
         {
             // Nothing below is safe here. A headless test runtime brings the workspace, the UI and the
             // platform up on its own schedule, and reaching for any of them from a bundle activator
             // races it and kills the process. The server object exists; nothing else is touched.
+            // Built-in tools are never registered on this branch. The catalogue gate still opens,
+            // so the opener can publish the road once external tools are tracked.
+            releaseRoadCatalogue(true);
             logInfo("AI-EDT started in headless mode: EDT services and UI are not initialized"); //$NON-NLS-1$
             return;
         }
@@ -200,11 +242,23 @@ public class Activator
         // Before anything reads a marker setting: a workspace configured under the older key names
         // has to be carried over first, or the decorator starts up on defaults and the user's
         // choice looks lost.
-        MarkerSettingsMigration.run();
+        boolean builtInsRegistered = false;
+        try
+        {
+            MarkerSettingsMigration.run();
 
-        // Eagerly, and before any server start: the Tools preference page reads tool descriptions
-        // straight out of the registry, and it has to work whether or not the server was ever started.
-        mcpServer.registerTools();
+            // Eagerly, and before any server start: the Tools preference page reads tool descriptions
+            // straight out of the registry, and it has to work whether or not the server was ever started.
+            mcpServer.registerTools();
+            builtInsRegistered = true;
+        }
+        finally
+        {
+            // The opener publishes only after this, and only when registration finished. A failure
+            // here must not leave that thread waiting, and must not publish over a half-built
+            // catalogue. This thread still does not wait for the publication.
+            releaseRoadCatalogue(builtInsRegistered);
+        }
 
         openServiceTrackers(context);
         SessionChangeTracker.initialize();
@@ -239,9 +293,71 @@ public class Activator
         }
     }
 
+    /**
+     * Publishes the road from the whiteboard opener, once that thread's {@code open} has
+     * returned and the catalogue gate is open.
+     *
+     * @param context this bundle's context
+     */
+    private void publishRoad(BundleContext context)
+    {
+        try
+        {
+            roadCatalogueReady.await();
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        synchronized (roadPublicationLock)
+        {
+            if (roadPublicationSuppressed || toolRoadRegistration != null || mcpServer == null)
+            {
+                return;
+            }
+            roadPublishedOn = Thread.currentThread().getName();
+            toolRoadRegistration = context.registerService(IToolRoad.class, mcpServer.getToolRoad(), null);
+        }
+    }
+
+    /**
+     * Lets the opener publish, or tells it not to.
+     *
+     * @param publish {@code false} when startup failed before the built-in catalogue was ready
+     */
+    private void releaseRoadCatalogue(boolean publish)
+    {
+        synchronized (roadPublicationLock)
+        {
+            if (!publish)
+            {
+                roadPublicationSuppressed = true;
+            }
+        }
+        roadCatalogueReady.countDown();
+    }
+
     @Override
     public void stop(BundleContext context) throws Exception
     {
+        synchronized (roadPublicationLock)
+        {
+            roadPublicationSuppressed = true;
+            if (toolRoadRegistration != null)
+            {
+                try
+                {
+                    toolRoadRegistration.unregister();
+                }
+                catch (IllegalStateException alreadyGone)
+                {
+                    // The framework tore the registration down with the bundle.
+                }
+                toolRoadRegistration = null;
+            }
+        }
+        roadCatalogueReady.countDown();
         if (mcpServer != null && mcpServer.isRunning())
         {
             mcpServer.stop();
@@ -312,6 +428,14 @@ public class Activator
     public static Activator getDefault()
     {
         return plugin;
+    }
+
+    /**
+     * @return the name of the thread that published the road, or {@code null} before that
+     */
+    String publishedRoadOn()
+    {
+        return roadPublishedOn;
     }
 
     /**

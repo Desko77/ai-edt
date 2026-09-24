@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 116 | a test class named after it |
-| exercised | 126 | reached by some other test |
-| tool-sweep | 70 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 48 | needs a display or an extension point |
-| workspace-bound | 48 | drives a live EDT project or debug session |
+| direct | 124 | a test class named after it |
+| exercised | 152 | reached by some other test |
+| tool-sweep | 62 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 47 | needs a display or an extension point |
+| workspace-bound | 44 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **408** | across 332 test classes |
+| **total** | **429** | across 396 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (48)
+## workspace-bound (44)
 
 **folders**
 - IClusterChangeObserver
@@ -46,14 +46,11 @@ _none_
 - BmCommonModuleGuards
 - BmEventSubscriptionHelper
 - BmExportHelper
-- BmExtensionHelper
 - BmExtensionProjectHelper
 - BmFormCleanupHelper
 - BmFormGeneratorHelper
 - BmFormResourceHelper
 - BmHelpHelper
-- BmInfobaseCredentialsHelper
-- BmInfobaseLifecycleHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
 - BmRouteMapHelper
@@ -69,7 +66,6 @@ _none_
 - ProjectReadinessGate
 - ProjectScopeResolver
 - RoleRightsAnalyzer
-- SyncBaseline
 
 **toolkit/mdreport**
 - EObjectProbe
@@ -85,7 +81,7 @@ _none_
 - RouteMapOps
 - SpecializedOps
 
-## ui-bound (48)
+## ui-bound (47)
 
 **(root)**
 - McpAutoStart
@@ -144,7 +140,6 @@ _none_
 - ToolsPrefTab
 
 **support**
-- ApplicationUpdater
 - BslHoverAccess
 - BslProposalAccess
 - DebugLog
@@ -157,7 +152,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (70)
+## tool-sweep (62)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -181,7 +176,6 @@ _none_
 - DebugVariableWriter
 - DebugVariablesReader
 - DefinitionNavigator
-- DependencyGraphTool
 - DialogAnswerer
 - DiskResynchronizer
 - EdtVersionReader
@@ -199,16 +193,11 @@ _none_
 - GetFormStructureTool
 - GetObjectHelpTool
 - GetSubsystemsTool
-- InfobaseCreator
-- InfobaseCredentialsWriter
-- InfobaseRemover
 - InstallExtensionTool
 - LaunchConfigCreator
 - LaunchConfigsLister
-- LaunchTerminator
 - ListExtensionsTool
 - McpHistoryReader
-- MetadataObjectRenamer
 - OutgoingStructuresReader
 - PlatformDocReader
 - ProblemSummaryReader
@@ -216,10 +205,8 @@ _none_
 - ProfilingStarter
 - ProjectCleaner
 - ProjectCreator
-- ProjectMetricsTool
 - ProjectRemover
 - ProjectsLister
-- ReferenceLocator
 - RunToLineTool
 - SelfStatusTool
 - SemanticMetadataSearchTool
@@ -231,7 +218,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (126)
+## exercised (152)
 
 **(root)**
 - Activator
@@ -260,19 +247,23 @@ _none_
 
 **support**
 - AllureResultReader
+- ApplicationUpdater
 - BmComparisonHelper
 - BmConfigurationProjectHelper
 - BmDcsHelper
+- BmExtensionHelper
 - BmExtensionTypeHelper
 - BmExternalObjectDumpHelper
 - BmExternalObjectProjectHelper
 - BmFormHelper
 - BmInfobaseExtensionHelper
+- BmInfobaseLifecycleHelper
 - BmObjectHelper
 - BmReferencesHelper
 - BmRightsHelper
 - BmSupportRegistryHelper
 - BmTemplateHelper
+- ChildBorrow
 - ClientLaunchMode
 - ConfigurationListProperties
 - ContainerScope
@@ -281,6 +272,8 @@ _none_
 - DebugSessionBook
 - DebugValueSerializer
 - DefaultLanguage
+- DumpInfoProbe
+- DumpInfoRebuilder
 - EditorBuffer
 - EndpointWaiter
 - ErrorTags
@@ -290,6 +283,7 @@ _none_
 - GitRepositoryAccess
 - HistoryFullText
 - InfobaseAddress
+- InfobaseObjectsExporter
 - JUnitRunOutcome
 - LaunchConfigAccess
 - MetadataDiffEngine
@@ -304,7 +298,11 @@ _none_
 - ProjectResolver
 - ProjectStateGuard
 - QlValidator
+- SubsystemMembership
 - SupportSnapshotStore
+- SyncBaseline
+- TemplatePrintWidth
+- ToolRoad
 - UnreadArguments
 - WatchForCancel
 
@@ -313,8 +311,16 @@ _none_
 - IModuleSourceProvider
 - ModuleSources
 
+**support/naparnik**
+- BundleCopy
+- NaparnikAccessException
+- NaparnikHost
+- OsgiNaparnikHost
+
 **toolkit**
 - IMcpTool
+- IToolRoad
+- ToolRoadOutcome
 - ToolWhiteboard
 
 **toolkit/mdreport**
@@ -331,6 +337,7 @@ _none_
 - DatabaseUpdater
 - DcsWorkshopTool
 - DebugSessionStarter
+- DependencyGraphTool
 - DetectQueryAntiPatternsTool
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
@@ -344,11 +351,16 @@ _none_
 - GitTool
 - ImpactAnalysisTool
 - InfobaseAdminFacadeTool
+- InfobaseCreator
+- InfobaseCredentialsWriter
+- InfobaseRemover
 - InsightsFacadeTool
 - LaunchDebuggerTool
+- LaunchTerminator
 - ListInterceptorsTool
 - MetadataDetailsReader
 - MetadataObjectDeleter
+- MetadataObjectRenamer
 - MetadataObjectsReader
 - MethodSourceReader
 - MiscOps
@@ -356,11 +368,14 @@ _none_
 - ModuleSourceReader
 - ModulesLister
 - MxlWorkshopTool
+- NaparnikTool
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
 - ProjectAdminFacadeTool
+- ProjectMetricsTool
 - ProjectProblemsReader
+- ReferenceLocator
 - RestartEdtTool
 - SecurityAuditFacadeTool
 - SensitiveDataScanTool
@@ -387,7 +402,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (116)
+## direct (124)
 
 **(root)**
 - BrowserOrigin
@@ -410,6 +425,8 @@ _none_
 - AttributionRule
 - BmBinaryImportHelper
 - BmDefinedTypeHelper
+- BmInfobaseCredentialsHelper
+- BmInfobaseRegistrationHelper
 - BranchInfobaseBook
 - BslCommentParseHelper
 - ComparisonSessions
@@ -422,10 +439,12 @@ _none_
 - EventLogReader
 - EventStubGenerator
 - ExtensionFitness
+- FacadeHelpSearch
 - FailureScreenshots
 - FailureShape
 - FormBaseSetup
 - FormEventRegistry
+- FormExtensionDataPathGuard
 - GenericPending
 - GitBranch
 - GitDiffUtils
@@ -438,6 +457,7 @@ _none_
 - InstanceRegistry
 - JUnitReportFormatter
 - JUnitXmlReader
+- LaunchApplicationIds
 - LegacyStorageMigration
 - LineDelimiters
 - LocalizedStringUtils
@@ -454,6 +474,7 @@ _none_
 - OriginCheck
 - PendingExecutor
 - PlatformTypeNames
+- PreviousRevision
 - QueryAntiPatternRules
 - QueryResultSchema
 - ReflectionAccess
@@ -471,6 +492,7 @@ _none_
 - ToolGate
 - TypeApplication
 - UpdateReport
+- WalkNarrowing
 - WorkspacePhase
 - YamlFrontMatter
 - YaxunitHelp
@@ -493,6 +515,7 @@ _none_
 - EditMetadataTool
 - ExtensionWorkshopTool
 - ExternalBinaryUnpacker
+- InfobaseRegistrar
 - MarkerCorrectionTool
 - ModuleSourceWriter
 - ObjectCopier
@@ -539,17 +562,17 @@ closes.
 | Test methods | Classes |
 |---:|---:|
 | 1 | 0 |
-| 2 | 0 |
-| 3-4 | 16 |
-| 5-8 | 36 |
-| 9-16 | 49 |
-| 17+ | 15 |
+| 2 | 1 |
+| 3-4 | 15 |
+| 5-8 | 37 |
+| 9-16 | 52 |
+| 17+ | 19 |
 
-2799 test methods across 332 test classes; 116 classes have a test of their own, median 9 methods each.
+3469 test methods across 396 test classes; 124 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 116 of 408 classes have one: 70 are covered by the registry-wide contract sweep and 48 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 124 of 429 classes have one: 62 are covered by the registry-wide contract sweep and 44 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
-### Resting on 2 test method(s) or fewer (0)
+### Resting on 2 test method(s) or fewer (1)
 
-_none_
+- support/BmInfobaseCredentialsHelper - 2
 

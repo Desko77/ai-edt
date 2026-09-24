@@ -12,11 +12,19 @@ import static org.junit.Assert.assertTrue;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 
 /**
  * Covers the F2 delegated, preset-gated operations ({@code delete_metadata_object},
@@ -32,20 +40,46 @@ import com.google.gson.JsonParser;
  * </p>
  * <p>
  * {@code ToolGate.gateOrNull} asks {@code McpToolCatalog.isToolEnabled}, which is
- * {@code tools.containsKey(name) && !disabled}. A bare JUnit run never registers a tool into the
- * JVM-wide catalog (that needs a live {@code McpServer} start), so the containsKey half is always
- * false and the gate deterministically trips here - which is exactly why these assertions see the
- * disabled branch. The ENABLED route (gate returns {@code null}, the standalone runs) and a genuine
- * user-disabled preset both need a live EDT workspace and are live-verify items; the standalone-vs-
- * facade wording equivalence is structural (router and facade share {@code ToolGate}, see
- * {@code ToolGateTest}). {@code dispatch} is called reflectively because it is private and, unlike
- * {@code execute}, never touches {@code PlatformUI}.
+ * {@code tools.containsKey(name) && !disabled}. The three names are switched off in the tool settings
+ * before each test and the settings are put back after, so the gate trips whatever the JVM-wide
+ * catalogue holds at that moment - which is exactly why these assertions see the disabled branch.
+ * The ENABLED route (gate returns {@code null}, the standalone runs) needs a live EDT workspace and
+ * is a live-verify item; the standalone-vs-facade wording equivalence is structural (router and
+ * facade share {@code ToolGate}, see {@code ToolGateTest}). {@code dispatch} is called reflectively
+ * because it is private and, unlike {@code execute}, never touches {@code PlatformUI}.
  * </p>
  */
 public class EditMetadataToolTest
 {
     /** What dispatch answers for an operation it has no handler for. */
     private static final String UNIMPLEMENTED = "not implemented"; //$NON-NLS-1$
+
+    private static final Set<String> GATED = Set.of("delete_metadata_object", "rename_metadata_object", //$NON-NLS-1$ //$NON-NLS-2$
+        "add_metadata_attribute"); //$NON-NLS-1$
+
+    private IPreferenceStore store;
+
+    private String presetBefore;
+
+    private String disabledBefore;
+
+    /** Switches the three gated names off, remembering the settings they replace. */
+    @Before
+    public void theGatedOperationsAreSwitchedOff()
+    {
+        store = Activator.getDefault().getPreferenceStore();
+        presetBefore = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        disabledBefore = store.getString(PrefKeys.PREF_DISABLED_TOOLS);
+        ToolSettingsStore.getInstance().setDisabledTools(GATED);
+    }
+
+    /** Puts the tool settings back as they were before the test. */
+    @After
+    public void theSettingsGoBack()
+    {
+        store.setValue(PrefKeys.PREF_DISABLED_TOOLS, disabledBefore);
+        store.setValue(PrefKeys.PREF_TOOL_PRESET, presetBefore);
+    }
 
     private static String invokeDispatch(String op, Map<String, String> params) throws Exception
     {
@@ -61,7 +95,7 @@ public class EditMetadataToolTest
         // very failure shapeStructured would hit at runtime for this JSON-typed tool.
         JsonElement parsed = JsonParser.parseString(result);
         assertTrue("gated rejection must be a JSON object", parsed.isJsonObject()); //$NON-NLS-1$
-        // The gate tripped (headless registry is empty) and named the operation it rejected.
+        // The gate tripped (the names are switched off) and named the operation it rejected.
         assertTrue("must carry the disabled wording", result.contains("is disabled")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("must name the gated operation", result.contains(op)); //$NON-NLS-1$
         // Not the registry's unknown-op fallback - the op IS registered, it was gated.

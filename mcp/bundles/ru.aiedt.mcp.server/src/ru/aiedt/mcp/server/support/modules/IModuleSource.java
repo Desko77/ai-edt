@@ -83,6 +83,28 @@ public interface IModuleSource
     }
 
     /**
+     * The lines of this module as another revision of its container holds them.
+     *
+     * <p>Asked when a module without a file of its own has to be compared with something: HEAD
+     * holds the text of the file that carries it, not the module itself, so only the provider can
+     * find its own module inside that revision. The bytes are the container file as that revision
+     * has it, read the way any file of that revision would be - the same text a checkout of it
+     * would leave on disk.</p>
+     *
+     * <p>A provider that does not read previous revisions leaves this implementation in place, and
+     * the answer names that outcome instead of comparing against nothing. A provider that does read
+     * them answers {@code null} when that revision holds no such module: the module is new.</p>
+     *
+     * @param containerRevision the container file as the previous revision holds it
+     * @return the lines, no terminators; {@code null} when that revision does not hold the module
+     * @throws IOException when the revision cannot be parsed into this module's text
+     */
+    default List<String> linesIn(byte[] containerRevision) throws IOException
+    {
+        throw new UnsupportedOperationException(kind() + " does not read previous revisions"); //$NON-NLS-1$
+    }
+
+    /**
      * Examines a write before it happens.
      *
      * @param before the lines as they are

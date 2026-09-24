@@ -11,6 +11,8 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+
 /**
  * The tools whose one invocation can be genuinely expensive on a large configuration - whole-project
  * scans, whole-configuration export/import, cross-configuration compares, thick-client spawns, and the
@@ -37,6 +39,31 @@ public final class HeavyTools
         "export_configuration_to_xml", //$NON-NLS-1$
         "import_configuration_from_xml", //$NON-NLS-1$
         "import_configuration_from_binary", //$NON-NLS-1$
+        // config_io's export_infobase_objects: the facade runs it itself - there is no standalone
+        // tool whose name a call arrives under - and its Designer spawn against the infobase is
+        // the same weight as the grouped export's. Named by the operation because that is the
+        // name the facade's route answers for it.
+        "export_infobase_objects", //$NON-NLS-1$
+        // config_io's export_configuration_to_cf: the same weight as export_infobase_objects and
+        // named the same way - the facade runs it itself, so the operation name is what its route
+        // answers. It dumps the whole configuration through a Designer spawned against the
+        // infobase.
+        "export_configuration_to_cf", //$NON-NLS-1$
+        // convertExternalToXml behind two callers: the standalone tool and config_io's operation of
+        // the same name. Runs a Designer against the infobase the caller names.
+        "unpack_external_binary", //$NON-NLS-1$
+        // external_object_workshop's import_external_object: the same Designer conversion, reached
+        // through the workshop's own route.
+        "import_external_object", //$NON-NLS-1$
+        // create_infobase: the physical creation is a CREATEINFOBASE batch child process.
+        "create_infobase", //$NON-NLS-1$
+        // sync_control's rebuild_dump_info: the infobase is released to a Designer that dumps
+        // ConfigDumpInfo.xml. The other sync_control operations read files in-process.
+        "rebuild_dump_info", //$NON-NLS-1$
+        // extension_workshop's check_platform_verdict: the facade runs it itself, and the run
+        // creates a staging infobase and puts the delivery and the extension to a Designer
+        // there. Named by the operation, as the facade's route answers it.
+        "check_platform_verdict", //$NON-NLS-1$
         "export_extension", //$NON-NLS-1$
         "install_extension", //$NON-NLS-1$
         "uninstall_extension", //$NON-NLS-1$
@@ -82,13 +109,21 @@ public final class HeavyTools
 
     /**
      * Whether the named tool is one the heavy-tool limiter should count.
+     * <p>
+     * A tool another bundle published is named here by its own declaration, the
+     * {@code ru.aiedt.mcp.tool.heavy} service property, rather than by this list: the list is this
+     * server's policy over this server's tools, and a bundle is the one who knows what its own
+     * call costs.
+     * </p>
      *
      * @param toolName the wire tool name, or <code>null</code>
      * @return <code>true</code> when the tool is heavy
      */
     public static boolean isHeavy(String toolName)
     {
-        return toolName != null && HEAVY.contains(toolName);
+        return toolName != null
+            && (HEAVY.contains(toolName)
+                || McpToolCatalog.getInstance().isExternalHeavy(toolName));
     }
 
     /**

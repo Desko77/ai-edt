@@ -13,8 +13,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IResourceChangeEvent;
+import org.eclipse.core.resources.IResourceChangeListener;
+import org.eclipse.core.resources.IResourceDelta;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.debug.core.DebugPlugin;
@@ -24,12 +31,14 @@ import org.eclipse.debug.core.ILaunchManager;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 
+import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com.e1c.g5.dt.applications.ApplicationException;
 import com.e1c.g5.dt.applications.ApplicationUpdateState;
 import com.e1c.g5.dt.applications.ApplicationUpdateType;
 import com.e1c.g5.dt.applications.ExecutionContext;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
+import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -40,8 +49,10 @@ import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
+import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.BranchInfobaseBook;
+import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.GitBranch;
 import ru.aiedt.mcp.server.support.InfobaseHolders;
@@ -59,7 +70,8 @@ import ru.aiedt.mcp.server.support.ProjectStateGuard;
  * The update can outlast an HTTP handler, so a slow one is handed to a worker and the caller gets a
  * runKey to poll with; a fast one returns in place. Targeting is by launch configuration name
  * (preferred, as it pins the project and application together) or by an explicit project +
- * application id pair.
+ * application id pair. A {@code dryRun} call is a probe rather than a run: answered in place, it
+ * reads only what cannot synchronize with the infobase and starts nothing.
  * </p>
  */
 public class DatabaseUpdater implements IMcpTool
@@ -107,6 +119,19 @@ public class DatabaseUpdater implements IMcpTool
         return NAME;
     }
 
+    /**
+     * Polls an update this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation unused; a direct call names none, and the facade declares its own poll
+     * @return {@code update_database} when the key is in the update registry, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.UPDATE.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String getDescription()
     {
@@ -133,15 +158,28 @@ public class DatabaseUpdater implements IMcpTool
                     + "application is used, and for an extension project - which has no infobase of its own - " //$NON-NLS-1$
                     + "the default of the configuration it extends. The response says which was updated.") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
-                "Answer what an update would face and start nothing: the update state, the " //$NON-NLS-1$
-                    + "environment's readiness check, and whether an update is needed. No run " //$NON-NLS-1$
-                    + "is recorded and no infobase is claimed.") //$NON-NLS-1$
+                "Answer what an update would face and start nothing: the update state the " //$NON-NLS-1$
+                    + "environment holds, whether an update is needed, and - unless refreshWorkspace " //$NON-NLS-1$
+                    + "is off - what that refresh picked up. Readiness and the export validation an " //$NON-NLS-1$
+                    + "update runs first are NOT checked and are reported as notCheckedInDryRun: " //$NON-NLS-1$
+                    + "readiness reaches the infobase synchronization cycle through a thick client and " //$NON-NLS-1$
+                    + "does not return while a thick-client session holds the infobase; the export " //$NON-NLS-1$
+                    + "validation walks the whole project - diagnostics operation=validate_for_export " //$NON-NLS-1$
+                    + "answers it. No run is recorded, no runKey is issued, and no infobase is " //$NON-NLS-1$
+                    + "claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
                 + "on is bound to a different application (see branch_infobase). Off by default: " //$NON-NLS-1$
                 + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
                 + "branch switch, which cannot be undone.") //$NON-NLS-1$
+            .booleanProperty("ignoreDumpInfoFormat", "Update even when the stored " //$NON-NLS-1$ //$NON-NLS-2$
+                + "ConfigDumpInfo.xml carries a format other than the one recorded for this " //$NON-NLS-1$
+                + "infobase by its own Designer (the answer names both formats when it stops you). " //$NON-NLS-1$
+                + "Off by default: a file of a foreign format makes the platform answer FullDump " //$NON-NLS-1$
+                + "and the update silently becomes a full configuration load. A base with no " //$NON-NLS-1$
+                + "recorded format is not compared at all. The way to actually fix the file is " //$NON-NLS-1$
+                + "sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
                 + "EDT-launched runtime-client sessions for this infobase, so an active client cannot keep " //$NON-NLS-1$
                 + "the infobase locked and block the update. Only runtime-client launches that match both this project " //$NON-NLS-1$
@@ -176,8 +214,10 @@ public class DatabaseUpdater implements IMcpTool
                     + "this server - a file tool, git checkout, a pull - are otherwise invisible to " //$NON-NLS-1$
                     + "the model, and the update decision would be made against what the disk held " //$NON-NLS-1$
                     + "before them, answering Done or UPDATED over an update that never carried them. " //$NON-NLS-1$
-                    + "The answer reports workspaceRefresh.changedResources: 0 means the model already " //$NON-NLS-1$
-                    + "matched the disk. Pass false only when every change went through this server.") //$NON-NLS-1$
+                    + "The answer reports workspaceRefresh.changedResources: how many resources " //$NON-NLS-1$
+                    + "the re-read actually changed (added, removed, replaced or content-changed); " //$NON-NLS-1$
+                    + "0 means the model already matched the disk. Pass false only " //$NON-NLS-1$
+                    + "when every change went through this server.") //$NON-NLS-1$
             .build();
     }
 
@@ -409,7 +449,9 @@ public class DatabaseUpdater implements IMcpTool
         // A slow FULL / restructure update would otherwise hold an HTTP-handler thread for its whole
         // run. Hand it to the worker registry; the caller polls via runKey, and a fast update that
         // finishes inside the window still returns synchronously. updateDatabase() re-resolves its own
-        // state from these params, so no live EDT handle crosses the thread boundary.
+        // state from these params, so no live EDT handle crosses the thread boundary. A PROBE is
+        // answered on this thread instead and never reaches the registry - see runOrAnswer - while the
+        // key below stays the one a real update under these arguments owns.
         final String fProjectName = projectName;
         final String fApplicationId = applicationId;
         final boolean fFull = fullUpdate;
@@ -417,17 +459,71 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
-        final boolean fCheckOnly = checkOnly;
+        final boolean fIgnoreDumpInfo =
+            JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
-        // to a caller who had said to go ahead.
-        String runKey = PendingWorkRegistry.computeRunKey(fProjectName, fApplicationId,
-            String.valueOf(fFull), String.valueOf(fRestr), String.valueOf(fFree),
-            String.valueOf(fIgnoreBranch));
+        // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
+        // the key below is the one a real update under these arguments owns.
+        String runKey = runKeyFor(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+            fIgnoreDumpInfo);
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
-        PendingWorkRegistry registry = PendingWorkRegistry.UPDATE;
+        return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
+            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+                fSkipValidation, checkOnly, params));
+    }
+
+    /**
+     * The key a run under these arguments coalesces on: every argument that changes what the run
+     * does is part of it, so two calls that would do different things never share one run's answer.
+     *
+     * @param projectName the project
+     * @param applicationId the application naming the infobase
+     * @param fullUpdate whether the update loads the whole configuration
+     * @param autoRestructure whether restructuring is left automatic
+     * @param autoFreeClients whether client sessions are freed
+     * @param ignoreBranchBinding whether the branch-binding check is bypassed
+     * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @return the run key
+     */
+    static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
+        boolean ignoreDumpInfoFormat)
+    {
+        return PendingWorkRegistry.computeRunKey(projectName, applicationId,
+            String.valueOf(fullUpdate), String.valueOf(autoRestructure), String.valueOf(autoFreeClients),
+            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat));
+    }
+
+    /**
+     * Runs the call: through the run registry for an update, in place for a probe.
+     * <p>
+     * A probe is answered where it arrives and never enters the registry. It reads and starts
+     * nothing, so it has no run to track and no runKey to hand back - but that is not the whole of
+     * it. The registry coalesces on the key alone, and the key is built from the arguments an
+     * update coalesces on, which a probe shares with the update it asks about. On that path a probe
+     * was served a real update's answer - a run it never asked for, reported as the environment's
+     * state before the update - and a real update arriving while a probe ran joined the probe and
+     * never executed.
+     * </p>
+     *
+     * @param answerInPlace whether this call is a probe, answered on the calling thread
+     * @param runKey the key a real run under these arguments owns
+     * @param registry the run registry, which a probe does not touch
+     * @param projectName the project, named in a Pending body
+     * @param timeoutMs how long a real run is waited for before a Pending answer
+     * @param work the body: the probe's answer, or the update itself
+     * @return a JSON result body
+     */
+    static String runOrAnswer(boolean answerInPlace, String runKey, PendingWorkRegistry registry,
+        String projectName, long timeoutMs, java.util.function.Supplier<String> work)
+    {
+        if (answerInPlace)
+        {
+            return work.get();
+        }
         registry.pruneExpired();
         // A FRESH call must never be silently served a finished cached result for the same params:
         // update_database asserts "this just happened", so a completed entry from a prior identical
@@ -438,14 +534,15 @@ public class DatabaseUpdater implements IMcpTool
         {
             registry.remove(runKey);
         }
-        PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, fCheckOnly, params));
+        PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey, work);
         // So a caller who never got the runKey can still address this run - and so the shared
         // registry answers questions about updates with updates: edit_metadata starts its pending
         // work in this same registry, and a kind-less entry cannot be told apart from either.
-        entry.subject = fProjectName;
+        entry.subject = projectName;
         entry.workKind = WORK_KIND;
+        // The name a poll of this run arrives under, so a live key exempts only this tool's own
+        // resumption path from the heavy gates.
+        entry.startedBy = NAME;
 
         String result = entry.await(timeoutMs);
         if (result != null)
@@ -453,7 +550,7 @@ public class DatabaseUpdater implements IMcpTool
             registry.remove(runKey);
             return result;
         }
-        return buildPendingJson(runKey, entry, fProjectName, timeoutMs);
+        return buildPendingJson(runKey, entry, projectName, timeoutMs);
     }
 
     /**
@@ -527,32 +624,124 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
-     * What an update would face, without starting one.
+     * The workspace refresh a probe performs before it reads the update state, or {@code null} when
+     * the caller asked for none.
      * <p>
-     * Two things are reachable without running: the update state the environment holds - whether an
-     * update is needed and of which kind - and its own readiness check, which answers a status and
-     * changes nothing. The COMPOSITION of an update, object by object, is not: nothing in the
-     * application API offers it, and it is not worth running an update to find out. That is said
-     * here rather than left for the caller to infer from a short answer.
+     * A seam rather than a call, because how often a probe refreshes is part of what the answer
+     * promises - none when the caller turned it off, exactly one otherwise - and that count is not
+     * readable back out of the answer once the refresh has nothing to report.
      * </p>
+     */
+    interface WorkspaceRefresh
+    {
+        /**
+         * Makes the workspace hear about what the disk holds.
+         *
+         * @return the report: projects touched, resources changed, any failure noted
+         */
+        JsonObject refresh();
+    }
+
+    /**
+     * The refresh a probe asks for, from the call as it arrived.
      * <p>
-     * Nothing is claimed and nothing is recorded: no run, no infobase claim, no change to the
-     * update state.
+     * The flag is read here so the whole rule sits in one place: on unless the caller turns it off,
+     * and turned off it is not a refresh that reports nothing, it is no refresh at all.
      * </p>
      *
-     * @param appManager the application manager.
-     * @param application the application that would be updated.
-     * @param applicationId its id, as the answer names it.
-     * @param projectName the project the call named.
-     * @param infobaseProject the project that owns the infobase - the parent, for an extension.
-     * @param viaParent whether the infobase belongs to the parent configuration.
-     * @param state the update state the environment holds.
+     * @param params the call
+     * @param project the project being updated
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension
+     * @return the refresh to perform, or {@code null} when the caller turned it off
+     */
+    static WorkspaceRefresh refreshForProbe(Map<String, String> params, IProject project,
+        IProject infobaseProject)
+    {
+        if (!JsonUtils.extractBooleanArgument(params, "refreshWorkspace", true)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return null;
+        }
+        return () -> refreshFromDisk(project, infobaseProject);
+    }
+
+    /**
+     * What an update would face, reading only what cannot start one - without a dump-info reading.
+     *
+     * @param appManager the application manager
+     * @param application the application that would be updated
+     * @param refresh the workspace refresh to perform first, or {@code null} for none
+     * @param applicationId its id, as the answer names it
+     * @param projectName the project the call named
+     * @param viaParent whether the infobase belongs to the parent configuration
+     * @param infobaseOwnerName the project that owns the infobase - the parent, for an extension
      * @return the answer
      */
-    private static String whatAnUpdateWouldFace(IApplicationManager appManager,
-        IApplication application, String applicationId, String projectName, IProject infobaseProject,
-        boolean viaParent, ApplicationUpdateState state)
+    static String whatAnUpdateWouldFace(IApplicationManager appManager, IApplication application,
+        WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
+        String infobaseOwnerName)
     {
+        return whatAnUpdateWouldFace(appManager, application, refresh, applicationId, projectName,
+            viaParent, infobaseOwnerName, null, false);
+    }
+
+    /**
+     * What an update would face, reading only what cannot start one.
+     * <p>
+     * Two things are reachable without running an update: the update state the environment holds -
+     * whether an update is needed and of which kind - and, when the caller asked for it, a workspace
+     * refresh, so that state is read against a model that has heard about what the disk holds. The
+     * COMPOSITION of an update, object by object, is not reachable: nothing in the application API
+     * offers it, and it is not worth running an update to find out. Both are said here rather than
+     * left for the caller to infer from a short answer.
+     * </p>
+     * <p>
+     * The readiness check an update itself performs is NOT among these reads. It reaches the
+     * infobase synchronization cycle - a thick client process, {@code config generation-id},
+     * {@code config dump-files}, a load into the infobase - through
+     * {@code InfobaseApplicationBehaviourDelegate.check} and
+     * {@code IInfobaseSynchronizationManager.retrieveInfobaseChanges}. Behind an open thick-client
+     * session that load waits for a monopoly it cannot get, so the check does not return, and a
+     * probe that asked for it hung the EDT it was asked about. What it used to fill is now a
+     * statement that it was not asked for, which is the whole of what a dry run can honestly say
+     * about it.
+     * </p>
+     * <p>
+     * A dump-info format mismatch is REPORTED here and stops nothing: a probe names what an update
+     * would be stopped by, and being told is the whole of what it asked for.
+     * </p>
+     * <p>
+     * Nothing is claimed and nothing is recorded: no run, no infobase claim, no change to the update
+     * state.
+     * </p>
+     *
+     * @param appManager the application manager, taken whole rather than as the one state it holds,
+     *            so what this path reads of it is a fact a stand-in can count.
+     * @param application the application that would be updated.
+     * @param refresh the workspace refresh to perform first, or {@code null} for none.
+     * @param applicationId its id, as the answer names it.
+     * @param projectName the project the call named.
+     * @param viaParent whether the infobase belongs to the parent configuration.
+     * @param infobaseOwnerName the project that owns the infobase - the parent, for an extension.
+     * @param dumpInfo the stored dump-info reading, or {@code null} when there is nothing to compare
+     * @param ignoreDumpInfoFormat whether the caller said to go ahead over a mismatch
+     * @return the answer
+     */
+    static String whatAnUpdateWouldFace(IApplicationManager appManager, IApplication application,
+        WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
+        String infobaseOwnerName, DumpInfoProbe.Reading dumpInfo, boolean ignoreDumpInfoFormat)
+    {
+        JsonObject workspaceRefresh = refresh == null ? null : refresh.refresh();
+        ApplicationUpdateState state;
+        try
+        {
+            state = appManager.getUpdateState(application);
+        }
+        catch (Exception | LinkageError cannotRead)
+        {
+            return ToolResult.error("Could not read what '" + infobaseOwnerName //$NON-NLS-1$
+                + "' holds, so nothing can be said about what an update would face: " + cannotRead) //$NON-NLS-1$
+                .toJson();
+        }
         ToolResult answer = ToolResult.success()
             .put("dryRun", Boolean.TRUE) //$NON-NLS-1$
             .put("projectName", projectName) //$NON-NLS-1$
@@ -562,50 +751,217 @@ public class DatabaseUpdater implements IMcpTool
                 || state == ApplicationUpdateState.FULL_UPDATE_REQUIRED));
         if (viaParent)
         {
-            answer.put("infobaseOwner", infobaseProject.getName()); //$NON-NLS-1$
+            answer.put("infobaseOwner", infobaseOwnerName); //$NON-NLS-1$
         }
-        try
+        if (workspaceRefresh != null)
         {
-            org.eclipse.core.runtime.IStatus readiness = appManager.check(application,
-                com.e1c.g5.dt.applications.ApplicationCheckUnknownStateTreatment.TREAT_AS_NOT_READY,
-                contextWithActiveShell(),
-                new org.eclipse.core.runtime.NullProgressMonitor());
-            if (readiness != null)
-            {
-                answer.put("readiness", readiness.isOK() ? "ok" : readiness.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-                List<String> problems = new ArrayList<>();
-                for (org.eclipse.core.runtime.IStatus child : readiness.getChildren())
-                {
-                    if (child != null && !child.isOK())
-                    {
-                        problems.add(child.getMessage());
-                    }
-                }
-                if (!problems.isEmpty())
-                {
-                    answer.put("readinessProblems", problems); //$NON-NLS-1$
-                }
-            }
+            // The answer asserts what the model holds, so it asserts the refresh too: the state
+            // below is only as current as the workspace this call just read.
+            answer.put("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
         }
-        catch (Exception | LinkageError cannotCheck)
+        // Said here rather than acted on: a mismatch would STOP the update, and a probe that
+        // stopped things would not be a probe. Named only when there is something to compare -
+        // silence about a check that had nothing to read is not an overstatement.
+        String dumpInfoCheck = describeDumpInfoFormatCheck(dumpInfo, ignoreDumpInfoFormat);
+        if (dumpInfoCheck != null)
         {
-            // Said, not swallowed: a readiness that could not be asked for is a different answer
-            // from one that came back clean.
-            answer.put("readiness", "could not be established: " + cannotCheck); //$NON-NLS-1$ //$NON-NLS-2$
+            answer.put("dumpInfoFormatCheck", dumpInfoCheck); //$NON-NLS-1$
         }
         return answer
+            .put("notCheckedInDryRun", List.of("readiness", "exportValidation")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .put("notCheckedInDryRunNote", "The readiness check an update itself performs is not run " //$NON-NLS-1$ //$NON-NLS-2$
+                + "here. Asking for it reaches the infobase synchronization cycle through a thick " //$NON-NLS-1$
+                + "client and does not return while a thick-client session holds the infobase, which " //$NON-NLS-1$
+                + "is what a dry run exists to avoid. Only an update can answer it. The export " //$NON-NLS-1$
+                + "validation an update runs before writing is not run either: it walks the whole " //$NON-NLS-1$
+                + "project. diagnostics operation=validate_for_export runs it.") //$NON-NLS-1$
             .put("composition", "not available without running an update - the application API " //$NON-NLS-1$ //$NON-NLS-2$
-                + "reports the state and the readiness, not the objects an update would carry. " //$NON-NLS-1$
+                + "reports the state, not the objects an update would carry. " //$NON-NLS-1$
                 + "Nothing was claimed, started or recorded by this call.") //$NON-NLS-1$
             .toJson();
     }
 
     /**
+     * Reads the stored dump-info of an application's infobase and the format recorded for that base
+     * by its own Designer. Every leg that EDT may not be able to answer collapses to a reading with
+     * no expectation rather than to an exception: a check with nothing to compare is a fact the
+     * answer names, not a failure to run.
+     *
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension
+     * @param application the application the update targets
+     * @return the reading; its {@code expectedFormat} is {@code null} when this base has no record
+     */
+    static DumpInfoProbe.Reading readDumpInfoProbe(IProject infobaseProject, IApplication application)
+    {
+        if (!(application instanceof IInfobaseApplication))
+        {
+            return null;
+        }
+        InfobaseReference infobase = ((IInfobaseApplication)application).getInfobase();
+        if (infobase == null || infobase.getUuid() == null)
+        {
+            return null;
+        }
+        java.nio.file.Path stored = ru.aiedt.mcp.server.support.SyncBaseline
+            .indexOf(infobaseProject, infobase.getUuid().toString()).getParent()
+            .resolve(DumpInfoProbe.FILE_NAME);
+        String platformVersion =
+            ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.thickClientPlatformVersion(
+                infobaseProject, infobase);
+        String identity = ru.aiedt.mcp.server.support.InfobaseIdentity.of(infobase);
+        java.nio.file.Path state = DumpInfoProbe.stateFile();
+        String expected = DumpInfoProbe.applicableFormat(identity, state, platformVersion);
+        String notCompared = DumpInfoProbe.inapplicableReason(identity, state, platformVersion);
+        return DumpInfoProbe.reading(stored.toString(), DumpInfoProbe.formatOf(stored), expected,
+            platformVersion, notCompared);
+    }
+
+    /**
+     * The stored dump-info of an application, or {@code null} when it cannot be read. A launch that
+     * cannot read the store has nothing to compare, which is not a reason to refuse the update.
+     *
+     * @param application the application about to be updated
+     * @return the reading, or {@code null}
+     */
+    public static DumpInfoProbe.Reading dumpInfoOf(IApplication application)
+    {
+        if (application == null)
+        {
+            return null;
+        }
+        try
+        {
+            return readDumpInfoProbe(application.getProject(), application);
+        }
+        catch (Exception | LinkageError cannotRead)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * The sentence that stops a launch-time update on a foreign dump-info format, or {@code null}
+     * to go on. Launch paths do not take {@code ignoreDumpInfoFormat}; skipping the update is
+     * {@code updateBeforeLaunch=false}.
+     *
+     * @param dumpInfo the reading, or {@code null}
+     * @return the refusal sentence, or {@code null}
+     */
+    public static String launchUpdateRefusal(DumpInfoProbe.Reading dumpInfo)
+    {
+        String stop = stopOnForeignDumpInfoFormat(dumpInfo, false);
+        if (stop == null)
+        {
+            return null;
+        }
+        JsonObject body = com.google.gson.JsonParser.parseString(stop).getAsJsonObject();
+        return body.has("error") ? body.get("error").getAsString() : stop; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The update path's format gate. A foreign format returns before {@code askTheManager} runs, so
+     * a recording manager closed over by that supplier sees no {@code check} and no {@code update}.
+     * {@code updateDatabase} calls this and only then refreshes the workspace and asks the manager.
+     *
+     * @param manager the application manager the update would ask
+     * @param application the application the update would ask about
+     * @param dumpInfo the stored-file reading, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @param askTheManager what the update asks once the format allows it; not called on a refusal
+     * @return the refusal JSON, or whatever {@code askTheManager} returned
+     */
+    static String passTheFormatGate(IApplicationManager manager, IApplication application,
+        DumpInfoProbe.Reading dumpInfo, boolean ignore,
+        java.util.function.Supplier<String> askTheManager)
+    {
+        String stop = stopOnForeignDumpInfoFormat(dumpInfo, ignore);
+        if (stop != null)
+        {
+            return stop;
+        }
+        if (manager == null || application == null || askTheManager == null)
+        {
+            return null;
+        }
+        return askTheManager.get();
+    }
+
+    /**
+     * The refusal an update answers when the stored dump-info carries a foreign format, or
+     * <code>null</code> to go ahead - when the formats match, when this base has no recorded
+     * format, when there is no stored file, or when the caller said to ignore it.
+     *
+     * @param dumpInfo the reading of the stored file, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    static String stopOnForeignDumpInfoFormat(DumpInfoProbe.Reading dumpInfo, boolean ignore)
+    {
+        if (dumpInfo == null || !dumpInfo.mismatch() || ignore)
+        {
+            return null;
+        }
+        return ToolResult.error("The stored ConfigDumpInfo.xml carries format \"" //$NON-NLS-1$
+            + dumpInfo.actualFormat + "\" while the Designer of this infobase writes \"" //$NON-NLS-1$
+            + dumpInfo.expectedFormat + "\" (recorded for this base on platform " //$NON-NLS-1$
+            + dumpInfo.platformVersion + ") - an update would silently become a FULL " //$NON-NLS-1$
+            + "configuration load (the platform answers FullDump to a dump-info file it does not " //$NON-NLS-1$
+            + "understand), so it was not started. Rebuild the file with the platform's own " //$NON-NLS-1$
+            + "Designer dump: infobase_admin operation=sync_control syncOperation=rebuild_dump_info " //$NON-NLS-1$
+            + "projectName=<this project> confirm=true, or pass ignoreDumpInfoFormat=true to " //$NON-NLS-1$
+            + "update anyway.") //$NON-NLS-1$
+            .put("dumpInfoFile", dumpInfo.file) //$NON-NLS-1$
+            .put("dumpInfoFormat", dumpInfo.actualFormat) //$NON-NLS-1$
+            .put("expectedDumpInfoFormat", dumpInfo.expectedFormat) //$NON-NLS-1$
+            .put("platformVersion", dumpInfo.platformVersion) //$NON-NLS-1$
+            .put("tag", ErrorTags.DUMP_INFO_FORMAT.wire()) //$NON-NLS-1$
+            .put("nextStep", "sync_control syncOperation=rebuild_dump_info confirm=true") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
+
+    /**
+     * One sentence about the dump-info format check, for answers that went ahead: what was
+     * compared, what matched, what was overridden, or that nothing has been recorded for this base.
+     *
+     * @param dumpInfo the reading, or {@code null}
+     * @param ignore whether the caller passed {@code ignoreDumpInfoFormat}
+     * @return the sentence, or <code>null</code> when there is nothing to say (no file, or no
+     *         application of an infobase kind)
+     */
+    static String describeDumpInfoFormatCheck(DumpInfoProbe.Reading dumpInfo, boolean ignore)
+    {
+        if (dumpInfo == null || dumpInfo.actualFormat == null)
+        {
+            return null;
+        }
+        if (!dumpInfo.mismatch())
+        {
+            if (dumpInfo.expectedFormat == null)
+            {
+                if (dumpInfo.notComparedBecause != null)
+                {
+                    return dumpInfo.notComparedBecause;
+                }
+                return "not compared: no format has been recorded for this infobase yet (the " //$NON-NLS-1$
+                    + "file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
+                    + "\") - rebuild_dump_info records one from this base's own Designer"; //$NON-NLS-1$
+            }
+            return "matched: the file carries \"" + dumpInfo.expectedFormat //$NON-NLS-1$
+                + "\" as this infobase's own Designer writes"; //$NON-NLS-1$
+        }
+        return ignore
+            ? "OVERRIDDEN by ignoreDumpInfoFormat: the file carries \"" + dumpInfo.actualFormat //$NON-NLS-1$
+                + "\", this infobase's Designer writes \"" + dumpInfo.expectedFormat //$NON-NLS-1$
+                + "\" - expect a FULL configuration load" //$NON-NLS-1$
+            : "mismatch: file \"" + dumpInfo.actualFormat + "\", expected \"" //$NON-NLS-1$ //$NON-NLS-2$
+                + dumpInfo.expectedFormat + "\""; //$NON-NLS-1$
+    }
+
+    /**
      * An execution context carrying the active shell.
      * <p>
-     * Both the update and its readiness check are given one. The environment refuses the readiness
-     * check outright without a shell - {@code ApplicationException: Shell is not provided in
-     * execution context} - and the update wants one for any modal it raises.
+     * The update is given one, because it wants a shell for any modal it raises. A probe is not:
+     * it raises none, and nothing else it reads asks for a shell.
      * </p>
      *
      * @return the context, carrying a shell when the workbench has one
@@ -647,7 +1003,7 @@ public class DatabaseUpdater implements IMcpTool
      * @param timeoutMs how long was waited
      * @return a JSON Pending body
      */
-    private String buildPendingJson(String runKey, PendingWorkRegistry.PendingEntry entry, String projectName,
+    private static String buildPendingJson(String runKey, PendingWorkRegistry.PendingEntry entry, String projectName,
         long timeoutMs)
     {
         ToolResult body = ToolResult.success()
@@ -683,7 +1039,8 @@ public class DatabaseUpdater implements IMcpTool
      * @param autoFreeClients whether to free held clients first
      * @param ignoreBranchBinding whether to go ahead when the branch names another application
      * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
-     * @param checkOnly whether to answer what an update would face and start nothing
+     * @param checkOnly whether to answer what an update would face and start nothing. Reached only
+     *            from the caller's thread - a probe is never a tracked run, see {@link #runOrAnswer}
      * @param params the full call, for the refreshWorkspace flag
      * @return a JSON result body
      */
@@ -691,7 +1048,8 @@ public class DatabaseUpdater implements IMcpTool
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
         boolean skipValidation, boolean checkOnly, Map<String, String> params)
     {
-        String blocked = refuseWhatTheInfobaseWillRefuse(projectName, skipValidation);
+        String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
+            DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
         if (blocked != null)
         {
             return blocked;
@@ -776,6 +1134,32 @@ public class DatabaseUpdater implements IMcpTool
 
             IApplication application = appOpt.get();
 
+            // The stored ConfigDumpInfo.xml tells the platform's Designer what the last
+            // synchronization left behind, and the platform reads it from disk on every
+            // dump-files. A file of a format this platform does not understand makes it answer
+            // FullDump and the update silently becomes a full load - so the format is compared
+            // BEFORE anything is asked of the infobase, while the reason is still readable here.
+            DumpInfoProbe.Reading dumpInfo =
+                readDumpInfoProbe(infobaseProject, application);
+            boolean ignoreDumpInfoFormat =
+                JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
+            if (checkOnly)
+            {
+                // Answered here, and only here: the probe reaches this method on the caller's
+                // thread, never as a tracked run - see runOrAnswer. What it reads is the state and,
+                // if asked, a refresh; what it must not read is the readiness check, which
+                // synchronizes with the infobase.
+                return whatAnUpdateWouldFace(appManager, application,
+                    refreshForProbe(params, project, infobaseProject), applicationId, projectName,
+                    viaParent, infobaseProject.getName(), dumpInfo, ignoreDumpInfoFormat);
+            }
+            String formatStop = passTheFormatGate(appManager, application, dumpInfo,
+                ignoreDumpInfoFormat, () -> null);
+            if (formatStop != null)
+            {
+                return formatStop;
+            }
+
             boolean refreshWorkspace =
                 JsonUtils.extractBooleanArgument(params, "refreshWorkspace", true); //$NON-NLS-1$
             JsonObject workspaceRefresh = null;
@@ -789,21 +1173,6 @@ public class DatabaseUpdater implements IMcpTool
             }
 
             ApplicationUpdateState stateBefore = appManager.getUpdateState(application);
-            if (checkOnly)
-            {
-                String dryAnswer = whatAnUpdateWouldFace(appManager, application, applicationId,
-                    projectName, infobaseProject, viaParent, stateBefore);
-                if (workspaceRefresh != null)
-                {
-                    // The dry answer asserts what the model holds, so it asserts the refresh too:
-                    // its stateBefore is only as current as the workspace this call just read.
-                    com.google.gson.JsonObject parsed =
-                        com.google.gson.JsonParser.parseString(dryAnswer).getAsJsonObject();
-                    parsed.add("workspaceRefresh", workspaceRefresh); //$NON-NLS-1$
-                    dryAnswer = parsed.toString();
-                }
-                return dryAnswer;
-            }
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
                 return ToolResult.error("This application has an update already in progress - wait for it to finish.").toJson(); //$NON-NLS-1$
@@ -958,6 +1327,15 @@ public class DatabaseUpdater implements IMcpTool
                     + "extension's current code into the base."); //$NON-NLS-1$
             }
 
+            // The check that stood before the update: matched, overridden, or without an
+            // expectation for this platform. Named only when there was a file to compare - a
+            // store without a dump-info file is EDT's own state to report, not this update's.
+            String formatCheckLine = describeDumpInfoFormatCheck(dumpInfo, ignoreDumpInfoFormat);
+            if (formatCheckLine != null)
+            {
+                result.put("dumpInfoFormatCheck", formatCheckLine); //$NON-NLS-1$
+            }
+
             if (updateComplete)
             {
                 result.put("message", "Database update finished successfully"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1043,6 +1421,25 @@ public class DatabaseUpdater implements IMcpTool
                 infobaseClaim.close();
             }
         }
+    }
+
+    /**
+     * The export scan an update runs before it writes, or nothing for a dry run.
+     * <p>
+     * A dry run answers from what the environment already holds. The scan walks the whole
+     * project, so a dry run does not run it and names it in {@code notCheckedInDryRun} instead.
+     * </p>
+     *
+     * @param projectName the project about to be written to an infobase.
+     * @param skip whether the caller asked to go ahead unchecked.
+     * @param probe whether this call is a dry run.
+     * @param scan the scan to run, {@link #refuseWhatTheInfobaseWillRefuse} outside tests.
+     * @return the refusal as a JSON body, or <code>null</code> to go ahead
+     */
+    static String exportScanBefore(String projectName, boolean skip, boolean probe,
+        java.util.function.BiFunction<String, Boolean, String> scan)
+    {
+        return probe ? null : scan.apply(projectName, Boolean.valueOf(skip));
     }
 
     /**
@@ -1188,36 +1585,60 @@ public class DatabaseUpdater implements IMcpTool
      * invisible to the model until then, and the update decision below answers against the model:
      * Done or UPDATED over an update that never carried the change. This is the refresh a caller
      * would have had to know to ask for; done here, it cannot be forgotten. The count it reports
-     * is what this call picked up, so 0 means the model already matched the disk.
+     * is what this re-read actually changed - resources added, removed, replaced or whose content
+     * moved into the model - so 0 means the model already matched the disk.
+     * <p>
+     * The platform's {@code refreshLocal} answers nothing about what it found, so the number is
+     * measured rather than asked for: a POST_CHANGE listener counts leaf deltas delivered in the
+     * calling thread while it is inside {@code refreshLocal}. The platform delivers that operation's
+     * notification synchronously before returning. The listener is taken down in a closing step
+     * whatever the refresh did - a failed one included.
+     * </p>
      *
      * @param project the project being updated
      * @param infobaseProject the project that owns the infobase - the parent, for an extension,
      *            which is where the change usually is
      * @return the report: projects touched, resources changed, any failure noted rather than thrown
      */
-    private static JsonObject refreshFromDisk(IProject project, IProject infobaseProject)
+    static JsonObject refreshFromDisk(IProject project, IProject infobaseProject)
     {
         JsonObject report = new JsonObject();
         java.util.LinkedHashSet<String> touched = new java.util.LinkedHashSet<>();
-        int changed = 0;
-        String failure = null;
+        java.util.Set<IProject> watched = new java.util.LinkedHashSet<>();
         for (IProject each : new IProject[] { project, infobaseProject })
         {
-            if (each == null || !each.isAccessible() || touched.contains(each.getName()))
+            if (each != null && each.isAccessible() && !touched.contains(each.getName()))
             {
-                continue;
+                touched.add(each.getName());
+                watched.add(each);
             }
-            touched.add(each.getName());
-            try
+        }
+        String failure = null;
+        RefreshChangeCounter counter = new RefreshChangeCounter(watched);
+        counter.register();
+        try
+        {
+            for (IProject each : watched)
             {
-                each.refreshLocal(org.eclipse.core.resources.IResource.DEPTH_INFINITE,
-                    new NullProgressMonitor());
+                counter.beginRefresh();
+                try
+                {
+                    each.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+                }
+                catch (Exception e)
+                {
+                    failure = (failure == null ? "" : failure + "; ") //$NON-NLS-1$ //$NON-NLS-2$
+                        + each.getName() + ": " + e.getMessage(); //$NON-NLS-1$
+                }
+                finally
+                {
+                    counter.endRefresh();
+                }
             }
-            catch (Exception e)
-            {
-                failure = (failure == null ? "" : failure + "; ") //$NON-NLS-1$ //$NON-NLS-2$
-                    + each.getName() + ": " + e.getMessage();
-            }
+        }
+        finally
+        {
+            counter.unregister();
         }
         JsonArray names = new JsonArray();
         for (String name : touched)
@@ -1225,12 +1646,157 @@ public class DatabaseUpdater implements IMcpTool
             names.add(name);
         }
         report.add("projects", names); //$NON-NLS-1$
-        report.addProperty("changedResources", Integer.valueOf(changed)); //$NON-NLS-1$
+        report.addProperty("changedResources", Integer.valueOf(counter.changed())); //$NON-NLS-1$
         if (failure != null)
         {
             report.addProperty("refreshError", failure); //$NON-NLS-1$
         }
         return report;
+    }
+
+    /**
+     * How many refresh counters are registered right now. Exists for the test that says a failed
+     * refresh takes its listener down with it: a counter left behind would keep counting other
+     * calls' events into a report nobody reads.
+     *
+     * @return the number of registered counters
+     */
+    static int activeRefreshCounters()
+    {
+        return RefreshChangeCounter.ACTIVE.get();
+    }
+
+    /**
+     * Counts the resource deltas one refresh produced.
+     * <p>
+     * {@code IResource.refreshLocal} returns nothing about what it found, so the number the
+     * report promises is measured here: POST_CHANGE events delivered synchronously in the thread
+     * executing {@code refreshLocal} are watched, and their changed leaf resources are counted.
+     * Events from every other thread are ignored, including traffic in the same project while the
+     * refresh runs.
+     * </p>
+     */
+    static final class RefreshChangeCounter implements IResourceChangeListener
+    {
+        /** The counters registered right now; see {@link DatabaseUpdater#activeRefreshCounters()}. */
+        private static final AtomicInteger ACTIVE = new AtomicInteger();
+
+        private final Set<String> watched = new LinkedHashSet<>();
+
+        private final AtomicInteger changed = new AtomicInteger();
+
+        private volatile Thread refreshThread;
+
+        /**
+         * Binds the counter to the projects whose deltas count.
+         *
+         * @param watched the projects the refresh is asked about
+         */
+        RefreshChangeCounter(Set<IProject> watched)
+        {
+            for (IProject project : watched)
+            {
+                this.watched.add(project.getName());
+            }
+        }
+
+        /** Marks the calling thread as being inside one watched {@code refreshLocal} call. */
+        void beginRefresh()
+        {
+            refreshThread = Thread.currentThread();
+        }
+
+        /** Stops attributing events to the call that just returned or failed. */
+        void endRefresh()
+        {
+            refreshThread = null;
+        }
+
+        /** Starts watching the workspace for the deltas the refresh is about to cause. */
+        void register()
+        {
+            ResourcesPlugin.getWorkspace().addResourceChangeListener(this, IResourceChangeEvent.POST_CHANGE);
+            ACTIVE.incrementAndGet();
+        }
+
+        /**
+         * Stops watching. Runs in a closing step whatever the refresh did: a listener left
+         * behind would keep counting into a report whose call was already answered.
+         */
+        void unregister()
+        {
+            ResourcesPlugin.getWorkspace().removeResourceChangeListener(this);
+            ACTIVE.decrementAndGet();
+        }
+
+        /**
+         * What the refresh changed: leaf resources it added, removed, replaced, or whose content
+         * moved into the model.
+         *
+         * @return the count
+         */
+        int changed()
+        {
+            return changed.get();
+        }
+
+        /**
+         * Walks one notification batch and counts changed leaf deltas of any resource kind, and
+         * every node whose kind of resource was replaced - a folder that became a file carries
+         * the removal of what it held as its children, and the replacement itself is only on the
+         * node.
+         *
+         * @param event the POST_CHANGE notification
+         */
+        @Override
+        public void resourceChanged(IResourceChangeEvent event)
+        {
+            if (Thread.currentThread() != refreshThread)
+            {
+                return;
+            }
+            IResourceDelta delta = event.getDelta();
+            if (delta == null)
+            {
+                return;
+            }
+            try
+            {
+                delta.accept(child -> {
+                    IResource resource = child.getResource();
+                    if (resource instanceof IProject && !watched.contains(resource.getName()))
+                    {
+                        return false;
+                    }
+                    int kind = child.getKind();
+                    if (child.getAffectedChildren().length != 0)
+                    {
+                        if ((kind & IResourceDelta.CHANGED) != 0
+                            && (child.getFlags() & (IResourceDelta.TYPE | IResourceDelta.REPLACED)) != 0)
+                        {
+                            changed.incrementAndGet();
+                        }
+                        return true;
+                    }
+                    boolean counts = (kind & (IResourceDelta.ADDED | IResourceDelta.REMOVED)) != 0
+                        || (kind & IResourceDelta.CHANGED) != 0
+                            && (child.getFlags()
+                                & (IResourceDelta.CONTENT | IResourceDelta.TYPE | IResourceDelta.REPLACED)) != 0;
+                    if (counts)
+                    {
+                        changed.incrementAndGet();
+                    }
+                    return false;
+                });
+            }
+            catch (CoreException walkFailed)
+            {
+                // A tree that cannot be walked leaves a partial count; the refresh error beside
+                // it says more than throwing the answer away would.
+                Activator.logWarning("Refresh change count lost part of the delta tree: " //$NON-NLS-1$
+                    + walkFailed.getMessage());
+            }
+        }
     }
 
     /**

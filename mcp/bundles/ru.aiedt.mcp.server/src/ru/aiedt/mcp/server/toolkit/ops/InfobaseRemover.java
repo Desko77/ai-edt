@@ -73,6 +73,11 @@ public class InfobaseRemover implements IMcpTool
         BmInfobaseLifecycleHelper.DeleteResult r =
             BmInfobaseLifecycleHelper.deleteInfobase(name, deleteContent, projectName);
 
+        return response(name, r);
+    }
+
+    static String response(String name, BmInfobaseLifecycleHelper.DeleteResult r)
+    {
         if (!r.ok)
         {
             ToolResult err = ToolResult.error(r.error)
@@ -81,6 +86,10 @@ public class InfobaseRemover implements IMcpTool
             if (r.failureKind != null)
             {
                 err.put(r.failureKind, Boolean.TRUE);
+            }
+            if (r.launchApplicationIds != null)
+            {
+                err.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
             }
             return err.toJson();
         }
@@ -93,6 +102,10 @@ public class InfobaseRemover implements IMcpTool
         if (r.dissociateWarning != null)
         {
             ok.put("dissociateWarning", r.dissociateWarning); //$NON-NLS-1$
+        }
+        if (r.launchApplicationIds != null)
+        {
+            ok.put("launchApplicationIds", r.launchApplicationIds); //$NON-NLS-1$
         }
         return ok.toJson();
     }
