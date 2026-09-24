@@ -104,4 +104,26 @@ public class TheInfobaseObjectsExportTakesAHeavyPermitTest
             noHeap.admit(ConfigIoFacadeTool.NAME,
                 Map.of("operation", "export_infobase_objects")).refusal()); //$NON-NLS-1$ //$NON-NLS-2$
     }
+
+    /**
+     * The camelCase spelling of the selector - accepted by the facade's own execute - is weighed
+     * by the road the same way: the permit is taken, and the concurrency limit refuses it.
+     */
+    @Test
+    public void theCamelCaseSelectorTakesThePermitAndMeetsTheLimit()
+    {
+        ensure(new ConfigIoFacadeTool());
+        ToolRoad road = new ToolRoad(new Semaphore(1));
+        ToolRoad.Admission admission = road.admit(ConfigIoFacadeTool.NAME,
+            Map.of("operation", "exportInfobaseObjects")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull("the camelCase selector is admitted: " + admission.refusal(), admission.refusal()); //$NON-NLS-1$
+        assertTrue("the camelCase selector takes one of the heavy permits", //$NON-NLS-1$
+            admission.ticket().holdsPermit());
+        admission.ticket().release();
+
+        ToolRoad atTheLimit = new ToolRoad(new Semaphore(0));
+        assertEquals("the camelCase selector meets the concurrency limit", ToolRoad.MSG_HEAVY_BUSY, //$NON-NLS-1$
+            atTheLimit.admit(ConfigIoFacadeTool.NAME,
+                Map.of("operation", "exportInfobaseObjects")).refusal()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
 }

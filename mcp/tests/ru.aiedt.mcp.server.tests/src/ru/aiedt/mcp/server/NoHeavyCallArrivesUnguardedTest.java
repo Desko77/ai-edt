@@ -109,6 +109,64 @@ public class NoHeavyCallArrivesUnguardedTest
     }
 
     /**
+     * Every facade weighs a heavy operation by the same spelling its own execution accepts. Each
+     * of these dispatches normalizes the selector, so camelCase like {@code exportInfobaseObjects}
+     * is accepted spelling; a route that only lowercased missed it, and the call ran heavy work no
+     * gate had weighed - no heap check, no permit, no limit.
+     */
+    @Test
+    public void aCamelCaseSelectorOfEveryHeavyOperationIsStillWeighed()
+    {
+        List<String> unweighed = new ArrayList<>();
+        for (Map.Entry<IMcpTool, String[]> entry : ROUTES_TO_CHECK.entrySet())
+        {
+            IMcpTool facade = entry.getKey();
+            if (facade instanceof ExtensionWorkshopTool)
+            {
+                // Its execute accepts only the exact snake_case spelling, so a camelCase
+                // selector is refused before any work runs - there is nothing to weigh.
+                continue;
+            }
+            for (String operation : entry.getValue())
+            {
+                String camel = camelCase(operation);
+                String routed = facade.routesTo(call(camel));
+                boolean known = HeavyTools.isHeavy(facade.getName())
+                    || (routed != null && HeavyTools.isHeavy(routed));
+                if (!known)
+                {
+                    unweighed.add(facade.getName() + " operation=" + camel + " reaches " + routed); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+        }
+        assertEquals("these accepted spellings reach a heavy tool unweighed: " + unweighed, 0, //$NON-NLS-1$
+            unweighed.size());
+    }
+
+    /**
+     * snake_case to the camelCase spelling a client sends and the facades' dispatch accepts.
+     *
+     * @param snake the canonical operation name
+     * @return the camelCase spelling of the same operation
+     */
+    private static String camelCase(String snake)
+    {
+        StringBuilder camel = new StringBuilder();
+        for (String part : snake.split("_")) //$NON-NLS-1$
+        {
+            if (camel.length() == 0)
+            {
+                camel.append(part);
+            }
+            else if (!part.isEmpty())
+            {
+                camel.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+            }
+        }
+        return camel.toString();
+    }
+
+    /**
      * A facade answers the tool an operation reaches, by name.
      */
     @Test

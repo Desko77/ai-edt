@@ -14,7 +14,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
@@ -93,7 +92,7 @@ public class ConfigIoFacadeTool implements IMcpTool
         {
             return null;
         }
-        String normalized = operation.trim().toLowerCase(Locale.ROOT);
+        String normalized = JsonUtils.normalizeOperationToken(operation);
         if ("export_infobase_objects".equals(normalized)) //$NON-NLS-1$
         {
             // The operation has no delegate to name: the facade runs it itself, through a

@@ -701,7 +701,7 @@ public class EditMetadataTool implements IMcpTool
         {
             return null;
         }
-        return "rename_metadata_object".equals(operation.trim().toLowerCase(java.util.Locale.ROOT)) //$NON-NLS-1$
+        return "rename_metadata_object".equals(JsonUtils.normalizeOperationToken(operation)) //$NON-NLS-1$
             ? "rename_metadata_object" //$NON-NLS-1$
             : null;
     }

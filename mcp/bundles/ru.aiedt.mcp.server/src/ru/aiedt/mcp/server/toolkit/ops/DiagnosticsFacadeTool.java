@@ -14,7 +14,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -83,7 +82,7 @@ public class DiagnosticsFacadeTool implements IMcpTool
         {
             return null;
         }
-        Supplier<IMcpTool> delegate = DESCRIBED.get(operation.trim().toLowerCase(Locale.ROOT));
+        Supplier<IMcpTool> delegate = DESCRIBED.get(JsonUtils.normalizeOperationToken(operation));
         return delegate == null ? null : delegate.get().getName();
     }
 
