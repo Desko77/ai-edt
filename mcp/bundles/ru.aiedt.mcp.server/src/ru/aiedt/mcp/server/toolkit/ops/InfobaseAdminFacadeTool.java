@@ -98,7 +98,27 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         {
             return null;
         }
-        Supplier<IMcpTool> delegate = DESCRIBED.get(JsonUtils.normalizeOperationToken(operation));
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        if ("sync_control".equals(normalized)) //$NON-NLS-1$
+        {
+            // Its inner action travels as syncOperation and is forwarded verbatim, so the Designer
+            // behind rebuild_dump_info is named from that argument, not from DESCRIBED - which
+            // cannot hold sync_control, whose delegate would need this facade's own remapping.
+            // SyncControlTool answers the same question for a standalone call; both spellings of
+            // the action are compared exactly, as its own dispatch does.
+            return "rebuild_dump_info".equals(JsonUtils.extractStringArgument(arguments, //$NON-NLS-1$
+                "syncOperation")) ? "rebuild_dump_info" : null; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if ("start_client".equals(normalized)) //$NON-NLS-1$
+        {
+            // The delegate updates the infobase before starting only when the caller asks for it
+            // (default false, read the way ClientSessionStarter reads it), and that update is the
+            // work update_database is weighed for. Without it the call keeps its previous answer,
+            // the delegate's own name, which weighs nothing.
+            return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", false) //$NON-NLS-1$
+                ? "update_database" : ClientSessionStarter.NAME; //$NON-NLS-1$
+        }
+        Supplier<IMcpTool> delegate = DESCRIBED.get(normalized);
         return delegate == null ? null : delegate.get().getName();
     }
 

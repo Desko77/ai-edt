@@ -182,7 +182,11 @@ public class ExtensionWorkshopTool implements IMcpTool
      * <p>
      * Read off the dispatch below one case at a time: these five construct another tool and hand it
      * the call, and four of the five are heavy enough that the server has to know before it starts.
-     * The rest is work this facade does itself, and answers <code>null</code>.
+     * {@code check_platform_verdict} is work this facade does itself, but through a staging
+     * infobase and a Designer, so it answers its own name for the road to weigh. The rest is work
+     * this facade does itself, and answers <code>null</code>. The operation is compared exactly,
+     * as the dispatch accepts it: a spelling the dispatch would refuse - uppercase, padded - routes
+     * nowhere, and a route that weighed it would take a permit for a call that never runs.
      * </p>
      *
      * @param arguments the call arguments
@@ -196,7 +200,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         {
             return null;
         }
-        switch (operation.trim().toLowerCase(java.util.Locale.ROOT))
+        switch (operation)
         {
         case "install_extension": //$NON-NLS-1$
             return "install_extension"; //$NON-NLS-1$
@@ -208,6 +212,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             return "export_extension"; //$NON-NLS-1$
         case "list_interceptors": //$NON-NLS-1$
             return "list_interceptors"; //$NON-NLS-1$
+        case "check_platform_verdict": //$NON-NLS-1$
+            return "check_platform_verdict"; //$NON-NLS-1$
         default:
             return null;
         }

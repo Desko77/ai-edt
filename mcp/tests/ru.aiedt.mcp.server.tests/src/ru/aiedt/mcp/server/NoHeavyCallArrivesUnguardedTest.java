@@ -21,10 +21,12 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.DiagnosticsFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.EditMetadataTool;
+import ru.aiedt.mcp.server.toolkit.ops.ExternalObjectWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.ExtensionWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseAdminFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.InsightsFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.SecurityAuditFacadeTool;
+import ru.aiedt.mcp.server.toolkit.ops.SyncControlTool;
 import ru.aiedt.mcp.server.toolkit.ops.YaxunitTestsTool;
 
 /**
@@ -63,13 +65,32 @@ public class NoHeavyCallArrivesUnguardedTest
             "find_rls_violations", "sensitive_data_scan"}); //$NON-NLS-1$ //$NON-NLS-2$
         ROUTES_TO_CHECK.put(new ConfigIoFacadeTool(), new String[] {"export_object", //$NON-NLS-1$
             "export_configuration_to_xml", "import_configuration_from_xml", //$NON-NLS-1$ //$NON-NLS-2$
-            "import_configuration_from_binary", "export_infobase_objects"}); //$NON-NLS-1$ //$NON-NLS-2$
+            "import_configuration_from_binary", "export_infobase_objects", //$NON-NLS-1$ //$NON-NLS-2$
+            "export_configuration_to_cf", "unpack_external_binary"}); //$NON-NLS-1$ //$NON-NLS-2$
         ROUTES_TO_CHECK.put(new DiagnosticsFacadeTool(), new String[] {"clean_project", "revalidate_objects", //$NON-NLS-1$ //$NON-NLS-2$
             "validate_for_export"}); //$NON-NLS-1$
-        ROUTES_TO_CHECK.put(new InfobaseAdminFacadeTool(), new String[] {"update_database"}); //$NON-NLS-1$
+        ROUTES_TO_CHECK.put(new InfobaseAdminFacadeTool(), new String[] {"update_database", //$NON-NLS-1$
+            "create_infobase"}); //$NON-NLS-1$
         ROUTES_TO_CHECK.put(new ExtensionWorkshopTool(), new String[] {"install_extension", //$NON-NLS-1$
-            "uninstall_extension", "list_extension", "export_extension", "list_interceptors"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "uninstall_extension", "list_extension", "export_extension", "list_interceptors", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "check_platform_verdict"}); //$NON-NLS-1$
         ROUTES_TO_CHECK.put(new EditMetadataTool(), new String[] {"rename_metadata_object"}); //$NON-NLS-1$
+        ROUTES_TO_CHECK.put(new ExternalObjectWorkshopTool(), new String[] {"import_external_object"}); //$NON-NLS-1$
+        ROUTES_TO_CHECK.put(new SyncControlTool(), new String[] {"rebuild_dump_info"}); //$NON-NLS-1$
+    }
+
+    /**
+     * The selectors that carry the heavy action in a SECOND argument, so the map above cannot spell
+     * them: {@code infobase_admin} forwards {@code syncOperation} verbatim to {@link SyncControlTool}
+     * and the road asks a facade once, without chaining - a route answering the facade's own name
+     * would weigh nothing.
+     */
+    private static Map<String, String> syncControl(String syncOperation)
+    {
+        Map<String, String> arguments = new LinkedHashMap<>();
+        arguments.put("operation", "sync_control"); //$NON-NLS-1$ //$NON-NLS-2$
+        arguments.put("syncOperation", syncOperation); //$NON-NLS-1$
+        return arguments;
     }
 
     private static Map<String, String> call(String operation)
@@ -109,6 +130,24 @@ public class NoHeavyCallArrivesUnguardedTest
     }
 
     /**
+     * The action that travels in a second argument is weighed too, and only for the spelling the
+     * inner dispatch accepts: {@code infobase_admin} hands {@code syncOperation} to
+     * {@link SyncControlTool} without changing it, and of its operations only
+     * {@code rebuild_dump_info} releases the infobase to a Designer.
+     */
+    @Test
+    public void aSelectorCarriedInASecondArgumentIsWeighed()
+    {
+        IMcpTool facade = new InfobaseAdminFacadeTool();
+        String routed = facade.routesTo(syncControl("rebuild_dump_info")); //$NON-NLS-1$
+        assertEquals("the Designer run behind the forwarded action", //$NON-NLS-1$
+            "rebuild_dump_info", routed); //$NON-NLS-1$
+        assertTrue("the road weighs what the route answers", HeavyTools.isHeavy(routed)); //$NON-NLS-1$
+        assertEquals("the in-process operations stay unweighed", null, //$NON-NLS-1$
+            facade.routesTo(syncControl("status"))); //$NON-NLS-1$
+    }
+
+    /**
      * Every facade weighs a heavy operation by the same spelling its own execution accepts. Each
      * of these dispatches normalizes the selector, so camelCase like {@code exportInfobaseObjects}
      * is accepted spelling; a route that only lowercased missed it, and the call ran heavy work no
@@ -121,9 +160,10 @@ public class NoHeavyCallArrivesUnguardedTest
         for (Map.Entry<IMcpTool, String[]> entry : ROUTES_TO_CHECK.entrySet())
         {
             IMcpTool facade = entry.getKey();
-            if (facade instanceof ExtensionWorkshopTool)
+            if (facade instanceof ExtensionWorkshopTool || facade instanceof ExternalObjectWorkshopTool
+                || facade instanceof SyncControlTool)
             {
-                // Its execute accepts only the exact snake_case spelling, so a camelCase
+                // Their execute accepts only the exact snake_case spelling, so a camelCase
                 // selector is refused before any work runs - there is nothing to weigh.
                 continue;
             }
@@ -176,6 +216,14 @@ public class NoHeavyCallArrivesUnguardedTest
         assertEquals("project_metrics", insights.routesTo(call("project_metrics"))); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("an operation this facade does itself routes nowhere", //$NON-NLS-1$
             null, insights.routesTo(call("help"))); //$NON-NLS-1$
+        IMcpTool configIo = new ConfigIoFacadeTool();
+        assertEquals("the .cf dump has no delegate, so the operation names itself", //$NON-NLS-1$
+            "export_configuration_to_cf", configIo.routesTo(call("exportConfigurationToCf"))); //$NON-NLS-1$ //$NON-NLS-2$
+        IMcpTool workshop = new ExternalObjectWorkshopTool();
+        assertEquals("import_external_object", //$NON-NLS-1$
+            workshop.routesTo(call("import_external_object"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("create scaffolds in-process and is not weighed", null, //$NON-NLS-1$
+            workshop.routesTo(call("create"))); //$NON-NLS-1$
     }
 
     /**

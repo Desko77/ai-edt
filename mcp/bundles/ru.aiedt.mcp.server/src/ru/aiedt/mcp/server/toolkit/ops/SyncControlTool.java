@@ -218,6 +218,24 @@ public class SyncControlTool implements IMcpTool
         }
     }
 
+    /**
+     * Names the Designer run behind {@code rebuild_dump_info} so the road weighs the call by it.
+     * <p>
+     * Every other operation here reads files and the model in-process, so only this one answers:
+     * a name returned for the rest would throttle cheap reads. The action is matched exactly, as
+     * the dispatch below accepts it - a camelCase selector is refused before any work runs.
+     * </p>
+     *
+     * @param arguments the call arguments, as the client sent them; may be <code>null</code>
+     * @return {@code rebuild_dump_info} for that action, <code>null</code> otherwise
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
+        return "rebuild_dump_info".equals(operation) ? "rebuild_dump_info" : null; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {

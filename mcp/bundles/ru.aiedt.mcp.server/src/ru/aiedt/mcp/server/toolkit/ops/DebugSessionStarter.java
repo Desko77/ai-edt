@@ -165,6 +165,27 @@ public final class DebugSessionStarter implements IMcpTool
         return ResponseType.JSON;
     }
 
+    /**
+     * Names the database update this launch runs before the client starts, so the road weighs the
+     * call by it.
+     * <p>
+     * The update runs unless {@code updateBeforeLaunch} opts out (default true, read exactly as
+     * {@link #execute} reads it), and it is the work {@code update_database} is weighed for. The
+     * route cannot tell an Attach configuration from a runtime client, so a launch that names an
+     * Attach configuration is weighed although the update is skipped there.
+     * </p>
+     *
+     * @param arguments the call arguments, as the client sent them; may be <code>null</code>
+     * @return {@code update_database} when the call updates the infobase before launching,
+     *         <code>null</code> when it opts out
+     */
+    @Override
+    public String routesTo(Map<String, String> arguments)
+    {
+        return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", true) //$NON-NLS-1$
+            ? "update_database" : null; //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
