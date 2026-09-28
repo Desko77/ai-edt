@@ -1326,6 +1326,12 @@ public final class BmExtensionHelper
         return BmObjectHelper.childKindGetter(childKind);
     }
 
+    /**
+     * Reads an object's name through its getName() method.
+     *
+     * @param obj the object to read
+     * @return the name, or {@code null} when the object does not answer with one
+     */
     private static String invokeNameGetter(Object obj)
     {
         try

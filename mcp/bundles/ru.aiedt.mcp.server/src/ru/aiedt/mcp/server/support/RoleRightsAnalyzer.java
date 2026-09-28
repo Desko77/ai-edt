@@ -586,6 +586,13 @@ public final class RoleRightsAnalyzer
         return false;
     }
 
+    /**
+     * Reads a property through a no-argument getter.
+     *
+     * @param target the object to read, which may be {@code null}
+     * @param name the getter name
+     * @return the value, or {@code null} when no such getter answers
+     */
     private static Object invokeGetter(Object target, String name)
     {
         if (target == null)

@@ -600,6 +600,12 @@ public class GetFormStructureTool implements IMcpTool
         return props.size() > 0 ? props : null;
     }
 
+    /**
+     * Reads a form item's title.
+     *
+     * @param item the item to read
+     * @return the title, or {@code null} when the item does not carry one
+     */
     private String extractTitle(Object item)
     {
         // Form / FormItem / Decoration use getTitle() returning a localized string holder

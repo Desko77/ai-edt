@@ -309,6 +309,14 @@ public class SensitiveDataScanTool implements IMcpTool
         }
     }
 
+    /**
+     * Scans one metadata object's attributes, dimensions and resources for sensitive data.
+     * A collection getter this build does not expose is skipped.
+     *
+     * @param obj the object to scan
+     * @param custom the caller's extra name patterns
+     * @param findings the list findings are added to
+     */
     @SuppressWarnings("unchecked")
     private void scanMdObjectAttributes(MdObject obj, Set<Pattern> custom,
         List<Map<String, Object>> findings)

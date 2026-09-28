@@ -191,6 +191,13 @@ public final class BmCommonModuleGuards
         }
     }
 
+    /**
+     * Reads a boolean property through a named getter, trying the get&lt;X&gt; form as well.
+     *
+     * @param obj the object to read
+     * @param getter the name of the is&lt;X&gt; getter
+     * @return the value, or {@code null} when no getter of either name answers
+     */
     private static Boolean readBooleanProperty(Object obj, String getter)
     {
         try
