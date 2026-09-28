@@ -500,6 +500,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
      * edit_metadata: 93862.
      * </p>
+     * <p>
+     * And one by 15 for format on security_audit: markdown applies to audit_role_rights in
+     * mode=rights only: 93877.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 93862;
+    private static final int DOCUMENT_PROSE = 93877;
 }

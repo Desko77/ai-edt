@@ -74,8 +74,12 @@ public class TheToolListHasAWeightBudgetTest
      * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
      * and add_schema_parameter write them into the schema parameter.
      * </p>
+     * <p>
+     * Raised from 170444 to 170459 for format on security_audit: markdown applies to
+     * audit_role_rights in mode=rights only.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 170444;
+    private static final int DOCUMENT_BUDGET = 170459;
 
     private LiveServer server;
 

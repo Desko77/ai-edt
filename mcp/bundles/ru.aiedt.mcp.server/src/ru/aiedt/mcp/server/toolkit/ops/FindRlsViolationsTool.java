@@ -38,9 +38,10 @@ import ru.aiedt.mcp.server.support.UiSync;
 import ru.aiedt.mcp.server.support.WalkNarrowing;
 
 /**
- * Static analyzer for RLS violations and bypass patterns. 1.39 MVP detects
- * the most-impactful pattern (`УстановитьПривилегированныйРежим` without reset)
- * and a heuristic NO_RLS_TABLE check.
+ * Static analyzer of the privileged-mode bypass: {@code УстановитьПривилегированныйРежим(Истина)}
+ * without a reset in the same method (kind {@code PRIVILEGED_MODE}). The answer also says whether
+ * any role's {@code Rights.rights} restricts rows ({@code noRlsConfigured}), or why that could not
+ * be determined.
  */
 public class FindRlsViolationsTool implements IMcpTool
 {
@@ -77,9 +78,9 @@ public class FindRlsViolationsTool implements IMcpTool
     public String getDescription()
     {
         return "Back-compat alias of `security_audit` `operation=find_rls_violations`; prefer the facade for new prompts. " //$NON-NLS-1$
-            + "Static RLS-violation analyzer. Detects: PRIVILEGED_MODE without reset within " //$NON-NLS-1$
-            + "the same method, queries to RLS-protected tables without WHERE. Best-effort " //$NON-NLS-1$
-            + "intra-method analysis (no call-graph)."; //$NON-NLS-1$
+            + "Finds SetPrivilegedMode(True) without a reset in the same method (kind PRIVILEGED_MODE) " //$NON-NLS-1$
+            + "and reports whether any role's Rights.rights restricts rows (noRlsConfigured, " //$NON-NLS-1$
+            + "rlsNotDetermined). Intra-method analysis, no call graph."; //$NON-NLS-1$
     }
 
     @Override
@@ -92,7 +93,7 @@ public class FindRlsViolationsTool implements IMcpTool
             .stringProperty("moduleFqn", //$NON-NLS-1$
                 "Module FQN, for example CommonModule.Sales.") //$NON-NLS-1$
             .stringProperty("methodName", "Method inside moduleFqn.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("roleName", "Limit checks to RLS of this role (default: any RLS)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("roleName", "Decide noRlsConfigured from this role only (default: every role)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
@@ -165,7 +166,13 @@ public class FindRlsViolationsTool implements IMcpTool
         // which leaves noRlsConfigured absent from the answer rather than false.
         // A narrowed walk still asks it of the project: the flag says whether RLS is configured
         // at all, which a single module cannot answer, and it is not a finding.
-        Boolean noRlsConfigured = watch.raised() ? null : checkNoRls(project, roleName);
+        RlsVerdict rls = watch.raised()
+            ? RlsVerdict.undetermined("the call was cancelled before the rights were read", List.of()) //$NON-NLS-1$
+            : checkNoRls(project, roleName);
+        if (rls.refusal != null)
+        {
+            return rls.refusal;
+        }
         List<Map<String, Object>> findings = new ArrayList<>();
         String methodMissing = walkFiles(project, decision, watch, findings);
         if (methodMissing != null)
@@ -188,18 +195,7 @@ public class FindRlsViolationsTool implements IMcpTool
         ToolResult tr = ToolResult.success();
         tr.put("scope", decision.area()); //$NON-NLS-1$
         tr.put("cancelled", watch.note("files")); //$NON-NLS-1$
-        if (Boolean.TRUE.equals(noRlsConfigured))
-        {
-            tr.put("noRlsConfigured", true); //$NON-NLS-1$
-        }
-        else if (noRlsConfigured == null)
-        {
-            // Absent, not false: the rights files could not be read, and "no restrictions" would be
-            // a claim about a configuration nobody looked at.
-            tr.put("rlsNotDetermined", true) //$NON-NLS-1$
-                .put("rlsNote", "Whether row-level security is configured could not be determined: " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "no role's Rights.rights could be read."); //$NON-NLS-1$
-        }
+        rls.putInto(tr);
         if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
         {
             return tr.put("statistics", stats) //$NON-NLS-1$
@@ -211,18 +207,40 @@ public class FindRlsViolationsTool implements IMcpTool
             .toJson();
     }
 
-    private Boolean checkNoRls(IProject project, String roleName)
+    /**
+     * Whether any role restricts rows, read from the project's configuration.
+     *
+     * @param project the project
+     * @param roleName the only role to read, or {@code null} for every role
+     * @return the verdict
+     */
+    private RlsVerdict checkNoRls(IProject project, String roleName)
     {
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
         if (provider == null)
         {
-            return null;
+            return RlsVerdict.undetermined("the configuration provider is not available", List.of()); //$NON-NLS-1$
         }
         Configuration config = provider.getConfiguration(project);
         if (config == null)
         {
-            return null;
+            return RlsVerdict.undetermined("the project's configuration could not be read", List.of()); //$NON-NLS-1$
         }
+        return rlsOf(project, config, roleName);
+    }
+
+    /**
+     * Whether any role restricts rows. A role whose {@code Rights.rights} cannot be read is named,
+     * and while such a role remains, "no role restricts rows" is not answered: the restriction may
+     * be in that file.
+     *
+     * @param project the project the rights files are read from
+     * @param config the configuration
+     * @param roleName the only role to read, or {@code null} or empty for every role
+     * @return the verdict; a refusal when {@code roleName} is not a role of the configuration
+     */
+    static RlsVerdict rlsOf(IProject project, Configuration config, String roleName)
+    {
         List<com._1c.g5.v8.dt.metadata.mdclass.MdObject> objects = collectAllObjects(config);
         Collection<Role> roles;
         if (roleName != null && !roleName.isEmpty())
@@ -230,49 +248,144 @@ public class FindRlsViolationsTool implements IMcpTool
             Role role = RoleRightsAnalyzer.findRole(config, roleName);
             if (role == null)
             {
-                return null;
+                return RlsVerdict.refused(AuditRoleRightsTool.errorRoleNotFound(config, roleName));
             }
             roles = java.util.Collections.singletonList(role);
         }
         else
         {
             roles = RoleRightsAnalyzer.listRoles(config);
+            if (roles.isEmpty())
+            {
+                return RlsVerdict.undetermined("the configuration lists no roles", List.of()); //$NON-NLS-1$
+            }
         }
-        boolean anythingRead = false;
+        List<String> unread = new ArrayList<>();
         for (Role role : roles)
         {
             RoleRightsAnalyzer.RightsTable table;
             try
             {
-                // The rights FILE, not the role model: the model answers empty on EDT 2026, and an
-                // empty answer read as "no restrictions" is how this flag came to contradict 56
-                // roles that carry them.
+                // The rights FILE, not the role model: the model answers empty on EDT 2026.
                 table = RoleRightsAnalyzer.analyze(project, role, objects);
             }
             catch (RuntimeException e)
             {
                 Activator.logDebug("rights of " + role.getName() + " not read: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+                unread.add(role.getName());
                 continue;
             }
-            if (table.hasRls.isEmpty())
-            {
-                // Nothing was read for this role - its file is missing or unreadable.
-                continue;
-            }
-            anythingRead = true;
             for (Boolean restricted : table.hasRls.values())
             {
                 if (Boolean.TRUE.equals(restricted))
                 {
-                    return Boolean.FALSE;
+                    return new RlsVerdict(Boolean.FALSE, null, List.of(), null);
                 }
             }
         }
-        // Not a single rights file could be read: the answer says nothing rather than "none".
-        return anythingRead ? Boolean.TRUE : null;
+        if (unread.isEmpty())
+        {
+            return new RlsVerdict(Boolean.TRUE, null, List.of(), null);
+        }
+        if (unread.size() == roles.size())
+        {
+            return RlsVerdict.undetermined("no role's Rights.rights could be read", unread); //$NON-NLS-1$
+        }
+        return RlsVerdict.undetermined("the Rights.rights of " + unread.size() //$NON-NLS-1$
+            + " roles could not be read, and a restriction may be there", unread); //$NON-NLS-1$
     }
 
-    private List<com._1c.g5.v8.dt.metadata.mdclass.MdObject> collectAllObjects(Configuration cfg)
+    /** What the rights files say about row-level security. */
+    static final class RlsVerdict
+    {
+        /** At most this many unread role names go into the answer. */
+        private static final int NAMED_LIMIT = 20;
+
+        /** {@code TRUE} no role restricts rows, {@code FALSE} some role does, {@code null} not determined. */
+        final Boolean noRlsConfigured;
+
+        /** Why {@link #noRlsConfigured} is {@code null}; {@code null} otherwise. */
+        final String reason;
+
+        /** The roles whose {@code Rights.rights} could not be read. */
+        final List<String> unreadRoles;
+
+        /** The JSON refusal of the call, or {@code null}. */
+        final String refusal;
+
+        /**
+         * @param noRlsConfigured the answer, or {@code null} when not determined
+         * @param reason why the answer is not determined
+         * @param unreadRoles the roles whose rights could not be read
+         * @param refusal the JSON refusal, or {@code null}
+         */
+        RlsVerdict(Boolean noRlsConfigured, String reason, List<String> unreadRoles, String refusal)
+        {
+            this.noRlsConfigured = noRlsConfigured;
+            this.reason = reason;
+            this.unreadRoles = unreadRoles;
+            this.refusal = refusal;
+        }
+
+        /**
+         * A verdict that could not be reached.
+         *
+         * @param reason why
+         * @param unreadRoles the roles whose rights could not be read
+         * @return the verdict
+         */
+        static RlsVerdict undetermined(String reason, List<String> unreadRoles)
+        {
+            return new RlsVerdict(null, reason, unreadRoles, null);
+        }
+
+        /**
+         * A verdict that refuses the call.
+         *
+         * @param refusal the JSON refusal
+         * @return the verdict
+         */
+        static RlsVerdict refused(String refusal)
+        {
+            return new RlsVerdict(null, null, List.of(), refusal);
+        }
+
+        /**
+         * Writes the verdict into the answer: {@code noRlsConfigured} when no role restricts rows,
+         * nothing when some role does, {@code rlsNotDetermined} with the reason and the unread roles
+         * otherwise.
+         *
+         * @param answer the answer
+         */
+        void putInto(ToolResult answer)
+        {
+            if (Boolean.TRUE.equals(noRlsConfigured))
+            {
+                answer.put("noRlsConfigured", true); //$NON-NLS-1$
+                return;
+            }
+            if (noRlsConfigured != null)
+            {
+                return;
+            }
+            answer.put("rlsNotDetermined", true) //$NON-NLS-1$
+                .put("rlsNote", "Whether row-level security is configured could not be determined: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + reason + "."); //$NON-NLS-1$
+            if (!unreadRoles.isEmpty())
+            {
+                answer.put("rightsNotRead", unreadRoles.subList(0, Math.min(NAMED_LIMIT, unreadRoles.size()))) //$NON-NLS-1$
+                    .put("rightsNotReadCount", unreadRoles.size()); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /**
+     * Every metadata object of the configuration.
+     *
+     * @param cfg the configuration
+     * @return the objects
+     */
+    private static List<com._1c.g5.v8.dt.metadata.mdclass.MdObject> collectAllObjects(Configuration cfg)
     {
         List<com._1c.g5.v8.dt.metadata.mdclass.MdObject> all = new ArrayList<>();
         for (java.lang.reflect.Method m : cfg.getClass().getMethods())

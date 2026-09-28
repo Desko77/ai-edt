@@ -29,8 +29,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * <ul>
  *   <li>{@code audit_role_rights} - role rights by object, missing rights, conflicts
  *       between roles, or the impact of a right (delegates to {@link AuditRoleRightsTool})</li>
- *   <li>{@code find_rls_violations} - row-level-security checks that reference an
- *       undefined field, always-false conditions, or missing coverage (delegates to
+ *   <li>{@code find_rls_violations} - privileged mode set without a reset in the same
+ *       method, and whether any role restricts rows (delegates to
  *       {@link FindRlsViolationsTool})</li>
  *   <li>{@code sensitive_data_scan} - attribute names, hardcoded secrets, comment leaks
  *       and logged sensitive values (delegates to {@link SensitiveDataScanTool})</li>
@@ -168,7 +168,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
                 "find_rls_violations and sensitive_data_scan: info / warning / error / all " //$NON-NLS-1$
                     + "(default warning).") //$NON-NLS-1$
             .stringProperty("format", //$NON-NLS-1$
-                "All three operations: json (default) or markdown.") //$NON-NLS-1$
+                "json (default) or markdown; audit_role_rights: mode=rights only.") //$NON-NLS-1$
             .build();
     }
 
@@ -252,8 +252,8 @@ public class SecurityAuditFacadeTool implements IMcpTool
             sb.append("# security_audit - operations\n\n"); //$NON-NLS-1$
             sb.append("- **audit_role_rights** - role rights by object, missing rights, " //$NON-NLS-1$
                 + "conflicts between roles, or impact of a role change.\n"); //$NON-NLS-1$
-            sb.append("- **find_rls_violations** - row-level-security checks that " //$NON-NLS-1$
-                + "reference an undefined field, are always false, or are missing.\n"); //$NON-NLS-1$
+            sb.append("- **find_rls_violations** - privileged mode set without a reset in the " //$NON-NLS-1$
+                + "same method, and whether any role restricts rows.\n"); //$NON-NLS-1$
             sb.append("- **sensitive_data_scan** - suspicious attribute names, hardcoded " //$NON-NLS-1$
                 + "secrets, comment leaks and logged sensitive values.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the " //$NON-NLS-1$
@@ -269,7 +269,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
             sb.append("| What can this role do, or what is missing | audit_role_rights |\n"); //$NON-NLS-1$
             sb.append("| Do two roles conflict, or what breaks if I remove one | " //$NON-NLS-1$
                 + "audit_role_rights (mode=conflicts / mode=impact) |\n"); //$NON-NLS-1$
-            sb.append("| Is row-level security broken or missing somewhere | " //$NON-NLS-1$
+            sb.append("| Is privileged mode left on in a method, or does any role restrict rows | " //$NON-NLS-1$
                 + "find_rls_violations |\n"); //$NON-NLS-1$
             sb.append("| Is a password/token/PII leaking into an attribute name, a " //$NON-NLS-1$
                 + "comment or a log | sensitive_data_scan |\n"); //$NON-NLS-1$
