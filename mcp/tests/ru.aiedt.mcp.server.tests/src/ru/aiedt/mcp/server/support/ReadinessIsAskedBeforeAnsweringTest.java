@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -99,5 +100,35 @@ public class ReadinessIsAskedBeforeAnsweringTest
         // cannot be opened, the honest report is that there is no watch - not a watch that will
         // cheerfully answer "nothing moved" to every question it is asked.
         assertNull(ProjectStateGuard.watchModel(null));
+    }
+
+    @Test
+    public void aProjectThatIsNotThereIsNotToldToWait()
+    {
+        // Waiting cannot conjure a project, so the refusal for a name that matches nothing must
+        // not advise it. What it must do is name the projects the caller could have meant, which
+        // is the information that actually unblocks the call.
+        String refusal = ProjectStateGuard.checkReadyOrError("no-such-project-aiedt-test"); //$NON-NLS-1$
+        assertNotNull("a missing project cannot be ready", refusal); //$NON-NLS-1$
+        assertTrue(refusal, refusal.startsWith("Project not found:")); //$NON-NLS-1$
+        assertFalse(refusal, refusal.contains("Wait a moment")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void waitingIsAdvisedOnlyWhereWaitingCanHelp()
+    {
+        // A build finishes on its own, and an unreadable state may read fine a moment later, so
+        // both keep the advice to wait. A project that is absent, closed, or not EDT's will be
+        // exactly as absent after the wait, and the advice would only send the agent in a circle.
+        ProjectStateGuard.ProjectStateResult building = new ProjectStateGuard.ProjectStateResult(
+            ProjectStateGuard.ProjectState.BUILDING, "Project is still building"); //$NON-NLS-1$
+        ProjectStateGuard.ProjectStateResult unknown = new ProjectStateGuard.ProjectStateResult(
+            ProjectStateGuard.ProjectState.UNKNOWN, "Build state cannot be determined"); //$NON-NLS-1$
+        ProjectStateGuard.ProjectStateResult missing = new ProjectStateGuard.ProjectStateResult(
+            ProjectStateGuard.ProjectState.NOT_AVAILABLE, "No such project in the workspace"); //$NON-NLS-1$
+
+        assertTrue(ProjectStateGuard.withRetryAdvice(building).contains("Wait a moment")); //$NON-NLS-1$
+        assertTrue(ProjectStateGuard.withRetryAdvice(unknown).contains("Wait a moment")); //$NON-NLS-1$
+        assertFalse(ProjectStateGuard.withRetryAdvice(missing).contains("Wait a moment")); //$NON-NLS-1$
     }
 }

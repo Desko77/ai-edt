@@ -45,9 +45,9 @@ import ru.aiedt.mcp.server.Activator;
 public final class ProjectStateGuard
 {
     /**
-     * Appended to every message a tool shows. It reads oddly on a state that will never resolve on its
-     * own - a closed project is not going to open itself - but the shape of the message is what agents
-     * key on, and the prefix already says what is wrong.
+     * Appended only to a message about a state that can pass on its own - a build in progress, or a
+     * state EDT has not published yet. A state that will never resolve by waiting (no such project, a
+     * closed project, not an EDT project) gets no such advice: the retry it suggests cannot work.
      */
     private static final String RETRY_SUFFIX = ". Wait a moment and try again."; //$NON-NLS-1$
 
@@ -238,7 +238,11 @@ public final class ProjectStateGuard
         {
             return null;
         }
-        return result.getMessage() + RETRY_SUFFIX;
+        if (project != null && (!project.exists() || !project.isOpen()))
+        {
+            return ProjectResolver.describeNotFound(project.getName());
+        }
+        return withRetryAdvice(result);
     }
 
     /**
@@ -256,7 +260,14 @@ public final class ProjectStateGuard
         {
             return null;
         }
-        return checkReadyOrError(findProject(projectName));
+        IProject project = findProject(projectName);
+        if (!project.exists() || !project.isOpen())
+        {
+            // The name is in hand here, so the refusal can name the open projects and the closest
+            // match instead of only stating the absence.
+            return ProjectResolver.describeNotFound(projectName);
+        }
+        return checkReadyOrError(project);
     }
 
     /**
@@ -279,9 +290,13 @@ public final class ProjectStateGuard
         {
             return null;
         }
+        if (project != null && (!project.exists() || !project.isOpen()))
+        {
+            return ProjectResolver.describeNotFound(project.getName());
+        }
         if (result.getState() != ProjectState.BUILDING || timeoutMs <= 0)
         {
-            return result.getMessage() + RETRY_SUFFIX;
+            return withRetryAdvice(result);
         }
 
         BuildTaskHelper.waitForBuildAndDerivedData(project, timeoutMs, new NullProgressMonitor());
@@ -291,7 +306,7 @@ public final class ProjectStateGuard
         {
             return null;
         }
-        return recheck.getMessage() + RETRY_SUFFIX;
+        return withRetryAdvice(recheck);
     }
 
     /**
@@ -308,7 +323,12 @@ public final class ProjectStateGuard
         {
             return null;
         }
-        return checkReadyOrWait(findProject(projectName), timeoutMs);
+        IProject project = findProject(projectName);
+        if (!project.exists() || !project.isOpen())
+        {
+            return ProjectResolver.describeNotFound(projectName);
+        }
+        return checkReadyOrWait(project, timeoutMs);
     }
 
     /**
@@ -403,6 +423,26 @@ public final class ProjectStateGuard
             Activator.logError("Could not start watching a project model", e); //$NON-NLS-1$
             return null;
         }
+    }
+
+    /**
+     * Turns a state into the refusal a tool shows, advising a retry only where a retry can work.
+     * <p>
+     * Waiting helps against a build in progress and is harmless against a state that simply could
+     * not be read; against a project that is absent, closed, or not EDT's it cannot, so those
+     * refusals carry what is wrong and nothing more.
+     * </p>
+     *
+     * @param result the state and its explanation; never <code>null</code> when called
+     * @return the refusal text for the agent, never <code>null</code>
+     */
+    static String withRetryAdvice(ProjectStateResult result)
+    {
+        if (result.getState() == ProjectState.NOT_AVAILABLE)
+        {
+            return result.getMessage();
+        }
+        return result.getMessage() + RETRY_SUFFIX;
     }
 
     /**
