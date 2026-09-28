@@ -627,6 +627,9 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("confirm", //$NON-NLS-1$
                 "delete_metadata_object only: applies the deletion rather than returning a " //$NON-NLS-1$
                     + "preview.") //$NON-NLS-1$
+            .booleanProperty("cascadeForms", //$NON-NLS-1$
+                "Removing an attribute, tabular section or column: also remove the form items bound " //$NON-NLS-1$
+                    + "to it.") //$NON-NLS-1$
             .booleanProperty("batch", //$NON-NLS-1$
                 "Run several operations from ONE call, in order, each in its own " //$NON-NLS-1$
                     + "transaction. An operation or argument name that does not exist stops " //$NON-NLS-1$
