@@ -1560,6 +1560,16 @@ final class FormItemsOps
      * RadioButton ext-info (see {@code createRadioButtonsFieldExtInfo}). Caller
      * may still pass {@code elementType} explicitly; we set it here only when
      * absent.
+     * <p>
+     * {@link EditFormTool} answers MARKDOWN while {@code edit_metadata} answers
+     * JSON, so its response is passed through
+     * {@link #convertEditFormMarkdownToJson} the same way the neighbouring
+     * {@link #delegateToEditForm} route does. The raw markdown leaves the JSON
+     * protocol handler with a body it cannot parse (-32603
+     * MalformedJsonException) even though the write already happened.
+     *
+     * @param params the edit_metadata parameters of add_radio_button
+     * @return the JSON answer of the operation, naming the form it wrote to
      */
     String delegateToEditFormAsRadioButton(Map<String, String> params)
     {
@@ -1567,7 +1577,9 @@ final class FormItemsOps
         forwarded.put("operation", "add_field"); //$NON-NLS-1$ //$NON-NLS-2$
         forwarded.putIfAbsent("elementType", "RadioButton"); //$NON-NLS-1$ //$NON-NLS-2$
         EditFormTool editForm = new EditFormTool();
-        return editForm.execute(forwarded);
+        String markdown = editForm.execute(forwarded);
+        return convertEditFormMarkdownToJson(markdown, "add_radio_button", //$NON-NLS-1$
+            forwarded.get("formFqn")); //$NON-NLS-1$
     }
 
     /**
