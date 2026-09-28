@@ -47,11 +47,28 @@ public final class BmSubsystemHelper
     }
 
     /**
+     * Says whether an object carries a subsystem content list at all.
+     * <p>
+     * Only a subsystem does. Asked of anything else, the content operations would otherwise have
+     * no list to change and nothing to tell "already there" from "cannot be there".
+     * </p>
+     *
+     * @param owner the object named as the owner of the content.
+     * @return <code>true</code> when the owner has a content list to add to or remove from
+     */
+    public static boolean canHoldContent(MdObject owner)
+    {
+        return owner != null && getContentList(owner) != null;
+    }
+
+    /**
      * Adds the target object to the subsystem's content list, idempotent.
      *
      * @param subsystem the Subsystem MdObject to mutate
      * @param target    the metadata object to include
      * @return true when an addition happened, false when it was already present
+     * @throws IllegalArgumentException when the owner is not a subsystem - a <code>false</code>
+     *     there would read as "already present"
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
     public static boolean addContent(MdObject subsystem, MdObject target)
@@ -63,7 +80,8 @@ public final class BmSubsystemHelper
         EList contentList = getContentList(subsystem);
         if (contentList == null)
         {
-            return false;
+            throw new IllegalArgumentException(subsystem.eClass().getName() + " '" //$NON-NLS-1$
+                + subsystem.getName() + "' has no subsystem content"); //$NON-NLS-1$
         }
         for (Object existing : contentList)
         {
