@@ -307,7 +307,7 @@ public final class ApplicationUpdater
     }
 
     /** How long an update waits for the UI thread to name the active shell, in milliseconds. */
-    static final long SHELL_WAIT_MS = 5_000L;
+    public static final long SHELL_WAIT_MS = 5_000L;
 
     /**
      * Builds an {@link ExecutionContext} with the active SWT shell, waiting for the UI thread at
@@ -330,7 +330,7 @@ public final class ApplicationUpdater
      * @param shellWaitMs how long to wait for the UI thread, in milliseconds
      * @return the context
      */
-    static ExecutionContext buildExecutionContext(long shellWaitMs)
+    public static ExecutionContext buildExecutionContext(long shellWaitMs)
     {
         ExecutionContext context = new ExecutionContext();
         Display display = Display.getDefault();
