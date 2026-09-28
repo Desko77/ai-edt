@@ -35,6 +35,7 @@ import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmExtensionTypeHelper;
 import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
+import ru.aiedt.mcp.server.support.BmFormCleanupHelper;
 import ru.aiedt.mcp.server.support.BmFormResourceHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.ConfigurationListProperties;
@@ -1912,12 +1913,24 @@ final class ObjectOps
             autoBorrowSkipped.add(sk);
         }
     }
+    /**
+     * Removes an attribute of a metadata object.
+     * <p>
+     * A form item of the owner whose data path reaches the attribute refuses the removal with
+     * {@code requiresCascadeForms}, unless {@code cascadeForms=true} removes those items with it.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, name, and optionally dryRun and cascadeForms
+     * @return the JSON answer
+     */
     String opRemoveObjectAttribute(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
+        AtomicReference<BmFormCleanupHelper.CleanupResult> cleaned = new AtomicReference<>();
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -1944,9 +1957,11 @@ final class ObjectOps
                 {
                     throw BmObjectHelper.notFound(name, ownerFqn, "attribute"); //$NON-NLS-1$
                 }
+                cleaned.set(BmFormCleanupHelper.clearOrRefuse(tx, owner, name, cascadeForms));
                 attrs.remove(existing);
                 return name;
             });
+        reportFormCleanup(r, project, dryRun, cleaned.get());
         return EditMetadataTool.formatResult(r, "remove_object_attribute"); //$NON-NLS-1$
     }
     String opAddTabularSection(Map<String, String> params)
@@ -2004,12 +2019,25 @@ final class ObjectOps
         EditMetadataTool.addSynonymTags(r, tsSynonymRef.get());
         return EditMetadataTool.formatResult(r, "add_tabular_section"); //$NON-NLS-1$
     }
+    /**
+     * Removes a tabular section of a metadata object.
+     * <p>
+     * A form item of the owner whose data path reaches the tabular section or one of its columns
+     * refuses the removal with {@code requiresCascadeForms}, unless {@code cascadeForms=true}
+     * removes those items with it.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, name, and optionally dryRun and cascadeForms
+     * @return the JSON answer
+     */
     String opRemoveTabularSection(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
+        AtomicReference<BmFormCleanupHelper.CleanupResult> cleaned = new AtomicReference<>();
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -2036,9 +2064,11 @@ final class ObjectOps
                 {
                     throw BmObjectHelper.notFound(name, ownerFqn, "tabularSection"); //$NON-NLS-1$
                 }
+                cleaned.set(BmFormCleanupHelper.clearOrRefuse(tx, owner, name, cascadeForms));
                 tcs.remove(existing);
                 return name;
             });
+        reportFormCleanup(r, project, dryRun, cleaned.get());
         return EditMetadataTool.formatResult(r, "remove_tabular_section"); //$NON-NLS-1$
     }
     String opAddTabularSectionAttribute(Map<String, String> params)
@@ -2276,6 +2306,17 @@ final class ObjectOps
         }
         return EditMetadataTool.formatResult(r, "add_tabular_section_attribute"); //$NON-NLS-1$
     }
+    /**
+     * Removes a column of a tabular section.
+     * <p>
+     * A form item of the owner whose data path reaches the column refuses the removal with
+     * {@code requiresCascadeForms}, unless {@code cascadeForms=true} removes those items with it.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, tabularSectionName, name, and optionally dryRun and
+     *            cascadeForms
+     * @return the JSON answer
+     */
     String opRemoveTabularSectionAttribute(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -2283,6 +2324,8 @@ final class ObjectOps
         String tcName = JsonUtils.extractStringArgument(params, "tabularSectionName"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
+        AtomicReference<BmFormCleanupHelper.CleanupResult> cleaned = new AtomicReference<>();
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -2313,10 +2356,40 @@ final class ObjectOps
                     throw BmObjectHelper.notFound(name, ownerFqn + "." + tcName, //$NON-NLS-1$
                         "tabularSectionAttribute"); //$NON-NLS-1$
                 }
+                cleaned.set(BmFormCleanupHelper.clearOrRefuse(tx, owner, tcName + "." + name, //$NON-NLS-1$
+                    cascadeForms));
                 attrs.remove(existing);
                 return tcName + "." + name; //$NON-NLS-1$
             });
+        reportFormCleanup(r, project, dryRun, cleaned.get());
         return EditMetadataTool.formatResult(r, "remove_tabular_section_attribute"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds the form items a removal took with it to the answer, and writes the cleaned forms.
+     *
+     * @param r the result of the removal
+     * @param project the project the owner belongs to
+     * @param dryRun whether the removal was rolled back
+     * @param cleaned the items removed from forms, or <code>null</code> when the write did not
+     *            reach the cleanup
+     */
+    private static void reportFormCleanup(BmObjectHelper.Result r, IProject project, boolean dryRun,
+        BmFormCleanupHelper.CleanupResult cleaned)
+    {
+        if (!r.ok || cleaned == null || cleaned.totalRemoved() == 0)
+        {
+            return;
+        }
+        r.tags.put("formItemsRemoved", cleaned.toTagData()); //$NON-NLS-1$
+        if (!dryRun)
+        {
+            String exportError = BmFormCleanupHelper.exportCleanedForms(project, cleaned);
+            if (exportError != null)
+            {
+                r.tags.put("formExportWarning", exportError); //$NON-NLS-1$
+            }
+        }
     }
     /**
      * 1.42 (RSV 4.2 parity): removes a metadata object whole - the same
