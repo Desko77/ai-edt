@@ -1031,7 +1031,16 @@ public class EditMetadataTool implements IMcpTool
         {
             return ToolResult.error("batch=true requires `operations` parameter").toJson(); //$NON-NLS-1$
         }
-        java.util.List<Map<String, String>> ops = parseBatchOperations(operationsRaw, params);
+        java.util.List<Map<String, String>> ops;
+        try
+        {
+            ops = parseBatchOperations(operationsRaw, params);
+        }
+        catch (IllegalArgumentException unreadable)
+        {
+            return ToolResult.error("This batch was not started: " + unreadable.getMessage() //$NON-NLS-1$
+                + " Nothing was changed in the project.").toJson(); //$NON-NLS-1$
+        }
         if (ops.isEmpty())
         {
             return ToolResult.error("batch operations parsed empty - check format").toJson(); //$NON-NLS-1$
@@ -1210,25 +1219,15 @@ public class EditMetadataTool implements IMcpTool
         {
             return ToolResult.error("batch=true requires `operations` parameter").toJson(); //$NON-NLS-1$
         }
-        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
-        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         String providedRunKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
         long softTimeoutMs = Math.max(5, Math.min(120,
             JsonUtils.extractIntArgument(params, "timeoutSeconds", 25))) * 1000L; //$NON-NLS-1$
 
-        boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
-
         PendingWorkRegistry reg = PendingWorkRegistry.UPDATE;
         reg.pruneExpired();
-        // Fold every outer-inherited shared param (ownerFqn, dryRun, stopOnError) into the key: a preview
-        // (dryRun=true) and a real apply of byte-identical operations - or the same operations against a
-        // different ownerFqn target, or with a different stopOnError policy - must NOT coalesce onto one
-        // execution.
         String runKey = (providedRunKey != null && !providedRunKey.isEmpty())
             ? providedRunKey
-            : PendingWorkRegistry.computeRunKey("batch", projectName, ownerFqn, //$NON-NLS-1$
-                String.valueOf(dryRun), String.valueOf(stopOnError), operationsRaw);
+            : batchRunKey(params);
 
         PendingWorkRegistry.PendingEntry entry;
         if (providedRunKey != null && !providedRunKey.isEmpty())
@@ -1294,6 +1293,35 @@ public class EditMetadataTool implements IMcpTool
             pending.put("progress", entry.progressNote); //$NON-NLS-1$
         }
         return pending.toJson();
+    }
+
+    /**
+     * The run key of a batch call: everything that decides what the batch does.
+     * <p>
+     * Every parameter an operation inherits from the outer call ({@link #SHARED_BATCH_PARAMS}) is
+     * part of the key, together with the stop policy and the operations themselves. Two batches
+     * that differ in any of them are different work and must not share one execution - the same
+     * operations against two forms of one object would otherwise receive one form's results.
+     * </p>
+     *
+     * @param params the outer batch call.
+     * @return the run key
+     */
+    static String batchRunKey(Map<String, String> params)
+    {
+        List<String> parts = new ArrayList<>();
+        parts.add("batch"); //$NON-NLS-1$
+        for (String name : SHARED_BATCH_PARAMS)
+        {
+            String value = "dryRun".equals(name) //$NON-NLS-1$
+                ? String.valueOf(JsonUtils.extractBooleanArgument(params, name, false))
+                : String.valueOf(JsonUtils.extractStringArgument(params, name));
+            parts.add(name + '=' + value);
+        }
+        parts.add("stopOnError=" //$NON-NLS-1$
+            + JsonUtils.extractBooleanArgument(params, "stopOnError", false)); //$NON-NLS-1$
+        parts.add(String.valueOf(JsonUtils.extractStringArgument(params, "operations"))); //$NON-NLS-1$
+        return PendingWorkRegistry.computeRunKey(parts.toArray(new String[0]));
     }
 
     /**
@@ -1375,20 +1403,38 @@ public class EditMetadataTool implements IMcpTool
             {
                 continue;
             }
-            Map<String, String> opParams = new LinkedHashMap<>();
-            String[] tokens = l.split("\\s+"); //$NON-NLS-1$
-            opParams.put("operation", tokens[0]); //$NON-NLS-1$
-            for (int i = 1; i < tokens.length; i++)
-            {
-                int eq = tokens[i].indexOf('=');
-                if (eq > 0)
-                {
-                    opParams.put(tokens[i].substring(0, eq), tokens[i].substring(eq + 1));
-                }
-            }
-            ops.add(opParams);
+            ops.add(parseBatchLine(l));
         }
         return ops;
+    }
+
+    /**
+     * Reads one operation written in the line form: the operation name, then {@code name=value}
+     * tokens separated by spaces, each split at its first {@code =}.
+     *
+     * @param line one non-empty line of the batch.
+     * @return the operation's parameters, the name under {@code operation}
+     * @throws IllegalArgumentException when a token after the name is not {@code name=value} -
+     *     a value with spaces, which the line form cannot carry, would otherwise be cut short and
+     *     its tail dropped
+     */
+    static Map<String, String> parseBatchLine(String line)
+    {
+        Map<String, String> opParams = new LinkedHashMap<>();
+        String[] tokens = line.trim().split("\\s+"); //$NON-NLS-1$
+        opParams.put("operation", tokens[0]); //$NON-NLS-1$
+        for (int i = 1; i < tokens.length; i++)
+        {
+            int eq = tokens[i].indexOf('=');
+            if (eq <= 0)
+            {
+                throw new IllegalArgumentException("batch line '" + line + "': '" + tokens[i] //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' is not name=value. A value with spaces cannot be written in the line " //$NON-NLS-1$
+                    + "form - pass operations as a JSON array."); //$NON-NLS-1$
+            }
+            opParams.put(tokens[i].substring(0, eq), tokens[i].substring(eq + 1));
+        }
+        return opParams;
     }
 
     /**
@@ -1922,58 +1968,105 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * Reads a multi-language synonym written as a JSON object, without touching any model.
+     *
+     * @param json the text, already known to start with an opening and end with a closing brace.
+     * @param byLanguage receives language code to text, in the order written; a JSON null is an
+     *     empty text.
+     * @return <code>null</code> when every entry was read, otherwise why the synonym is refused
+     */
+    static String readSynonymObject(String json, Map<String, String> byLanguage)
+    {
+        com.google.gson.JsonObject obj;
+        try
+        {
+            obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        }
+        catch (RuntimeException notJson)
+        {
+            return "synonym looks like a JSON object of language codes but is not valid JSON: " //$NON-NLS-1$
+                + notJson.getMessage() + ". Nothing was written."; //$NON-NLS-1$
+        }
+        for (Map.Entry<String, com.google.gson.JsonElement> e : obj.entrySet())
+        {
+            String code = e.getKey() != null ? e.getKey().trim() : ""; //$NON-NLS-1$
+            if (code.isEmpty())
+            {
+                return "synonym names an empty language code. Nothing was written."; //$NON-NLS-1$
+            }
+            com.google.gson.JsonElement value = e.getValue();
+            if (value.isJsonNull())
+            {
+                byLanguage.put(code, ""); //$NON-NLS-1$
+            }
+            else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString())
+            {
+                byLanguage.put(code, value.getAsString());
+            }
+            else
+            {
+                return "synonym for language '" + code + "' is not a string: " + value //$NON-NLS-1$ //$NON-NLS-2$
+                    + ". Nothing was written."; //$NON-NLS-1$
+            }
+        }
+        if (byLanguage.isEmpty())
+        {
+            return "synonym is an empty JSON object: it names no language. Nothing was written."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
      * Fills the {@code synonym} (EMap&lt;lang,text&gt;) of a freshly created
      * metadata object (attribute, EventSubscription, Catalog, ...): explicit
      * value when supplied, otherwise auto-generated from the name like the EDT
      * wizard. Language is the configuration default, falling back to {@code ru}.
      * Best-effort - a setter failure (e.g. a type that has no synonym) is logged,
-     * never fatal. Returns a {@link SynonymResult} so callers can surface the
-     * outcome to the agent instead of letting it be silently lost.
+     * never fatal. A JSON object of language codes replaces the whole map, and is
+     * refused whole - the map untouched - when it is not valid JSON, names no
+     * language or holds a value that is not a string. Returns a
+     * {@link SynonymResult} so callers can surface the outcome to the agent
+     * instead of letting it be silently lost.
+     *
+     * @param mdObject the object whose synonym is written.
+     * @param explicitSynonym the synonym the caller passed, plain text or a JSON object of
+     *     language codes; <code>null</code> or empty generates one from the name.
+     * @param name the object's name, for the generated synonym.
+     * @param project the project, for its default language and name prefix.
+     * @return what was written, that nothing was, or why the synonym was refused
      */
     static SynonymResult applyMdObjectSynonym(MdObject mdObject, String explicitSynonym,
         String name, IProject project)
     {
-        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
-        Configuration config = cp != null ? cp.getConfiguration(project) : null;
         String trimmed = (explicitSynonym != null) ? explicitSynonym.trim() : null;
-        // Multi-language synonym: a JSON object {"ru":"...","en":"..."} REPLACES
-        // the whole synonym map (one entry per language code). Any non-object or
-        // unparseable value falls through to the single-language path below.
+        // Multi-language synonym: a JSON object {"ru":"...","en":"..."} REPLACES the whole synonym
+        // map (one entry per language code). It is read whole before the map is touched: a value
+        // that is not a string, text that is not JSON, or an object naming no language is refused
+        // and the map keeps what it had.
         if (trimmed != null && trimmed.length() > 1
             && trimmed.charAt(0) == '{' && trimmed.charAt(trimmed.length() - 1) == '}')
         {
-            try
+            Map<String, String> byLanguage = new LinkedHashMap<>();
+            String refusal = readSynonymObject(trimmed, byLanguage);
+            if (refusal != null)
             {
-                com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(trimmed)
-                    .getAsJsonObject();
-                if (obj.size() > 0)
+                return SynonymResult.error(refusal);
+            }
+            mdObject.getSynonym().clear();
+            StringBuilder applied = new StringBuilder();
+            for (Map.Entry<String, String> e : byLanguage.entrySet())
+            {
+                mdObject.getSynonym().put(e.getKey(), e.getValue());
+                if (applied.length() > 0)
                 {
-                    mdObject.getSynonym().clear();
-                    StringBuilder applied = new StringBuilder();
-                    for (Map.Entry<String, com.google.gson.JsonElement> e : obj.entrySet())
-                    {
-                        String code = e.getKey() != null ? e.getKey().trim() : null;
-                        if (code == null || code.isEmpty())
-                        {
-                            continue;
-                        }
-                        String val = e.getValue().isJsonNull() ? "" : e.getValue().getAsString(); //$NON-NLS-1$
-                        mdObject.getSynonym().put(code, val);
-                        if (applied.length() > 0)
-                        {
-                            applied.append(", "); //$NON-NLS-1$
-                        }
-                        applied.append(code).append('=').append(val);
-                    }
-                    return SynonymResult.ok(applied.toString());
+                    applied.append(", "); //$NON-NLS-1$
                 }
+                applied.append(e.getKey()).append('=').append(e.getValue());
             }
-            catch (Exception jsonEx)
-            {
-                // Not a JSON object synonym - treat the literal string as the
-                // single-language synonym value below.
-            }
+            return SynonymResult.ok(applied.toString());
         }
+        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
+        Configuration config = cp != null ? cp.getConfiguration(project) : null;
         String synonymValue;
         if (trimmed != null && !trimmed.isEmpty())
         {

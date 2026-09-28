@@ -299,8 +299,9 @@ public class ThePollBelongsToTheCallThatResumesItTest
         ensure(new EditMetadataTool());
         ensure(new MetadataObjectRenamer());
         String operations = "[{\"operation\":\"not_a_real_op_" + System.nanoTime() + "\"}]"; //$NON-NLS-1$ //$NON-NLS-2$
-        String runKey = PendingWorkRegistry.computeRunKey("batch", null, null, "false", "false", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            operations);
+        Map<String, String> keyed = new LinkedHashMap<>();
+        keyed.put("operations", operations); //$NON-NLS-1$
+        String runKey = EditMetadataTool.batchRunKey(keyed);
         Semaphore permits = new Semaphore(1);
         ToolRoad road = new ToolRoad(permits);
         CountDownLatch entered = new CountDownLatch(1);
