@@ -312,7 +312,7 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("nestedSchemaName", //$NON-NLS-1$
                 "Name of a nested schema to work inside.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
-                "remove_conditional_appearance: where to remove from - schema (default) / settings.") //$NON-NLS-1$
+                "remove_conditional_appearance: schema (default) / settings / variant name.") //$NON-NLS-1$
             .stringProperty("userSettingPresentation", //$NON-NLS-1$
                 "add_filter: filter item user presentation.") //$NON-NLS-1$
             .build();
@@ -4718,9 +4718,25 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.41 / 4d: removes a ConditionalAppearance item by index from
-     * {@code Schema.getConditionalAppearance().getItems()} (or
-     * {@code Settings.getConditionalAppearance()} when {@code target=settings}).
+     * 1.41 / 4d: removes a ConditionalAppearance item by index from the settings that hold it.
+     * <p>
+     * The {@code target} argument defaults to {@code schema}, and both that and {@code settings}
+     * resolve to the settings of the default variant, which is where {@code add_conditional_appearance}
+     * writes its items. Asking the schema object itself for a {@code ConditionalAppearance} refused
+     * every default call with {@code schema.ConditionalAppearance not available}: a schema has no
+     * such property, and the items live one level down, on the settings. Any other value of
+     * {@code target} is read as the name of a variant, whose settings carry an appearance too; a
+     * variant that is not there is refused by name, before anything is touched.
+     * </p>
+     * <p>
+     * The container is read rather than created. There is nothing to take out of a container that
+     * does not exist, and creating one would leave a call that removed nothing with a change to the
+     * schema that says otherwise.
+     * </p>
+     *
+     * @param params the call; {@code index} selects the item, {@code target} the settings
+     * @param schema the schema.
+     * @return a short report naming the index and the target
      */
     private Object doRemoveConditionalAppearance(Map<String, String> params, EObject schema)
     {
@@ -4735,18 +4751,13 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("index must be an integer"); //$NON-NLS-1$
         }
-        Object root = "settings".equalsIgnoreCase(target) //$NON-NLS-1$
-            ? ensureDefaultSettings(schema) // the "Основной" variant's settings, where add_appearance writes
-            : schema;
-        Object ca = invokeGetter(root, "getConditionalAppearance"); //$NON-NLS-1$
-        if (ca == null)
-        {
-            throw new RuntimeException(target + ".ConditionalAppearance not available"); //$NON-NLS-1$
-        }
-        EList<EObject> items = BmDcsHelper.getEObjectList(ca, "getItems"); //$NON-NLS-1$
+        Object settings = appearanceSettingsFor(schema, target);
+        Object ca = invokeGetter(settings, "getConditionalAppearance"); //$NON-NLS-1$
+        EList<EObject> items = ca == null ? null : BmDcsHelper.getEObjectList(ca, "getItems"); //$NON-NLS-1$
         if (items == null)
         {
-            throw new RuntimeException("ConditionalAppearance.getItems() not available"); //$NON-NLS-1$
+            throw new RuntimeException("nothing to remove: " + target //$NON-NLS-1$
+                + " holds no conditional appearance items"); //$NON-NLS-1$
         }
         if (index < 0 || index >= items.size())
         {
@@ -4754,6 +4765,48 @@ public class DcsWorkshopTool implements IMcpTool
         }
         items.remove(index);
         return "conditional appearance [" + index + "] removed from " + target; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The settings whose conditional appearance a call works on.
+     * <p>
+     * The same resolution the add path makes, so a removal addresses what an addition wrote:
+     * {@code schema} and {@code settings} both mean the settings of the default variant, and any
+     * other value names a variant. A dynamic list has no variants above it, so a variant name there
+     * is refused rather than ignored.
+     * </p>
+     *
+     * @param schema the schema, or a settings container in the case of a dynamic list.
+     * @param target the value of {@code target}: a settings spelling, or a variant name.
+     * @return the settings to read the appearance from
+     */
+    private Object appearanceSettingsFor(EObject schema, String target)
+    {
+        if ("schema".equalsIgnoreCase(target) || "settings".equalsIgnoreCase(target)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            Object settings = ensureDefaultSettings(schema);
+            if (settings == null)
+            {
+                throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
+            }
+            return settings;
+        }
+        if (alreadyASettingsContainer(schema))
+        {
+            throw new RuntimeException("target '" + target + "' names a settings variant, and a " //$NON-NLS-1$ //$NON-NLS-2$
+                + "dynamic list has none - its settings are the whole of it. Use target=settings."); //$NON-NLS-1$
+        }
+        EObject variant = BmDcsHelper.findByNameInList(schema, "getSettingsVariants", target); //$NON-NLS-1$
+        if (variant == null)
+        {
+            throw notFoundTag(target, "settingsVariant"); //$NON-NLS-1$
+        }
+        Object settings = invokeGetter(variant, "getSettings"); //$NON-NLS-1$
+        if (settings == null)
+        {
+            throw new RuntimeException("Variant '" + target + "' has no settings"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return settings;
     }
 
     /**
