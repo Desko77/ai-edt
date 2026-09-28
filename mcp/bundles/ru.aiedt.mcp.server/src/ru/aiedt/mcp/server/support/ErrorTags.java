@@ -308,7 +308,18 @@ public enum ErrorTags
 
     /** export_object: the external-object build failed for a reason not
      * otherwise classified. */
-    DUMP_FAILED("dumpFailed"); //$NON-NLS-1$
+    DUMP_FAILED("dumpFailed"), //$NON-NLS-1$
+
+    /** export_database_configuration / export_database_extension: the
+     * infobase does not hold the project's current configuration (or the
+     * synchronization state could not be read), so the dump was refused
+     * rather than written from stale content. */
+    OUT_OF_SYNC("outOfSync"), //$NON-NLS-1$
+
+    /** install_extension with {@code updateDatabase=true}: the designer
+     * log of the run reports the database update failed; the extension may
+     * be registered but it was NOT applied to the database. */
+    DATABASE_UPDATE_FAILED("databaseUpdateFailed"); //$NON-NLS-1$
 
     private final String wire;
 

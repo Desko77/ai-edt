@@ -46,6 +46,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
 import ru.aiedt.mcp.server.toolkit.ToolWhiteboard;
+import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
 
 /**
  * The bundle's word for an export: an internal call through {@code IToolRoad} answers the Pending
@@ -149,6 +150,46 @@ public class TheBundlesWordForAnExportTest
         {
             deleteTree(destination);
         }
+    }
+
+    /**
+     * The guarded database export answers its own refusal rather than reading a success off
+     * whatever file already sits at outputPath: a project that is not there yields the
+     * operation's Failed report naming the cause.
+     */
+    @Test
+    public void aGuardedDatabaseExportAnswersFailedForAProjectThatIsNotThere()
+    {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("operation", "export_database_configuration"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", "whatever.cf"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(answer, answer.contains("# export_database_configuration")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("**Failed:**")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("projectNotFound")); //$NON-NLS-1$
+    }
+
+    /**
+     * The same answer for the guarded extension export: the failure names the cause instead
+     * of letting a previous .cfe stand in for the result.
+     */
+    @Test
+    public void aGuardedExtensionExportAnswersFailedForAProjectThatIsNotThere()
+    {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("operation", "export_database_extension"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("extensionName", "YAxUnit"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", "whatever.cfe"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(answer, answer.contains("# export_database_extension")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("**Failed:**")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("projectNotFound")); //$NON-NLS-1$
     }
 
     private void publish(IMcpTool probe)

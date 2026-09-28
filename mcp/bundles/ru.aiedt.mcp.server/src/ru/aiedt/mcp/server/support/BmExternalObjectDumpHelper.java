@@ -236,10 +236,11 @@ public final class BmExternalObjectDumpHelper
     }
 
     /**
-     * Invokes {@code dumper.dump(project, object, Paths.get(outputPath), null)}.
-     * The {@code dump} Method is taken from the {@code IExternalObjectDumper}
-     * interface class (not the x-internal impl) so the reflective invoke is
-     * accessible. All throwables are captured and classified.
+     * Invokes {@code dumper.dump(project, object, temp, null)} with a temporary sibling
+     * of {@code outputPath}, then judges the product and moves it into place (see
+     * {@link #placeDumpResult}). The {@code dump} Method is taken from the
+     * {@code IExternalObjectDumper} interface class (not the x-internal impl) so the
+     * reflective invoke is accessible. All throwables are captured and classified.
      */
     public static DumpInvocation dump(Object dumper, IProject project, EObject object,
         String outputPath)
@@ -266,24 +267,24 @@ public final class BmExternalObjectDumpHelper
             Method dumpM = dumperC.getMethod("dump", IProject.class, EObject.class, //$NON-NLS-1$
                 Path.class, IProgressMonitor.class);
             Path out = Paths.get(outputPath);
-            dumpM.invoke(dumper, project, object, out, (IProgressMonitor) null);
-            // The dumper returns void, so "it did not throw" says nothing about a
-            // file having appeared. Its siblings in this plugin check their output
-            // and report outputMissing; this one reported success and left the
-            // caller to discover the absence later, with the operation that failed
-            // several steps behind. An empty file counts as no file: the platform
-            // creates one before writing into it.
-            java.io.File written = out.toFile();
-            if (!written.isFile() || written.length() == 0L)
+            // The build writes to a temporary sibling, never to outputPath itself: the
+            // temp file exists solely because this run created it, so a non-empty fresh
+            // one IS this build's product, and a file a previous run left at outputPath
+            // can no longer be reported as this build's result (or be damaged by a
+            // failed one - the destination is touched by the final move alone).
+            java.time.Instant startedAt = java.time.Instant.now();
+            Path temp = java.nio.file.Files.createTempFile(out.toAbsolutePath().getParent(),
+                ".aiedt-dump-", ".part"); //$NON-NLS-1$ //$NON-NLS-2$
+            try
             {
-                r.error = "The dump reported no error but no file was written to " + outputPath //$NON-NLS-1$
-                    + ". The object may not be buildable, or the platform may have exited before " //$NON-NLS-1$
-                    + "writing - check the project for validation errors first."; //$NON-NLS-1$
-                r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
-                return r;
+                dumpM.invoke(dumper, project, object, temp, (IProgressMonitor) null);
             }
-            r.ok = true;
-            return r;
+            catch (Throwable e)
+            {
+                BmInfobaseExtensionHelper.deleteQuietly(temp);
+                throw e;
+            }
+            return placeDumpResult(temp, out, startedAt);
         }
         catch (InvocationTargetException ite)
         {
@@ -296,6 +297,52 @@ public final class BmExternalObjectDumpHelper
             r.failureKind = ErrorTags.INVOCATION.wire();
             return r;
         }
+    }
+
+    /**
+     * Judges the file a dump run wrote and moves it over the requested path.
+     * <p>
+     * The dumper returns void, so "it did not throw" says nothing about a file having
+     * appeared. Its siblings in this plugin check their output and report outputMissing;
+     * this one reported success and left the caller to discover the absence later, with
+     * the operation that failed several steps behind - and a stale file a previous run
+     * left passed the check entirely, because nothing asked whether THIS run wrote it.
+     * An empty file counts as no file: the platform creates one before writing into it.
+     * </p>
+     * <p>
+     * Package-visible so the freshness judgement - the branch that refuses to pass a
+     * previous run's file off as this build - is testable without a dumper.
+     * </p>
+     *
+     * @param temp the temporary file the build was pointed at
+     * @param out the requested output path
+     * @param startedAt the moment the build started
+     * @return the invocation outcome: ok with the file in place, or the refusal
+     */
+    static DumpInvocation placeDumpResult(Path temp, Path out, java.time.Instant startedAt)
+    {
+        DumpInvocation r = new DumpInvocation();
+        String problem = BmInfobaseExtensionHelper.freshExportProblem(temp, startedAt);
+        if (problem != null)
+        {
+            r.error = "The dump reported no error but its output did not materialize at " + out //$NON-NLS-1$
+                + ": " + problem //$NON-NLS-1$
+                + ". The object may not be buildable, or the platform may have exited before " //$NON-NLS-1$
+                + "writing - check the project for validation errors first."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+            BmInfobaseExtensionHelper.deleteQuietly(temp);
+            return r;
+        }
+        String moveError = BmInfobaseExtensionHelper.moveExportIntoPlace(temp, out, true);
+        if (moveError != null)
+        {
+            r.error = moveError;
+            r.failureKind = ErrorTags.WRITE_FAILED.wire();
+            BmInfobaseExtensionHelper.deleteQuietly(temp);
+            return r;
+        }
+        r.ok = true;
+        return r;
     }
 
     /**
