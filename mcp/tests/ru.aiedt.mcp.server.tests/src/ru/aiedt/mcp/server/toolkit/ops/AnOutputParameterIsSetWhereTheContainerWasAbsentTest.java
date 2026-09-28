@@ -10,6 +10,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -191,6 +192,34 @@ public class AnOutputParameterIsSetWhereTheContainerWasAbsentTest
             1, items.size());
         assertSame("the write finds the entry that was already there", present, items.get(0)); //$NON-NLS-1$
         assertEquals("reading it back returns what was written", WRITTEN, valueOf(present)); //$NON-NLS-1$
+    }
+
+    /**
+     * Omitting {@code value} is refused, and the literal already stored stays.
+     *
+     * @throws Exception if a call that should succeed refuses
+     */
+    @Test
+    public void aCallWithoutAValueIsRefusedAndTheLiteralStays() throws Exception
+    {
+        run("set_output_parameter", "name", PARAMETER, "value", WRITTEN); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        EObject literal = BmDcsHelper.getEObjectList(entries().get(0), "getValues").get(0); //$NON-NLS-1$
+
+        try
+        {
+            run("set_output_parameter", "name", PARAMETER); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            fail("a call with no value must not clear the one already stored"); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            assertTrue("the refusal says there was nothing to set: " + e.getMessage(), //$NON-NLS-1$
+                String.valueOf(e.getMessage()).contains("nothing to set")); //$NON-NLS-1$
+        }
+
+        EList<EObject> values = BmDcsHelper.getEObjectList(entries().get(0), "getValues"); //$NON-NLS-1$
+        assertEquals("the literal that was there is still the only one", 1, values.size()); //$NON-NLS-1$
+        assertSame("and it is the same literal", literal, values.get(0)); //$NON-NLS-1$
+        assertEquals("reading it back returns what was written", WRITTEN, valueOf(entries().get(0))); //$NON-NLS-1$
     }
 
     /**

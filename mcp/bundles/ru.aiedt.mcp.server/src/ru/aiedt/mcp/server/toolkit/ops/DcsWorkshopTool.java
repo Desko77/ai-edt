@@ -152,9 +152,12 @@ public class DcsWorkshopTool implements IMcpTool
             + "ОсновнаяСхемаКомпоновкиДанных (Russian) / MainDataCompositionSchema " //$NON-NLS-1$
             + "(English)"); //$NON-NLS-1$
         rules.put("parentPath", "Omitted means the root of the structure. Space around a step is " //$NON-NLS-1$
-            + "ignored. A group a name cannot reach - one with no name, with a dot " //$NON-NLS-1$
-            + "in it, or one of two with the same name - is addressed by its " //$NON-NLS-1$
-            + "position at its level, as [0]."); //$NON-NLS-1$
+            + "ignored, and a step matches a group name ignoring case. A group a name cannot " //$NON-NLS-1$
+            + "reach - one with no name, with a dot in it, or one of two with the same name - " //$NON-NLS-1$
+            + "is addressed by its position at its level, as [0]."); //$NON-NLS-1$
+        rules.put("use", "set_settings_parameter: omitted leaves the flag. Setting value turns " //$NON-NLS-1$
+            + "it on. A call that passes neither value, userSettingID nor use changes nothing " //$NON-NLS-1$
+            + "and is refused."); //$NON-NLS-1$
         rules.put("variantName", "Omitted means the default settings, which is the first variant. A " //$NON-NLS-1$
             + "dynamic list has no variants and refuses this argument."); //$NON-NLS-1$
         rules.put("field", "Also the SELECT-list field for add_query_field / remove_query_field."); //$NON-NLS-1$
@@ -220,6 +223,8 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("userSettingID", //$NON-NLS-1$
                 "set_settings_parameter: the identifier under which the parameter appears in " //$NON-NLS-1$
                     + "user settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
+            .booleanProperty("use", //$NON-NLS-1$
+                "set_settings_parameter used flag.") //$NON-NLS-1$
             .integerProperty("index", //$NON-NLS-1$
                 "0-based item index for remove/set settings-item ops") //$NON-NLS-1$
             .stringProperty("viewMode", //$NON-NLS-1$
@@ -233,8 +238,8 @@ public class DcsWorkshopTool implements IMcpTool
                     + "index).") //$NON-NLS-1$
             .stringProperty("condition", //$NON-NLS-1$
                 "Query condition expression for add_query_condition / remove_query_condition " //$NON-NLS-1$
-                + "(e.g. 'T.Sum > &MinSum'). add splices it into WHERE/ГДЕ; remove matches it " //$NON-NLS-1$
-                + "(parenthesised or bare) and drops it with one adjacent AND/И.") //$NON-NLS-1$
+                + "(e.g. 'T.Sum > &MinSum'). add splices it into WHERE/ГДЕ; remove drops it " //$NON-NLS-1$
+                + "and the connector beside it.") //$NON-NLS-1$
             .stringProperty("appearance", //$NON-NLS-1$
                 "Appearance spec 'Name=Value;Name=Value' for add_appearance / " //$NON-NLS-1$
                     + "set_data_set_field_appearance. Keys: TextColor, BackColor, " //$NON-NLS-1$
@@ -1804,6 +1809,17 @@ public class DcsWorkshopTool implements IMcpTool
         return count;
     }
 
+    /**
+     * Adds a dataset to the schema.
+     * <p>
+     * The result names the dataset and the text the exported file has to contain, so a write that
+     * lands and is then overwritten can be told apart from one that stuck.
+     * </p>
+     *
+     * @param params name, and optionally queryText, dataSetType and dataObjectName
+     * @param schema the schema root
+     * @return what was written, including the text the file must carry
+     */
     private Object doAddDataSet(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -1840,7 +1856,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         dataSets.add((EObject) dataSet);
         requireDataObjectName(params, dataSet, dataSetType);
-        return name;
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), dataSets.size(), "dataSets"); //$NON-NLS-1$
     }
 
     /**
@@ -1903,6 +1919,79 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException(failed);
         }
+    }
+
+    /**
+     * Writes an enumeration property, or refuses before the caller adds the element.
+     * <p>
+     * The setter's answer used to be discarded, so an unknown literal was reported as written and
+     * the model kept the enumeration's default. The refusal carries that answer and, when the
+     * property is an enumeration, the literals it accepts.
+     * </p>
+     *
+     * @param target the element, not yet added to the model the caller will read back
+     * @param property the property name as the model spells it
+     * @param value the literal the caller asked for
+     */
+    private static void mustSetEnum(Object target, String property, Object value)
+    {
+        String failed = BmDcsHelper.setProperty(target, property, value);
+        if (failed == null)
+        {
+            return;
+        }
+        String allowed = enumLiterals(target, property);
+        if (allowed.isEmpty())
+        {
+            throw new RuntimeException(failed);
+        }
+        throw new RuntimeException(failed + " Allowed: " + allowed); //$NON-NLS-1$
+    }
+
+    /**
+     * The literals an enumeration property accepts.
+     *
+     * @param target the element that carries the property
+     * @param property the property name as the model spells it
+     * @return the literals, comma-separated, or an empty string when the property is not an
+     *         enumeration
+     */
+    private static String enumLiterals(Object target, String property)
+    {
+        if (target == null || property == null || property.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        String setter = "set" + Character.toUpperCase(property.charAt(0)) //$NON-NLS-1$
+            + property.substring(1);
+        for (java.lang.reflect.Method method : target.getClass().getMethods())
+        {
+            if (!setter.equals(method.getName()) || method.getParameterCount() != 1)
+            {
+                continue;
+            }
+            Class<?> type = method.getParameterTypes()[0];
+            if (!type.isEnum())
+            {
+                continue;
+            }
+            Object[] constants = type.getEnumConstants();
+            if (constants == null || constants.length == 0)
+            {
+                return ""; //$NON-NLS-1$
+            }
+            StringBuilder listed = new StringBuilder();
+            for (Object constant : constants)
+            {
+                if (listed.length() > 0)
+                {
+                    listed.append(", "); //$NON-NLS-1$
+                }
+                listed.append(String.valueOf(constant));
+            }
+            return listed.toString();
+        }
+        return ""; //$NON-NLS-1$
     }
 
     /**
@@ -2868,6 +2957,18 @@ public class DcsWorkshopTool implements IMcpTool
         return items;
     }
 
+    /**
+     * Removes a dataset and the calculated and total fields that read it.
+     * <p>
+     * The claim does not name text the file must still contain. A presence claim on a deletion
+     * makes a successful removal look like a lost write: the file shrinks, and the check that
+     * expects it to grow retries a dataset that is already gone.
+     * </p>
+     *
+     * @param params the dataset name
+     * @param schema the schema root
+     * @return what was removed, and how many datasets remain
+     */
     private Object doRemoveDataSet(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -2885,13 +2986,64 @@ public class DcsWorkshopTool implements IMcpTool
             throw notFoundTag(name, "dataSet"); //$NON-NLS-1$
         }
         dataSets.remove(existing);
-        // Cascade: remove calculated/total fields whose expression starts with "<name>."
+        // Cascade: a field whose expression's first path segment is this dataset.
         int removedCalc = removeFieldsReferencing(schema, "getCalculatedFields", name); //$NON-NLS-1$
         int removedTotal = removeFieldsReferencing(schema, "getTotalFields", name); //$NON-NLS-1$
-        return name + " (cascade: removed " + removedCalc //$NON-NLS-1$
+        String message = name + " (cascade: removed " + removedCalc //$NON-NLS-1$
             + " calculated, " + removedTotal + " total)"; //$NON-NLS-1$ //$NON-NLS-2$
+        return new BmDcsHelper.Wrote(message, null, dataSets.size(), "dataSets"); //$NON-NLS-1$
     }
 
+    /**
+     * Whether an expression reads a field of the named dataset.
+     * <p>
+     * A reference is a dotted path, and the dataset is its first segment. Looking for the
+     * substring {@code name + "."} also matches a longer name that merely ends in that dataset's
+     * name, and it distinguishes case, which no other name lookup here does.
+     * </p>
+     *
+     * @param expression the calculated or total expression, may be empty
+     * @param dataSetName the dataset just removed
+     * @return <code>true</code> when the expression reads a field of that dataset
+     */
+    private static boolean expressionReadsDataSet(String expression, String dataSetName)
+    {
+        if (expression == null || dataSetName == null || dataSetName.isEmpty())
+        {
+            return false;
+        }
+        int length = expression.length();
+        int i = 0;
+        while (i < length)
+        {
+            if (!isWordChar(expression.charAt(i)))
+            {
+                i++;
+                continue;
+            }
+            int start = i;
+            while (i < length && isWordChar(expression.charAt(i)))
+            {
+                i++;
+            }
+            int identLength = i - start;
+            if (identLength == dataSetName.length() && i < length && expression.charAt(i) == '.'
+                && expression.regionMatches(true, start, dataSetName, 0, identLength))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Drops calculated or total fields whose expression reads the named dataset.
+     *
+     * @param schema the schema root
+     * @param getter {@code getCalculatedFields} or {@code getTotalFields}
+     * @param dataSetName the dataset just removed
+     * @return how many fields were removed
+     */
     private int removeFieldsReferencing(EObject schema, String getter, String dataSetName)
     {
         EList<EObject> list = BmDcsHelper.getEObjectList(schema, getter);
@@ -2908,7 +3060,7 @@ public class DcsWorkshopTool implements IMcpTool
             {
                 java.lang.reflect.Method getExpr = field.getClass().getMethod("getExpression"); //$NON-NLS-1$
                 Object expr = getExpr.invoke(field);
-                if (expr != null && expr.toString().contains(dataSetName + ".")) //$NON-NLS-1$
+                if (expr != null && expressionReadsDataSet(expr.toString(), dataSetName))
                 {
                     it.remove();
                     removed++;
@@ -2984,6 +3136,17 @@ public class DcsWorkshopTool implements IMcpTool
             "dataSet:" + dataSetName); //$NON-NLS-1$
     }
 
+    /**
+     * Adds a schema parameter.
+     * <p>
+     * The result names the parameter and the text the exported file has to contain.
+     * </p>
+     *
+     * @param params name, and optionally type and the other parameter fields
+     * @param schema the schema root
+     * @param project the project whose configuration resolves {@code type}, or <code>null</code>
+     * @return what was written, including the text the file must carry
+     */
     private Object doAddParameter(Map<String, String> params, EObject schema, IProject project)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -3004,7 +3167,8 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("Schema.getParameters() not available"); //$NON-NLS-1$
         }
         parameters.add((EObject) parameter);
-        return name;
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), parameters.size(),
+            "parameters"); //$NON-NLS-1$
     }
 
     private Object doSetParameter(Map<String, String> params, EObject schema, IProject project)
@@ -3224,6 +3388,16 @@ public class DcsWorkshopTool implements IMcpTool
         return name + " moved from " + oldIdx + " to " + targetIdx; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * Adds a calculated field.
+     * <p>
+     * The result names the field and the text the exported file has to contain.
+     * </p>
+     *
+     * @param params name, expression and optionally title
+     * @param schema the schema root
+     * @return what was written, including the text the file must carry
+     */
     private Object doAddCalculatedField(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -3246,7 +3420,8 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("Schema.getCalculatedFields() not available"); //$NON-NLS-1$
         }
         calc.add((EObject) field);
-        return name;
+        return new BmDcsHelper.Wrote(name, asWrittenInTheFile(name), calc.size(),
+            "calculatedFields"); //$NON-NLS-1$
     }
 
     private Object doAddTotal(Map<String, String> params, EObject schema)
@@ -3279,6 +3454,19 @@ public class DcsWorkshopTool implements IMcpTool
         return "total: " + expression; //$NON-NLS-1$
     }
 
+    /**
+     * Adds a conditional-appearance item.
+     * <p>
+     * When a condition is present, its comparison kind has to be a literal of the comparison
+     * enumeration. An unknown kind is refused before the item is added, and the refusal names the
+     * literals the enumeration accepts. The model property is {@code comparisonType} even when the
+     * caller spelled the argument {@code conditionType}.
+     * </p>
+     *
+     * @param params field, conditionType, conditionValue and appearance, as the operation reads them
+     * @param schema the schema root
+     * @return what was added
+     */
     private Object doAddAppearance(Map<String, String> params, EObject schema)
     {
         String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
@@ -3380,7 +3568,7 @@ public class DcsWorkshopTool implements IMcpTool
                     + "typed value - the filter would carry a right with no left"); //$NON-NLS-1$
             }
             mustSet(filterItem, "left", left); //$NON-NLS-1$
-            BmDcsHelper.setProperty(filterItem, "comparisonType", effectiveConditionType); //$NON-NLS-1$
+            mustSetEnum(filterItem, "comparisonType", effectiveConditionType); //$NON-NLS-1$
             Object rv = BmDcsHelper.createLiteralValue(conditionValue);
             EList<EObject> rightList = BmDcsHelper.getEObjectList(filterItem, "getRight"); //$NON-NLS-1$
             if (rv == null || rightList == null)
@@ -3444,6 +3632,18 @@ public class DcsWorkshopTool implements IMcpTool
             new MetadataGuards.ErrorTag(ErrorTags.FONT_COLOR_GUARD.wire(), data)));
     }
 
+    /**
+     * Adds a grouping to the settings structure.
+     * <p>
+     * {@code groupingType} has to be a literal of the group-type enumeration. An unknown value is
+     * refused before the grouping is added, and the refusal carries the setter's reason.
+     * {@code parentPath} matches a group name ignoring case.
+     * </p>
+     *
+     * @param params field, and optionally name, groupingType and parentPath
+     * @param schema the schema root
+     * @return what was added
+     */
     private Object doAddGrouping(Map<String, String> params, EObject schema)
     {
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
@@ -3452,8 +3652,8 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("field is required for add_grouping"); //$NON-NLS-1$
         }
-        // DataCompositionGroupType literals are Items / Hierarchy / HierarchyOnly
-        // (there is no "Standard"); default to Items.
+        // DataCompositionGroupType literals are Items / Hierarchy / HierarchyOnly.
+        // An unknown value is refused rather than stored as the default.
         String groupingType = orDefault(
             JsonUtils.extractStringArgument(params, "groupingType"), "Items"); //$NON-NLS-1$ //$NON-NLS-2$
         Object settings = ensureDefaultSettings(schema);
@@ -3482,7 +3682,7 @@ public class DcsWorkshopTool implements IMcpTool
             if (groupField != null)
             {
                 setFieldProperty(groupField, "field", field); //$NON-NLS-1$
-                BmDcsHelper.setProperty(groupField, "groupType", groupingType); //$NON-NLS-1$
+                mustSetEnum(groupField, "groupType", groupingType); //$NON-NLS-1$
                 EList<EObject> items = BmDcsHelper.getEObjectList(groupFields, "getItems"); //$NON-NLS-1$
                 if (items != null)
                 {
@@ -3556,7 +3756,7 @@ public class DcsWorkshopTool implements IMcpTool
      * One step of a structure path.
      *
      * @param level the items to look in.
-     * @param step a group name, or a position in brackets.
+     * @param step a group name, matched ignoring case, or a position in brackets.
      * @param walked the path so far, for the refusal to quote.
      * @return the group that step names
      */
@@ -3589,7 +3789,7 @@ public class DcsWorkshopTool implements IMcpTool
             Object candidateName = invokeGetter(candidate, "getName"); //$NON-NLS-1$
             String asText = candidateName == null ? "" : String.valueOf(candidateName); //$NON-NLS-1$
             present.add(asText.isEmpty() ? "[" + i + "]" : asText); //$NON-NLS-1$ //$NON-NLS-2$
-            if (step.equals(asText))
+            if (step.equalsIgnoreCase(asText))
             {
                 matches.add(candidate);
             }
@@ -3640,6 +3840,17 @@ public class DcsWorkshopTool implements IMcpTool
         }
     }
 
+    /**
+     * Adds a filter item to the settings.
+     * <p>
+     * {@code comparisonType} has to be a literal of the comparison enumeration. An unknown kind is
+     * refused before the item is added, and the refusal names the literals the enumeration accepts.
+     * </p>
+     *
+     * @param params field, comparisonType, value and the optional presentation fields
+     * @param schema the schema root
+     * @return what was added
+     */
     private Object doAddFilter(Map<String, String> params, EObject schema)
     {
         String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
@@ -3677,7 +3888,7 @@ public class DcsWorkshopTool implements IMcpTool
         // The legacy leftValue/rightValue setters do not exist on FilterItem and were
         // silently no-ops.
         setFieldProperty(filterItem, "left", field); //$NON-NLS-1$
-        BmDcsHelper.setProperty(filterItem, "comparisonType", comparisonType); //$NON-NLS-1$
+        mustSetEnum(filterItem, "comparisonType", comparisonType); //$NON-NLS-1$
         if (value != null)
         {
             Object rv = BmDcsHelper.createLiteralValue(value);
@@ -3813,6 +4024,8 @@ public class DcsWorkshopTool implements IMcpTool
      * short-name alias (see the dispatch switch above) - that op spells the
      * sort-direction param {@code direction} instead of {@code orderType};
      * both are accepted here so the two op names stay behaviourally identical.
+     * An unknown direction is refused before the item is added, and the refusal names the
+     * literals the enumeration accepts.
      */
     private Object doAddSettingsOrder(Map<String, String> params, EObject schema)
     {
@@ -3844,7 +4057,7 @@ public class DcsWorkshopTool implements IMcpTool
         // field is a DataCompositionField value-carrier; orderType is the
         // DataCompositionSortDirection enum (Asc / Desc).
         setFieldProperty(orderItem, "field", field); //$NON-NLS-1$
-        BmDcsHelper.setProperty(orderItem, "orderType", orderType); //$NON-NLS-1$
+        mustSetEnum(orderItem, "orderType", orderType); //$NON-NLS-1$
         EList<EObject> items = BmDcsHelper.getEObjectList(order, "getItems"); //$NON-NLS-1$
         if (items == null)
         {
@@ -4151,12 +4364,30 @@ public class DcsWorkshopTool implements IMcpTool
      * An entry is created only for a parameter the schema declares. Creating one for a name the
      * schema does not know would write a setting nothing reads, and the caller would see success.
      * </p>
+     * <p>
+     * {@code value}, {@code userSettingID} and {@code use} are each optional, and only the ones
+     * the call passes are written. Omitting {@code value} leaves the literals already stored. A
+     * call that passes none of the three is refused, because answering that the parameter was set
+     * would claim a change that did not happen.
+     * </p>
+     *
+     * @param params name, and any of value, userSettingID, use and variantName
+     * @param schema the schema root
+     * @return what was written
      */
     private Object doSetSettingsParameter(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
         String userSettingID = JsonUtils.extractStringArgument(params, "userSettingID"); //$NON-NLS-1$
+        Boolean useFlag = JsonUtils.extractBooleanArgumentNullable(params, "use"); //$NON-NLS-1$
+        boolean hasValue = value != null;
+        boolean hasId = userSettingID != null && !userSettingID.isEmpty();
+        if (!hasValue && !hasId && useFlag == null)
+        {
+            throw new RuntimeException("nothing to set on '" + name //$NON-NLS-1$
+                + "': pass value, userSettingID or use"); //$NON-NLS-1$
+        }
         Object settings = settingsToWorkOn(schema, params);
         Object dataParameters = invokeGetter(settings, "getDataParameters"); //$NON-NLS-1$
         if (dataParameters == null)
@@ -4201,7 +4432,7 @@ public class DcsWorkshopTool implements IMcpTool
             found = newParameterEntry(schema, name, availableKeys);
             items.add(found);
         }
-        if (userSettingID != null && !userSettingID.isEmpty())
+        if (hasId)
         {
             String idError = BmDcsHelper.setProperty(found, "userSettingID", userSettingID); //$NON-NLS-1$
             if (idError != null)
@@ -4210,19 +4441,53 @@ public class DcsWorkshopTool implements IMcpTool
                     + idError);
             }
         }
-        EList<EObject> vals = BmDcsHelper.getEObjectList(found, "getValues"); //$NON-NLS-1$
-        if (vals == null)
+        if (hasValue)
         {
-            throw new RuntimeException("DataParameterValue.getValues() not available"); //$NON-NLS-1$
+            EList<EObject> vals = BmDcsHelper.getEObjectList(found, "getValues"); //$NON-NLS-1$
+            if (vals == null)
+            {
+                throw new RuntimeException("DataParameterValue.getValues() not available"); //$NON-NLS-1$
+            }
+            vals.clear();
+            Object lv = BmDcsHelper.createLiteralValue(value);
+            if (lv != null)
+            {
+                vals.add((EObject) lv);
+            }
         }
-        vals.clear();
-        Object lv = BmDcsHelper.createLiteralValue(value);
-        if (lv != null)
+        if (useFlag != null)
         {
-            vals.add((EObject) lv);
+            String useError = BmDcsHelper.setProperty(found, "use", //$NON-NLS-1$
+                useFlag.booleanValue() ? "true" : "false"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (useError != null)
+            {
+                throw new RuntimeException("use could not be set on '" + name + "': " + useError); //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
-        BmDcsHelper.setProperty(found, "use", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-        return "settings parameter '" + name + (created ? "' added and set" : "' set"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        else if (hasValue)
+        {
+            // A value write enables the parameter, which is what a caller who passed a value has
+            // always got. A call that does not pass a value leaves the flag alone.
+            BmDcsHelper.setProperty(found, "use", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (hasValue)
+        {
+            return "settings parameter '" + name + (created ? "' added and set" : "' set"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        StringBuilder changed = new StringBuilder();
+        if (hasId)
+        {
+            changed.append("userSettingID"); //$NON-NLS-1$
+        }
+        if (useFlag != null)
+        {
+            if (changed.length() > 0)
+            {
+                changed.append(", "); //$NON-NLS-1$
+            }
+            changed.append("use"); //$NON-NLS-1$
+        }
+        return "settings parameter '" + name + "' changed: " + changed; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -4421,6 +4686,11 @@ public class DcsWorkshopTool implements IMcpTool
      * entry in it. The entry's key is {@code getParameter().getValue()}; the value is held in
      * {@code getValues()}, which has no setter and is replaced by clearing and appending.
      * </p>
+     * <p>
+     * {@code value} is required. Without it the call is refused and whatever the parameter already
+     * holds is left as it is: clearing the list before noticing that there was nothing to write
+     * reported a set that had erased the value.
+     * </p>
      *
      * @param params the call; {@code name} selects the parameter and {@code value} is what it holds
      * @param schema the schema, or a settings container in the case of a dynamic list
@@ -4430,6 +4700,10 @@ public class DcsWorkshopTool implements IMcpTool
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
+        if (value == null)
+        {
+            throw new RuntimeException("nothing to set on '" + name + "': pass value"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         Object settings = ensureDefaultSettings(schema);
         if (settings == null)
         {
@@ -5382,12 +5656,20 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.43.x L1: removes a condition token (parenthesised {@code "(cond)"} as
-     * written by add_query_condition, or bare) from a WHERE/ГДЕ region, together
-     * with one adjacent AND/И connector. Returns the rewritten region - the text
-     * before the keyword (i.e. the whole WHERE/ГДЕ clause dropped) when the sole
-     * condition is removed - or {@code null} when the condition text is absent.
-     * The region must start at the WHERE/ГДЕ keyword.
+     * Removes one condition from a WHERE/ГДЕ region.
+     * <p>
+     * The condition is matched parenthesised, the form {@code add_query_condition} writes, or
+     * bare. What is dropped with it is the connector touching it - AND, И, OR or ИЛИ - and nothing
+     * further away. A condition that sits between AND and OR is refused, and the refusal quotes
+     * the region, because either connector that survived would change what the clause means. The
+     * whole clause is dropped only when the condition was the only one. Returns {@code null} when
+     * the condition text is absent. The region must start at the WHERE/ГДЕ keyword.
+     * </p>
+     *
+     * @param whereRegion the region, starting at the keyword
+     * @param condition the condition text to drop
+     * @param english whether the keyword is WHERE rather than ГДЕ
+     * @return the rewritten region, or <code>null</code> when the condition is not there
      */
     private static String removeConditionToken(String whereRegion, String condition, boolean english)
     {
@@ -5425,26 +5707,22 @@ public class DcsWorkshopTool implements IMcpTool
             return null;
         }
         int matchEnd = at + matchLen;
-        // The connector is AND or И. add_query_condition always writes "AND" (even
-        // into a Russian ГДЕ query - 1C accepts mixed keywords), while a hand-written
-        // WHERE may use "И", so match BOTH regardless of the query language. (The
-        // WHERE/ГДЕ keyword itself is language-correct via `english`.)
-        int connBefore = Math.max(lastKeywordBefore(body, "AND", at), //$NON-NLS-1$
-            lastKeywordBefore(body, "И", at)); //$NON-NLS-1$
-        int connAfter = nearestAfter(indexOfKeyword(body, "AND", matchEnd), //$NON-NLS-1$
-            indexOfKeyword(body, "И", matchEnd)); //$NON-NLS-1$
-        String newBody;
-        if (connBefore >= 0)
+        QueryConnector before = connectorTouching(body, at, true);
+        QueryConnector after = connectorTouching(body, matchEnd, false);
+        if (before != null && after != null && before.or != after.or)
         {
-            // "... AND (cond)" - drop the connector through the condition.
-            newBody = body.substring(0, connBefore) + body.substring(matchEnd);
+            throw new RuntimeException(
+                "refusing to remove a condition that sits between AND and OR: " //$NON-NLS-1$
+                    + whereRegion.trim());
         }
-        else if (connAfter >= 0)
+        String newBody;
+        if (before != null)
         {
-            // Leading "(cond) AND ..." - drop the condition through the connector
-            // (length 3 for "AND", 1 for "И").
-            int connLen = indexOfKeyword(body, "AND", connAfter) == connAfter ? 3 : 1; //$NON-NLS-1$
-            newBody = body.substring(0, at) + body.substring(connAfter + connLen);
+            newBody = body.substring(0, before.start) + body.substring(matchEnd);
+        }
+        else if (after != null)
+        {
+            newBody = body.substring(0, at) + body.substring(after.end);
         }
         else
         {
@@ -5455,77 +5733,140 @@ public class DcsWorkshopTool implements IMcpTool
         {
             return whereRegion.substring(0, kwIdx);
         }
-        return whereRegion.substring(0, bodyStart) + newBody;
+        return (whereRegion.substring(0, bodyStart) + newBody).trim();
     }
 
     /**
-     * 1.43.x L1: {@link #indexOfKeyword(String, String)} starting at
-     * {@code fromIndex} (word-boundary, case-insensitive; boundaries checked
-     * against the original text, not a substring).
+     * One AND/OR connector in a WHERE body, and whether it is the OR kind.
      */
-    private static int indexOfKeyword(String text, String keyword, int fromIndex)
+    private static final class QueryConnector
     {
-        if (text == null || keyword == null || keyword.isEmpty())
+        /** Index of the connector's first character. */
+        final int start;
+
+        /** Index just past the connector. */
+        final int end;
+
+        /** Whether the connector is OR or ИЛИ rather than AND or И. */
+        final boolean or;
+
+        /**
+         * @param start index of the first character
+         * @param end index just past the connector
+         * @param or whether this is the OR kind
+         */
+        QueryConnector(int start, int end, boolean or)
         {
-            return -1;
-        }
-        String upperText = text.toUpperCase();
-        String upperKw = keyword.toUpperCase();
-        int from = Math.max(0, fromIndex);
-        while (true)
-        {
-            int idx = upperText.indexOf(upperKw, from);
-            if (idx < 0)
-            {
-                return -1;
-            }
-            boolean leftOk = idx == 0 || !isWordChar(upperText.charAt(idx - 1));
-            int after = idx + upperKw.length();
-            boolean rightOk = after >= upperText.length() || !isWordChar(upperText.charAt(after));
-            if (leftOk && rightOk)
-            {
-                return idx;
-            }
-            from = idx + 1;
+            this.start = start;
+            this.end = end;
+            this.or = or;
         }
     }
 
+    /** Connectors, longest first, so ИЛИ is not read as И. */
+    private static final String[] QUERY_CONNECTORS = {"AND", "OR", "ИЛИ", "И"}; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
     /**
-     * 1.43.x L1: index of the last word-boundary occurrence of {@code keyword}
-     * strictly before {@code before}, or {@code -1}.
+     * The connector touching a condition, with only whitespace between them.
+     *
+     * @param body the WHERE body, without the keyword
+     * @param edge the condition's boundary
+     * @param lookBefore <code>true</code> to look to the left of the edge
+     * @return the connector, or <code>null</code> when none touches the edge
      */
-    private static int lastKeywordBefore(String text, String keyword, int before)
+    private static QueryConnector connectorTouching(String body, int edge, boolean lookBefore)
     {
-        int last = -1;
-        int from = 0;
-        while (true)
+        if (lookBefore)
         {
-            int idx = indexOfKeyword(text, keyword, from);
-            if (idx < 0 || idx >= before)
+            int end = edge;
+            while (end > 0 && Character.isWhitespace(body.charAt(end - 1)))
             {
-                break;
+                end--;
             }
-            last = idx;
-            from = idx + 1;
+            return connectorEndingAt(body, end);
         }
-        return last;
+        int start = edge;
+        while (start < body.length() && Character.isWhitespace(body.charAt(start)))
+        {
+            start++;
+        }
+        return connectorStartingAt(body, start);
     }
 
     /**
-     * 1.43.x L1: the nearest (smallest) non-negative of two indices, or {@code -1}
-     * when both are negative. Picks whichever AND/И connector comes first.
+     * A connector whose last character is {@code end}, or <code>null</code>.
+     *
+     * @param body the WHERE body
+     * @param end index just past the candidate
+     * @return the connector
      */
-    private static int nearestAfter(int a, int b)
+    private static QueryConnector connectorEndingAt(String body, int end)
     {
-        if (a < 0)
+        for (String word : QUERY_CONNECTORS)
         {
-            return b;
+            int start = end - word.length();
+            if (start >= 0 && connectorAt(body, start, word))
+            {
+                return new QueryConnector(start, end, isOrConnector(word));
+            }
         }
-        if (b < 0)
+        return null;
+    }
+
+    /**
+     * A connector whose first character is {@code start}, or <code>null</code>.
+     *
+     * @param body the WHERE body
+     * @param start index of the candidate
+     * @return the connector
+     */
+    private static QueryConnector connectorStartingAt(String body, int start)
+    {
+        for (String word : QUERY_CONNECTORS)
         {
-            return a;
+            if (connectorAt(body, start, word))
+            {
+                return new QueryConnector(start, start + word.length(), isOrConnector(word));
+            }
         }
-        return Math.min(a, b);
+        return null;
+    }
+
+    /**
+     * Whether {@code word} stands at {@code start} on a word boundary.
+     *
+     * @param body the WHERE body
+     * @param start index to test
+     * @param word the connector, in either case
+     * @return <code>true</code> when the word stands there and is not part of a longer word
+     */
+    private static boolean connectorAt(String body, int start, String word)
+    {
+        int end = start + word.length();
+        if (start < 0 || end > body.length())
+        {
+            return false;
+        }
+        if (!body.regionMatches(true, start, word, 0, word.length()))
+        {
+            return false;
+        }
+        if (start > 0 && isWordChar(body.charAt(start - 1)))
+        {
+            return false;
+        }
+        return end >= body.length() || !isWordChar(body.charAt(end));
+    }
+
+    /**
+     * Whether a connector word is the OR kind.
+     *
+     * @param word AND, OR, И or ИЛИ, in either case
+     * @return <code>true</code> for OR and ИЛИ
+     */
+    private static boolean isOrConnector(String word)
+    {
+        return "OR".equalsIgnoreCase(word) || "ИЛИ".equalsIgnoreCase(word); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -6374,7 +6715,7 @@ public class DcsWorkshopTool implements IMcpTool
             + "   dcs_workshop operation=add_calculated_field name=Total \\\n" //$NON-NLS-1$
             + "       expression=\"Summa(Tsena * Kolichestvo)\"\n\n" //$NON-NLS-1$
             + "5. Build settings (default groupings / filters / appearance):\n" //$NON-NLS-1$
-            + "   dcs_workshop operation=add_grouping field=Tovar groupingType=Standard\n" //$NON-NLS-1$
+            + "   dcs_workshop operation=add_grouping field=Tovar groupingType=Items\n" //$NON-NLS-1$
             + "   dcs_workshop operation=add_filter field=Period comparisonType=Between\n" //$NON-NLS-1$
             + "   dcs_workshop operation=add_appearance conditionType=Greater \\\n" //$NON-NLS-1$
             + "       conditionValue=1000 appearance=\"BackColor=#FFFF00;Font=Arial,11,bold\"\n\n" //$NON-NLS-1$
@@ -6384,6 +6725,11 @@ public class DcsWorkshopTool implements IMcpTool
             + "Direct save to .dcs disk file is automatic for extension projects.\n"; //$NON-NLS-1$
     }
 
+    /**
+     * The literals a caller may pass for the enumeration parameters.
+     *
+     * @return the property-values help topic
+     */
     private String buildPropertyValuesHelp()
     {
         return "Allowed values for DCS operation parameters.\n\n" //$NON-NLS-1$
@@ -6405,9 +6751,9 @@ public class DcsWorkshopTool implements IMcpTool
             + "**viewMode** (filter, parameter, selected field):\n" //$NON-NLS-1$
             + "- Auto, Normal, QuickAccess, Inaccessible.\n\n" //$NON-NLS-1$
             + "**groupingType** (add_grouping):\n" //$NON-NLS-1$
-            + "- Standard (regular grouping)\n" //$NON-NLS-1$
-            + "- DetailRecords (no aggregation, raw rows)\n" //$NON-NLS-1$
-            + "- Items (hierarchical inside the same field).\n\n" //$NON-NLS-1$
+            + "- Items\n" //$NON-NLS-1$
+            + "- Hierarchy\n" //$NON-NLS-1$
+            + "- HierarchyOnly\n\n" //$NON-NLS-1$
             + "**direction / orderType** (add_order / add_settings_order):\n" //$NON-NLS-1$
             + "- Asc (ascending, default), Desc (descending).\n\n" //$NON-NLS-1$
             + "**appearance names** (add_appearance):\n" //$NON-NLS-1$

@@ -179,4 +179,23 @@ public class AGroupingGoesInsideAnotherTest
         assertEquals("a group with no name is still a group to nest inside", 1, root.size()); //$NON-NLS-1$
         assertEquals(1, inside(root.get(0)).size());
     }
+
+    /**
+     * A step matches the group name without regard to case.
+     *
+     * @throws Exception if the call refuses
+     */
+    @Test
+    public void aPathInAnotherCaseAddressesTheSameGroup() throws Exception
+    {
+        run("add_grouping", "name", "Объект", "field", "ОбъектСтроительства"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        run("add_grouping", "name", "Статья", "field", "СтатьяБюджетов", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "parentPath", "объект"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        EList<EObject> root = rootStructure();
+        assertEquals("another spelling of the name is not a second root", 1, root.size()); //$NON-NLS-1$
+        assertEquals("it is inside the group the path named", 1, inside(root.get(0)).size()); //$NON-NLS-1$
+        assertEquals("Статья", nameOf(inside(root.get(0)).get(0))); //$NON-NLS-1$
+    }
 }

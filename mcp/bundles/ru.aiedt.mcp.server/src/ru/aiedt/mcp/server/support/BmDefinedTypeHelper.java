@@ -1289,6 +1289,74 @@ public final class BmDefinedTypeHelper
             return length != null || precision != null || fractionDigits != null
                 || nonNegative != null || dateFractions != null || allowedLength != null;
         }
+
+        /**
+         * Lists the qualifier arguments that no type of the requested composition accepts. A
+         * qualifier one of the types accepts is applied to that type and is not listed, so a
+         * composite such as {@code String,CatalogRef.Goods} with {@code length} is not reported.
+         *
+         * @param type the requested primitive type or comma-separated type composition
+         * @return human-readable argument/type pairs with the applicable alternative; empty when
+         *     every given qualifier applies to one of the types
+         */
+        public List<String> ignoredFor(String type)
+        {
+            List<String> ignored = new ArrayList<>();
+            if (type == null || type.trim().isEmpty())
+            {
+                return ignored;
+            }
+            List<String> names = new ArrayList<>();
+            boolean string = false;
+            boolean number = false;
+            boolean date = false;
+            boolean binaryData = false;
+            for (String requestedType : type.split(",")) //$NON-NLS-1$
+            {
+                String trimmed = requestedType.trim();
+                if (trimmed.isEmpty())
+                {
+                    continue;
+                }
+                String normalized = normalizePrimitiveFqn(trimmed);
+                String name = normalized == null ? trimmed : normalized.trim();
+                names.add(name);
+                string |= "String".equalsIgnoreCase(name); //$NON-NLS-1$
+                number |= "Number".equalsIgnoreCase(name); //$NON-NLS-1$
+                date |= "Date".equalsIgnoreCase(name); //$NON-NLS-1$
+                binaryData |= "BinaryData".equalsIgnoreCase(name); //$NON-NLS-1$
+            }
+            String types = String.join(",", names); //$NON-NLS-1$
+            if (length != null && !string && !binaryData)
+            {
+                ignored.add("length - " + types //$NON-NLS-1$
+                    + (number ? " (use precision for the total digit count)" //$NON-NLS-1$
+                        : " (use length only with String or BinaryData)")); //$NON-NLS-1$
+            }
+            if (precision != null && !number)
+            {
+                ignored.add("precision - " + types + " (use precision only with Number)"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (fractionDigits != null && !number)
+            {
+                ignored.add("fractionDigits - " + types //$NON-NLS-1$
+                    + " (use fractionDigits only with Number)"); //$NON-NLS-1$
+            }
+            if (nonNegative != null && !number)
+            {
+                ignored.add("nonNegative - " + types + " (use nonNegative only with Number)"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (dateFractions != null && !date)
+            {
+                ignored.add("dateFractions - " + types + " (use dateFractions only with Date)"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (allowedLength != null && !string)
+            {
+                ignored.add("allowedLength - " + types //$NON-NLS-1$
+                    + " (use allowedLength only with String)"); //$NON-NLS-1$
+            }
+            return ignored;
+        }
     }
 
     /**

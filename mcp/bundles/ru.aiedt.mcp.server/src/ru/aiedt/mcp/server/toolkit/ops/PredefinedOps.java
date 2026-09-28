@@ -13,7 +13,9 @@ import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.ecore.EObject;
 
+import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
@@ -61,10 +63,13 @@ final class PredefinedOps
      * {@code PredefinedItem} (id + name + description), not MdObject, so they are
      * built with {@link BmObjectHelper#createMdClassEObject} and populated
      * reflectively. Refuses adopted (borrowed) owners - predefined items belong
-     * on the native object, not its extension adoption. {@code code} is applied
-     * only when the item's code feature is a String (ChartOfAccounts /
-     * ChartOfCharacteristicTypes); Value-typed codes (Catalog /
-     * ChartOfCalculationTypes) are surfaced as a warning and left unset.
+     * on the native object, not its extension adoption. {@code code} is written in
+     * the kind the owner's code type declares: a String setter (ChartOfAccounts /
+     * ChartOfCharacteristicTypes) takes the text as it comes, a {@code mcore.Value}
+     * setter (Catalog / ChartOfCalculationTypes) takes a Number or String value
+     * built from that type. A code that does not fit the type, that another item
+     * of the same owner already carries, or that cannot be typed at all is
+     * refused, and nothing is written.
      * Idempotent on the item name.
      *
      * @param params the tool parameters
@@ -200,17 +205,12 @@ final class PredefinedOps
                 }
                 if (fCode != null && !fCode.isEmpty())
                 {
-                    java.lang.reflect.Method sc = EditMetadataTool.findSingleArgSetter(item.getClass(), "setCode"); //$NON-NLS-1$
-                    if (sc != null && sc.getParameterTypes()[0] == String.class)
+                    String codeError = applyPredefinedCode(owner, item, items, fCode);
+                    if (codeError != null)
                     {
-                        EditMetadataTool.invokeSetterClearly(sc, item, fCode, "code"); //$NON-NLS-1$
-                        codeApplied[0] = true;
+                        throw new RuntimeException(codeError);
                     }
-                    else
-                    {
-                        warn.add("code not set: this object's predefined code is a Value type " //$NON-NLS-1$
-                            + "(Catalog / ChartOfCalculationTypes); set it manually for now."); //$NON-NLS-1$
-                    }
+                    codeApplied[0] = true;
                 }
                 if (fIsFolder)
                 {
@@ -247,6 +247,191 @@ final class PredefinedOps
             r.tags.put("warnings", warn); //$NON-NLS-1$
         }
         return EditMetadataTool.formatResult(r, "add_predefined_item"); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes a predefined item's code in the kind the owner declares, answering the reason instead
+     * of leaving the code unset.
+     * <p>
+     * The item's own code feature decides the route. A String setter (ChartOfAccounts /
+     * ChartOfCharacteristicTypes) takes the text as it comes. A {@code mcore.Value} setter
+     * (Catalog / ChartOfCalculationTypes) needs a value of the kind the OWNER's code type names,
+     * so the type is read from the owner and the value built for it - the one place the object's
+     * kind decides what the code holds.
+     * <p>
+     * Nothing is written when the request cannot be honoured: a non-numeric code on a Number code
+     * type, an owner whose code type cannot be read, a code another item of the same owner
+     * already carries, and a value the model factory cannot build are each answered with the
+     * reason.
+     *
+     * @param owner the predefined-data owner the item belongs to
+     * @param item the freshly built predefined item
+     * @param siblings the owner's existing predefined items, checked for a code already in use
+     * @param code the requested code, non-empty
+     * @return {@code null} when the code is on the item, otherwise the reason it is not
+     */
+    static String applyPredefinedCode(EObject owner, Object item, EList<Object> siblings, String code)
+    {
+        java.lang.reflect.Method setCode =
+            EditMetadataTool.findSingleArgSetter(item.getClass(), "setCode"); //$NON-NLS-1$
+        if (setCode == null)
+        {
+            return "code not applied: " + typeName(item) + " has no setCode."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String ownerType = owner.eClass().getName();
+        if (setCode.getParameterTypes()[0] == String.class)
+        {
+            String usedBy = findItemWithTheSameCode(siblings, code);
+            if (usedBy != null)
+            {
+                return sameCodeMessage(code, usedBy, ownerType);
+            }
+            EditMetadataTool.invokeSetterClearly(setCode, item, code, "code"); //$NON-NLS-1$
+            return null;
+        }
+        Object codeType = reflectNoArg(owner, "getCodeType"); //$NON-NLS-1$
+        String kind = codeType == null ? null : String.valueOf(codeType);
+        boolean number = "Number".equalsIgnoreCase(kind) || "Число".equalsIgnoreCase(kind); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean text = "String".equalsIgnoreCase(kind) || "Строка".equalsIgnoreCase(kind); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!number && !text)
+        {
+            return "code not applied: the code type of " + ownerType //$NON-NLS-1$
+                + (kind == null ? " could not be read" //$NON-NLS-1$
+                    : " is '" + kind + "', which is neither Number nor String") //$NON-NLS-1$ //$NON-NLS-2$
+                + ", so a value of the right kind cannot be built."; //$NON-NLS-1$
+        }
+        if (number && !isNumberLiteral(code))
+        {
+            return "code '" + code + "' is not a number, and the code type of " + ownerType //$NON-NLS-1$ //$NON-NLS-2$
+                + " is Number."; //$NON-NLS-1$
+        }
+        Object value = createCodeValue(number, code);
+        if (value == null)
+        {
+            return "code not applied: the model value factory is unavailable on this EDT runtime."; //$NON-NLS-1$
+        }
+        String usedBy = findItemWithTheSameCode(siblings, code);
+        if (usedBy != null)
+        {
+            return sameCodeMessage(code, usedBy, ownerType);
+        }
+        EditMetadataTool.invokeSetterClearly(setCode, item, value, "code"); //$NON-NLS-1$
+        return null;
+    }
+
+    /** The refusal naming the item that already carries the requested code. */
+    private static String sameCodeMessage(String code, String usedBy, String ownerType)
+    {
+        return "code '" + code + "' is already used by the predefined item '" + usedBy //$NON-NLS-1$ //$NON-NLS-2$
+            + "' of " + ownerType + "."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** The model type name of an object built through the factories, for the messages here. */
+    private static String typeName(Object target)
+    {
+        return target instanceof EObject ? ((EObject) target).eClass().getName()
+            : target.getClass().getSimpleName();
+    }
+
+    /** Whether the text reads as a number at all. */
+    private static boolean isNumberLiteral(String code)
+    {
+        try
+        {
+            new java.math.BigDecimal(code.trim());
+            return true;
+        }
+        catch (NumberFormatException nfe)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Builds the code value for a Value-typed code through the model factory: a Number value for a
+     * Number code type, a String value for a String one.
+     *
+     * @param number whether the owner's code type is a number
+     * @param code the requested code as text
+     * @return the built value, or {@code null} when the factory chain is unreachable on this runtime
+     */
+    private static Object createCodeValue(boolean number, String code)
+    {
+        String className = number
+            ? "com._1c.g5.v8.dt.mcore.NumberValue" : "com._1c.g5.v8.dt.mcore.StringValue"; //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            Class<?> factoryClass = Class.forName("com._1c.g5.v8.dt.mcore.McoreFactory"); //$NON-NLS-1$
+            Object factory = factoryClass.getField("eINSTANCE").get(null); //$NON-NLS-1$
+            Object value = factory.getClass()
+                .getMethod(number ? "createNumberValue" : "createStringValue").invoke(factory); //$NON-NLS-1$ //$NON-NLS-2$
+            Object literal = number ? new java.math.BigDecimal(code.trim()) : code;
+            Class.forName(className).getMethod("setValue", literal.getClass()).invoke(value, literal); //$NON-NLS-1$
+            return value;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("createCodeValue failed: " + e); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Finds the existing predefined item whose code reads the same as the requested one. Codes are
+     * unique within one owner, so a repeat is refused before it reaches the model.
+     *
+     * @param siblings the owner's existing predefined items
+     * @param wantedCode the requested code as text
+     * @return the name of the item already carrying that code, or {@code null}
+     */
+    private static String findItemWithTheSameCode(EList<Object> siblings, String wantedCode)
+    {
+        String wanted = wantedCode == null ? null : wantedCode.trim();
+        if (siblings == null || wanted == null || wanted.isEmpty())
+        {
+            return null;
+        }
+        for (Object item : siblings)
+        {
+            String existing = codeAsText(reflectNoArg(item, "getCode")); //$NON-NLS-1$
+            if (existing == null)
+            {
+                continue;
+            }
+            if (existing.equals(wanted) || sameNumber(existing, wanted))
+            {
+                Object name = reflectNoArg(item, "getName"); //$NON-NLS-1$
+                return name == null ? "?" : name.toString(); //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads a predefined item's code as text: the String feature's own text, or the value carried
+     * by a Value-typed code. Answers {@code null} when the item holds no code.
+     */
+    private static String codeAsText(Object code)
+    {
+        if (code == null)
+        {
+            return null;
+        }
+        Object raw = code instanceof String ? code : reflectNoArg(code, "getValue"); //$NON-NLS-1$
+        return raw == null ? null : raw.toString().trim();
+    }
+
+    /** Whether two code texts name the same number - 42 and 42.0 are one code. */
+    private static boolean sameNumber(String one, String other)
+    {
+        try
+        {
+            return new java.math.BigDecimal(one).compareTo(new java.math.BigDecimal(other)) == 0;
+        }
+        catch (NumberFormatException nfe)
+        {
+            return false;
+        }
     }
 
     /**
