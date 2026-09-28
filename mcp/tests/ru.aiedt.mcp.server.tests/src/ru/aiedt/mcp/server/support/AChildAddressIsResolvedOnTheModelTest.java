@@ -18,6 +18,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
@@ -27,10 +28,12 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com._1c.g5.v8.dt.metadata.mdclass.CalculationRegister;
 import com._1c.g5.v8.dt.metadata.mdclass.Catalog;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.HTTPService;
@@ -150,7 +153,7 @@ public class AChildAddressIsResolvedOnTheModelTest
         assertEquals("Atribute", unknown.missingKind); //$NON-NLS-1$
         assertNull(unknown.presenceForRemoval());
 
-        BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        BmRightsHelper.RightsGate gate = modelGate();
         BmRightsHelper.FileRightResult refused = BmRightsHelper.applyRightToFile(project, "FullRights", //$NON-NLS-1$
             "Catalog.Goods.Attribute.Missing", "Read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse(refused.ok);
@@ -181,8 +184,12 @@ public class AChildAddressIsResolvedOnTheModelTest
             BmRightsHelper.locateObject(configuration, "Конфигурация.Cfg").canonicalFqn); //$NON-NLS-1$
         assertEquals("Configuration.Cfg", //$NON-NLS-1$
             BmRightsHelper.locateObject(configuration, "configuration.cfg").canonicalFqn); //$NON-NLS-1$
+        assertEquals("Configuration.Cfg", //$NON-NLS-1$
+            BmRightsHelper.locateObject(configuration, "Cfg").canonicalFqn); //$NON-NLS-1$
+        assertEquals("Configuration.Cfg", //$NON-NLS-1$
+            BmRightsHelper.locateObject(configuration, "Конфигурация").canonicalFqn); //$NON-NLS-1$
 
-        BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        BmRightsHelper.RightsGate gate = modelGate();
         BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(project, "Keeper", //$NON-NLS-1$
             "Конфигурация.Cfg", "ThinClient", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(written.error == null ? "written" : written.error, written.ok); //$NON-NLS-1$
@@ -199,7 +206,7 @@ public class AChildAddressIsResolvedOnTheModelTest
     @Test
     public void aBlockStoredInRussianIsTheSameBlock() throws Exception
     {
-        BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        BmRightsHelper.RightsGate gate = modelGate();
         BmRightsHelper.FileRightResult first = BmRightsHelper.applyRightToFile(project, "Keeper", //$NON-NLS-1$
             "Catalog.Товары", "Read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(first.error == null ? "written" : first.error, first.ok); //$NON-NLS-1$
@@ -220,6 +227,159 @@ public class AChildAddressIsResolvedOnTheModelTest
     }
 
     /**
+     * An address that only starts with the configuration type is not the root. The write is
+     * refused and the role file gains no root block.
+     *
+     * @throws Exception when the rights file cannot be read
+     */
+    @Test
+    public void aMisstatedConfigurationAddressDoesNotWriteTheRoot() throws Exception
+    {
+        BmRightsHelper.RightsGate gate = modelGate();
+        String[] addresses = {
+            "Configuration.Опечатка", //$NON-NLS-1$
+            "Configuration.Cfg.Subsystem.Foo", //$NON-NLS-1$
+            "Конфигурация.Чужое.Имя" //$NON-NLS-1$
+        };
+        for (String address : addresses)
+        {
+            BmRightsHelper.LocatedObject located = BmRightsHelper.locateObject(configuration, address);
+            assertEquals(address, Boolean.FALSE, located.present);
+            assertNull(address, located.canonicalFqn);
+            BmRightsHelper.FileRightResult refused = BmRightsHelper.applyRightToFile(project, "RootGuard", //$NON-NLS-1$
+                address, "ThinClient", true, false, gate); //$NON-NLS-1$
+            assertFalse(refused.ok);
+            assertEquals(address, "notFound", refused.failureKind); //$NON-NLS-1$
+        }
+        Path file = rightsFile("RootGuard"); //$NON-NLS-1$
+        assertFalse(Files.exists(file)
+            && Files.readString(file, StandardCharsets.UTF_8).contains("<name>Configuration")); //$NON-NLS-1$
+    }
+
+    /**
+     * A root block stored as {@code Configuration} is the same block as {@code Configuration.Cfg}.
+     * Either address rewrites the name and does not add a second block.
+     *
+     * @throws Exception when the rights file cannot be read or written
+     */
+    @Test
+    public void anOldConfigurationBlockBecomesTheNamedRoot() throws Exception
+    {
+        theOldRootBlockIsRenamed("Configuration.Cfg"); //$NON-NLS-1$
+        theOldRootBlockIsRenamed("Configuration"); //$NON-NLS-1$
+    }
+
+    /**
+     * {@code Перерасчет} on a register that has {@code recalculations} is not refused. A Latin
+     * typo {@code Atribute} still is.
+     *
+     * @throws Exception when the rights file cannot be read
+     */
+    @Test
+    public void aRussianKindOutsideTheTablesIsNotRefused() throws Exception
+    {
+        CalculationRegister payroll = configuration.getCalculationRegisters().get(0);
+        StringBuilder features = new StringBuilder();
+        for (EStructuralFeature feature : payroll.eClass().getEAllStructuralFeatures())
+        {
+            if (feature.isMany())
+            {
+                features.append(feature.getName()).append(' ');
+            }
+        }
+        assertTrue(features.toString(), features.toString().contains("recalculations")); //$NON-NLS-1$
+
+        String address = "CalculationRegister.Payroll.Перерасчет.Bonus"; //$NON-NLS-1$
+        BmRightsHelper.LocatedObject located = BmRightsHelper.locateObject(configuration, address);
+        assertNull(located.present);
+        assertNull(located.missingKind);
+        assertNull(located.presenceForRemoval());
+
+        BmRightsHelper.RightsGate gate = modelGate();
+        BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(project, "RussianKind", //$NON-NLS-1$
+            address, "Read", true, false, gate); //$NON-NLS-1$
+        assertTrue(written.error == null ? "written" : written.error, written.ok); //$NON-NLS-1$
+        assertNull(written.failureKind);
+
+        BmRightsHelper.OrphanSweep sweep = BmRightsHelper.sweepOrphanedRights(project, "RussianKind", //$NON-NLS-1$
+            fqn -> BmRightsHelper.locateObject(configuration, fqn).presenceForRemoval(), true);
+        assertTrue(sweep.error == null ? "swept" : sweep.error, sweep.ok); //$NON-NLS-1$
+        assertFalse(sweep.orphaned.contains(address));
+        assertTrue(Files.readString(rightsFile("RussianKind"), StandardCharsets.UTF_8) //$NON-NLS-1$
+            .contains("Перерасчет")); //$NON-NLS-1$
+
+        BmRightsHelper.LocatedObject typo =
+            BmRightsHelper.locateObject(configuration, "Catalog.Goods.Atribute.Foo"); //$NON-NLS-1$
+        assertEquals(Boolean.FALSE, typo.present);
+        assertEquals("Atribute", typo.missingKind); //$NON-NLS-1$
+        BmRightsHelper.FileRightResult refused = BmRightsHelper.applyRightToFile(project, "RussianKind", //$NON-NLS-1$
+            "Catalog.Goods.Atribute.Foo", "Read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(refused.ok);
+        assertEquals("notFound", refused.failureKind); //$NON-NLS-1$
+        assertFalse(Files.readString(rightsFile("RussianKind"), StandardCharsets.UTF_8) //$NON-NLS-1$
+            .contains("Atribute")); //$NON-NLS-1$
+    }
+
+    /**
+     * {@code Attribut} is not the {@code attributes} collection. The member is refused as an
+     * unknown kind, and a sweep leaves the block in place.
+     *
+     * @throws Exception when the rights file cannot be read or written
+     */
+    @Test
+    public void aShortenedKindIsLeftByTheSweep() throws Exception
+    {
+        String address = "Catalog.Goods.Attribut.Price"; //$NON-NLS-1$
+        BmRightsHelper.LocatedObject located = BmRightsHelper.locateObject(configuration, address);
+        assertEquals(Boolean.FALSE, located.present);
+        assertEquals("Attribut", located.missingKind); //$NON-NLS-1$
+        assertNull(located.presenceForRemoval());
+
+        Path file = rightsFile("AttributRole"); //$NON-NLS-1$
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, rightsDocument(address), StandardCharsets.UTF_8);
+        BmRightsHelper.OrphanSweep sweep = BmRightsHelper.sweepOrphanedRights(project, "AttributRole", //$NON-NLS-1$
+            fqn -> BmRightsHelper.locateObject(configuration, fqn).presenceForRemoval(), true);
+        assertTrue(sweep.error == null ? "swept" : sweep.error, sweep.ok); //$NON-NLS-1$
+        assertFalse(sweep.changed);
+        assertFalse(sweep.orphaned.contains(address));
+        assertTrue(Files.readString(file, StandardCharsets.UTF_8).contains("<name>" + address + "</name>")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The feature name {@code urlTemplates} is stored as {@code URLTemplate}, the spelling from
+     * the kind table.
+     */
+    @Test
+    public void urlTemplatesIsStoredAsUrlTemplate()
+    {
+        BmRightsHelper.LocatedObject method = BmRightsHelper.locateObject(configuration,
+            "HTTPService.Api.urlTemplates.Items.Method.Get"); //$NON-NLS-1$
+        assertEquals(Boolean.TRUE, method.present);
+        assertEquals("HTTPService.Api.URLTemplate.Items.Method.Get", method.canonicalFqn); //$NON-NLS-1$
+    }
+
+    /**
+     * A read that fails with a filesystem exception does not put the file path into the answer.
+     *
+     * @throws Exception when the blocking directory cannot be created
+     */
+    @Test
+    public void aDeniedReadDoesNotNameThePath() throws Exception
+    {
+        Path role = projectDir.resolve("src").resolve("Roles").resolve("Unreadable"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Files.createDirectories(role.resolve("Rights.rights")); //$NON-NLS-1$
+
+        BmRightsHelper.FileRightResult refused = BmRightsHelper.applyRightToFile(project, "Unreadable", //$NON-NLS-1$
+            "Catalog.Goods", "Read", true, false, //$NON-NLS-1$ //$NON-NLS-2$
+            modelGate());
+
+        assertNotNull(refused.error);
+        assertFalse(refused.ok);
+        assertFalse(refused.error, refused.error.contains(projectDir.getFileName().toString()));
+    }
+
+    /**
      * The file stores the model's role directory, the English object address and the right's
      * spelling from the applicable set, not the spelling the caller used.
      *
@@ -228,7 +388,7 @@ public class AChildAddressIsResolvedOnTheModelTest
     @Test
     public void theWriterStoresTheModelsSpelling() throws Exception
     {
-        BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        BmRightsHelper.RightsGate gate = modelGate();
         BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(project, "fullrights", //$NON-NLS-1$
             "catalog.goods", "read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(written.error == null ? "written" : written.error, written.ok); //$NON-NLS-1$
@@ -270,8 +430,58 @@ public class AChildAddressIsResolvedOnTheModelTest
     }
 
     /**
-     * A configuration with one catalog named {@code Goods}, one named {@code Товары} that owns a
-     * standard attribute, two roles, and an HTTP service method.
+     * A gate over the in-memory configuration whose applicable rights come from the static table
+     * straight away. The headless runtime has no platform version for the rights registry, so
+     * {@code IRightInfosService.getRights} waits 120 seconds per call and then answers nothing;
+     * the gate then falls back to this same table for a top-level object and to "not decided" for
+     * a child. Everything else is the model gate's answer.
+     *
+     * @return the gate
+     */
+    private static BmRightsHelper.RightsGate modelGate()
+    {
+        BmRightsHelper.RightsGate model = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        return new BmRightsHelper.RightsGate()
+        {
+            @Override
+            public Boolean roleExists(String roleName)
+            {
+                return model.roleExists(roleName);
+            }
+
+            @Override
+            public Boolean objectExists(String targetFqn)
+            {
+                return model.objectExists(targetFqn);
+            }
+
+            @Override
+            public Set<String> applicableRights(String targetFqn)
+            {
+                if (targetFqn == null || targetFqn.chars().filter(c -> c == '.').count() > 1)
+                {
+                    return null;
+                }
+                return ApplicableRightsResolver.knownRights(ApplicableRightsResolver.kindOf(targetFqn));
+            }
+
+            @Override
+            public String roleDirectoryName(String roleName)
+            {
+                return model.roleDirectoryName(roleName);
+            }
+
+            @Override
+            public String objectFqnToWrite(String targetFqn)
+            {
+                return model.objectFqnToWrite(targetFqn);
+            }
+        };
+    }
+
+    /**
+     * A configuration with catalogs {@code Goods} and {@code Товары}, a calculation register
+     * {@code Payroll}, roles used by the rights writes, and an HTTP service method.
      *
      * @return the model
      * @throws Exception when a child cannot be created or attached
@@ -297,6 +507,22 @@ public class AChildAddressIsResolvedOnTheModelTest
         Role keeper = MdClassFactory.eINSTANCE.createRole();
         keeper.setName("Keeper"); //$NON-NLS-1$
         configuration.getRoles().add(keeper);
+
+        Role rootGuard = MdClassFactory.eINSTANCE.createRole();
+        rootGuard.setName("RootGuard"); //$NON-NLS-1$
+        configuration.getRoles().add(rootGuard);
+
+        Role legacyRoot = MdClassFactory.eINSTANCE.createRole();
+        legacyRoot.setName("LegacyRoot"); //$NON-NLS-1$
+        configuration.getRoles().add(legacyRoot);
+
+        Role russianKind = MdClassFactory.eINSTANCE.createRole();
+        russianKind.setName("RussianKind"); //$NON-NLS-1$
+        configuration.getRoles().add(russianKind);
+
+        CalculationRegister payroll = MdClassFactory.eINSTANCE.createCalculationRegister();
+        payroll.setName("Payroll"); //$NON-NLS-1$
+        configuration.getCalculationRegisters().add(payroll);
 
         MdObject service = BmObjectHelper.createGenericObject("HTTPService"); //$NON-NLS-1$
         assertNotNull("HTTPService was not created", service); //$NON-NLS-1$
@@ -355,6 +581,65 @@ public class AChildAddressIsResolvedOnTheModelTest
     {
         Object list = owner.getClass().getMethod(getter).invoke(owner);
         ((EList<EObject>)list).add(child);
+    }
+
+    /**
+     * Writes {@code address} onto a role file that already stores the root as {@code Configuration}
+     * and checks that the file holds one block named {@code Configuration.Cfg}.
+     *
+     * @param address the address of the write
+     * @throws Exception when the file cannot be written or read
+     */
+    private static void theOldRootBlockIsRenamed(String address) throws Exception
+    {
+        Path file = rightsFile("LegacyRoot"); //$NON-NLS-1$
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, rightsDocument("Configuration"), StandardCharsets.UTF_8); //$NON-NLS-1$
+        BmRightsHelper.RightsGate gate = modelGate();
+        BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(project, "LegacyRoot", //$NON-NLS-1$
+            address, "ThinClient", true, false, gate); //$NON-NLS-1$
+        assertTrue(address + (written.error == null ? "" : " " + written.error), written.ok); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(written.objectCreated);
+        String text = Files.readString(file, StandardCharsets.UTF_8);
+        assertEquals(1, countOf(text, "<name>Configuration.Cfg</name>")); //$NON-NLS-1$
+        assertFalse(text, text.contains("<name>Configuration</name>")); //$NON-NLS-1$
+        assertEquals(1, countOf(text, "<object>")); //$NON-NLS-1$
+    }
+
+    /**
+     * A rights document with one object block.
+     *
+     * @param objectName the object name to store
+     * @return the document text
+     */
+    private static String rightsDocument(String objectName)
+    {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Rights>\n  <object><name>" //$NON-NLS-1$
+            + objectName
+            + "</name><right><name>Read</name><value>true</value></right></object>\n</Rights>\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * How many times {@code token} occurs in {@code text}.
+     *
+     * @param text the text
+     * @param token the token
+     * @return the count
+     */
+    private static int countOf(String text, String token)
+    {
+        int count = 0;
+        int from = 0;
+        while (true)
+        {
+            int at = text.indexOf(token, from);
+            if (at < 0)
+            {
+                return count;
+            }
+            count++;
+            from = at + token.length();
+        }
     }
 
     /**

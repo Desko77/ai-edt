@@ -555,12 +555,17 @@ public final class BmRightsHelper
                 return res;
             }
             Element objectEl = findObjectBlock(root, objectToWrite, targetFqn);
+            boolean rootRenamed = false;
             if (objectEl == null)
             {
                 objectEl = doc.createElement("object"); //$NON-NLS-1$
                 appendTextChild(doc, objectEl, "name", objectToWrite); //$NON-NLS-1$
                 root.appendChild(objectEl);
                 res.objectCreated = true;
+            }
+            else
+            {
+                rootRenamed = renameBareConfigurationRoot(objectEl, objectToWrite);
             }
             Element rightEl = findRightBlock(objectEl, rightToWrite, canonicalRightName);
             if (rightEl == null)
@@ -580,9 +585,14 @@ public final class BmRightsHelper
                 {
                     res.idempotent = true;
                     res.ok = true;
-                    return res; // already at the requested value - no rewrite
+                    // The right is already set. A root block still stored without its name has to
+                    // be rewritten, so that one change is saved below.
+                    if (!rootRenamed)
+                    {
+                        return res;
+                    }
                 }
-                if (valueEl == null)
+                else if (valueEl == null)
                 {
                     appendTextChild(doc, rightEl, "value", String.valueOf(granted)); //$NON-NLS-1$
                 }
@@ -608,8 +618,7 @@ public final class BmRightsHelper
         }
         catch (Exception e)
         {
-            res.error = "Rights.rights edit failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            res.error = "Rights.rights edit failed: " + failureWithoutPath(e); //$NON-NLS-1$
             return res;
         }
         finally
@@ -825,8 +834,7 @@ public final class BmRightsHelper
         }
         catch (Exception e)
         {
-            res.error = "Rights.rights template edit failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            res.error = "Rights.rights template edit failed: " + failureWithoutPath(e); //$NON-NLS-1$
             return res;
         }
         finally
@@ -1072,8 +1080,7 @@ public final class BmRightsHelper
         }
         catch (Exception e)
         {
-            res.error = "Rights.rights restriction edit failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            res.error = "Rights.rights restriction edit failed: " + failureWithoutPath(e); //$NON-NLS-1$
             return res;
         }
         finally
@@ -1278,7 +1285,8 @@ public final class BmRightsHelper
      * The object block to update. The canonical address is tried first; a block stored under the
      * caller's spelling is the same block when the two differ only by case. A block stored with a
      * Russian type or collection kind ({@code Справочник.Товары}) is the same block as its English
-     * address.
+     * address. A root stored as {@code Configuration} or {@code Конфигурация}, with no
+     * configuration name, is the block of {@code Configuration.<name>}.
      *
      * @param root the {@code Rights} element
      * @param canonical the address to store
@@ -1304,7 +1312,9 @@ public final class BmRightsHelper
             if (n instanceof Element && "object".equals(((Element)n).getTagName())) //$NON-NLS-1$
             {
                 Element nameEl = firstChild((Element)n, "name"); //$NON-NLS-1$
-                if (nameEl != null && wanted.equals(spellingKey(nameEl.getTextContent().trim())))
+                String stored = nameEl == null ? null : nameEl.getTextContent().trim();
+                if (stored != null && (wanted.equals(spellingKey(stored))
+                    || bareConfigurationNamesTheRoot(canonical, stored)))
                 {
                     return (Element)n;
                 }
@@ -1359,6 +1369,103 @@ public final class BmRightsHelper
     private static boolean isConfigurationType(String segment)
     {
         return "Configuration".equalsIgnoreCase(segment) || "Конфигурация".equalsIgnoreCase(segment); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Whether {@code parts} name the configuration itself.
+     * <p>
+     * One segment is the root when it is {@code Configuration}, {@code Конфигурация}, or the
+     * configuration's own name, in any letter case. Two segments are the root when the first is
+     * {@code Configuration} or {@code Конфигурация} and the second is that name.
+     * </p>
+     *
+     * @param configuration the configuration
+     * @param parts the address split on dots
+     * @return {@code true} when the address is the root
+     */
+    private static boolean isConfigurationRoot(Configuration configuration, String[] parts)
+    {
+        if (parts.length == 1)
+        {
+            return isConfigurationType(parts[0]) || sameConfigurationName(configuration, parts[0]);
+        }
+        return parts.length == 2 && isConfigurationType(parts[0])
+            && sameConfigurationName(configuration, parts[1]);
+    }
+
+    /**
+     * Whether {@code segment} is the configuration's name, ignoring letter case.
+     *
+     * @param configuration the configuration
+     * @param segment one address segment
+     * @return {@code true} when the names match
+     */
+    private static boolean sameConfigurationName(Configuration configuration, String segment)
+    {
+        String name = configuration.getName();
+        return name != null && !name.isEmpty() && name.equalsIgnoreCase(segment);
+    }
+
+    /**
+     * Whether {@code fqn} is the root stored as {@code Configuration.<name>}.
+     *
+     * @param fqn the address to store
+     * @return {@code true} when it is two segments and the first names the configuration
+     */
+    private static boolean isNamedConfigurationRoot(String fqn)
+    {
+        if (fqn == null)
+        {
+            return false;
+        }
+        String[] parts = fqn.split("\\.", -1); //$NON-NLS-1$
+        return parts.length == 2 && isConfigurationType(parts[0]) && !parts[1].isEmpty();
+    }
+
+    /**
+     * Whether a stored name is the configuration type with no configuration name after it.
+     *
+     * @param name the name in the file, already trimmed
+     * @return {@code true} for {@code Configuration} and {@code Конфигурация}
+     */
+    private static boolean isBareConfigurationType(String name)
+    {
+        return name != null && name.indexOf('.') < 0 && isConfigurationType(name);
+    }
+
+    /**
+     * Whether a block stored without the configuration name is the root {@code canonical} names.
+     *
+     * @param canonical the address to store, {@code Configuration.<name>}
+     * @param stored the name in the file
+     * @return {@code true} when {@code stored} is {@code Configuration} or {@code Конфигурация}
+     */
+    private static boolean bareConfigurationNamesTheRoot(String canonical, String stored)
+    {
+        return isNamedConfigurationRoot(canonical) && isBareConfigurationType(stored);
+    }
+
+    /**
+     * Rewrites a root block stored as {@code Configuration} or {@code Конфигурация} to
+     * {@code Configuration.<name>}.
+     *
+     * @param objectEl the object block that was found
+     * @param canonical the address to store
+     * @return {@code true} when the stored name was replaced
+     */
+    private static boolean renameBareConfigurationRoot(Element objectEl, String canonical)
+    {
+        if (!isNamedConfigurationRoot(canonical))
+        {
+            return false;
+        }
+        Element nameEl = firstChild(objectEl, "name"); //$NON-NLS-1$
+        if (nameEl == null || !isBareConfigurationType(nameEl.getTextContent().trim()))
+        {
+            return false;
+        }
+        nameEl.setTextContent(canonical);
+        return true;
     }
 
     /**
@@ -1848,8 +1955,10 @@ public final class BmRightsHelper
     /**
      * Where one FQN landed in a configuration, and the address to store when it was found.
      * <p>
-     * The same walk answers a rights write and an orphan sweep. A child it cannot resolve is
-     * {@link #unresolved()}, which neither refuses the write nor deletes the rights entry.
+     * Three outcomes. Found: the object is in the configuration and {@link #canonicalFqn} is the
+     * address to store. Absent ({@link #absent()}, including {@link #noSuchKind}): the object is
+     * not there, and a write is refused. Unresolved ({@link #unresolved()}): the walk could not
+     * decide, a write is not refused, and a sweep does not delete the entry.
      * </p>
      */
     public static final class LocatedObject
@@ -1934,10 +2043,15 @@ public final class BmRightsHelper
     /**
      * Locates one FQN in a configuration.
      * <p>
-     * The top segment is the English metadata type. Each later pair is a child collection and a
-     * member. The collection is the structural feature of that name, matched without regard to
-     * case, and the member is the object whose {@code getName()} matches. A feature that cannot
-     * be read, or a member whose name cannot be read, is not treated as absent.
+     * The configuration root is one segment ({@code Configuration}, {@code Конфигурация}, or the
+     * configuration's own name) or two segments whose first is {@code Configuration} or
+     * {@code Конфигурация} and whose second is that name. Any other address that starts with the
+     * configuration type is absent. The top segment of any other address is the English metadata
+     * type. Each later pair is a child collection and a member. The collection is the structural
+     * feature of that name, matched without regard to case, and the member is the object whose
+     * {@code getName()} matches. A feature that cannot be read, or a member whose name cannot be
+     * read, is not treated as absent. A Latin collection segment the class does not have is
+     * absent; a segment in another script that this writer cannot map stays unresolved.
      * </p>
      *
      * @param configuration the configuration; {@code null} cannot be decided
@@ -1955,13 +2069,16 @@ public final class BmRightsHelper
             return LocatedObject.absent();
         }
         String[] parts = fqn.split("\\."); //$NON-NLS-1$
-        if (fqn.equalsIgnoreCase(configuration.getName())
-            || parts.length > 0 && isConfigurationType(parts[0]))
+        if (isConfigurationRoot(configuration, parts))
         {
             // The rights file names the root Configuration.<name>.
             String name = configuration.getName();
             return LocatedObject.found(configuration,
                 name == null || name.isEmpty() ? "Configuration" : "Configuration." + name); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (parts.length > 0 && isConfigurationType(parts[0]))
+        {
+            return LocatedObject.absent();
         }
         if (parts.length < 2)
         {
@@ -1991,6 +2108,11 @@ public final class BmRightsHelper
 
     /**
      * Walks a child FQN one collection/member pair at a time.
+     * <p>
+     * A Latin collection segment the owner does not have is absent. A segment in another script
+     * that this writer cannot map is unresolved: the write is not refused and a sweep does not
+     * delete the entry.
+     * </p>
      *
      * @param owner the object reached so far
      * @param parts the whole address, split on dots
@@ -2013,7 +2135,14 @@ public final class BmRightsHelper
         org.eclipse.emf.ecore.EStructuralFeature feature = collectionFeature(owner, kind);
         if (feature == null)
         {
-            return LocatedObject.noSuchKind(parts[at]);
+            // A Latin segment that names no collection is a typo and the write is refused. A
+            // segment in another script may be a kind this writer does not map: the walk stays
+            // unresolved, so the write is not refused and a sweep does not delete the entry.
+            if (isLatinSegment(parts[at]))
+            {
+                return LocatedObject.noSuchKind(parts[at]);
+            }
+            return LocatedObject.unresolved();
         }
         if (BmObjectHelper.canonicalChildKind(parts[at]) == null
             && MetadataTypeCatalog.toEnglishSingular(parts[at]) == null)
@@ -2126,6 +2255,11 @@ public final class BmRightsHelper
     /**
      * The singular English kind of a collection feature the kind table does not list
      * ({@code recalculations} to {@code Recalculation}).
+     * <p>
+     * One trailing {@code s} is removed and the first letter is raised. When that result matches
+     * a kind in the table without regard to case, the table's spelling is used
+     * ({@code urlTemplates} to {@code URLTemplate}).
+     * </p>
      *
      * @param featureName the feature name as the model spells it
      * @return the kind to store in an address
@@ -2134,7 +2268,9 @@ public final class BmRightsHelper
     {
         String singular = featureName.endsWith("s") && featureName.length() > 1 //$NON-NLS-1$
             ? featureName.substring(0, featureName.length() - 1) : featureName;
-        return Character.toUpperCase(singular.charAt(0)) + singular.substring(1);
+        String spelled = Character.toUpperCase(singular.charAt(0)) + singular.substring(1);
+        String fromTable = BmObjectHelper.canonicalChildKind(spelled);
+        return fromTable != null ? fromTable : spelled;
     }
 
     /**
@@ -2142,7 +2278,8 @@ public final class BmRightsHelper
      *
      * @param featureName the feature name, as the model spells it ({@code urlTemplates})
      * @param kind the English singular kind ({@code URLTemplate})
-     * @return {@code true} when the names are the same collection
+     * @return {@code true} when the names are equal, or the feature is {@code kind} with one
+     *         trailing {@code s}. A stem that is one letter short of {@code kind} does not match
      */
     private static boolean namesTheCollection(String featureName, String kind)
     {
@@ -2151,8 +2288,36 @@ public final class BmRightsHelper
             return false;
         }
         return featureName.equalsIgnoreCase(kind)
-            || featureName.equalsIgnoreCase(kind + "s") //$NON-NLS-1$
-            || featureName.equalsIgnoreCase(kind + "es"); //$NON-NLS-1$
+            || featureName.equalsIgnoreCase(kind + "s"); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a collection segment is written in Latin letters and digits.
+     * <p>
+     * A Latin segment that names no collection is refused. Any other spelling is unknown to this
+     * writer and stays unresolved.
+     * </p>
+     *
+     * @param segment the collection segment of an address
+     * @return {@code true} when every character is an ASCII letter or digit
+     */
+    private static boolean isLatinSegment(String segment)
+    {
+        if (segment == null || segment.isEmpty())
+        {
+            return false;
+        }
+        for (int i = 0; i < segment.length(); i++)
+        {
+            char c = segment.charAt(i);
+            boolean letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+            boolean digit = c >= '0' && c <= '9';
+            if (!letter && !digit)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -2336,6 +2501,7 @@ public final class BmRightsHelper
 
     /**
      * Reads {@code Rights.rights} when it exists. A missing file is an empty load, not an error.
+     * A failure names its class and reason, not the file path.
      *
      * @param file the rights file
      * @return the load
@@ -2353,8 +2519,7 @@ public final class BmRightsHelper
         }
         catch (Exception refused)
         {
-            loaded.parseError = refused.getMessage() != null
-                ? refused.getMessage() : refused.getClass().getSimpleName();
+            loaded.parseError = failureWithoutPath(refused);
         }
         return loaded;
     }
