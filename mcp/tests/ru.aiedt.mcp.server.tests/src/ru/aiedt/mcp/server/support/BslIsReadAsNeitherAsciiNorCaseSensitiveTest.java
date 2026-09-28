@@ -10,6 +10,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -18,6 +20,8 @@ import org.junit.Test;
 
 import ru.aiedt.mcp.server.toolkit.ops.DetectQueryAntiPatternsTool;
 import ru.aiedt.mcp.server.toolkit.ops.FindRlsViolationsTool;
+import ru.aiedt.mcp.server.toolkit.ops.MethodSourceReader;
+import ru.aiedt.mcp.server.toolkit.ops.ModuleOutlineReader;
 
 /**
  * Holds every regular expression that reads 1C source to the two things that are true about 1C
@@ -187,5 +191,46 @@ public class BslIsReadAsNeitherAsciiNorCaseSensitiveTest
             set.matcher("установитьпривилегированныйрежим(истина);").find()); //$NON-NLS-1$
         assertTrue("and the same for the reset", //$NON-NLS-1$
             reset.matcher("установитьпривилегированныйрежим(ложь);").find()); //$NON-NLS-1$
+    }
+
+    /**
+     * The {@code Export} keyword after a parameter list is a keyword whatever case it is typed in.
+     * <p>
+     * Both text readers detect it with an inline pattern, and a Cyrillic keyword in the wrong case
+     * is invisible to ASCII folding: the method read as unexported when it was exported. The
+     * detectors are private and take the module lines, so they are reached by reflection, the way
+     * the pattern fields above are.
+     * </p>
+     */
+    @Test
+    public void theExportKeywordIsSeenWhateverTheCase() throws Exception
+    {
+        assertExportSeen(MethodSourceReader.class, "detectExport", "Функция С() Экспорт", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(MethodSourceReader.class, "detectExport", "Функция С() ЭКСПОРТ", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(MethodSourceReader.class, "detectExport", "Функция С() экспорт", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(MethodSourceReader.class, "detectExport", "Функция С() Export", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(MethodSourceReader.class, "detectExport", "Функция С()", false); //$NON-NLS-1$ //$NON-NLS-2$
+        assertExportSeen(ModuleOutlineReader.class, "detectTextExport", "Функция С() Экспорт", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(ModuleOutlineReader.class, "detectTextExport", "Функция С() ЭКСПОРТ", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(ModuleOutlineReader.class, "detectTextExport", "Функция С() экспорт", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(ModuleOutlineReader.class, "detectTextExport", "Функция С() Export", true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertExportSeen(ModuleOutlineReader.class, "detectTextExport", "Функция С()", false); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Runs one reader's private export detector on a one-line module.
+     *
+     * @param owner the reader class
+     * @param method the detector's name in that class
+     * @param line the module line
+     * @param expected whether the method is exported
+     */
+    private static void assertExportSeen(Class<?> owner, String method, String line, boolean expected)
+        throws Exception
+    {
+        Method detector = owner.getDeclaredMethod(method, List.class, int.class);
+        detector.setAccessible(true);
+        boolean seen = (Boolean)detector.invoke(null, List.of(line), Integer.valueOf(0));
+        assertTrue(owner.getSimpleName() + " on '" + line + "'", seen == expected); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

@@ -7,6 +7,8 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -15,7 +17,6 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.Path;
-import org.eclipse.emf.ecore.EObject;
 
 import com._1c.g5.v8.dt.bsl.model.DeclareStatement;
 import com._1c.g5.v8.dt.bsl.model.ExplicitVariable;
@@ -210,7 +211,7 @@ public class ModuleOutlineReader
         builder.append("**Total:** ").append(procedures).append(" procedures, ").append(functions) //$NON-NLS-1$ //$NON-NLS-2$
             .append(" functions | **Line span:** ").append(totalLines).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
 
-        appendRegions(builder, collectModelRegions(module));
+        appendRegions(builder, collectModelRegions(module, lines));
 
         if (includeVariables)
         {
@@ -276,8 +277,8 @@ public class ModuleOutlineReader
     private String structureFromLines(String modulePath, List<String> lines, boolean includeComments,
         String provenance)
     {
-        List<RegionRange> regions = new ArrayList<>();
-        List<MethodInfo> methods = parseTextStructure(lines, regions, includeComments);
+        List<RegionRange> regions = collectRegionRanges(lines);
+        List<MethodInfo> methods = parseTextStructure(lines, includeComments);
 
         int procedures = 0;
         int functions = 0;
@@ -311,7 +312,8 @@ public class ModuleOutlineReader
     }
 
     /**
-     * Appends the regions list, when there is one.
+     * Appends the regions list, when there is one. A region whose end is unknown prints by its start
+     * alone: a made-up end would send the caller looking for code that is not in the region.
      *
      * @param builder the report
      * @param regions the regions in document order
@@ -325,8 +327,12 @@ public class ModuleOutlineReader
         builder.append("### Code Regions\n\n"); //$NON-NLS-1$
         for (RegionRange region : regions)
         {
-            builder.append("- ").append(region.name).append(" (line ").append(region.start) //$NON-NLS-1$ //$NON-NLS-2$
-                .append("-").append(region.end).append(")\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            builder.append("- ").append(region.name).append(" (line ").append(region.start); //$NON-NLS-1$ //$NON-NLS-2$
+            if (region.end > 0)
+            {
+                builder.append("-").append(region.end); //$NON-NLS-1$
+            }
+            builder.append(")\n"); //$NON-NLS-1$
         }
         builder.append("\n"); //$NON-NLS-1$
     }
@@ -433,32 +439,82 @@ public class ModuleOutlineReader
     }
 
     /**
-     * Collects the regions of a built module, in document order.
+     * Collects the regions of a built module. The names and the start lines come from the model,
+     * where they are exact; the spans come from the directive pairs of the module text, because the
+     * model nests a sibling region inside the one before it, and a span built from the model's own
+     * children runs past the closing directive into whatever follows it. A region whose span the
+     * text does not give - the lines could not be read - carries no end rather than a wrong one.
      *
      * @param module the module
-     * @return the regions with their line spans
+     * @param lines the module lines, or an empty list when they could not be read
+     * @return the regions with their line spans, ordered by start line
      */
-    private static List<RegionRange> collectModelRegions(Module module)
+    private static List<RegionRange> collectModelRegions(Module module, List<String> lines)
     {
+        Map<Integer, Integer> endByStart = new HashMap<>();
+        for (RegionRange range : collectRegionRanges(lines))
+        {
+            endByStart.put(Integer.valueOf(range.start), Integer.valueOf(range.end));
+        }
         List<RegionRange> regions = new ArrayList<>();
         module.eAllContents().forEachRemaining(element -> {
             if (element instanceof RegionPreprocessor)
             {
                 RegionPreprocessor region = (RegionPreprocessor)element;
                 int start = BslModuleAccess.getStartLine(region);
-                int maxChild = 0;
-                for (EObject child : region.eContents())
-                {
-                    int childEnd = BslModuleAccess.getEndLine(child);
-                    if (childEnd > maxChild)
-                    {
-                        maxChild = childEnd;
-                    }
-                }
-                int end = maxChild > 0 ? maxChild + 1 : start + 1;
-                regions.add(new RegionRange(region.getName(), start, end));
+                Integer end = endByStart.get(Integer.valueOf(start));
+                regions.add(new RegionRange(region.getName(), start, end == null ? 0 : end.intValue()));
             }
         });
+        regions.sort(Comparator.comparingInt(region -> region.start));
+        return regions;
+    }
+
+    /**
+     * Computes the region spans of a module from its {@code #Область} / {@code #КонецОбласти}
+     * pairs: a region ends on the line of the directive that closes it - that line belongs to the
+     * region it closes, the convention {@link BslModuleAccess#findRegionForLine} already keeps -
+     * and a region the source never closes ends on the last line of the module. The list is
+     * ordered by start line, which is the document order: the region that opens first prints
+     * first, outer before inner.
+     *
+     * @param lines the module lines, or <code>null</code> when they could not be read
+     * @return the regions with their spans, ordered by start line; empty when the lines are
+     *         unavailable or hold no region directives
+     */
+    private static List<RegionRange> collectRegionRanges(List<String> lines)
+    {
+        List<RegionRange> regions = new ArrayList<>();
+        if (lines == null)
+        {
+            return regions;
+        }
+        List<String> openNames = new ArrayList<>();
+        List<Integer> openStarts = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++)
+        {
+            int lineNumber = i + 1;
+            String line = lines.get(i);
+            Matcher regionStart = BslModuleAccess.REGION_START_PATTERN.matcher(line);
+            if (regionStart.find())
+            {
+                openNames.add(regionStart.group(1));
+                openStarts.add(Integer.valueOf(lineNumber));
+            }
+            else if (BslModuleAccess.REGION_END_PATTERN.matcher(line).find() && !openNames.isEmpty())
+            {
+                int last = openNames.size() - 1;
+                regions.add(new RegionRange(openNames.remove(last),
+                    openStarts.remove(last).intValue(), lineNumber));
+            }
+        }
+        while (!openNames.isEmpty())
+        {
+            int last = openNames.size() - 1;
+            regions.add(new RegionRange(openNames.remove(last),
+                openStarts.remove(last).intValue(), lines.size()));
+        }
+        regions.sort(Comparator.comparingInt(region -> region.start));
         return regions;
     }
 
@@ -574,22 +630,20 @@ public class ModuleOutlineReader
     }
 
     /**
-     * Parses the method and region structure out of module text.
+     * Parses the method structure out of module text. Regions are tracked only as a name stack, to
+     * tell each method the region it sits in; their spans are computed by
+     * {@link #collectRegionRanges}.
      *
      * @param lines the module lines
-     * @param regions filled with the regions found, in document order
      * @param includeComments whether to parse doc-comments
      * @return the methods in document order
      */
-    private static List<MethodInfo> parseTextStructure(List<String> lines, List<RegionRange> regions,
-        boolean includeComments)
+    private static List<MethodInfo> parseTextStructure(List<String> lines, boolean includeComments)
     {
         List<MethodInfo> methods = new ArrayList<>();
         List<String> regionNameStack = new ArrayList<>();
-        List<Integer> regionStartStack = new ArrayList<>();
 
-        int lineCount = lines.size();
-        for (int i = 0; i < lineCount; i++)
+        for (int i = 0; i < lines.size(); i++)
         {
             String line = lines.get(i);
             int lineNumber = i + 1;
@@ -598,16 +652,13 @@ public class ModuleOutlineReader
             if (regionStart.find())
             {
                 regionNameStack.add(regionStart.group(1));
-                regionStartStack.add(lineNumber);
                 continue;
             }
             if (BslModuleAccess.REGION_END_PATTERN.matcher(line).find())
             {
                 if (!regionNameStack.isEmpty())
                 {
-                    int last = regionNameStack.size() - 1;
-                    regions.add(new RegionRange(regionNameStack.remove(last),
-                        regionStartStack.remove(last).intValue(), lineNumber));
+                    regionNameStack.remove(regionNameStack.size() - 1);
                 }
                 continue;
             }
@@ -618,7 +669,7 @@ public class ModuleOutlineReader
                 MethodInfo info = new MethodInfo();
                 info.name = methodStart.group(1);
                 info.function = BslModuleAccess.FUNC_KEYWORD_PATTERN.matcher(line).find();
-                info.params = extractTextParams(methodStart.group(2));
+                info.params = extractTextParams(lines, i, methodStart.group(2));
                 info.startLine = lineNumber;
                 info.endLine = findMethodEnd(lines, i);
                 info.export = detectTextExport(lines, i);
@@ -631,27 +682,79 @@ public class ModuleOutlineReader
                 methods.add(info);
             }
         }
-
-        while (!regionNameStack.isEmpty())
-        {
-            int last = regionNameStack.size() - 1;
-            regions.add(new RegionRange(regionNameStack.remove(last),
-                regionStartStack.remove(last).intValue(), lineCount));
-        }
         return methods;
     }
 
     /**
-     * Pulls the parameter text out of the remainder of a method header line.
+     * Pulls the parameter text out of a method header, following the signature past the end of the
+     * declaration line and past the brackets of default values, up to the bracket that closes the
+     * parameter list itself.
      *
-     * @param afterParen the text from just after the opening parenthesis to end of line
-     * @return the parameter list text, before the first closing parenthesis, trimmed
+     * @param lines the module lines
+     * @param declIndex the 0-based index of the declaration line
+     * @param afterParen the declaration line from just after the opening parenthesis
+     * @return the parameter list text, continuation lines joined by single spaces; the whole
+     *         collected text when the list never closes
      */
-    private static String extractTextParams(String afterParen)
+    private static String extractTextParams(List<String> lines, int declIndex, String afterParen)
     {
-        int close = afterParen.indexOf(')');
-        String params = close >= 0 ? afterParen.substring(0, close) : afterParen;
-        return params.trim();
+        List<String> parts = new ArrayList<>();
+        int depth = 1;
+        int limit = Math.min(lines.size(), declIndex + SIGNATURE_SCAN_LIMIT);
+        for (int i = declIndex; i < limit; i++)
+        {
+            String line = i == declIndex ? afterParen : lines.get(i);
+            int cut = -1;
+            for (int j = 0; j < line.length(); j++)
+            {
+                char symbol = line.charAt(j);
+                if (symbol == '(')
+                {
+                    depth++;
+                }
+                else if (symbol == ')')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        cut = j;
+                        break;
+                    }
+                }
+            }
+            parts.add(cut >= 0 ? line.substring(0, cut) : line);
+            if (cut >= 0)
+            {
+                break;
+            }
+        }
+        return joinParams(parts);
+    }
+
+    /**
+     * Joins the collected pieces of a parameter list into one cell: each piece trimmed, the empty
+     * ones dropped, the rest separated by single spaces.
+     *
+     * @param parts the pieces the signature was read into
+     * @return the joined parameter text
+     */
+    private static String joinParams(List<String> parts)
+    {
+        StringBuilder params = new StringBuilder();
+        for (String part : parts)
+        {
+            String trimmed = part.trim();
+            if (trimmed.isEmpty())
+            {
+                continue;
+            }
+            if (params.length() > 0)
+            {
+                params.append(' ');
+            }
+            params.append(trimmed);
+        }
+        return params.toString();
     }
 
     /**
@@ -708,7 +811,7 @@ public class ModuleOutlineReader
                         {
                             rest = rest.substring(0, comment);
                         }
-                        return rest.matches("(?i)\\s*(?:Экспорт|Export)\\s*"); //$NON-NLS-1$
+                        return rest.matches("(?iu)\\s*(?:Экспорт|Export)\\s*"); //$NON-NLS-1$
                     }
                 }
             }
@@ -740,7 +843,7 @@ public class ModuleOutlineReader
         }
     }
 
-    /** One region and the lines it spans. */
+    /** One region and the lines it spans; an end of 0 means the span is unknown. */
     private static final class RegionRange
     {
         final String name;
