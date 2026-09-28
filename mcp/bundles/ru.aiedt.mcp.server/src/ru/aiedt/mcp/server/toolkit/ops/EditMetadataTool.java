@@ -163,6 +163,110 @@ public class EditMetadataTool implements IMcpTool
         "projectName", "ownerFqn", "formFqn", "dryRun" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     };
 
+    /** The batch entry field naming the earlier operation a failure follows from. */
+    static final String CAUSED_BY_OPERATION = "causedByOperation"; //$NON-NLS-1$
+
+    /** The batch entry field marking a failure that follows from an earlier operation. */
+    static final String DERIVED_FAILURE = "derivedFailure"; //$NON-NLS-1$
+
+    /** The arguments through which an operation names the object it works on or refers to. */
+    private static final String[] OBJECT_ADDRESS_PARAMS = {
+        "ownerFqn", "parentFqn", "objectName", "formFqn", "bpFqn", "targetFqn", "objectFqn", "valueFqn" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$ //$NON-NLS-8$
+    };
+
+    /**
+     * The object an operation of a batch creates, when it is one that creates an object.
+     *
+     * @param operation the normalized operation name
+     * @param opParams the operation's arguments
+     * @return the created object's FQN ({@code Catalog.X}, {@code Catalog.X.Form.Y}), or
+     *         <code>null</code> when the operation creates no object this can name
+     */
+    static String createdObjectOf(String operation, Map<String, String> opParams)
+    {
+        String name = JsonUtils.extractStringArgument(opParams, "name"); //$NON-NLS-1$
+        if ("create_object".equals(operation)) //$NON-NLS-1$
+        {
+            String type = JsonUtils.extractStringArgument(opParams, "objectType"); //$NON-NLS-1$
+            return type == null || type.isEmpty() || name == null || name.isEmpty() ? null
+                : type + "." + name; //$NON-NLS-1$
+        }
+        if ("create_form".equals(operation)) //$NON-NLS-1$
+        {
+            String owner = JsonUtils.extractStringArgument(opParams, "ownerFqn"); //$NON-NLS-1$
+            String form = JsonUtils.extractStringArgument(opParams, "formName"); //$NON-NLS-1$
+            return owner == null || owner.isEmpty() || form == null || form.isEmpty() ? null
+                : owner + ".Form." + form; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Which earlier operation of a batch left absent an object this operation addresses.
+     *
+     * @param opParams the failed operation's arguments
+     * @param absent objects earlier operations previewed or failed to create, keyed by
+     *            {@link #objectKey}, each with the index of that operation
+     * @return the index of that earlier operation, or <code>null</code> when the operation addresses
+     *         none of those objects
+     */
+    static Integer causedBy(Map<String, String> opParams, Map<String, Integer> absent)
+    {
+        if (absent.isEmpty())
+        {
+            return null;
+        }
+        for (String param : OBJECT_ADDRESS_PARAMS)
+        {
+            String address = JsonUtils.extractStringArgument(opParams, param);
+            if (address == null || address.isEmpty())
+            {
+                continue;
+            }
+            String key = objectKey(address);
+            for (Map.Entry<String, Integer> missing : absent.entrySet())
+            {
+                if (key.equals(missing.getKey()) || key.startsWith(missing.getKey() + ".")) //$NON-NLS-1$
+                {
+                    return missing.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Compares FQNs the way the platform does: types in either language, names without regard to
+     * case.
+     *
+     * @param fqn the FQN
+     * @return the comparison key
+     */
+    static String objectKey(String fqn)
+    {
+        String normalized = MetadataTypeCatalog.normalizeFqn(fqn);
+        return (normalized != null ? normalized : fqn).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * The first line of a batch answer when some operations failed.
+     *
+     * @param failed how many operations failed
+     * @param total how many operations the batch had
+     * @param preview <code>true</code> when every operation that ran was a preview
+     * @return the message, before the list of failures
+     */
+    static String batchFailureText(int failed, int total, boolean preview)
+    {
+        String head = failed + " of " + total + " operations failed. "; //$NON-NLS-1$ //$NON-NLS-2$
+        if (preview)
+        {
+            return head + "Nothing was written: every operation ran as a preview (dryRun) in its own " //$NON-NLS-1$
+                + "transaction, so an object one operation would create does not exist for the next.\n"; //$NON-NLS-1$
+        }
+        return head + "Operations are NOT rolled back: the ones that succeeded are already applied.\n"; //$NON-NLS-1$
+    }
+
     /** How many failed operations a batch names in its message before it says how many are left. */
     private static final int FAILURES_NAMED = 5;
 
@@ -241,7 +345,13 @@ public class EditMetadataTool implements IMcpTool
             }
             sb.append("  [").append(entry.get("index")).append("] ") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 .append(entry.get("operation")).append(": ") //$NON-NLS-1$ //$NON-NLS-2$
-                .append(reasonOf(entry)).append('\n');
+                .append(reasonOf(entry));
+            if (entry.get(CAUSED_BY_OPERATION) != null)
+            {
+                sb.append(" (follows from [").append(entry.get(CAUSED_BY_OPERATION)) //$NON-NLS-1$
+                    .append("], which did not create what this operation needs)"); //$NON-NLS-1$
+            }
+            sb.append('\n');
             named++;
         }
         if (unnamed > 0)
@@ -1061,6 +1171,8 @@ public class EditMetadataTool implements IMcpTool
         }
         boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
         java.util.List<Map<String, Object>> results = new java.util.ArrayList<>();
+        Map<String, Integer> absent = new LinkedHashMap<>();
+        boolean anyApplied = false;
         int okCount = 0;
         int failCount = 0;
         int stoppedAt = -1;
@@ -1138,6 +1250,8 @@ public class EditMetadataTool implements IMcpTool
                     isOk = json != null && json.contains("\"success\":true"); //$NON-NLS-1$
                 }
                 entry.put("ok", isOk); //$NON-NLS-1$
+                boolean preview = JsonUtils.extractBooleanArgument(opParams, "dryRun", false); //$NON-NLS-1$
+                anyApplied |= !preview;
                 if (isOk)
                 {
                     okCount++;
@@ -1145,6 +1259,17 @@ public class EditMetadataTool implements IMcpTool
                 else
                 {
                     failCount++;
+                    Integer cause = causedBy(opParams, absent);
+                    if (cause != null)
+                    {
+                        entry.put(DERIVED_FAILURE, Boolean.TRUE);
+                        entry.put(CAUSED_BY_OPERATION, cause);
+                    }
+                }
+                String created = createdObjectOf(subOp, opParams);
+                if (created != null && (preview || !isOk))
+                {
+                    absent.putIfAbsent(objectKey(created), Integer.valueOf(i));
                 }
             }
             catch (Exception e)
@@ -1192,10 +1317,8 @@ public class EditMetadataTool implements IMcpTool
         // passes for a clean one.
         if (failCount > 0)
         {
-            batchResult = batchResult.demote(failCount + " of " //$NON-NLS-1$
-                + (okCount + failCount + skippedCount)
-                + " operations failed. Operations are NOT rolled back: the ones that succeeded " //$NON-NLS-1$
-                + "are already applied.\n" + whyEachFailed(results)); //$NON-NLS-1$
+            batchResult = batchResult.demote(batchFailureText(failCount, okCount + failCount + skippedCount,
+                !anyApplied) + whyEachFailed(results));
         }
         return batchResult.toJson();
         }
@@ -2853,7 +2976,7 @@ public class EditMetadataTool implements IMcpTool
         sb.append("add_table with dataPath: auto-create columns for every attribute of the " //$NON-NLS-1$
             + "underlying tabular section / value table. Default false.\n\n"); //$NON-NLS-1$
         sb.append("### batch\n\n"); //$NON-NLS-1$
-        sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
+        sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. With dryRun each op previews in its own transaction, so an op that needs an object an earlier op would create fails; such a failure, and one that follows from an earlier op that failed to create the object, carries derivedFailure=true and causedByOperation=<index>. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
         sb.append("Before anything runs, the whole batch is read for what can be told without touching the project: an operation this tool does not have, an entry naming no operation, an argument of a name neither the schema nor the operation map knows, an entry carrying batch or operations of its own. If any of that is found the batch is NOT started, nothing is changed, and the answer lists every such entry by its index in refusedBeforeRunning. What is visible only while running - the object is not there, the name is taken - still comes back per operation in batchResults.\n\n"); //$NON-NLS-1$
         sb.append("### cascadeDependencies\n\n"); //$NON-NLS-1$
         sb.append("set_role_right: when granting (value=true), ALSO grant the rights this one REQUIRES per the platform dependency model (Update->Read, Posting->Read+Update, InteractiveInsert->Insert+View+Edit, ...) so the role stays consistent. Grant-direction only - never revokes, never over-grants (granting Read never implies Update). Auto-added prerequisites are listed in cascadedRights. Default false.\n\n"); //$NON-NLS-1$
