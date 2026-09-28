@@ -154,6 +154,18 @@ public class ClusterManagerImpl
 
     private final Map<String, ClusterStore> projectStorageCache = new HashMap<>();
 
+    /**
+
+     * Projects whose clusters file could not be loaded since the cache entry was last dropped. The
+
+     * file is not read again until {@link #invalidateCache} or {@link #refresh} clears the mark, so
+
+     * a tree that asks once per element does not read and log the same unreadable file each time.
+
+     */
+
+    private final java.util.Set<String> failedLoads = new java.util.HashSet<>();
+
 
 
     private final ReadWriteLock cacheLock = new ReentrantReadWriteLock();
@@ -267,6 +279,8 @@ public class ClusterManagerImpl
         {
 
             projectStorageCache.clear();
+
+            failedLoads.clear();
 
         }
 
@@ -851,7 +865,9 @@ public class ClusterManagerImpl
 
      * @param project the project
 
-     * @return the cached storage, or <code>null</code> when the repository could not load it
+     * @return the cached storage, or <code>null</code> when the repository could not load it now
+
+     *         or on an earlier call since the cache entry was last dropped
 
      */
 
@@ -871,6 +887,14 @@ public class ClusterManagerImpl
 
         }
 
+        if (failedLoads.contains(key))
+
+        {
+
+            return null;
+
+        }
+
         ensureProjectWatched(project);
 
         ClusterStore loaded = repository.load(project);
@@ -880,6 +904,14 @@ public class ClusterManagerImpl
         {
 
             projectStorageCache.put(key, loaded);
+
+        }
+
+        else
+
+        {
+
+            failedLoads.add(key);
 
         }
 
@@ -910,6 +942,8 @@ public class ClusterManagerImpl
         {
 
             projectStorageCache.remove(project.getName());
+
+            failedLoads.remove(project.getName());
 
         }
 

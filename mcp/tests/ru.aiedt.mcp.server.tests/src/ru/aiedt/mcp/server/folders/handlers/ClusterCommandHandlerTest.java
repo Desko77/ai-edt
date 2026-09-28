@@ -7,12 +7,16 @@
 package ru.aiedt.mcp.server.folders.handlers;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Proxy;
 
 import org.eclipse.core.resources.IProject;
 
 import org.junit.Test;
+
+import ru.aiedt.mcp.server.folders.model.Cluster;
 
 /** Tests the non-UI part of cluster command failure reporting. */
 public class ClusterCommandHandlerTest
@@ -28,5 +32,16 @@ public class ClusterCommandHandlerTest
 
         assertEquals("The cluster changes were not saved. Check .settings/aiedt-clusters.yaml " //$NON-NLS-1$
             + "in project 'Demo' and try again.", ClusterCommandHandler.saveFailureMessage(project)); //$NON-NLS-1$
+    }
+
+    /** An object already in the chosen cluster is skipped, not reported as a failed save. */
+    @Test
+    public void anObjectAlreadyInTheChosenClusterIsSkipped()
+    {
+        Cluster shelf = new Cluster("Shelf", "Catalogs"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(AddToClusterCommand.isAlreadyIn(new Cluster("Shelf", "Catalogs"), shelf)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(AddToClusterCommand.isAlreadyIn(new Cluster("Box", "Catalogs"), shelf)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(AddToClusterCommand.isAlreadyIn(null, shelf));
     }
 }

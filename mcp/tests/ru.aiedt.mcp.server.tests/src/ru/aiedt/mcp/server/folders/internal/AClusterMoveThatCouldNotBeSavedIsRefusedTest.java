@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.folders.internal;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -119,7 +120,26 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
         assertTrue(store.saveCalls == 0);
 
         store.refuseLoads = false;
+        manager.refresh(probe.project);
         assertNotNull(manager.getClusterStorage(probe.project).getClusterByFullPath("Catalogs/Shelf")); //$NON-NLS-1$
+    }
+
+    /**
+     * A file that could not be loaded is read once until the cache is dropped, not once per call.
+     */
+    @Test
+    public void aFailedLoadIsNotRepeatedOnEveryRead()
+    {
+        store.refuseLoads = true;
+
+        manager.getClusterStorage(probe.project);
+        manager.getClusterStorage(probe.project);
+        manager.findClusterForObject(probe.project, "Catalog.A"); //$NON-NLS-1$
+        assertEquals(1, store.loadCalls);
+
+        manager.refresh(probe.project);
+        manager.getClusterStorage(probe.project);
+        assertEquals(2, store.loadCalls);
     }
 
     /**
@@ -142,9 +162,12 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
 
         private int saveCalls;
 
+        private int loadCalls;
+
         @Override
         public ClusterStore load(org.eclipse.core.resources.IProject project)
         {
+            loadCalls++;
             return refuseLoads ? null : copy(saved);
         }
 
