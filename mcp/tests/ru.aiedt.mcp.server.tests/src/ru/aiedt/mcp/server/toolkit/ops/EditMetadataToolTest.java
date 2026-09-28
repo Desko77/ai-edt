@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -24,6 +25,7 @@ import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 
 /**
@@ -133,5 +135,38 @@ public class EditMetadataToolTest
         assertTrue("unknown op must read as unimplemented, got: " + result, //$NON-NLS-1$
             result.contains(UNIMPLEMENTED));
         assertTrue(result.contains(op));
+    }
+
+
+    /**
+     * A formatted metadata response keeps the dry-run tag that the write helper supplies.
+     */
+    @Test
+    public void formattedDryRunResultCarriesThePreviewFlag()
+    {
+        BmObjectHelper.Result result = new BmObjectHelper.Result();
+        result.ok = true;
+        result.fqn = "Catalog.Products"; //$NON-NLS-1$
+        result.message = "Dry run: property would be set."; //$NON-NLS-1$
+        result.tags.put("dryRun", true); //$NON-NLS-1$
+
+        JsonElement json = JsonParser.parseString(EditMetadataTool.formatResult(result,
+            "set_object_property")); //$NON-NLS-1$
+        assertTrue(json.getAsJsonObject().get("dryRun").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("set_object_property", json.getAsJsonObject().get("operation").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Extension-adoption previews return a plan and do not invoke the adopt service.
+     */
+    @Test
+    public void extensionAdoptDryRunReturnsTheBorrowPlan()
+    {
+        JsonElement json = JsonParser.parseString(MiscOps.dryRunAdoptPlan("adopt_object",
+            "Catalog.Products")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(json.getAsJsonObject().get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(json.getAsJsonObject().get("dryRun").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("wouldBorrow", json.getAsJsonObject().get("action").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("dryRun", json.getAsJsonObject().get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }
