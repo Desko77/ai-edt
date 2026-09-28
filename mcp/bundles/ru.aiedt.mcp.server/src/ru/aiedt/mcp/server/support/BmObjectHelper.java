@@ -1519,6 +1519,23 @@ public final class BmObjectHelper
     }
 
     /**
+     * The English kind a child-address segment names, in the spelling an FQN stores.
+     *
+     * @param kind the segment as a caller wrote it ({@code Attribute}, {@code Реквизит},
+     *        {@code urltemplate}); may be {@code null}
+     * @return the English kind ({@code StandardAttribute}, {@code URLTemplate}), or {@code null}
+     *         when the segment names no child collection
+     */
+    public static String canonicalChildKind(String kind)
+    {
+        if (kind == null)
+        {
+            return null;
+        }
+        return CANONICAL_BY_SPELLING.get(kind.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
      * Filled while {@link #CHILD_KIND_GETTERS} is built, so the walk and the address list cannot
      * drift apart. Not published: {@link #CHILD_COLLECTION_KINDS} is the copy callers see.
      */
@@ -1530,6 +1547,12 @@ public final class BmObjectHelper
      * map's initializer so {@code put} finds it built.
      */
     private static final Map<String, String> RUSSIAN_KIND_BY_CANONICAL = new HashMap<>();
+
+    /**
+     * Every spelling of a child kind, lower case, to the English kind an address stores
+     * ({@code standardattribute} to {@code StandardAttribute}). Filled by the same {@link #put}.
+     */
+    private static final Map<String, String> CANONICAL_BY_SPELLING = new HashMap<>();
 
     /**
      * Every child kind an address or a borrow may name, in either language, and the getter that
@@ -1584,6 +1607,7 @@ public final class BmObjectHelper
 
     /**
      * Records one kind under its canonical English name and each spelling a caller may write.
+     * The same spellings are recorded for {@link #canonicalChildKind(String)}.
      *
      * @param kinds the map being built
      * @param getter the getter of that collection
@@ -1595,9 +1619,11 @@ public final class BmObjectHelper
     {
         CANONICAL_CHILD_KINDS.add(canonical);
         kinds.put(canonical.toLowerCase(java.util.Locale.ROOT), getter);
+        CANONICAL_BY_SPELLING.put(canonical.toLowerCase(java.util.Locale.ROOT), canonical);
         for (String spelling : spellings)
         {
             kinds.put(spelling, getter);
+            CANONICAL_BY_SPELLING.put(spelling, canonical);
             // The one non-ASCII spelling is the Russian name the platform itself writes in full
             // names; recorded here so the reverse view needs no table of its own.
             if (!spelling.isEmpty() && spelling.codePointAt(0) > 0x7F)

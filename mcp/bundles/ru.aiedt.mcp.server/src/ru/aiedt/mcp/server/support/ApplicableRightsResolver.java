@@ -348,7 +348,6 @@ public final class ApplicableRightsResolver
         addHistory(document);
         document = Collections.unmodifiableSet(document);
 
-        Set<String> enumeration = freeze("Read", "View", "InputByString"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Set<String> use = freeze("Use", "View"); //$NON-NLS-1$ //$NON-NLS-2$
         Set<String> constant = mutable("Read", "Update", "View", "Edit"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         addHistory(constant);
@@ -361,10 +360,14 @@ public final class ApplicableRightsResolver
         Set<String> session = freeze("Get", "Set"); //$NON-NLS-1$ //$NON-NLS-2$
         Set<String> task = mutable(
             "Read", "Insert", "Update", "Delete", "View", "Edit", "InputByString", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
+            "InteractiveInsert", "InteractiveDelete", //$NON-NLS-1$ //$NON-NLS-2$
+            "InteractiveSetDeletionMark", "InteractiveClearDeletionMark", "InteractiveDeleteMarked", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "InteractiveActivate", "Execute", "InteractiveExecute"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         task = Collections.unmodifiableSet(task);
         Set<String> businessProcess = mutable(
             "Read", "Insert", "Update", "Delete", "View", "Edit", "InputByString", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
+            "InteractiveInsert", "InteractiveDelete", //$NON-NLS-1$ //$NON-NLS-2$
+            "InteractiveSetDeletionMark", "InteractiveClearDeletionMark", "InteractiveDeleteMarked", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "Start", "InteractiveStart", "InteractiveActivate"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         businessProcess = Collections.unmodifiableSet(businessProcess);
         Set<String> sequence = freeze("Read", "Update"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -377,7 +380,8 @@ public final class ApplicableRightsResolver
             known.put(kind, catalog);
         }
         known.put("Document", document); //$NON-NLS-1$
-        known.put("Enum", enumeration); //$NON-NLS-1$
+        // Enum is not listed. No role was checked for the rights an enumeration carries, so a
+        // missing registry must not refuse one: an unlisted kind is not judged.
         known.put("Report", use); //$NON-NLS-1$
         known.put("DataProcessor", use); //$NON-NLS-1$
         known.put("Constant", constant); //$NON-NLS-1$

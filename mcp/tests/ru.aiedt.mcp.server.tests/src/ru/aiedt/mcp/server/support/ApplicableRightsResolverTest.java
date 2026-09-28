@@ -27,24 +27,43 @@ import org.w3c.dom.Element;
 public class ApplicableRightsResolverTest
 {
     /**
-     * Insert applies to a catalog and does not apply to an enumeration. The refusal names the
-     * rights that do apply.
+     * An enumeration is not in the fallback table: no role was checked for the rights it carries,
+     * so a missing registry does not refuse one. Insert still applies to a catalog.
      */
     @Test
-    public void insertIsRefusedOnAnEnumAndAllowedOnACatalog()
+    public void anEnumIsNotJudgedAndInsertIsAllowedOnACatalog()
     {
+        assertNull(ApplicableRightsResolver.knownRights("Enum")); //$NON-NLS-1$
         ApplicableRightsResolver.Decision enumeration = ApplicableRightsResolver.decide(
             "Enum", "Insert", ApplicableRightsResolver.knownRights("Enum"), false); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        assertFalse(enumeration.allowed);
-        assertNotNull(enumeration.applicableRights);
-        assertFalse(enumeration.applicableRights.contains("Insert")); //$NON-NLS-1$
-        assertTrue(enumeration.applicableRights.contains("Read")); //$NON-NLS-1$
-        assertTrue(enumeration.error.contains("Insert")); //$NON-NLS-1$
-        assertTrue(enumeration.error.contains("Enum")); //$NON-NLS-1$
+        assertTrue(enumeration.allowed);
 
         ApplicableRightsResolver.Decision catalog = ApplicableRightsResolver.decide(
             "Catalog", "Insert", ApplicableRightsResolver.knownRights("Catalog"), false); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertTrue(catalog.allowed);
+    }
+
+    /**
+     * A task and a business process carry the interactive deletion rights the fallback table
+     * used to omit. Without them a missing registry refuses a right those objects do have.
+     */
+    @Test
+    public void aTaskAndABusinessProcessCarryTheInteractiveDeletionRights()
+    {
+        String[] rights = {
+            "InteractiveInsert", "InteractiveDelete", "InteractiveSetDeletionMark", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "InteractiveClearDeletionMark", "InteractiveDeleteMarked" }; //$NON-NLS-1$ //$NON-NLS-2$
+        for (String kind : new String[] { "Task", "BusinessProcess" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            Set<String> known = ApplicableRightsResolver.knownRights(kind);
+            assertNotNull(kind, known);
+            for (String right : rights)
+            {
+                assertTrue(kind + " " + right, known.contains(right)); //$NON-NLS-1$
+                assertTrue(kind + " " + right, //$NON-NLS-1$
+                    ApplicableRightsResolver.decide(kind, right, known, false).allowed);
+            }
+        }
     }
 
     /**

@@ -15,6 +15,7 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmRightsHelper;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 
 /**
  * Role / RLS operations (set_role_right, set / remove_restriction_template, set / remove_role_restriction),
@@ -61,8 +62,7 @@ final class RoleOps
         {
             return ToolResult.error("Project not found").toJson();
         }
-        String roleName = roleFqn.startsWith("Role.") //$NON-NLS-1$
-            ? roleFqn.substring("Role.".length()) : roleFqn; //$NON-NLS-1$
+        String roleName = roleNameOf(roleFqn);
         if (roleName.isEmpty())
         {
             return ToolResult.error("ownerFqn must be Role.<name>").toJson();
@@ -122,7 +122,7 @@ final class RoleOps
             .put("objectRightsCreated", fr.objectCreated) //$NON-NLS-1$
             .put("rightCreated", fr.rightCreated) //$NON-NLS-1$
             .put("fileCreated", fr.fileCreated) //$NON-NLS-1$
-            .put("persistedTo", "src/Roles/" + roleName + "/Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .put("persistedTo", persistedTo(effective, roleName)); //$NON-NLS-1$
         if (fr.previousValue != null)
         {
             tool.put("previousValue", fr.previousValue); //$NON-NLS-1$
@@ -186,8 +186,7 @@ final class RoleOps
         {
             return ToolResult.error("Project not found").toJson();
         }
-        String roleName = roleFqn.startsWith("Role.") //$NON-NLS-1$
-            ? roleFqn.substring("Role.".length()) : roleFqn; //$NON-NLS-1$
+        String roleName = roleNameOf(roleFqn);
         if (roleName.isEmpty())
         {
             return ToolResult.error("ownerFqn must be Role.<name>").toJson();
@@ -211,7 +210,7 @@ final class RoleOps
             .put("templateUpdated", fr.updated) //$NON-NLS-1$
             .put("templateRemoved", fr.removed) //$NON-NLS-1$
             .put("fileCreated", fr.fileCreated) //$NON-NLS-1$
-            .put("persistedTo", "src/Roles/" + roleName + "/Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .put("persistedTo", persistedTo(effective, roleName)); //$NON-NLS-1$
         if (!dryRun && !fr.idempotent)
         {
             tool.put("note", "Rights.rights written; the in-memory model syncs on EDT re-read " //$NON-NLS-1$ //$NON-NLS-2$
@@ -238,14 +237,6 @@ final class RoleOps
     }
 
     /**
-     * J5: adds/updates or removes a per-object, per-right ROW-LEVEL RLS condition on a role -
-     * {@code <right>..<restrictionByCondition><condition>..</condition></restrictionByCondition>}
-     * under the {@code <object>} in the role's {@code Rights.rights}. Complements set_restriction_template
-     * (reusable NAMED templates): this writes the actual condition on a specific object's right (the
-     * condition text may reference a template via {@code #<name>(...)}). File-level parse-merge-write
-     * (same mechanism as {@link #opSetRoleRight}), preserving all other rights/RLS/templates.
-     * Condition-only - field-level restriction is not supported.
-     *
      * {@link #opRoleRestriction(Map, boolean)} with the caller's own answers. A {@code null} gate
      * reads the project model. A role, object or right the configuration does not have is refused
      * before the file is written.
@@ -283,8 +274,7 @@ final class RoleOps
         {
             return ToolResult.error("Project not found").toJson();
         }
-        String roleName = roleFqn.startsWith("Role.") //$NON-NLS-1$
-            ? roleFqn.substring("Role.".length()) : roleFqn; //$NON-NLS-1$
+        String roleName = roleNameOf(roleFqn);
         if (roleName.isEmpty())
         {
             return ToolResult.error("ownerFqn must be Role.<name>").toJson();
@@ -312,7 +302,7 @@ final class RoleOps
             .put("objectRightsCreated", fr.objectCreated) //$NON-NLS-1$
             .put("rightCreated", fr.rightCreated) //$NON-NLS-1$
             .put("fileCreated", fr.fileCreated) //$NON-NLS-1$
-            .put("persistedTo", "src/Roles/" + roleName + "/Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .put("persistedTo", persistedTo(effective, roleName)); //$NON-NLS-1$
         if (!dryRun && !fr.idempotent)
         {
             tool.put("note", "Rights.rights written; the in-memory model syncs on EDT re-read " //$NON-NLS-1$ //$NON-NLS-2$
@@ -323,7 +313,12 @@ final class RoleOps
     }
 
     /**
-     * Adds, updates or removes a per-object row-level restriction on a role.
+     * Adds, updates or removes a per-object, per-right row-level RLS condition on a role -
+     * {@code <right>..<restrictionByCondition><condition>..</condition></restrictionByCondition>}
+     * under the {@code <object>} in the role's {@code Rights.rights}. Complements a named
+     * restriction template: this writes the condition on a specific object's right (the text may
+     * reference a template via {@code #<name>(...)}). Condition-only - field-level restriction is
+     * not supported.
      *
      * @param params the tool parameters
      * @param remove true to strip the restriction, false to add or update it
@@ -332,6 +327,45 @@ final class RoleOps
     String opRoleRestriction(Map<String, String> params, boolean remove)
     {
         return opRoleRestriction(params, remove, null);
+    }
+
+    /**
+     * The simple role name from an owner address. A prefix whose English singular is Role is
+     * removed, in either language and any case. Any other address is returned unchanged, and a
+     * dotted remainder is still refused by the rights writer.
+     *
+     * @param ownerFqn the owner the caller named
+     * @return the name used as the role, or an empty string when the prefix was the whole address
+     */
+    private static String roleNameOf(String ownerFqn)
+    {
+        if (ownerFqn == null)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        int dot = ownerFqn.indexOf('.');
+        if (dot <= 0)
+        {
+            return ownerFqn;
+        }
+        String head = ownerFqn.substring(0, dot);
+        if ("Role".equals(MetadataTypeCatalog.toEnglishSingular(head))) //$NON-NLS-1$
+        {
+            return ownerFqn.substring(dot + 1);
+        }
+        return ownerFqn;
+    }
+
+    /**
+     * The path the writer used, under the role name the model stores.
+     *
+     * @param gate the gate that resolved the role
+     * @param roleName the simple name after the type prefix was removed
+     * @return the path relative to the project
+     */
+    private static String persistedTo(BmRightsHelper.RightsGate gate, String roleName)
+    {
+        return "src/Roles/" + gate.roleDirectoryName(roleName) + "/Rights.rights"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

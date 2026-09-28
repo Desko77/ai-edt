@@ -120,6 +120,27 @@ public class ASweepReachesTheWorkspaceAndWritesItWholeTest
     }
 
     /**
+     * A resolver that throws is a failed sweep, and the failure does not name the rights file.
+     *
+     * @throws Exception when the fixture cannot be written
+     */
+    @Test
+    public void aSweepThatThrowsDoesNotNameTheFile() throws Exception
+    {
+        createRights(rightsXml(KEPT));
+        String file = roleDir().resolve("Rights.rights").toString(); //$NON-NLS-1$
+
+        BmRightsHelper.OrphanSweep sweep = BmRightsHelper.sweepOrphanedRights(project, ROLE, fqn -> {
+            throw new IllegalStateException("resolver failed"); //$NON-NLS-1$
+        }, false);
+
+        assertFalse(sweep.ok);
+        assertTrue(sweep.error.contains("could not sweep the role")); //$NON-NLS-1$
+        assertFalse(sweep.error.contains(file));
+        assertFalse(sweep.error.contains(projectDir.toString()));
+    }
+
+    /**
      * A rights document holding one block per name.
      *
      * @param names object names

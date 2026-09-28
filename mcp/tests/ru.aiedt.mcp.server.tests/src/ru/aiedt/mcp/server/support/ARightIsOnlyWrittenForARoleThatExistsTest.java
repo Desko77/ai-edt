@@ -28,8 +28,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * A right is written only for a role the configuration has, and a second call that spells the
- * same object or right in another case updates the block already there.
+ * A right is written only when the configuration can be read and has the role, and a second call
+ * that spells the same object or right in another case updates the block already there.
  */
 public class ARightIsOnlyWrittenForARoleThatExistsTest
 {
@@ -68,10 +68,11 @@ public class ARightIsOnlyWrittenForARoleThatExistsTest
     }
 
     /**
-     * An unknown role is a refusal that names it, and no Rights.rights is created for it.
+     * A plain project has no readable configuration. That is not a missing role: the role may
+     * exist, and the answer must not say it was looked up and found absent.
      */
     @Test
-    public void anUnknownRoleIsRefusedAndNoFileIsWritten()
+    public void anUnreadableConfigurationIsNotAMissingRole()
     {
         BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(
             project, "ПолныеПраваИ", "Catalog.Товары", "Read", true, false); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -79,9 +80,8 @@ public class ARightIsOnlyWrittenForARoleThatExistsTest
         assertFalse(written.ok);
         assertFalse(written.fileCreated);
         assertNotNull(written.error);
-        assertTrue(written.error.contains("ПолныеПраваИ")); //$NON-NLS-1$
-        assertTrue(written.error.contains("not found")); //$NON-NLS-1$
-        assertEquals("notFound", written.failureKind); //$NON-NLS-1$
+        assertTrue(written.error.contains("configuration not readable")); //$NON-NLS-1$
+        assertEquals(null, written.failureKind);
         assertFalse(Files.exists(rightsFile("ПолныеПраваИ"))); //$NON-NLS-1$
     }
 

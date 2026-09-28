@@ -76,12 +76,29 @@ public class RoleOpsRightGuardsTest
     }
 
     /**
-     * A role the model does not have is {@code notFound}, and no rights file appears.
+     * A plain project has no readable configuration. The refusal says so, and it does not claim
+     * the role was looked up and found absent.
      */
     @Test
-    public void anUnknownRoleIsNotFound()
+    public void anUnreadableConfigurationIsNotAMissingRole()
     {
         String json = ops.opSetRoleRight(call("Role.ПолныеПраваИ", "Catalog.Товары", "Read")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        JsonObject body = JsonParser.parseString(json).getAsJsonObject();
+
+        assertFalse(body.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(body.get("error").getAsString().contains("configuration not readable")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(body.has("notFound")); //$NON-NLS-1$
+        assertFalse(Files.exists(rightsFile("ПолныеПраваИ"))); //$NON-NLS-1$
+    }
+
+    /**
+     * A gate that has read the configuration and not found the role is {@code notFound}.
+     */
+    @Test
+    public void aRoleTheConfigurationDoesNotHaveIsNotFound()
+    {
+        String json = ops.opSetRoleRight(
+            call("Role.ПолныеПраваИ", "Catalog.Товары", "Read"), missingRole()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         JsonObject body = JsonParser.parseString(json).getAsJsonObject();
 
         assertFalse(body.get("success").getAsBoolean()); //$NON-NLS-1$
@@ -168,10 +185,11 @@ public class RoleOpsRightGuardsTest
     }
 
     /**
-     * A template on an unknown role is the same refusal, and it does not create the file.
+     * A template on a project whose configuration cannot be read is the same refusal, and it does
+     * not create the file.
      */
     @Test
-    public void aTemplateOnAnUnknownRoleIsNotFound()
+    public void aTemplateOnAnUnreadableConfigurationIsRefused()
     {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("projectName", PROJECT); //$NON-NLS-1$
@@ -183,8 +201,8 @@ public class RoleOpsRightGuardsTest
         JsonObject body = JsonParser.parseString(json).getAsJsonObject();
 
         assertFalse(body.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(body.get("error").getAsString().contains("role not found")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(body.has("notFound")); //$NON-NLS-1$
+        assertTrue(body.get("error").getAsString().contains("configuration not readable")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(body.has("notFound")); //$NON-NLS-1$
         assertFalse(Files.exists(rightsFile("НетТакой"))); //$NON-NLS-1$
     }
 
@@ -207,18 +225,36 @@ public class RoleOpsRightGuardsTest
     }
 
     /**
-     * A role name with a dot is refused and does not become a directory.
+     * A Russian role prefix is the same prefix as {@code Role.} and is not part of the directory.
+     *
+     * @throws Exception when the written file cannot be read
      */
     @Test
-    public void aDottedRoleNameIsRefused()
+    public void aRussianRolePrefixIsStripped() throws Exception
     {
         String json = ops.opSetRoleRight(
             call("Роль.ПолныеПрава", "Catalog.Товары", "Read"), BmRightsHelper.RightsGate.allowAll()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         JsonObject body = JsonParser.parseString(json).getAsJsonObject();
 
+        assertTrue(body.has("error") ? body.get("error").getAsString() : "written", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            body.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(Files.exists(rightsFile("ПолныеПрава"))); //$NON-NLS-1$
+        assertFalse(Files.exists(projectDir.resolve("src").resolve("Roles").resolve("Роль.ПолныеПрава"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * A prefix that is not a role stays in the name, and a dotted name is still refused.
+     */
+    @Test
+    public void aDottedNameThatIsNotARoleIsRefused()
+    {
+        String json = ops.opSetRoleRight(
+            call("Catalog.Товары", "Catalog.Товары", "Read"), BmRightsHelper.RightsGate.allowAll()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        JsonObject body = JsonParser.parseString(json).getAsJsonObject();
+
         assertFalse(body.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(body.get("error").getAsString().contains("simple role name")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(Files.exists(projectDir.resolve("src").resolve("Roles").resolve("Роль.ПолныеПрава"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse(Files.exists(projectDir.resolve("src").resolve("Roles").resolve("Catalog.Товары"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
     /**
@@ -237,6 +273,47 @@ public class RoleOpsRightGuardsTest
         params.put("targetFqn", object); //$NON-NLS-1$
         params.put("rightName", right); //$NON-NLS-1$
         return params;
+    }
+
+    /**
+     * A gate that says the role is not in a configuration it could read.
+     *
+     * @return the gate
+     */
+    private static BmRightsHelper.RightsGate missingRole()
+    {
+        return new BmRightsHelper.RightsGate()
+        {
+            /**
+             * @param roleName the simple role name
+             * @return {@code FALSE}
+             */
+            @Override
+            public Boolean roleExists(String roleName)
+            {
+                return Boolean.FALSE;
+            }
+
+            /**
+             * @param targetFqn the object address
+             * @return {@code TRUE}
+             */
+            @Override
+            public Boolean objectExists(String targetFqn)
+            {
+                return Boolean.TRUE;
+            }
+
+            /**
+             * @param targetFqn the object address
+             * @return {@code null}
+             */
+            @Override
+            public Set<String> applicableRights(String targetFqn)
+            {
+                return null;
+            }
+        };
     }
 
     /**
