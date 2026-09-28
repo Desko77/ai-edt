@@ -497,9 +497,9 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("description", //$NON-NLS-1$
                 "add_predefined_item: presentation/description of the predefined item (optional).") //$NON-NLS-1$
             .stringProperty("code", //$NON-NLS-1$
-                "add_predefined_item: item code (applied only for ChartOfAccounts / " //$NON-NLS-1$
-                + "ChartOfCharacteristicTypes where code is a String; Value-typed codes are skipped " //$NON-NLS-1$
-                + "with a warning). Optional.") //$NON-NLS-1$
+                "add_predefined_item: item code, in the kind the owner's code type declares - " //$NON-NLS-1$
+                + "a number or text. A code that does not fit, or that another item carries, is " //$NON-NLS-1$
+                + "refused. Optional.") //$NON-NLS-1$
             .booleanProperty("isFolder", //$NON-NLS-1$
                 "add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
                     + "ChartOfCharacteristicTypes only).") //$NON-NLS-1$
