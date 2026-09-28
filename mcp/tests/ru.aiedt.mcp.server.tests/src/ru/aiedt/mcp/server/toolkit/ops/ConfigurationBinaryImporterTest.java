@@ -7,13 +7,18 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
@@ -56,6 +61,49 @@ public class ConfigurationBinaryImporterTest
         assertTrue(schema.contains("\"extensionName\"")); //$NON-NLS-1$
         assertTrue(schema.contains("\"baseConfigurationPath\"")); //$NON-NLS-1$
         assertTrue(schema.contains("\"keepXmlPath\"")); //$NON-NLS-1$
+        assertTrue(schema.contains("\"baseProjectName\"")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anExtensionIsImportedAgainstItsBaseProject()
+    {
+        Map<String, String> params = ConfigurationBinaryImporter.xmlImportParams(Paths.get("C:/tmp/xml"), //$NON-NLS-1$
+            "Расширение", BmBinaryImportHelper.BinaryKind.EXTENSION, "Конфигурация"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals("Расширение", params.get("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Конфигурация", params.get("baseProjectName")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aConfigurationIsImportedWithoutABaseProject()
+    {
+        Map<String, String> params = ConfigurationBinaryImporter.xmlImportParams(Paths.get("C:/tmp/xml"), //$NON-NLS-1$
+            "Конфигурация", BmBinaryImportHelper.BinaryKind.CONFIGURATION, "Другая"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertFalse(params.containsKey("baseProjectName")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anExtensionsAbsentBaseProjectIsRefusedBeforeStaging() throws Exception
+    {
+        Path cfe = Files.createTempFile("aiedt-tests-", ".cfe"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            Map<String, String> params = new HashMap<>();
+            params.put("binaryPath", cfe.toString()); //$NON-NLS-1$
+            params.put("projectName", "aiedt-tests-new-extension"); //$NON-NLS-1$ //$NON-NLS-2$
+            params.put("baseProjectName", "aiedt-tests-no-such-base"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            String result = new ConfigurationBinaryImporter().execute(params);
+
+            assertTrue(result, result.contains("aiedt-tests-no-such-base")); //$NON-NLS-1$
+            assertTrue(result, result.contains("projectNotFound")); //$NON-NLS-1$
+            assertFalse("refused before a run starts, got: " + result, result.contains("runKey")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            Files.deleteIfExists(cfe);
+        }
     }
 
     @Test
