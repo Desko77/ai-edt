@@ -9,7 +9,6 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.Map;
 
 import org.eclipse.debug.core.model.IStackFrame;
-import org.eclipse.debug.core.model.IThread;
 import org.eclipse.debug.core.model.IVariable;
 
 import ru.aiedt.mcp.server.Activator;
@@ -94,12 +93,13 @@ public class DebugVariableWriter implements IMcpTool
 
         try
         {
-            IStackFrame frame = resolveFrame(registry, frameRef, threadId, frameIndex);
-            if (frame == null)
+            DebugFrameResolution.Resolution resolved =
+                DebugFrameResolution.resolve(registry, frameRef, threadId, frameIndex);
+            if (resolved.frame == null)
             {
-                return ToolResult.error("Provide frameRef or threadId - no single suspended debug " //$NON-NLS-1$
-                    + "launch is available to auto-resolve. Call wait_for_break first.").toJson(); //$NON-NLS-1$
+                return ToolResult.error(resolved.refusal).toJson();
             }
+            IStackFrame frame = resolved.frame;
             IVariable var = DebugValueSerializer.resolvePath(frame, path);
             if (var == null)
             {
@@ -122,7 +122,9 @@ public class DebugVariableWriter implements IMcpTool
             // after supportsValueModification()/verifyValue() pass, so "applied" only
             // means setValue returned without error; "variable" is the confirmation.
             Map<String, Object> updated = DebugValueSerializer.serializeVariable(var, registry);
-            Activator.logInfo("set_variable: " + path + " = " + value); //$NON-NLS-1$ //$NON-NLS-2$
+            // The value is an expression the caller chose and may hold a secret; the platform log
+            // records that the variable was written and which one, and nothing else.
+            Activator.logInfo("set_variable applied to " + path); //$NON-NLS-1$
             return ToolResult.success()
                 .put("path", path) //$NON-NLS-1$
                 .put("applied", true) //$NON-NLS-1$
@@ -138,39 +140,4 @@ public class DebugVariableWriter implements IMcpTool
         }
     }
 
-    /** Resolves a stack frame by frameRef, then threadId+frameIndex, then the lone suspended launch. */
-    private static IStackFrame resolveFrame(DebugSessionBook registry, long frameRef,
-        long threadId, int frameIndex) throws Exception
-    {
-        if (frameRef > 0)
-        {
-            return registry.getFrame(frameRef);
-        }
-        if (threadId > 0)
-        {
-            IThread thread = registry.getThread(threadId);
-            if (thread == null)
-            {
-                return null;
-            }
-            IStackFrame[] frames = thread.getStackFrames();
-            if (frameIndex < 0 || frameIndex >= frames.length)
-            {
-                return null;
-            }
-            return frames[frameIndex];
-        }
-        String appId = DebugSessionBook.findLoneActiveApplicationId();
-        DebugSessionBook.SuspendSnapshot snap = appId != null ? registry.getSnapshot(appId) : null;
-        if (snap == null)
-        {
-            return null;
-        }
-        IStackFrame[] frames = snap.thread.getStackFrames();
-        if (frames.length == 0)
-        {
-            return null;
-        }
-        return frames[Math.min(Math.max(frameIndex, 0), frames.length - 1)];
-    }
 }
