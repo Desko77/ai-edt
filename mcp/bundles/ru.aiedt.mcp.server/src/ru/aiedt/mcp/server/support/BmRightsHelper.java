@@ -80,9 +80,41 @@ public final class BmRightsHelper
      */
     private static final Map<String, ReentrantLock> FILE_LOCKS = new ConcurrentHashMap<>();
 
+    /**
+     * The lock of one rights file.
+     * <p>
+     * The key is folded to lower case: Windows opens one role directory under any letter case, so
+     * a setter using the model's name and a sweep using the caller's spelling reach the same file
+     * and must take the same lock.
+     * </p>
+     *
+     * @param key the path of the rights file
+     * @return the lock shared by every writer of that file
+     */
     private static ReentrantLock fileLock(String key)
     {
-        return FILE_LOCKS.computeIfAbsent(key, k -> new ReentrantLock());
+        return FILE_LOCKS.computeIfAbsent(key.toLowerCase(java.util.Locale.ROOT), k -> new ReentrantLock());
+    }
+
+    /**
+     * The text of a failure without a local filesystem address.
+     * <p>
+     * A {@link java.nio.file.FileSystemException} puts the file path into its message; its class and
+     * reason are returned instead. Other failures keep their message.
+     * </p>
+     *
+     * @param failure the exception
+     * @return the text to put into an answer
+     */
+    static String failureWithoutPath(Exception failure)
+    {
+        if (failure instanceof java.nio.file.FileSystemException)
+        {
+            String reason = ((java.nio.file.FileSystemException)failure).getReason();
+            String kind = failure.getClass().getSimpleName();
+            return reason == null || reason.isEmpty() ? kind : kind + " (" + reason + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return failure.getMessage() != null ? failure.getMessage() : failure.getClass().getSimpleName();
     }
 
     private BmRightsHelper()
@@ -368,7 +400,7 @@ public final class BmRightsHelper
                 // The failure being returned is the write. A temp file that could not be
                 // removed is left for the next write, which replaces it.
             }
-            return "Failed to write Rights.rights: " + ioe.getMessage(); //$NON-NLS-1$
+            return "Failed to write Rights.rights of role " + roleName + ": " + failureWithoutPath(ioe); //$NON-NLS-1$ //$NON-NLS-2$
         }
         try
         {
@@ -1160,9 +1192,7 @@ public final class BmRightsHelper
                 // The parser's own message names the DOCTYPE or the malformed markup. The path is
                 // not part of that answer: it is a local filesystem address.
                 sweep.ok = false;
-                String detail = refused.getMessage() != null
-                    ? refused.getMessage() : refused.getClass().getSimpleName();
-                sweep.error = "Rights.rights could not be read: " + detail; //$NON-NLS-1$
+                sweep.error = "Rights.rights could not be read: " + failureWithoutPath(refused); //$NON-NLS-1$
                 return sweep;
             }
             Element root = doc.getDocumentElement();
@@ -1223,8 +1253,7 @@ public final class BmRightsHelper
             sweep.ok = false;
             // The path of the rights file is a local filesystem address and is not part of the
             // answer, the same rule as the parse failure above.
-            String detail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            sweep.error = "could not sweep the role: " + detail; //$NON-NLS-1$
+            sweep.error = "could not sweep the role: " + failureWithoutPath(e); //$NON-NLS-1$
             return sweep;
         }
         finally
@@ -1247,12 +1276,14 @@ public final class BmRightsHelper
 
     /**
      * The object block to update. The canonical address is tried first; a block stored under the
-     * caller's spelling is the same block when the two differ only by case.
+     * caller's spelling is the same block when the two differ only by case. A block stored with a
+     * Russian type or collection kind ({@code Справочник.Товары}) is the same block as its English
+     * address.
      *
      * @param root the {@code Rights} element
      * @param canonical the address to store
      * @param caller the address the caller passed
-     * @return the block, or {@code null} when neither name is there
+     * @return the block, or {@code null} when no spelling of the address is there
      */
     private static Element findObjectBlock(Element root, String canonical, String caller)
     {
@@ -1261,7 +1292,73 @@ public final class BmRightsHelper
         {
             found = findChildByName(root, "object", caller); //$NON-NLS-1$
         }
-        return found;
+        if (found != null || canonical == null)
+        {
+            return found;
+        }
+        String wanted = spellingKey(canonical);
+        NodeList kids = root.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++)
+        {
+            Node n = kids.item(i);
+            if (n instanceof Element && "object".equals(((Element)n).getTagName())) //$NON-NLS-1$
+            {
+                Element nameEl = firstChild((Element)n, "name"); //$NON-NLS-1$
+                if (nameEl != null && wanted.equals(spellingKey(nameEl.getTextContent().trim())))
+                {
+                    return (Element)n;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * An object address with its type and collection kinds in English and in lower case, so two
+     * spellings of one address compare equal.
+     *
+     * @param fqn the address
+     * @return the comparison key
+     */
+    static String spellingKey(String fqn)
+    {
+        String[] parts = fqn.split("\\.", -1); //$NON-NLS-1$
+        StringBuilder key = new StringBuilder();
+        for (int i = 0; i < parts.length; i++)
+        {
+            String part = parts[i];
+            String english = null;
+            if (i == 0)
+            {
+                english = isConfigurationType(part) ? "Configuration" //$NON-NLS-1$
+                    : MetadataTypeCatalog.toEnglishSingular(part);
+            }
+            else if (i % 2 == 0)
+            {
+                english = BmObjectHelper.canonicalChildKind(part);
+                if (english == null)
+                {
+                    english = MetadataTypeCatalog.toEnglishSingular(part);
+                }
+            }
+            if (i > 0)
+            {
+                key.append('.');
+            }
+            key.append(english != null ? english : part);
+        }
+        return key.toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Whether an address segment names the configuration root, in either language.
+     *
+     * @param segment the first segment of an address
+     * @return {@code true} for {@code Configuration} and {@code Конфигурация} in any letter case
+     */
+    private static boolean isConfigurationType(String segment)
+    {
+        return "Configuration".equalsIgnoreCase(segment) || "Конфигурация".equalsIgnoreCase(segment); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -1601,7 +1698,8 @@ public final class BmRightsHelper
 
     /**
      * Reads the configuration of one project. A project that is not a configuration answers
-     * {@code null}, which the callers treat as "the role is not there".
+     * {@code null}, which the callers treat as "the configuration cannot be read": nothing is
+     * written.
      */
     private static final class ProjectGate implements RightsGate
     {
@@ -1768,11 +1866,33 @@ public final class BmRightsHelper
          */
         public final String canonicalFqn;
 
-        private LocatedObject(Boolean present, EObject object, String canonicalFqn)
+        /**
+         * The collection segment of the address that the owner's class has no collection for
+         * ({@code Atribute} in {@code Catalog.Goods.Atribute.Price}), or {@code null}.
+         * {@link #present} is then {@code FALSE}.
+         */
+        public final String missingKind;
+
+        private LocatedObject(Boolean present, EObject object, String canonicalFqn, String missingKind)
         {
             this.present = present;
             this.object = object;
             this.canonicalFqn = canonicalFqn;
+            this.missingKind = missingKind;
+        }
+
+        /**
+         * Whether an orphan sweep may treat the object as gone.
+         * <p>
+         * An address whose collection kind the owner does not have is refused on write, but a
+         * sweep leaves it in place: the kind may be one this locator does not map.
+         * </p>
+         *
+         * @return {@link #present}, or {@code null} when the collection kind is missing
+         */
+        public Boolean presenceForRemoval()
+        {
+            return missingKind != null ? null : present;
         }
 
         /**
@@ -1782,7 +1902,7 @@ public final class BmRightsHelper
          */
         static LocatedObject found(EObject object, String canonicalFqn)
         {
-            return new LocatedObject(Boolean.TRUE, object, canonicalFqn);
+            return new LocatedObject(Boolean.TRUE, object, canonicalFqn, null);
         }
 
         /**
@@ -1790,7 +1910,16 @@ public final class BmRightsHelper
          */
         static LocatedObject absent()
         {
-            return new LocatedObject(Boolean.FALSE, null, null);
+            return new LocatedObject(Boolean.FALSE, null, null, null);
+        }
+
+        /**
+         * @param segment the collection segment the owner has no collection for
+         * @return a location that is sure the object is absent because the kind is
+         */
+        static LocatedObject noSuchKind(String segment)
+        {
+            return new LocatedObject(Boolean.FALSE, null, null, segment);
         }
 
         /**
@@ -1798,7 +1927,7 @@ public final class BmRightsHelper
          */
         static LocatedObject unresolved()
         {
-            return new LocatedObject(null, null, null);
+            return new LocatedObject(null, null, null, null);
         }
     }
 
@@ -1825,12 +1954,15 @@ public final class BmRightsHelper
         {
             return LocatedObject.absent();
         }
-        if (fqn.equals(configuration.getName()) || "Configuration".equals(fqn) //$NON-NLS-1$
-            || fqn.startsWith("Configuration.")) //$NON-NLS-1$
-        {
-            return LocatedObject.found(configuration, "Configuration"); //$NON-NLS-1$
-        }
         String[] parts = fqn.split("\\."); //$NON-NLS-1$
+        if (fqn.equalsIgnoreCase(configuration.getName())
+            || parts.length > 0 && isConfigurationType(parts[0]))
+        {
+            // The rights file names the root Configuration.<name>.
+            String name = configuration.getName();
+            return LocatedObject.found(configuration,
+                name == null || name.isEmpty() ? "Configuration" : "Configuration." + name); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (parts.length < 2)
         {
             return LocatedObject.unresolved();
@@ -1878,7 +2010,27 @@ public final class BmRightsHelper
             return LocatedObject.unresolved();
         }
         String kind = canonicalCollectionKind(parts[at]);
-        Object children = readCollection(owner, kind);
+        org.eclipse.emf.ecore.EStructuralFeature feature = collectionFeature(owner, kind);
+        if (feature == null)
+        {
+            return LocatedObject.noSuchKind(parts[at]);
+        }
+        if (BmObjectHelper.canonicalChildKind(parts[at]) == null
+            && MetadataTypeCatalog.toEnglishSingular(parts[at]) == null)
+        {
+            kind = kindOfFeature(feature.getName());
+        }
+        Object children;
+        try
+        {
+            children = owner.eGet(feature);
+        }
+        catch (RuntimeException failed)
+        {
+            // The feature is there but did not answer. The walk stays undecided rather than
+            // treating a reflective failure as "the child does not exist".
+            return LocatedObject.unresolved();
+        }
         if (!(children instanceof Iterable))
         {
             return LocatedObject.unresolved();
@@ -1932,7 +2084,7 @@ public final class BmRightsHelper
     }
 
     /**
-     * Reads one named collection off a metadata object.
+     * The collection feature of one kind on a metadata object.
      * <p>
      * The collection is a many-valued structural feature whose name matches {@code kind} without
      * regard to case, including the plural the model uses ({@code urlTemplates} for
@@ -1942,10 +2094,9 @@ public final class BmRightsHelper
      *
      * @param owner the object
      * @param kind the collection's English singular name as it appears in an FQN
-     * @return the collection, or {@code null} when this object has no such feature or the feature
-     *         could not be read
+     * @return the feature, or {@code null} when the class of this object has no such collection
      */
-    private static Object readCollection(EObject owner, String kind)
+    private static org.eclipse.emf.ecore.EStructuralFeature collectionFeature(EObject owner, String kind)
     {
         if (owner == null || kind == null)
         {
@@ -1969,20 +2120,21 @@ public final class BmRightsHelper
                 matched = feature;
             }
         }
-        if (matched == null)
-        {
-            return null;
-        }
-        try
-        {
-            return owner.eGet(matched);
-        }
-        catch (RuntimeException failed)
-        {
-            // The feature is there but did not answer. The walk stays undecided rather than
-            // treating a reflective failure as "the child does not exist".
-            return null;
-        }
+        return matched;
+    }
+
+    /**
+     * The singular English kind of a collection feature the kind table does not list
+     * ({@code recalculations} to {@code Recalculation}).
+     *
+     * @param featureName the feature name as the model spells it
+     * @return the kind to store in an address
+     */
+    private static String kindOfFeature(String featureName)
+    {
+        String singular = featureName.endsWith("s") && featureName.length() > 1 //$NON-NLS-1$
+            ? featureName.substring(0, featureName.length() - 1) : featureName;
+        return Character.toUpperCase(singular.charAt(0)) + singular.substring(1);
     }
 
     /**

@@ -496,7 +496,8 @@ public class AuditRoleRightsTool implements IMcpTool
      * <p>
      * The walk is {@link BmRightsHelper#locateObject}: the same one a rights write uses, so a
      * standard attribute or a URL template that the write accepts is not deleted here as an orphan.
-     * A child that walk cannot resolve comes back {@code null} and is left in place.
+     * A child that walk cannot resolve, or whose collection kind the owner does not have, comes
+     * back {@code null} and is left in place.
      * </p>
      *
      * @param configuration the configuration.
@@ -505,7 +506,7 @@ public class AuditRoleRightsTool implements IMcpTool
      */
     private static Boolean stillThere(Configuration configuration, String fqn)
     {
-        return BmRightsHelper.locateObject(configuration, fqn).present;
+        return BmRightsHelper.locateObject(configuration, fqn).presenceForRemoval();
     }
 
 }

@@ -129,21 +129,26 @@ public class AChildAddressIsResolvedOnTheModelTest
     }
 
     /**
-     * A member missing from a collection that could be read is absent. A collection this model
-     * does not have is not decided, and a write of that child is not refused.
+     * A member missing from a collection that could be read is absent. A collection kind the
+     * owner's class does not have is absent too, and the write is refused; a sweep leaves such an
+     * address in place.
      *
-     * @throws Exception when the written file cannot be read
+     * @throws Exception when the rights file cannot be read
      */
     @Test
-    public void aMissingMemberIsAbsentAndAnUnknownKindIsNotRefused() throws Exception
+    public void aMissingMemberAndAnUnknownKindAreRefused() throws Exception
     {
         BmRightsHelper.LocatedObject missing =
             BmRightsHelper.locateObject(configuration, "Catalog.Goods.Attribute.Missing"); //$NON-NLS-1$
         assertEquals(Boolean.FALSE, missing.present);
+        assertNull(missing.missingKind);
+        assertEquals(Boolean.FALSE, missing.presenceForRemoval());
 
         BmRightsHelper.LocatedObject unknown =
-            BmRightsHelper.locateObject(configuration, "Catalog.Goods.NoSuchKind.Foo"); //$NON-NLS-1$
-        assertNull(unknown.present);
+            BmRightsHelper.locateObject(configuration, "Catalog.Goods.Atribute.Foo"); //$NON-NLS-1$
+        assertEquals(Boolean.FALSE, unknown.present);
+        assertEquals("Atribute", unknown.missingKind); //$NON-NLS-1$
+        assertNull(unknown.presenceForRemoval());
 
         BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
         BmRightsHelper.FileRightResult refused = BmRightsHelper.applyRightToFile(project, "FullRights", //$NON-NLS-1$
@@ -152,11 +157,66 @@ public class AChildAddressIsResolvedOnTheModelTest
         assertEquals("notFound", refused.failureKind); //$NON-NLS-1$
         assertEquals("object", refused.subject); //$NON-NLS-1$
 
-        BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(project, "FullRights", //$NON-NLS-1$
-            "Catalog.Goods.NoSuchKind.Foo", "Read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
+        BmRightsHelper.FileRightResult typo = BmRightsHelper.applyRightToFile(project, "FullRights", //$NON-NLS-1$
+            "Catalog.Goods.Atribute.Foo", "Read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(typo.ok);
+        assertEquals("notFound", typo.failureKind); //$NON-NLS-1$
+        Path file = rightsFile("FullRights"); //$NON-NLS-1$
+        assertFalse(Files.exists(file)
+            && Files.readString(file, StandardCharsets.UTF_8).contains("Atribute")); //$NON-NLS-1$
+    }
+
+    /**
+     * The configuration root is stored as {@code Configuration.<name>}, the way EDT names it, in
+     * whichever language and case the caller wrote it.
+     *
+     * @throws Exception when the written file cannot be read
+     */
+    @Test
+    public void theConfigurationRootIsStoredWithItsName() throws Exception
+    {
+        assertEquals("Configuration.Cfg", //$NON-NLS-1$
+            BmRightsHelper.locateObject(configuration, "Configuration").canonicalFqn); //$NON-NLS-1$
+        assertEquals("Configuration.Cfg", //$NON-NLS-1$
+            BmRightsHelper.locateObject(configuration, "Конфигурация.Cfg").canonicalFqn); //$NON-NLS-1$
+        assertEquals("Configuration.Cfg", //$NON-NLS-1$
+            BmRightsHelper.locateObject(configuration, "configuration.cfg").canonicalFqn); //$NON-NLS-1$
+
+        BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        BmRightsHelper.FileRightResult written = BmRightsHelper.applyRightToFile(project, "Keeper", //$NON-NLS-1$
+            "Конфигурация.Cfg", "ThinClient", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(written.error == null ? "written" : written.error, written.ok); //$NON-NLS-1$
-        String text = Files.readString(rightsFile("FullRights"), StandardCharsets.UTF_8); //$NON-NLS-1$
-        assertTrue(text.contains("Catalog.Goods.NoSuchKind.Foo")); //$NON-NLS-1$
+        String text = Files.readString(rightsFile("Keeper"), StandardCharsets.UTF_8); //$NON-NLS-1$
+        assertTrue(text, text.contains("<name>Configuration.Cfg</name>")); //$NON-NLS-1$
+    }
+
+    /**
+     * A block stored with the Russian type is the block the English address updates: no second
+     * block of the same object is added.
+     *
+     * @throws Exception when the rights file cannot be read or written
+     */
+    @Test
+    public void aBlockStoredInRussianIsTheSameBlock() throws Exception
+    {
+        BmRightsHelper.RightsGate gate = BmRightsHelper.RightsGate.forConfiguration(configuration);
+        BmRightsHelper.FileRightResult first = BmRightsHelper.applyRightToFile(project, "Keeper", //$NON-NLS-1$
+            "Catalog.Товары", "Read", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(first.error == null ? "written" : first.error, first.ok); //$NON-NLS-1$
+        Path file = rightsFile("Keeper"); //$NON-NLS-1$
+        String text = Files.readString(file, StandardCharsets.UTF_8);
+        Files.writeString(file, text.replace("<name>Catalog.Товары</name>", "<name>Справочник.Товары</name>"), //$NON-NLS-1$ //$NON-NLS-2$
+            StandardCharsets.UTF_8);
+
+        BmRightsHelper.FileRightResult second = BmRightsHelper.applyRightToFile(project, "Keeper", //$NON-NLS-1$
+            "Catalog.Товары", "Update", true, false, gate); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(second.error == null ? "written" : second.error, second.ok); //$NON-NLS-1$
+        assertFalse(second.objectCreated);
+        String after = Files.readString(file, StandardCharsets.UTF_8);
+        assertFalse(after, after.contains("<name>Catalog.Товары</name>")); //$NON-NLS-1$
+        assertEquals(BmRightsHelper.spellingKey("Catalog.Товары.StandardAttribute.Description"), //$NON-NLS-1$
+            BmRightsHelper.spellingKey("Справочник.товары.СтандартныйРеквизит.Description")); //$NON-NLS-1$
     }
 
     /**
@@ -206,11 +266,12 @@ public class AChildAddressIsResolvedOnTheModelTest
 
         assertNotNull(error);
         assertFalse(Files.exists(role.resolve("Rights.rights.tmp"))); //$NON-NLS-1$
+        assertFalse(error, error.contains(projectDir.getFileName().toString()));
     }
 
     /**
      * A configuration with one catalog named {@code Goods}, one named {@code Товары} that owns a
-     * standard attribute, a role, and an HTTP service method.
+     * standard attribute, two roles, and an HTTP service method.
      *
      * @return the model
      * @throws Exception when a child cannot be created or attached
@@ -232,6 +293,10 @@ public class AChildAddressIsResolvedOnTheModelTest
         Role role = MdClassFactory.eINSTANCE.createRole();
         role.setName("FullRights"); //$NON-NLS-1$
         configuration.getRoles().add(role);
+
+        Role keeper = MdClassFactory.eINSTANCE.createRole();
+        keeper.setName("Keeper"); //$NON-NLS-1$
+        configuration.getRoles().add(keeper);
 
         MdObject service = BmObjectHelper.createGenericObject("HTTPService"); //$NON-NLS-1$
         assertNotNull("HTTPService was not created", service); //$NON-NLS-1$
