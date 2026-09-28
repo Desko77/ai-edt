@@ -948,8 +948,9 @@ final class FormItemsOps
     /**
      * Adds a new command to an existing form, or binds the handler to the command of that name.
      * <p>
-     * With {@code writeStub} (default true) the handler procedure is appended to the form's module
-     * after the command is committed, unless the module already declares it.
+     * With {@code writeStub} (default true) the handler procedure is added to the form's module
+     * after the command is committed, into the region of form command handlers, unless the module
+     * already declares it.
      * </p>
      *
      * @param params projectName, formFqn, commandName; optionally title, handler, writeStub, dryRun
@@ -1023,7 +1024,7 @@ final class FormItemsOps
         if (JsonUtils.extractBooleanArgument(params, "writeStub", true)) //$NON-NLS-1$
         {
             FormModuleStubs.append(project, formFqn, handler, FormModuleStubs.commandHandlerStub(handler),
-                formDryRun).putInto(ok);
+                FormModuleStubs.COMMANDS, formDryRun).putInto(ok);
         }
         else
         {
