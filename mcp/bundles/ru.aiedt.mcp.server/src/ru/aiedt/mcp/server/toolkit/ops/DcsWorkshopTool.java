@@ -5078,7 +5078,8 @@ public class DcsWorkshopTool implements IMcpTool
             // that argument and every name carries both spellings regardless.
             Object values = creatorClass.getConstructor(Version.class, String.class)
                 .newInstance(outputParameterVersion(project), ""); //$NON-NLS-1$
-            Object available = creatorClass.getMethod("getParameters").invoke(values); //$NON-NLS-1$
+            // The creator keeps what it built in DcsParameterValuesBase.getAvailableParameters().
+            Object available = creatorClass.getMethod("getAvailableParameters").invoke(values); //$NON-NLS-1$
             if (available == null)
             {
                 return null;

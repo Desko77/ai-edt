@@ -55,7 +55,7 @@ com._1c.g5.v8.dt.dcs.model.settings.DcsFactory
 com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameter key
 com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameterCollection getItemAt,itemsCount
 com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameters getParameters
-com._1c.g5.v8.dt.dcs.parameters.output.DcsOutputParameters getParameters
+com._1c.g5.v8.dt.dcs.parameters.output.DcsOutputParameters getAvailableParameters
 com._1c.g5.v8.dt.dcs.util.DcsUtil createDefaultDataCompositionSettings
 com._1c.g5.v8.dt.dcs.util.DcsV8Serializer runtimeVersionSupport,serializeXML,deserializeXML
 probe com._1c.g5.v8.dt.debug.bsl.model.BslLineBreakpoint
