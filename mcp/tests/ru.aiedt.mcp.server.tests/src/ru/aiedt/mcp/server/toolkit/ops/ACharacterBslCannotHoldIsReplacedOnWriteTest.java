@@ -284,19 +284,40 @@ public class ACharacterBslCannotHoldIsReplacedOnWriteTest
             "modulePath", ADDRESS, //$NON-NLS-1$ //$NON-NLS-2$
             "mode", "searchReplace", //$NON-NLS-1$ //$NON-NLS-2$
             "oldSource", oldSource,
-            "source", "\tСообщить(\"новое " + EM_DASH + " значение\");")); //$NON-NLS-1$
+            "source", "\tСообщить(\"новое значение\"); // правка " + EM_DASH)); //$NON-NLS-1$
 
         assertTrue("oldSource is matched as the caller wrote it, so the write finds its place", //$NON-NLS-1$
             answer.contains("status: success")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("invalidCharactersReplaced: 1")); //$NON-NLS-1$
-        assertTrue(written(), written().contains("\tСообщить(\"новое - значение\");")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("\tСообщить(\"новое значение\"); // правка -")); //$NON-NLS-1$
+    }
+
+    /**
+     * A character inside a string literal of the written text stands as supplied: a no-break space
+     * inside a format string is the group separator the code means, not a character to fix.
+     */
+    @Test
+    public void aCharacterInsideALiteralOfTheWrittenTextStands()
+    {
+        String answer = new ModuleSourceWriter().execute(args(
+            "projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "modulePath", ADDRESS, //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "append", //$NON-NLS-1$ //$NON-NLS-2$
+            "source", "Формат(Число, \"ЧРГ='" + NO_BREAK_SPACE + "'; ЧДЦ=2\"); // правка " + EM_DASH)); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("only the dash of the comment counts", //$NON-NLS-1$
+            answer.contains("invalidCharactersReplaced: 1")); //$NON-NLS-1$
+        assertTrue("the no-break space stands inside the literal", //$NON-NLS-1$
+            written().contains("Формат(Число, \"ЧРГ='" + NO_BREAK_SPACE + "'; ЧДЦ=2\");")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("// правка -")); //$NON-NLS-1$
     }
 
     /** A method written by a replaceMethods call is passed through the same way. */
     @Test
     public void everyMethodOfAMultiMethodWriteIsPassedThrough()
     {
-        String body = "Процедура Тест()\n\tСообщить(\"a " + EM_DASH + " b\");\nКонецПроцедуры"; //$NON-NLS-1$
+        String body = "Процедура Тест()\n\t// заметка " + EM_DASH + "\nКонецПроцедуры"; //$NON-NLS-1$
         String methods = "[{\"methodName\":\"Тест\",\"source\":" + asJsonText(body) + "}]"; //$NON-NLS-1$ //$NON-NLS-2$
 
         String answer = new ModuleSourceWriter().execute(args(
@@ -308,8 +329,8 @@ public class ACharacterBslCannotHoldIsReplacedOnWriteTest
         assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("invalidCharactersReplaced: 1")); //$NON-NLS-1$
         assertTrue("the place is named by the method it was measured in", //$NON-NLS-1$
-            answer.contains("Тест 2:14")); //$NON-NLS-1$
-        assertTrue(written(), written().contains("Сообщить(\"a - b\");")); //$NON-NLS-1$
+            answer.contains("Тест 2:13")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("\t// заметка -")); //$NON-NLS-1$
     }
 
     /**

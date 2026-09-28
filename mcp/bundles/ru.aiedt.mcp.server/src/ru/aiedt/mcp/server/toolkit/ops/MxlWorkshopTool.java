@@ -495,8 +495,10 @@ public class MxlWorkshopTool implements IMcpTool
         }
         @SuppressWarnings("unchecked")
         final List<Map<String, Object>>[] areasRef = new List[] { null };
-        // dryRun=true runs the reader and rolls the get-or-create model touch back.
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+        // The read entry asks no support question: a template of a closed object stays readable.
+        // Its transaction still rolls back, because reading a template without a spreadsheet model
+        // touches the model to build the answer.
+        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -1022,9 +1024,9 @@ public class MxlWorkshopTool implements IMcpTool
         }
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] dataRef = new Map[] { null };
-        // Read-only: dryRun=true executes the reader lambda then rolls the
+        // Read-only: the read entry asks no support question, and its transaction rolls the
         // (get-or-create) model touch back, so nothing is persisted.
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -1101,8 +1103,8 @@ public class MxlWorkshopTool implements IMcpTool
         final TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] widthRef = new Map[] { null };
-        // Read-only: dryRun=true runs the reader lambda and rolls the get-or-create model touch back.
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+        // Read-only: the read entry asks no support question and rolls the model touch back.
+        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);

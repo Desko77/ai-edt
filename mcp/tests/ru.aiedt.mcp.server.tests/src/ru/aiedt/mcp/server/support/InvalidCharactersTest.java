@@ -147,6 +147,88 @@ public class InvalidCharactersTest
         assertEquals("", InvalidCharacters.normalize("").text); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    // ---------- string literals are data ----------
+
+    /**
+     * A character inside a string literal is data, and data is not rewritten.
+     * <p>
+     * A no-break space inside a format string is the group separator the code means; a dash inside a
+     * message is the message's own punctuation. Replacing either changes what the code does while
+     * the module still compiles.
+     * </p>
+     */
+    @Test
+    public void aCharacterInsideAStringLiteralStandsAsWritten()
+    {
+        String source = "Формат(Значение, \"ЧРГ='" + NO_BREAK_SPACE + "'; ЧДЦ=2\");"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertEquals("nothing outside the literal was touched", source, report.text); //$NON-NLS-1$
+        assertFalse(report.changed());
+    }
+
+    /** A literal may run over lines that continue with {@code |}; its characters stand as written. */
+    @Test
+    public void aMultilineLiteralKeepsItsCharacters()
+    {
+        String source = "Текст = \"первая строка\n" //$NON-NLS-1$
+            + "|вторая " + EM_DASH + " строка\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "|третья \" + Дефис;\nДефис = " + EN_DASH + ";"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertEquals("the literal keeps its dash, the code loses its own", //$NON-NLS-1$
+            "Текст = \"первая строка\n" //$NON-NLS-1$
+                + "|вторая " + EM_DASH + " строка\n" //$NON-NLS-1$ //$NON-NLS-2$
+                + "|третья \" + Дефис;\nДефис = -;", //$NON-NLS-1$
+            report.text);
+        assertEquals(1, report.count);
+        assertEquals("4:9", report.positions.get(0)); //$NON-NLS-1$
+    }
+
+    /** An embedded {@code ""} is an escaped quote: it does not close the literal. */
+    @Test
+    public void anEscapedQuoteDoesNotEndTheLiteral()
+    {
+        String source = "Сообщить(\"слово \"\"в кавычках\" + \" дальше " + EM_DASH + " конец\");"
+            + " x = " + EN_DASH + ";"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertEquals("only the dash after the closing quote counts", 1, report.count); //$NON-NLS-1$
+        assertTrue(report.text,
+            report.text.contains("слово \"\"в кавычках\" + \" дальше " + EM_DASH + " конец\")")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(report.text, report.text.endsWith("x = -;")); //$NON-NLS-1$
+    }
+
+    /** A comment is written by a person and is rewritten like code. */
+    @Test
+    public void aCommentIsRewrittenLikeCode()
+    {
+        String source = "А = 1; // примечание " + EM_DASH + " продолжение"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertEquals("А = 1; // примечание - продолжение", report.text); //$NON-NLS-1$
+        assertEquals(1, report.count);
+    }
+
+    /** A quote inside a comment opens no literal, and {@code //} inside a literal starts no comment. */
+    @Test
+    public void aQuoteInACommentAndSlashesInALiteralMeanNothing()
+    {
+        String source = "// кавычка \" тут" + EM_DASH + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "Стр = \"слэши // внутри" + NO_BREAK_SPACE + "литерала\";"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertTrue("the dash in the comment is replaced", report.text.contains("тут-")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the no-break space inside the literal stands", //$NON-NLS-1$
+            report.text.contains("слэши // внутри" + NO_BREAK_SPACE + "литерала")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(1, report.count);
+    }
+
     /** Several pieces written in one call answer with one count. */
     @Test
     public void thePiecesOfOneWriteAreCountedTogether()

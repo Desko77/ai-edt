@@ -15,11 +15,13 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 import org.junit.After;
 import org.junit.Test;
 
+import com._1c.g5.v8.dt.metadata.mdclass.CatalogForm;
 import com._1c.g5.v8.dt.metadata.mdclass.Catalog;
 import com._1c.g5.v8.dt.metadata.mdclass.CatalogAttribute;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
@@ -59,6 +61,7 @@ public class ModelEditabilityGuardTest
     public void theSupportServiceAnswersAgain()
     {
         ModelEditabilityGuard.useProbeForTest(null);
+        ModelEditabilityGuard.useOwnerResolverForTest(null);
     }
 
     /**
@@ -144,14 +147,14 @@ public class ModelEditabilityGuardTest
 
     // ---------- which object is judged ----------
 
-    /** A child is judged by the object that carries the support record, not by itself. */
+    /**
+     * A child that is a metadata object of its own - an attribute is - is judged by itself, the way
+     * EDT judges it, and not by the object that holds it.
+     */
     @Test
-    public void aChildIsJudgedByItsOwningObject()
+    public void aChildIsJudgedByItsOwnRecord()
     {
-        Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
-        configuration.setName("Конфигурация"); //$NON-NLS-1$
         Catalog catalog = catalog("Валюты"); //$NON-NLS-1$
-        configuration.getCatalogs().add(catalog);
         CatalogAttribute attribute = MdClassFactory.eINSTANCE.createCatalogAttribute();
         attribute.setName("КодВалюты"); //$NON-NLS-1$
         catalog.getAttributes().add(attribute);
@@ -163,44 +166,120 @@ public class ModelEditabilityGuardTest
 
         MetadataGuards.Verdict verdict = ModelEditabilityGuard.checkObject(null, attribute);
 
-        assertEquals("the record belongs to the catalog", 1, probe.asked.size()); //$NON-NLS-1$
-        assertSame(catalog, probe.asked.get(0));
+        assertEquals("the attribute carries a record of its own", 1, probe.asked.size()); //$NON-NLS-1$
+        assertSame(attribute, probe.asked.get(0));
         assertTrue(verdict.blocked);
-        assertEquals("Catalog.Валюты", verdict.tag.data.get("object")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("CatalogAttribute.КодВалюты", verdict.tag.data.get("object")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    /** The configuration itself is not among the objects the registry holds a record for. */
+    /** A form is judged by the form, not by the catalog that holds it. */
     @Test
-    public void aConfigurationLevelWriteIsNotJudged()
+    public void aFormIsJudgedByTheForm()
+    {
+        Catalog catalog = catalog("Валюты"); //$NON-NLS-1$
+        CatalogForm form = MdClassFactory.eINSTANCE.createCatalogForm();
+        form.setName("ФормаЭлемента"); //$NON-NLS-1$
+        catalog.getForms().add(form);
+
+        ModelEditabilityGuard.useProbeForTest(probe);
+
+        ModelEditabilityGuard.checkObject(null, form);
+
+        assertEquals("the record of the form is the one that decides", 1, probe.asked.size()); //$NON-NLS-1$
+        assertSame(form, probe.asked.get(0));
+    }
+
+    /** The configuration root is a metadata object and is judged by its own record. */
+    @Test
+    public void aConfigurationRootIsJudgedByItsOwnRecord()
     {
         Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
         configuration.setName("Конфигурация"); //$NON-NLS-1$
         ModelEditabilityGuard.useProbeForTest(probe);
 
-        assertFalse(ModelEditabilityGuard.checkObject(null, configuration).blocked);
-        assertEquals("nothing to ask about, so nothing is asked", 0, probe.asked.size()); //$NON-NLS-1$
+        MetadataGuards.Verdict verdict = ModelEditabilityGuard.checkObject(null, configuration);
+
+        assertEquals("the root is asked about like any object", 1, probe.asked.size()); //$NON-NLS-1$
+        assertSame(configuration, probe.asked.get(0));
+        assertFalse(verdict.blocked);
     }
 
-    /** An object that sits in no configuration is still judged by itself. */
+    /** The nearest metadata object is the object the walk stops at first, itself included. */
     @Test
-    public void anUnattachedObjectIsJudgedByItself()
-    {
-        Catalog detached = catalog("Валюты"); //$NON-NLS-1$
-        assertEquals(detached, ModelEditabilityGuard.topOwnerOf(detached));
-    }
-
-    /** There is no object to judge under a configuration root. */
-    @Test
-    public void theWalkStopsBelowTheConfigurationRoot()
+    public void theNearestMetadataObjectIsTheFirstOneUpwards()
     {
         Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
         Catalog catalog = catalog("Валюты"); //$NON-NLS-1$
         configuration.getCatalogs().add(catalog);
+        CatalogAttribute attribute = MdClassFactory.eINSTANCE.createCatalogAttribute();
+        attribute.setName("КодВалюты"); //$NON-NLS-1$
+        catalog.getAttributes().add(attribute);
 
-        assertEquals(catalog, ModelEditabilityGuard.topOwnerOf(catalog));
-        assertNull("the configuration is judged by no record of its own", //$NON-NLS-1$
-            ModelEditabilityGuard.topOwnerOf(configuration));
-        assertNull(ModelEditabilityGuard.topOwnerOf(null));
+        assertSame(attribute, ModelEditabilityGuard.nearestMdObject(attribute));
+        assertSame(catalog, ModelEditabilityGuard.nearestMdObject(catalog));
+        assertSame("the root is a metadata object too", configuration, //$NON-NLS-1$
+            ModelEditabilityGuard.nearestMdObject(configuration));
+        assertNull(ModelEditabilityGuard.nearestMdObject(null));
+    }
+
+    /**
+     * An address that names a child resolves to the child; the child's record is the one asked for.
+     */
+    @Test
+    public void anAddressThatNamesAChildIsJudgedByTheChild()
+    {
+        Catalog catalog = catalog("Валюты"); //$NON-NLS-1$
+        CatalogForm form = MdClassFactory.eINSTANCE.createCatalogForm();
+        form.setName("ФормаЭлемента"); //$NON-NLS-1$
+        catalog.getForms().add(form);
+        ModelEditabilityGuard.useOwnerResolverForTest((project, ownerFqn) -> catalog);
+
+        probe.answer.answered = true;
+        probe.answer.userMode = "ChangesNotAllowed"; //$NON-NLS-1$
+        probe.answer.canEdit = false;
+        ModelEditabilityGuard.useProbeForTest(probe);
+
+        MetadataGuards.Verdict verdict =
+            ModelEditabilityGuard.checkFqn(null, "Catalog.Валюты.Form.ФормаЭлемента"); //$NON-NLS-1$
+
+        assertSame("the form the address spells is the object asked about", form, //$NON-NLS-1$
+            probe.asked.get(0));
+        assertTrue(verdict.blocked);
+        assertEquals("the refusal names the address the caller used", //$NON-NLS-1$
+            "Catalog.Валюты.Form.ФормаЭлемента", verdict.tag.data.get("object")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** An address whose child segment names nothing is judged by the owner it did resolve. */
+    @Test
+    public void anAddressOfAnUnknownChildFallsBackToItsOwner()
+    {
+        Catalog catalog = catalog("Валюты"); //$NON-NLS-1$
+        ModelEditabilityGuard.useOwnerResolverForTest((project, ownerFqn) -> catalog);
+        ModelEditabilityGuard.useProbeForTest(probe);
+
+        ModelEditabilityGuard.checkFqn(null, "Catalog.Валюты.Form.НетТакой"); //$NON-NLS-1$
+
+        assertEquals(1, probe.asked.size());
+        assertSame(catalog, probe.asked.get(0));
+    }
+
+    /** The BM trailing {@code .Form} segment and a module marker name no child of their own. */
+    @Test
+    public void aTrailingMarkerNamesNoChild()
+    {
+        Catalog catalog = catalog("Валюты"); //$NON-NLS-1$
+        CatalogForm form = MdClassFactory.eINSTANCE.createCatalogForm();
+        form.setName("ФормаЭлемента"); //$NON-NLS-1$
+        catalog.getForms().add(form);
+        ModelEditabilityGuard.useOwnerResolverForTest((project, ownerFqn) -> catalog);
+        ModelEditabilityGuard.useProbeForTest(probe);
+
+        ModelEditabilityGuard.checkFqn(null, "Catalog.Валюты.Form.ФормаЭлемента.Form"); //$NON-NLS-1$
+        ModelEditabilityGuard.checkFqn(null, "Catalog.Валюты.ObjectModule"); //$NON-NLS-1$
+
+        assertSame(form, probe.asked.get(0));
+        assertSame("the module of the object is judged by the object", catalog, //$NON-NLS-1$
+            probe.asked.get(1));
     }
 
     /** The address of a module or a form belongs to the object its first two segments name. */
@@ -231,5 +310,28 @@ public class ModelEditabilityGuardTest
     public void theGuardNamesItselfInsideTheServer()
     {
         assertEquals("model_editability_guard", ModelEditabilityGuard.NAME); //$NON-NLS-1$
+    }
+
+    /**
+     * The tag of a refusal survives a path that answers in text: the line carries the fields, and
+     * the parse reads them back - the hint included, spaces and all.
+     */
+    @Test
+    public void theTagSurvivesATextAnswerAndIsReadBack()
+    {
+        MetadataGuards.Verdict verdict =
+            ModelEditabilityGuard.decide("Catalog.Валюты", answer("ChangesNotAllowed", false)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String line = ModelEditabilityGuard.supportLockLine(verdict);
+
+        assertTrue(line, line.startsWith("supportLock: ")); //$NON-NLS-1$
+        assertTrue(line, line.contains("object=Catalog.Валюты")); //$NON-NLS-1$
+        Map<String, Object> read = ModelEditabilityGuard.parseSupportLockLine(
+            "Error: refused\n" + line + "\nmore text"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Catalog.Валюты", read.get("object")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("ChangesNotAllowed", read.get("userSupportMode")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(verdict.hint, read.get("hint")); //$NON-NLS-1$
+        assertNull("a text without the line answers nothing", //$NON-NLS-1$
+            ModelEditabilityGuard.parseSupportLockLine("Error: something else")); //$NON-NLS-1$
     }
 }

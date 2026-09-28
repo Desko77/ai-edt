@@ -172,10 +172,10 @@ public final class BmObjectHelper
      * by throwing a sentinel exception that {@link IBmModel#execute} treats as
      * normal abort - changes never reach the model.
      * <p>
-     * This overload preserves the legacy contract (no centralized guards). It
-     * delegates to the {@link #executeWriteOnObject(IProject, String, boolean,
-     * MdObjectAction, PreExecuteCheck)} variant with a {@code null} preCheck,
-     * but the supplier-lock guard always runs.
+     * This overload takes no caller-provided check. It delegates to the
+     * {@link #executeWriteOnObject(IProject, String, boolean, MdObjectAction, PreExecuteCheck)}
+     * variant with a {@code null} preCheck; the support-registry and supplier-lock
+     * guards of that variant run for every write.
      */
     public static Result executeWriteOnObject(IProject project, String ownerFqn, boolean dryRun,
         MdObjectAction action)
@@ -294,6 +294,48 @@ public final class BmObjectHelper
     public static Result executeWriteOnObject(IProject project, String ownerFqn, boolean dryRun,
         MdObjectAction action, PreExecuteCheck preCheck, boolean autoBorrowOwner)
     {
+        return executeOnObject(project, ownerFqn, dryRun, action, preCheck, autoBorrowOwner, true);
+    }
+
+    /**
+     * Runs a read against a resolved owner with no write question asked.
+     * <p>
+     * The reading operations - {@code mxl_workshop} reading a template, naming its areas, measuring
+     * its print width - used to reach the model through the write entry, which asked the support
+     * registry and refused when the owner was closed for changes. A template of a closed object is
+     * readable the way EDT reads it, so this entry asks nothing: no support question, no supplier
+     * lock, no adoption of a not-yet-resolved owner. The action still runs inside a transaction that
+     * rolls back, because the reader of a template without a spreadsheet model touches the model to
+     * build its answer.
+     * </p>
+     *
+     * @param project the workspace project
+     * @param ownerFqn the owner the read is aimed at, the way the write entry takes it
+     * @param action the read to execute inside the transaction
+     * @return the result of the read, or an error result
+     */
+    public static Result executeReadOnObject(IProject project, String ownerFqn,
+        MdObjectAction action)
+    {
+        return executeOnObject(project, ownerFqn, true, action, null, false, false);
+    }
+
+    /**
+     * The one body behind the write and the read entries.
+     *
+     * @param project the workspace project
+     * @param ownerFqn the owner the call is aimed at
+     * @param dryRun whether the transaction commits or rolls back
+     * @param action the action to execute inside the transaction
+     * @param preCheck a caller-provided check, or <code>null</code>
+     * @param autoBorrowOwner whether a not-found owner is adopted on the fly
+     * @param guarded whether the write questions are asked: the support registry before anything
+     *        else, the supplier lock inside the transaction. A read passes <code>false</code>.
+     * @return the result of the action, or an error result
+     */
+    private static Result executeOnObject(IProject project, String ownerFqn, boolean dryRun,
+        MdObjectAction action, PreExecuteCheck preCheck, boolean autoBorrowOwner, boolean guarded)
+    {
         Result r = new Result();
         r.fqn = ownerFqn;
         if (dryRun)
@@ -304,6 +346,26 @@ public final class BmObjectHelper
         {
             r.error = "project and ownerFqn are required"; //$NON-NLS-1$
             return r;
+        }
+
+        // GUARD 0: the support registry's own answer, asked by the address before any service is
+        // reached. It runs here so that a preview is judged by the same question a real call is,
+        // and so that the refusal arrives before anything of the model is touched to find out. The
+        // one case it cannot see is an owner this very call adopts (the address of a not-yet-adopted
+        // base object resolves to nothing); that one is asked again below, once the owner exists.
+        if (guarded)
+        {
+            MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, ownerFqn);
+            if (notEditable.blocked)
+            {
+                r.error = notEditable.error + (notEditable.hint == null
+                    || notEditable.hint.isEmpty() ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+                if (notEditable.tag != null)
+                {
+                    r.tags.put(notEditable.tag.name, notEditable.tag.data);
+                }
+                return r;
+            }
         }
 
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
@@ -400,6 +462,24 @@ public final class BmObjectHelper
                     // wouldAutoBorrow tag and leaves owner null so the preview keeps the
                     // "no mutation" contract; a real run adopts and surfaces autoBorrowed.
                     owner = maybeLazyBorrowOwner(project, configProvider, parts, normalized, r, dryRun);
+                    if (owner != null && guarded)
+                    {
+                        // The adoption is what made the owner resolvable, so the address question
+                        // above could not have seen it: the freshly adopted object is asked about
+                        // here, once it exists.
+                        MetadataGuards.Verdict adopted =
+                            ModelEditabilityGuard.checkObject(project, owner);
+                        if (adopted.blocked)
+                        {
+                            r.error = adopted.error + (adopted.hint == null
+                                || adopted.hint.isEmpty() ? "" : " - " + adopted.hint); //$NON-NLS-1$ //$NON-NLS-2$
+                            if (adopted.tag != null)
+                            {
+                                r.tags.put(adopted.tag.name, adopted.tag.data);
+                            }
+                            return r;
+                        }
+                    }
                 }
             }
             else
@@ -445,21 +525,6 @@ public final class BmObjectHelper
             return r;
         }
 
-        // GUARD 0: the support registry's own answer, asked before the transaction opens. It runs
-        // here rather than inside the transaction so that a preview is judged by the same question a
-        // real call is, and so that nothing in the model is touched to find out.
-        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkObject(project, owner);
-        if (notEditable.blocked)
-        {
-            r.error = notEditable.error + (notEditable.hint == null || notEditable.hint.isEmpty()
-                ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
-            if (notEditable.tag != null)
-            {
-                r.tags.put(notEditable.tag.name, notEditable.tag.data);
-            }
-            return r;
-        }
-
         long bmId = ((IBmObject) owner).bmGetId();
         try
         {
@@ -476,11 +541,14 @@ public final class BmObjectHelper
                             throw new RuntimeException("Owner not found in transaction"); //$NON-NLS-1$
                         }
 
-                        // GUARD 1: supplier lock - always
-                        MetadataGuards.Verdict lock = MetadataGuards.checkSupplierLock(txOwner);
-                        if (lock.blocked)
+                        // GUARD 1: supplier lock - on a write, never on a read
+                        if (guarded)
                         {
-                            throw new MetadataGuards.BlockedGuardException(lock);
+                            MetadataGuards.Verdict lock = MetadataGuards.checkSupplierLock(txOwner);
+                            if (lock.blocked)
+                            {
+                                throw new MetadataGuards.BlockedGuardException(lock);
+                            }
                         }
 
                         // GUARD 2: caller-provided preCheck (optional)

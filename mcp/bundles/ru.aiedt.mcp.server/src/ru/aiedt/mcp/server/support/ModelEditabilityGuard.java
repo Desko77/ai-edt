@@ -6,6 +6,10 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 
@@ -28,9 +32,19 @@ import ru.aiedt.mcp.server.Activator;
  * <p>
  * This guard is the one place the question is asked, and it is asked on the way into every write
  * path: {@link BmObjectHelper#executeWriteOnObject} for the metadata operations, the form writes
- * through {@code BmFormHelper} and the module writes through {@code ModuleSourceWriter}. It runs
+ * through {@code BmFormHelper} and the module writes through {@code ModuleSourceWriter}. Reads have
+ * their own entries - {@link BmObjectHelper#executeReadOnObject} and
+ * {@code BmFormHelper.executeFormReadOperation} - and no read asks this question: a form or a
+ * template of a closed object stays readable, exactly as EDT reads it. On a write the question runs
  * before the model is touched and before the transaction opens, a preview included, so a dry run
  * answers the same refusal a real call would.
+ * </p>
+ * <p>
+ * The object judged is the nearest one, the way EDT judges: the write aimed at a form asks the form
+ * ({@code BasicForm}), the write aimed at an attribute or a tabular section asks that child - each
+ * of them is a metadata object with a support record of its own - and only a write whose address
+ * names no child asks the owner the address spells. The configuration root is a metadata object too
+ * and is judged by its own record.
  * </p>
  * <p>
  * The answer comes from the support registry itself - {@link IDistributionSupportManager}, the same
@@ -117,14 +131,40 @@ public final class ModelEditabilityGuard
          * Asks about one object.
          *
          * @param project the project the object belongs to; may be <code>null</code>
-         * @param top the metadata object that carries the support record; never <code>null</code>
+         * @param judged the metadata object the support record is asked about; never
+         *            <code>null</code>
          * @return what the environment says; never <code>null</code>
          */
-        Editability ask(IProject project, MdObject top);
+        Editability ask(IProject project, MdObject judged);
+    }
+
+    /**
+     * Resolves the owner part of an address - {@code Type.Name} or the {@code Configuration} root -
+     * to the metadata object it names.
+     * <p>
+     * The production implementation reads the configuration of the project. A test substitutes its
+     * own, so the wiring of the guard into the write paths can be asked about without a live 1C:EDT
+     * project behind the address.
+     * </p>
+     */
+    public interface OwnerResolver
+    {
+        /**
+         * Resolves the owner an address spells.
+         *
+         * @param project the project being written to; may be <code>null</code>
+         * @param ownerFqn the owner address: {@code Type.Name}, or the one-segment
+         *            {@code Configuration}
+         * @return the object, or <code>null</code> when the address names nothing this project holds
+         */
+        MdObject owner(IProject project, String ownerFqn);
     }
 
     /** Where the answer comes from. Replaced only by a test, and put back by it. */
     private static volatile Probe probe = ModelEditabilityGuard::askSupportService;
+
+    /** Where an owner address resolves. Replaced only by a test, and put back by it. */
+    private static volatile OwnerResolver ownerResolver = ModelEditabilityGuard::resolveByConfiguration;
 
     private ModelEditabilityGuard()
     {
@@ -142,7 +182,24 @@ public final class ModelEditabilityGuard
     }
 
     /**
+     * Substitutes the resolution of owner addresses, for a test.
+     *
+     * @param replacement the resolution to use; <code>null</code> puts the configuration walk back
+     */
+    public static void useOwnerResolverForTest(OwnerResolver replacement)
+    {
+        ownerResolver =
+            replacement != null ? replacement : ModelEditabilityGuard::resolveByConfiguration;
+    }
+
+    /**
      * Judges a write into the object a caller holds.
+     * <p>
+     * The object judged is the nearest metadata object at or above the one handed in - the way EDT
+     * itself judges. A form model resolves to its {@code BasicForm}, an attribute is a metadata
+     * object of its own and is judged by its own record, and the configuration root is judged by
+     * its record like any object.
+     * </p>
      *
      * @param project the project being written to; may be <code>null</code>
      * @param any the object about to be changed, or any object inside it
@@ -150,23 +207,25 @@ public final class ModelEditabilityGuard
      */
     public static MetadataGuards.Verdict checkObject(IProject project, EObject any)
     {
-        MdObject top = topOwnerOf(any);
-        if (top == null)
+        MdObject judged = nearestMdObject(any);
+        if (judged == null)
         {
-            // No metadata owner to judge: the write is aimed at something the registry has no
-            // record for - a configuration-level object, a form model, an external object root.
+            // No metadata object to judge: the write is aimed at something the registry has no
+            // record for - a form model with no BasicForm wrapper, an external object root.
             return MetadataGuards.Verdict.pass();
         }
-        return decide(fqnOf(top), probe.ask(project, top));
+        return decide(fqnOf(judged), probe.ask(project, judged));
     }
 
     /**
      * Judges a write into the object an address names.
      * <p>
      * Used where the write path has an address rather than the object - the module writer knows the
-     * module path, the form writer the form's address. An address that does not resolve to a
-     * metadata object is not judged: the write is refused or accepted further along by the code that
-     * does resolve it.
+     * module path, the form writer the form's address. The address resolves to the nearest metadata
+     * object it spells: {@code Catalog.X.Form.Y} asks the form {@code Y}, a child segment that does
+     * not resolve falls back to the deepest one that did, and an address that resolves to nothing is
+     * not judged at all - the write is refused or accepted further along by the code that does
+     * resolve it.
      * </p>
      *
      * @param project the project being written to
@@ -175,12 +234,17 @@ public final class ModelEditabilityGuard
      */
     public static MetadataGuards.Verdict checkFqn(IProject project, String fqn)
     {
-        MdObject object = resolve(project, ownerFqnOf(fqn));
-        if (object == null)
+        if (fqn == null || fqn.trim().isEmpty())
         {
             return MetadataGuards.Verdict.pass();
         }
-        return checkObject(project, object);
+        String trimmed = fqn.trim();
+        MdObject judged = resolveAddress(project, trimmed);
+        if (judged == null)
+        {
+            return MetadataGuards.Verdict.pass();
+        }
+        return decide(trimmed, probe.ask(project, judged));
     }
 
     /**
@@ -213,35 +277,31 @@ public final class ModelEditabilityGuard
     }
 
     /**
-     * The outermost metadata object an object sits in.
+     * The nearest metadata object at or above the one handed in, the object the support registry is
+     * asked about.
      * <p>
-     * A write is aimed at an attribute, a tabular section or a nested subsystem, while the support
-     * record belongs to the object that holds it. The walk stops below the configuration root: the
-     * configuration is not one of the objects this guard judges, so a configuration-level write is
-     * passed through rather than judged by a record that belongs to the configuration as a whole.
+     * A form item and a form model both resolve to the {@code BasicForm} that holds them; an
+     * attribute, a tabular section and a nested subsystem are metadata objects of their own and
+     * resolve to themselves; the configuration root is a metadata object too and is judged by its
+     * own record rather than passed by. This mirrors the walk
+     * {@code DistributionSupportManager.canEdit(EObject)} makes when EDT decides the same question.
      * </p>
      *
      * @param any the object to walk up from; may be <code>null</code>
-     * @return the outermost metadata object below the configuration, or <code>null</code> when there
-     *         is none
+     * @return the nearest metadata object, or <code>null</code> when the chain holds none
      */
-    public static MdObject topOwnerOf(EObject any)
+    public static MdObject nearestMdObject(EObject any)
     {
         EObject current = any;
-        MdObject outermost = null;
         while (current != null)
         {
-            if (current instanceof Configuration)
-            {
-                return outermost;
-            }
             if (current instanceof MdObject)
             {
-                outermost = (MdObject)current;
+                return (MdObject)current;
             }
             current = current.eContainer();
         }
-        return outermost;
+        return null;
     }
 
     /**
@@ -294,17 +354,83 @@ public final class ModelEditabilityGuard
     }
 
     /**
+     * The refusal's structured tag as one line, for a path that answers in text.
+     * <p>
+     * A write path that returns a plain string cannot carry the tag the way a structured answer
+     * does; this line keeps the same fields in the same shape, and {@link #parseSupportLockLine}
+     * reads them back where the string becomes structured again.
+     * </p>
+     *
+     * @param verdict a blocked verdict carrying a tag; a passing verdict or one without a tag answers
+     *            <code>null</code>
+     * @return the line {@code supportLock: <fields>}, or <code>null</code>
+     */
+    public static String supportLockLine(MetadataGuards.Verdict verdict)
+    {
+        if (verdict == null || !verdict.blocked || verdict.tag == null)
+        {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(ErrorTags.SUPPORT_LOCK.wire()).append(':'); //$NON-NLS-1$
+        for (Map.Entry<String, Object> field : verdict.tag.data.entrySet())
+        {
+            sb.append(' ').append(field.getKey()).append('=').append(field.getValue());
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Reads the {@link #supportLockLine} back out of an answer text.
+     * <p>
+     * A field value may hold spaces - the hint does - so the line splits only before a token that
+     * carries an equals sign, and everything after the last equals sign belongs to its own field.
+     * </p>
+     *
+     * @param text the answer text that may carry the line
+     * @return the tag fields, or <code>null</code> when the text carries no line
+     */
+    public static Map<String, Object> parseSupportLockLine(String text)
+    {
+        if (text == null)
+        {
+            return null;
+        }
+        int at = text.indexOf(ErrorTags.SUPPORT_LOCK.wire() + ":"); //$NON-NLS-1$
+        if (at < 0)
+        {
+            return null;
+        }
+        String line = text.substring(at);
+        int end = line.indexOf('\n');
+        if (end >= 0)
+        {
+            line = line.substring(0, end);
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        for (String part : line.split(" +(?=[^ =]+\\=)")) //$NON-NLS-1$
+        {
+            int equals = part.indexOf('=');
+            if (equals <= 0 || equals == part.length() - 1)
+            {
+                continue;
+            }
+            fields.put(part.substring(0, equals), part.substring(equals + 1));
+        }
+        return fields.isEmpty() ? null : fields;
+    }
+
+    /**
      * Asks the support service about one object.
      *
      * @param project the project the object belongs to
-     * @param top the metadata object carrying the support record
+     * @param judged the metadata object carrying the support record
      * @return what the service said; {@link Editability#answered} is <code>false</code> when it could
      *         not be asked
      */
-    private static Editability askSupportService(IProject project, MdObject top)
+    private static Editability askSupportService(IProject project, MdObject judged)
     {
         Editability answer = new Editability();
-        if (project == null || top == null)
+        if (project == null || judged == null)
         {
             answer.cannotTell = "no project or no object to ask about"; //$NON-NLS-1$
             return answer;
@@ -315,6 +441,7 @@ public final class ModelEditabilityGuard
             if (service.manager == null)
             {
                 answer.cannotTell = service.failure;
+                Activator.logWarning("model_editability_guard: " + answer.cannotTell); //$NON-NLS-1$
                 return answer;
             }
             answer.route = service.route;
@@ -326,42 +453,103 @@ public final class ModelEditabilityGuard
                     + " is not on support, so no object of it is closed for changes"; //$NON-NLS-1$
                 return answer;
             }
-            UserSupportMode mode = service.manager.getUserSupportMode(top);
+            UserSupportMode mode = service.manager.getUserSupportMode(judged);
             answer.userMode = mode == null ? null : mode.getName();
-            answer.canEdit = service.manager.canEdit(top);
+            answer.canEdit = service.manager.canEdit(judged);
             answer.answered = true;
         }
         catch (RuntimeException | LinkageError cannotAsk)
         {
             // Named rather than swallowed, but not fatal: a support subsystem this server cannot
-            // reach is not evidence that the object is closed.
+            // reach is not evidence that the object is closed. The reason is a warning, not a debug
+            // line: a check that quietly did not run reads as a check that passed.
             answer.cannotTell = "the support service could not be asked: " + cannotAsk; //$NON-NLS-1$
-            Activator.logDebug("model_editability_guard: " + answer.cannotTell); //$NON-NLS-1$
+            Activator.logWarning("model_editability_guard: " + answer.cannotTell); //$NON-NLS-1$
         }
         return answer;
     }
 
     /**
-     * Resolves an address to the metadata object it names.
+     * Resolves an address to the nearest metadata object it spells.
+     * <p>
+     * The owner part goes through {@link #ownerResolver}; whatever it returns is walked further by
+     * the address's remaining {@code Kind.Name} pairs, so an address that names a form, an attribute
+     * or a nested subsystem is judged by that child. A pair that does not resolve stops the walk:
+     * the deepest object that did resolve is judged, and an address whose owner resolves to nothing
+     * is not judged at all. A lone trailing segment - the {@code ObjectModule} marker of a module
+     * address, the {@code .Form} suffix of a BM form address - names no object of its own and is
+     * ignored.
+     * </p>
      *
      * @param project the project holding the object
-     * @param fqn the address, already shortened to {@code Type.Name}
+     * @param fqn the address, already trimmed
+     * @return the nearest object the address resolves to, or <code>null</code>
+     */
+    private static MdObject resolveAddress(IProject project, String fqn)
+    {
+        MdObject current = ownerResolver.owner(project, ownerFqnOf(fqn));
+        if (current == null)
+        {
+            return null;
+        }
+        int firstDot = fqn.indexOf('.');
+        if (firstDot <= 0)
+        {
+            return current;
+        }
+        int secondDot = fqn.indexOf('.', firstDot + 1);
+        if (secondDot < 0)
+        {
+            return current;
+        }
+        String[] rest = fqn.substring(secondDot + 1).split("\\."); //$NON-NLS-1$
+        for (int i = 0; i + 1 < rest.length; i += 2)
+        {
+            MdObject child = childByKindAndName(current, rest[i], rest[i + 1]);
+            if (child == null)
+            {
+                break;
+            }
+            current = child;
+        }
+        return current;
+    }
+
+    /**
+     * Resolves the owner part of an address against the configuration of the project.
+     * <p>
+     * The one-segment {@code Configuration} names the configuration root itself - a metadata object
+     * with a support record of its own - except in an external-object project, where
+     * {@code getConfiguration} answers with a foreign project's configuration and judging by that
+     * record would refuse work aimed at the external roots instead.
+     * </p>
+     *
+     * @param project the project holding the object; may be <code>null</code>
+     * @param ownerFqn the owner address: {@code Type.Name}, or {@code Configuration}
      * @return the object, or <code>null</code> when the address names nothing this project holds
      */
-    private static MdObject resolve(IProject project, String fqn)
+    private static MdObject resolveByConfiguration(IProject project, String ownerFqn)
     {
-        if (project == null || fqn == null)
+        if (project == null || ownerFqn == null || ownerFqn.isEmpty())
         {
             return null;
         }
         try
         {
+            if (ownerFqn.indexOf('.') < 0 && "Configuration".equalsIgnoreCase(ownerFqn.trim())) //$NON-NLS-1$
+            {
+                if (ExternalProjectResolver.isExternalProject(project))
+                {
+                    return null;
+                }
+                return SubsystemMembership.configurationOf(project);
+            }
             Configuration configuration = SubsystemMembership.configurationOf(project);
             if (configuration == null)
             {
                 return null;
             }
-            String normalized = MetadataTypeCatalog.normalizeFqn(fqn);
+            String normalized = MetadataTypeCatalog.normalizeFqn(ownerFqn);
             String[] parts = normalized.split("\\.", 2); //$NON-NLS-1$
             if (parts.length < 2)
             {
@@ -371,9 +559,52 @@ public final class ModelEditabilityGuard
         }
         catch (RuntimeException | LinkageError cannotResolve)
         {
-            Activator.logDebug("model_editability_guard: could not resolve " + fqn + ": " //$NON-NLS-1$ //$NON-NLS-2$
+            Activator.logWarning("model_editability_guard: could not resolve " + ownerFqn + ": " //$NON-NLS-1$ //$NON-NLS-2$
                 + cannotResolve);
             return null;
         }
+    }
+
+    /**
+     * Finds the direct child of a metadata object a {@code Kind.Name} address pair names.
+     * <p>
+     * Every child this guard has to reach - a form, an attribute, a tabular section, a command, a
+     * template, a nested subsystem - is a direct contained metadata object. The kind matches the
+     * child's class name by suffix ({@code BasicForm} for {@code Form}, {@code CatalogAttribute}
+     * for {@code Attribute}), the name matches case-insensitively, the way the rest of this server
+     * reads names.
+     * </p>
+     *
+     * @param owner the object to look inside
+     * @param kind the child kind as the address spells it
+     * @param name the child name as the address spells it
+     * @return the child, or <code>null</code> when no direct child matches both
+     */
+    private static MdObject childByKindAndName(MdObject owner, String kind, String name)
+    {
+        if (name == null || name.isEmpty())
+        {
+            return null;
+        }
+        String wanted = kind.toLowerCase(Locale.ROOT);
+        for (EObject child : owner.eContents())
+        {
+            if (!(child instanceof MdObject))
+            {
+                continue;
+            }
+            MdObject candidate = (MdObject)child;
+            String childName = candidate.getName();
+            if (childName == null || !childName.equalsIgnoreCase(name))
+            {
+                continue;
+            }
+            String className = candidate.eClass().getName().toLowerCase(Locale.ROOT);
+            if (className.equals(wanted) || className.endsWith(wanted))
+            {
+                return candidate;
+            }
+        }
+        return null;
     }
 }

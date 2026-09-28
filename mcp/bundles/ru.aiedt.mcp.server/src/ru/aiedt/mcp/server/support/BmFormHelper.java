@@ -222,31 +222,28 @@ public class BmFormHelper
     }
 
     /**
-     * Executes a form operation inside a BM read-write transaction.
+     * Resolves a form and runs a read against it inside the transaction, with no write question
+     * asked.
      * <p>
-     * Steps:
-     * <ol>
-     * <li>Get {@code IBmModelManager} via {@link Activator}</li>
-     * <li>Get {@code IBmModel} for the project</li>
-     * <li>Create a {@link Proxy} for {@code IBmSingleNamespaceTask}</li>
-     * <li>Inside the proxy: resolve form by FQN via {@code transaction.getTopObjectByFqn()}</li>
-     * <li>Call the action with transaction and form</li>
-     * <li>Execute the task via {@code bmModel.executeReadWriteTask()} found by reflection</li>
-     * </ol>
+     * A structure walk of a form whose owner is closed for vendor-support changes is a read, the
+     * way EDT reads it: the write entries below ask the support registry and refuse such a form,
+     * and this entry does not, so a closed configuration stays readable through
+     * {@code get_form_structure}. The transaction opens the way a write's does - that is how the
+     * form model is reached - but a read changes nothing and persists nothing.
+     * </p>
      *
      * @param project the workspace project
-     * @param formFqn the BM top-object FQN of the form, including the trailing
-     *            {@code .Form} segment that comes from the {@code Form.form}
-     *            file name (e.g. "Catalog.Products.Form.ItemForm.Form"). Use
-     *            the diagnostic hint returned on "form not found" to discover
-     *            the canonical FQN for borrowed forms in extensions.
-     * @param action the action to execute inside the transaction
+     * @param formFqn the BM top-object FQN of the form, with or without the trailing
+     *            {@code .Form} segment (e.g. "Catalog.Products.Form.ItemForm.Form"); use the
+     *            diagnostic hint returned on "form not found" to discover the canonical FQN for
+     *            borrowed forms in extensions
+     * @param action the read to execute inside the transaction
      * @return result string from the action, or an error message
      */
-    public String executeFormOperation(IProject project, String formFqn, FormTransactionAction action)
+    public String executeFormReadOperation(IProject project, String formFqn,
+        FormTransactionAction action)
     {
-        // Backward-compatible delegate for legacy / read-only callers (dryRun=false).
-        return executeFormOperation(project, formFqn, false, action);
+        return executeFormOperation(project, formFqn, false, action, false);
     }
 
     /**
@@ -329,7 +326,7 @@ public class BmFormHelper
     }
 
     /**
-     * dryRun-aware form operation. When {@code dryRun} is true the action runs
+     * dryRun-aware form write. When {@code dryRun} is true the action runs
      * inside the BM transaction and is then rolled back (DryRunAbort), and the
      * changes are NOT persisted to the Form.form file - so a preview leaves no
      * garbage behind. When false, behaviour is identical to the legacy method
@@ -338,14 +335,38 @@ public class BmFormHelper
     public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
         FormTransactionAction action)
     {
+        return executeFormOperation(project, formFqn, dryRun, action, true);
+    }
+
+    /**
+     * The one body behind the write and the read entries of this helper.
+     *
+     * @param project the workspace project
+     * @param formFqn the BM top-object FQN of the form
+     * @param dryRun whether the transaction commits or rolls back
+     * @param action the action to execute inside the transaction
+     * @param guarded whether the support registry is asked before the transaction opens; a read
+     *        passes <code>false</code> and no question is asked of it
+     * @return result string from the action, or an error message
+     */
+    private String executeFormOperation(IProject project, String formFqn, boolean dryRun,
+        FormTransactionAction action, boolean guarded)
+    {
         // The support registry is asked before the transaction opens, so a preview is judged by the
-        // same question a real call is. The form belongs to the object its address names in its first
-        // two segments, which is the object that carries the support record.
-        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, formFqn);
-        if (notEditable.blocked)
+        // same question a real call is. The address names the form itself in its Form.Name segment,
+        // and the form - a BasicForm, a metadata object of its own - is the object the registry is
+        // asked about.
+        if (guarded)
         {
-            return "Error: " + notEditable.error + (notEditable.hint == null //$NON-NLS-1$
-                || notEditable.hint.isEmpty() ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+            MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, formFqn);
+            if (notEditable.blocked)
+            {
+                String line = ModelEditabilityGuard.supportLockLine(notEditable);
+                return "Error: " + notEditable.error //$NON-NLS-1$
+                    + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
+                        ? "" : " - " + notEditable.hint) //$NON-NLS-1$ //$NON-NLS-2$
+                    + (line == null ? "" : "\n" + line); //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
         beginWrite(null);
         try

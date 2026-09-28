@@ -28,6 +28,14 @@ import java.util.Map;
  * quotation mark, a letter of the other alphabet and a curly brace are passed through, since
  * replacing them would be a guess about intent rather than transcription.
  * </p>
+ * <p>
+ * A string literal is data, and data is not rewritten. The characters inside a BSL literal -
+ * between its opening quote and its closing one, an embedded {@code ""} being an escaped quote and
+ * a literal that runs past the end of a line continuing on every following line that starts with
+ * {@code |} - stand exactly as the caller wrote them: a no-break space inside a format string is the
+ * group separator the code means, not a typo. The characters in code and in a {@code //} comment are
+ * the ones replaced.
+ * </p>
  */
 public final class InvalidCharacters
 {
@@ -59,7 +67,14 @@ public final class InvalidCharacters
         /** How many characters were replaced or dropped. */
         public int count;
 
-        /** Where they stood, as {@code line:column}, the first {@link #POSITION_LIMIT} of them. */
+        /**
+         * Where they stood, as {@code line:column}, the first {@link #POSITION_LIMIT} of them.
+         * <p>
+         * Lines and columns count from the start of the text this pass was handed - the fragment the
+         * caller supplied, not the module file the fragment is bound for - and a column counts in
+         * UTF-16 units, the units {@code String} addresses.
+         * </p>
+         */
         public final List<String> positions = new ArrayList<>();
 
         /** Whether the position list was cut short. */
@@ -155,9 +170,15 @@ public final class InvalidCharacters
     }
 
     /**
-     * Replaces the characters BSL source cannot hold with the ones they stand for.
+     * Replaces the characters BSL source cannot hold with the ones they stand for, everywhere except
+     * inside string literals.
      * <p>
-     * Text that carries none of them comes back unchanged, and the report says so.
+     * The pass reads the text as BSL is read: a {@code "} opens a literal that only a quote closes -
+     * an embedded {@code ""} is an escaped quote, not a closing one, and a literal may run over
+     * several lines whose first non-blank character is {@code |} - and a {@code //} outside a
+     * literal comments to the end of the line. Inside a literal nothing is touched; in code and in a
+     * comment the replacement runs as it always did. Text that carries none of the characters comes
+     * back unchanged, and the report says so.
      * </p>
      *
      * @param source the text about to be written; may be <code>null</code>
@@ -171,79 +192,311 @@ public final class InvalidCharacters
         {
             return report;
         }
-        int line = 1;
-        int column = 1;
+        Scanner scanner = new Scanner(source);
         StringBuilder out = null;
-        for (int at = 0; at < source.length(); at++)
+        while (scanner.hasNext())
         {
-            char c = source.charAt(at);
-            char replacement;
-            boolean dropped = false;
-            if (isDash(c))
+            char c = scanner.peek();
+            if (scanner.insideLiteral())
             {
-                replacement = '-';
+                // Data: an escaped quote is consumed as a pair, any other character of the literal
+                // stands as written, and the closing quote ends it.
+                if (c == '"' && scanner.peekNext() == '"')
+                {
+                    out = appendRaw(appendRaw(out, c), '"');
+                    scanner.step();
+                    scanner.step();
+                    continue;
+                }
+                if (c == '"')
+                {
+                    scanner.closeLiteral();
+                }
+                out = appendRaw(out, c);
+                scanner.step();
+                continue;
             }
-            else if (c == NO_BREAK_SPACE)
-            {
-                replacement = ' ';
-            }
-            else if (c == SOFT_HYPHEN)
-            {
-                replacement = ' '; // unused: the character is dropped, not replaced
-                dropped = true;
-            }
-            else
+            if (scanner.insideComment())
             {
                 if (c == '\n')
                 {
-                    line++;
-                    column = 1;
+                    scanner.endComment();
                 }
-                else
-                {
-                    column++;
-                }
-                if (out != null)
-                {
-                    out.append(c);
-                }
+                // A comment is written by a person and is rewritten like code.
+                out = replace(c, scanner, out, report);
                 continue;
             }
-            if (out == null)
+            if (c == '"')
             {
-                // The first change is where the untouched prefix is copied; everything before it is
-                // the text it already was.
-                out = new StringBuilder(source.length());
-                out.append(source, 0, at);
+                scanner.openLiteral();
+                out = appendRaw(out, c);
+                scanner.step();
+                continue;
             }
-            if (!dropped)
+            if (c == '/' && scanner.peekNext() == '/')
             {
-                out.append(replacement);
+                scanner.startComment();
+                out = appendRaw(out, c);
+                scanner.step();
+                continue;
             }
-            report.count++;
-            String kind = nameOf(c) + " -> " + (dropped ? "removed" : "'" + replacement + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            report.kinds.merge(kind, Integer.valueOf(1),
-                (was, one) -> Integer.valueOf(was.intValue() + 1));
-            if (report.positions.size() < POSITION_LIMIT)
-            {
-                report.positions.add(line + ":" + column); //$NON-NLS-1$
-            }
-            else
-            {
-                report.positionsTruncated = true;
-            }
-            // A dropped character takes no room: the column after it is the one it stood at, and a
-            // replaced one advances by the single character that took its place.
-            if (!dropped)
-            {
-                column++;
-            }
+            out = replace(c, scanner, out, report);
         }
         if (out != null)
         {
             report.text = out.toString();
         }
         return report;
+    }
+
+    /**
+     * Applies the replacement rules to one character of code or comment.
+     *
+     * @param c the character at the scanner's position
+     * @param scanner the scanner, positioned at the character; consumes it
+     * @param out the text built so far, or <code>null</code> while nothing has changed
+     * @param report the report the replacement records into
+     * @return the text built so far
+     */
+    private static StringBuilder replace(char c, Scanner scanner, StringBuilder out, Report report)
+    {
+        char replacement;
+        boolean dropped = false;
+        if (isDash(c))
+        {
+            replacement = '-';
+        }
+        else if (c == NO_BREAK_SPACE)
+        {
+            replacement = ' ';
+        }
+        else if (c == SOFT_HYPHEN)
+        {
+            replacement = ' '; // unused: the character is dropped, not replaced
+            dropped = true;
+        }
+        else
+        {
+            scanner.step();
+            return appendRaw(out, c);
+        }
+        if (out == null)
+        {
+            // The first change is where the untouched prefix is copied; everything before it is
+            // the text it already was.
+            out = new StringBuilder(scanner.textLength());
+            out.append(scanner.text(), 0, scanner.position());
+        }
+        if (!dropped)
+        {
+            out.append(replacement);
+        }
+        report.count++;
+        String kind = nameOf(c) + " -> " + (dropped ? "removed" : "'" + replacement + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        report.kinds.merge(kind, Integer.valueOf(1),
+            (was, one) -> Integer.valueOf(was.intValue() + 1));
+        if (report.positions.size() < POSITION_LIMIT)
+        {
+            report.positions.add(scanner.line() + ":" + scanner.column()); //$NON-NLS-1$
+        }
+        else
+        {
+            report.positionsTruncated = true;
+        }
+        // A dropped character takes no room: the column after it is the one it stood at, and a
+        // replaced one advances by the single character that took its place.
+        if (dropped)
+        {
+            scanner.stepLeavingNoRoom();
+        }
+        else
+        {
+            scanner.step();
+        }
+        return out;
+    }
+
+    /**
+     * Copies one unchanged character into the text being built.
+     *
+     * @param out the text built so far, or <code>null</code> while nothing has changed
+     * @param c the character to copy
+     * @return the text built so far
+     */
+    private static StringBuilder appendRaw(StringBuilder out, char c)
+    {
+        if (out != null)
+        {
+            out.append(c);
+        }
+        return out;
+    }
+
+    /**
+     * One pass over the text that knows where it stands: which line and column the next character
+     * sits at, and whether that character is inside a string literal or a comment.
+     * <p>
+     * The literal rules are the ones the BSL reader applies. A quote opens a literal; inside, a
+     * doubled quote is one escaped quote and any single quote closes the literal. A literal may span
+     * lines - its continuation lines start with {@code |} after optional blanks, and everything up
+     * to the closing quote belongs to it, a newline included. A comment starts with {@code //}
+     * outside a literal and ends at the newline.
+     * </p>
+     */
+    private static final class Scanner
+    {
+        private final String text;
+
+        private int at;
+
+        private int line = 1;
+
+        private int column = 1;
+
+        private boolean literal;
+
+        private boolean comment;
+
+        /**
+         * Starts at the beginning of the text.
+         *
+         * @param text the text to walk
+         */
+        Scanner(String text)
+        {
+            this.text = text;
+        }
+
+        /**
+         * @return whether any character is left
+         */
+        boolean hasNext()
+        {
+            return at < text.length();
+        }
+
+        /**
+         * @return the character at the current position
+         */
+        char peek()
+        {
+            return text.charAt(at);
+        }
+
+        /**
+         * @return the character after the current position, or {@code '\0'} at the end
+         */
+        char peekNext()
+        {
+            return at + 1 < text.length() ? text.charAt(at + 1) : '\0';
+        }
+
+        /**
+         * Consumes one character, counting the line and column it leaves the scanner at.
+         */
+        void step()
+        {
+            char c = text.charAt(at);
+            at++;
+            if (c == '\n')
+            {
+                line++;
+                column = 1;
+            }
+            else
+            {
+                column++;
+            }
+        }
+
+        /**
+         * Consumes one character that leaves no room in the line: the next character's column is the
+         * one this character stood at. A dropped character is never a newline.
+         */
+        void stepLeavingNoRoom()
+        {
+            at++;
+        }
+
+        /** Marks the scanner as inside a literal. */
+        void openLiteral()
+        {
+            literal = true;
+        }
+
+        /** Marks the literal as closed. */
+        void closeLiteral()
+        {
+            literal = false;
+        }
+
+        /**
+         * @return whether the scanner stands inside a string literal
+         */
+        boolean insideLiteral()
+        {
+            return literal;
+        }
+
+        /** Marks the scanner as inside a comment. */
+        void startComment()
+        {
+            comment = true;
+        }
+
+        /** Marks the comment as ended. */
+        void endComment()
+        {
+            comment = false;
+        }
+
+        /**
+         * @return whether the scanner stands inside a comment
+         */
+        boolean insideComment()
+        {
+            return comment;
+        }
+
+        /**
+         * @return the line the current character sits on, counted from one
+         */
+        int line()
+        {
+            return line;
+        }
+
+        /**
+         * @return the column the current character sits at, counted from one
+         */
+        int column()
+        {
+            return column;
+        }
+
+        /**
+         * @return the position of the current character
+         */
+        int position()
+        {
+            return at;
+        }
+
+        /**
+         * @return the whole text being walked
+         */
+        String text()
+        {
+            return text;
+        }
+
+        /**
+         * @return the length of the text being walked
+         */
+        int textLength()
+        {
+            return text.length();
+        }
     }
 
     /**

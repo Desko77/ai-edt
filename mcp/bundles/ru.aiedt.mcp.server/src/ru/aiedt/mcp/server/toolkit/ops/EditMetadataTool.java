@@ -68,6 +68,7 @@ import ru.aiedt.mcp.server.support.FormBaseSetup;
 import ru.aiedt.mcp.server.support.FormEventRegistry;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.ModelEditabilityGuard;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -2389,10 +2390,18 @@ public class EditMetadataTool implements IMcpTool
         }
         if (isErrorOutcome(helperResult))
         {
-            return ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
+            ToolResult error = ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
                 .put("operation", op) //$NON-NLS-1$
-                .put("formFqn", formFqn) //$NON-NLS-1$
-                .toJson();
+                .put("formFqn", formFqn); //$NON-NLS-1$
+            // A refusal by the support registry carries its tag as a line of the helper's text;
+            // here is where that text becomes structured again, so the answer holds the same
+            // supportLock field the object path holds.
+            Map<String, Object> supportLock = ModelEditabilityGuard.parseSupportLockLine(helperResult);
+            if (supportLock != null)
+            {
+                error.put(ErrorTags.SUPPORT_LOCK.wire(), supportLock);
+            }
+            return error.toJson();
         }
         return putNotAsked(putAdopted(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$

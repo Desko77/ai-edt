@@ -36,6 +36,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExportHelper;
+import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InvalidCharacters;
 import ru.aiedt.mcp.server.support.LineDelimiters;
 import ru.aiedt.mcp.server.support.MetadataGuards;
@@ -199,8 +200,8 @@ public class ModuleSourceWriter implements IMcpTool
                 "Shows what the write would produce without touching the file. Reports diff stats " //$NON-NLS-1$
                     + "(linesBefore, linesAfter, removedLines, addedLines)") //$NON-NLS-1$
             .booleanProperty("normalizeInvalidCharacters", //$NON-NLS-1$
-                "Replaces the characters BSL has no place for with the plain ones and reports how " //$NON-NLS-1$
-                    + "many and where. Default: true (false writes the text as supplied)") //$NON-NLS-1$
+                "Replaces dashes, no-break spaces and soft hyphens outside string literals with plain " //$NON-NLS-1$
+                    + "characters and reports where. Default: true.") //$NON-NLS-1$
             .booleanProperty("skipSyntaxCheck", //$NON-NLS-1$
                 "Bypasses the BSL syntax check (default: false). At the default, it confirms balanced " //$NON-NLS-1$
                     + "Procedure/EndProcedure, Function/EndFunction, If/EndIf, While/EndDo, " //$NON-NLS-1$
@@ -349,12 +350,33 @@ public class ModuleSourceWriter implements IMcpTool
         // --- step 6a: the support registry's own answer ---
         // Asked before anything is read or written, so that a preview is refused exactly as a real
         // call is, and so that the caller is told which object is closed rather than which file is.
+        // A module of the configuration root (Configuration/*.bsl) names the root itself, which the
+        // validation FQN below does not derive: the root's directory names no object type.
         MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project,
-            resolveFqnForValidation(objectName, modulePath));
+            guardFqnOf(objectName, modulePath));
         if (notEditable.blocked)
         {
-            return "Error: " + notEditable.error + (notEditable.hint == null //$NON-NLS-1$
-                || notEditable.hint.isEmpty() ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+            // A refusal in the shape the rest of this tool's answers take, with the supportLock tag
+            // as a field rather than as prose: the status line is what tells a client this answer
+            // failed, and the tag is what lets one act on the refusal without reading the text.
+            YamlFrontMatter refused = YamlFrontMatter.create()
+                .put("tool", NAME) //$NON-NLS-1$
+                .put("projectName", projectName) //$NON-NLS-1$
+                .put("modulePath", modulePath) //$NON-NLS-1$
+                .put("status", "error"); //$NON-NLS-1$ //$NON-NLS-2$
+            refused.put("error", notEditable.error); //$NON-NLS-1$
+            if (notEditable.hint != null && !notEditable.hint.isEmpty())
+            {
+                refused.put("hint", notEditable.hint); //$NON-NLS-1$
+            }
+            String supportLock = supportLockAsText(notEditable);
+            if (supportLock != null)
+            {
+                refused.put(ErrorTags.SUPPORT_LOCK.wire(), supportLock);
+            }
+            return refused.wrapContent("Error: " + notEditable.error //$NON-NLS-1$
+                + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
+                    ? "" : " - " + notEditable.hint)); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         // -- outer try: steps 7-17 --
@@ -594,6 +616,8 @@ public class ModuleSourceWriter implements IMcpTool
                     .put("linesBefore", totalOriginal) //$NON-NLS-1$
                     .put("linesAfter", newLines.size()) //$NON-NLS-1$
                     .put("lineDelta", newLines.size() - totalOriginal); //$NON-NLS-1$
+                if (protectionWarning != null)
+                    dryFm.put("protection", protectionWarning); //$NON-NLS-1$
                 if (characterFix.changed())
                     putCharacterFix(dryFm, characterFix);
                 if (provided != null)
@@ -1329,6 +1353,59 @@ public class ModuleSourceWriter implements IMcpTool
         if (typePart == null)
             return null;
         return typePart + "." + namePart; //$NON-NLS-1$
+    }
+
+    /**
+     * The address the support question is asked about for this write.
+     * <p>
+     * The validation FQN names the object a modulePath or objectName spells, but the configuration
+     * root's directory ({@code Configuration/*.bsl} - the session module and its kin) names no
+     * object type, so the validation FQN comes back empty there. The root is a metadata object the
+     * registry holds a record for, and a write into one of its modules is judged by that record, so
+     * the guard's address falls back to the one-segment {@code Configuration} for it.
+     * </p>
+     *
+     * @param objectName explicit FQN from the call, may be null
+     * @param modulePath path under src/, used when objectName is absent
+     * @return the address to judge, or <code>null</code> when the write names no metadata object
+     */
+    private static String guardFqnOf(String objectName, String modulePath)
+    {
+        String fqn = resolveFqnForValidation(objectName, modulePath);
+        if (fqn != null)
+        {
+            return fqn;
+        }
+        if (objectName != null && !objectName.isEmpty() || modulePath == null || modulePath.isEmpty())
+        {
+            return null;
+        }
+        String dir = modulePath.replace('\\', '/').split("/")[0]; //$NON-NLS-1$ //$NON-NLS-2$
+        return "Configuration".equalsIgnoreCase(dir) ? "Configuration" : null; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The refusal's structured tag as one line of fields, for the response front matter.
+     *
+     * @param verdict a blocked verdict carrying a tag
+     * @return the fields as {@code key=value} pairs, or <code>null</code> when there is no tag
+     */
+    private static String supportLockAsText(MetadataGuards.Verdict verdict)
+    {
+        if (verdict.tag == null || verdict.tag.data.isEmpty())
+        {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Object> field : verdict.tag.data.entrySet())
+        {
+            if (sb.length() > 0)
+            {
+                sb.append(' ');
+            }
+            sb.append(field.getKey()).append('=').append(field.getValue());
+        }
+        return sb.toString();
     }
 
     /**
