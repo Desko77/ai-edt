@@ -135,7 +135,7 @@ public final class ApplicationUpdater
                     + "'com.e1c.g5.dt.applications' is not available.");
         }
 
-        static Result appNotFound(String applicationId, String projectName)
+        public static Result appNotFound(String applicationId, String projectName)
         {
             return new Result(Outcome.APPLICATION_NOT_FOUND, null, null, null,
                 "No application named '" + applicationId + "' in project '" + projectName + "'",
@@ -162,7 +162,7 @@ public final class ApplicationUpdater
                 "Database updated (" + typeUsed + ") from state " + before + " to " + after + ".");
         }
 
-        static Result failed(String message)
+        public static Result failed(String message)
         {
             return new Result(Outcome.FAILED, null, null, null, message,
                 "You can retry with updateBeforeLaunch=false to skip update, or rebuild the project manually in EDT.");

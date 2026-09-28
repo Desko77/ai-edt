@@ -414,13 +414,15 @@ public class ADumpInfoFormatStopsTheUpdateTest
         assertEquals(ApplicationUpdater.Outcome.ALREADY_UP_TO_DATE, went.outcome);
         assertEquals(List.of("getUpdateState"), matching.calls); //$NON-NLS-1$
 
-        String debugRefusal = DebugSessionStarter.updateDatabase(manager, application, foreignFile());
+        String debugRefusal = DebugSessionStarter.preLaunchRefusal(
+            DebugSessionStarter.updateDatabase(manager, application, foreignFile()));
         assertNotNull(debugRefusal);
         assertTrue(debugRefusal.contains("2.20")); //$NON-NLS-1$
         assertTrue("the debugger's update did not ask the manager", manager.calls.isEmpty()); //$NON-NLS-1$
 
-        String debugWent = DebugSessionStarter.updateDatabase(matching, application,
-            DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        String debugWent = DebugSessionStarter.preLaunchRefusal(DebugSessionStarter.updateDatabase(
+            matching, application,
+            DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         assertNull(debugWent);
         assertEquals(List.of("getUpdateState", "getUpdateState"), matching.calls); //$NON-NLS-1$ //$NON-NLS-2$
     }
