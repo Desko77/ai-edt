@@ -74,8 +74,12 @@ public class TheToolListHasAWeightBudgetTest
      * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
      * and add_schema_parameter write them into the schema parameter.
      * </p>
+     * <p>
+     * Raised from 170444 to 170476 for the docs_lookup description, which names system_enum_values
+     * among the operations it accepts and no longer counts them.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 170444;
+    private static final int DOCUMENT_BUDGET = 170476;
 
     private LiveServer server;
 

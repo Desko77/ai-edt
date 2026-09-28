@@ -158,6 +158,46 @@ public class FacadeF3dTest
         assertFalse(description.isEmpty());
     }
 
+    /**
+     * The description is what a client reads before calling, so an operation it leaves out is one
+     * nobody calls: {@code system_enum_values} worked and was named nowhere a caller would look.
+     */
+    @Test
+    public void docsLookupDescriptionNamesEveryOperationTheFacadeAccepts()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "not_a_real_operation"); //$NON-NLS-1$ //$NON-NLS-2$
+        String refusal = new DocsLookupFacadeTool().execute(params);
+
+        // The "Allowed:" list is the catalog the facade refuses against, and that branch answers
+        // without reaching any tool, so the whole vocabulary is readable here.
+        int at = refusal.indexOf("Allowed: "); //$NON-NLS-1$
+        assertTrue("the refusal does not list what the facade accepts: " + refusal, at > 0); //$NON-NLS-1$
+        String allowed = refusal.substring(at + "Allowed: ".length()); //$NON-NLS-1$
+        allowed = allowed.substring(0, allowed.indexOf('"'));
+
+        String description = new DocsLookupFacadeTool().getDescription();
+        for (String operation : allowed.split(" / ")) //$NON-NLS-1$
+        {
+            assertTrue("the description does not name the operation " //$NON-NLS-1$
+                + operation.trim() + ": " + description, //$NON-NLS-1$
+                description.contains(operation.trim()));
+        }
+    }
+
+    /**
+     * The description carried the sentence "Both operations are read-only", and it read as the
+     * facade having two operations and needing no preset gate - while {@code execute} gates every
+     * operation it runs under that operation's own name.
+     */
+    @Test
+    public void docsLookupDescriptionDoesNotCountTheOperationsItHas()
+    {
+        String description = new DocsLookupFacadeTool().getDescription();
+        assertFalse("the facade carries three operations, not two: " + description, //$NON-NLS-1$
+            description.contains("Both operations")); //$NON-NLS-1$
+    }
+
     @Test
     public void docsLookupSchemaDeclaresOperationAndKeyParams()
     {

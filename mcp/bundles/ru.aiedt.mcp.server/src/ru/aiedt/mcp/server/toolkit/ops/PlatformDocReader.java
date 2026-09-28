@@ -7,13 +7,14 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.emf.common.util.EList;
-import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
@@ -36,6 +37,7 @@ import com._1c.g5.v8.dt.mcore.Property;
 import com._1c.g5.v8.dt.mcore.Type;
 import com._1c.g5.v8.dt.mcore.TypeContainer;
 import com._1c.g5.v8.dt.mcore.TypeItem;
+import com._1c.g5.v8.dt.mcore.TypeSet;
 import com._1c.g5.v8.dt.platform.IEObjectProvider;
 import com._1c.g5.v8.dt.platform.version.Version;
 
@@ -62,6 +64,15 @@ public final class PlatformDocReader implements IMcpTool
     private static final String MEMBER_PROPERTY = "property"; //$NON-NLS-1$
     private static final String MEMBER_CONSTRUCTOR = "constructor"; //$NON-NLS-1$
     private static final String MEMBER_EVENT = "event"; //$NON-NLS-1$
+
+    /** How many results one call returns when the caller names no bound. */
+    private static final int DEFAULT_LIMIT = 50;
+
+    /** The most results one call may return, whatever the caller asks for. */
+    private static final int MAX_LIMIT = 200;
+
+    /** How many names of the register a refusal prints as the ones this register knows. */
+    private static final int KNOWN_NAMES_LIMIT = 30;
 
     @Override
     public String getName()
@@ -130,12 +141,13 @@ public final class PlatformDocReader implements IMcpTool
         }
 
         // A project was named to pick the platform version. One that resolves to no version is
-        // refused rather than answered from the newest platform installed: the caller asked what
-        // one configuration's platform offers, and help for another version reads the same.
+        // refused rather than answered from another version: the caller asked what one
+        // configuration's platform offers, and help for another version reads the same.
         if (projectName != null && !projectName.isEmpty() && getProjectVersion(projectName) == null)
         {
             return "Error: project '" + projectName + "' is not in this workspace, or carries no " //$NON-NLS-1$ //$NON-NLS-2$
-                + "platform version. Omit projectName to read the newest platform installed."; //$NON-NLS-1$
+                + "platform version. Omit projectName to read the newest platform version this " //$NON-NLS-1$
+                + "workspace uses."; //$NON-NLS-1$
         }
 
         if (category == null || category.isEmpty())
@@ -151,17 +163,16 @@ public final class PlatformDocReader implements IMcpTool
             language = "en"; //$NON-NLS-1$
         }
 
-        int limit = 50;
-        if (limitStr != null && !limitStr.isEmpty())
+        int limit = DEFAULT_LIMIT;
+        Integer asked = (limitStr == null || limitStr.isEmpty()) ? null : readLimit(limitStr);
+        if (asked != null)
         {
-            try
+            if (asked.intValue() <= 0)
             {
-                limit = Math.min((int)Double.parseDouble(limitStr), 200);
+                // Zero or less asks for an answer holding nothing.
+                return "Error: the 'limit' parameter must be a positive number, got: " + limitStr; //$NON-NLS-1$
             }
-            catch (NumberFormatException e)
-            {
-                // keep the default
-            }
+            limit = Math.min(asked.intValue(), MAX_LIMIT);
         }
 
         boolean useRussian = "ru".equalsIgnoreCase(language); //$NON-NLS-1$
@@ -202,101 +213,169 @@ public final class PlatformDocReader implements IMcpTool
         }
 
         IEObjectProvider.Registry registry = IEObjectProvider.Registry.INSTANCE;
-        IEObjectProvider typeProvider = registry.get(McorePackage.Literals.TYPE, version);
-        boolean typeProviderHasContent = false;
-        if (typeProvider != null)
+        // The register of type items holds types and type sets under one name space, which is why a
+        // name such as СправочникСсылка is found at all. The register of types is asked only when the
+        // item one answers with nothing, so an install that lists the two separately still answers.
+        IEObjectProvider provider = registry.get(McorePackage.Literals.TYPE_ITEM, version);
+        if (!hasContent(provider))
         {
-            Iterable<IEObjectDescription> typeDes = typeProvider.getEObjectDescriptions(null);
-            if (typeDes != null && typeDes.iterator().hasNext())
-            {
-                typeProviderHasContent = true;
-            }
+            provider = registry.get(McorePackage.Literals.TYPE, version);
         }
-
-        IEObjectProvider typeItemProvider = registry.get(McorePackage.Literals.TYPE_ITEM, version);
-        if (!typeProviderHasContent)
-        {
-            typeProvider = typeItemProvider;
-        }
-
-        if (typeProvider == null)
+        if (!hasContent(provider))
         {
             return "Error: unable to obtain the type provider - make sure the EDT workspace is open."; //$NON-NLS-1$
         }
 
-        Type foundType = null;
-        List<String> availableTypes = new ArrayList<>();
+        Iterable<IEObjectDescription> descriptions = provider.getEObjectDescriptions(null);
+        List<String> availableTypes = knownNames(descriptions, KNOWN_NAMES_LIMIT);
 
-        Iterable<IEObjectDescription> descriptions = typeProvider.getEObjectDescriptions(null);
+        Type foundType = null;
+        TypeSet foundSet = null;
         if (descriptions != null)
         {
             for (IEObjectDescription desc : descriptions)
             {
-                String fullName = desc.getName().toString();
-                String lastSegment = desc.getName().getLastSegment();
-
-                if (availableTypes.size() < 30)
+                if (!isDocumentable(desc.getEClass()) || !namedAs(desc, typeName))
                 {
-                    availableTypes.add(lastSegment != null ? lastSegment : fullName);
+                    continue;
                 }
 
-                if (fullName.equalsIgnoreCase(typeName)
-                    || (lastSegment != null && lastSegment.equalsIgnoreCase(typeName)))
+                EObject resolved = resolveTypeItem(desc);
+                // A type wins over a set of the same name, and the scan goes on looking for one: the
+                // register has no order to rely on, and stopping at the first match would make which
+                // of the two answers the call depend on the order the index happened to hand them in.
+                if (resolved instanceof Type)
                 {
-                    EObject resolved = desc.getEObjectOrProxy();
-                    if (resolved instanceof Type)
-                    {
-                        if (resolved.eIsProxy())
-                        {
-                            URI uri = desc.getEObjectURI();
-                            try
-                            {
-                                ResourceSetImpl tempResourceSet = new ResourceSetImpl();
-                                resolved = EcoreUtil.resolve(resolved, tempResourceSet);
-                            }
-                            catch (Exception e)
-                            {
-                                Activator.logError("Failed to resolve type proxy: " + uri, e); //$NON-NLS-1$
-                            }
-                        }
-                        if (!resolved.eIsProxy())
-                        {
-                            foundType = (Type)resolved;
-                            break;
-                        }
-                    }
+                    foundType = (Type)resolved;
+                    break;
+                }
+                if (foundSet == null && resolved instanceof TypeSet)
+                {
+                    foundSet = (TypeSet)resolved;
                 }
             }
         }
 
-        if (foundType == null)
+        if (foundType != null)
         {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Error: unable to locate type: " + typeName + "\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            sb.append("Known types (first " + availableTypes.size() + "):\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            if (availableTypes.isEmpty())
+            return buildTypeDocumentation(foundType, memberName, memberType, limit, useRussian, version);
+        }
+        if (foundSet != null)
+        {
+            return describeTypeSet(foundSet, memberName, limit, useRussian, version);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Error: unable to locate type: " + typeName + "\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        sb.append(platformLine(version));
+        sb.append("Known types (first " + availableTypes.size() + "):\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (availableTypes.isEmpty())
+        {
+            sb.append("(no types were found - the provider may be empty)\n"); //$NON-NLS-1$
+        }
+        else
+        {
+            for (String availType : availableTypes)
             {
-                sb.append("(no types were found - the provider may be empty)\n"); //$NON-NLS-1$
+                sb.append("- " + availType + "\n"); //$NON-NLS-1$ //$NON-NLS-2$
             }
-            else
+            if (availableTypes.size() >= KNOWN_NAMES_LIMIT)
             {
-                for (String availType : availableTypes)
-                {
-                    sb.append("- " + availType + "\n"); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                if (availableTypes.size() >= 30)
-                {
-                    sb.append("... (additional types not shown)\n"); //$NON-NLS-1$
-                }
+                sb.append("... (additional types not shown)\n"); //$NON-NLS-1$
             }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Renders what is known about a set of types.
+     * <p>
+     * A name such as {@code СправочникСсылка} stands for any reference rather than for one type, and
+     * the register keeps such a name as a type set. It has no members and no context of its own - the
+     * methods and properties belong to the types it covers - so the call answers which types those
+     * are instead of refusing a name the register holds.
+     * </p>
+     *
+     * @param typeSet the set that was found, never <code>null</code>
+     * @param memberName the member the caller asked for, or <code>null</code> for the set itself; a
+     *        set has no members, so asking for one is refused
+     * @param limit how many names of the contained types to print at most
+     * @param useRussian whether the names are rendered in Russian
+     * @param version the platform version this answer came from
+     * @return the Markdown answer, or the refusal when a member was asked for
+     */
+    static String describeTypeSet(TypeSet typeSet, String memberName, int limit, boolean useRussian,
+        Version version)
+    {
+        String displayName = typeItemName(typeSet, useRussian);
+        // The name in the other language, which is what a reader of the opposite preference sees.
+        String altName = typeItemName(typeSet, !useRussian);
+        String shownName = displayName != null ? displayName : "Unnamed"; //$NON-NLS-1$
+
+        if (memberName != null && !memberName.isEmpty())
+        {
+            return "Error: '" + shownName + "' is a set of types, not one type: it has no members " //$NON-NLS-1$ //$NON-NLS-2$
+                + "and no context of its own. Ask instead for a member of one of the types it " //$NON-NLS-1$
+                + "covers.\n\n" //$NON-NLS-1$
+                + platformLine(version);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("# " + shownName); //$NON-NLS-1$
+        if (altName != null && !altName.equals(shownName))
+        {
+            sb.append(" / " + altName); //$NON-NLS-1$
+        }
+        sb.append("\n\n"); //$NON-NLS-1$
+        sb.append(platformLine(version));
+        sb.append("**Kind:** set of types - a name that stands for any of the types below\n\n"); //$NON-NLS-1$
+        sb.append("*A set of types has no members and no context of its own; methods and properties " //$NON-NLS-1$
+            + "are read from the type that carries them.*\n\n"); //$NON-NLS-1$
+
+        EList<Type> contained = typeSet.getBaseTypes();
+        int total = contained == null ? 0 : contained.size();
+        sb.append("**Types in the set (" + total + "):**\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (total == 0)
+        {
+            sb.append("*The set lists no types.*\n"); //$NON-NLS-1$
             return sb.toString();
         }
 
-        return buildTypeDocumentation(foundType, memberName, memberType, limit, useRussian);
+        int shown = 0;
+        for (Type containedType : contained)
+        {
+            if (shown >= limit)
+            {
+                break;
+            }
+            String name = typeItemName(containedType, useRussian);
+            if (name != null)
+            {
+                sb.append("- " + MarkdownTableHelper.escapeMarkdown(name) + "\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                shown++;
+            }
+        }
+        if (total > shown)
+        {
+            sb.append("... (" + (total - shown) + " more not shown)\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return sb.toString();
     }
 
-    private String buildTypeDocumentation(Type type, String memberName, String memberType, int limit,
-        boolean useRussian)
+    /**
+     * Renders one platform type: what it supports, and its constructors, methods, properties and
+     * events.
+     *
+     * @param type the type to describe, never <code>null</code>
+     * @param memberName keep only members whose name matches this text, or <code>null</code> for all
+     * @param memberType the one member kind to print: method, property, constructor, event or all
+     * @param limit how many members to print at most
+     * @param useRussian whether the names are rendered in Russian
+     * @param version the platform version this answer came from
+     * @return the Markdown answer
+     */
+    String buildTypeDocumentation(Type type, String memberName, String memberType, int limit,
+        boolean useRussian, Version version)
     {
         StringBuilder sb = new StringBuilder();
 
@@ -308,6 +387,7 @@ public final class PlatformDocReader implements IMcpTool
             sb.append(" / " + altName); //$NON-NLS-1$
         }
         sb.append("\n\n"); //$NON-NLS-1$
+        sb.append(platformLine(version));
 
         sb.append("**Type Summary:**\n"); //$NON-NLS-1$
         sb.append("- Supports iteration: " + (type.isIterable() ? "Yes" : "No") + "\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -424,7 +504,9 @@ public final class PlatformDocReader implements IMcpTool
             }
         }
 
-        if (count >= limit)
+        // A bound of zero or less holds nothing to truncate. The caller's bound is refused before it
+        // gets here; this keeps the truncation notice off an answer built by any other route.
+        if (limit > 0 && count >= limit)
         {
             sb.append("\n*Output truncated to " + limit + " entries.*\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -528,6 +610,7 @@ public final class PlatformDocReader implements IMcpTool
         {
             StringBuilder sb = new StringBuilder();
             sb.append("Error: no built-in function named: " + functionName + "\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append(platformLine(version));
             sb.append("Known global methods (first " + availableMethods.size() + "):\n"); //$NON-NLS-1$ //$NON-NLS-2$
             if (availableMethods.isEmpty())
             {
@@ -547,10 +630,18 @@ public final class PlatformDocReader implements IMcpTool
             return sb.toString();
         }
 
-        return buildBuiltinMethodDocumentation(foundMethod, useRussian);
+        return buildBuiltinMethodDocumentation(foundMethod, useRussian, version);
     }
 
-    private String buildBuiltinMethodDocumentation(Method method, boolean useRussian)
+    /**
+     * Renders one global built-in function, with its signatures and its return type.
+     *
+     * @param method the function to describe, never <code>null</code>
+     * @param useRussian whether the names are rendered in Russian
+     * @param version the platform version this answer came from
+     * @return the Markdown answer
+     */
+    private String buildBuiltinMethodDocumentation(Method method, boolean useRussian, Version version)
     {
         StringBuilder sb = new StringBuilder();
 
@@ -562,6 +653,7 @@ public final class PlatformDocReader implements IMcpTool
             sb.append(" / " + altName); //$NON-NLS-1$
         }
         sb.append("\n\n"); //$NON-NLS-1$
+        sb.append(platformLine(version));
 
         sb.append("**Kind:** Global built-in function\n\n"); //$NON-NLS-1$
 
@@ -608,15 +700,20 @@ public final class PlatformDocReader implements IMcpTool
     {
         if (projectName == null || projectName.isEmpty())
         {
+            // The newest version this workspace uses, which is what the refusal for an unknown
+            // project promises. A workspace holds several configurations, and the first one listed
+            // may be on an older version.
             IV8ProjectManager v8pm = Activator.getDefault().getV8ProjectManager();
-            if (v8pm != null)
+            if (v8pm == null)
             {
-                for (IV8Project project : v8pm.getProjects())
-                {
-                    return project.getVersion();
-                }
+                return null;
             }
-            return null;
+            List<Version> versions = new ArrayList<>();
+            for (IV8Project project : v8pm.getProjects())
+            {
+                versions.add(project.getVersion());
+            }
+            return newestOf(versions);
         }
 
         try
@@ -648,6 +745,202 @@ public final class PlatformDocReader implements IMcpTool
             Activator.logError("Failed to resolve project version", e); //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * Reads the number the caller bounded the answer with.
+     *
+     * @param raw the text of the 'limit' argument
+     * @return the number it holds, or <code>null</code> when it holds none
+     */
+    static Integer readLimit(String raw)
+    {
+        if (raw == null || raw.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            return Integer.valueOf((int)Double.parseDouble(raw));
+        }
+        catch (NumberFormatException e)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * Says whether a register answers with anything at all.
+     * <p>
+     * A register for a version whose bundle is not installed is not absent but empty, so asking one of
+     * those answers nothing and reads as a name the platform does not have. An empty register is
+     * passed over for one that holds something.
+     * </p>
+     *
+     * @param provider the register to ask, may be <code>null</code>
+     * @return <code>true</code> when it lists at least one object
+     */
+    static boolean hasContent(IEObjectProvider provider)
+    {
+        if (provider == null)
+        {
+            return false;
+        }
+        Iterable<IEObjectDescription> descriptions = provider.getEObjectDescriptions(null);
+        return descriptions != null && descriptions.iterator().hasNext();
+    }
+
+    /**
+     * Says whether an index entry describes something this tool can answer about: a type, or a set of
+     * types.
+     * <p>
+     * The register lists both under one name space. A name the call would refuse must not be printed
+     * as one it knows, so this one question decides both the list of known names and the acceptance of
+     * a name.
+     * </p>
+     *
+     * @param eClass the class an index entry carries, may be <code>null</code>
+     * @return <code>true</code> for a type or a type set
+     */
+    static boolean isDocumentable(EClass eClass)
+    {
+        return eClass != null && (McorePackage.Literals.TYPE.isSuperTypeOf(eClass)
+            || McorePackage.Literals.TYPE_SET.isSuperTypeOf(eClass));
+    }
+
+    /**
+     * Collects the names a refusal prints as the ones the register knows.
+     *
+     * @param descriptions the register's entries, may be <code>null</code>
+     * @param max how many names to collect at most
+     * @return the names, in the order the register hands them over
+     */
+    static List<String> knownNames(Iterable<IEObjectDescription> descriptions, int max)
+    {
+        List<String> names = new ArrayList<>();
+        if (descriptions == null)
+        {
+            return names;
+        }
+        for (IEObjectDescription desc : descriptions)
+        {
+            if (names.size() >= max)
+            {
+                break;
+            }
+            if (!isDocumentable(desc.getEClass()))
+            {
+                continue;
+            }
+            String lastSegment = desc.getName().getLastSegment();
+            String name = lastSegment != null ? lastSegment : desc.getName().toString();
+            if (!names.contains(name))
+            {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Says whether an index entry carries the name the caller asked for.
+     *
+     * @param desc the entry to compare, never <code>null</code>
+     * @param typeName the name the caller asked for, never <code>null</code>
+     * @return <code>true</code> when the full name or its last segment matches, ignoring case
+     */
+    static boolean namedAs(IEObjectDescription desc, String typeName)
+    {
+        if (desc.getName().toString().equalsIgnoreCase(typeName))
+        {
+            return true;
+        }
+        String lastSegment = desc.getName().getLastSegment();
+        return lastSegment != null && lastSegment.equalsIgnoreCase(typeName);
+    }
+
+    /**
+     * Hands back the object an index entry stands for.
+     *
+     * @param desc the entry to resolve, never <code>null</code>
+     * @return the resolved object, or <code>null</code> when it could not be resolved
+     */
+    static EObject resolveTypeItem(IEObjectDescription desc)
+    {
+        EObject resolved = desc.getEObjectOrProxy();
+        if (resolved == null)
+        {
+            return null;
+        }
+        if (resolved.eIsProxy())
+        {
+            try
+            {
+                resolved = EcoreUtil.resolve(resolved, new ResourceSetImpl());
+            }
+            catch (Exception e)
+            {
+                Activator.logError("Failed to resolve type proxy: " + desc.getEObjectURI(), e); //$NON-NLS-1$
+                return null;
+            }
+        }
+        return resolved.eIsProxy() ? null : resolved;
+    }
+
+    /**
+     * Picks the newest of the platform versions a workspace uses.
+     *
+     * @param versions the versions to compare, may hold <code>null</code>s and empty versions
+     * @return the newest one, or <code>null</code> when none of them names a version
+     */
+    static Version newestOf(Collection<Version> versions)
+    {
+        if (versions == null)
+        {
+            return null;
+        }
+        Version newest = null;
+        for (Version version : versions)
+        {
+            if (version == null || Version.EMPTY_VERSION.equals(version))
+            {
+                continue;
+            }
+            if (newest == null || version.isGreaterThan(newest))
+            {
+                newest = version;
+            }
+        }
+        return newest;
+    }
+
+    /**
+     * Names the platform version an answer was built from, so a caller who reads help for one version
+     * can tell which one it got.
+     *
+     * @param version the version the answer came from, may be <code>null</code>
+     * @return a Markdown line with a blank line after it, or the empty string when there is no version
+     */
+    static String platformLine(Version version)
+    {
+        return version == null ? "" : "*Platform version: " + version + "*\n\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * Names a type item in the language the caller asked for.
+     *
+     * @param item the item to name, never <code>null</code>
+     * @param useRussian whether the Russian name comes first
+     * @return the name, or <code>null</code> when the item carries none in either language
+     */
+    private static String typeItemName(TypeItem item, boolean useRussian)
+    {
+        String name = useRussian ? item.getNameRu() : item.getName();
+        if (name != null)
+        {
+            return name;
+        }
+        return useRussian ? item.getName() : item.getNameRu();
     }
 
     private boolean shouldIncludeMemberType(String memberTypeFilter, String actualType)
