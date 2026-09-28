@@ -1304,8 +1304,9 @@ public final class BmComparisonHelper
             // write in progress; forgetting the handle leaves it running with nothing able to
             // release it. So an unfinished merge keeps its session whatever the intent, and the
             // answer already carries mergeStatus for the caller to act on.
-            keepSession = !closeSession
-                && (intent == Intent.REPORT || mergeStillRunning(outcome));
+            boolean mergeRunning = mergeStillRunning(outcome);
+            keepSession = !closeSession && (intent == Intent.REPORT || mergeRunning);
+            ComparisonSessions.setMergeRunning(held, keepSession && mergeRunning);
             return outcome;
         }
         catch (NoClassDefFoundError absent)
@@ -1405,6 +1406,16 @@ public final class BmComparisonHelper
                 // the exact leak this sweep exists to close. Leave them queued for the next tick.
                 Activator.logDebug("idle sweep: no comparison manager, sessions left queued"); //$NON-NLS-1$
                 return 0;
+            }
+            for (ComparisonSessions.Session merging : ComparisonSessions.mergesRunning())
+            {
+                if (merging.handle instanceof ComparisonProcessHandle)
+                {
+                    ComparisonProcessStatus status =
+                        manager.getStatus((ComparisonProcessHandle)merging.handle);
+                    ComparisonSessions.setMergeRunning(merging,
+                        stillMerging(status == null ? null : status.name()));
+                }
             }
             ComparisonSessions.expireIdle();
             for (ComparisonSessions.Session dropped : ComparisonSessions.drainDropped())
@@ -3384,7 +3395,17 @@ public final class BmComparisonHelper
      */
     private static boolean mergeStillRunning(Outcome outcome)
     {
-        String status = outcome.mergeStatus;
+        return stillMerging(outcome.mergeStatus);
+    }
+
+    /**
+     * Says whether a comparison process status names a merge that has not ended yet.
+     *
+     * @param status the status name, or <code>null</code> when the environment gave none.
+     * @return <code>false</code> for no status and for the finished, discarded and cancelled ends
+     */
+    static boolean stillMerging(String status)
+    {
         return status != null
             && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name())
             && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_DISCARDED.name())
