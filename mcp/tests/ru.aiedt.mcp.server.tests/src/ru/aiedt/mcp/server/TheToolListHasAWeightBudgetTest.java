@@ -59,8 +59,13 @@ public class TheToolListHasAWeightBudgetTest
      * dateFractions and allowedLength on dcs_workshop: add_parameter, set_parameter and add_field
      * write them into the value type.
      * </p>
+     * <p>
+     * Raised from 168428 to 168575 for writeStub on edit_metadata: add_form_event_handler and
+     * add_command_handler append the handler procedure to the form module unless the call turns
+     * that off.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 168428;
+    private static final int DOCUMENT_BUDGET = 168575;
 
     private LiveServer server;
 

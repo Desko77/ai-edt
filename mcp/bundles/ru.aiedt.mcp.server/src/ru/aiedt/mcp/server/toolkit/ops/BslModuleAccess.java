@@ -417,7 +417,7 @@ public final class BslModuleAccess
      * @param token the FQN segment to test
      * @return <code>true</code> when it is one of {@code form}, {@code forms} and their Russian twins
      */
-    private static boolean isFormKeyword(String token)
+    static boolean isFormKeyword(String token)
     {
         return "form".equalsIgnoreCase(token) //$NON-NLS-1$
             || "forms".equalsIgnoreCase(token) //$NON-NLS-1$

@@ -946,7 +946,14 @@ final class FormItemsOps
     }
 
     /**
-     * Adds a new command to an existing form.
+     * Adds a new command to an existing form, or binds the handler to the command of that name.
+     * <p>
+     * With {@code writeStub} (default true) the handler procedure is appended to the form's module
+     * after the command is committed, unless the module already declares it.
+     * </p>
+     *
+     * @param params projectName, formFqn, commandName; optionally title, handler, writeStub, dryRun
+     * @return the answer as JSON
      */
     String opAddFormCommand(Map<String, String> params)
     {
@@ -1007,21 +1014,24 @@ final class FormItemsOps
         {
             return EditMetadataTool.formatFormResult(result, "add_form_command", formFqn); //$NON-NLS-1$
         }
-        // Success: surface the handler name + a hint to add its BSL body (the
-        // platform cannot generate a procedure body inside a BM transaction),
-        // mirroring opAddFormEventHandler.
         ToolResult ok = ToolResult.success()
             .put("operation", "add_form_command") //$NON-NLS-1$ //$NON-NLS-2$
             .put("formFqn", formFqn) //$NON-NLS-1$
             .put("commandName", commandName) //$NON-NLS-1$
             .put("handler", handler) //$NON-NLS-1$
-            .put("message", result != null ? result : "ok") //$NON-NLS-1$ //$NON-NLS-2$
-            .put("hint", //$NON-NLS-1$
-                "Command action wired to handler '" + handler //$NON-NLS-1$
-                    + "'. Add the procedure to the form's Module.bsl via " //$NON-NLS-1$
-                    + "write_module_source mode=append: &НаКлиенте Процедура " //$NON-NLS-1$
-                    + handler + "(Команда) ... КонецПроцедуры - the platform " //$NON-NLS-1$
-                    + "cannot generate procedure bodies inside a BM transaction."); //$NON-NLS-1$
+            .put("message", result != null ? result : "ok"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (JsonUtils.extractBooleanArgument(params, "writeStub", true)) //$NON-NLS-1$
+        {
+            FormModuleStubs.append(project, formFqn, handler, FormModuleStubs.commandHandlerStub(handler),
+                formDryRun).putInto(ok);
+        }
+        else
+        {
+            ok.put("stubWritten", false) //$NON-NLS-1$
+                .put("hint", "Command action wired to handler '" + handler //$NON-NLS-1$ //$NON-NLS-2$
+                    + "'. Add the procedure to the form's Module.bsl via write_module_source " //$NON-NLS-1$
+                    + "mode=append."); //$NON-NLS-1$
+        }
         // Nudge toward EDT naming: a form command is named by its action, not by
         // a "Command"/"Команда" suffix (that reads as machine-generated). EDT
         // itself names command "X", handler "X", and the button "ФормаX".

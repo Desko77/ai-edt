@@ -610,6 +610,8 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("handlerName", //$NON-NLS-1$
                 "BSL handler procedure name for add_form_event_handler (default derived " //$NON-NLS-1$
                     + "from the event / item).") //$NON-NLS-1$
+            .booleanProperty("writeStub", //$NON-NLS-1$
+                "add_form_event_handler / add_command_handler: append the procedure to the form module. Default true.") //$NON-NLS-1$
             .stringProperty("picture", //$NON-NLS-1$
                 "Picture reference for add_decoration elementType=Picture (StdPicture.X / " //$NON-NLS-1$
                     + "CommonPicture.X).") //$NON-NLS-1$
