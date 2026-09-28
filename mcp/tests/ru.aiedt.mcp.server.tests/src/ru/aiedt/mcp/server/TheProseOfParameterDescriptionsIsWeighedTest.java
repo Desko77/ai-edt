@@ -472,6 +472,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * bytes, and this budget weighs parameter descriptions only. Measured addition: 0. The list
      * budget records the sentence. Together with the twenty-eighth: 92481.
      * </p>
+     * <p>
+     * And a thirtieth, by 105, for length, precision, fractionDigits, nonNegative, dateFractions
+     * and allowedLength on dcs_workshop: add_parameter, set_parameter and add_field write them into
+     * the value type, and a client that builds its call from the schema has to see them there.
+     * Together with the twenty-ninth: 92586.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92481;
+    private static final int DOCUMENT_PROSE = 92586;
 }
