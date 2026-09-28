@@ -9,10 +9,13 @@ package ru.aiedt.mcp.server.support;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import org.eclipse.jface.preference.PreferenceStore;
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.settings.HistorySettings;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 
 /**
@@ -83,5 +86,39 @@ public class TheFullTextOutlivesTheBufferTest
     {
         // Nothing is written and nothing throws: the call it belonged to has been cleared away.
         HistoryFullText.write("id", "tool", "args", "result", false, null, 0L); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    }
+
+    @Test
+    public void aPathTheFileSystemCannotNameIsAProblemNotACrash()
+    {
+        // A NUL is not allowed in a path on any platform, so this asks for the one thing
+        // Paths.get refuses outright - which is what a hand-edited preference can carry.
+        HistorySettings settings = settingsWithDiskPath("bad\0path"); //$NON-NLS-1$
+
+        // Every road into the store - write, read, clear and the sweep the server runs at
+        // startup - must come back empty-handed, never throw into the call that only tried to
+        // record itself or into the server that was only starting.
+        HistoryFullText.write("id", "tool", "args", "result", false, settings, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            HistoryFullText.generation());
+        HistoryFullText.read("id", settings); //$NON-NLS-1$
+        HistoryFullText.clear(settings);
+        assertEquals(0, HistoryFullText.sweepOld(settings));
+
+        assertNotNull("the reader of the settings must be told what was wrong", //$NON-NLS-1$
+            HistoryFullText.pathProblem());
+    }
+
+    /**
+     * Settings that keep the full text under a path given as text, valid or not.
+     *
+     * @param diskPath the configured directory, exactly as a preference would carry it
+     * @return the settings to record under
+     */
+    private static HistorySettings settingsWithDiskPath(String diskPath)
+    {
+        PreferenceStore store = new PreferenceStore();
+        store.setValue(PrefKeys.PREF_HISTORY_DISK_ENABLED, true);
+        store.setValue(PrefKeys.PREF_HISTORY_DISK_PATH, diskPath);
+        return HistorySettings.read(store);
     }
 }
