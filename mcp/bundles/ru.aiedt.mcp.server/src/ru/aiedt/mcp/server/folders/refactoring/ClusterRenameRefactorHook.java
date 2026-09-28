@@ -23,14 +23,17 @@ import com._1c.g5.v8.dt.refactoring.core.RefactoringStatus;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.folders.IClusterManager;
+import ru.aiedt.mcp.server.folders.model.ClusterStore;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
 /**
  * Keeps the names in {@code aiedt-clusters.yaml} correct when EDT renames a metadata object.
  * <p>
  * Clusters hold objects by name, so a rename that this contributor does not follow would leave a cluster
- * pointing at a name that no longer exists. It contributes a single post-rename change that rewrites
- * the object's name in every cluster that held it, and only when the object was in a cluster at all.
+ * pointing at a name that no longer exists. It contributes a single post-rename change that rewrites the
+ * object's name, and the names nested under it, in every cluster that held either. The change is
+ * contributed when a cluster holds the object itself or one of its children, and performing it returns
+ * the change that puts the names back.
  * </p>
  */
 public class ClusterRenameRefactorHook
@@ -47,12 +50,29 @@ public class ClusterRenameRefactorHook
             return null;
         }
         IClusterManager service = Activator.getClusterServiceStatic();
-        if (service == null || service.findClusterForObject(project, oldFqn) == null)
+        if (service == null || !holdsObjectOrDescendant(service.getClusterStorage(project), oldFqn))
         {
             return null;
         }
         String newFqn = MarkerHelpers.buildNewFqn(oldFqn, newName);
         return Collections.singletonList(new ClusterFqnRenameChange(project, oldFqn, newFqn));
+    }
+
+    /**
+     * Tells whether a rename of {@code oldFqn} has cluster membership to carry.
+     * <p>
+     * True when a cluster holds that name or a name nested under it. The contributor calls this
+     * before it builds a change, so a cluster that holds only a child of the renamed object is not
+     * skipped.
+     * </p>
+     *
+     * @param storage the project's clusters; <code>null</code> counts as none
+     * @param oldFqn the name being renamed
+     * @return <code>true</code> when the hook must contribute a change
+     */
+    static boolean holdsObjectOrDescendant(ClusterStore storage, String oldFqn)
+    {
+        return storage != null && storage.holdsObjectOrDescendant(oldFqn);
     }
 
     @Override
@@ -83,9 +103,10 @@ public class ClusterRenameRefactorHook
     }
 
     /**
-     * The change that rewrites one object's name across the clusters that held it.
+     * The change that rewrites one object's name, and names nested under it, across the clusters
+     * that held them. Performing it returns the change that writes the previous names back.
      */
-    private static class ClusterFqnRenameChange
+    static class ClusterFqnRenameChange
         extends Change
     {
         private final IProject project;
@@ -119,15 +140,40 @@ public class ClusterRenameRefactorHook
             return new org.eclipse.ltk.core.refactoring.RefactoringStatus();
         }
 
+        /**
+         * Rewrites cluster membership from the old name to the new one.
+         *
+         * @param monitor unused; the rewrite does not report progress
+         * @return the reverse change, which renames the new name back to the old one
+         */
         @Override
         public Change perform(IProgressMonitor monitor)
         {
-            IClusterManager service = Activator.getClusterServiceStatic();
-            if (service != null)
+            apply(Activator.getClusterServiceStatic(), project, oldFqn, newFqn);
+            return new ClusterFqnRenameChange(project, newFqn, oldFqn);
+        }
+
+        /**
+         * Applies one direction of a cluster rename through the given service.
+         * <p>
+         * {@link #perform(IProgressMonitor)} calls this with the running service. A test calls it
+         * with a service of its own, which is the same step undo runs.
+         * </p>
+         *
+         * @param service the cluster service; <code>null</code> applies nothing
+         * @param project the project; <code>null</code> applies nothing
+         * @param from the name to replace
+         * @param to the name to give it
+         * @return whatever {@link IClusterManager#renameObject(IProject, String, String)} returned,
+         *         or <code>false</code> when there is no service or no project
+         */
+        static boolean apply(IClusterManager service, IProject project, String from, String to)
+        {
+            if (service == null || project == null || from == null || to == null)
             {
-                service.renameObject(project, oldFqn, newFqn);
+                return false;
             }
-            return null;
+            return service.renameObject(project, from, to);
         }
 
         @Override

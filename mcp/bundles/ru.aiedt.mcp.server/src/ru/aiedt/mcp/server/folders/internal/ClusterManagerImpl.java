@@ -386,56 +386,48 @@ public class ClusterManagerImpl
 
 
 
+    /**
+     * Creates a cluster at a path and saves it.
+     * <p>
+     * When the file refuses the write the cluster is not kept and listeners are not told it
+     * appeared. A full path that is already taken answers {@code null} the same way, without a write.
+     * </p>
+     *
+     * @param project the project
+     * @param name the cluster name
+     * @param path the collection path; may be {@code null} for a root cluster
+     * @param description the description; may be {@code null}
+     * @return the created cluster, or {@code null} if the full path was taken or the file was not saved
+     */
     @Override
-
     public Cluster createCluster(IProject project, String name, String path, String description)
-
     {
-
         Cluster created;
-
         cacheLock.writeLock().lock();
-
         try
-
         {
-
             ClusterStore storage = loadStorageLocked(project);
-
             if (storage.getClusterByFullPath(buildFullPath(path, name)) != null)
-
             {
-
                 return null;
-
             }
-
             Cluster cluster = new Cluster(name, path);
-
             cluster.setDescription(description);
-
             cluster.setOrder(nextOrderAtPath(storage, path));
-
             storage.addCluster(cluster);
-
-            repository.save(project, storage);
-
+            if (!repository.save(project, storage))
+            {
+                projectStorageCache.remove(project.getName());
+                return null;
+            }
             created = cluster;
-
         }
-
         finally
-
         {
-
             cacheLock.writeLock().unlock();
-
         }
-
         fireClustersChanged(project);
-
         return created;
-
     }
 
 
@@ -753,71 +745,45 @@ public class ClusterManagerImpl
 
 
     /**
-
-     * Applies an edit to a project's storage and, if it changed anything, saves and notifies.
-
+     * Applies an edit to a project's storage and, when the edit changed anything and the file
+     * accepted the write, notifies listeners.
      * <p>
-
-     * The edit runs under the write lock, so the storage cannot be read half-changed elsewhere; the
-
-     * notification is sent after the lock is dropped.
-
+     * The edit runs under the write lock. A save that fails drops the cached storage, so the next
+     * read reloads the file that is actually on disk, and answers {@code false} without notifying
+     * listeners.
      * </p>
-
      *
-
      * @param project the project
-
      * @param edit the edit, returning whether it changed anything
-
-     * @return whatever the edit returned
-
+     * @return {@code true} only when the edit changed the storage and the file was saved
      */
-
     private boolean mutate(IProject project, Predicate<ClusterStore> edit)
-
     {
-
-        boolean changed;
-
+        boolean changed = false;
+        boolean saved = false;
         cacheLock.writeLock().lock();
-
         try
-
         {
-
             ClusterStore storage = loadStorageLocked(project);
-
             changed = edit.test(storage);
-
             if (changed)
-
             {
-
-                repository.save(project, storage);
-
+                saved = repository.save(project, storage);
+                if (!saved)
+                {
+                    projectStorageCache.remove(project.getName());
+                }
             }
-
         }
-
         finally
-
         {
-
             cacheLock.writeLock().unlock();
-
         }
-
-        if (changed)
-
+        if (changed && saved)
         {
-
             fireClustersChanged(project);
-
         }
-
-        return changed;
-
+        return changed && saved;
     }
 
 

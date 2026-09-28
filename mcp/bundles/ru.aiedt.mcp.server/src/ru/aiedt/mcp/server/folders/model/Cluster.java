@@ -229,6 +229,47 @@ public class Cluster
     }
 
     /**
+     * Rewrites a held name and every held name nested under it, keeping each one's position.
+     * <p>
+     * A nested name is one that continues past {@code oldFqn} with a dot, so
+     * {@code Catalog.ProductsExtra} is not nested under {@code Catalog.Products}. The exact name
+     * and its descendants are rewritten in one pass over the names as they stand now.
+     * </p>
+     *
+     * @param oldFqn the current fully qualified name
+     * @param newFqn the fully qualified name to give it
+     * @return <code>true</code> if at least one held name was rewritten
+     */
+    public boolean renameChildTree(String oldFqn, String newFqn)
+    {
+        if (oldFqn == null || newFqn == null || oldFqn.isEmpty() || oldFqn.equals(newFqn))
+        {
+            return false;
+        }
+        String nestedPrefix = oldFqn + "."; //$NON-NLS-1$
+        boolean renamed = false;
+        for (int i = 0; i < children.size(); i++)
+        {
+            String child = children.get(i);
+            if (child == null)
+            {
+                continue;
+            }
+            if (child.equals(oldFqn))
+            {
+                children.set(i, newFqn);
+                renamed = true;
+            }
+            else if (child.startsWith(nestedPrefix))
+            {
+                children.set(i, newFqn + child.substring(oldFqn.length()));
+                renamed = true;
+            }
+        }
+        return renamed;
+    }
+
+    /**
      * Tells whether the cluster holds the given object.
      *
      * @param objectFqn the fully qualified name of the object

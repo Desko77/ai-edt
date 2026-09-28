@@ -574,4 +574,87 @@ public class ClusterModelTest
     {
         assertFalse(storage.renameObject("Missing", "NewName"));
     }
+
+    @Test
+    public void renameObjectRewritesADescendantHeldInTheSameCluster()
+    {
+        Cluster cluster = new Cluster("Shelf", "Catalogs");
+        cluster.addChild("Catalog.Products");
+        cluster.addChild("Catalog.Products.CatalogAttribute.X");
+        storage.addCluster(cluster);
+
+        assertTrue(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+
+        assertEquals(Arrays.asList("Catalog.Goods", "Catalog.Goods.CatalogAttribute.X"),
+            cluster.getChildren());
+    }
+
+    @Test
+    public void renameObjectRewritesADescendantWhenTheParentIsNotHeld()
+    {
+        Cluster cluster = new Cluster("Shelf", "Catalogs");
+        cluster.addChild("Catalog.Products.CatalogAttribute.X");
+        storage.addCluster(cluster);
+
+        assertTrue(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+        assertEquals(Arrays.asList("Catalog.Goods.CatalogAttribute.X"), cluster.getChildren());
+    }
+
+    @Test
+    public void renameObjectLeavesANameThatOnlySharesAPrefix()
+    {
+        Cluster cluster = new Cluster("Shelf", "Catalogs");
+        cluster.addChild("Catalog.ProductsExtra");
+        storage.addCluster(cluster);
+
+        assertFalse(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+        assertTrue(cluster.containsChild("Catalog.ProductsExtra"));
+    }
+
+    @Test
+    public void holdsObjectOrDescendantSeesANestedName()
+    {
+        Cluster cluster = new Cluster("Shelf", "Catalogs");
+        cluster.addChild("Catalog.Products.CatalogAttribute.X");
+        storage.addCluster(cluster);
+
+        assertTrue(storage.holdsObjectOrDescendant("Catalog.Products"));
+        assertTrue(storage.holdsObjectOrDescendant("Catalog.Products.CatalogAttribute.X"));
+        assertFalse(storage.holdsObjectOrDescendant("Catalog.ProductsExtra"));
+        assertFalse(storage.holdsObjectOrDescendant("Catalog.Other"));
+    }
+
+    @Test
+    public void removingAParentClusterReleasesObjectsHeldByNestedClusters()
+    {
+        storage.addCluster(new Cluster("Parent", "Catalogs"));
+        Cluster child = new Cluster("Child", "Catalogs/Parent");
+        child.addChild("Catalog.Products.Attribute.X");
+        storage.addCluster(child);
+        Cluster deep = new Cluster("Grand", "Catalogs/Parent/Child");
+        deep.addChild("Catalog.Products.TabularSection.Rows");
+        storage.addCluster(deep);
+
+        assertTrue(storage.removeCluster("Catalogs/Parent"));
+
+        assertEquals(0, storage.getClusterCount());
+        assertNull(storage.findClusterForObject("Catalog.Products.Attribute.X"));
+        assertNull(storage.findClusterForObject("Catalog.Products.TabularSection.Rows"));
+        assertFalse(storage.getClusteredObjectsAtPath("Catalogs")
+            .contains("Catalog.Products.Attribute.X"));
+    }
+
+    @Test
+    public void removingAParentClusterLeavesAPrefixSibling()
+    {
+        storage.addCluster(new Cluster("Parent", "Catalogs"));
+        Cluster sibling = new Cluster("Child", "Catalogs/ParentExtra");
+        sibling.addChild("Catalog.Keep");
+        storage.addCluster(sibling);
+
+        assertTrue(storage.removeCluster("Catalogs/Parent"));
+
+        assertNotNull(storage.findClusterForObject("Catalog.Keep"));
+        assertNotNull(storage.getClusterByFullPath("Catalogs/ParentExtra/Child"));
+    }
 }

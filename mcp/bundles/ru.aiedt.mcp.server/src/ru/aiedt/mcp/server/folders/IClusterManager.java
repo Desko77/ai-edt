@@ -94,7 +94,8 @@ public interface IClusterManager
     boolean updateCluster(IProject project, String oldFullPath, String newName, String description);
 
     /**
-     * Deletes a cluster. Any objects it held return to their normal place in the collection.
+     * Deletes a cluster and any clusters nested under it. Objects those clusters held return to
+     * their normal place in the collection.
      *
      * @param project the project
      * @param fullPath the full path of the cluster to delete
@@ -161,12 +162,13 @@ public interface IClusterManager
     void refresh(IProject project);
 
     /**
-     * Renames an object's fully qualified name in every cluster that named it. Refactoring support.
+     * Renames an object's fully qualified name in every cluster that named it, and rewrites names
+     * nested under it the same way. Refactoring support.
      *
      * @param project the project
      * @param oldFqn the current fully qualified name
      * @param newFqn the fully qualified name to give it
-     * @return <code>true</code> if at least one cluster named the old FQN
+     * @return <code>true</code> if at least one cluster named the old FQN or a name nested under it
      */
     boolean renameObject(IProject project, String oldFqn, String newFqn);
 
