@@ -26,7 +26,10 @@ import ru.aiedt.mcp.server.Activator;
  * Tracks file changes in the workspace for scoped validation.
  * <p>
  * Monitors changes to 1C-related files (.bsl, .mdo, .form, .dcs, .mxl)
- * and provides API for querying which files were modified since last reset.
+ * and provides API for querying which files were modified. The set
+ * accumulates from the moment the tracker initializes until shutdown -
+ * nothing clears it in between - so the window {@code scope=session}
+ * reports is the server's lifetime, not one client session.
  * This enables scoped validation - checking only changed objects instead
  * of the entire project.
  * </p>
@@ -131,7 +134,11 @@ public final class SessionChangeTracker
     }
 
     /**
-     * Clears all tracked modifications (e.g., after validation).
+     * Clears all tracked modifications.
+     * <p>
+     * Nothing in the server calls this between initialization and shutdown; it exists for tests
+     * isolating their state from one another.
+     * </p>
      */
     public static void clear()
     {

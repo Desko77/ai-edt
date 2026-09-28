@@ -116,7 +116,7 @@ public class ProblemSummaryReader
                     .merge(effective, 1, Integer::sum);
             });
 
-            return render(grandTotals, byProject);
+            return render(grandTotals, byProject, projectName);
         }
         catch (Exception e)
         {
@@ -126,18 +126,26 @@ public class ProblemSummaryReader
 
     /**
      * Renders the overall and per-project tables.
+     * <p>
+     * Package-visible so the wording can be driven by a test: when the count was scoped to one
+     * project, the heading and the total row name that project - a page titled "Workspace Totals"
+     * over one project's numbers reads as the whole workspace having that few problems.
+     * </p>
      *
-     * @param grandTotals the counts by severity across everything
+     * @param grandTotals the counts by severity across everything counted
      * @param byProject the counts by severity per project
+     * @param projectName the project the count was scoped to, or <code>null</code>/empty for the
+     *        whole workspace
      * @return the markdown
      */
-    private static String render(Map<MarkerSeverity, Integer> grandTotals,
-        Map<String, Map<MarkerSeverity, Integer>> byProject)
+    static String render(Map<MarkerSeverity, Integer> grandTotals,
+        Map<String, Map<MarkerSeverity, Integer>> byProject, String projectName)
     {
+        boolean scoped = projectName != null && !projectName.isEmpty();
         StringBuilder builder = new StringBuilder();
         builder.append("## Validation Problem Counts\n\n"); //$NON-NLS-1$
 
-        builder.append("### Workspace Totals\n\n"); //$NON-NLS-1$
+        builder.append("### ").append(scoped ? projectName + " Totals" : "Workspace Totals").append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         builder.append("| Severity | Occurrences |\n"); //$NON-NLS-1$
         builder.append("|----------|-------|\n"); //$NON-NLS-1$
 
@@ -152,7 +160,8 @@ public class ProblemSummaryReader
             }
             builder.append("| ").append(severity.name()).append(" | ").append(count).append(" |\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
-        builder.append("| **GRAND TOTAL** | **").append(grandTotal).append("** |\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.append("| **").append(scoped ? MarkdownTableHelper.escapeForTable(projectName) + " TOTAL" //$NON-NLS-1$ //$NON-NLS-2$
+            : "GRAND TOTAL").append("** | **").append(grandTotal).append("** |\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
         if (byProject.isEmpty())
         {
