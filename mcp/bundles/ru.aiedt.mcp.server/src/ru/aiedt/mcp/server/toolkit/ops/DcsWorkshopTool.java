@@ -5041,6 +5041,20 @@ public class DcsWorkshopTool implements IMcpTool
     /**
      * 1.43.x: sets a property on an existing dataset link, located by the
      * {@code sourceDataSet}+{@code destinationDataSet} pair.
+     * <p>
+     * The setter's answer decides the outcome. A property the link does not carry, or a value it
+     * refuses, is named and refused here - it used to be discarded and answered as "set", which left
+     * the refusal to the write path: the schema reached disk byte-identical to what it held, and the
+     * call came back as {@code schemaUnchanged}, a message that names neither the property nor the
+     * link. The properties of a link are sourceDataSet, destinationDataSet, sourceExpression,
+     * destinationExpression, parameter, parameterListAllowed, linkConditionExpression, startExpression
+     * and required.
+     * </p>
+     *
+     * @param params the call; sourceDataSet and destinationDataSet locate the link, property and
+     *            value name what to write
+     * @param schema the schema.
+     * @return a short report naming the link and the property that was set
      */
     private Object doSetDataSetLinkProperty(Map<String, String> params, EObject schema)
     {
@@ -5058,7 +5072,12 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw notFoundTag(source + "->" + dest, "dataSetLink"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        BmDcsHelper.setProperty(link, property, value);
+        String refused = BmDcsHelper.setProperty(link, property, value);
+        if (refused != null)
+        {
+            throw new RuntimeException("dataset link " + source + " -> " + dest //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " property '" + property + "' was not set: " + refused); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         return "dataset link " + source + " -> " + dest + " property '" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             + property + "' set"; //$NON-NLS-1$
     }
