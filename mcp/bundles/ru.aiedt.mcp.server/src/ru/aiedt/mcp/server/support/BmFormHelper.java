@@ -2407,6 +2407,9 @@ public class BmFormHelper
      * String) on a form item by setter name, coercing the string value to the
      * setter's parameter type via {@link #coerceFormValue}. Returns {@code null} on
      * success, an error description otherwise (setter absent / coercion failed).
+     * A setter-absent refusal names the model class ({@code FormField}, not
+     * {@code FormFieldImpl}) and lists the settable property names; a containment
+     * list feature is refused with a pointer to the item-structure operations.
      */
     String setScalarProperty(Object item, String property, String value)
     {
@@ -2449,6 +2452,28 @@ public class BmFormHelper
             {
                 return "Failed to set " + property + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
             }
+        }
+        if (item instanceof EObject)
+        {
+            // Name the model class (FormField), not the implementation class
+            // (FormFieldImpl), and answer with the same correction the object path
+            // gives: the settable property names. A containment list (a group's
+            // items) is a property the item HAS, only not a scalar one - the
+            // refusal points at the operations that manage list contents.
+            org.eclipse.emf.ecore.EStructuralFeature feature =
+                ((EObject)item).eClass().getEStructuralFeature(property);
+            if (feature instanceof org.eclipse.emf.ecore.EReference
+                && ((org.eclipse.emf.ecore.EReference)feature).isContainment()
+                && feature.isMany())
+            {
+                return "Property '" + property + "' exists on " //$NON-NLS-1$ //$NON-NLS-2$
+                    + ((EObject)item).eClass().getName()
+                    + " but is a list, not a scalar value. Its contents are managed by the " //$NON-NLS-1$
+                    + "item-structure operations (add_field, add_group, add_button, add_table, " //$NON-NLS-1$
+                    + "remove_form_item), not by set_form_item_property. Nothing was changed."; //$NON-NLS-1$
+            }
+            return TextSuggest.propertyNotFound(property, ((EObject)item).eClass().getName(),
+                BmObjectHelper.settablePropertyNames(item));
         }
         return "Property '" + property + "' is absent on " //$NON-NLS-1$ //$NON-NLS-2$
             + item.getClass().getSimpleName();

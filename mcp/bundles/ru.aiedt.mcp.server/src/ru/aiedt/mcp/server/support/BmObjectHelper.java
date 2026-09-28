@@ -1118,8 +1118,23 @@ public final class BmObjectHelper
         {
             return emapResult; // null = success, or a concrete error message
         }
+        return TextSuggest.propertyNotFound(propertyName, obj.eClass().getName(),
+            settablePropertyNames(obj));
+    }
+
+    /**
+     * Names the properties exposed as one-argument {@code setXxx(...)} setters on the
+     * given object, decapitalized the way callers spell them ({@code setVisible} ->
+     * {@code visible}). Shared by the object and the form-item write paths so a wrong
+     * property name earns the same correction from both.
+     *
+     * @param target the object whose public methods are scanned, never <code>null</code>
+     * @return the sorted set of settable property names, never <code>null</code>
+     */
+    public static java.util.SortedSet<String> settablePropertyNames(Object target)
+    {
         java.util.TreeSet<String> settable = new java.util.TreeSet<>();
-        for (Method setterMethod : obj.getClass().getMethods())
+        for (Method setterMethod : target.getClass().getMethods())
         {
             if (setterMethod.getName().startsWith("set") && setterMethod.getName().length() > 3 //$NON-NLS-1$
                 && setterMethod.getParameterCount() == 1)
@@ -1128,7 +1143,7 @@ public final class BmObjectHelper
                     + setterMethod.getName().substring(4));
             }
         }
-        return TextSuggest.propertyNotFound(propertyName, obj.eClass().getName(), settable);
+        return settable;
     }
 
     /** Sentinel: the property is not an EMap-backed localized string. */
