@@ -36,7 +36,10 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExportHelper;
+import ru.aiedt.mcp.server.support.InvalidCharacters;
 import ru.aiedt.mcp.server.support.LineDelimiters;
+import ru.aiedt.mcp.server.support.MetadataGuards;
+import ru.aiedt.mcp.server.support.ModelEditabilityGuard;
 import ru.aiedt.mcp.server.support.FileMarkers;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
@@ -195,6 +198,9 @@ public class ModuleSourceWriter implements IMcpTool
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "Shows what the write would produce without touching the file. Reports diff stats " //$NON-NLS-1$
                     + "(linesBefore, linesAfter, removedLines, addedLines)") //$NON-NLS-1$
+            .booleanProperty("normalizeInvalidCharacters", //$NON-NLS-1$
+                "Replaces the characters BSL has no place for with the plain ones and reports how " //$NON-NLS-1$
+                    + "many and where. Default: true (false writes the text as supplied)") //$NON-NLS-1$
             .booleanProperty("skipSyntaxCheck", //$NON-NLS-1$
                 "Bypasses the BSL syntax check (default: false). At the default, it confirms balanced " //$NON-NLS-1$
                     + "Procedure/EndProcedure, Function/EndFunction, If/EndIf, While/EndDo, " //$NON-NLS-1$
@@ -249,6 +255,8 @@ public class ModuleSourceWriter implements IMcpTool
         boolean skipSyntaxCheck = JsonUtils.extractBooleanArgument(params, "skipSyntaxCheck", false); //$NON-NLS-1$
         boolean validateAfterWrite = JsonUtils.extractBooleanArgument(params, "validateAfterWrite", true); //$NON-NLS-1$
         boolean confirmFullReplace = JsonUtils.extractBooleanArgument(params, "confirmFullReplace", false); //$NON-NLS-1$
+        boolean normalizeInvalidCharacters =
+            JsonUtils.extractBooleanArgument(params, "normalizeInvalidCharacters", true); //$NON-NLS-1$
 
         // --- step 2: validate required parameters ---
         if (projectName == null || projectName.isEmpty())
@@ -338,12 +346,34 @@ public class ModuleSourceWriter implements IMcpTool
                 + "the source in as its entire content)."; //$NON-NLS-1$
         }
 
+        // --- step 6a: the support registry's own answer ---
+        // Asked before anything is read or written, so that a preview is refused exactly as a real
+        // call is, and so that the caller is told which object is closed rather than which file is.
+        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project,
+            resolveFqnForValidation(objectName, modulePath));
+        if (notEditable.blocked)
+        {
+            return "Error: " + notEditable.error + (notEditable.hint == null //$NON-NLS-1$
+                || notEditable.hint.isEmpty() ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
         // -- outer try: steps 7-17 --
         try
         {
             // --- step 7: normalise source line endings ---
             if (source != null)
                 source = source.replace("\r\n", "\n"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            // --- step 7a: replace the characters BSL has no place for ---
+            // Only what is written is touched. oldSource is matched against the file as it stands
+            // and expectedText against what the caller read, so neither may be rewritten here.
+            InvalidCharacters.Report characterFix = new InvalidCharacters.Report();
+            InvalidCharacters.Report sourceFix = normalizeForWrite(source, normalizeInvalidCharacters);
+            characterFix.merge(null, sourceFix);
+            if (sourceFix.changed())
+            {
+                source = sourceFix.text;
+            }
 
             // --- step 8: read current content + BOM ---
             List<String> originalLines;
@@ -510,7 +540,8 @@ public class ModuleSourceWriter implements IMcpTool
                 }
                 case MODE_REPLACE_METHODS:
                 {
-                    ReplaceMethodsResult result = applyReplaceMethods(originalLines, methodsJson);
+                    ReplaceMethodsResult result = applyReplaceMethods(originalLines, methodsJson,
+                        normalizeInvalidCharacters, characterFix);
                     if (result.error != null)
                         return result.error;
                     newLines = result.newLines;
@@ -563,8 +594,8 @@ public class ModuleSourceWriter implements IMcpTool
                     .put("linesBefore", totalOriginal) //$NON-NLS-1$
                     .put("linesAfter", newLines.size()) //$NON-NLS-1$
                     .put("lineDelta", newLines.size() - totalOriginal); //$NON-NLS-1$
-                if (protectionWarning != null)
-                    dryFm.put("protection", protectionWarning); //$NON-NLS-1$
+                if (characterFix.changed())
+                    putCharacterFix(dryFm, characterFix);
                 if (provided != null)
                 {
                     describeProvided(dryFm, provided);
@@ -577,6 +608,8 @@ public class ModuleSourceWriter implements IMcpTool
                     preview.append("**").append(protectionWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
                 if (handlerWarning != null)
                     preview.append("**").append(handlerWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (characterFix.changed())
+                    preview.append(describeCharacterFix(characterFix)).append("\n\n"); //$NON-NLS-1$
                 preview.append("Lines: ").append(totalOriginal).append(" -> ") //$NON-NLS-1$ //$NON-NLS-2$
                     .append(newLines.size()).append("\n\n"); //$NON-NLS-1$
                 return dryFm.wrapContent(preview.toString());
@@ -652,6 +685,9 @@ public class ModuleSourceWriter implements IMcpTool
             if (protectionWarning != null)
                 fm.put("protection", protectionWarning); //$NON-NLS-1$
 
+            if (characterFix.changed())
+                putCharacterFix(fm, characterFix);
+
             if (provided != null)
             {
                 describeProvided(fm, provided);
@@ -687,6 +723,8 @@ public class ModuleSourceWriter implements IMcpTool
                 body.append("\n\n**").append(protectionWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
             if (handlerWarning != null)
                 body.append("\n\n**").append(handlerWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (characterFix.changed())
+                body.append("\n\n").append(describeCharacterFix(characterFix)); //$NON-NLS-1$
 
             if (!duplicateMethods.isEmpty())
             {
@@ -816,6 +854,43 @@ public class ModuleSourceWriter implements IMcpTool
                 return "Error: unrecognized moduleType: " + moduleType + ". Valid values: ObjectModule, " //$NON-NLS-1$ //$NON-NLS-2$
                     + "ManagerModule, FormModule, CommandModule, RecordSetModule, Module"; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Records the character pass in a response front matter.
+     *
+     * @param fm the front matter being built
+     * @param fix what the pass changed; its {@code changed()} is already known to be true
+     */
+    private static void putCharacterFix(YamlFrontMatter fm, InvalidCharacters.Report fix)
+    {
+        fm.put("invalidCharactersReplaced", fix.count); //$NON-NLS-1$
+        fm.put("invalidCharactersPositions", fix.positionsAsText()); //$NON-NLS-1$
+    }
+
+    /**
+     * One line naming what the character pass changed and where.
+     *
+     * @param fix what the pass changed; its {@code changed()} is already known to be true
+     * @return the line, without a trailing newline
+     */
+    private static String describeCharacterFix(InvalidCharacters.Report fix)
+    {
+        return "**" + fix.describe() + " Positions (line:column): " + fix.positionsAsText() + "**"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * Passes text about to be written through the character pass, when the caller asked for it.
+     *
+     * @param text the text about to be written; may be <code>null</code>
+     * @param enabled the caller's {@code normalizeInvalidCharacters} switch
+     * @return what the pass changed; an empty report when the switch is off or there is no text
+     */
+    private static InvalidCharacters.Report normalizeForWrite(String text, boolean enabled)
+    {
+        if (text == null || !enabled)
+            return new InvalidCharacters.Report();
+        return InvalidCharacters.normalize(text);
     }
 
     /**
@@ -958,10 +1033,13 @@ public class ModuleSourceWriter implements IMcpTool
      *
      * @param originalLines the current module
      * @param methodsJson JSON array of {@code {methodName, source}} objects (aliases supported)
+     * @param normalizeInvalidCharacters whether each entry's source is passed through
+     *        {@link InvalidCharacters}
+     * @param characterFix collects what that pass changed, per method
      * @return either the new lines or an error
      */
     private static ReplaceMethodsResult applyReplaceMethods(List<String> originalLines,
-        String methodsJson)
+        String methodsJson, boolean normalizeInvalidCharacters, InvalidCharacters.Report characterFix)
     {
         if (methodsJson == null || methodsJson.trim().isEmpty())
         {
@@ -1011,6 +1089,13 @@ public class ModuleSourceWriter implements IMcpTool
             if (src.length() > MAX_SOURCE_LENGTH)
                 return ReplaceMethodsResult
                     .error("Error: methods[" + i + "] source is longer than the maximum allowed"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            InvalidCharacters.Report fix = normalizeForWrite(src, normalizeInvalidCharacters);
+            if (fix.changed())
+            {
+                src = fix.text;
+                characterFix.merge(name.trim(), fix);
+            }
 
             int[] span = findMethodSpan(originalLines, name.trim());
             if (span == null)

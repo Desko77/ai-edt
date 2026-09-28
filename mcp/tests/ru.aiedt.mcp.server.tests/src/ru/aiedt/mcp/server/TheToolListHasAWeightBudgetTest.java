@@ -64,8 +64,12 @@ public class TheToolListHasAWeightBudgetTest
      * add_command_handler append the handler procedure to the form module unless the call turns
      * that off.
      * </p>
+     * <p>
+     * Raised from 168575 to 168736 for normalizeInvalidCharacters on write_module_source: the
+     * module writer replaces the characters BSL has no place for unless the call turns that off.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 168575;
+    private static final int DOCUMENT_BUDGET = 168736;
 
     private LiveServer server;
 

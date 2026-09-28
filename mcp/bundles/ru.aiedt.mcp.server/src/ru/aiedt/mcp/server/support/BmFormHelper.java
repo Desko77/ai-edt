@@ -338,6 +338,15 @@ public class BmFormHelper
     public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
         FormTransactionAction action)
     {
+        // The support registry is asked before the transaction opens, so a preview is judged by the
+        // same question a real call is. The form belongs to the object its address names in its first
+        // two segments, which is the object that carries the support record.
+        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, formFqn);
+        if (notEditable.blocked)
+        {
+            return "Error: " + notEditable.error + (notEditable.hint == null //$NON-NLS-1$
+                || notEditable.hint.isEmpty() ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         beginWrite(null);
         try
         {

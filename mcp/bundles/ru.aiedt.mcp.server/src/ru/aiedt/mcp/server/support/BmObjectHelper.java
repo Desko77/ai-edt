@@ -445,6 +445,21 @@ public final class BmObjectHelper
             return r;
         }
 
+        // GUARD 0: the support registry's own answer, asked before the transaction opens. It runs
+        // here rather than inside the transaction so that a preview is judged by the same question a
+        // real call is, and so that nothing in the model is touched to find out.
+        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkObject(project, owner);
+        if (notEditable.blocked)
+        {
+            r.error = notEditable.error + (notEditable.hint == null || notEditable.hint.isEmpty()
+                ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+            if (notEditable.tag != null)
+            {
+                r.tags.put(notEditable.tag.name, notEditable.tag.data);
+            }
+            return r;
+        }
+
         long bmId = ((IBmObject) owner).bmGetId();
         try
         {

@@ -484,6 +484,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * that off, and the switch has to be in the schema to be turned off. Measured with the
      * templateType sentence of add_template one byte shorter: 92685.
      * </p>
+     * <p>
+     * Raised from 92685 to 92779 for normalizeInvalidCharacters on write_module_source: the module
+     * writer replaces the characters BSL has no place for unless the call turns that off, and the
+     * switch has to be in the schema to be turned off.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92685;
+    private static final int DOCUMENT_PROSE = 92779;
 }
