@@ -3099,7 +3099,21 @@ public class DcsWorkshopTool implements IMcpTool
         return null;
     }
 
-    private Object doAddField(Map<String, String> params, EObject schema)
+    /**
+     * Adds a field to a dataset of the schema.
+     * <p>
+     * {@code title} becomes the field's presentation, {@code type} its value type, and a
+     * {@code property} / {@code value} pair is set on the field; {@code property=type} (or
+     * {@code valueType}) is read as {@code type}. A property the field does not have, or a type
+     * that could not be applied, refuses the call before the field is added to the dataset.
+     * </p>
+     *
+     * @param params name, dataSetName, and optionally title, type, property and value
+     * @param schema the schema root
+     * @param project the project whose configuration resolves {@code type}, or <code>null</code>
+     * @return what was written, including the text the file must carry
+     */
+    private Object doAddField(Map<String, String> params, EObject schema, IProject project)
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String dataSetName = required(params, "dataSetName"); //$NON-NLS-1$
@@ -3124,6 +3138,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         BmDcsHelper.setProperty(field, "dataPath", name); //$NON-NLS-1$
         BmDcsHelper.setProperty(field, "field", name); //$NON-NLS-1$
+        applyFieldArguments(field, params, project);
         EList<EObject> fields = BmDcsHelper.getEObjectList(dataSet, "getFields"); //$NON-NLS-1$
         if (fields == null)
         {
@@ -3201,6 +3216,72 @@ public class DcsWorkshopTool implements IMcpTool
         // valueType (the parameter's value type) is a TypeDescription - wire it like
         // object-attribute types so the editor shows a typed parameter.
         applyParameterType(parameter, JsonUtils.extractStringArgument(params, "type"), project); //$NON-NLS-1$
+    }
+
+    /**
+     * Applies the optional arguments of {@code add_field} to a field not yet added to its dataset.
+     *
+     * @param field the new dataset field
+     * @param params the call's arguments
+     * @param project the project whose configuration resolves a type, or <code>null</code>
+     * @throws RuntimeException naming the argument when a property is unknown to the field or a
+     *             type could not be applied
+     */
+    private void applyFieldArguments(Object field, Map<String, String> params, IProject project)
+    {
+        String title = JsonUtils.extractStringArgument(params, "title"); //$NON-NLS-1$
+        if (title != null && !title.isEmpty())
+        {
+            setPresentationProperty(field, "title", title); //$NON-NLS-1$
+        }
+        String type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
+        String property = JsonUtils.extractStringArgument(params, "property"); //$NON-NLS-1$
+        String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
+        if (property != null && !property.isEmpty()
+            && ("type".equalsIgnoreCase(property) || "valueType".equalsIgnoreCase(property))) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            if (type == null || type.isEmpty())
+            {
+                type = value;
+            }
+            property = null;
+        }
+        if (type != null && !type.isEmpty())
+        {
+            applyParameterType(field, type, project);
+            if (!hasValueTypes(field))
+            {
+                throw new RuntimeException("Type '" + type + "' could not be applied to the field" //$NON-NLS-1$ //$NON-NLS-2$
+                    + (project == null ? " without a project" : "") //$NON-NLS-1$ //$NON-NLS-2$
+                    + ". Nothing was written."); //$NON-NLS-1$
+            }
+        }
+        if (property != null && !property.isEmpty())
+        {
+            String failed = BmDcsHelper.setProperty(field, property, value);
+            if (failed != null)
+            {
+                throw new RuntimeException("Property '" + property + "' was not applied to the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "field: " + failed + ". Nothing was written."); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /**
+     * Whether an object's value type names at least one type.
+     *
+     * @param typed the object carrying {@code getValueType()}
+     * @return <code>true</code> when the value type is set and lists a type
+     */
+    private boolean hasValueTypes(Object typed)
+    {
+        Object valueType = invokeGetter(typed, "getValueType"); //$NON-NLS-1$
+        if (valueType == null)
+        {
+            return false;
+        }
+        Object types = invokeGetter(valueType, "getTypes"); //$NON-NLS-1$
+        return types instanceof java.util.Collection && !((java.util.Collection<?>) types).isEmpty();
     }
 
     /**
@@ -6998,7 +7079,7 @@ public class DcsWorkshopTool implements IMcpTool
         reg(m, "add_data_source", (p, s, pr) -> doAddDataSource(p, s));
         reg(m, "remove_data_source", (p, s, pr) -> doRemoveDataSource(p, s));
         reg(m, "set_data_source_property", (p, s, pr) -> doSetDataSourceProperty(p, s));
-        reg(m, "add_field", (p, s, pr) -> doAddField(p, s));
+        reg(m, "add_field", (p, s, pr) -> doAddField(p, s, pr));
         reg(m, "add_parameter", (p, s, pr) -> doAddParameter(p, s, pr));
         reg(m, "set_parameter", (p, s, pr) -> doSetParameter(p, s, pr));
         reg(m, "remove_parameter", (p, s, pr) -> doRemoveParameter(p, s));
