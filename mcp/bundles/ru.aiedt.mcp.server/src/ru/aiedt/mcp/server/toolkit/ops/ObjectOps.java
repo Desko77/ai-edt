@@ -1291,6 +1291,11 @@ final class ObjectOps
             typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
         }
         r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+        List<String> ignoredQualifiers = qualifiers.ignoredFor(type);
+        if (!ignoredQualifiers.isEmpty())
+        {
+            r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
+        }
         return EditMetadataTool.formatResult(r, "set_object_type"); //$NON-NLS-1$
     }
 
@@ -1742,6 +1747,11 @@ final class ObjectOps
                 typeApply.put("warning", lenWarn); //$NON-NLS-1$
             }
             r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+            List<String> ignoredQualifiers = attrQualifiers.ignoredFor(type);
+            if (!ignoredQualifiers.isEmpty())
+            {
+                r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
+            }
             if (r.ok && TypeApplication.failed(typeAppliedFlag[0], typeUnresolved))
             {
                 typeFailure = TypeApplication.failureMessage("attribute '" + name + "'", //$NON-NLS-1$ //$NON-NLS-2$
@@ -2246,6 +2256,11 @@ final class ObjectOps
                 typeApply.put("warning", tcLenWarn); //$NON-NLS-1$
             }
             r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+            List<String> ignoredQualifiers = tcQualifiers.ignoredFor(type);
+            if (!ignoredQualifiers.isEmpty())
+            {
+                r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
+            }
             if (r.ok && TypeApplication.failed(tcTypeAppliedFlag[0], tcTypeUnresolved))
             {
                 r.ok = false;
