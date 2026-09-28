@@ -490,14 +490,15 @@ public class BmFormHelper
                     // write borrowed, so the names go with the transaction.
                     abandonWrite();
                     Object preview = dryRunPreview.get();
-                    if (preview instanceof String && ((String) preview).startsWith("Error:")) //$NON-NLS-1$
+                    String refusal = dryRunRefusal(preview);
+                    if (refusal != null)
                     {
                         // Prefix with "Error:" so callers' startsWith("Error:") checks
                         // treat a dry-run that previews a FAILURE as an error, not as
                         // success with a buried message (was a false-success across all
                         // form ops). A dry-run that previews SUCCESS keeps the non-Error
                         // branch below and stays success.
-                        return "Error: dry run - action would FAIL: " + preview //$NON-NLS-1$
+                        return "Error: dry run - action would FAIL: " + refusal //$NON-NLS-1$
                             + " (rolled back, no changes written to Form.form)."; //$NON-NLS-1$
                     }
                     String note = preview == null ? "" : " Preview result: " + preview; //$NON-NLS-1$ //$NON-NLS-2$
@@ -570,6 +571,61 @@ public class BmFormHelper
                 : root.getClass().getSimpleName();
             return "Error: BM API error: " + rootMsg; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The refusal a dry-run preview carries, or <code>null</code> when the previewed action
+     * succeeded.
+     * <p>
+     * An action reports a refusal in one of two shapes: a string starting with {@code Error:}, or
+     * an answer already formatted with a front-matter header whose {@code status} line is
+     * {@code error}. The second shape is returned by value, so its header is dropped and only the
+     * body after the closing {@code ---} is kept.
+     * </p>
+     *
+     * @param preview what the action returned inside the rolled-back transaction
+     * @return the refusal text, or <code>null</code>
+     */
+    static String dryRunRefusal(Object preview)
+    {
+        if (!(preview instanceof String))
+        {
+            return null;
+        }
+        String text = (String) preview;
+        if (text.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return text;
+        }
+        if (!text.startsWith("---")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        String[] lines = text.split("\n", -1); //$NON-NLS-1$
+        boolean error = false;
+        for (int i = 1; i < lines.length; i++)
+        {
+            String line = lines[i].trim();
+            if ("---".equals(line)) //$NON-NLS-1$
+            {
+                if (!error)
+                {
+                    return null;
+                }
+                StringBuilder body = new StringBuilder();
+                for (int j = i + 1; j < lines.length; j++)
+                {
+                    body.append(lines[j]).append('\n');
+                }
+                String refusal = body.toString().trim();
+                return refusal.isEmpty() ? "the previewed action reported an error" : refusal; //$NON-NLS-1$
+            }
+            if (line.startsWith("status:") && "error".equals(line.substring("status:".length()).trim())) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                error = true;
+            }
+        }
+        return null;
     }
 
     /**
