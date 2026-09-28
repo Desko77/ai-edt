@@ -387,7 +387,7 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("templateName", //$NON-NLS-1$
                 "Template name.") //$NON-NLS-1$
             .stringProperty("templateType", //$NON-NLS-1$
-                "Template type for addTemplate: SpreadsheetDocument / TextDocument / BinaryData / ActiveDocument / GraphicalScheme / DataCompositionSchema / DataCompositionAppearanceTemplate / Geographical Schema / HTMLDocument / AddIn.") //$NON-NLS-1$
+                "Template type for addTemplate: SpreadsheetDocument / TextDocument / BinaryData / ActiveDocument / GraphicalSchema / DataCompositionSchema / DataCompositionAppearanceTemplate / GeographicalSchema / HTMLDocument / AddIn.") //$NON-NLS-1$
             .stringProperty("content", //$NON-NLS-1$
                 "Plain-text body of a TextDocument or HTMLDocument template - filled on " //$NON-NLS-1$
                     + "create, replaced by set_template_content, returned by " //$NON-NLS-1$

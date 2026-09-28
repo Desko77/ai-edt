@@ -33,6 +33,7 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
 import com._1c.g5.v8.dt.mcore.Point;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.TemplateType;
 import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Drawing;
 import com._1c.g5.v8.dt.moxel.Format;
@@ -196,6 +197,11 @@ public final class BmTemplateHelper
     /**
      * Maps an English/Russian template-type alias to its canonical EDT enum
      * literal name. Used by {@code addTemplate} when setting Template.templateType.
+     *
+     * <p>An alias nobody recognizes is passed through unchanged rather than refused here: this
+     * method only spells a caller's word the way the model spells it. Whether the model has such a
+     * literal is a separate question, answered by {@link #resolveTemplateTypeLiteral}, and the
+     * caller refuses on {@code null} from that one.
      */
     public static String canonicalTemplateType(String alias)
     {
@@ -233,11 +239,15 @@ public final class BmTemplateHelper
             case "htmldocument":
                 return "HTMLDocument";
             case "geographicschema":
+            case "geographicalschema":
+            case "geographical schema":
             case "geo":
             case "географическая":
             case "географическаясхема":
                 return "GeographicalSchema";
             case "graphicalschema":
+            case "graphicalscheme":
+            case "graphical scheme":
             case "graph":
             case "графическая":
             case "графическаясхема":
@@ -253,6 +263,57 @@ public final class BmTemplateHelper
             default:
                 return alias; // pass through, EDT will reject if invalid
         }
+    }
+
+    /**
+     * The model's own literal for a canonical template type.
+     * <p>
+     * The type is set through reflection, where an unrecognized value is not an exception but a
+     * returned error the caller can drop - and dropping it left the template with no type at all
+     * while the answer named the one that was asked for. So the caller asks the model itself
+     * whether the literal exists before it writes anything.
+     * </p>
+     * <p>
+     * Measured on EDT 2025.2.3: {@code getByName} and {@code get} answer to the literal
+     * ({@code SpreadsheetDocument}), not to the Java constant ({@code SPREADSHEET_DOCUMENT}), so the
+     * literal is what a caller writes and what this returns.
+     * </p>
+     *
+     * @param canonicalType a name from {@link #canonicalTemplateType}; may be <code>null</code>
+     * @return the literal, or <code>null</code> when the model has no such template type
+     */
+    public static String resolveTemplateTypeLiteral(String canonicalType)
+    {
+        if (canonicalType == null || canonicalType.isEmpty())
+        {
+            return null;
+        }
+        TemplateType byName = TemplateType.getByName(canonicalType);
+        return byName == null ? null : byName.getLiteral();
+    }
+
+    /**
+     * The template types this EDT model has, separated by a comma - the values a caller may ask for.
+     * <p>
+     * The literal, not the Java constant: a caller writes {@code SpreadsheetDocument}, while
+     * {@code SPREADSHEET_DOCUMENT} is refused by {@code getByName} on EDT 2025.2.3, and a list of
+     * refused words in a refusal message is worse than no list at all.
+     * </p>
+     *
+     * @return the literals, in the order the model declares them
+     */
+    public static String templateTypeValues()
+    {
+        StringBuilder values = new StringBuilder();
+        for (TemplateType type : TemplateType.values())
+        {
+            if (values.length() > 0)
+            {
+                values.append(", "); //$NON-NLS-1$
+            }
+            values.append(type.getLiteral());
+        }
+        return values.toString();
     }
 
     /**
@@ -547,8 +608,8 @@ public final class BmTemplateHelper
         if (templateDir == null)
         {
             return "Cannot resolve template directory for " + ownerFqn //$NON-NLS-1$
-                + "/Templates/" + templateName //$NON-NLS-1$
-                + " (project location is not on the local filesystem)"; //$NON-NLS-1$
+                + "/Templates/" + templateName + ": " + unresolvableReason(project, ownerFqn, //$NON-NLS-1$ //$NON-NLS-2$
+                    templateName);
         }
         Path mxlxFile = templateDir.resolve("Template.mxlx"); //$NON-NLS-1$
         if (Files.exists(mxlxFile))
@@ -684,8 +745,8 @@ public final class BmTemplateHelper
         if (templateDir == null)
         {
             return "Cannot resolve template directory for " + ownerFqn //$NON-NLS-1$
-                + "/Templates/" + templateName //$NON-NLS-1$
-                + " (project location is not on the local filesystem)"; //$NON-NLS-1$
+                + "/Templates/" + templateName + ": " + unresolvableReason(project, ownerFqn, //$NON-NLS-1$ //$NON-NLS-2$
+                    templateName);
         }
         try
         {
@@ -720,7 +781,8 @@ public final class BmTemplateHelper
         if (templateDir == null)
         {
             result.error = "Cannot resolve template directory for " + ownerFqn //$NON-NLS-1$
-                + "/Templates/" + templateName; //$NON-NLS-1$
+                + "/Templates/" + templateName + ": " + unresolvableReason(project, ownerFqn, //$NON-NLS-1$ //$NON-NLS-2$
+                    templateName);
             return result;
         }
         for (String candidate : new String[] { "Template.txt", "Template.htmldoc" }) //$NON-NLS-1$ //$NON-NLS-2$
@@ -1022,10 +1084,151 @@ public final class BmTemplateHelper
     }
 
     /**
+     * Maps an English or Russian metadata type prefix to the plural folder name EDT uses under
+     * {@code src/} - the directory a template of that owner lives in.
+     * <p>
+     * The name is asked of {@link MetadataTypeCatalog}, the one place a type name is spelled out:
+     * a second table beside it is a second answer to the same question, and the two drift. A
+     * prefix no type answers to is refused rather than pluralized, which is how an owner FQN in a
+     * language this build does not know used to end up as a folder named after the caller's own
+     * word - {@code Справочникs} for {@code Справочник.Товары}.
+     * </p>
+     *
+     * @param typePrefix the owner's type, English or Russian, singular or plural; may be
+     *            <code>null</code>
+     * @return the folder name, for example {@code Catalogs}, or <code>null</code> when no metadata
+     *         type answers to that name
+     */
+    public static String englishTypePlural(String typePrefix)
+    {
+        MetadataTypeCatalog.MetadataTypeInfo type = MetadataTypeCatalog.resolve(typePrefix);
+        return type == null ? null : type.getEnglishPlural();
+    }
+
+    /**
+     * The template's folder relative to the project root, or <code>null</code> when the owner FQN or
+     * the template name cannot address one.
+     * <p>
+     * Both the owner name and the template name are single path elements and are checked as such
+     * before anything is joined: a name carrying a separator or standing for a parent directory
+     * would otherwise place the write outside the template it names, and an owner type nobody
+     * recognizes would place it in a folder that exists nowhere.
+     * </p>
+     *
+     * @param ownerFqn the owner's FQN, {@code <Type>.<Name>} in either language
+     * @param templateName the template's name
+     * @return the relative folder, for example {@code src/Catalogs/Tovary/Templates/Main}, or
+     *         <code>null</code> when the two cannot address one
+     */
+    public static Path templateDirRelativePath(String ownerFqn, String templateName)
+    {
+        int dot = ownerFqn == null ? -1 : ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return null;
+        }
+        if (!isPlainName(templateName))
+        {
+            return null;
+        }
+        String typePrefix = ownerFqn.substring(0, dot);
+        String ownerName = ownerFqn.substring(dot + 1);
+        String typeDirectory = englishTypePlural(typePrefix);
+        if (typeDirectory == null || !isPlainName(ownerName))
+        {
+            return null;
+        }
+        Path src = Path.of("src"); //$NON-NLS-1$
+        if (MetadataTypeCatalog.MetadataTypeInfo.COMMON_TEMPLATE
+            == MetadataTypeCatalog.resolve(typePrefix))
+        {
+            // A common template is the whole object: src/CommonTemplates/<Name>, with no owner
+            // folder and no Templates level - the shape its .mdo lives in.
+            return src.resolve(typeDirectory).resolve(templateName);
+        }
+        return src.resolve(typeDirectory).resolve(ownerName).resolve("Templates").resolve(templateName); //$NON-NLS-1$
+    }
+
+    /**
+     * Why the owner FQN and the template name do not address a template folder, or <code>null</code>
+     * when they do. Both answer from the same rule as {@link #templateDirRelativePath}: this one
+     * names the reason, that one builds the path.
+     *
+     * @param ownerFqn the owner's FQN
+     * @param templateName the template's name
+     * @return the reason, or <code>null</code> when the two address a folder
+     */
+    public static String templateDirRefusal(String ownerFqn, String templateName)
+    {
+        if (ownerFqn == null || ownerFqn.isEmpty())
+        {
+            return "ownerFqn is required"; //$NON-NLS-1$
+        }
+        int dot = ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return "ownerFqn must be <Type>.<Name>, got '" + ownerFqn + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String typePrefix = ownerFqn.substring(0, dot);
+        if (englishTypePlural(typePrefix) == null)
+        {
+            return "ownerFqn names no metadata type that owns templates: '" + typePrefix + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!isPlainName(ownerFqn.substring(dot + 1)))
+        {
+            return "the owner name must be a plain name, got '" + ownerFqn.substring(dot + 1) //$NON-NLS-1$
+                + "'"; //$NON-NLS-1$
+        }
+        if (!isPlainName(templateName))
+        {
+            return "the template name must be a plain name, got '" + templateName + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return null;
+    }
+
+    /**
+     * Whether a name is one path element: not empty, not this or the parent directory, and carrying
+     * no separator of either kind.
+     *
+     * @param name the name to test; may be <code>null</code>
+     * @return <code>true</code> when the name is a single, ordinary path element
+     */
+    private static boolean isPlainName(String name)
+    {
+        if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return false;
+        }
+        return name.indexOf('/') < 0 && name.indexOf('\\') < 0;
+    }
+
+    /**
+     * Whether the template has a folder on disk, which is where EDT keeps its content file.
+     * <p>
+     * Measured on real configurations: a template is declared inline in its owner's {@code .mdo},
+     * and the folder under {@code src/.../Templates/} holds the content. So a folder is what a
+     * template that exists has, and its absence is what a mistyped name looks like.
+     * </p>
+     *
+     * @param project the EDT project (must be open)
+     * @param ownerFqn FQN of the owning metadata object
+     * @param templateName name of the template
+     * @return <code>true</code> when the template's folder exists
+     */
+    public static boolean templateExists(IProject project, String ownerFqn, String templateName)
+    {
+        Path dir = project == null ? null : resolveTemplateDir(project, ownerFqn, templateName);
+        return dir != null && Files.isDirectory(dir);
+    }
+
+    /**
      * Resolves the on-disk template directory:
      * {@code <project>/src/<OwnerCollection>/<OwnerName>/Templates/<TemplateName>}
      * for object-owned templates, or
      * {@code <project>/src/CommonTemplates/<TemplateName>} for CommonTemplate.
+     *
+     * <p>The result is normalized and checked to be inside the project: a path that would land
+     * outside the project the caller named is not resolved at all.
      */
     private static Path resolveTemplateDir(IProject project, String ownerFqn,
         String templateName)
@@ -1034,20 +1237,35 @@ public final class BmTemplateHelper
         {
             return null;
         }
-        Path projectRoot = project.getLocation().toFile().toPath();
-        String[] parts = ownerFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
+        Path relative = templateDirRelativePath(ownerFqn, templateName);
+        if (relative == null)
         {
             return null;
         }
-        String typePlural = englishTypePlural(parts[0]);
-        String ownerName = parts[1];
-        if ("CommonTemplate".equals(parts[0]) || "ОбщийМакет".equals(parts[0])) //$NON-NLS-1$ //$NON-NLS-2$
+        Path projectRoot = project.getLocation().toFile().toPath().toAbsolutePath().normalize();
+        Path resolved = projectRoot.resolve(relative).normalize();
+        return resolved.startsWith(projectRoot) ? resolved : null;
+    }
+
+    /**
+     * Why the template directory could not be resolved: the owner or the name does not address one,
+     * or - when both do - the project has no location on the local filesystem.
+     *
+     * @param project the EDT project
+     * @param ownerFqn the owner's FQN
+     * @param templateName the template's name
+     * @return the reason, for the caller's error message
+     */
+    private static String unresolvableReason(IProject project, String ownerFqn, String templateName)
+    {
+        String refusal = templateDirRefusal(ownerFqn, templateName);
+        if (refusal != null)
         {
-            return projectRoot.resolve("src").resolve("CommonTemplates").resolve(templateName); //$NON-NLS-1$ //$NON-NLS-2$
+            return refusal;
         }
-        return projectRoot.resolve("src").resolve(typePlural).resolve(ownerName) //$NON-NLS-1$
-            .resolve("Templates").resolve(templateName); //$NON-NLS-1$
+        return project == null || project.getLocation() == null
+            ? "the project has no location on the local filesystem" //$NON-NLS-1$
+            : "the template path leaves the project"; //$NON-NLS-1$
     }
 
     /**
@@ -1058,69 +1276,17 @@ public final class BmTemplateHelper
     private static IFolder locateTemplateFolder(IProject project, String ownerFqn,
         String templateName)
     {
-        String[] parts = ownerFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
+        Path relative = templateDirRelativePath(ownerFqn, templateName);
+        if (relative == null)
         {
             return null;
         }
-        if ("CommonTemplate".equals(parts[0]) || "ОбщийМакет".equals(parts[0])) //$NON-NLS-1$ //$NON-NLS-2$
+        IFolder folder = project.getFolder(relative.getName(0).toString());
+        for (int index = 1; index < relative.getNameCount(); index++)
         {
-            return project.getFolder("src").getFolder("CommonTemplates").getFolder(templateName); //$NON-NLS-1$ //$NON-NLS-2$
+            folder = folder.getFolder(relative.getName(index).toString());
         }
-        return project.getFolder("src") //$NON-NLS-1$
-            .getFolder(englishTypePlural(parts[0]))
-            .getFolder(parts[1])
-            .getFolder("Templates") //$NON-NLS-1$
-            .getFolder(templateName);
-    }
-
-    /**
-     * Maps an English-singular metadata type prefix to the plural folder
-     * name EDT uses on disk. Falls back to {@code prefix + "s"} when no
-     * special case applies.
-     */
-    private static String englishTypePlural(String typePrefix)
-    {
-        if (typePrefix == null || typePrefix.isEmpty())
-        {
-            return ""; //$NON-NLS-1$
-        }
-        switch (typePrefix)
-        {
-            case "Catalog": //$NON-NLS-1$
-                return "Catalogs"; //$NON-NLS-1$
-            case "Document": //$NON-NLS-1$
-                return "Documents"; //$NON-NLS-1$
-            case "DataProcessor": //$NON-NLS-1$
-                return "DataProcessors"; //$NON-NLS-1$
-            case "Report": //$NON-NLS-1$
-                return "Reports"; //$NON-NLS-1$
-            case "ChartOfAccounts": //$NON-NLS-1$
-                return "ChartsOfAccounts"; //$NON-NLS-1$
-            case "ChartOfCalculationTypes": //$NON-NLS-1$
-                return "ChartsOfCalculationTypes"; //$NON-NLS-1$
-            case "ChartOfCharacteristicTypes": //$NON-NLS-1$
-                return "ChartsOfCharacteristicTypes"; //$NON-NLS-1$
-            case "BusinessProcess": //$NON-NLS-1$
-                return "BusinessProcesses"; //$NON-NLS-1$
-            case "ExchangePlan": //$NON-NLS-1$
-                return "ExchangePlans"; //$NON-NLS-1$
-            case "InformationRegister": //$NON-NLS-1$
-                return "InformationRegisters"; //$NON-NLS-1$
-            case "AccumulationRegister": //$NON-NLS-1$
-                return "AccumulationRegisters"; //$NON-NLS-1$
-            case "AccountingRegister": //$NON-NLS-1$
-                return "AccountingRegisters"; //$NON-NLS-1$
-            case "CalculationRegister": //$NON-NLS-1$
-                return "CalculationRegisters"; //$NON-NLS-1$
-            case "Task": //$NON-NLS-1$
-                return "Tasks"; //$NON-NLS-1$
-            case "Enum": //$NON-NLS-1$
-            case "Enumeration": //$NON-NLS-1$
-                return "Enums"; //$NON-NLS-1$
-            default:
-                return typePrefix + "s"; //$NON-NLS-1$
-        }
+        return folder;
     }
 
     /**
@@ -1330,6 +1496,13 @@ public final class BmTemplateHelper
 
     /**
      * Points a range of columns at a format carrying the requested width behaviour.
+     * <p>
+     * A width belongs to a column, and columns live in the document's column set. A template that
+     * was authored with cells but never with a column set has none - and returning there left the
+     * caller with an answer saying nothing about the width, after a call that named one. The set is
+     * therefore made, and its declared size grown to cover the columns being formatted: a set that
+     * stopped short of them would put the width outside the set the page is measured by.
+     * </p>
      *
      * @param doc the spreadsheet.
      * @param fromCol first column, 1-based inclusive.
@@ -1345,7 +1518,12 @@ public final class BmTemplateHelper
         Columns columns = doc.getColumns();
         if (columns == null)
         {
-            return 0;
+            columns = MoxelFactory.eINSTANCE.createColumns();
+            doc.setColumns(columns);
+        }
+        if (columns.getSize() < toCol)
+        {
+            columns.setSize(toCol);
         }
         EMap<Integer, Column> byIndex = columns.getColumns();
         int changed = 0;
