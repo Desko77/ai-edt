@@ -22,6 +22,8 @@ import com._1c.g5.v8.dt.moxel.Format;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.Row;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.support.BmTemplateHelper;
 
@@ -122,7 +124,115 @@ public class MxlFormatContractTest
 
         assertFalse(answer.contains("\"success\":true")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("degrees")); //$NON-NLS-1$
-        assertTrue(answer, answer.contains("0")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("between 0 and 360")); //$NON-NLS-1$
+    }
+
+    /** A print scale that is not a whole number is refused, not silently skipped. */
+    @Test
+    public void aNonNumericScaleIsRefused()
+    {
+        Map<String, String> params = formatCall();
+        params.put("scale", "75%"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = tool.execute(params);
+
+        assertFalse(answer.contains("\"success\":true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("scale must be a whole number")); //$NON-NLS-1$
+    }
+
+    /** A value past the int the model stores is refused with the argument's name. */
+    @Test
+    public void aScaleBeyondWhatTheModelStoresIsRefused()
+    {
+        Map<String, String> params = formatCall();
+        params.put("scale", "3000000000"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = tool.execute(params);
+
+        assertFalse(answer.contains("\"success\":true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("scale must be a whole number")); //$NON-NLS-1$
+    }
+
+    /** A margin that is not a number is refused with its name, not dropped from the request. */
+    @Test
+    public void aNonNumericMarginIsRefused()
+    {
+        Map<String, String> params = formatCall();
+        params.put("topMargin", "wide"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = tool.execute(params);
+
+        assertFalse(answer.contains("\"success\":true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("topMargin must be a number of millimetres")); //$NON-NLS-1$
+    }
+
+    /** The fill arguments of set_cell are refused on format_cells, which has no fill of its own. */
+    @Test
+    public void theFillArgumentsAreRefusedOnFormatCells()
+    {
+        Map<String, String> params = formatCall();
+        params.put("fillType", "parameter"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = tool.execute(params);
+
+        assertFalse(answer.contains("\"success\":true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("set_cell")); //$NON-NLS-1$
+    }
+
+    /** A font height and margins are declared as numbers, so a client may send fractions. */
+    @Test
+    public void fontSizeAndMarginsAreDeclaredAsNumbers()
+    {
+        JsonObject schema = JsonParser.parseString(tool.getInputSchema())
+            .getAsJsonObject();
+        JsonObject properties = schema.getAsJsonObject("properties"); //$NON-NLS-1$
+
+        for (String argument : new String[] {"fontSize", "topMargin", "leftMargin", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "bottomMargin", "rightMargin"}) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            assertEquals(argument + " must be a number", "number", //$NON-NLS-1$ //$NON-NLS-2$
+                properties.getAsJsonObject(argument).get("type").getAsString()); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A default text fill and a zero rotation do not make an empty cell appear in the read, and
+     * neither grows the counts.
+     */
+    @Test
+    public void aDefaultTextFillAloneDoesNotAppearInTheRead()
+    {
+        SpreadsheetDocument doc = MoxelFactory.eINSTANCE.createSpreadsheetDocument();
+        BmTemplateHelper.CellLook textFill = new BmTemplateHelper.CellLook();
+        textFill.fillType = "Text"; //$NON-NLS-1$
+        assertNull(BmTemplateHelper.applyCellFormat(doc, 1, 2, 1, 2, null, null, null, null, null,
+            null, textFill).error);
+        assertNull(BmTemplateHelper.applyCellFormat(doc, 2, 2, 2, 2, null, Integer.valueOf(0),
+            null, null, null, null).error);
+
+        Map<String, Object> read = BmTemplateHelper.readSpreadsheet(doc, "ru"); //$NON-NLS-1$
+
+        assertEquals(Integer.valueOf(0), read.get("cellCount")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(0), read.get("rowCount")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(0), read.get("colCount")); //$NON-NLS-1$
+    }
+
+    /** A parameter fill on an empty cell is still worth reading: it is how BSL fills the sheet. */
+    @Test
+    public void aParameterFillAloneAppearsInTheRead()
+    {
+        SpreadsheetDocument doc = MoxelFactory.eINSTANCE.createSpreadsheetDocument();
+        BmTemplateHelper.CellLook look = new BmTemplateHelper.CellLook();
+        look.fillType = "Parameter"; //$NON-NLS-1$
+        assertNull(BmTemplateHelper.applyCellFormat(doc, 1, 1, 1, 1, null, null, null, null, null,
+            null, look).error);
+
+        Map<String, Object> read = BmTemplateHelper.readSpreadsheet(doc, "ru"); //$NON-NLS-1$
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cells = (List<Map<String, Object>>)read.get("cells"); //$NON-NLS-1$
+
+        assertEquals(1, cells.size());
+        assertEquals("Parameter", cells.get(0).get("fillType")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

@@ -62,17 +62,9 @@ public class MxlWorkshopTool implements IMcpTool
             + "read_template, add_named_area, list_named_areas, remove_named_area, " //$NON-NLS-1$
             + "check_print_width. " //$NON-NLS-1$
             + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
-            + "SpreadsheetDocument model directly. read_template returns dimensions, " //$NON-NLS-1$
-            + "the populated cell map, merged ranges and drawing ids. " //$NON-NLS-1$
-            + "Coordinates are 1-based. set_cell takes row/col/text; " //$NON-NLS-1$
-            + "merge_cells takes fromRow/fromCol/toRow/toCol; draw takes a " //$NON-NLS-1$
-            + "JSON layout with cells/merges arrays; add_drawing places a " //$NON-NLS-1$
-            + "Line/Rectangle/Ellipse/Text graphic anchored to begin/end cells. " //$NON-NLS-1$
+            + "SpreadsheetDocument model directly. Coordinates are 1-based. " //$NON-NLS-1$
             + "check_print_width reads the model alone: whether the print area fits the sheet " //$NON-NLS-1$
-            + "by width, and which page defaults the answer took. It changes nothing. " //$NON-NLS-1$
-            + "set_cell also sets a template parameter (fillType text, parameter or template). " //$NON-NLS-1$
-            + "format_cells also sets borders, font, colors and print settings. " //$NON-NLS-1$
-            + "textOrientation is degrees from 0 to 360."; //$NON-NLS-1$
+            + "by width, and which page defaults the answer took. It changes nothing."; //$NON-NLS-1$
     }
 
     @Override
@@ -153,8 +145,7 @@ public class MxlWorkshopTool implements IMcpTool
             .stringProperty("rightBorder", "format_cells: line style of the right side.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("bottomBorder", "format_cells: line style of the bottom side.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("fontName", "format_cells: font face. A cell with no font yet starts from Arial.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("fontSize", //$NON-NLS-1$
-                "format_cells: font height in points, the number the template stores.") //$NON-NLS-1$
+            .numberProperty("fontSize", "format_cells: font height in points, greater than 0.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontBold", "format_cells: bold.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontItalic", "format_cells: italic.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontUnderline", "format_cells: underline.") //$NON-NLS-1$ //$NON-NLS-2$
@@ -174,14 +165,14 @@ public class MxlWorkshopTool implements IMcpTool
                 "format_cells: pages per sheet. Applies to the whole template.") //$NON-NLS-1$
             .booleanProperty("fitToPage", //$NON-NLS-1$
                 "format_cells: scale the sheet to fit the page. Applies to the whole template.") //$NON-NLS-1$
-            .integerProperty("topMargin", //$NON-NLS-1$
-                "format_cells: top margin in millimetres. The template stores hundredths.") //$NON-NLS-1$
-            .integerProperty("leftMargin", //$NON-NLS-1$
-                "format_cells: left margin in millimetres. The template stores hundredths.") //$NON-NLS-1$
-            .integerProperty("bottomMargin", //$NON-NLS-1$
-                "format_cells: bottom margin in millimetres. The template stores hundredths.") //$NON-NLS-1$
-            .integerProperty("rightMargin", //$NON-NLS-1$
-                "format_cells: right margin in millimetres. The template stores hundredths.") //$NON-NLS-1$
+            .numberProperty("topMargin", //$NON-NLS-1$
+                "format_cells: top margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("leftMargin", //$NON-NLS-1$
+                "format_cells: left margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("bottomMargin", //$NON-NLS-1$
+                "format_cells: bottom margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("rightMargin", //$NON-NLS-1$
+                "format_cells: right margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
             .integerProperty("smallScalePercent", //$NON-NLS-1$
                 "check_print_width: print scale below which the answer warns of unreadable type " //$NON-NLS-1$
                     + "(10..100, default 75). help topic=printWidth says where 75 comes from.") //$NON-NLS-1$
@@ -353,7 +344,7 @@ public class MxlWorkshopTool implements IMcpTool
         String parameter = JsonUtils.extractStringArgument(params, "parameter"); //$NON-NLS-1$
         boolean textPassed = params.containsKey("text"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
-        String fillError = BmTemplateHelper.fillProblem(fillType, parameter);
+        String fillError = BmTemplateHelper.fillProblem(fillType, parameter, textPassed);
         if (fillError != null)
         {
             return ToolResult.error(fillError).put("operation", "set_cell").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
@@ -657,13 +648,17 @@ public class MxlWorkshopTool implements IMcpTool
     /** String arguments of {@code format_cells} read together, so each one is a read. */
     private static final String[] FORMAT_STRINGS = {
         "border", "leftBorder", "topBorder", "rightBorder", "bottomBorder", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-        "fontName", "fontSize", "textColor", "backColor", "borderColor", "patternColor", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        "fontName", "textColor", "backColor", "borderColor", "patternColor", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         "pattern", "pageOrientation" //$NON-NLS-1$ //$NON-NLS-2$
     };
 
     /** Integer arguments of {@code format_cells} read together. */
     private static final String[] FORMAT_INTS = {
-        "borderWidth", "scale", "copies", "perPage", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "borderWidth", "scale", "copies", "perPage" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    };
+
+    /** Margin arguments of {@code format_cells}, read together: millimetres, fractions allowed. */
+    private static final String[] FORMAT_MARGINS = {
         "topMargin", "leftMargin", "bottomMargin", "rightMargin" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     };
 
@@ -703,6 +698,11 @@ public class MxlWorkshopTool implements IMcpTool
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         String placement = JsonUtils.extractStringArgument(params, "textPlacement"); //$NON-NLS-1$
+        if (params.containsKey("fillType") || params.containsKey("parameter")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return ToolResult.error("fillType and parameter are set_cell arguments - format_cells " //$NON-NLS-1$
+                + "has no fill of its own").put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         String orientationRaw = JsonUtils.extractStringArgument(params, "textOrientation"); //$NON-NLS-1$
         Integer orientation = null;
         if (orientationRaw != null && !orientationRaw.isEmpty())
@@ -731,7 +731,42 @@ public class MxlWorkshopTool implements IMcpTool
         Map<String, Integer> numbers = new LinkedHashMap<>();
         for (String name : FORMAT_INTS)
         {
-            numbers.put(name, optionalInt(params, name));
+            String raw = JsonUtils.extractStringArgument(params, name);
+            Integer parsed = null;
+            if (raw != null && !raw.isEmpty())
+            {
+                try
+                {
+                    parsed = Integer.valueOf(raw.trim());
+                }
+                catch (NumberFormatException notAWholeNumber)
+                {
+                    // Includes a value past the int the model stores. Skipping it here would
+                    // answer success for a setting the template never got.
+                    return ToolResult.error(name + " must be a whole number - got: " + raw) //$NON-NLS-1$
+                        .put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            numbers.put(name, parsed);
+        }
+        Map<String, Float> margins = new LinkedHashMap<>();
+        for (String name : FORMAT_MARGINS)
+        {
+            String raw = JsonUtils.extractStringArgument(params, name);
+            Float parsed = null;
+            if (raw != null && !raw.isEmpty())
+            {
+                try
+                {
+                    parsed = Float.valueOf(raw.trim());
+                }
+                catch (NumberFormatException notANumber)
+                {
+                    return ToolResult.error(name + " must be a number of millimetres - got: " + raw) //$NON-NLS-1$
+                        .put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            margins.put(name, parsed);
         }
         Map<String, Boolean> flags = new LinkedHashMap<>();
         for (String name : FORMAT_FLAGS)
@@ -743,7 +778,7 @@ public class MxlWorkshopTool implements IMcpTool
             }
         }
         Float fontSize = null;
-        String fontSizeRaw = strings.get("fontSize"); //$NON-NLS-1$
+        String fontSizeRaw = JsonUtils.extractStringArgument(params, "fontSize"); //$NON-NLS-1$
         if (fontSizeRaw != null && !fontSizeRaw.isEmpty())
         {
             try
@@ -756,7 +791,7 @@ public class MxlWorkshopTool implements IMcpTool
                     .put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
-        BmTemplateHelper.CellLook look = cellLook(strings, numbers, flags, fontSize);
+        BmTemplateHelper.CellLook look = cellLook(strings, numbers, margins, flags, fontSize);
         boolean cellProperties = placement != null || orientation != null || rowHeight != null
             || columnWidth != null || widthWeight != null || autoColumnWidth != null
             || look.changesCells();
@@ -854,12 +889,14 @@ public class MxlWorkshopTool implements IMcpTool
      *
      * @param strings the string arguments, missing ones null
      * @param numbers the integer arguments, missing ones null
+     * @param margins the margin arguments in millimetres, missing ones null
      * @param flags the boolean arguments that were actually passed
      * @param fontSize the parsed font height, or {@code null}
      * @return the request
      */
     private static BmTemplateHelper.CellLook cellLook(Map<String, String> strings,
-        Map<String, Integer> numbers, Map<String, Boolean> flags, Float fontSize)
+        Map<String, Integer> numbers, Map<String, Float> margins, Map<String, Boolean> flags,
+        Float fontSize)
     {
         BmTemplateHelper.CellLook look = new BmTemplateHelper.CellLook();
         look.border = strings.get("border"); //$NON-NLS-1$
@@ -879,10 +916,10 @@ public class MxlWorkshopTool implements IMcpTool
         look.scale = numbers.get("scale"); //$NON-NLS-1$
         look.copies = numbers.get("copies"); //$NON-NLS-1$
         look.perPage = numbers.get("perPage"); //$NON-NLS-1$
-        look.topMargin = numbers.get("topMargin"); //$NON-NLS-1$
-        look.leftMargin = numbers.get("leftMargin"); //$NON-NLS-1$
-        look.bottomMargin = numbers.get("bottomMargin"); //$NON-NLS-1$
-        look.rightMargin = numbers.get("rightMargin"); //$NON-NLS-1$
+        look.topMargin = margins.get("topMargin"); //$NON-NLS-1$
+        look.leftMargin = margins.get("leftMargin"); //$NON-NLS-1$
+        look.bottomMargin = margins.get("bottomMargin"); //$NON-NLS-1$
+        look.rightMargin = margins.get("rightMargin"); //$NON-NLS-1$
         look.fontBold = flags.get("fontBold"); //$NON-NLS-1$
         look.fontItalic = flags.get("fontItalic"); //$NON-NLS-1$
         look.fontUnderline = flags.get("fontUnderline"); //$NON-NLS-1$
@@ -1500,9 +1537,9 @@ public class MxlWorkshopTool implements IMcpTool
                 + "parameter\n"); //$NON-NLS-1$
             sb.append("- format_cells - placement, rotation in degrees (0..360, stored as tenths), " //$NON-NLS-1$
                 + "row height, column width, borders, font, colors and print settings. " //$NON-NLS-1$
-                + "A cell range is row/col or fromRow/fromCol/toRow/toCol. Print settings alone " //$NON-NLS-1$
+                + "A cell range is row/col or fromRow/fromCol/toRow/toCol. Print settings " //$NON-NLS-1$
                 + "(pageOrientation, scale, copies, perPage, fitToPage, margins in millimetres) " //$NON-NLS-1$
-                + "do not need a range.\n"); //$NON-NLS-1$
+                + "apply to the whole template, not to the cells in the range, and need no range.\n"); //$NON-NLS-1$
             sb.append("- merge_cells - merges a rectangle. Args: fromRow, fromCol, toRow, toCol (1-based, both inclusive)\n"); //$NON-NLS-1$
             sb.append("- draw - batch: layout='{\"cells\":[{row,col,text,language}],\"merges\":[{fromRow,fromCol,toRow,toCol}]}'\n"); //$NON-NLS-1$
             sb.append("- add_drawing - places a graphic. Args: drawingType (Line/Rectangle/Ellipse/Text), beginRow, beginColumn, endRow, endColumn, [*Offset], [formatIndex], [zOrder], text (for Text). Returns drawingId\n"); //$NON-NLS-1$

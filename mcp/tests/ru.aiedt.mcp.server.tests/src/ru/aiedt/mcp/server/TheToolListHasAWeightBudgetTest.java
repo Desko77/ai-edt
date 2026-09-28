@@ -69,7 +69,7 @@ public class TheToolListHasAWeightBudgetTest
      * fill, borders, font, colors and page settings. Measured tool entry 8326 bytes.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 172265;
+    private static final int DOCUMENT_BUDGET = 171752;
 
     private LiveServer server;
 
@@ -232,8 +232,9 @@ public class TheToolListHasAWeightBudgetTest
         // Raised by 1073 for runMode and clientType on launch, the same two arguments start_client
         // takes, so a debug launch of a configuration on ordinary forms opens the same client.
         BUDGETS.put("launch_debugger", Integer.valueOf(7158)); //$NON-NLS-1$
-        // Raised from 4636 to 8326 for parameter fill, borders, font, colors and print settings.
-        BUDGETS.put("mxl_workshop", Integer.valueOf(8326)); //$NON-NLS-1$
+        // The entry names the operations and the model; what each argument takes is the schema's
+        // to say. Measured 7813 bytes.
+        BUDGETS.put("mxl_workshop", Integer.valueOf(7813)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
