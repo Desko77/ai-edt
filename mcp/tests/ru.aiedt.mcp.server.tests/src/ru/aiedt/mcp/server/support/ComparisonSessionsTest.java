@@ -194,6 +194,26 @@ public class ComparisonSessionsTest
     }
 
     /**
+     * A finished merge that reports its end decorated is finished all the same.
+     * <p>
+     * The environment discards the session in the same breath as finishing, and the answer marks
+     * that by naming the state {@code "MERGE_PROCESS_FINISHED (session discarded on completion)"}.
+     * Read as an exact string that was a merge still going: the session stayed open past its end
+     * and its key reached the caller for a session nothing could page through.
+     * </p>
+     */
+    @Test
+    public void aDecoratedEndIsAnEnd()
+    {
+        assertFalse(BmComparisonHelper
+            .stillMerging("MERGE_PROCESS_FINISHED (session discarded on completion)")); //$NON-NLS-1$
+        assertFalse(BmComparisonHelper
+            .stillMerging("MERGE_PROCESS_DISCARDED (session discarded on completion)")); //$NON-NLS-1$
+        assertTrue("a decorated state that is not an end keeps the protection", //$NON-NLS-1$
+            BmComparisonHelper.stillMerging("MERGE_PROCESS_VALIDATION_FINISHED (settling)")); //$NON-NLS-1$
+    }
+
+    /**
      * Verifies that eviction drops the oldest free session instead of a session a call holds.
      */
     @Test

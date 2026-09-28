@@ -230,6 +230,10 @@ public class ThreeWayComparisonTool
         rules.put("offset", "Default 0. With limit this walks the whole set: a real update runs to " //$NON-NLS-1$
             + "tens of thousands of changed objects and one page names at most 500 " //$NON-NLS-1$
             + "of them."); //$NON-NLS-1$
+        rules.put("sectionsOffset", "Pages the sections the same way offset pages the objects: one " //$NON-NLS-1$
+            + "page of sections holds at most 500 pieces, moreSections says there are more, and " //$NON-NLS-1$
+            + "this argument walks the rest without narrowing the scope and re-running the " //$NON-NLS-1$
+            + "comparison."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -265,25 +269,27 @@ public class ThreeWayComparisonTool
                     + "and object correspondences are applied before anything else.") //$NON-NLS-1$
             .stringProperty("changedBy", //$NON-NLS-1$
                 "List only objects with this attribution: OURS, VENDOR, BOTH or UNKNOWN. The " //$NON-NLS-1$
-                    + "counts are unaffected - they always cover everything. OURS is what a " //$NON-NLS-1$
-                    + "customisation-preserving update needs to enumerate.") //$NON-NLS-1$
+                    + "counts always cover everything; OURS is what a customisation-preserving " //$NON-NLS-1$
+                    + "update needs to enumerate.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "List only objects of this metadata type, as the comparison qualifies names " //$NON-NLS-1$
                     + "(Catalog, Document, CommonModule).") //$NON-NLS-1$
             .booleanProperty("oneSided", //$NON-NLS-1$
-                "true lists only objects present on one side, false only those present on both. " //$NON-NLS-1$
-                    + "Omit for either.") //$NON-NLS-1$
+                "true lists only objects present on one side, false only those on both. Omit " //$NON-NLS-1$
+                    + "for either.") //$NON-NLS-1$
             .booleanProperty("mustBeMergedOnly", //$NON-NLS-1$
                 "List only objects the environment says must take part in a merge.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
                 "How many matching objects to skip. Default 0.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "How many objects to name. Default and maximum 500.") //$NON-NLS-1$
+            .integerProperty("sectionsOffset", //$NON-NLS-1$
+                "Module pieces to skip before the page of sections starts. Default 0.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "Compare only these objects, comma separated and named as this tool names " //$NON-NLS-1$
                     + "them (Catalog.X,Document.Y). Omit for the whole configuration. What the " //$NON-NLS-1$
-                    + "environment added comes back in scopeExtendedBy, and a name it does not " //$NON-NLS-1$
-                    + "recognise in scopeUnrecognised rather than dropped.") //$NON-NLS-1$
+                    + "environment added comes back in scopeExtendedBy, unrecognised names in " //$NON-NLS-1$
+                    + "scopeUnrecognised rather than dropped.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
                 "Assemble the answer into one document a person can read before deciding to " //$NON-NLS-1$
                     + "update: summary (ten names per section) or full.") //$NON-NLS-1$
@@ -292,9 +298,8 @@ public class ThreeWayComparisonTool
                     + "and a decision can be addressed at one method. Off by default; " //$NON-NLS-1$
                     + "comparedInMs comes back either way, so the cost is measurable.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
-                "Close the comparison after answering instead of keeping it open for the " //$NON-NLS-1$
-                    + "next page. Off by default; an open comparison expires after 20 idle " //$NON-NLS-1$
-                    + "minutes.") //$NON-NLS-1$
+                "Close the comparison after answering rather than keep it open for paging. " //$NON-NLS-1$
+                    + "Off by default; it expires after 20 idle minutes.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
                 "Compare the sides even when they do not identify as the same configuration " //$NON-NLS-1$
                     + "in different versions. Off by default.") //$NON-NLS-1$
@@ -569,6 +574,7 @@ public class ThreeWayComparisonTool
             JsonUtils.extractBooleanArgument(params, "mustBeMergedOnly", false); //$NON-NLS-1$
         page.offset = JsonUtils.extractIntArgument(params, "offset", 0); //$NON-NLS-1$
         page.limit = JsonUtils.extractIntArgument(params, "limit", 0); //$NON-NLS-1$
+        page.sectionsOffset = JsonUtils.extractIntArgument(params, "sectionsOffset", 0); //$NON-NLS-1$
         boolean closeSession = JsonUtils.extractBooleanArgument(params, "closeSession", false); //$NON-NLS-1$
         page.methodLevel = JsonUtils.extractBooleanArgument(params, "methodLevel", false); //$NON-NLS-1$
         BmComparisonHelper.Request request = new BmComparisonHelper.Request();
@@ -697,6 +703,7 @@ public class ThreeWayComparisonTool
             .put("comparedInMs", outcome.comparedInMs) //$NON-NLS-1$
             .put("sections", outcome.sections) //$NON-NLS-1$
             .put("moreSections", outcome.moreSections) //$NON-NLS-1$
+            .put("sectionsOffset", outcome.sectionsOffset) //$NON-NLS-1$
             // The document, when it was asked for. Absent otherwise: a report nobody wanted is
             // several kilobytes on every answer.
             .put("report", report(outcome, params)) //$NON-NLS-1$
@@ -755,6 +762,9 @@ public class ThreeWayComparisonTool
             // leaves the configuration broken is ordinary, not exceptional.
             .put("errorsAfterMerge", outcome.errorsAfterMerge) //$NON-NLS-1$
             .put("revalidatedAfterMerge", outcome.revalidatedAfterMerge) //$NON-NLS-1$
+            // Present when the revalidated set was narrower than the merge: silence would let
+            // errorsAfterMerge read as a statement about every object that moved.
+            .put("revalidationNote", outcome.revalidationNote) //$NON-NLS-1$
             .toJson();
     }
 }
