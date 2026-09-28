@@ -202,6 +202,12 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("aggregateFunction", //$NON-NLS-1$
                 "Aggregate for add_total: Sum / Count / Min / Max / Avg") //$NON-NLS-1$
             .stringProperty("type", "Parameter type (Date, Number, String, etc.)") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("length", "String length, 0 = unlimited.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("precision", "Number: total digits.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("fractionDigits", "Number: fraction digits.") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("nonNegative", "Number: no negatives.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("dateFractions", "Date / DateTime / Time.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("allowedLength", "String: Variable / Fixed.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("direction", //$NON-NLS-1$
                 "Up / Down for move_parameter; Asc / Desc for add_order (alias of orderType, default Asc)") //$NON-NLS-1$
             .integerProperty("newIndex", "Target index for move_parameter (0-based)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -3138,7 +3144,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         BmDcsHelper.setProperty(field, "dataPath", name); //$NON-NLS-1$
         BmDcsHelper.setProperty(field, "field", name); //$NON-NLS-1$
-        applyFieldArguments(field, params, project);
+        applyFieldArguments(field, params, qualifiersOf(params), project);
         EList<EObject> fields = BmDcsHelper.getEObjectList(dataSet, "getFields"); //$NON-NLS-1$
         if (fields == null)
         {
@@ -3175,7 +3181,7 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("DcsFactory.createDataCompositionSchemaParameter not available"); //$NON-NLS-1$
         }
         BmDcsHelper.setProperty(parameter, "name", name); //$NON-NLS-1$
-        applyParameterFields(parameter, params, project);
+        applyParameterFields(parameter, params, qualifiersOf(params), project);
         EList<EObject> parameters = BmDcsHelper.getEObjectList(schema, "getParameters"); //$NON-NLS-1$
         if (parameters == null)
         {
@@ -3195,14 +3201,30 @@ public class DcsWorkshopTool implements IMcpTool
             throw notFoundTag(name, "parameter"); //$NON-NLS-1$
         }
         // Name change is intentionally ignored (matching conventional behavior).
-        applyParameterFields(parameter, params, project);
+        applyParameterFields(parameter, params, qualifiersOf(params), project);
         return name + " updated"; //$NON-NLS-1$
     }
 
-    private void applyParameterFields(Object parameter, Map<String, String> params, IProject project)
+    /**
+     * Applies the optional arguments of {@code add_parameter} and {@code set_parameter} to a
+     * schema parameter.
+     * <p>
+     * The value type goes first: a type or qualifier that cannot be applied refuses the call
+     * before any other field of the parameter is touched. {@code length}, {@code precision} and
+     * the other qualifiers belong to the value type; the parameter has no such fields of its own.
+     * </p>
+     *
+     * @param parameter the parameter to write into
+     * @param params the call's arguments
+     * @param qualifiers the value-type qualifiers the call names
+     * @param project the project whose configuration resolves {@code type}, or <code>null</code>
+     * @throws RuntimeException when the type or a qualifier could not be applied
+     */
+    private void applyParameterFields(Object parameter, Map<String, String> params,
+        BmDefinedTypeHelper.QualifierOptions qualifiers, IProject project)
     {
-        // Optional fields: type, length, precision, expression, title, use,
-        // valueListAllowed, denyIncompleteValues, useRestriction.
+        applyParameterType(parameter, JsonUtils.extractStringArgument(params, "type"), //$NON-NLS-1$
+            qualifiers, project);
         // title is a Presentation object (not a String) - build via the core factory.
         setPresentationProperty(parameter, "title", JsonUtils.extractStringArgument(params, "title")); //$NON-NLS-1$ //$NON-NLS-2$
         applyOptionalProperty(parameter, "expression", params, "expression"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -3211,11 +3233,27 @@ public class DcsWorkshopTool implements IMcpTool
             "valueListAllowed"); //$NON-NLS-1$
         applyOptionalProperty(parameter, "denyIncompleteValues", params, //$NON-NLS-1$
             "denyIncompleteValues"); //$NON-NLS-1$
-        applyOptionalProperty(parameter, "length", params, "length"); //$NON-NLS-1$ //$NON-NLS-2$
-        applyOptionalProperty(parameter, "precision", params, "precision"); //$NON-NLS-1$ //$NON-NLS-2$
-        // valueType (the parameter's value type) is a TypeDescription - wire it like
-        // object-attribute types so the editor shows a typed parameter.
-        applyParameterType(parameter, JsonUtils.extractStringArgument(params, "type"), project); //$NON-NLS-1$
+    }
+
+    /**
+     * Reads the value-type qualifiers a call names.
+     *
+     * @param params the call's arguments
+     * @return the qualifiers, each <code>null</code> when the call does not name it
+     */
+    private static BmDefinedTypeHelper.QualifierOptions qualifiersOf(Map<String, String> params)
+    {
+        BmDefinedTypeHelper.QualifierOptions q = new BmDefinedTypeHelper.QualifierOptions();
+        q.length = JsonUtils.extractIntegerArgument(params, "length"); //$NON-NLS-1$
+        q.precision = JsonUtils.extractIntegerArgument(params, "precision"); //$NON-NLS-1$
+        q.fractionDigits = JsonUtils.extractIntegerArgument(params, "fractionDigits"); //$NON-NLS-1$
+        if (params != null && params.containsKey("nonNegative")) //$NON-NLS-1$
+        {
+            q.nonNegative = JsonUtils.extractBooleanArgument(params, "nonNegative", false); //$NON-NLS-1$
+        }
+        q.dateFractions = JsonUtils.extractStringArgument(params, "dateFractions"); //$NON-NLS-1$
+        q.allowedLength = JsonUtils.extractStringArgument(params, "allowedLength"); //$NON-NLS-1$
+        return q;
     }
 
     /**
@@ -3223,11 +3261,13 @@ public class DcsWorkshopTool implements IMcpTool
      *
      * @param field the new dataset field
      * @param params the call's arguments
+     * @param qualifiers the value-type qualifiers the call names
      * @param project the project whose configuration resolves a type, or <code>null</code>
      * @throws RuntimeException naming the argument when a property is unknown to the field or a
      *             type could not be applied
      */
-    private void applyFieldArguments(Object field, Map<String, String> params, IProject project)
+    private void applyFieldArguments(Object field, Map<String, String> params,
+        BmDefinedTypeHelper.QualifierOptions qualifiers, IProject project)
     {
         String title = JsonUtils.extractStringArgument(params, "title"); //$NON-NLS-1$
         if (title != null && !title.isEmpty())
@@ -3246,9 +3286,9 @@ public class DcsWorkshopTool implements IMcpTool
             }
             property = null;
         }
+        applyParameterType(field, type, qualifiers, project);
         if (type != null && !type.isEmpty())
         {
-            applyParameterType(field, type, project);
             if (!hasValueTypes(field))
             {
                 throw new RuntimeException("Type '" + type + "' could not be applied to the field" //$NON-NLS-1$ //$NON-NLS-2$
@@ -3285,39 +3325,69 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Sets the parameter's {@code valueType} (a TypeDescription) from a type FQN
-     * (Date / Number / String / Boolean / CatalogRef.X / ...), reusing the
-     * object-attribute typing machinery ({@code setTypesOnDescription}). No-op when
-     * type/project/config is absent or the mcore TypeDescription factory is
-     * unavailable - the parameter is still created, just untyped.
+     * Sets the {@code valueType} (a TypeDescription) of a schema parameter or a dataset field from
+     * a type FQN (Date / Number / String / Boolean / CatalogRef.X / ...) and its qualifiers,
+     * reusing the object-attribute typing machinery ({@code setTypesOnDescription}).
+     * <p>
+     * Does nothing when neither a type nor a qualifier is named. Without a project, primitive
+     * types are still applied; a reference type needs the project's configuration.
+     * </p>
+     *
+     * @param typed the parameter or field carrying {@code getValueType()}
+     * @param type the requested type or comma-separated composition, or <code>null</code>
+     * @param qualifiers the qualifiers the call names
+     * @param project the project whose configuration resolves {@code type}, or <code>null</code>
+     * @throws RuntimeException naming the type when it was not resolved or not applied, and
+     *             naming the qualifier when it applies to none of the requested types or comes
+     *             without a type
      */
-    private void applyParameterType(Object parameter, String type, IProject project)
+    private void applyParameterType(Object typed, String type,
+        BmDefinedTypeHelper.QualifierOptions qualifiers, IProject project)
     {
-        if (type == null || type.isEmpty() || project == null || !(parameter instanceof EObject))
+        if (type == null || type.isEmpty())
         {
+            if (qualifiers.anyRequested())
+            {
+                throw new RuntimeException("Qualifiers describe the value type and apply only " //$NON-NLS-1$
+                    + "together with 'type'. Nothing was written."); //$NON-NLS-1$
+            }
             return;
         }
-        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
-        Configuration config = cp != null ? cp.getConfiguration(project) : null;
-        if (config == null)
+        List<String> ignored = qualifiers.ignoredFor(type);
+        if (!ignored.isEmpty())
         {
-            return;
+            throw new RuntimeException("Qualifiers do not apply to type '" + type + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                + String.join("; ", ignored) + ". Nothing was written."); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        Object typeDesc = invokeGetter(parameter, "getValueType"); //$NON-NLS-1$
+        Configuration config = null;
+        if (project != null)
+        {
+            IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
+            config = cp != null ? cp.getConfiguration(project) : null;
+            if (config == null)
+            {
+                throw new RuntimeException("Type '" + type + "' was not applied: the configuration " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "of project " + project.getName() + " is not available. Nothing was written."); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        Object typeDesc = invokeGetter(typed, "getValueType"); //$NON-NLS-1$
         if (typeDesc == null)
         {
             typeDesc = BmDcsHelper.createMcoreTypeDescription();
             if (typeDesc == null)
             {
-                return;
+                throw new RuntimeException("Type '" + type + "' was not applied: TypeDescription " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "factory is not available. Nothing was written."); //$NON-NLS-1$
             }
-            BmDcsHelper.setProperty(parameter, "valueType", typeDesc); //$NON-NLS-1$
+            BmDcsHelper.setProperty(typed, "valueType", typeDesc); //$NON-NLS-1$
         }
         BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.setTypesOnDescription(typeDesc,
-            project, config, java.util.Collections.singletonList(type), null, (EObject) parameter);
-        if (tr != null && tr.error != null)
+            project, config, java.util.Collections.singletonList(type), qualifiers,
+            typed instanceof EObject ? (EObject) typed : null);
+        if (tr == null || tr.error != null)
         {
-            Activator.logWarning("dcs_workshop add_parameter type: " + tr.error); //$NON-NLS-1$
+            throw new RuntimeException("Type '" + type + "' was not applied: " //$NON-NLS-1$ //$NON-NLS-2$
+                + (tr == null ? "no result" : tr.error) + ". Nothing was written."); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
