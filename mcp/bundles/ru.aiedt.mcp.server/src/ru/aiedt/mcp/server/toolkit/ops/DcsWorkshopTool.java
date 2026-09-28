@@ -6,8 +6,10 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -18,14 +20,18 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
+import org.osgi.framework.Bundle;
 
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport;
+import com._1c.g5.v8.dt.platform.version.Version;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -4927,12 +4933,18 @@ public class DcsWorkshopTool implements IMcpTool
      * holds is left as it is: clearing the list before noticing that there was nothing to write
      * reported a set that had erased the value.
      * </p>
+     * <p>
+     * {@code name} has to be one the platform offers, in either spelling; anything else is refused
+     * with the closest name and the full list. The check runs before the container is reached, so a
+     * refused call writes nothing at all.
+     * </p>
      *
      * @param params the call; {@code name} selects the parameter and {@code value} is what it holds
      * @param schema the schema, or a settings container in the case of a dynamic list
+     * @param project the project the call works in, or null when it has none
      * @return a short report naming the parameter that was set
      */
-    private Object doSetOutputParameter(Map<String, String> params, EObject schema)
+    private Object doSetOutputParameter(Map<String, String> params, EObject schema, IProject project)
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
@@ -4940,6 +4952,10 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("nothing to set on '" + name + "': pass value"); //$NON-NLS-1$ //$NON-NLS-2$
         }
+        // Before anything is created: the platform's set of output parameters is what decides
+        // whether the name addresses one. An entry is made for whatever name arrives, so a name
+        // that is not in the set would be written and read back by nothing.
+        mustBeKnownOutputParameter(name, outputParameterNames(project));
         Object settings = ensureDefaultSettings(schema);
         if (settings == null)
         {
@@ -4985,6 +5001,218 @@ public class DcsWorkshopTool implements IMcpTool
         }
         BmDcsHelper.setProperty(found, "use", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         return "output parameter '" + name + "' set"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The platform's data-composition output parameters, the container a call reads the names from.
+     */
+    private static final String DCS_OUTPUT_PARAMETERS_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.output.DcsOutputParameters"; //$NON-NLS-1$
+
+    /** The class the output parameter names are read out of. */
+    private static final String DCS_AVAILABLE_PARAMETERS_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameters"; //$NON-NLS-1$
+
+    /** The class holding them, in the platform's own order. */
+    private static final String DCS_AVAILABLE_COLLECTION_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameterCollection"; //$NON-NLS-1$
+
+    /** The class carrying one parameter, one name per language. */
+    private static final String DCS_AVAILABLE_PARAMETER_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameter"; //$NON-NLS-1$
+
+    /**
+     * The bundle the parameter classes are reached through. It carries them and exports both
+     * packages, but this plugin imports neither, so its own loader cannot see them: the bundle's
+     * loader is the one that reads them.
+     */
+    private static final String DCS_BUNDLE = "com._1c.g5.v8.dt.dcs"; //$NON-NLS-1$
+
+    /** How many allowed names a refusal lists before it says how many it left out. */
+    private static final int ALLOWED_NAMES_SHOWN = 40;
+
+    /**
+     * The names {@link #outputParameterNames(IProject)} answers with. {@code null} asks the platform.
+     * Tests point this at a fixed set and clear it afterwards: the platform's set is built from the
+     * installed 1C:Enterprise, so a runtime without one cannot answer with any name at all.
+     */
+    static volatile List<String> outputParameterNamesForTests;
+
+    /**
+     * The output parameter names the platform offers, both spellings of each.
+     * <p>
+     * Read from the platform rather than kept in this file: the set depends on the platform version
+     * the project runs on, and the platform adds names from one version onwards, so a list written
+     * here answers for the release it was copied from and refuses nothing afterwards.
+     * </p>
+     * <p>
+     * The classes are reached by name - the composition packages holding them are not on this
+     * plugin's import list - so the compiler sees none of this and the reflection registry beside
+     * {@code scripts/check-edt-api.py} carries the pairing instead.
+     * </p>
+     *
+     * @param project the project the call works in, or null when it has none
+     * @return the names in the platform's order, or null when they cannot be read here
+     */
+    static List<String> outputParameterNames(IProject project)
+    {
+        List<String> pinned = outputParameterNamesForTests;
+        if (pinned != null)
+        {
+            return pinned;
+        }
+        try
+        {
+            Bundle bundle = Platform.getBundle(DCS_BUNDLE);
+            if (bundle == null)
+            {
+                // A runtime without the composition bundles at all: nothing to read names from.
+                return null;
+            }
+            Class<?> parametersClass = bundle.loadClass(DCS_AVAILABLE_PARAMETERS_CLASS);
+            Class<?> collectionClass = bundle.loadClass(DCS_AVAILABLE_COLLECTION_CLASS);
+            Class<?> parameterClass = bundle.loadClass(DCS_AVAILABLE_PARAMETER_CLASS);
+            Class<?> creatorClass = bundle.loadClass(DCS_OUTPUT_PARAMETERS_CLASS);
+            // The second constructor argument is the language, and the platform does not read it:
+            // measured on com._1c.g5.v8.dt.dcs 22.0.2, where createAvailableParameters never loads
+            // that argument and every name carries both spellings regardless.
+            Object values = creatorClass.getConstructor(Version.class, String.class)
+                .newInstance(outputParameterVersion(project), ""); //$NON-NLS-1$
+            Object available = creatorClass.getMethod("getParameters").invoke(values); //$NON-NLS-1$
+            if (available == null)
+            {
+                return null;
+            }
+            Object collection = parametersClass.getMethod("getParameters").invoke(available); //$NON-NLS-1$
+            if (collection == null)
+            {
+                return null;
+            }
+            Method count = collectionClass.getMethod("itemsCount"); //$NON-NLS-1$
+            Method itemAt = collectionClass.getMethod("getItemAt", int.class); //$NON-NLS-1$
+            // key(int) is the name of one parameter for one language, 0 first and 1 second.
+            Method key = parameterClass.getMethod("key", int.class); //$NON-NLS-1$
+            int size = ((Integer)count.invoke(collection)).intValue();
+            List<String> names = new ArrayList<>();
+            for (int i = 0; i < size; i++)
+            {
+                Object item = itemAt.invoke(collection, Integer.valueOf(i));
+                for (int spelling = 0; item != null && spelling <= 1; spelling++)
+                {
+                    Object name = key.invoke(item, Integer.valueOf(spelling));
+                    String text = name == null ? null : String.valueOf(name);
+                    if (text != null && !text.isEmpty() && !names.contains(text))
+                    {
+                        names.add(text);
+                    }
+                }
+            }
+            return names.isEmpty() ? null : names;
+        }
+        catch (Exception e)
+        {
+            // Measured: with no 1C:Enterprise installation behind the platform type registry the
+            // list is not built at all and asking for it stops on IllegalArgumentException
+            // "Can't create proxy for unknown name 'DataCompositionAppearanceTemplate'" - the
+            // descriptions carry platform types. Ordinary on such a runtime, and NOT the same
+            // answer as an empty set: the caller reads null and refuses without writing.
+            Activator.logWarning("outputParameterNames failed: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * The platform version whose output parameter set applies to a call.
+     * <p>
+     * The set is version-dependent: the platform's builder adds names only from a given version
+     * onwards. The project's own version is read when there is a project.
+     * </p>
+     *
+     * @param project the project the call works in, or null when it has none
+     * @return the version to read the names for
+     */
+    private static Version outputParameterVersion(IProject project)
+    {
+        if (project != null)
+        {
+            try
+            {
+                Activator activator = Activator.getDefault();
+                IRuntimeVersionSupport support =
+                    activator == null ? null : activator.getRuntimeVersionSupport();
+                if (support != null)
+                {
+                    Version version = support.getRuntimeVersion(project);
+                    if (version != null)
+                    {
+                        return version;
+                    }
+                }
+            }
+            catch (Throwable t)
+            {
+                // A version that cannot be read is not a reason to refuse the call.
+                Activator.logWarning("outputParameterVersion failed: " //$NON-NLS-1$
+                    + TextSuggest.safeMessage(t));
+            }
+        }
+        return Version.LATEST;
+    }
+
+    /**
+     * Refuses an output parameter name the platform does not offer.
+     * <p>
+     * The name is matched ignoring case, and against both spellings of every parameter, so a caller
+     * may name one in either language. The refusal carries the closest name and the ones that are
+     * allowed, so the call is corrected rather than guessed at.
+     * </p>
+     *
+     * @param name the name the caller passed
+     * @param known the names the platform offers, or null when they could not be read
+     * @throws RuntimeException when the name is unknown, or when the names could not be read
+     */
+    static void mustBeKnownOutputParameter(String name, Collection<String> known)
+    {
+        if (known == null || known.isEmpty())
+        {
+            throw new RuntimeException("output parameter list is unavailable: EDT did not answer " //$NON-NLS-1$
+                + "with the output parameters, so '" + name + "' was not checked and nothing " //$NON-NLS-1$ //$NON-NLS-2$
+                + "was written"); //$NON-NLS-1$
+        }
+        for (String candidate : known)
+        {
+            if (candidate != null && candidate.equalsIgnoreCase(name))
+            {
+                return;
+            }
+        }
+        StringBuilder refused = new StringBuilder();
+        refused.append("Unknown output parameter '").append(name).append("'."); //$NON-NLS-1$ //$NON-NLS-2$
+        String suggestion = TextSuggest.closest(name, known);
+        if (suggestion != null)
+        {
+            refused.append(" Did you mean '").append(suggestion).append("'?"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        refused.append(" Available: ").append(shownNames(known)); //$NON-NLS-1$
+        throw new RuntimeException(refused.toString());
+    }
+
+    /**
+     * The allowed names as a refusal lists them, comma-separated and capped the way
+     * {@link TextSuggest} caps the lists it formats.
+     *
+     * @param known the names the platform offers
+     * @return the text for the refusal
+     */
+    private static String shownNames(Collection<String> known)
+    {
+        List<String> names = new ArrayList<>(known);
+        if (names.size() <= ALLOWED_NAMES_SHOWN)
+        {
+            return String.join(", ", names); //$NON-NLS-1$
+        }
+        return String.join(", ", names.subList(0, ALLOWED_NAMES_SHOWN)) //$NON-NLS-1$
+            + ", ... (+" + (names.size() - ALLOWED_NAMES_SHOWN) + " more)"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -7321,8 +7549,8 @@ public class DcsWorkshopTool implements IMcpTool
         reg(m, "remove_conditional_appearance", (p, s, pr) -> doRemoveConditionalAppearance(p, s));
         reg(m, "set_field_appearance", (p, s, pr) -> doSetDataSetFieldAppearance(p, s));
         reg(m, "set_data_set_field_appearance", (p, s, pr) -> doSetDataSetFieldAppearance(p, s));
-        reg(m, "set_output_param", (p, s, pr) -> doSetOutputParameter(p, s));
-        reg(m, "set_output_parameter", (p, s, pr) -> doSetOutputParameter(p, s));
+        reg(m, "set_output_param", (p, s, pr) -> doSetOutputParameter(p, s, pr));
+        reg(m, "set_output_parameter", (p, s, pr) -> doSetOutputParameter(p, s, pr));
         reg(m, "add_filter_group", (p, s, pr) -> doAddSettingsFilterGroup(p, s));
         reg(m, "add_settings_filter_group", (p, s, pr) -> doAddSettingsFilterGroup(p, s));
         reg(m, "add_dataset_link", (p, s, pr) -> doAddDataSetLink(p, s));

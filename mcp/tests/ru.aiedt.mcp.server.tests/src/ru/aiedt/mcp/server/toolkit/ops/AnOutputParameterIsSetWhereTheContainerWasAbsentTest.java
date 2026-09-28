@@ -12,11 +12,14 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
+import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -61,6 +64,20 @@ public class AnOutputParameterIsSetWhereTheContainerWasAbsentTest
             built instanceof EObject);
         schema = (EObject)built;
         tool = new DcsWorkshopTool();
+        // The operation checks the name against the platform's output parameters. The platform's
+        // set is built from the installed 1C:Enterprise, which a test runtime has none of, so the
+        // set the check reads is pinned here to the names these tests write.
+        DcsWorkshopTool.outputParameterNamesForTests =
+            Collections.unmodifiableList(Arrays.asList(PARAMETER, "Title")); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts the output parameter names back the way the production path reads them.
+     */
+    @After
+    public void clearThePinnedNames()
+    {
+        DcsWorkshopTool.outputParameterNamesForTests = null;
     }
 
     /**
