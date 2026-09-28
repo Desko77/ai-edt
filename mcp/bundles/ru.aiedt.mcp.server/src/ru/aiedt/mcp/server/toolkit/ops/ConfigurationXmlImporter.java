@@ -32,7 +32,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *
  * <p>Backed by the EDT CLI API
  * {@code com._1c.g5.v8.dt.cli.api.workspace.IImportConfigurationFilesApi#importProject(Path, String, String, String)},
- * obtained as an OSGi service and invoked reflectively (no compile dependency).
+ * obtained as an OSGi service and invoked reflectively (no compile dependency). Its arguments are
+ * the source folder, the project name, the platform version and the base project of an extension,
+ * in that order (parameter names from the implementation class's local variable table).
  * Not destructive to existing projects - a pre-existing project name is rejected.
  * Synchronous; for a large configuration this can run a while. Requires the
  * source XML's platform version to be installed in EDT.
@@ -65,11 +67,10 @@ public class ConfigurationXmlImporter implements IMcpTool
                 "Absolute path to the directory of Designer-XML files to import (required).", true) //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Name of the NEW EDT project to create (required; must not already exist).", true) //$NON-NLS-1$
-            .stringProperty("projectNature", //$NON-NLS-1$
-                "EDT nature id, or omit to auto-detect (e.g. " //$NON-NLS-1$
-                    + "com._1c.g5.v8.dt.core.V8ConfigurationNature).") //$NON-NLS-1$
             .stringProperty("xmlVersion", //$NON-NLS-1$
                 "Platform XML format version (e.g. 8.3.20), or omit to auto-detect.") //$NON-NLS-1$
+            .stringProperty("baseProjectName", //$NON-NLS-1$
+                "For an extension: the workspace project of the configuration it extends.") //$NON-NLS-1$
             .build();
     }
 
@@ -84,8 +85,8 @@ public class ConfigurationXmlImporter implements IMcpTool
     {
         String importPath = JsonUtils.extractStringArgument(params, "importPath"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        String projectNature = JsonUtils.extractStringArgument(params, "projectNature"); //$NON-NLS-1$
         String xmlVersion = JsonUtils.extractStringArgument(params, "xmlVersion"); //$NON-NLS-1$
+        String baseProjectName = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
         if (importPath == null || importPath.isEmpty())
         {
             return ToolResult.error("importPath is required").toJson(); //$NON-NLS-1$
@@ -95,13 +96,13 @@ public class ConfigurationXmlImporter implements IMcpTool
             return ToolResult.error("projectName is required").toJson(); //$NON-NLS-1$
         }
         // Empty optional strings -> null so the API auto-detects.
-        if (projectNature != null && projectNature.isEmpty())
-        {
-            projectNature = null;
-        }
         if (xmlVersion != null && xmlVersion.isEmpty())
         {
             xmlVersion = null;
+        }
+        if (baseProjectName != null && baseProjectName.isEmpty())
+        {
+            baseProjectName = null;
         }
 
         Path in;
@@ -127,6 +128,11 @@ public class ConfigurationXmlImporter implements IMcpTool
             return ToolResult.error("A project under this name is already in the workspace: " + projectName //$NON-NLS-1$
                 + ". Import creates a NEW project - pick a name that is not in use.").toJson(); //$NON-NLS-1$
         }
+        String baseRefusal = baseProjectRefusal(baseProjectName);
+        if (baseRefusal != null)
+        {
+            return ToolResult.error(baseRefusal).put(ErrorTags.PROJECT_NOT_FOUND.wire(), true).toJson();
+        }
 
         Object api = Activator.getDefault().getImportConfigurationFilesApi();
         if (api == null)
@@ -139,9 +145,7 @@ public class ConfigurationXmlImporter implements IMcpTool
 
         try
         {
-            Method importProject = api.getClass().getMethod("importProject", //$NON-NLS-1$
-                Path.class, String.class, String.class, String.class);
-            importProject.invoke(api, in, projectName, projectNature, xmlVersion);
+            invokeImport(api, in, projectName, xmlVersion, baseProjectName);
         }
         catch (InvocationTargetException ite)
         {
@@ -171,7 +175,7 @@ public class ConfigurationXmlImporter implements IMcpTool
                 + "' appeared in the workspace. The sources at " + in //$NON-NLS-1$
                 + " were most likely not recognised as a configuration, an extension or an " //$NON-NLS-1$
                 + "external-object folder. Check that the directory is the root of a Designer " //$NON-NLS-1$
-                + "XML dump, and pass projectNature explicitly if auto-detection is the problem.") //$NON-NLS-1$
+                + "XML dump.") //$NON-NLS-1$
                 .toJson();
         }
 
@@ -221,11 +225,58 @@ public class ConfigurationXmlImporter implements IMcpTool
             .put("operation", "import_configuration_from_xml") //$NON-NLS-1$ //$NON-NLS-2$
             .put("projectName", projectName) //$NON-NLS-1$
             .put("importPath", in.toString()); //$NON-NLS-1$
+        if (baseProjectName != null)
+        {
+            tool.put("baseProjectName", baseProjectName); //$NON-NLS-1$
+        }
         if (lifecycleNote != null)
         {
             tool.put("lifecycleNote", lifecycleNote); //$NON-NLS-1$
         }
         return tool.toJson();
+    }
+
+    /**
+     * Calls {@code importProject(Path, String, String, String)} of the EDT import API with the
+     * arguments in the order the implementation declares them: source folder, project name,
+     * platform version, base project. Does not check the result; the caller inspects the workspace.
+     *
+     * @param api the {@code IImportConfigurationFilesApi} service
+     * @param in the folder of Designer-XML files
+     * @param projectName the project to create
+     * @param xmlVersion the platform version of the files, or <code>null</code> to auto-detect
+     * @param baseProjectName the project an extension extends, or <code>null</code>
+     * @throws ReflectiveOperationException when the method is missing, inaccessible or throws
+     */
+    static void invokeImport(Object api, Path in, String projectName, String xmlVersion,
+        String baseProjectName) throws ReflectiveOperationException
+    {
+        Method importProject = api.getClass().getMethod("importProject", //$NON-NLS-1$
+            Path.class, String.class, String.class, String.class);
+        importProject.invoke(api, in, projectName, xmlVersion, baseProjectName);
+    }
+
+    /**
+     * Tells why a base project named for an extension import cannot be used. Does not check that
+     * the project holds a configuration.
+     *
+     * @param baseProjectName the name the caller passed, or <code>null</code>
+     * @return the refusal text, or <code>null</code> when no base was named or the project exists
+     */
+    static String baseProjectRefusal(String baseProjectName)
+    {
+        if (baseProjectName == null || baseProjectName.isEmpty())
+        {
+            return null;
+        }
+        IProject base = ResourcesPlugin.getWorkspace().getRoot().getProject(baseProjectName);
+        if (base != null && base.exists())
+        {
+            return null;
+        }
+        return "baseProjectName '" + baseProjectName + "' does not name a project in the workspace. " //$NON-NLS-1$ //$NON-NLS-2$
+            + "Import or open the configuration the extension extends first, then pass its " //$NON-NLS-1$
+            + "project name."; //$NON-NLS-1$
     }
 
     /**

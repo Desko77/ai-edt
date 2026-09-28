@@ -291,9 +291,8 @@ public class ConfigIoFacadeTool implements IMcpTool
             .stringProperty("skipValidation", //$NON-NLS-1$
                 "export_configuration_to_cf: pass 'true' to skip the built-in " //$NON-NLS-1$
                     + "validate_for_export guard.") //$NON-NLS-1$
-            .stringProperty("projectNature", //$NON-NLS-1$
-                "import_configuration_from_xml: EDT nature id, or omit to auto-detect (e.g. " //$NON-NLS-1$
-                    + "com._1c.g5.v8.dt.core.V8ConfigurationNature).") //$NON-NLS-1$
+            .stringProperty("baseProjectName", //$NON-NLS-1$
+                "Both imports, for an extension: the project of the configuration it extends.") //$NON-NLS-1$
             .stringProperty("xmlVersion", //$NON-NLS-1$
                 "import_configuration_from_xml: platform XML format version (e.g. 8.3.20), " //$NON-NLS-1$
                     + "or omit to auto-detect.") //$NON-NLS-1$
