@@ -286,7 +286,10 @@ public class TheRoadKeepsEachOfItsPromisesTest
             assertEquals("scope-done", result); //$NON-NLS-1$
             assertTrue("while the run went, the entry held the scope it was started under", //$NON-NLS-1$
                 heldWhileRunning.get());
-            assertNull("a finished entry no longer holds the call scope", entry.scope); //$NON-NLS-1$
+            // The scope is dropped by the future's completion callback, which runs on the completing
+            // thread after await() has already been released.
+            assertTrue("a finished entry no longer holds the call scope", //$NON-NLS-1$
+                eventually(() -> entry.scope == null));
             PendingWorkRegistry.REFERENCES.remove(key, entry);
         }
         finally
