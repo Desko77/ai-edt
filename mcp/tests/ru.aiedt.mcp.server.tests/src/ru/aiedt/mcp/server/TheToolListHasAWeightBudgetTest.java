@@ -54,8 +54,13 @@ public class TheToolListHasAWeightBudgetTest
     /**
      * What the whole document may weigh. Measured at 160766 bytes; the allowance is the per-tool
      * headroom spent a few times over, not a free hand.
+     * <p>
+     * Raised from 168000 to 168428 for length, precision, fractionDigits, nonNegative,
+     * dateFractions and allowedLength on dcs_workshop: add_parameter, set_parameter and add_field
+     * write them into the value type.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 168000;
+    private static final int DOCUMENT_BUDGET = 168428;
 
     private LiveServer server;
 

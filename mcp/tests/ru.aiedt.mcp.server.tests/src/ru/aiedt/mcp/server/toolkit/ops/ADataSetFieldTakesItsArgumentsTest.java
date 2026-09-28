@@ -88,19 +88,29 @@ public class ADataSetFieldTakesItsArgumentsTest
         assertEquals("the refused field must not stay in the dataset", 0, fields().size()); //$NON-NLS-1$
     }
 
-    /** property=type is the type; without a project to resolve it, the call is refused. */
+    /** property=type is the type: a primitive type is written on the field. */
+    @Test
+    public void aTypeNamedAsThePropertyTypesTheField() throws Exception
+    {
+        tool.applyToSchemaForTest("add_field", params("dataSetName", DATA_SET, "name", "Сумма", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "property", "type", "value", "Number"), schema); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Object valueType = onlyField().getClass().getMethod("getValueType").invoke(onlyField()); //$NON-NLS-1$
+        assertNotNull("the field has to carry the value type", valueType); //$NON-NLS-1$
+    }
+
+    /** A type that does not resolve refuses the call before the field joins the dataset. */
     @Test
     public void aTypeThatCannotBeAppliedIsRefusedAndNothingIsAdded() throws Exception
     {
         try
         {
             tool.applyToSchemaForTest("add_field", params("dataSetName", DATA_SET, "name", "Сумма", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-                "property", "type", "value", "Number"), schema); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "property", "type", "value", "НетТакогоТипа"), schema); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             fail("a type that was not applied was reported as written"); //$NON-NLS-1$
         }
         catch (RuntimeException refused)
         {
-            assertTrue(refused.getMessage(), refused.getMessage().contains("Type 'Number'")); //$NON-NLS-1$
+            assertTrue(refused.getMessage(), refused.getMessage().contains("Type 'НетТакогоТипа'")); //$NON-NLS-1$
         }
         assertEquals(0, fields().size());
     }
