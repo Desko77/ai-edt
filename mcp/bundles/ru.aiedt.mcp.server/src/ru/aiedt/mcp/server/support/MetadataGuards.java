@@ -201,6 +201,28 @@ public final class MetadataGuards
     }
 
     /**
+     * Whether a name is one path element: not empty, not this or the parent directory, and carrying
+     * no separator of either kind.
+     * <p>
+     * A metadata name is joined onto a path under {@code src/} to address the object's files, so a
+     * name that stands for a parent directory or carries a separator places those files outside the
+     * object it names - and the object, whose {@code .mdo} was written with that name, stops
+     * resolving. Every path that joins a caller's name onto {@code src/} answers from this rule.
+     * </p>
+     *
+     * @param name the name to test; may be <code>null</code>
+     * @return <code>true</code> when the name is a single, ordinary path element
+     */
+    public static boolean isPlainName(String name)
+    {
+        if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return false;
+        }
+        return name.indexOf('/') < 0 && name.indexOf('\\') < 0;
+    }
+
+    /**
      * Refuses a name that carries a letter of the other alphabet inside one of its words.
      * <p>
      * Such a name is accepted by the platform and printed exactly like the one it imitates, so the

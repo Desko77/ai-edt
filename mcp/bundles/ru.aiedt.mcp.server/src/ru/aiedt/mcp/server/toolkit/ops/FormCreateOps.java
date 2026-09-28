@@ -49,7 +49,7 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
  * and dispatched through the single-source op-registry. Shared stateless helpers
  * live on {@link EditMetadataTool} (qualified calls); the 17 cluster-local creation
  * helpers (normalizeFormType, extractCommonFormName, isCommonFormType,
- * pickDefaultFormSetter, deriveFormPurpose, equalsAny, nameContains,
+ * purposeToken, formPurposeFor, defaultFormSetterFor, deriveFormPurpose, equalsAny, nameContains,
  * isObjectOwningType, isRegisterType, mainTypeFqnForOwner, ensureObjectFormContent,
  * resolveFormFactory, applyAdjustableCommon, createAdjustableBooleanCommon,
  * invokeNoArg, isBoxedMatch, attachGeneratedForm) are private here. The CommonForm
@@ -169,8 +169,28 @@ final class FormCreateOps
         {
             return ToolResult.error(formNameErr.trim()).toJson();
         }
+        // Audit W06 F3: a name that is not one path element cannot address the form's folder on
+        // disk. Writing the .mdo first and discovering this afterwards left a form the object no
+        // longer resolved (measured: formName=../TraversalProbe).
+        if (!MetadataGuards.isPlainName(formName))
+        {
+            return ToolResult.error("formName must be a plain name, got '" + formName + "'") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("hint", "A form name is a single path element: no separator, no '..'.") //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
+        }
+        // The form's purpose, resolved once and used by every step that depends on it: the
+        // generator's FormType, the deterministic main attribute, and the default-form property
+        // setAsDefault points at. An explicit `purpose` states it; a legacy `formType` value that
+        // names a purpose (ItemForm / ListForm / ...) still does; without either, the owner type and
+        // the form name decide.
+        final String purposeConstant = formPurposeFor(purposeRaw, formTypeRaw, ownerFqn, formName);
         // 3.8.3: track scaffold tags for response
         AtomicReference<Integer> scaffoldedProps = new AtomicReference<>(0);
+        // An empty managed form is born without the base properties the EDT wizard sets. Ordinary
+        // forms carry their own layout, so the scaffolding applies to managed forms only.
+        final boolean isManagedEmpty = "empty".equalsIgnoreCase(layout) //$NON-NLS-1$
+            && !"ORDINARY".equalsIgnoreCase(formType); //$NON-NLS-1$
         // Audit B2/G10: capture setter / inner-form-attach failures that were
         // previously only logged, so the JSON response tells the agent that part
         // of create_form silently did not apply (otherwise a follow-up form op
@@ -296,29 +316,21 @@ final class FormCreateOps
                     formSetterWarnings.add("defaultForm: " + de.getMessage()); //$NON-NLS-1$
                 }
 
-                // 3.8.3 defensive layer: apply 11 base properties for a managed
-                // form with layout=empty (groupHorizontalAlign / commandBar /
-                // commandInterface / etc). Without these the editor refuses to
-                // open the form and tables collapse at runtime. Bug A: the gate
-                // used to key off the literal formType "Generic", which is no
-                // longer a valid FormType - it now keys off layout=empty (the
-                // managed form is the only kind we create).
-                boolean isManagedEmpty = "empty".equalsIgnoreCase(layout)
-                    && !"ORDINARY".equalsIgnoreCase(formType);
-                if (isManagedEmpty)
-                {
-                    int applied = FormBaseSetup.applyDefaults(form);
-                    scaffoldedProps.set(applied);
-                }
-
-                // setAsDefault - point owner.defaultListForm or defaultObjectForm at this form
+                // setAsDefault - point the owner's default-list / default-object / ... property at
+                // this form. Which property that is follows from the form's purpose (audit W05 F3:
+                // the choice used to be made from the raw formType, so a caller who gave a purpose
+                // and no formType got no setter at all and an answer of success).
                 if (setAsDefault)
                 {
-                    // Use the RAW form type (purpose name, e.g. ItemForm / ListForm)
-                    // here, not the normalized ORDINARY/MANAGED - the default-form
-                    // setter is chosen by the form's purpose.
-                    String setterName = pickDefaultFormSetter(formTypeRaw);
-                    if (setterName != null)
+                    String setterName = defaultFormSetterFor(purposeConstant);
+                    if (setterName == null)
+                    {
+                        // Nothing to point at: the purpose names no default-form property. Say so
+                        // instead of answering success.
+                        formSetterWarnings.add("setAsDefault: the " + purposeConstant //$NON-NLS-1$
+                            + " purpose names no default-form property of " + ownerFqn); //$NON-NLS-1$
+                    }
+                    else
                     {
                         String setErr = BmObjectHelper.setProperty(owner, setterName, form);
                         if (setErr != null)
@@ -340,9 +352,8 @@ final class FormCreateOps
                 boolean generatedAttached = false;
                 if (!"ORDINARY".equalsIgnoreCase(formType))
                 {
-                    String purposeConst = deriveFormPurpose(purposeRaw, ownerFqn, formName);
                     BmFormGeneratorHelper.Result genResult = BmFormGeneratorHelper.generate(
-                        owner, form, purposeConst, formGenConfig, formGenProject);
+                        owner, form, purposeConstant, formGenConfig, formGenProject);
                     if (genResult.ok && genResult.generatedForm != null)
                     {
                         // Attach the generated Form root to the BasicForm
@@ -487,11 +498,20 @@ final class FormCreateOps
                 // non-OBJECT purposes (LIST / GENERIC / register RECORD_SET) we
                 // skip the main attribute and just ensure the autoCommandBar.
                 Object innerFormForContent = innerFormModelRef.get();
+                if (innerFormForContent != null && isManagedEmpty)
+                {
+                    // 3.8.3 defensive layer: the 11 base properties an empty managed form is born
+                    // with (children align, command bar, command interface, ...). Without them the
+                    // editor refuses to open the form and tables collapse at runtime. They live on
+                    // the inner form.model.Form, so they can only be applied once that object
+                    // exists - applying them to the metadata wrapper reached no setter at all and
+                    // reported zero (audit W06 F1).
+                    scaffoldedProps.set(FormBaseSetup.applyDefaults(innerFormForContent));
+                }
                 if (innerFormForContent != null && !"ORDINARY".equalsIgnoreCase(formType)) //$NON-NLS-1$
                 {
-                    String purposeForContent = deriveFormPurpose(purposeRaw, ownerFqn, formName);
                     ensureObjectFormContent(innerFormForContent, owner, ownerFqn,
-                        purposeForContent, formGenProject, formGenConfig,
+                        purposeConstant, formGenProject, formGenConfig,
                         mainAttrAddedRef, autoCmdBarAddedRef, contentWarnings);
                 }
                 return formName;
@@ -796,23 +816,74 @@ final class FormCreateOps
     }
 
     /**
-     * Picks the appropriate "default form" setter on the owner depending on
-     * the form type. Returns null when no canonical mapping exists.
+     * The purpose the created form is being given, as a token the purpose table accepts.
+     * <p>
+     * An explicit {@code purpose} states it. A {@code formType} does too when it names one of the
+     * legacy purpose values ({@code ItemForm} / {@code ListForm} / ...), which is what callers of
+     * that older spelling meant; {@code MANAGED} and {@code ORDINARY} name the form model, not a
+     * purpose, and leave the question to the owner type and the form name.
+     *
+     * @param purposeRaw the caller's {@code purpose}, may be null/empty
+     * @param legacyFormTypeRaw the caller's {@code formType}, may be null/empty
+     * @return the purpose token, or null when the caller named none
      */
-    private static String pickDefaultFormSetter(String formType)
+    static String purposeToken(String purposeRaw, String legacyFormTypeRaw)
     {
-        if (formType == null)
+        if (purposeRaw != null && !purposeRaw.trim().isEmpty())
+        {
+            return purposeRaw;
+        }
+        String legacy = legacyFormTypeRaw == null ? null : legacyFormTypeRaw.trim();
+        if (legacy == null || legacy.isEmpty()
+            || "MANAGED".equalsIgnoreCase(legacy) || "ORDINARY".equalsIgnoreCase(legacy)) //$NON-NLS-1$ //$NON-NLS-2$
         {
             return null;
         }
-        switch (formType)
+        return legacy;
+    }
+
+    /**
+     * The EDT {@code FormType} constant the created form's purpose resolves to, from the caller's
+     * purpose (or a legacy formType that names one) and, when neither is given, from the owner type
+     * and the form name.
+     *
+     * @param purposeRaw the caller's {@code purpose}, may be null/empty
+     * @param legacyFormTypeRaw the caller's {@code formType}, may be null/empty
+     * @param ownerFqn FQN of the owning metadata object
+     * @param formName the form name (used by the name heuristic)
+     * @return a FormType constant name, never null
+     */
+    static String formPurposeFor(String purposeRaw, String legacyFormTypeRaw, String ownerFqn,
+        String formName)
+    {
+        return deriveFormPurpose(purposeToken(purposeRaw, legacyFormTypeRaw), ownerFqn, formName);
+    }
+
+    /**
+     * The owner property that declares a form of this purpose as the owner's default one, or null
+     * when the owner has no such property for that purpose.
+     * <p>
+     * {@code GENERIC} and {@code RECORD_SET} name no default-form property: a caller who asks for
+     * {@code setAsDefault} with one of those purposes has nothing to set, and the caller of this
+     * method reports that rather than answering success.
+     *
+     * @param purposeConstant a {@code FormType} constant name, as {@link #deriveFormPurpose} returns
+     * @return the property name ({@code defaultListForm}, ...), or null when there is none
+     */
+    static String defaultFormSetterFor(String purposeConstant)
+    {
+        if (purposeConstant == null)
         {
-            case "ItemForm": return "defaultObjectForm";
-            case "ListForm": return "defaultListForm";
-            case "ChoiceForm": return "defaultChoiceForm";
-            case "FolderForm": return "defaultFolderForm";
-            case "FolderChoiceForm": return "defaultFolderChoiceForm";
-            case "RecordForm": return "defaultRecordForm";
+            return null;
+        }
+        switch (purposeConstant)
+        {
+            case "OBJECT": return "defaultObjectForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "LIST": return "defaultListForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CHOICE": return "defaultChoiceForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FOLDER": return "defaultFolderForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FOLDER_CHOICE": return "defaultFolderChoiceForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "RECORD": return "defaultRecordForm"; //$NON-NLS-1$ //$NON-NLS-2$
             default: return null;
         }
     }
