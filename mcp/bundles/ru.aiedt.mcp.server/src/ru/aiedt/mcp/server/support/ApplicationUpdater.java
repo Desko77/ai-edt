@@ -306,12 +306,31 @@ public final class ApplicationUpdater
         return ApplicationUpdateType.INCREMENTAL;
     }
 
+    /** How long an update waits for the UI thread to name the active shell, in milliseconds. */
+    static final long SHELL_WAIT_MS = 5_000L;
+
     /**
-     * Builds an {@link ExecutionContext} with the active SWT shell, so EDT
-     * can route any modal prompts through it. When no UI thread is available
-     * (e.g. server context), returns an empty context.
+     * Builds an {@link ExecutionContext} with the active SWT shell, waiting for the UI thread at
+     * most {@link #SHELL_WAIT_MS}.
+     *
+     * @return the context; without a shell when there is no display or the UI thread did not answer
      */
     private static ExecutionContext buildExecutionContext()
+    {
+        return buildExecutionContext(SHELL_WAIT_MS);
+    }
+
+    /**
+     * Builds an {@link ExecutionContext} with the active SWT shell, so EDT can route any modal
+     * prompts through it. The wait for the UI thread is bounded: the callers hold the launch lock,
+     * and a UI thread held by a modal dialog would otherwise hold every later launch behind it.
+     * When the UI thread does not answer in time, or there is no display, the context carries no
+     * shell and the update goes on without one.
+     *
+     * @param shellWaitMs how long to wait for the UI thread, in milliseconds
+     * @return the context
+     */
+    static ExecutionContext buildExecutionContext(long shellWaitMs)
     {
         ExecutionContext context = new ExecutionContext();
         Display display = Display.getDefault();
@@ -319,28 +338,34 @@ public final class ApplicationUpdater
         {
             return context;
         }
-        final Shell[] shellHolder = new Shell[1];
+        Shell shell = null;
         try
         {
-            display.syncExec(() -> {
-                shellHolder[0] = display.getActiveShell();
-                if (shellHolder[0] == null)
+            shell = UiSync.call(() -> {
+                Shell active = display.getActiveShell();
+                if (active == null)
                 {
                     Shell[] shells = display.getShells();
                     if (shells.length > 0)
                     {
-                        shellHolder[0] = shells[0];
+                        active = shells[0];
                     }
                 }
-            });
+                return active;
+            }, shellWaitMs);
         }
-        catch (Exception ignored)
+        catch (UiSync.UiBusyException e)
+        {
+            Activator.logWarning("The UI thread did not name the active shell within " + shellWaitMs //$NON-NLS-1$
+                + " ms; the infobase update goes on without a shell for prompts."); //$NON-NLS-1$
+        }
+        catch (RuntimeException ignored)
         {
             // Display might be disposing - context without shell is still usable.
         }
-        if (shellHolder[0] != null)
+        if (shell != null)
         {
-            context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shellHolder[0]);
+            context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shell);
         }
         return context;
     }
