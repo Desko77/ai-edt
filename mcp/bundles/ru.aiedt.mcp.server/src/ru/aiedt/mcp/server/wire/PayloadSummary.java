@@ -33,6 +33,13 @@ public final class PayloadSummary
     /** Beyond this the line stops being a summary. */
     private static final int MAX_LENGTH = 400;
 
+    /**
+     * Beyond this a failure text is cut. A refusal is the reason the caller has to act on and a
+     * batch failure names each failed operation with its reason, so it is kept to this length rather
+     * than to the length of a summary.
+     */
+    static final int MAX_FAILURE_LENGTH = 4000;
+
     /** How many fields of a successful answer are worth naming. */
     private static final int MAX_FIELDS = 6;
 
@@ -75,7 +82,8 @@ public final class PayloadSummary
         // The failure text goes out whole and first. This is the case the class exists for: an
         // invisible error is worse than an invisible result, because the caller concludes the tool
         // is broken rather than that the call was wrong.
-        String line = failure != null ? clip(failure) : clip(describeSuccess(object));
+        String line = failure != null ? clip(failure, MAX_FAILURE_LENGTH)
+            : clip(describeSuccess(object), MAX_LENGTH);
         return withSignal(line, object);
     }
 
@@ -244,16 +252,23 @@ public final class PayloadSummary
             JsonArray array = payload.getAsJsonArray();
             return array.size() + (array.size() == 1 ? " item" : " items"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return clip(payload.getAsString());
+        return clip(payload.getAsString(), MAX_LENGTH);
     }
 
-    private static String clip(String line)
+    /**
+     * Flattens a text to one line and cuts it to a length.
+     *
+     * @param line the text
+     * @param maxLength the longest line returned, the closing "..." included
+     * @return the line, or {@code Done} for an empty text
+     */
+    private static String clip(String line, int maxLength)
     {
         String flat = line.replace('\n', ' ').replace('\r', ' ').trim();
         if (flat.isEmpty())
         {
             return NOTHING_TO_SAY;
         }
-        return flat.length() > MAX_LENGTH ? flat.substring(0, MAX_LENGTH - 3) + "..." : flat; //$NON-NLS-1$
+        return flat.length() > maxLength ? flat.substring(0, maxLength - 3) + "..." : flat; //$NON-NLS-1$
     }
 }
