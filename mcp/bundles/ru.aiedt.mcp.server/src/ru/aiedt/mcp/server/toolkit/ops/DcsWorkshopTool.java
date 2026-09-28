@@ -4755,11 +4755,10 @@ public class DcsWorkshopTool implements IMcpTool
      * <p>
      * The {@code target} argument defaults to {@code schema}, and both that and {@code settings}
      * resolve to the settings of the default variant, which is where {@code add_conditional_appearance}
-     * writes its items. Asking the schema object itself for a {@code ConditionalAppearance} refused
-     * every default call with {@code schema.ConditionalAppearance not available}: a schema has no
-     * such property, and the items live one level down, on the settings. Any other value of
-     * {@code target} is read as the name of a variant, whose settings carry an appearance too; a
-     * variant that is not there is refused by name, before anything is touched.
+     * writes its items: a schema has no conditional appearance of its own, the items live on the
+     * settings. Any other value of {@code target} is read as the name of a variant, whose settings
+     * carry an appearance too; a variant that is not there is refused by name, before anything is
+     * touched.
      * </p>
      * <p>
      * The container is read rather than created. There is nothing to take out of a container that
@@ -5076,10 +5075,8 @@ public class DcsWorkshopTool implements IMcpTool
      * {@code sourceDataSet}+{@code destinationDataSet} pair.
      * <p>
      * The setter's answer decides the outcome. A property the link does not carry, or a value it
-     * refuses, is named and refused here - it used to be discarded and answered as "set", which left
-     * the refusal to the write path: the schema reached disk byte-identical to what it held, and the
-     * call came back as {@code schemaUnchanged}, a message that names neither the property nor the
-     * link. The properties of a link are sourceDataSet, destinationDataSet, sourceExpression,
+     * refuses, is refused here with the link and the property named, before the schema is written.
+     * The properties of a link are sourceDataSet, destinationDataSet, sourceExpression,
      * destinationExpression, parameter, parameterListAllowed, linkConditionExpression, startExpression
      * and required.
      * </p>
