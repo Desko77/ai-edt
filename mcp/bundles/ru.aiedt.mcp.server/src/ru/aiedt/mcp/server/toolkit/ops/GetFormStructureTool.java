@@ -15,6 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 
+import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -655,36 +657,137 @@ public class GetFormStructureTool implements IMcpTool
         return null;
     }
 
+    /**
+     * The command a button runs, as the form file writes it.
+     *
+     * @param item a form item; only a button carries a command
+     * @return the command path (see {@link #commandPath(Object)}), or <code>null</code> when the item
+     *         is not a button or its command is not set
+     */
     private String extractCommandName(Object item)
     {
-        // Button.getCommandName / Button.getStandardCommand.getName / Button.getCommand.getName
-        String name = invokeStringNoArg(item, "getCommandName"); //$NON-NLS-1$
-        if (name != null && !name.isEmpty())
+        try
+        {
+            return commandPath(item.getClass().getMethod("getCommandName").invoke(item)); //$NON-NLS-1$
+        }
+        catch (NoSuchMethodException e)
+        {
+            // Only a button declares a command: any other item answers "no command".
+            return null;
+        }
+        catch (ReflectiveOperationException e)
+        {
+            Activator.logDebug("get_form_structure: command of " + item.getClass().getSimpleName() //$NON-NLS-1$
+                + " could not be read: " + e); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * The path a command is written under in a form file: {@code Form.Command.<Name>},
+     * {@code Form.StandardCommand.<Name>}, {@code Form.Item.<Item>.StandardCommand.<Name>},
+     * {@code CommonCommand.<Name>}, {@code <Type>.<Object>.Command.<Name>} or
+     * {@code <Type>.<Object>.StandardCommand.<Name>}. A command reference is followed to the command it
+     * names.
+     *
+     * @param command a form command, a standard command of the form or of one of its items, a command
+     *            or standard command of a metadata object, a command reference, or <code>null</code>
+     * @return the path; the bare name when the owner of a metadata command cannot be read;
+     *         <code>null</code> for <code>null</code> or a command without a name
+     */
+    static String commandPath(Object command)
+    {
+        Object target = command;
+        for (int hop = 0; hop < 4 && target instanceof EObject && "CommandRef".equals(kindOf(target)); hop++) //$NON-NLS-1$
+        {
+            target = readNoArg(target, "getCommand"); //$NON-NLS-1$
+        }
+        if (target instanceof String)
+        {
+            return ((String)target).isEmpty() ? null : (String)target;
+        }
+        if (!(target instanceof EObject))
+        {
+            return null;
+        }
+        EObject resolved = (EObject)target;
+        String name = nameOf(resolved);
+        if (name == null)
+        {
+            return null;
+        }
+        String kind = kindOf(resolved);
+        if ("FormCommand".equals(kind)) //$NON-NLS-1$
+        {
+            return "Form.Command." + name; //$NON-NLS-1$
+        }
+        EObject owner = resolved.eContainer();
+        if ("FormStandardCommand".equals(kind)) //$NON-NLS-1$
+        {
+            String item = owner == null || "Form".equals(kindOf(owner)) ? null : nameOf(owner); //$NON-NLS-1$
+            return item == null ? "Form.StandardCommand." + name //$NON-NLS-1$
+                : "Form.Item." + item + ".StandardCommand." + name; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        EObject ownerObject = owner;
+        while (ownerObject != null && !(ownerObject instanceof MdObject))
+        {
+            ownerObject = ownerObject.eContainer();
+        }
+        if (ownerObject == null)
+        {
+            return resolved instanceof MdObject ? kind + "." + name : name; //$NON-NLS-1$
+        }
+        String ownerName = nameOf(ownerObject);
+        if (ownerName == null)
         {
             return name;
         }
+        String segment = "StandardCommand".equals(kind) ? ".StandardCommand." : ".Command."; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return kindOf(ownerObject) + "." + ownerName + segment + name; //$NON-NLS-1$
+    }
+
+    /**
+     * The model class name of an object, which is also the type word of its path.
+     *
+     * @param object a model object
+     * @return the name of its {@code EClass}, or <code>null</code> when it is not a model object
+     */
+    private static String kindOf(Object object)
+    {
+        return object instanceof EObject && ((EObject)object).eClass() != null
+            ? ((EObject)object).eClass().getName() : null;
+    }
+
+    /**
+     * The name of a model object, read by its {@code getName()}.
+     *
+     * @param object a model object
+     * @return the name, or <code>null</code> when it has no {@code getName()} or the name is empty
+     */
+    private static String nameOf(Object object)
+    {
+        Object name = readNoArg(object, "getName"); //$NON-NLS-1$
+        return name instanceof String && !((String)name).isEmpty() ? (String)name : null;
+    }
+
+    /**
+     * Calls a public no-argument getter.
+     *
+     * @param target the receiver
+     * @param getter the getter name
+     * @return what it returned, or <code>null</code> when the receiver has no such getter
+     */
+    private static Object readNoArg(Object target, String getter)
+    {
         try
         {
-            Method m = item.getClass().getMethod("getStandardCommand"); //$NON-NLS-1$
-            Object cmd = m.invoke(item);
-            if (cmd != null)
-            {
-                String n = invokeStringNoArg(cmd, "getName"); //$NON-NLS-1$
-                if (n != null && !n.isEmpty())
-                {
-                    return n;
-                }
-            }
+            return target.getClass().getMethod(getter).invoke(target);
         }
-        catch (NoSuchMethodException ignored)
+        catch (ReflectiveOperationException e)
         {
-            // not a button or different EDT version
+            // A model object of another kind has no such getter; the caller reads null as "absent".
+            return null;
         }
-        catch (Exception ignored)
-        {
-            // best-effort
-        }
-        return null;
     }
 
     /**
