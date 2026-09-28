@@ -63,6 +63,23 @@ final class ServiceOps
 {
     private static final String XSD_NS = "http://www.w3.org/2001/XMLSchema"; //$NON-NLS-1$
 
+    /**
+     * Checks the form of a URL template before it is written. The platform addresses a template
+     * from the root of the service, so a template must start with a slash.
+     *
+     * @param template the template value
+     * @return the refusal sentence, or {@code null} when the template starts with a slash
+     */
+    static String urlTemplateRefusal(String template)
+    {
+        if (template != null && template.startsWith("/")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        return "A URL template must start with '/', for example '/items/{id}' (got '" + template //$NON-NLS-1$
+            + "'). Nothing was created."; //$NON-NLS-1$
+    }
+
     String opAddUrlTemplate(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -87,6 +104,11 @@ final class ServiceOps
         if (!err.isEmpty())
         {
             return ToolResult.error(err.trim()).toJson();
+        }
+        String templateRefusal = urlTemplateRefusal(template);
+        if (templateRefusal != null)
+        {
+            return ToolResult.error(templateRefusal).put("urlTemplate", template).toJson(); //$NON-NLS-1$
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -986,6 +1008,11 @@ final class ServiceOps
         if (urlTemplate == null || urlTemplate.isEmpty() || "/".equals(urlTemplate)) //$NON-NLS-1$
         {
             urlTemplate = "/" + urlTemplateName; //$NON-NLS-1$
+        }
+        String templateRefusal = urlTemplateRefusal(urlTemplate);
+        if (templateRefusal != null)
+        {
+            return ToolResult.error(templateRefusal).put("urlTemplate", urlTemplate).toJson(); //$NON-NLS-1$
         }
         String methodName = JsonUtils.extractStringArgument(params, "methodName"); //$NON-NLS-1$
         if (methodName == null || methodName.isEmpty())

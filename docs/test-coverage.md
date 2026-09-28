@@ -6,18 +6,18 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 124 | a test class named after it |
-| exercised | 152 | reached by some other test |
-| tool-sweep | 62 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 47 | needs a display or an extension point |
-| workspace-bound | 44 | drives a live EDT project or debug session |
+| exercised | 165 | reached by some other test |
+| tool-sweep | 56 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 46 | needs a display or an extension point |
+| workspace-bound | 39 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **429** | across 398 test classes |
+| **total** | **430** | across 426 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (44)
+## workspace-bound (39)
 
 **folders**
 - IClusterChangeObserver
@@ -47,14 +47,11 @@ _none_
 - BmEventSubscriptionHelper
 - BmExportHelper
 - BmExtensionProjectHelper
-- BmFormCleanupHelper
 - BmFormGeneratorHelper
 - BmFormResourceHelper
-- BmHelpHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
 - BmRouteMapHelper
-- BmSubsystemHelper
 - BmXdtoHelper
 - BreakpointAccess
 - BslCallGraphHelper
@@ -73,15 +70,13 @@ _none_
 
 **toolkit/ops**
 - CommandInterfaceOps
-- ContentOps
 - FormCreateOps
 - FormEventOps
-- PredefinedOps
 - RoleOps
 - RouteMapOps
 - SpecializedOps
 
-## ui-bound (47)
+## ui-bound (46)
 
 **(root)**
 - McpAutoStart
@@ -143,7 +138,6 @@ _none_
 - BslHoverAccess
 - BslProposalAccess
 - DebugLog
-- EditorImageCapture
 - OffScreenWidget
 - UiSync
 
@@ -152,7 +146,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (62)
+## tool-sweep (56)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -173,8 +167,6 @@ _none_
 - DebugResumer
 - DebugStateReader
 - DebugStepper
-- DebugVariableWriter
-- DebugVariablesReader
 - DefinitionNavigator
 - DialogAnswerer
 - DiskResynchronizer
@@ -182,14 +174,12 @@ _none_
 - EventLogTool
 - ExportExtensionTool
 - ExportObjectTool
-- ExpressionEvaluator
 - ExtensionDiffTool
 - ExtensionLifecycleTool
 - ExternalDataSourceWorkshopTool
 - FindDeadCodeTool
 - FormScreenshotGrabber
 - GenerateHealthSnapshotTool
-- GetCommandInterfaceTool
 - GetFormStructureTool
 - GetObjectHelpTool
 - GetSubsystemsTool
@@ -197,7 +187,6 @@ _none_
 - LaunchConfigCreator
 - LaunchConfigsLister
 - ListExtensionsTool
-- McpHistoryReader
 - OutgoingStructuresReader
 - PlatformDocReader
 - ProblemSummaryReader
@@ -210,7 +199,6 @@ _none_
 - RunToLineTool
 - SelfStatusTool
 - SemanticMetadataSearchTool
-- SetExceptionBreakpointTool
 - TaggedObjectsReader
 - TagsReader
 - TasksReader
@@ -218,7 +206,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (152)
+## exercised (165)
 
 **(root)**
 - Activator
@@ -255,12 +243,15 @@ _none_
 - BmExtensionTypeHelper
 - BmExternalObjectDumpHelper
 - BmExternalObjectProjectHelper
+- BmFormCleanupHelper
 - BmFormHelper
+- BmHelpHelper
 - BmInfobaseExtensionHelper
 - BmInfobaseLifecycleHelper
 - BmObjectHelper
 - BmReferencesHelper
 - BmRightsHelper
+- BmSubsystemHelper
 - BmSupportRegistryHelper
 - BmTemplateHelper
 - ChildBorrow
@@ -275,6 +266,7 @@ _none_
 - DumpInfoProbe
 - DumpInfoRebuilder
 - EditorBuffer
+- EditorImageCapture
 - EndpointWaiter
 - ErrorTags
 - ExportedFiles
@@ -334,18 +326,24 @@ _none_
 - CodeTextSearcher
 - ConfigIoFacadeTool
 - ContentAssistReader
+- ContentOps
 - DatabaseUpdater
 - DcsWorkshopTool
+- DebugFrameResolution
 - DebugSessionStarter
+- DebugVariableWriter
+- DebugVariablesReader
 - DependencyGraphTool
 - DetectQueryAntiPatternsTool
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
+- ExpressionEvaluator
 - ExternalObjectWorkshopTool
 - FindRlsViolationsTool
 - FormCommandInterfaceOps
 - FormItemsOps
 - GenerateEventHandlersTool
+- GetCommandInterfaceTool
 - GitCheckoutTool
 - GitCommitTool
 - GitTool
@@ -358,6 +356,7 @@ _none_
 - LaunchDebuggerTool
 - LaunchTerminator
 - ListInterceptorsTool
+- McpHistoryReader
 - MetadataDetailsReader
 - MetadataObjectDeleter
 - MetadataObjectRenamer
@@ -372,6 +371,7 @@ _none_
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
+- PredefinedOps
 - ProjectAdminFacadeTool
 - ProjectMetricsTool
 - ProjectProblemsReader
@@ -380,6 +380,7 @@ _none_
 - SecurityAuditFacadeTool
 - SensitiveDataScanTool
 - ServiceOps
+- SetExceptionBreakpointTool
 - SuspendWaiter
 - SymbolInfoReader
 - SyncControlTool
@@ -563,14 +564,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 1 |
-| 3-4 | 15 |
-| 5-8 | 37 |
-| 9-16 | 52 |
-| 17+ | 19 |
+| 3-4 | 13 |
+| 5-8 | 39 |
+| 9-16 | 51 |
+| 17+ | 20 |
 
-3477 test methods across 398 test classes; 124 classes have a test of their own, median 9 methods each.
+3587 test methods across 426 test classes; 124 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 124 of 429 classes have one: 62 are covered by the registry-wide contract sweep and 44 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 124 of 430 classes have one: 56 are covered by the registry-wide contract sweep and 39 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (1)
 

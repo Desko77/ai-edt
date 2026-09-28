@@ -28,8 +28,6 @@ import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.ILaunchManager;
-import org.eclipse.swt.widgets.Display;
-import org.eclipse.swt.widgets.Shell;
 
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com.e1c.g5.dt.applications.ApplicationException;
@@ -48,6 +46,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.ApplicationUpdater;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
@@ -963,35 +962,16 @@ public class DatabaseUpdater implements IMcpTool
      * The update is given one, because it wants a shell for any modal it raises. A probe is not:
      * it raises none, and nothing else it reads asks for a shell.
      * </p>
+     * <p>
+     * The wait for the UI thread is the bounded one {@link ApplicationUpdater} uses: a UI thread
+     * held by a modal dialog costs that wait, and the update goes on without a shell.
+     * </p>
      *
      * @return the context, carrying a shell when the workbench has one
      */
-    private static ExecutionContext contextWithActiveShell()
+    static ExecutionContext contextWithActiveShell()
     {
-        ExecutionContext context = new ExecutionContext();
-        Display display = Display.getDefault();
-        if (display == null || display.isDisposed())
-        {
-            return context;
-        }
-        final Shell[] shellHolder = new Shell[1];
-        display.syncExec(() ->
-        {
-            shellHolder[0] = display.getActiveShell();
-            if (shellHolder[0] == null)
-            {
-                Shell[] shells = display.getShells();
-                if (shells.length > 0)
-                {
-                    shellHolder[0] = shells[0];
-                }
-            }
-        });
-        if (shellHolder[0] != null)
-        {
-            context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shellHolder[0]);
-        }
-        return context;
+        return ApplicationUpdater.buildExecutionContext(ApplicationUpdater.SHELL_WAIT_MS);
     }
 
     /**

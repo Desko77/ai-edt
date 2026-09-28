@@ -7,7 +7,9 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -215,5 +217,103 @@ public class ADataParameterIsCreatedWhereThereWasNoneTest
         assertNotNull("the parameter went to the variant that was named", container); //$NON-NLS-1$
         assertEquals("and it is there once", 1, //$NON-NLS-1$
             BmDcsHelper.getEObjectList(container, "getItems").size()); //$NON-NLS-1$
+    }
+
+    /**
+     * The literals an entry holds.
+     *
+     * @param entry one settings-parameter entry
+     * @return {@code getValues()}, never <code>null</code>
+     */
+    private static EList<EObject> valuesOf(EObject entry)
+    {
+        EList<EObject> values = BmDcsHelper.getEObjectList(entry, "getValues"); //$NON-NLS-1$
+        assertNotNull("a settings parameter holds its value in getValues()", values); //$NON-NLS-1$
+        return values;
+    }
+
+    /**
+     * Omitting {@code value} must not wipe the literal already stored.
+     * <p>
+     * A call that names the parameter and nothing else has nothing to change, so it is refused.
+     * The refusal happens before the value list is cleared.
+     * </p>
+     *
+     * @throws Exception if a call that should succeed refuses
+     */
+    @Test
+    public void aCallThatPassesNoValueLeavesTheLiteralWhereItWas() throws Exception
+    {
+        run("add_parameter", "name", "Период", "type", "Date"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        run("set_settings_parameter", "name", "Период", "value", "2026-01-01"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        EObject literal = valuesOf(entries().get(0)).get(0);
+
+        try
+        {
+            run("set_settings_parameter", "name", "Период"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            fail("a call that changes nothing must not report the value as set"); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            assertTrue("the refusal says there was nothing to set: " + e.getMessage(), //$NON-NLS-1$
+                String.valueOf(e.getMessage()).contains("nothing to set")); //$NON-NLS-1$
+        }
+
+        EList<EObject> values = valuesOf(entries().get(0));
+        assertEquals("the literal that was there is still the only one", 1, values.size()); //$NON-NLS-1$
+        assertSame("and it is the same literal, not a replacement with no value", //$NON-NLS-1$
+            literal, values.get(0));
+    }
+
+    /**
+     * Setting only {@code userSettingID} leaves the value and says so.
+     *
+     * @throws Exception if the call refuses
+     */
+    @Test
+    public void aUserSettingIdentifierWithoutAValueLeavesTheLiteralAndNamesWhatChanged()
+        throws Exception
+    {
+        run("add_parameter", "name", "Период", "type", "Date"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        run("set_settings_parameter", "name", "Период", "value", "2026-01-01"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        EObject literal = valuesOf(entries().get(0)).get(0);
+
+        Object answer = run("set_settings_parameter", "name", "Период", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "userSettingID", "b1f0"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        EList<EObject> values = valuesOf(entries().get(0));
+        assertEquals(1, values.size());
+        assertSame("the value was not part of this call, so it stays", literal, values.get(0)); //$NON-NLS-1$
+        String text = String.valueOf(answer);
+        assertTrue("the answer names the identifier that changed: " + text, //$NON-NLS-1$
+            text.contains("userSettingID")); //$NON-NLS-1$
+        assertFalse("and it does not claim the value was set: " + text, //$NON-NLS-1$
+            text.contains("' set") || text.contains("added and set")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Setting only {@code use} leaves the value and says so.
+     *
+     * @throws Exception if the call refuses
+     */
+    @Test
+    public void useWithoutAValueLeavesTheLiteralAndNamesWhatChanged() throws Exception
+    {
+        run("add_parameter", "name", "Период", "type", "Date"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        run("set_settings_parameter", "name", "Период", "value", "2026-01-01"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        EObject literal = valuesOf(entries().get(0)).get(0);
+
+        Object answer = run("set_settings_parameter", "name", "Период", "use", "false"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        EObject entry = entries().get(0);
+        EList<EObject> values = valuesOf(entry);
+        assertEquals(1, values.size());
+        assertSame("the value was not part of this call, so it stays", literal, values.get(0)); //$NON-NLS-1$
+        assertEquals("the flag is what the call asked for", Boolean.FALSE, //$NON-NLS-1$
+            entry.eGet(entry.eClass().getEStructuralFeature("use"))); //$NON-NLS-1$
+        String text = String.valueOf(answer);
+        assertTrue("the answer names the flag that changed: " + text, text.contains("use")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("and it does not claim the value was set: " + text, //$NON-NLS-1$
+            text.contains("' set") || text.contains("added and set")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }
