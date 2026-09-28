@@ -55,6 +55,8 @@ public class ACharacterBslCannotHoldIsReplacedOnWriteTest
 
     private static final char EM_DASH = '\u2014';
 
+    private static final char EN_DASH = '\u2013';
+
     private static final char NO_BREAK_SPACE = '\u00A0';
 
     /** The module as the provider first holds it: one method, and a dash on a line of its body. */
@@ -331,6 +333,129 @@ public class ACharacterBslCannotHoldIsReplacedOnWriteTest
         assertTrue("the place is named by the method it was measured in", //$NON-NLS-1$
             answer.contains("Тест 2:13")); //$NON-NLS-1$
         assertTrue(written(), written().contains("\t// заметка -")); //$NON-NLS-1$
+    }
+
+    // ---------- a fragment is read where it lands in the module ----------
+
+    /** The module the fragment tests below are written into, one line at a time. */
+    private static void aModuleOf(String... lines)
+    {
+        PROBE.lines.clear();
+        PROBE.lines.addAll(List.of(lines));
+    }
+
+    /**
+     * A fragment that replaces a line of a multi-line literal begins inside that literal: a line
+     * that opens with {@code |} continues the literal above it, and its characters are data.
+     */
+    @Test
+    public void aFragmentOnAContinuationLineKeepsItsCharacters()
+    {
+        aModuleOf(
+            "Процедура Тест()", //$NON-NLS-1$
+            "\tТекст = \"Первая строка", //$NON-NLS-1$
+            "|Вторая строка\";", //$NON-NLS-1$
+            "КонецПроцедуры"); //$NON-NLS-1$
+
+        String answer = new ModuleSourceWriter().execute(args(
+            "projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "modulePath", ADDRESS, //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "replaceLines", //$NON-NLS-1$ //$NON-NLS-2$
+            "lineFrom", "3", //$NON-NLS-1$ //$NON-NLS-2$
+            "lineTo", "3", //$NON-NLS-1$ //$NON-NLS-2$
+            "source", "|Вторая " + EN_DASH + " строка\";")); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertFalse("the fragment continues a literal, so nothing in it is code", //$NON-NLS-1$
+            answer.contains("invalidCharactersReplaced")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("|Вторая " + EN_DASH + " строка\";")); //$NON-NLS-1$
+    }
+
+    /**
+     * A fragment that begins in the middle of a literal closes it with its own quote, and the
+     * literal below it keeps its characters: the quote parity of the module is what counts, not the
+     * parity of the fragment.
+     */
+    @Test
+    public void aFragmentThatClosesALiteralKeepsTheLiteralBelowIt()
+    {
+        aModuleOf(
+            "Процедура Тест()", //$NON-NLS-1$
+            "\tТекст = \"Первая строка", //$NON-NLS-1$
+            "|Вторая строка\";", //$NON-NLS-1$
+            "\tФормат(Сумма, \"ЧРГ='" + NO_BREAK_SPACE + "'\");", //$NON-NLS-1$ //$NON-NLS-2$
+            "КонецПроцедуры"); //$NON-NLS-1$
+
+        String answer = new ModuleSourceWriter().execute(args(
+            "projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "modulePath", ADDRESS, //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "searchReplace", //$NON-NLS-1$ //$NON-NLS-2$
+            "oldSource", "строка\";\n\tФормат(Сумма, \"ЧРГ='" + NO_BREAK_SPACE + "'\");", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "source", "строка " + EN_DASH + " конец\";\n\tФормат(Сумма, \"ЧРГ='" + NO_BREAK_SPACE + "'\");")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertFalse("the dash stands inside the literal the fragment closes", //$NON-NLS-1$
+            answer.contains("invalidCharactersReplaced")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("строка " + EN_DASH + " конец\";")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("ЧРГ='" + NO_BREAK_SPACE + "'")); //$NON-NLS-1$
+    }
+
+    /**
+     * A comment line between the lines of a literal carries no quote: the literal below it is whole,
+     * while the comment itself is rewritten like code.
+     */
+    @Test
+    public void aCommentLineInsideALiteralDoesNotEndIt()
+    {
+        aModuleOf(
+            "Процедура Тест()", //$NON-NLS-1$
+            "\tТекст = \"Первая строка", //$NON-NLS-1$
+            "//|\tТ.Код КАК \"Код", //$NON-NLS-1$
+            "|Вторая строка\";", //$NON-NLS-1$
+            "\tФормат(Сумма, \"ЧРГ='" + NO_BREAK_SPACE + "'\");", //$NON-NLS-1$ //$NON-NLS-2$
+            "КонецПроцедуры"); //$NON-NLS-1$
+
+        String tail = "\n|Вторая строка\";\n\tФормат(Сумма, \"ЧРГ='" + NO_BREAK_SPACE + "'\");"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        String answer = new ModuleSourceWriter().execute(args(
+            "projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "modulePath", ADDRESS, //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "searchReplace", //$NON-NLS-1$ //$NON-NLS-2$
+            "oldSource", "//|\tТ.Код КАК \"Код" + tail, //$NON-NLS-1$ //$NON-NLS-2$
+            "source", "//|\tТ.Код КАК \"Код " + EN_DASH + tail)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the comment is rewritten like code", //$NON-NLS-1$
+            answer.contains("invalidCharactersReplaced: 1")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("//|\tТ.Код КАК \"Код -")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the literal below the comment is whole", //$NON-NLS-1$
+            written().contains("ЧРГ='" + NO_BREAK_SPACE + "'")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A character in the code a fragment goes on with is still a character to replace. */
+    @Test
+    public void theCodeAfterALiteralIsStillRewritten()
+    {
+        aModuleOf(
+            "Процедура Тест()", //$NON-NLS-1$
+            "\tТекст = \"Первая строка", //$NON-NLS-1$
+            "|Вторая строка\";", //$NON-NLS-1$
+            "\t// правка", //$NON-NLS-1$
+            "КонецПроцедуры"); //$NON-NLS-1$
+
+        String answer = new ModuleSourceWriter().execute(args(
+            "projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "modulePath", ADDRESS, //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "searchReplace", //$NON-NLS-1$ //$NON-NLS-2$
+            "oldSource", "строка\";\n\t// правка", //$NON-NLS-1$ //$NON-NLS-2$
+            "source", "строка " + EN_DASH + " конец\";\n\t// правка " + EN_DASH)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("only the character in the code counts", //$NON-NLS-1$
+            answer.contains("invalidCharactersReplaced: 1")); //$NON-NLS-1$
+        assertTrue("the place is measured in the fragment that was written", //$NON-NLS-1$
+            answer.contains("2:12")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(written(), written().contains("строка " + EN_DASH + " конец\";")); //$NON-NLS-1$
+        assertTrue(written(), written().contains("// правка -")); //$NON-NLS-1$
     }
 
     /**

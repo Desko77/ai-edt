@@ -386,16 +386,13 @@ public class ModuleSourceWriter implements IMcpTool
             if (source != null)
                 source = source.replace("\r\n", "\n"); //$NON-NLS-1$ //$NON-NLS-2$
 
-            // --- step 7a: replace the characters BSL has no place for ---
-            // Only what is written is touched. oldSource is matched against the file as it stands
-            // and expectedText against what the caller read, so neither may be rewritten here.
+            // --- step 7a: what the character pass changes ---
+            // Only what is written is touched, and each piece is read as the module reads it where
+            // it lands - a fragment that begins inside a string literal keeps the characters of that
+            // literal, a fragment that begins in code has its own replaced. oldSource is matched
+            // against the file as it stands and expectedText against what the caller read, so
+            // neither is rewritten here.
             InvalidCharacters.Report characterFix = new InvalidCharacters.Report();
-            InvalidCharacters.Report sourceFix = normalizeForWrite(source, normalizeInvalidCharacters);
-            characterFix.merge(null, sourceFix);
-            if (sourceFix.changed())
-            {
-                source = sourceFix.text;
-            }
 
             // --- step 8: read current content + BOM ---
             List<String> originalLines;
@@ -422,9 +419,13 @@ public class ModuleSourceWriter implements IMcpTool
             switch (mode)
             {
                 case MODE_REPLACE:
+                    source = normalizeWhereWritten(source, "", normalizeInvalidCharacters, //$NON-NLS-1$
+                        characterFix, null);
                     newLines = splitSourceLines(source);
                     break;
                 case MODE_APPEND:
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, totalOriginal),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>(originalLines);
                     newLines.addAll(splitSourceLines(source));
                     break;
@@ -447,7 +448,10 @@ public class ModuleSourceWriter implements IMcpTool
                             + " occurrences). Provide a longer, more specific oldSource fragment " //$NON-NLS-1$
                             + "that pins down a single location."; //$NON-NLS-1$
                     }
-                    String newContent = currentContent.substring(0, idx) + source
+                    String before = currentContent.substring(0, idx);
+                    source = normalizeWhereWritten(source, before, normalizeInvalidCharacters,
+                        characterFix, null);
+                    String newContent = before + source
                         + currentContent.substring(idx + oldSource.length());
                     newLines = splitSourceLines(newContent);
                     break;
@@ -470,6 +474,8 @@ public class ModuleSourceWriter implements IMcpTool
                         if (!actualBlock.equals(expectedBlock))
                             return lineDriftError(lineFrom, lineTo, expectedBlock, actualBlock);
                     }
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, lineFrom - 1),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, lineFrom - 1));
                     newLines.addAll(splitSourceLines(source));
@@ -485,6 +491,8 @@ public class ModuleSourceWriter implements IMcpTool
                     if (line > totalOriginal)
                         return "Error: line (" + line + ") is past the end of the file (" + totalOriginal //$NON-NLS-1$ //$NON-NLS-2$
                             + " lines). Use 'append' mode instead to add at the end."; //$NON-NLS-1$
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, line - 1),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, line - 1));
                     newLines.addAll(splitSourceLines(source));
@@ -499,6 +507,8 @@ public class ModuleSourceWriter implements IMcpTool
                     if (line > totalOriginal)
                         return "Error: line (" + line + ") is past the end of the file (" + totalOriginal //$NON-NLS-1$ //$NON-NLS-2$
                             + " lines). Use 'append' mode instead to add at the end."; //$NON-NLS-1$
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, line),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, line));
                     newLines.addAll(splitSourceLines(source));
@@ -541,6 +551,8 @@ public class ModuleSourceWriter implements IMcpTool
                     methodStart = directiveStart;
                     if (firstNonBlankIsComment(source))
                         methodStart = includeLeadingCommentBlock(originalLines, methodStart);
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, methodStart),
+                        normalizeInvalidCharacters, characterFix, null);
                     int methodEnd = -1;
                     for (int i = methodStart + 1; i < totalOriginal; i++)
                     {
@@ -904,17 +916,47 @@ public class ModuleSourceWriter implements IMcpTool
     }
 
     /**
-     * Passes text about to be written through the character pass, when the caller asked for it.
+     * Passes text about to be written through the character pass, read as the module reads it where
+     * the text lands, and folds what it changed into the report of the whole call.
+     * <p>
+     * A fragment is not a module: it may begin inside a string literal - a line of a multi-line
+     * literal, or the middle of one - and the characters that stand there are data. The state at the
+     * point comes from the module text that precedes it.
+     * </p>
      *
      * @param text the text about to be written; may be <code>null</code>
+     * @param contextBefore the module text that stands before the point where the text lands; empty
+     *            for a text that stands for the whole module
      * @param enabled the caller's {@code normalizeInvalidCharacters} switch
-     * @return what the pass changed; an empty report when the switch is off or there is no text
+     * @param target the report of the whole call, which what was changed is folded into
+     * @param part the name the positions are measured in, or <code>null</code> when the text is the
+     *            whole of what is written
+     * @return the text to write
      */
-    private static InvalidCharacters.Report normalizeForWrite(String text, boolean enabled)
+    private static String normalizeWhereWritten(String text, String contextBefore, boolean enabled,
+        InvalidCharacters.Report target, String part)
     {
         if (text == null || !enabled)
-            return new InvalidCharacters.Report();
-        return InvalidCharacters.normalize(text);
+            return text;
+        InvalidCharacters.Report fix = InvalidCharacters.normalize(text,
+            InvalidCharacters.stateOf(contextBefore));
+        target.merge(part, fix);
+        return fix.changed() ? fix.text : text;
+    }
+
+    /**
+     * The module text that stands before one of its lines.
+     *
+     * @param lines the module as it stands
+     * @param beforeLine how many of its lines stand before the point, counted from zero
+     * @return those lines joined by newlines and closed by one, so that the text ends at the start
+     *         of a line; an empty string when no line stands before
+     */
+    private static String moduleTextBefore(List<String> lines, int beforeLine)
+    {
+        if (beforeLine <= 0)
+            return ""; //$NON-NLS-1$
+        return String.join("\n", lines.subList(0, Math.min(beforeLine, lines.size()))) + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -1114,19 +1156,14 @@ public class ModuleSourceWriter implements IMcpTool
                 return ReplaceMethodsResult
                     .error("Error: methods[" + i + "] source is longer than the maximum allowed"); //$NON-NLS-1$ //$NON-NLS-2$
 
-            InvalidCharacters.Report fix = normalizeForWrite(src, normalizeInvalidCharacters);
-            if (fix.changed())
-            {
-                src = fix.text;
-                characterFix.merge(name.trim(), fix);
-            }
-
             int[] span = findMethodSpan(originalLines, name.trim());
             if (span == null)
             {
                 missing.add(name.trim());
                 continue;
             }
+            src = normalizeWhereWritten(src, moduleTextBefore(originalLines, span[0]),
+                normalizeInvalidCharacters, characterFix, name.trim());
             if (firstNonBlankIsComment(src))
                 span[0] = includeLeadingCommentBlock(originalLines, span[0]);
             spans.add(span);

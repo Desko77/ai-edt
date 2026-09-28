@@ -264,13 +264,18 @@ public final class BmObjectHelper
     }
 
     /**
-     * Executes the given action inside a BM read-write transaction with two
-     * automatic guards:
+     * Executes the given action inside a BM read-write transaction, behind three guards.
+     * <p>
+     * GUARD 0 runs before the transaction opens: the support registry's own answer for the address,
+     * asked by {@link ModelEditabilityGuard#checkFqn}. A refusal there fills {@link Result#error} and
+     * {@link Result#tags} and returns before a service is reached or any of the model is touched.
+     * Inside the transaction two more guards run:
+     * </p>
      * <ol>
-     *   <li>{@link MetadataGuards#checkSupplierLock} - always.</li>
-     *   <li>{@code preCheck.validate(owner)} - optional, caller-provided.</li>
+     *   <li>GUARD 1 - {@link MetadataGuards#checkSupplierLock} - always.</li>
+     *   <li>GUARD 2 - {@code preCheck.validate(owner)} - optional, caller-provided.</li>
      * </ol>
-     * Both guards may throw {@link MetadataGuards.BlockedGuardException} with
+     * Both of those may throw {@link MetadataGuards.BlockedGuardException} with
      * a structured {@link MetadataGuards.Verdict}. The verdict's
      * {@link MetadataGuards.ErrorTag} is captured into {@link Result#tags} so
      * the response carries a machine-readable field next to the {@code error}
@@ -301,12 +306,11 @@ public final class BmObjectHelper
      * Runs a read against a resolved owner with no write question asked.
      * <p>
      * The reading operations - {@code mxl_workshop} reading a template, naming its areas, measuring
-     * its print width - used to reach the model through the write entry, which asked the support
-     * registry and refused when the owner was closed for changes. A template of a closed object is
-     * readable the way EDT reads it, so this entry asks nothing: no support question, no supplier
-     * lock, no adoption of a not-yet-resolved owner. The action still runs inside a transaction that
-     * rolls back, because the reader of a template without a spreadsheet model touches the model to
-     * build its answer.
+     * its print width - reach the model through this entry, which asks nothing: no support question,
+     * no supplier lock, no adoption of a not-yet-resolved owner, so a template of a closed object
+     * stays readable the way EDT reads it. The action still runs inside a transaction that rolls
+     * back, because the reader of a template without a spreadsheet model touches the model to build
+     * its answer.
      * </p>
      *
      * @param project the workspace project

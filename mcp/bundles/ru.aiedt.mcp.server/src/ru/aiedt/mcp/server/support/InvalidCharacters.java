@@ -83,6 +83,9 @@ public final class InvalidCharacters
         /** How many of each kind were changed, keyed by the phrase that describes the change. */
         public final Map<String, Integer> kinds = new LinkedHashMap<>();
 
+        /** How the text reads at its end, for a pass that goes on after it. */
+        State endState = TEXT_START;
+
         /**
          * Whether this pass changed anything.
          *
@@ -174,11 +177,18 @@ public final class InvalidCharacters
      * inside string literals.
      * <p>
      * The pass reads the text as BSL is read: a {@code "} opens a literal that only a quote closes -
-     * an embedded {@code ""} is an escaped quote, not a closing one, and a literal may run over
-     * several lines whose first non-blank character is {@code |} - and a {@code //} outside a
-     * literal comments to the end of the line. Inside a literal nothing is touched; in code and in a
-     * comment the replacement runs as it always did. Text that carries none of the characters comes
+     * an embedded {@code ""} is an escaped quote, not a closing one - and a literal continues onto
+     * the lines that begin with {@code |}. A line is read by its own first non-blank character, so a
+     * literal does not cross a newline by itself: the line below a {@code "} is data only when it
+     * begins with {@code |}. A {@code //} line between the lines of a literal is a comment and the
+     * literal stands open across it; a {@code #} directive line and a blank line close nothing
+     * either, while a line of code ends the literal. Inside a literal nothing is touched; in code
+     * and in a comment a character of the family is replaced. Text that carries none of them comes
      * back unchanged, and the report says so.
+     * </p>
+     * <p>
+     * The text is read from its first character, as a whole module is. A fragment that lands in the
+     * middle of a module is read with {@link #normalize(String, State)}.
      * </p>
      *
      * @param source the text about to be written; may be <code>null</code>
@@ -186,13 +196,32 @@ public final class InvalidCharacters
      */
     public static Report normalize(String source)
     {
+        return normalize(source, TEXT_START);
+    }
+
+    /**
+     * Replaces the characters BSL source cannot hold, reading the text as it stands at a point
+     * inside a module.
+     * <p>
+     * The rules are the ones of {@link #normalize(String)}; the state says how the module reads at
+     * the point where this text begins - inside a literal, inside a comment, or at the start of a
+     * line - and takes the place of the characters that stand before it.
+     * </p>
+     *
+     * @param source the text about to be written; may be <code>null</code>
+     * @param atStart the state the module is in where the text begins; <code>null</code> reads as
+     *            the start of a text
+     * @return what to write and what was changed; never <code>null</code>
+     */
+    public static Report normalize(String source, State atStart)
+    {
         Report report = new Report();
         report.text = source;
         if (source == null || source.isEmpty())
         {
             return report;
         }
-        Scanner scanner = new Scanner(source);
+        Scanner scanner = new Scanner(source, atStart == null ? TEXT_START : atStart);
         StringBuilder out = null;
         while (scanner.hasNext())
         {
@@ -242,11 +271,60 @@ public final class InvalidCharacters
             }
             out = replace(c, scanner, out, report);
         }
+        report.endState = scanner.state();
         if (out != null)
         {
             report.text = out.toString();
         }
         return report;
+    }
+
+    /**
+     * How a module reads at a point inside it, for a pass that starts there rather than at the first
+     * character.
+     * <p>
+     * A written fragment is not a module: it may begin in the middle of a string literal or of a
+     * comment, and then its first quote closes that literal instead of opening one. The state comes
+     * from the module text that stands before the point, through {@link #stateOf(String)}.
+     * </p>
+     */
+    public static final class State
+    {
+        /** Whether the text begins inside a string literal, whose characters are data. */
+        public final boolean literal;
+
+        /** Whether the text begins inside a {@code //} comment. */
+        public final boolean comment;
+
+        /** Whether the text begins at the start of a line, whose first non-blank character chooses how the line is read. */
+        public final boolean lineStart;
+
+        private State(boolean literal, boolean comment, boolean lineStart)
+        {
+            this.literal = literal;
+            this.comment = comment;
+            this.lineStart = lineStart;
+        }
+    }
+
+    /** The state of the first character of a text: code, and at the start of a line. */
+    private static final State TEXT_START = new State(false, false, true);
+
+    /**
+     * How a module reads at the end of a piece of its text.
+     *
+     * @param text the module text that stands before the point; may be <code>null</code>
+     * @return the state a pass starting at that point begins in; never <code>null</code>
+     */
+    public static State stateOf(String text)
+    {
+        if (text == null || text.isEmpty())
+        {
+            return TEXT_START;
+        }
+        // The pass that decides what stands inside a literal is the pass that reads the text, so the
+        // state comes from running it rather than from a second reader that could drift from it.
+        return normalize(text, TEXT_START).endState;
     }
 
     /**
@@ -337,10 +415,16 @@ public final class InvalidCharacters
      * sits at, and whether that character is inside a string literal or a comment.
      * <p>
      * The literal rules are the ones the BSL reader applies. A quote opens a literal; inside, a
-     * doubled quote is one escaped quote and any single quote closes the literal. A literal may span
-     * lines - its continuation lines start with {@code |} after optional blanks, and everything up
-     * to the closing quote belongs to it, a newline included. A comment starts with {@code //}
-     * outside a literal and ends at the newline.
+     * doubled quote is one escaped quote and any single quote closes the literal. A line that begins
+     * with {@code |} continues the literal and everything on it up to the closing quote is data. A
+     * comment starts with {@code //} outside a literal and ends at the newline.
+     * </p>
+     * <p>
+     * The kind of a line is read from its first non-blank character, once, before any character of
+     * it is taken: a {@code |} line is data, a {@code //} line is a comment, a {@code #} line is a
+     * directive and a blank line carries nothing - none of them closes a literal, while a line of
+     * code does. A literal therefore does not cross a newline by itself, and a comment between two
+     * lines of a literal does not end it.
      * </p>
      */
     private static final class Scanner
@@ -357,14 +441,20 @@ public final class InvalidCharacters
 
         private boolean comment;
 
+        private boolean lineStart;
+
         /**
-         * Starts at the beginning of the text.
+         * Starts at a given point of the text.
          *
          * @param text the text to walk
+         * @param start the state the text begins in
          */
-        Scanner(String text)
+        Scanner(String text, State start)
         {
             this.text = text;
+            this.literal = start.literal;
+            this.comment = start.comment;
+            this.lineStart = start.lineStart;
         }
 
         /**
@@ -380,7 +470,57 @@ public final class InvalidCharacters
          */
         char peek()
         {
+            if (lineStart)
+            {
+                lineStart = false;
+                classifyLine();
+            }
             return text.charAt(at);
+        }
+
+        /**
+         * Reads the kind of the line the scanner stands on and sets the literal state for it. Called
+         * once per line, before the line's first character is taken.
+         */
+        private void classifyLine()
+        {
+            int i = at;
+            while (i < text.length() && (text.charAt(i) == ' ' || text.charAt(i) == '\t'))
+            {
+                i++;
+            }
+            char first = i < text.length() ? text.charAt(i) : '\n';
+            if (first == '|')
+            {
+                // A continuation line belongs to the literal it continues. Outside a literal BSL
+                // reads no other meaning into it, so the line is data either way.
+                literal = true;
+            }
+            else if (first == '/' && i + 1 < text.length() && text.charAt(i + 1) == '/')
+            {
+                // A comment line between the lines of a literal is a comment; the literal stays open
+                // across it and the next continuation line goes on with it.
+                literal = false;
+            }
+            else if (first == '#' || first == '\n' || first == '\r')
+            {
+                // A directive line and a blank line carry no literal data, and neither ends a
+                // literal.
+                literal = false;
+            }
+            else
+            {
+                // Code: an unclosed literal ended with the line before this one.
+                literal = false;
+            }
+        }
+
+        /**
+         * @return how the text reads at the current position
+         */
+        State state()
+        {
+            return new State(literal, comment, lineStart);
         }
 
         /**
@@ -402,6 +542,8 @@ public final class InvalidCharacters
             {
                 line++;
                 column = 1;
+                comment = false;
+                lineStart = true;
             }
             else
             {

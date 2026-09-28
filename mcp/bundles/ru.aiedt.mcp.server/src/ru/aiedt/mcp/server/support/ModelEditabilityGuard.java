@@ -6,12 +6,14 @@
 
 package ru.aiedt.mcp.server.support;
 
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EStructuralFeature;
 
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
@@ -25,9 +27,9 @@ import ru.aiedt.mcp.server.Activator;
  * Refuses a write into a metadata object the support registry closed for changes.
  * <p>
  * An object taken from a vendor configuration and left in the mode EDT calls "changes are not
- * allowed" is read-only: the environment offers no way to change it, and a write reached through
- * this server used to go ahead anyway. The change landed in the in-memory model, the module file
- * was rewritten, and the next vendor update overwrote it - with nothing in the answer saying so.
+ * allowed" is read-only: the environment offers no way to change it, so a write into one would land
+ * in the in-memory model and rewrite its module file, where the next vendor update replaces it -
+ * with nothing in the answer saying so.
  * </p>
  * <p>
  * This guard is the one place the question is asked, and it is asked on the way into every write
@@ -74,6 +76,12 @@ public final class ModelEditabilityGuard
 
     /** The mode an object carries once the user has opened it for editing. */
     private static final String CHANGES_ALLOWED = "ChangesAllowed"; //$NON-NLS-1$
+
+    /** The child kind an address writes as {@code Subsystem}. */
+    private static final String SUBSYSTEM_KIND = "subsystem"; //$NON-NLS-1$
+
+    /** The feature a metadata object holds its subsystems in, below the configuration root. */
+    private static final String SUBSYSTEMS_FEATURE = "subsystems"; //$NON-NLS-1$
 
     /**
      * What the environment says about one object. Every field is filled in by
@@ -196,9 +204,11 @@ public final class ModelEditabilityGuard
      * Judges a write into the object a caller holds.
      * <p>
      * The object judged is the nearest metadata object at or above the one handed in - the way EDT
-     * itself judges. A form model resolves to its {@code BasicForm}, an attribute is a metadata
-     * object of its own and is judged by its own record, and the configuration root is judged by
-     * its record like any object.
+     * itself judges. An attribute is a metadata object of its own and is judged by its own record,
+     * and the configuration root is judged by its record like any object. A form model is held by
+     * its {@code BasicForm} through a reference rather than by containment, so the chain from one
+     * holds no metadata object and the verdict passes; a form reached by address is judged by that
+     * address.
      * </p>
      *
      * @param project the project being written to; may be <code>null</code>
@@ -211,7 +221,8 @@ public final class ModelEditabilityGuard
         if (judged == null)
         {
             // No metadata object to judge: the write is aimed at something the registry has no
-            // record for - a form model with no BasicForm wrapper, an external object root.
+            // record for - a form model, which its BasicForm holds by reference, or a root outside
+            // the metadata model.
             return MetadataGuards.Verdict.pass();
         }
         return decide(fqnOf(judged), probe.ask(project, judged));
@@ -280,11 +291,14 @@ public final class ModelEditabilityGuard
      * The nearest metadata object at or above the one handed in, the object the support registry is
      * asked about.
      * <p>
-     * A form item and a form model both resolve to the {@code BasicForm} that holds them; an
+     * The walk goes up the containment chain and stops at the first metadata object on it: an
      * attribute, a tabular section and a nested subsystem are metadata objects of their own and
-     * resolve to themselves; the configuration root is a metadata object too and is judged by its
-     * own record rather than passed by. This mirrors the walk
+     * resolve to themselves, and the configuration root is a metadata object too and is judged by
+     * its own record rather than passed by. This mirrors the walk
      * {@code DistributionSupportManager.canEdit(EObject)} makes when EDT decides the same question.
+     * A form model is held by its {@code BasicForm} through a reference rather than by containment,
+     * so the chain from a form model holds no metadata object and this returns <code>null</code>; a
+     * form is judged by the address that names it, which resolves the {@code BasicForm} itself.
      * </p>
      *
      * @param any the object to walk up from; may be <code>null</code>
@@ -568,11 +582,16 @@ public final class ModelEditabilityGuard
     /**
      * Finds the direct child of a metadata object a {@code Kind.Name} address pair names.
      * <p>
-     * Every child this guard has to reach - a form, an attribute, a tabular section, a command, a
-     * template, a nested subsystem - is a direct contained metadata object. The kind matches the
-     * child's class name by suffix ({@code BasicForm} for {@code Form}, {@code CatalogAttribute}
-     * for {@code Attribute}), the name matches case-insensitively, the way the rest of this server
-     * reads names.
+     * Most children this guard has to reach - a form, an attribute, a tabular section, a command, a
+     * template - are direct contained metadata objects. The kind matches the child's class name by
+     * suffix ({@code BasicForm} for {@code Form}, {@code CatalogAttribute} for {@code Attribute}),
+     * the name matches case-insensitively, the way the rest of this server reads names.
+     * </p>
+     * <p>
+     * A subsystem below the root is not among those: {@code subsystems} holds them by reference, so
+     * the containment walk cannot see them and an address like
+     * {@code Subsystem.A.Subsystem.B} would be judged by {@code A}. The subsystems the object holds
+     * are read from that feature instead - the way the write path finds a nested subsystem.
      * </p>
      *
      * @param owner the object to look inside
@@ -587,6 +606,14 @@ public final class ModelEditabilityGuard
             return null;
         }
         String wanted = kind.toLowerCase(Locale.ROOT);
+        if (SUBSYSTEM_KIND.equals(wanted))
+        {
+            MdObject subsystem = referencedChild(owner, SUBSYSTEMS_FEATURE, name);
+            if (subsystem != null)
+            {
+                return subsystem;
+            }
+        }
         for (EObject child : owner.eContents())
         {
             if (!(child instanceof MdObject))
@@ -603,6 +630,48 @@ public final class ModelEditabilityGuard
             if (className.equals(wanted) || className.endsWith(wanted))
             {
                 return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds a child an object holds by reference, which {@link EObject#eContents()} therefore does
+     * not list.
+     * <p>
+     * The one such child this guard reaches is a nested subsystem: {@code Configuration} and
+     * {@code Subsystem} both hold the subsystems below them in a {@code subsystems} feature. The
+     * feature is read by name rather than through a typed call, so the guard keeps working where the
+     * metadata model it runs against does not carry it.
+     * </p>
+     *
+     * @param owner the object to look inside
+     * @param featureName the name of the feature that holds those children
+     * @param name the child name, matched case-insensitively
+     * @return the child, or <code>null</code> when the object holds none by that name
+     */
+    private static MdObject referencedChild(MdObject owner, String featureName, String name)
+    {
+        EStructuralFeature feature = owner.eClass().getEStructuralFeature(featureName);
+        if (feature == null)
+        {
+            return null;
+        }
+        Object held = owner.eGet(feature);
+        if (!(held instanceof Collection))
+        {
+            return null;
+        }
+        for (Object child : (Collection<?>)held)
+        {
+            if (!(child instanceof MdObject))
+            {
+                continue;
+            }
+            String childName = ((MdObject)child).getName();
+            if (childName != null && childName.equalsIgnoreCase(name))
+            {
+                return (MdObject)child;
             }
         }
         return null;

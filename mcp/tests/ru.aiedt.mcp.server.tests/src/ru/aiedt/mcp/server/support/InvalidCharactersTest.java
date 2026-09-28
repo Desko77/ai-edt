@@ -229,6 +229,102 @@ public class InvalidCharactersTest
         assertEquals(1, report.count);
     }
 
+    // ---------- a line is read by its own first character ----------
+
+    /**
+     * A line that begins with {@code |} is a continuation of the literal above it, and its
+     * characters are data - even where the text handed to the pass begins on that line and holds no
+     * opening quote at all.
+     */
+    @Test
+    public void aContinuationLineIsDataEvenWhereNoQuoteOpensItInTheText()
+    {
+        String source = "|вторая " + EM_DASH + " строка"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertEquals(source, report.text);
+        assertFalse(report.changed());
+    }
+
+    /** A literal does not cross a newline by itself: a line of code below it ends it there. */
+    @Test
+    public void aLineOfCodeEndsAnUnclosedLiteral()
+    {
+        String source = "Стр = \"первая\nвто" + EM_DASH + "рая"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertEquals("Стр = \"первая\nвто-рая", report.text); //$NON-NLS-1$
+        assertEquals(1, report.count);
+    }
+
+    /**
+     * A comment line between the lines of a literal is a comment: it is rewritten like code, its
+     * quote opens nothing, and the literal goes on below it.
+     */
+    @Test
+    public void aCommentLineBetweenTheLinesOfALiteralLeavesTheLiteralOpen()
+    {
+        String source = "Стр = \"первая\n" //$NON-NLS-1$
+            + "//| запрос \" тут" + EM_DASH + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + "|вторая" + NO_BREAK_SPACE + "строка\";"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report report = InvalidCharacters.normalize(source);
+
+        assertTrue("the dash of the comment is replaced", report.text.contains("тут-")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the literal below is untouched", //$NON-NLS-1$
+            report.text.contains("|вторая" + NO_BREAK_SPACE + "строка\";")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(1, report.count);
+    }
+
+    // ---------- a fragment is read where it lands ----------
+
+    /** The state of a module at the end of a piece of its text: in code, inside a literal or a comment. */
+    @Test
+    public void theStateSaysWhereAModuleStands()
+    {
+        InvalidCharacters.State inCode = InvalidCharacters.stateOf("А = 1;\n"); //$NON-NLS-1$
+        assertFalse(inCode.literal);
+        assertFalse(inCode.comment);
+        assertTrue("a line ends, so the text stands at the start of one", inCode.lineStart); //$NON-NLS-1$
+
+        InvalidCharacters.State inLiteral = InvalidCharacters.stateOf("Стр = \"первая "); //$NON-NLS-1$
+        assertTrue("the quote opened a literal that nothing closed", inLiteral.literal); //$NON-NLS-1$
+        assertFalse(inLiteral.lineStart);
+
+        InvalidCharacters.State inComment = InvalidCharacters.stateOf("А = 1; // примечание"); //$NON-NLS-1$
+        assertTrue(inComment.comment);
+        assertFalse(inComment.literal);
+
+        assertTrue("no text is the start of a text", InvalidCharacters.stateOf(null).lineStart); //$NON-NLS-1$
+    }
+
+    /**
+     * A fragment that lands inside a literal keeps the characters of that literal, while the same
+     * text read from the start of a text is code and loses them.
+     */
+    @Test
+    public void aFragmentIsReadWhereItLands()
+    {
+        String fragment = "ЧРГ='" + NO_BREAK_SPACE + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+
+        InvalidCharacters.Report asCode = InvalidCharacters.normalize(fragment);
+        assertEquals("read as a text of its own, the no-break space is code", 1, asCode.count); //$NON-NLS-1$
+        assertEquals("ЧРГ=' '", asCode.text); //$NON-NLS-1$
+
+        InvalidCharacters.State inLiteral = InvalidCharacters.stateOf("Стр = \"первая "); //$NON-NLS-1$
+        InvalidCharacters.Report inTheModule = InvalidCharacters.normalize(fragment, inLiteral);
+        assertEquals("read inside the literal it lands in, it is data", //$NON-NLS-1$
+            fragment, inTheModule.text);
+        assertFalse(inTheModule.changed());
+
+        InvalidCharacters.Report closed = InvalidCharacters.normalize("\"; код дальше", inLiteral); //$NON-NLS-1$
+        assertFalse("the fragment closed the literal its text landed in", closed.endState.literal); //$NON-NLS-1$
+        InvalidCharacters.Report open = InvalidCharacters.normalize("новая строка", inLiteral); //$NON-NLS-1$
+        assertTrue("a fragment without a quote leaves the literal as it was", open.endState.literal); //$NON-NLS-1$
+    }
+
     /** Several pieces written in one call answer with one count. */
     @Test
     public void thePiecesOfOneWriteAreCountedTogether()

@@ -228,8 +228,10 @@ public class BmFormHelper
      * A structure walk of a form whose owner is closed for vendor-support changes is a read, the
      * way EDT reads it: the write entries below ask the support registry and refuse such a form,
      * and this entry does not, so a closed configuration stays readable through
-     * {@code get_form_structure}. The transaction opens the way a write's does - that is how the
-     * form model is reached - but a read changes nothing and persists nothing.
+     * {@code get_form_structure}. The transaction opens and commits the way a write's does - that is
+     * how the form model is reached, and the form is exported to disk at the end of it, the same
+     * {@code forceExport} a write performs. This entry answers without asking the support question;
+     * it does not answer without touching the file.
      * </p>
      *
      * @param project the workspace project

@@ -2617,8 +2617,10 @@ public class EditMetadataTool implements IMcpTool
     {
         return "Structured error tags surfaced in the JSON response (1.37).\n\n" //$NON-NLS-1$
             + "Top-level fields next to `error`:\n" //$NON-NLS-1$
-            + "- `supportLock` { target, ownerType, userSupportMode, discoveredApi, hint } -\n" //$NON-NLS-1$
-            + "    object is on vendor support; use an extension instead.\n" //$NON-NLS-1$
+            + "- `supportLock` { object, userSupportMode, canEdit, guard, hint } -\n" //$NON-NLS-1$
+            + "    object is on vendor support; use an extension instead. `object` is the address\n" //$NON-NLS-1$
+            + "    the guard judged, `userSupportMode` the mode the registry holds,\n" //$NON-NLS-1$
+            + "    `guard` = model_editability_guard.\n" //$NON-NLS-1$
             + "- `standardAttributeConflict` { name, conflictsWith, ownerType, source } -\n" //$NON-NLS-1$
             + "    candidate name shadows a platform-standard attribute. Pick another name.\n" //$NON-NLS-1$
             + "- `alreadyExists` { name, ownerFqn, kind } - the child is already present.\n" //$NON-NLS-1$
