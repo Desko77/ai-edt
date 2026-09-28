@@ -9,12 +9,12 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.debug.core.model.IStackFrame;
-import org.eclipse.debug.core.model.IThread;
 import org.eclipse.debug.core.model.IVariable;
 
 import ru.aiedt.mcp.server.Activator;
@@ -83,71 +83,38 @@ public final class DebugVariablesReader implements IMcpTool
 
         try
         {
-            IStackFrame frame;
-            if (frameRef > 0)
+            DebugFrameResolution.Resolution resolved =
+                DebugFrameResolution.resolve(registry, frameRef, threadId, frameIndex);
+            if (resolved.frame == null)
             {
-                frame = registry.getFrame(frameRef);
-                if (frame == null)
-                {
-                    return ToolResult.error("frameRef is no longer valid - call wait_for_break again").toJson(); //$NON-NLS-1$
-                }
+                return ToolResult.error(resolved.refusal).toJson();
             }
-            else if (threadId > 0)
-            {
-                IThread thread = registry.getThread(threadId);
-                if (thread == null)
-                {
-                    return ToolResult.error("threadId is no longer valid - call wait_for_break again").toJson(); //$NON-NLS-1$
-                }
-                IStackFrame[] frames = thread.getStackFrames();
-                if (frameIndex < 0 || frameIndex >= frames.length)
-                {
-                    return ToolResult
-                        .error("frameIndex is out of range (0.." + (frames.length - 1) + ")").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                frame = frames[frameIndex];
-            }
-            else
-            {
-                String appId = DebugSessionBook.findLoneActiveApplicationId();
-                DebugSessionBook.SuspendSnapshot snap = appId != null ? registry.getSnapshot(appId) : null;
-                if (snap == null)
-                {
-                    return ToolResult.error("Pass frameRef or threadId - there is no single suspended debug launch " //$NON-NLS-1$
-                        + "to auto-resolve to. Call wait_for_break first.").toJson(); //$NON-NLS-1$
-                }
-                IStackFrame[] frames = snap.thread.getStackFrames();
-                if (frames.length == 0)
-                {
-                    return ToolResult.error("the suspended thread has no stack frames").toJson(); //$NON-NLS-1$
-                }
-                frame = frames[Math.min(Math.max(frameIndex, 0), frames.length - 1)];
-            }
+            IStackFrame frame = resolved.frame;
 
             List<Map<String, Object>> vars;
             int withoutValue = 0;
+            Map<String, String> scopeFailures = new LinkedHashMap<>();
             if (expandPath != null && !expandPath.isEmpty())
             {
-                IVariable resolved = DebugValueSerializer.resolvePath(frame, expandPath);
-                if (resolved == null)
+                IVariable resolvedVariable = DebugValueSerializer.resolvePath(frame, expandPath);
+                if (resolvedVariable == null)
                 {
                     // Not every name the listing prints is in the variables API: module properties
                     // come from it with no value at all, and evaluating the name is how the
                     // environment itself answers for them. Measured 17.09 on a live suspension.
-                    Map<String, Object> evaluated = evaluateByName(frame, expandPath);
-                    if (evaluated != null)
+                    ExpressionEvaluator.Evaluation evaluated = evaluateByName(frame, expandPath);
+                    if (evaluated.value != null)
                     {
-                        return ToolResult.success()
+                        return withFrameAddress(ToolResult.success()
                             .put("expandPath", expandPath) //$NON-NLS-1$
                             .put("resolvedBy", "evaluate") //$NON-NLS-1$ //$NON-NLS-2$
-                            .put("variable", evaluated) //$NON-NLS-1$
-                            .toJson();
+                            .put("variable", evaluated.value), resolved).toJson(); //$NON-NLS-1$
                     }
                     return ToolResult.error("expandPath did not resolve: " + expandPath //$NON-NLS-1$
-                        + ". The name is not among the frame's variables and evaluating it answered " //$NON-NLS-1$
-                        + "nothing either.").toJson(); //$NON-NLS-1$
+                        + ". The name is not among the frame's variables, and evaluating it answered " //$NON-NLS-1$
+                        + "nothing: " + evaluated.refusal).toJson(); //$NON-NLS-1$
                 }
-                vars = DebugValueSerializer.serializeChildren(resolved, registry);
+                vars = DebugValueSerializer.serializeChildren(resolvedVariable, registry);
             }
             else
             {
@@ -165,11 +132,13 @@ public final class DebugVariablesReader implements IMcpTool
                 }
                 if ("module".equals(scope) || "all".equals(scope)) //$NON-NLS-1$ //$NON-NLS-2$
                 {
-                    vars.addAll(serializeModuleScope(frame, "getModuleVariables", registry)); //$NON-NLS-1$
+                    collectScope(readModuleScope(frame, "getModuleVariables", registry), "module", //$NON-NLS-1$ //$NON-NLS-2$
+                        vars, scopeFailures);
                 }
                 if ("all".equals(scope)) //$NON-NLS-1$
                 {
-                    vars.addAll(serializeModuleScope(frame, "getModuleProperties", registry)); //$NON-NLS-1$
+                    collectScope(readModuleScope(frame, "getModuleProperties", registry), //$NON-NLS-1$
+                        "moduleProperties", vars, scopeFailures); //$NON-NLS-1$
                 }
                 for (Map<String, Object> record : vars)
                 {
@@ -183,9 +152,19 @@ public final class DebugVariablesReader implements IMcpTool
                 }
             }
 
-            ToolResult answer = ToolResult.success()
+            ToolResult answer = withFrameAddress(ToolResult.success()
                 .put("variables", vars) //$NON-NLS-1$
-                .put("count", Integer.valueOf(vars.size())); //$NON-NLS-1$
+                .put("count", Integer.valueOf(vars.size())), resolved); //$NON-NLS-1$
+            if (!scopeFailures.isEmpty())
+            {
+                // An empty list and a refused read are different answers: without this the caller
+                // reads a scope that threw as a scope that holds nothing.
+                answer.put("scopeFailures", scopeFailures) //$NON-NLS-1$
+                    .put("scopeFailureNote", "These scopes were not read: " //$NON-NLS-1$ //$NON-NLS-2$
+                        + String.join(", ", scopeFailures.keySet()) //$NON-NLS-1$
+                        + ". The list is incomplete. Read one name at a time with expandPath=<name> " //$NON-NLS-1$
+                        + "or evaluate expression=<name>."); //$NON-NLS-1$
+            }
             if (withoutValue > 0)
             {
                 answer.put("valuesNotReturnedByVariables", Integer.valueOf(withoutValue)) //$NON-NLS-1$
@@ -210,12 +189,11 @@ public final class DebugVariablesReader implements IMcpTool
      * @param frame the frame to ask
      * @param method the getter name ({@code getModuleVariables} / {@code getModuleProperties})
      * @param registry passed through to the serializer
-     * @return one DTO per variable the method returned; empty when the frame does not expose the method
+     * @return what the getter answered, and why it answered nothing when it threw
      */
-    private static List<Map<String, Object>> serializeModuleScope(IStackFrame frame, String method,
-        DebugSessionBook registry)
+    private static ScopeRead readModuleScope(IStackFrame frame, String method, DebugSessionBook registry)
     {
-        List<Map<String, Object>> out = new ArrayList<>();
+        ScopeRead read = new ScopeRead();
         try
         {
             Method m = frame.getClass().getMethod(method);
@@ -224,7 +202,7 @@ public final class DebugVariablesReader implements IMcpTool
             {
                 for (IVariable v : (IVariable[])arr)
                 {
-                    out.add(DebugValueSerializer.serializeVariable(v, registry));
+                    read.variables.add(DebugValueSerializer.serializeVariable(v, registry));
                 }
             }
         }
@@ -234,9 +212,28 @@ public final class DebugVariablesReader implements IMcpTool
         }
         catch (Exception e)
         {
-            Activator.logWarning("get_variables " + method + " raised: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
+            read.failure = TextSuggest.safeMessage(e);
+            Activator.logWarning("get_variables " + method + " raised: " + read.failure); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return out;
+        return read;
+    }
+
+    /**
+     * Adds a scope's variables to the answer, and the reason to its failure list when the read threw.
+     *
+     * @param read what the scope getter answered
+     * @param scope the scope name the caller used, as the failure is reported under it
+     * @param vars the collected variables, added to
+     * @param failures the scope name to reason, added to
+     */
+    private static void collectScope(ScopeRead read, String scope, List<Map<String, Object>> vars,
+        Map<String, String> failures)
+    {
+        vars.addAll(read.variables);
+        if (read.failure != null)
+        {
+            failures.put(scope, read.failure);
+        }
     }
 
     /**
@@ -244,9 +241,9 @@ public final class DebugVariablesReader implements IMcpTool
      *
      * @param frame the suspended frame.
      * @param name the name the caller asked to expand.
-     * @return its type and value, or <code>null</code> when evaluation answers nothing
+     * @return its type and value, or the reason evaluation answered nothing
      */
-    private static Map<String, Object> evaluateByName(IStackFrame frame, String name)
+    private static ExpressionEvaluator.Evaluation evaluateByName(IStackFrame frame, String name)
     {
         try
         {
@@ -254,8 +251,59 @@ public final class DebugVariablesReader implements IMcpTool
         }
         catch (Exception e)
         {
-            Activator.logDebug("evaluating " + name + " answered nothing: " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-            return null;
+            String reason = TextSuggest.safeMessage(e);
+            Activator.logDebug("evaluating " + name + " answered nothing: " + reason); //$NON-NLS-1$ //$NON-NLS-2$
+            return ExpressionEvaluator.Evaluation.refused(reason);
         }
+    }
+
+    /**
+     * Names the frame the answer came from.
+     * <p>
+     * The caller may have named a thread and an index, and an index that landed on somebody else's
+     * frame has to be visible in the answer - otherwise the values read out of the wrong frame look
+     * exactly like the values it asked for.
+     * </p>
+     *
+     * @param answer the answer being built
+     * @param resolved the frame it was read from
+     * @return the same answer, with the address of that frame
+     */
+    private static ToolResult withFrameAddress(ToolResult answer, DebugFrameResolution.Resolution resolved)
+    {
+        if (resolved.frameRef > 0)
+        {
+            answer.put("frameRef", resolved.frameRef); //$NON-NLS-1$
+        }
+        if (resolved.threadId > 0)
+        {
+            answer.put("threadId", resolved.threadId) //$NON-NLS-1$
+                .put("frameIndex", resolved.index); //$NON-NLS-1$
+        }
+        try
+        {
+            String name = resolved.frame.getName();
+            if (name != null && !name.isEmpty())
+            {
+                answer.put("frameName", name); //$NON-NLS-1$
+            }
+        }
+        catch (Exception e)
+        {
+            // A frame that will not name itself is still a frame whose variables were read. Numbers
+            // were reported already; the name is what goes missing.
+            Activator.logDebug("the frame would not name itself: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
+        }
+        return answer;
+    }
+
+    /** What one module-scope getter answered: the variables it returned, and why it returned none. */
+    private static final class ScopeRead
+    {
+        /** One DTO per variable the getter returned. */
+        final List<Map<String, Object>> variables = new ArrayList<>();
+
+        /** Why the getter threw, or <code>null</code> when it answered. */
+        String failure;
     }
 }
