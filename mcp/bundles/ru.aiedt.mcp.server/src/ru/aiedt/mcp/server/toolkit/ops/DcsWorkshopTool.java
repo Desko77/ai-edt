@@ -4411,27 +4411,35 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.41 / 4c: sets a value on an existing OutputParameter by name in
-     * {@code Schema.getOutputParameters()} (Schema-level).
+     * Sets one output parameter of the default settings by name.
+     * <p>
+     * The container is created when the settings do not carry one. A freshly built
+     * {@code DataCompositionSettings} leaves {@code outputParameters} unset, and reading the getter
+     * used to refuse with {@code getOutputParameters() not available} before a value could be
+     * written. An entry the container does not already hold is created, so the name addresses the
+     * same parameter whether the container was just created or was already serialized with the
+     * entry in it. The entry's key is {@code getParameter().getValue()}; the value is held in
+     * {@code getValues()}, which has no setter and is replaced by clearing and appending.
+     * </p>
+     *
+     * @param params the call; {@code name} selects the parameter and {@code value} is what it holds
+     * @param schema the schema, or a settings container in the case of a dynamic list
+     * @return a short report naming the parameter that was set
      */
     private Object doSetOutputParameter(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
-        // 1.43.x batch 4a: output parameters live on DefaultSettings.getOutputParameters()
-        // .getItems() (a DataCompositionOutputParameterValues container), NOT directly on
-        // the schema, and each item's key is getParameter().getValue() with the value held
-        // in getValues() (EList<Value>, no setter). The previous schema.getOutputParameters()
-        // + getName() + setProperty("value") path matched nothing and silently no-op'd.
         Object settings = ensureDefaultSettings(schema);
         if (settings == null)
         {
             throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
         }
-        Object outputParameters = invokeGetter(settings, "getOutputParameters"); //$NON-NLS-1$
+        Object outputParameters = ensureChild(settings, "getOutputParameters", //$NON-NLS-1$
+            "createDataCompositionOutputParameterValues", "outputParameters"); //$NON-NLS-1$ //$NON-NLS-2$
         if (outputParameters == null)
         {
-            throw new RuntimeException("DefaultSettings.getOutputParameters() not available"); //$NON-NLS-1$
+            throw factoryMissingTag("createDataCompositionOutputParameterValues"); //$NON-NLS-1$
         }
         EList<EObject> items = BmDcsHelper.getEObjectList(outputParameters, "getItems"); //$NON-NLS-1$
         if (items == null)
@@ -4439,15 +4447,10 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("OutputParameters.getItems() not available"); //$NON-NLS-1$
         }
         EObject found = null;
-        java.util.List<String> availableKeys = new java.util.ArrayList<>();
         for (EObject it : items)
         {
             Object p = invokeGetter(it, "getParameter"); //$NON-NLS-1$
             String key = p != null ? String.valueOf(invokeGetter(p, "getValue")) : null; //$NON-NLS-1$
-            if (key != null)
-            {
-                availableKeys.add(key);
-            }
             if (key != null && key.equalsIgnoreCase(name))
             {
                 found = it;
@@ -4456,8 +4459,8 @@ public class DcsWorkshopTool implements IMcpTool
         }
         if (found == null)
         {
-            throw notFoundTag(name + " (available: " + availableKeys + ")", //$NON-NLS-1$ //$NON-NLS-2$
-                "outputParameter"); //$NON-NLS-1$
+            found = namedEntry(name);
+            items.add(found);
         }
         EList<EObject> vals = BmDcsHelper.getEObjectList(found, "getValues"); //$NON-NLS-1$
         if (vals == null)
