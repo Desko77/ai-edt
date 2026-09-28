@@ -478,6 +478,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * the value type, and a client that builds its call from the schema has to see them there.
      * Together with the twenty-ninth: 92586.
      * </p>
+     * <p>
+     * And a thirty-first, by 99, for writeStub on edit_metadata: add_form_event_handler and
+     * add_command_handler append the handler procedure to the form module unless the call turns
+     * that off, and the switch has to be in the schema to be turned off. Measured with the
+     * templateType sentence of add_template one byte shorter: 92685.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92586;
+    private static final int DOCUMENT_PROSE = 92685;
 }

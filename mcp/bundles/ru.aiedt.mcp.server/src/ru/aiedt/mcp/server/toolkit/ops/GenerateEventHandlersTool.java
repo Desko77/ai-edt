@@ -271,7 +271,7 @@ public class GenerateEventHandlersTool implements IMcpTool
      * @param methodName the handler name
      * @return <code>true</code> when the module declares it
      */
-    private static boolean declares(String moduleText, String methodName)
+    static boolean declares(String moduleText, String methodName)
     {
         return java.util.regex.Pattern
             .compile("^\\s*(Процедура|Функция|Procedure|Function)\\s+" + java.util.regex.Pattern.quote(methodName) //$NON-NLS-1$
