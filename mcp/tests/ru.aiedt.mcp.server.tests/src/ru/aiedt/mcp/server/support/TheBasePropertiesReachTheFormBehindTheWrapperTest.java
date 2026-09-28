@@ -1,0 +1,136 @@
+/**
+ * AI-EDT - 1C AI tools for EDT - Tests
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server.support;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
+import java.util.List;
+
+import org.junit.Test;
+
+/**
+ * Where the 11 base properties land when a metadata wrapper is handed in.
+ * <p>
+ * The properties belong to the {@code form.model.Form}, and a configuration holds that form under
+ * an {@code mdclass} wrapper. Handing the wrapper to {@link FormBaseSetup#applyDefaults} used to set
+ * nothing - the wrapper exposes none of the setters - and the count came back zero while the form
+ * stayed without a command bar or a children align. Measured on a live project: an empty managed
+ * form was created, the answer carried no {@code formScaffolded}, and the editor's form had none of
+ * the eleven. The wrapper is now followed to the form behind it.
+ * </p>
+ */
+public class TheBasePropertiesReachTheFormBehindTheWrapperTest
+{
+    /** The form as the reflection sees it: four of the base properties. */
+    public static final class FormDouble
+    {
+        private String childrenAlign;
+        private String itemsGroup;
+        private boolean enableContentChange;
+        private Boolean autoCommandBar;
+
+        public void setChildrenAlign(String value)
+        {
+            childrenAlign = value;
+        }
+
+        public void setItemsGroup(String value)
+        {
+            itemsGroup = value;
+        }
+
+        public void setEnableContentChange(boolean value)
+        {
+            enableContentChange = value;
+        }
+
+        public void setAutoCommandBar(Boolean value)
+        {
+            autoCommandBar = value;
+        }
+    }
+
+    /** The mdclass shape: it holds the form and carries the properties itself in no way. */
+    public static final class WrapperDouble
+    {
+        private final FormDouble form = new FormDouble();
+
+        public Object getFormAttachedForm()
+        {
+            return form;
+        }
+    }
+
+    /**
+     * A form root already: it answers {@code getItems()}, and the accessor probe must not follow it
+     * anywhere - on a real form those names may answer an object that is not this form.
+     */
+    public static final class FormRootDouble
+    {
+        private final Object other = new Object();
+
+        private String childrenAlign;
+
+        public Object getFormAttachedForm()
+        {
+            return other;
+        }
+
+        public List<String> getItems()
+        {
+            return List.of();
+        }
+
+        public void setChildrenAlign(String value)
+        {
+            childrenAlign = value;
+        }
+    }
+
+    /** A wrapper whose accessors are named otherwise on this platform release - nothing to follow. */
+    public static final class OpaqueWrapperDouble
+    {
+        private final FormDouble form = new FormDouble();
+
+        public Object getSomethingNobodyProbes()
+        {
+            return form;
+        }
+    }
+
+    /** The regression: the properties reach the form the wrapper holds. */
+    @Test
+    public void aWrapperIsFollowedToTheFormItHolds()
+    {
+        WrapperDouble wrapper = new WrapperDouble();
+
+        assertEquals("all four setters of the form behind the wrapper have to be used", //$NON-NLS-1$
+            4, FormBaseSetup.applyDefaults(wrapper));
+        assertEquals("ItemsCenter", wrapper.form.childrenAlign); //$NON-NLS-1$
+        assertEquals("Vertical", wrapper.form.itemsGroup); //$NON-NLS-1$
+        assertTrue(wrapper.form.enableContentChange);
+        assertEquals(Boolean.TRUE, wrapper.form.autoCommandBar);
+    }
+
+    /** A form root is left alone rather than followed through its own accessors. */
+    @Test
+    public void aFormRootIsNotLookedBehind()
+    {
+        FormRootDouble form = new FormRootDouble();
+
+        assertEquals(1, FormBaseSetup.applyDefaults(form));
+        assertEquals("ItemsCenter", form.childrenAlign); //$NON-NLS-1$
+    }
+
+    /** A wrapper whose form is not reachable still answers zero instead of failing. */
+    @Test
+    public void anUnreachableFormIsNotAFailure()
+    {
+        assertEquals(0, FormBaseSetup.applyDefaults(new OpaqueWrapperDouble()));
+    }
+}

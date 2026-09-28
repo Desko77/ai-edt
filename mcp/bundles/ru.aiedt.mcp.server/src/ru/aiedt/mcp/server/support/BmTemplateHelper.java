@@ -1188,18 +1188,16 @@ public final class BmTemplateHelper
 
     /**
      * Whether a name is one path element: not empty, not this or the parent directory, and carrying
-     * no separator of either kind.
+     * no separator of either kind. The rule itself lives in {@link MetadataGuards#isPlainName} so
+     * that every path joining a caller's name onto {@code src/} - templates and forms alike - gets
+     * the same answer.
      *
      * @param name the name to test; may be <code>null</code>
      * @return <code>true</code> when the name is a single, ordinary path element
      */
     private static boolean isPlainName(String name)
     {
-        if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)) //$NON-NLS-1$ //$NON-NLS-2$
-        {
-            return false;
-        }
-        return name.indexOf('/') < 0 && name.indexOf('\\') < 0;
+        return MetadataGuards.isPlainName(name);
     }
 
     /**

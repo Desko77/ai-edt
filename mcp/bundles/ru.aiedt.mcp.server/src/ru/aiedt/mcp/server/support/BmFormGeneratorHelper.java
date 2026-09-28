@@ -59,15 +59,68 @@ public final class BmFormGeneratorHelper
     private static final String IFORM_FIELD_GENERATOR =
         "com._1c.g5.v8.dt.form.generator.IFormFieldGenerator"; //$NON-NLS-1$
 
-    /** Cached generator instance; resolved once per runtime. */
-    private static volatile Object cachedGenerator;
-
-    /** Guards a second resolve attempt after a confirmed miss. */
-    private static volatile boolean resolveAttempted;
+    /** What the attempts at finding the generator have left behind. */
+    private static final ResolutionCache CACHE = new ResolutionCache();
 
     private BmFormGeneratorHelper()
     {
         // utility
+    }
+
+    /**
+     * The two facts an attempt at resolving the generator leaves behind: the generator, once one is
+     * found, and whether this runtime carries one at all.
+     * <p>
+     * A runtime without the form bundle answers {@code null} for good, and asking it again would cost
+     * a class lookup on every {@code create_form} call - so that answer is kept. A runtime that
+     * carries the bundle but has not started it yet answers the same {@code null}, and that answer
+     * must not be kept: the next call is the one that finds the generator. Keeping it made every form
+     * created in that window fall back to the empty path for the rest of the session.
+     * </p>
+     */
+    static final class ResolutionCache
+    {
+        private volatile Object generator;
+
+        private volatile boolean runtimeLacksIt;
+
+        /**
+         * @return the generator found by an earlier attempt, or {@code null} when none was
+         */
+        Object generator()
+        {
+            return generator;
+        }
+
+        /**
+         * @return true when this runtime has already answered that it does not carry the generator
+         */
+        boolean runtimeLacksIt()
+        {
+            return runtimeLacksIt;
+        }
+
+        /**
+         * Records the outcome of one attempt. A generator, once found, is kept: a later miss cannot
+         * undo it, and neither can it turn the runtime into one that lacks the generator.
+         *
+         * @param found the generator the attempt produced, or {@code null} when it produced none
+         * @param absentOnThisRuntime true when the attempt could not have found one here - the bundle
+         *            or the class is not on this runtime - and no later attempt will either
+         */
+        void record(Object found, boolean absentOnThisRuntime)
+        {
+            if (found != null)
+            {
+                generator = found;
+                runtimeLacksIt = false;
+                return;
+            }
+            if (generator == null)
+            {
+                runtimeLacksIt = absentOnThisRuntime;
+            }
+        }
     }
 
     /**
@@ -91,23 +144,23 @@ public final class BmFormGeneratorHelper
      * Resolves the {@code IFormGenerator} singleton through the
      * {@code FormPlugin} Guice injector by reflection (mirrors
      * {@link BmExtensionHelper#resolveModelObjectAdopter()}). The instance is
-     * cached; on a confirmed miss a single warning is logged and {@code null}
-     * is returned without re-probing.
+     * cached; a miss this runtime cannot recover from is kept, and one it can - the bundle present
+     * but not started, a call that threw - is not, so the next call asks again.
      *
      * @return the generator instance, or {@code null} when the form bundle /
      *     plugin / injector is unreachable on this EDT runtime
      */
     public static Object resolveFormGenerator()
     {
-        if (cachedGenerator != null)
+        Object found = CACHE.generator();
+        if (found != null)
         {
-            return cachedGenerator;
+            return found;
         }
-        if (resolveAttempted)
+        if (CACHE.runtimeLacksIt())
         {
             return null;
         }
-        resolveAttempted = true;
         try
         {
             Bundle b = Platform.getBundle(FORM_BUNDLE);
@@ -115,6 +168,7 @@ public final class BmFormGeneratorHelper
             {
                 Activator.logWarning("Bundle " + FORM_BUNDLE + " not present - " //$NON-NLS-1$ //$NON-NLS-2$
                     + "create_form falls back to the empty path"); //$NON-NLS-1$
+                CACHE.record(null, true);
                 return null;
             }
             // FormPlugin lives in com._1c.g5.v8.dt.internal.form (x-internal),
@@ -126,12 +180,15 @@ public final class BmFormGeneratorHelper
             {
                 Activator.logWarning("FormPlugin.getDefault() returned null - " //$NON-NLS-1$
                     + "bundle not started yet"); //$NON-NLS-1$
+                // The plugin starts later in the session, so this miss is not final.
+                CACHE.record(null, false);
                 return null;
             }
             Object injector = pluginClass.getMethod("getInjector").invoke(plugin); //$NON-NLS-1$
             if (injector == null)
             {
                 Activator.logWarning("FormPlugin.getInjector() returned null"); //$NON-NLS-1$
+                CACHE.record(null, false);
                 return null;
             }
             Class<?> ifg = b.loadClass(IFORM_GENERATOR);
@@ -143,19 +200,21 @@ public final class BmFormGeneratorHelper
             Class<?> injectorIface = b.loadClass("com.google.inject.Injector"); //$NON-NLS-1$
             Object gen = injectorIface.getMethod("getInstance", Class.class) //$NON-NLS-1$
                 .invoke(injector, ifg);
-            cachedGenerator = gen;
+            CACHE.record(gen, false);
             return gen;
         }
         catch (ClassNotFoundException cnf)
         {
             Activator.logWarning("FormPlugin / IFormGenerator not on classpath: " //$NON-NLS-1$
                 + cnf.getMessage());
+            CACHE.record(null, true);
             return null;
         }
         catch (Exception e)
         {
             Activator.logWarning("resolveFormGenerator failed: " //$NON-NLS-1$
                 + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+            CACHE.record(null, false);
             return null;
         }
     }

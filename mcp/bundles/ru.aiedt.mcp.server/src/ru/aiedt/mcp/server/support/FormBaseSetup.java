@@ -44,6 +44,15 @@ public final class FormBaseSetup
      */
     private static final Map<String, String> BASE_PROPERTIES = buildBaseProperties();
 
+    /**
+     * Accessors a metadata form wrapper uses for the {@code form.model.Form} it holds, in the order
+     * they are tried. EDT names this attribute differently across releases, which is why all three
+     * are probed.
+     */
+    private static final String[] INNER_FORM_GETTERS = {
+        "getFormAttachedForm", "getForm", "getRootContainer" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    };
+
     private FormBaseSetup()
     {
         // utility
@@ -70,9 +79,13 @@ public final class FormBaseSetup
     /**
      * Applies the 11 base properties to the given form root. Properties that
      * have no matching setter on the form class are silently skipped.
+     * <p>
+     * The properties live on the {@code form.model.Form}, not on the
+     * {@code mdclass} wrapper the configuration holds it under, so a wrapper
+     * given here is unwrapped first and the properties reach the form behind it.
      *
      * @param formRoot the root {@code Form} object (the one exposing
-     *                 {@code getItems()} etc.)
+     *                 {@code getItems()} etc.), or the metadata wrapper around it
      * @return number of properties successfully applied
      */
     public static int applyDefaults(Object formRoot)
@@ -81,6 +94,30 @@ public final class FormBaseSetup
         {
             return 0;
         }
+        Object target = formRoot;
+        int applied = applyAll(target);
+        if (applied == 0)
+        {
+            Object inner = innerFormOf(formRoot);
+            if (inner != null)
+            {
+                target = inner;
+                applied = applyAll(target);
+            }
+        }
+        Activator.logInfo("FormBaseSetup applied " + applied + "/" //$NON-NLS-1$ //$NON-NLS-2$
+            + BASE_PROPERTIES.size() + " base properties to " + target.getClass().getSimpleName());
+        return applied;
+    }
+
+    /**
+     * Applies every base property to one object, counting the ones that reached a setter.
+     *
+     * @param formRoot the object to set the properties on
+     * @return how many of the base properties were applied
+     */
+    private static int applyAll(Object formRoot)
+    {
         int applied = 0;
         for (Map.Entry<String, String> e : BASE_PROPERTIES.entrySet())
         {
@@ -89,26 +126,101 @@ public final class FormBaseSetup
                 applied++;
             }
         }
-        Activator.logInfo("FormBaseSetup applied " + applied + "/" //$NON-NLS-1$ //$NON-NLS-2$
-            + BASE_PROPERTIES.size() + " base properties to " + formRoot.getClass().getSimpleName());
         return applied;
     }
 
-    private static boolean applyOne(Object obj, String propertyName, String value)
+    /**
+     * The {@code form.model.Form} behind a metadata form wrapper, or {@code null} when the object
+     * given is the form itself or carries none.
+     * <p>
+     * An object that answers {@code getItems()} is a form root already and is left alone: the
+     * accessors probed below are the metadata wrapper's, and probing them on a real form could
+     * return an object that is not this form at all.
+     *
+     * @param wrapper the candidate metadata wrapper
+     * @return the inner form, or {@code null} when there is none to reach
+     */
+    private static Object innerFormOf(Object wrapper)
     {
-        String setterName = "set" + propertyName;
-        for (Method m : obj.getClass().getMethods())
+        if (hasNoArgMethod(wrapper, "getItems")) //$NON-NLS-1$
         {
-            if (!setterName.equals(m.getName()) || m.getParameterCount() != 1)
+            return null;
+        }
+        for (String getter : INNER_FORM_GETTERS)
+        {
+            if (!hasNoArgMethod(wrapper, getter))
             {
                 continue;
             }
             try
             {
+                Object inner = wrapper.getClass().getMethod(getter).invoke(wrapper);
+                if (inner != null && inner != wrapper)
+                {
+                    return inner;
+                }
+            }
+            catch (Exception e)
+            {
+                Activator.logWarning("FormBaseSetup " + getter //$NON-NLS-1$
+                    + " failed: " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    /** True when the object exposes a no-argument method of that name. */
+    private static boolean hasNoArgMethod(Object obj, String name)
+    {
+        for (Method m : obj.getClass().getMethods())
+        {
+            if (name.equals(m.getName()) && m.getParameterCount() == 0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean applyOne(Object obj, String propertyName, String value)
+    {
+        String setterName = "set" + propertyName;
+        java.util.List<Method> candidates = new java.util.ArrayList<>();
+        for (Method m : obj.getClass().getMethods())
+        {
+            if (setterName.equals(m.getName()) && m.getParameterCount() == 1)
+            {
+                candidates.add(m);
+            }
+        }
+        return applyFirstThatTakes(obj, candidates, value);
+    }
+
+    /**
+     * Invokes the first of the given setters whose parameter takes the value, and answers whether
+     * one of them did.
+     * <p>
+     * A setter the value does not fit is passed over rather than ending the search, because a form
+     * carries the same property more than once - as the model type and as text - and an overload
+     * whose parameter the text cannot be coerced to says nothing about the rest. The candidates are
+     * tried in the order given.
+     *
+     * @param obj the object to set the property on
+     * @param candidates the setters of that property name, in the order to try them
+     * @param value the property value, as text
+     * @return true when one of the candidates was invoked
+     */
+    static boolean applyFirstThatTakes(Object obj, java.util.List<Method> candidates, String value)
+    {
+        for (Method m : candidates)
+        {
+            try
+            {
                 Object coerced = coerce(m.getParameterTypes()[0], value);
                 if (coerced == null && !m.getParameterTypes()[0].isPrimitive())
                 {
-                    return false;
+                    // The value does not fit this parameter type - try the next overload.
+                    continue;
                 }
                 m.invoke(obj, coerced);
                 return true;
