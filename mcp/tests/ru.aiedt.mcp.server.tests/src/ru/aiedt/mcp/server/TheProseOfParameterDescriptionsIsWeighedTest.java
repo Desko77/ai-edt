@@ -269,7 +269,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // a process that exists is not an opened processor that answers, and the wait is the only
         // way to tell them apart.
         PROSE.put("launch_debugger", Integer.valueOf(4186));
-        PROSE.put("mxl_workshop", Integer.valueOf(2164));
+        // Raised from 2164 to 4059 for the sentences on parameter fill, borders, font, colors
+        // and print settings. Each argument is one sentence naming the unit the call takes.
+        PROSE.put("mxl_workshop", Integer.valueOf(4059));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
         PROSE.put("project_admin", Integer.valueOf(1767));
@@ -484,6 +486,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * that off, and the switch has to be in the schema to be turned off. Measured with the
      * templateType sentence of add_template one byte shorter: 92685.
      * </p>
+     * <p>
+     * And a thirty-second, by 1895, for parameter fill, borders, font, colors and print settings
+     * on mxl_workshop. Measured parameter prose 4059. Together with the thirty-first: 94580.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92685;
+    private static final int DOCUMENT_PROSE = 94580;
 }

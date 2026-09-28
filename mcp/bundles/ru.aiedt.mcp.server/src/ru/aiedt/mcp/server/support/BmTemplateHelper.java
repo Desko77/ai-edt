@@ -30,6 +30,10 @@ import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 
+import com._1c.g5.v8.dt.mcore.Color;
+import com._1c.g5.v8.dt.mcore.ColorDef;
+import com._1c.g5.v8.dt.mcore.Font;
+import com._1c.g5.v8.dt.mcore.FontDef;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
 import com._1c.g5.v8.dt.mcore.Point;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
@@ -40,8 +44,16 @@ import com._1c.g5.v8.dt.moxel.Format;
 import com._1c.g5.v8.dt.moxel.Merge;
 import com._1c.g5.v8.dt.moxel.Column;
 import com._1c.g5.v8.dt.moxel.Columns;
+import com._1c.g5.v8.dt.moxel.PageOrientation;
+import com._1c.g5.v8.dt.moxel.PrintSettings;
+import com._1c.g5.v8.dt.moxel.content.CellLine;
+import com._1c.g5.v8.dt.moxel.content.CellLineStyle;
+import com._1c.g5.v8.dt.moxel.content.FillType;
+import com._1c.g5.v8.dt.moxel.content.Pattern;
+import com._1c.g5.v8.dt.moxel.content.SpreadsheetLine;
 import com._1c.g5.v8.dt.moxel.content.TextPlacement;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.Enumerator;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.ColumnsArea;
 import com._1c.g5.v8.dt.moxel.NamedItem;
@@ -1303,6 +1315,31 @@ public final class BmTemplateHelper
     public static void setCellText(SpreadsheetDocument doc, int row, int col, String text,
         String language)
     {
+        Cell c = cellAt(doc, row, col);
+        String lang = (language == null || language.isEmpty()) ? "ru" : language; //$NON-NLS-1$
+        LocalString ls = c.getText();
+        if (ls == null)
+        {
+            ls = ContentFactory.eINSTANCE.createLocalString();
+            c.setText(ls);
+        }
+        ls.getContent().put(lang, text == null ? "" : text); //$NON-NLS-1$
+    }
+
+    /**
+     * The cell at a 1-based position, creating the row and the cell when they are absent.
+     * <p>
+     * The moxel maps are 0-based. The conversion stays at this boundary so every writer lands on
+     * the same physical cell.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row 1-based row index
+     * @param col 1-based column index
+     * @return the cell
+     */
+    private static Cell cellAt(SpreadsheetDocument doc, int row, int col)
+    {
         if (doc == null)
         {
             throw new IllegalArgumentException("doc must not be null"); //$NON-NLS-1$
@@ -1311,13 +1348,8 @@ public final class BmTemplateHelper
         {
             throw new IllegalArgumentException("row and col must be 1-based positive integers"); //$NON-NLS-1$
         }
-        // The moxel row/cell EMaps are 0-based (platform-authored templates
-        // store the top-left cell at key 0), while this API is 1-based. Convert
-        // at the boundary so set_cell(1,1) lands on the physical top-left cell,
-        // matching the documented contract and the inverse readSpreadsheet.
         int rowKey = row - 1;
         int colKey = col - 1;
-        String lang = (language == null || language.isEmpty()) ? "ru" : language; //$NON-NLS-1$
         EMap<Integer, Row> rows = doc.getRows();
         Row r = rows.get(Integer.valueOf(rowKey));
         if (r == null)
@@ -1332,14 +1364,133 @@ public final class BmTemplateHelper
             c = MoxelFactory.eINSTANCE.createCell();
             cells.put(Integer.valueOf(colKey), c);
         }
-        LocalString ls = c.getText();
-        if (ls == null)
-        {
-            ls = ContentFactory.eINSTANCE.createLocalString();
-            c.setText(ls);
-        }
-        ls.getContent().put(lang, text == null ? "" : text); //$NON-NLS-1$
+        return c;
     }
+
+    /**
+     * Why a fill request cannot be applied.
+     * <p>
+     * A parameter cell is how a template is filled from BSL: the cell carries the parameter name and
+     * its format says the fill is a parameter. A template cell keeps the text, placeholders and all.
+     * Asking for a parameter without a name, or for plain text and a name together, is refused here
+     * so the call does not report success and leave the cell unchanged.
+     * </p>
+     *
+     * @param fillType text, parameter or template; empty means parameter when a name is present
+     * @param parameter the parameter name, or {@code null}
+     * @return the reason, or {@code null} when the request can be applied
+     */
+    public static String fillProblem(String fillType, String parameter)
+    {
+        boolean named = parameter != null && !parameter.isEmpty();
+        if ((fillType == null || fillType.isEmpty()) && !named)
+        {
+            return null;
+        }
+        String kind = (fillType == null || fillType.isEmpty()) ? "parameter" : fillType; //$NON-NLS-1$
+        FillType resolved = enumNamed(FillType.VALUES, kind);
+        if (resolved == null)
+        {
+            return "fillType must be one of " + enumLiterals(FillType.VALUES) + " - got: " + kind; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (resolved == FillType.PARAMETER && !named)
+        {
+            return "fillType parameter needs a parameter name"; //$NON-NLS-1$
+        }
+        if (resolved == FillType.TEXT && named)
+        {
+            return "fillType text does not take a parameter"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Sets a cell's text, its template parameter, and how the cell is filled.
+     * <p>
+     * Text is written only when the caller passed it, or when the call is a plain text write. A
+     * parameter on its own must not blank the text that was already there. The fill lives on the
+     * cell's format, copied the same way as any other presentation change.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row 1-based row index
+     * @param col 1-based column index
+     * @param text the text to write
+     * @param textPassed whether the caller named a text, including an empty one
+     * @param language language tag for the text; {@code null} means {@code ru}
+     * @param fillType text, parameter or template, or {@code null} to leave the fill
+     * @param parameter the parameter name, or {@code null} to leave it
+     * @return {@code null} when applied, or the reason it was refused
+     */
+    public static String setCellContent(SpreadsheetDocument doc, int row, int col, String text,
+        boolean textPassed, String language, String fillType, String parameter)
+    {
+        String problem = fillProblem(fillType, parameter);
+        if (problem != null)
+        {
+            return problem;
+        }
+        boolean named = parameter != null && !parameter.isEmpty();
+        String kind = fillType;
+        if ((kind == null || kind.isEmpty()) && named)
+        {
+            kind = "parameter"; //$NON-NLS-1$
+        }
+        boolean legacy = !textPassed && (kind == null || kind.isEmpty());
+        if (textPassed || legacy)
+        {
+            setCellText(doc, row, col, text, language);
+        }
+        else
+        {
+            cellAt(doc, row, col);
+        }
+        Cell cell = cellAt(doc, row, col);
+        if (named)
+        {
+            cell.setParameter(parameter);
+        }
+        else if (kind != null && enumNamed(FillType.VALUES, kind) == FillType.TEXT)
+        {
+            cell.setParameter(null);
+        }
+        if (kind != null && !kind.isEmpty())
+        {
+            CellLook look = new CellLook();
+            look.fillType = kind;
+            FormatOutcome outcome = applyCellFormat(doc, row, col, row, col, null, null, null,
+                null, null, null, look);
+            if (outcome.error != null)
+            {
+                return outcome.error;
+            }
+        }
+        return null;
+    }
+
+    /** Smallest rotation a caller may ask for, in degrees. */
+    private static final int MIN_TEXT_DEGREES = 0;
+
+    /** Largest rotation a caller may ask for, in degrees. A full circle, and no further. */
+    private static final int MAX_TEXT_DEGREES = 360;
+
+    /**
+     * How many model units one degree is. Templates store the angle in tenths of a degree: a
+     * vertical caption is 900, which the editor shows as 90 degrees.
+     */
+    private static final int TEXT_ORIENTATION_TENTHS = 10;
+
+    /** The line width a border gets when the caller names a style and no width. */
+    private static final int DEFAULT_BORDER_WIDTH = 1;
+
+    /** Face used when a font is asked for and the cell has none to copy. */
+    private static final String DEFAULT_FONT_FACE = "Arial"; //$NON-NLS-1$
+
+    /** Height, in the units the template stores, of a font created from nothing. */
+    private static final float DEFAULT_FONT_HEIGHT = 10f;
+
+    /** Scale the template stores on an absolute font. */
+    private static final int DEFAULT_FONT_SCALE = 100;
 
     /**
      * What a formatting request changes, and what it left alone.
@@ -1357,6 +1508,130 @@ public final class BmTemplateHelper
 
         /** Why nothing happened, when nothing did. */
         public String error;
+    }
+
+    /**
+     * Presentation and print settings asked of a template, beyond placement, rotation and size.
+     * <p>
+     * Every field is optional. {@code null} means leave that property alone. Colours are
+     * {@code #RRGGBB}. Lengths of margins are millimetres. Font height is the number the template
+     * stores, in points.
+     * </p>
+     */
+    public static final class CellLook
+    {
+        /** text, parameter or template. */
+        public String fillType;
+
+        /** Line style applied to every side that has no style of its own. */
+        public String border;
+
+        /** Width of the lines this request adds. {@code null} takes the default of 1. */
+        public Integer borderWidth;
+
+        /** Line style of the left side, or {@code null} to leave it or to take {@link #border}. */
+        public String leftBorder;
+
+        /** Line style of the top side. */
+        public String topBorder;
+
+        /** Line style of the right side. */
+        public String rightBorder;
+
+        /** Line style of the bottom side. */
+        public String bottomBorder;
+
+        /** Font face, or {@code null} to keep the cell's. */
+        public String fontName;
+
+        /** Font height in the units the template stores, or {@code null} to keep it. */
+        public Float fontSize;
+
+        /** Bold, or {@code null} to leave it. */
+        public Boolean fontBold;
+
+        /** Italic, or {@code null} to leave it. */
+        public Boolean fontItalic;
+
+        /** Underline, or {@code null} to leave it. */
+        public Boolean fontUnderline;
+
+        /** Strikeout, or {@code null} to leave it. */
+        public Boolean fontStrikeout;
+
+        /** Text colour {@code #RRGGBB}, or {@code null}. */
+        public String textColor;
+
+        /** Background colour {@code #RRGGBB}, or {@code null}. */
+        public String backColor;
+
+        /** Border colour {@code #RRGGBB}, or {@code null}. */
+        public String borderColor;
+
+        /** Pattern colour {@code #RRGGBB}, or {@code null}. */
+        public String patternColor;
+
+        /** Fill pattern, or {@code null} to leave it. */
+        public String pattern;
+
+        /** portrait or landscape. */
+        public String pageOrientation;
+
+        /** Print scale in percent, or {@code null}. */
+        public Integer scale;
+
+        /** Copies, or {@code null}. */
+        public Integer copies;
+
+        /** Pages per sheet, or {@code null}. */
+        public Integer perPage;
+
+        /** Fit to page, or {@code null} to leave it. */
+        public Boolean fitToPage;
+
+        /** Top margin in millimetres, or {@code null}. */
+        public Integer topMargin;
+
+        /** Left margin in millimetres, or {@code null}. */
+        public Integer leftMargin;
+
+        /** Bottom margin in millimetres, or {@code null}. */
+        public Integer bottomMargin;
+
+        /** Right margin in millimetres, or {@code null}. */
+        public Integer rightMargin;
+
+        /**
+         * Whether any cell-presentation field is set.
+         *
+         * @return {@code true} when a cell's format would change
+         */
+        public boolean changesCells()
+        {
+            return filled(fillType) || filled(border) || borderWidth != null || filled(leftBorder)
+                || filled(topBorder) || filled(rightBorder) || filled(bottomBorder)
+                || filled(fontName) || fontSize != null || fontBold != null || fontItalic != null
+                || fontUnderline != null || fontStrikeout != null || filled(textColor)
+                || filled(backColor) || filled(borderColor) || filled(patternColor)
+                || filled(pattern);
+        }
+
+        /**
+         * Whether any print field is set.
+         *
+         * @return {@code true} when the document's print settings would change
+         */
+        public boolean changesPrint()
+        {
+            return filled(pageOrientation) || scale != null || copies != null || perPage != null
+                || fitToPage != null || topMargin != null || leftMargin != null
+                || bottomMargin != null || rightMargin != null;
+        }
+
+        private static boolean filled(String value)
+        {
+            return value != null && !value.isEmpty();
+        }
     }
 
     /**
@@ -1418,7 +1693,8 @@ public final class BmTemplateHelper
      * @param toRow last row, inclusive.
      * @param toCol last column, inclusive.
      * @param placement text placement (wrap / cut / block / auto), or {@code null} to leave it.
-     * @param orientation text rotation in degrees, or {@code null} to leave it.
+     * @param orientation text rotation in degrees from 0 to 360, or {@code null} to leave it. The
+     *            template stores tenths of a degree, so 90 is written as 900.
      * @param rowHeight an explicit row height, or {@code null} to leave it. There is no
      *            auto-height flag in this model: a row whose height is unset and whose cells wrap
      *            is what the platform grows to fit the text.
@@ -1431,7 +1707,44 @@ public final class BmTemplateHelper
         int toRow, int toCol, String placement, Integer orientation, Integer rowHeight,
         Boolean autoColumnWidth, Integer columnWidth, Integer widthWeight)
     {
+        return applyCellFormat(doc, fromRow, fromCol, toRow, toCol, placement, orientation,
+            rowHeight, autoColumnWidth, columnWidth, widthWeight, null);
+    }
+
+    /**
+     * Applies presentation properties to a rectangle of cells, and column width to its columns.
+     * <p>
+     * The same sharing rule as the shorter form. {@code look} carries borders, font, colours, the
+     * fill and the pattern; {@code null} leaves all of those alone. Print settings are not applied
+     * here - they belong to the document, and {@link #applyPrintSettings} writes them.
+     * </p>
+     *
+     * @param doc the spreadsheet.
+     * @param fromRow first row, 1-based inclusive.
+     * @param fromCol first column, 1-based inclusive.
+     * @param toRow last row, inclusive.
+     * @param toCol last column, inclusive.
+     * @param placement text placement (wrap / cut / block / auto), or {@code null} to leave it.
+     * @param orientation text rotation in degrees from 0 to 360, or {@code null} to leave it. The
+     *            template stores tenths of a degree, so 90 is written as 900.
+     * @param rowHeight an explicit row height, or {@code null} to leave it.
+     * @param autoColumnWidth whether column width follows the content, or {@code null} to leave it.
+     * @param columnWidth an explicit column width, or {@code null} to leave it.
+     * @param widthWeight the column's share when widths are distributed, or {@code null}.
+     * @param look further presentation, or {@code null}.
+     * @return what changed
+     */
+    public static FormatOutcome applyCellFormat(SpreadsheetDocument doc, int fromRow, int fromCol,
+        int toRow, int toCol, String placement, Integer orientation, Integer rowHeight,
+        Boolean autoColumnWidth, Integer columnWidth, Integer widthWeight, CellLook look)
+    {
         FormatOutcome outcome = new FormatOutcome();
+        String problem = presentationProblem(orientation, look);
+        if (problem != null)
+        {
+            outcome.error = problem;
+            return outcome;
+        }
         if (doc == null)
         {
             outcome.error = "no spreadsheet to format"; //$NON-NLS-1$
@@ -1450,6 +1763,9 @@ public final class BmTemplateHelper
                 return outcome;
             }
         }
+        FormatDelta cellsWanted = cellDelta(doc, wanted, orientation, look);
+        FormatDelta heightWanted = new FormatDelta();
+        heightWanted.height = rowHeight;
         EMap<Integer, Row> rows = doc.getRows();
         for (int row = fromRow; row <= toRow; row++)
         {
@@ -1463,8 +1779,7 @@ public final class BmTemplateHelper
             {
                 // Height belongs to the ROW's own format, not to the cells in it - a cell cannot
                 // make the line it sits on taller by itself.
-                r.setFormatIndex(indexOfFormatWith(doc, r.getFormatIndex(), null, null,
-                    rowHeight, null, null, null));
+                r.setFormatIndex(indexOfFormatWith(doc, r.getFormatIndex(), heightWanted));
             }
             EMap<Integer, Cell> cells = r.getCells();
             for (int col = fromCol; col <= toCol; col++)
@@ -1476,7 +1791,7 @@ public final class BmTemplateHelper
                     cells.put(Integer.valueOf(col - 1), c);
                 }
                 int before = c.getFormatIndex();
-                int after = indexOfFormatWith(doc, before, wanted, orientation, null, null, null, null);
+                int after = indexOfFormatWith(doc, before, cellsWanted);
                 if (after != before)
                 {
                     c.setFormatIndex(after);
@@ -1534,7 +1849,11 @@ public final class BmTemplateHelper
                 byIndex.put(Integer.valueOf(col - 1), c);
             }
             int before = c.getFormatIndex();
-            int after = indexOfFormatWith(doc, before, null, null, null, autoWidth, width, weight);
+            FormatDelta widthWanted = new FormatDelta();
+            widthWanted.autoWidth = autoWidth;
+            widthWanted.width = width;
+            widthWanted.weight = weight;
+            int after = indexOfFormatWith(doc, before, widthWanted);
             if (after != before)
             {
                 c.setFormatIndex(after);
@@ -1542,6 +1861,65 @@ public final class BmTemplateHelper
             }
         }
         return changed;
+    }
+
+    /**
+     * The properties a format should gain. A null field keeps the base format's value.
+     */
+    private static final class FormatDelta
+    {
+        private TextPlacement placement;
+
+        /** Degrees, not tenths. Written multiplied by ten. */
+        private Integer orientationDegrees;
+
+        private Integer height;
+
+        private Boolean autoWidth;
+
+        private Integer width;
+
+        private Integer weight;
+
+        private FillType fillType;
+
+        private FontRequest font;
+
+        private Integer leftBorder;
+
+        private Integer topBorder;
+
+        private Integer rightBorder;
+
+        private Integer bottomBorder;
+
+        private Integer textColor;
+
+        private Integer backColor;
+
+        private Integer borderColor;
+
+        private Integer patternColor;
+
+        private Pattern pattern;
+    }
+
+    /**
+     * A font change asked relative to the font the cell already has.
+     */
+    private static final class FontRequest
+    {
+        private String face;
+
+        private Float size;
+
+        private Boolean bold;
+
+        private Boolean italic;
+
+        private Boolean underline;
+
+        private Boolean strikeout;
     }
 
     /**
@@ -1554,17 +1932,10 @@ public final class BmTemplateHelper
      *
      * @param doc the spreadsheet holding the format table.
      * @param baseIndex the format the element points at now.
-     * @param placement the wanted placement, or {@code null} to keep the base's.
-     * @param orientation the wanted rotation, or {@code null} to keep the base's.
-     * @param height the wanted height, or {@code null} to keep the base's.
-     * @param autoWidth the wanted auto-width, or {@code null} to keep the base's.
-     * @param width the wanted width, or {@code null} to keep the base's.
-     * @param weight the wanted width weight, or {@code null} to keep the base's.
+     * @param delta the properties to change. Rotation is in degrees and is stored as tenths.
      * @return the index to point at
      */
-    private static int indexOfFormatWith(SpreadsheetDocument doc, int baseIndex,
-        TextPlacement placement, Integer orientation, Integer height, Boolean autoWidth,
-        Integer width, Integer weight)
+    private static int indexOfFormatWith(SpreadsheetDocument doc, int baseIndex, FormatDelta delta)
     {
         EList<Format> formats = doc.getFormats();
         Format base = baseIndex >= 0 && baseIndex < formats.size() ? formats.get(baseIndex) : null;
@@ -1573,29 +1944,82 @@ public final class BmTemplateHelper
         {
             wanted = EcoreUtil.copy(base);
         }
-        if (placement != null)
+        if (delta.placement != null)
         {
-            wanted.setTextPlacement(placement);
+            wanted.setTextPlacement(delta.placement);
         }
-        if (orientation != null)
+        if (delta.orientationDegrees != null)
         {
-            wanted.setTextOrientation(orientation.intValue());
+            wanted.setTextOrientation(delta.orientationDegrees.intValue() * TEXT_ORIENTATION_TENTHS);
         }
-        if (height != null)
+        if (delta.height != null)
         {
-            wanted.setHeight(height.intValue());
+            wanted.setHeight(delta.height.intValue());
         }
-        if (autoWidth != null)
+        if (delta.autoWidth != null)
         {
-            wanted.setAutoWidthCalculation(autoWidth.booleanValue());
+            wanted.setAutoWidthCalculation(delta.autoWidth.booleanValue());
         }
-        if (width != null)
+        if (delta.width != null)
         {
-            wanted.setWidth(width.intValue());
+            wanted.setWidth(delta.width.intValue());
         }
-        if (weight != null)
+        if (delta.weight != null)
         {
-            wanted.setWidthWeightFactor(weight.intValue());
+            wanted.setWidthWeightFactor(delta.weight.intValue());
+        }
+        if (delta.fillType != null)
+        {
+            wanted.setFillType(delta.fillType);
+        }
+        if (delta.pattern != null)
+        {
+            wanted.setPattern(delta.pattern);
+        }
+        if (delta.leftBorder != null)
+        {
+            wanted.setLeftBorder(delta.leftBorder.intValue());
+        }
+        if (delta.topBorder != null)
+        {
+            wanted.setTopBorder(delta.topBorder.intValue());
+        }
+        if (delta.rightBorder != null)
+        {
+            wanted.setRightBorder(delta.rightBorder.intValue());
+        }
+        if (delta.bottomBorder != null)
+        {
+            wanted.setBottomBorder(delta.bottomBorder.intValue());
+        }
+        if (delta.textColor != null)
+        {
+            wanted.setTextColor(delta.textColor.intValue());
+        }
+        if (delta.backColor != null)
+        {
+            wanted.setBackColor(delta.backColor.intValue());
+        }
+        if (delta.borderColor != null)
+        {
+            wanted.setBorderColor(delta.borderColor.intValue());
+        }
+        if (delta.patternColor != null)
+        {
+            wanted.setPatternColor(delta.patternColor.intValue());
+        }
+        if (delta.font != null)
+        {
+            Font baseFont = null;
+            if (base != null && base.isSetFont())
+            {
+                int fontIndex = base.getFont();
+                if (fontIndex >= 0 && fontIndex < doc.getFonts().size())
+                {
+                    baseFont = doc.getFonts().get(fontIndex);
+                }
+            }
+            wanted.setFont(indexOfFont(doc, baseFont, delta.font));
         }
         for (int i = 0; i < formats.size(); i++)
         {
@@ -1606,6 +2030,600 @@ public final class BmTemplateHelper
         }
         formats.add(wanted);
         return formats.size() - 1;
+    }
+
+    /**
+     * The cell properties of a request, with borders and colours already placed in their tables.
+     *
+     * @param doc the spreadsheet the tables belong to
+     * @param placement the resolved placement, or {@code null}
+     * @param orientation degrees, or {@code null}
+     * @param look further presentation, or {@code null}
+     * @return the delta the cell loop applies
+     */
+    private static FormatDelta cellDelta(SpreadsheetDocument doc, TextPlacement placement,
+        Integer orientation, CellLook look)
+    {
+        FormatDelta delta = new FormatDelta();
+        delta.placement = placement;
+        delta.orientationDegrees = orientation;
+        if (look == null)
+        {
+            return delta;
+        }
+        if (look.fillType != null && !look.fillType.isEmpty())
+        {
+            delta.fillType = enumNamed(FillType.VALUES, look.fillType);
+        }
+        if (look.pattern != null && !look.pattern.isEmpty())
+        {
+            delta.pattern = enumNamed(Pattern.VALUES, look.pattern);
+        }
+        delta.leftBorder = borderIndex(doc, look.leftBorder, look.border, look.borderWidth);
+        delta.topBorder = borderIndex(doc, look.topBorder, look.border, look.borderWidth);
+        delta.rightBorder = borderIndex(doc, look.rightBorder, look.border, look.borderWidth);
+        delta.bottomBorder = borderIndex(doc, look.bottomBorder, look.border, look.borderWidth);
+        delta.textColor = colorIndex(doc, look.textColor);
+        delta.backColor = colorIndex(doc, look.backColor);
+        delta.borderColor = colorIndex(doc, look.borderColor);
+        delta.patternColor = colorIndex(doc, look.patternColor);
+        if (look.fontName != null || look.fontSize != null || look.fontBold != null
+            || look.fontItalic != null || look.fontUnderline != null || look.fontStrikeout != null)
+        {
+            FontRequest font = new FontRequest();
+            font.face = look.fontName;
+            font.size = look.fontSize;
+            font.bold = look.fontBold;
+            font.italic = look.fontItalic;
+            font.underline = look.fontUnderline;
+            font.strikeout = look.fontStrikeout;
+            delta.font = font;
+        }
+        return delta;
+    }
+
+    /**
+     * The line-table index of a border, or {@code null} when that side is not part of the request.
+     * <p>
+     * A side of its own wins over the style asked for every side. The line is reused when the
+     * document already has one of that style and width, so a sheet of boxed cells shares one line.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param side the style of this side, or empty to fall back to {@code all}
+     * @param all the style asked for every side, or empty
+     * @param width the line width, or {@code null} for the default
+     * @return the index, or {@code null} when this side stays as it is
+     */
+    private static Integer borderIndex(SpreadsheetDocument doc, String side, String all,
+        Integer width)
+    {
+        String styleName = side != null && !side.isEmpty() ? side : all;
+        if (styleName == null || styleName.isEmpty())
+        {
+            return null;
+        }
+        CellLineStyle style = enumNamed(CellLineStyle.VALUES, styleName);
+        int lineWidth = width == null ? DEFAULT_BORDER_WIDTH : width.intValue();
+        return Integer.valueOf(indexOfLine(doc, style, lineWidth));
+    }
+
+    /**
+     * Finds or adds a cell line of the given style and width.
+     *
+     * @param doc the spreadsheet
+     * @param style the line style
+     * @param width the line width
+     * @return the index in the document's line table
+     */
+    private static int indexOfLine(SpreadsheetDocument doc, CellLineStyle style, int width)
+    {
+        EList<SpreadsheetLine> lines = doc.getLines();
+        for (int i = 0; i < lines.size(); i++)
+        {
+            SpreadsheetLine line = lines.get(i);
+            if (line instanceof CellLine)
+            {
+                CellLine cellLine = (CellLine)line;
+                if (cellLine.getStyle() == style && cellLine.getWidth() == width && !cellLine.isGap())
+                {
+                    return i;
+                }
+            }
+        }
+        CellLine created = ContentFactory.eINSTANCE.createCellLine();
+        created.setStyle(style);
+        created.setWidth(width);
+        created.setGap(false);
+        lines.add(created);
+        return lines.size() - 1;
+    }
+
+    /**
+     * The colour-table index of a {@code #RRGGBB} colour, or {@code null} when none was asked.
+     *
+     * @param doc the spreadsheet
+     * @param hex the colour, or empty
+     * @return the index, or {@code null}
+     */
+    private static Integer colorIndex(SpreadsheetDocument doc, String hex)
+    {
+        int[] rgb = rgbOf(hex);
+        if (rgb == null)
+        {
+            return null;
+        }
+        return Integer.valueOf(indexOfColor(doc, rgb[0], rgb[1], rgb[2]));
+    }
+
+    /**
+     * Finds or adds an absolute colour.
+     *
+     * @param doc the spreadsheet
+     * @param red red, 0..255
+     * @param green green, 0..255
+     * @param blue blue, 0..255
+     * @return the index in the document's colour table
+     */
+    private static int indexOfColor(SpreadsheetDocument doc, int red, int green, int blue)
+    {
+        EList<Color> colors = doc.getColors();
+        for (int i = 0; i < colors.size(); i++)
+        {
+            Color color = colors.get(i);
+            if (color instanceof ColorDef)
+            {
+                ColorDef defined = (ColorDef)color;
+                if (defined.getRed() == red && defined.getGreen() == green && defined.getBlue() == blue)
+                {
+                    return i;
+                }
+            }
+        }
+        ColorDef created = McoreFactory.eINSTANCE.createColorDef();
+        created.setRed(red);
+        created.setGreen(green);
+        created.setBlue(blue);
+        colors.add(created);
+        return colors.size() - 1;
+    }
+
+    /**
+     * Finds or adds the font a request describes, starting from the font the cell already uses.
+     *
+     * @param doc the spreadsheet
+     * @param base the cell's current font, or {@code null}
+     * @param request what to change
+     * @return the index in the document's font table
+     */
+    private static int indexOfFont(SpreadsheetDocument doc, Font base, FontRequest request)
+    {
+        Font wanted = fontWith(base, request);
+        EList<Font> fonts = doc.getFonts();
+        for (int i = 0; i < fonts.size(); i++)
+        {
+            if (EcoreUtil.equals(fonts.get(i), wanted))
+            {
+                return i;
+            }
+        }
+        fonts.add(wanted);
+        return fonts.size() - 1;
+    }
+
+    /**
+     * A font with the requested fields changed and the rest taken from the base.
+     * <p>
+     * A cell that only asks to be bold keeps its face and height. A cell with no font yet starts
+     * from Arial at the default height, which is what a new absolute font in a template carries.
+     * </p>
+     *
+     * @param base the font to copy, or {@code null}
+     * @param request the changes
+     * @return the font to store
+     */
+    private static Font fontWith(Font base, FontRequest request)
+    {
+        FontDef wanted = McoreFactory.eINSTANCE.createFontDef();
+        if (base instanceof FontDef)
+        {
+            FontDef from = (FontDef)base;
+            wanted.setFaceName(from.getFaceName() == null ? DEFAULT_FONT_FACE : from.getFaceName());
+            wanted.setHeight(from.getHeight());
+            wanted.setBold(from.isBold());
+            wanted.setItalic(from.isItalic());
+            wanted.setUnderline(from.isUnderline());
+            wanted.setStrikeout(from.isStrikeout());
+            wanted.setScale(from.getScale() == 0 ? DEFAULT_FONT_SCALE : from.getScale());
+        }
+        else
+        {
+            wanted.setFaceName(DEFAULT_FONT_FACE);
+            wanted.setHeight(DEFAULT_FONT_HEIGHT);
+            wanted.setBold(false);
+            wanted.setItalic(false);
+            wanted.setUnderline(false);
+            wanted.setStrikeout(false);
+            wanted.setScale(DEFAULT_FONT_SCALE);
+        }
+        if (request.face != null && !request.face.isEmpty())
+        {
+            wanted.setFaceName(request.face);
+        }
+        if (request.size != null)
+        {
+            wanted.setHeight(request.size.floatValue());
+        }
+        if (request.bold != null)
+        {
+            wanted.setBold(request.bold.booleanValue());
+        }
+        if (request.italic != null)
+        {
+            wanted.setItalic(request.italic.booleanValue());
+        }
+        if (request.underline != null)
+        {
+            wanted.setUnderline(request.underline.booleanValue());
+        }
+        if (request.strikeout != null)
+        {
+            wanted.setStrikeout(request.strikeout.booleanValue());
+        }
+        return wanted;
+    }
+
+    /**
+     * Why a presentation request cannot be applied.
+     * <p>
+     * Checked before any table grows, so a bad colour or a rotation past a full circle leaves the
+     * template untouched. Rotation is degrees, 0 through 360.
+     * </p>
+     *
+     * @param orientation degrees, or {@code null} when rotation is not part of the request
+     * @param look the rest of the request, or {@code null}
+     * @return the reason, or {@code null} when the request can be applied
+     */
+    public static String presentationProblem(Integer orientation, CellLook look)
+    {
+        if (orientation != null && (orientation.intValue() < MIN_TEXT_DEGREES
+            || orientation.intValue() > MAX_TEXT_DEGREES))
+        {
+            return "textOrientation must be between " + MIN_TEXT_DEGREES + " and " //$NON-NLS-1$
+                + MAX_TEXT_DEGREES + " degrees - got: " + orientation; //$NON-NLS-1$
+        }
+        if (look == null)
+        {
+            return null;
+        }
+        if (look.fillType != null && !look.fillType.isEmpty()
+            && enumNamed(FillType.VALUES, look.fillType) == null)
+        {
+            return "fillType must be one of " + enumLiterals(FillType.VALUES) + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
+                + look.fillType;
+        }
+        String border = borderProblem("border", look.border); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("leftBorder", look.leftBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("topBorder", look.topBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("rightBorder", look.rightBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("bottomBorder", look.bottomBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        boolean anySide = filled(look.border) || filled(look.leftBorder) || filled(look.topBorder)
+            || filled(look.rightBorder) || filled(look.bottomBorder);
+        if (look.borderWidth != null && !anySide)
+        {
+            return "borderWidth needs a border style"; //$NON-NLS-1$
+        }
+        if (look.borderWidth != null && look.borderWidth.intValue() < 0)
+        {
+            return "borderWidth must be 0 or greater - got: " + look.borderWidth; //$NON-NLS-1$
+        }
+        String color = colorProblem("textColor", look.textColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        color = colorProblem("backColor", look.backColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        color = colorProblem("borderColor", look.borderColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        color = colorProblem("patternColor", look.patternColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        if (look.pattern != null && !look.pattern.isEmpty()
+            && enumNamed(Pattern.VALUES, look.pattern) == null)
+        {
+            return "pattern must be one of " + enumLiterals(Pattern.VALUES) + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
+                + look.pattern;
+        }
+        if (look.fontName != null && look.fontName.trim().isEmpty())
+        {
+            return "fontName must not be blank"; //$NON-NLS-1$
+        }
+        if (look.fontSize != null && look.fontSize.floatValue() < 0f)
+        {
+            return "fontSize must be 0 or greater - got: " + look.fontSize; //$NON-NLS-1$
+        }
+        if (look.pageOrientation != null && !look.pageOrientation.isEmpty()
+            && enumNamed(PageOrientation.VALUES, look.pageOrientation) == null)
+        {
+            return "pageOrientation must be one of " + enumLiterals(PageOrientation.VALUES) //$NON-NLS-1$
+                + " - got: " + look.pageOrientation; //$NON-NLS-1$
+        }
+        if (look.scale != null && look.scale.intValue() < 1)
+        {
+            return "scale must be 1 or greater - got: " + look.scale; //$NON-NLS-1$
+        }
+        if (look.copies != null && look.copies.intValue() < 1)
+        {
+            return "copies must be 1 or greater - got: " + look.copies; //$NON-NLS-1$
+        }
+        if (look.perPage != null && look.perPage.intValue() < 1)
+        {
+            return "perPage must be 1 or greater - got: " + look.perPage; //$NON-NLS-1$
+        }
+        String margin = marginProblem("topMargin", look.topMargin); //$NON-NLS-1$
+        if (margin != null)
+        {
+            return margin;
+        }
+        margin = marginProblem("leftMargin", look.leftMargin); //$NON-NLS-1$
+        if (margin != null)
+        {
+            return margin;
+        }
+        margin = marginProblem("bottomMargin", look.bottomMargin); //$NON-NLS-1$
+        if (margin != null)
+        {
+            return margin;
+        }
+        return marginProblem("rightMargin", look.rightMargin); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes the print settings a request names.
+     * <p>
+     * Margins are millimetres at the boundary and hundredths of a millimetre in the model, which is
+     * how a template file stores a 10 mm margin as 1000. Only the fields that were passed change.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param look the request; print fields that are {@code null} are left alone
+     * @return {@code null} when applied, or the reason it was refused
+     */
+    public static String applyPrintSettings(SpreadsheetDocument doc, CellLook look)
+    {
+        String problem = presentationProblem(null, look);
+        if (problem != null)
+        {
+            return problem;
+        }
+        if (doc == null)
+        {
+            return "no spreadsheet to format"; //$NON-NLS-1$
+        }
+        if (look == null || !look.changesPrint())
+        {
+            return null;
+        }
+        PrintSettings settings = doc.getPrintSettings();
+        if (settings == null)
+        {
+            settings = MoxelFactory.eINSTANCE.createPrintSettings();
+            doc.setPrintSettings(settings);
+        }
+        if (look.pageOrientation != null && !look.pageOrientation.isEmpty())
+        {
+            settings.setPageOrientation(enumNamed(PageOrientation.VALUES, look.pageOrientation));
+        }
+        if (look.scale != null)
+        {
+            settings.setScale(look.scale.intValue());
+        }
+        if (look.copies != null)
+        {
+            settings.setCopies(look.copies.intValue());
+        }
+        if (look.perPage != null)
+        {
+            settings.setPerPage(look.perPage.intValue());
+        }
+        if (look.fitToPage != null)
+        {
+            settings.setFitToPage(look.fitToPage.booleanValue());
+        }
+        if (look.topMargin != null)
+        {
+            settings.setTopMargin(look.topMargin.intValue() * 100);
+        }
+        if (look.leftMargin != null)
+        {
+            settings.setLeftMargin(look.leftMargin.intValue() * 100);
+        }
+        if (look.bottomMargin != null)
+        {
+            settings.setBottomMargin(look.bottomMargin.intValue() * 100);
+        }
+        if (look.rightMargin != null)
+        {
+            settings.setRightMargin(look.rightMargin.intValue() * 100);
+        }
+        return null;
+    }
+
+    /**
+     * The rotation a format stores, in degrees.
+     * <p>
+     * The model keeps tenths of a degree. Dividing by ten is the inverse of the write, so a
+     * vertical caption stored as 900 is read back as 90.
+     * </p>
+     *
+     * @param format the format, or {@code null}
+     * @return degrees, or {@code null} when the format does not set a rotation
+     */
+    public static Integer textOrientationDegrees(Format format)
+    {
+        if (format == null || !format.isSetTextOrientation())
+        {
+            return null;
+        }
+        return Integer.valueOf(format.getTextOrientation() / TEXT_ORIENTATION_TENTHS);
+    }
+
+    private static String borderProblem(String argument, String style)
+    {
+        if (style == null || style.isEmpty())
+        {
+            return null;
+        }
+        if (enumNamed(CellLineStyle.VALUES, style) == null)
+        {
+            return argument + " must be one of " + enumLiterals(CellLineStyle.VALUES) + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
+                + style;
+        }
+        return null;
+    }
+
+    private static String colorProblem(String argument, String hex)
+    {
+        if (hex == null || hex.isEmpty())
+        {
+            return null;
+        }
+        if (rgbOf(hex) == null)
+        {
+            return argument + " must be #RRGGBB - got: " + hex; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    private static String marginProblem(String argument, Integer millimetres)
+    {
+        if (millimetres == null)
+        {
+            return null;
+        }
+        if (millimetres.intValue() < 0)
+        {
+            return argument + " must be 0 or greater millimetres - got: " + millimetres; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    private static boolean filled(String value)
+    {
+        return value != null && !value.isEmpty();
+    }
+
+    /**
+     * An enumerator by the name or the literal a caller wrote, ignoring case and underscores.
+     *
+     * @param values the enumerator's published values
+     * @param wanted the text the caller wrote
+     * @param <T> the enumerator type
+     * @return the value, or {@code null} when nothing matches
+     */
+    private static <T extends Enumerator> T enumNamed(List<T> values, String wanted)
+    {
+        if (wanted == null)
+        {
+            return null;
+        }
+        String folded = wanted.trim().replace("_", "").replace("-", ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        for (T candidate : values)
+        {
+            String literal = candidate.getLiteral() == null ? "" //$NON-NLS-1$
+                : candidate.getLiteral().replace("_", ""); //$NON-NLS-1$
+            String name = candidate.getName() == null ? "" //$NON-NLS-1$
+                : candidate.getName().replace("_", ""); //$NON-NLS-1$
+            if (literal.equalsIgnoreCase(folded) || name.equalsIgnoreCase(folded))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The literals an enumerator publishes, for a refusal.
+     *
+     * @param values the enumerator's published values
+     * @return the literals, comma separated
+     */
+    private static String enumLiterals(List<? extends Enumerator> values)
+    {
+        StringBuilder text = new StringBuilder();
+        for (Enumerator candidate : values)
+        {
+            if (text.length() > 0)
+            {
+                text.append(", "); //$NON-NLS-1$
+            }
+            text.append(candidate.getLiteral());
+        }
+        return text.toString();
+    }
+
+    /**
+     * {@code #RRGGBB} or {@code RRGGBB} as three channels, or {@code null} when it is not that.
+     *
+     * @param hex the text
+     * @return red, green and blue, or {@code null}
+     */
+    private static int[] rgbOf(String hex)
+    {
+        if (hex == null)
+        {
+            return null;
+        }
+        String text = hex.trim();
+        if (text.startsWith("#")) //$NON-NLS-1$
+        {
+            text = text.substring(1);
+        }
+        if (text.length() != 6)
+        {
+            return null;
+        }
+        try
+        {
+            return new int[] {
+                Integer.parseInt(text.substring(0, 2), 16),
+                Integer.parseInt(text.substring(2, 4), 16),
+                Integer.parseInt(text.substring(4, 6), 16)
+            };
+        }
+        catch (NumberFormatException notHex)
+        {
+            return null;
+        }
     }
 
     /**
@@ -1851,7 +2869,9 @@ public final class BmTemplateHelper
      * this read adds 1 at the boundary. Populates:
      * <ul>
      * <li>{@code rowCount} / {@code colCount} / {@code cellCount}
-     * <li>{@code cells} - array of {@code {row, col, text}} for non-empty cells
+     * <li>{@code cells} - array of {@code {row, col, text}} for cells that carry text, a
+     * parameter, a fill or a rotation. {@code textOrientation} is degrees (the model value divided
+     * by ten). {@code parameter} and {@code fillType} are present when the cell has them.
      * <li>{@code merges} - array of {@code {fromRow, fromCol, toRow, toCol}} (1-based, inclusive)
      * <li>{@code drawings} - array of {@code {id}}
      * </ul>
@@ -1882,8 +2902,16 @@ public final class BmTemplateHelper
                     {
                         continue;
                     }
-                    String text = cellText(ce.getValue(), language);
-                    if (text == null || text.isEmpty())
+                    Cell held = ce.getValue();
+                    String text = cellText(held, language);
+                    String parameter = held.getParameter();
+                    boolean named = parameter != null && !parameter.isEmpty();
+                    Format format = formatAt(doc, held.getFormatIndex());
+                    Integer degrees = textOrientationDegrees(format);
+                    String fill = format != null && format.isSetFillType()
+                        ? format.getFillType().getLiteral() : null;
+                    boolean hasText = text != null && !text.isEmpty();
+                    if (!hasText && !named && degrees == null && fill == null)
                     {
                         continue;
                     }
@@ -1891,7 +2919,22 @@ public final class BmTemplateHelper
                     Map<String, Object> cm = new LinkedHashMap<>();
                     cm.put("row", Integer.valueOf(rowIdx)); //$NON-NLS-1$
                     cm.put("col", Integer.valueOf(colIdx)); //$NON-NLS-1$
-                    cm.put("text", text); //$NON-NLS-1$
+                    if (hasText)
+                    {
+                        cm.put("text", text); //$NON-NLS-1$
+                    }
+                    if (named)
+                    {
+                        cm.put("parameter", parameter); //$NON-NLS-1$
+                    }
+                    if (fill != null)
+                    {
+                        cm.put("fillType", fill); //$NON-NLS-1$
+                    }
+                    if (degrees != null)
+                    {
+                        cm.put("textOrientation", degrees); //$NON-NLS-1$
+                    }
                     cells.add(cm);
                     maxRow = Math.max(maxRow, rowIdx);
                     maxCol = Math.max(maxCol, colIdx);
@@ -1939,6 +2982,22 @@ public final class BmTemplateHelper
         // exactly what building a load template from an existing one needs.
         out.put("namedAreas", listNamedAreas(doc)); //$NON-NLS-1$
         return out;
+    }
+
+    /**
+     * The format a cell points at, or {@code null} when the index is outside the table.
+     *
+     * @param doc the spreadsheet
+     * @param index the format index
+     * @return the format, or {@code null}
+     */
+    private static Format formatAt(SpreadsheetDocument doc, int index)
+    {
+        if (doc == null || index < 0 || index >= doc.getFormats().size())
+        {
+            return null;
+        }
+        return doc.getFormats().get(index);
     }
 
     /**
