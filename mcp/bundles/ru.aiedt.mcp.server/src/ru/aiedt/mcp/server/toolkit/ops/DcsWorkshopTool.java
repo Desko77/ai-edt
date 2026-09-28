@@ -1984,7 +1984,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException(failed);
         }
-        throw new RuntimeException(failed + " Allowed: " + allowed); //$NON-NLS-1$
+        throw new RuntimeException(failed + ". Allowed: " + allowed); //$NON-NLS-1$
     }
 
     /**
