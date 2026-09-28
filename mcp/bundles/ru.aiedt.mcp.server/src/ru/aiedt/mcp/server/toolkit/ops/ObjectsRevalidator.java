@@ -96,6 +96,12 @@ public class ObjectsRevalidator
             objectsJson = JsonUtils.extractStringArgument(params, "objectFqns"); //$NON-NLS-1$
         }
 
+        String objectsRefusal = objectsNotArrayError(objectsJson);
+        if (objectsRefusal != null)
+        {
+            return ToolResult.error(objectsRefusal).toJson();
+        }
+
         if (projectName != null && !projectName.isEmpty())
         {
             String notReadyError = ProjectStateGuard.checkReadyOrError(projectName);
@@ -135,6 +141,41 @@ public class ObjectsRevalidator
             Activator.logError("Could not parse the objects JSON: " + objectsJson, e); //$NON-NLS-1$
         }
         return result;
+    }
+
+    /**
+     * The refusal for an {@code objects} argument that is not a JSON array.
+     * <p>
+     * A scalar or unparseable value parses to the same empty list as an omitted argument, and an
+     * empty list means revalidate the whole project: a caller who typed {@code "Catalog.Products"}
+     * instead of {@code ["Catalog.Products"]} triggered a full build of the project rather than a
+     * check of one object. Refusing with the shape the argument should have had keeps a mistyped
+     * call from becoming the most expensive answer this tool gives.
+     * </p>
+     *
+     * @param raw the raw argument value; may be <code>null</code>
+     * @return the refusal text, or <code>null</code> when the argument is absent, blank or a JSON
+     *         array
+     */
+    static String objectsNotArrayError(String raw)
+    {
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            if (JsonParser.parseString(raw.trim()).isJsonArray())
+            {
+                return null;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            // Not JSON at all; the refusal below says what was expected.
+        }
+        return "objects must be a JSON array of FQN strings, e.g. [\"Catalog.Products\", " //$NON-NLS-1$
+            + "\"Document.SalesOrder\"] - got: " + raw + ". Nothing was revalidated."; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     public static String revalidateObjects(String projectName, List<String> objectFqns)

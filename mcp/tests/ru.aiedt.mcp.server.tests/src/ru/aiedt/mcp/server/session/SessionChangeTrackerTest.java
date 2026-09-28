@@ -117,4 +117,27 @@ public class SessionChangeTrackerTest
             // Expected - set is unmodifiable
         }
     }
+
+    /**
+     * The {@code scope=session} description must say the window the tracker actually keeps.
+     * <p>
+     * The set accumulates from initialization to shutdown and nothing calls {@code clear()} in
+     * between, so a description promising "the current MCP session" describes a reset nobody
+     * performs - and a caller who trusts it expects yesterday's files to fall out of the window
+     * when they never do.
+     * </p>
+     */
+    @Test
+    public void testSessionScopeDescriptionMatchesTheTrackerLifetime()
+    {
+        ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader tool =
+            new ru.aiedt.mcp.server.toolkit.ops.ProjectProblemsReader();
+
+        assertFalse("the schema must not promise a per-session reset nobody performs", //$NON-NLS-1$
+            tool.getInputSchema().contains("MCP session")); //$NON-NLS-1$
+        assertFalse("the description must not promise a per-session reset nobody performs", //$NON-NLS-1$
+            tool.getDescription().contains("MCP session")); //$NON-NLS-1$
+        assertTrue("the schema says what the window actually is", //$NON-NLS-1$
+            tool.getInputSchema().contains("since EDT started")); //$NON-NLS-1$
+    }
 }
