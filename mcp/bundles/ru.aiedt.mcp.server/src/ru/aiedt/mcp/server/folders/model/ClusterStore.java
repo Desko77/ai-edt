@@ -130,7 +130,7 @@ public class ClusterStore
      * A nested cluster is one whose path equals that full path or continues past it with a slash.
      * Objects those clusters held are no longer clustered, so the navigator stops hiding them.
      * A cluster whose path merely shares a prefix is left in place. When the named cluster is not
-     * here, nothing is removed.
+     * here, nothing is removed. Every duplicate instance with the named full path is removed as well.
      * </p>
      *
      * @param fullPath the full path of the cluster to remove
@@ -138,14 +138,13 @@ public class ClusterStore
      */
     public boolean removeCluster(String fullPath)
     {
-        Cluster removed = getClusterByFullPath(fullPath);
-        if (removed == null || fullPath == null)
+        if (getClusterByFullPath(fullPath) == null || fullPath == null)
         {
             return false;
         }
         String nestedPrefix = fullPath + "/"; //$NON-NLS-1$
         clusters.removeIf(cluster -> {
-            if (cluster == removed)
+            if (Objects.equals(cluster.getFullPath(), fullPath))
             {
                 return true;
             }
@@ -308,7 +307,7 @@ public class ClusterStore
      * A nested name continues past {@code oldFqn} with a dot. A name that only shares a prefix is
      * not rewritten. The rename is what a metadata rename has to do: EDT renames the object, and
      * the children that were clustered under it change FQN with it even when the parent itself was
-     * not a member of the cluster.
+     * not a member of the cluster. Cluster collection paths built from that FQN are rewritten too.
      * </p>
      *
      * @param oldFqn the current fully qualified name
@@ -324,8 +323,39 @@ public class ClusterStore
             {
                 renamed = true;
             }
+            String renamedPath = renameFqnTree(cluster.getPath(), oldFqn, newFqn);
+            if (!Objects.equals(cluster.getPath(), renamedPath))
+            {
+                cluster.setPath(renamedPath);
+                renamed = true;
+            }
         }
         return renamed;
+    }
+
+    /**
+     * Rewrites an exact fully qualified name or a dot-delimited descendant.
+     *
+     * @param value the value to inspect; may be <code>null</code>
+     * @param oldFqn the current fully qualified name
+     * @param newFqn the replacement fully qualified name
+     * @return the rewritten value, or the original value when it does not match
+     */
+    private static String renameFqnTree(String value, String oldFqn, String newFqn)
+    {
+        if (value == null || oldFqn == null || newFqn == null || oldFqn.isEmpty())
+        {
+            return value;
+        }
+        if (value.equals(oldFqn))
+        {
+            return newFqn;
+        }
+        if (value.startsWith(oldFqn + ".")) //$NON-NLS-1$
+        {
+            return newFqn + value.substring(oldFqn.length());
+        }
+        return value;
     }
 
     /**

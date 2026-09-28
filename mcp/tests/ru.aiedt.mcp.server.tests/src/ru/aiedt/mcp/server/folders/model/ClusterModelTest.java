@@ -14,6 +14,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
@@ -278,6 +279,17 @@ public class ClusterModelTest
     public void removeClusterByFullPathDropsIt()
     {
         storage.addCluster(new Cluster("G", "P"));
+        assertTrue(storage.removeCluster("P/G"));
+        assertEquals(0, storage.getClusterCount());
+    }
+
+    @Test
+    public void removeClusterByFullPathDropsDuplicateInstances()
+    {
+        Cluster first = new Cluster("G", "P");
+        Cluster duplicate = new Cluster("G", "P");
+        storage.setGroups(new ArrayList<>(Arrays.asList(first, duplicate)));
+
         assertTrue(storage.removeCluster("P/G"));
         assertEquals(0, storage.getClusterCount());
     }
@@ -609,6 +621,29 @@ public class ClusterModelTest
 
         assertFalse(storage.renameObject("Catalog.Products", "Catalog.Goods"));
         assertTrue(cluster.containsChild("Catalog.ProductsExtra"));
+    }
+
+    @Test
+    public void renameObjectRemovesAResultingDuplicate()
+    {
+        Cluster cluster = new Cluster("Shelf", "Catalogs");
+        cluster.setChildren(Arrays.asList("Catalog.Products", "Catalog.Goods"));
+        storage.addCluster(cluster);
+
+        assertTrue(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+        assertEquals(Arrays.asList("Catalog.Goods"), cluster.getChildren());
+    }
+
+    @Test
+    public void renameObjectRewritesClusterCollectionPaths()
+    {
+        storage.addCluster(new Cluster("Forms", "Catalog.Products.Form"));
+        storage.addCluster(new Cluster("Attributes", "Catalog.Products.Attribute/Nested"));
+
+        assertTrue(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+
+        assertNotNull(storage.getClusterByFullPath("Catalog.Goods.Form/Forms"));
+        assertNotNull(storage.getClusterByFullPath("Catalog.Goods.Attribute/Nested/Attributes"));
     }
 
     @Test

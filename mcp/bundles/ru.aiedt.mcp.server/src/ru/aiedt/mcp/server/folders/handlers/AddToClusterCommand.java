@@ -82,9 +82,10 @@ public class AddToClusterCommand
         for (EObject object : objects)
         {
             String fqn = MarkerHelpers.extractFqn(object);
-            if (fqn != null)
+            if (fqn != null && !service.addObjectToCluster(project, fqn, target.getFullPath()))
             {
-                service.addObjectToCluster(project, fqn, target.getFullPath());
+                ClusterCommandHandler.showSaveFailure(shell, project);
+                break;
             }
         }
         return null;

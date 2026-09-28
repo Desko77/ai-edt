@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.folders.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -233,7 +234,8 @@ public class Cluster
      * <p>
      * A nested name is one that continues past {@code oldFqn} with a dot, so
      * {@code Catalog.ProductsExtra} is not nested under {@code Catalog.Products}. The exact name
-     * and its descendants are rewritten in one pass over the names as they stand now.
+     * and its descendants are rewritten in one pass over the names as they stand now. If a rewrite
+     * produces a name already present in the cluster, only its first occurrence is kept.
      * </p>
      *
      * @param oldFqn the current fully qualified name
@@ -265,6 +267,10 @@ public class Cluster
                 children.set(i, newFqn + child.substring(oldFqn.length()));
                 renamed = true;
             }
+        }
+        if (renamed)
+        {
+            children = new ArrayList<>(new LinkedHashSet<>(children));
         }
         return renamed;
     }

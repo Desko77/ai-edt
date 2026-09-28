@@ -65,7 +65,11 @@ public class NewClusterCommand
         ClusterEditDialog dialog = new ClusterEditDialog(shell, name -> validateName(service, project, path, name));
         if (dialog.open() == Window.OK)
         {
-            service.createCluster(project, dialog.getClusterName(), path, dialog.getClusterDescription());
+            if (service.createCluster(project, dialog.getClusterName(), path,
+                dialog.getClusterDescription()) == null)
+            {
+                ClusterCommandHandler.showSaveFailure(shell, project);
+            }
         }
         return null;
     }

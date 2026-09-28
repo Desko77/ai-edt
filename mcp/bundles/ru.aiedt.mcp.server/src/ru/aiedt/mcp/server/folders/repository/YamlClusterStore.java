@@ -32,7 +32,13 @@ import java.nio.channels.FileLock;
 
 import java.nio.channels.OverlappingFileLockException;
 
+import java.nio.charset.CodingErrorAction;
+
 import java.nio.charset.StandardCharsets;
+
+import java.nio.file.DirectoryStream;
+
+import java.nio.file.FileAlreadyExistsException;
 
 import java.nio.file.Files;
 
@@ -40,8 +46,14 @@ import java.nio.file.Path;
 
 import java.nio.file.StandardOpenOption;
 import java.nio.file.AccessDeniedException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileAttribute;
+
+import java.nio.file.attribute.PosixFileAttributeView;
+
+import java.nio.file.attribute.PosixFilePermission;
+
+import java.nio.file.attribute.PosixFilePermissions;
 
 import java.util.ArrayList;
 
@@ -160,6 +172,45 @@ public class YamlClusterStore
 
                 String.CASE_INSENSITIVE_ORDER);
 
+    private static final int ATOMIC_MOVE_ATTEMPTS = 4;
+
+    private static final long ATOMIC_MOVE_RETRY_MILLIS = 75L;
+    private static final long STALE_TEMPORARY_MILLIS = 24L * 60L * 60L * 1000L;
+
+    private static final Set<PosixFilePermission> DEFAULT_POSIX_FILE_PERMISSIONS = Set.of(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.GROUP_READ,
+        PosixFilePermission.OTHERS_READ);
+
+
+    /** Performs one atomic replacement attempt. */
+    @FunctionalInterface
+    interface AtomicMover
+    {
+        /**
+         * Moves the staged file over the destination atomically.
+         *
+         * @param source the staged file
+         * @param target the destination
+         * @throws IOException when the atomic replacement is refused
+         */
+        void move(Path source, Path target) throws IOException;
+    }
+
+    /** Waits between atomic replacement attempts. */
+    @FunctionalInterface
+    interface RetrySleeper
+    {
+        /**
+         * Waits for the requested retry delay.
+         *
+         * @param milliseconds the delay in milliseconds
+         * @throws InterruptedException when the waiting thread is interrupted
+         */
+        void sleep(long milliseconds) throws InterruptedException;
+    }
+
 
 
     @Override
@@ -180,7 +231,7 @@ public class YamlClusterStore
 
         try (InputStream in = file.getContents();
 
-            Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8))
+            Reader reader = strictUtf8Reader(in))
 
         {
 
@@ -210,7 +261,7 @@ public class YamlClusterStore
 
                 + " could not be parsed and was left unchanged: " + e.getMessage()); //$NON-NLS-1$
 
-            return new ClusterStore();
+            return null;
 
         }
 
@@ -220,10 +271,23 @@ public class YamlClusterStore
 
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
 
-            return new ClusterStore();
+            return null;
 
         }
 
+    }
+
+    /**
+     * Creates a reader that refuses malformed or unmappable UTF-8 instead of replacing it.
+     *
+     * @param input the byte stream to decode
+     * @return a strict UTF-8 reader
+     */
+    private static Reader strictUtf8Reader(InputStream input)
+    {
+        return new InputStreamReader(input, StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT));
     }
 
 
@@ -371,16 +435,22 @@ public class YamlClusterStore
     private boolean unreadableFileBlocksSave(IProject project)
     {
         IFile file = clustersFile(project);
-        if (!file.exists())
+        IPath location = file.getLocation();
+        if (location == null)
+        {
+            return unreadableWorkspaceFileBlocksSave(project, file);
+        }
+        Path path = location.toFile().toPath();
+        if (Files.notExists(path))
         {
             return false;
         }
         byte[] bytes;
-        try (InputStream in = file.getContents())
+        try
         {
-            bytes = in.readAllBytes();
+            bytes = Files.readAllBytes(path);
         }
-        catch (CoreException | IOException e)
+        catch (IOException e)
         {
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " before writing it; the write was refused", e); //$NON-NLS-1$
@@ -390,8 +460,40 @@ public class YamlClusterStore
         {
             return false;
         }
-        backupUnreadable(project, file, bytes);
+        backupUnreadable(project, path, bytes);
         return true;
+    }
+
+    /**
+     * Checks a non-local workspace file when no operating-system path is available.
+     *
+     * @param project the project, for diagnostics
+     * @param file the workspace file
+     * @return {@code true} when the save must be refused
+     */
+    private boolean unreadableWorkspaceFileBlocksSave(IProject project, IFile file)
+    {
+        if (!file.exists())
+        {
+            return false;
+        }
+        try (InputStream in = file.getContents())
+        {
+            byte[] bytes = in.readAllBytes();
+            if (bytes.length == 0 || parses(bytes))
+            {
+                return false;
+            }
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " could not be parsed; the write was refused"); //$NON-NLS-1$
+            return true;
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " before writing it; the write was refused", e); //$NON-NLS-1$
+            return true;
+        }
     }
 
     /**
@@ -405,7 +507,7 @@ public class YamlClusterStore
      */
     private static boolean parses(byte[] bytes)
     {
-        try (Reader reader = new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))
+        try (Reader reader = strictUtf8Reader(new ByteArrayInputStream(bytes)))
         {
             createLoadYaml().load(reader);
             return true;
@@ -417,31 +519,32 @@ public class YamlClusterStore
     }
 
     /**
-     * Copies an unreadable clusters file to {@code aiedt-clusters.yaml.bak} beside it.
+     * Copies the first unreadable clusters file to {@code aiedt-clusters.yaml.bak} beside it.
      * <p>
-     * The original is not modified. A failed copy is logged and still leaves the original in place,
-     * because the caller refuses the write either way.
+     * The original is not modified, and an existing backup is preserved so repeated refused saves do
+     * not destroy the first recoverable snapshot. A failed copy is logged and still leaves the original
+     * in place, because the caller refuses the write either way.
      * </p>
      *
      * @param project the project, for the log line
-     * @param file the clusters file
+     * @param file the clusters file on disk
      * @param bytes the bytes to copy
      */
-    private static void backupUnreadable(IProject project, IFile file, byte[] bytes)
+    private static void backupUnreadable(IProject project, Path file, byte[] bytes)
     {
-        IPath location = file.getLocation();
-        if (location == null)
-        {
-            Activator.logError("Could not back up unreadable aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
-                + ": the file has no location on disk", null); //$NON-NLS-1$
-            return;
-        }
-        Path backup = location.toFile().toPath().resolveSibling(ClusterKeys.CLUSTERS_FILE + ".bak"); //$NON-NLS-1$
+        Path backup = file.resolveSibling(ClusterKeys.CLUSTERS_FILE + ".bak"); //$NON-NLS-1$
         try
         {
-            Files.write(backup, bytes);
+            Files.write(backup, bytes, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " could not be parsed; the write was refused and a copy kept at " //$NON-NLS-1$
+                + backup.getFileName());
+        }
+        catch (FileAlreadyExistsException e)
+        {
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " is still unreadable; the existing backup was preserved at " //$NON-NLS-1$
                 + backup.getFileName());
         }
         catch (IOException e)
@@ -599,7 +702,7 @@ public class YamlClusterStore
 
                 Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
 
-                    + " is locked by another process; the write was refused"); //$NON-NLS-1$
+                    + " could not be locked or opened for writing; the write was refused"); //$NON-NLS-1$
 
                 return false;
 
@@ -608,18 +711,6 @@ public class YamlClusterStore
             clustersFile.refreshLocal(IResource.DEPTH_ZERO, null);
 
             return true;
-
-        }
-
-        catch (OverlappingFileLockException e)
-
-        {
-
-            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
-
-                + " is already being written in this process; the write was refused"); //$NON-NLS-1$
-
-            return false;
 
         }
 
@@ -638,13 +729,15 @@ public class YamlClusterStore
 
 
     /**
-     * Stages the content in a temporary file and replaces the destination only after an exclusive
-     * lock is taken without truncating it.
+     * Stages the content in a temporary file, probes the destination with an exclusive lock, and
+     * replaces the destination atomically after that probe succeeds.
      * <p>
      * The lock is taken on the destination as it stands. A lock another process holds, or one this
-     * process already holds, answers {@code false} and leaves the destination byte for byte. The
-     * bytes are forced to the temporary file before the replace, and the replace is what makes the
-     * new content visible, so a write that stops short never leaves the destination empty.
+     * process already holds, answers {@code false} and leaves the destination byte for byte. The lock
+     * is released before the move, so it is an availability probe rather than synchronization around
+     * replacement. The bytes are forced to the temporary file first, and only an atomic replacement
+     * makes them visible; an unavailable destination is retried and never falls back to a delete-first
+     * move.
      * </p>
      *
      * @param osPath the file's location on disk
@@ -661,8 +754,10 @@ public class YamlClusterStore
         {
             Files.createDirectories(directory);
         }
-        Path temporary = Files.createTempFile(directory == null ? Path.of(".") : directory, //$NON-NLS-1$
-            osPath.getFileName().toString() + ".", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+        Path stagingDirectory = directory == null ? Path.of(".") : directory; //$NON-NLS-1$
+        cleanupStaleTemporaryFiles(osPath, stagingDirectory);
+        Path temporary = createTemporaryFile(osPath, stagingDirectory);
+        IOException failure = null;
         try
         {
             writeForced(temporary, bytes);
@@ -673,9 +768,89 @@ public class YamlClusterStore
             moveReplacing(temporary, osPath);
             return true;
         }
+        catch (IOException e)
+        {
+            failure = e;
+            throw e;
+        }
         finally
         {
-            Files.deleteIfExists(temporary);
+            try
+            {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException cleanupFailure)
+            {
+                if (failure == null)
+                {
+                    throw cleanupFailure;
+                }
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    /**
+     * Creates a sibling staging file with the destination's POSIX permissions when available.
+     * <p>
+     * A new destination starts with ordinary 0644 permissions subject to the process umask. Other
+     * file-system providers receive no unsupported attributes.
+     * </p>
+     *
+     * @param target the destination whose permissions should be retained
+     * @param directory the directory in which to create the staging file
+     * @return the new staging file
+     * @throws IOException when the file or its permissions cannot be created
+     */
+    private static Path createTemporaryFile(Path target, Path directory) throws IOException
+    {
+        Set<PosixFilePermission> permissions = DEFAULT_POSIX_FILE_PERMISSIONS;
+        if (Files.getFileAttributeView(directory, PosixFileAttributeView.class) != null)
+        {
+            if (Files.exists(target))
+            {
+                permissions = Files.getPosixFilePermissions(target);
+            }
+            FileAttribute<Set<PosixFilePermission>> attribute =
+                PosixFilePermissions.asFileAttribute(permissions);
+            return Files.createTempFile(directory, target.getFileName().toString() + ".", ".tmp", //$NON-NLS-1$ //$NON-NLS-2$
+                attribute);
+        }
+        return Files.createTempFile(directory, target.getFileName().toString() + ".", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Removes staging files left by an earlier process once they are old enough not to be active.
+     *
+     * @param target the destination whose staging-file prefix identifies owned files
+     * @param directory the directory containing the destination
+     */
+    private static void cleanupStaleTemporaryFiles(Path target, Path directory)
+    {
+        long cutoff = System.currentTimeMillis() - STALE_TEMPORARY_MILLIS;
+        String pattern = target.getFileName().toString() + ".*.tmp"; //$NON-NLS-1$
+        try (DirectoryStream<Path> stagedFiles = Files.newDirectoryStream(directory, pattern))
+        {
+            for (Path stagedFile : stagedFiles)
+            {
+                try
+                {
+                    if (Files.getLastModifiedTime(stagedFile).toMillis() < cutoff)
+                    {
+                        Files.deleteIfExists(stagedFile);
+                    }
+                }
+                catch (IOException e)
+                {
+                    Activator.logError("Failed to remove stale cluster staging file " //$NON-NLS-1$
+                        + stagedFile.getFileName(), e);
+                }
+            }
+        }
+        catch (IOException e)
+        {
+            Activator.logError("Failed to inspect cluster staging files beside " //$NON-NLS-1$
+                + target.getFileName(), e);
         }
     }
 
@@ -713,8 +888,8 @@ public class YamlClusterStore
     /**
      * Takes an exclusive lock on {@code osPath} without truncating it.
      * <p>
-     * The file is created when it is missing, so there is something to lock, and deleted again when
-     * the lock cannot be taken. An existing file is opened for write without {@code TRUNCATE_EXISTING}.
+     * A missing destination needs no lock and is left absent until the atomic move. An existing file
+     * is opened for write without {@code TRUNCATE_EXISTING}.
      * </p>
      *
      * @param osPath the destination
@@ -723,16 +898,10 @@ public class YamlClusterStore
      */
     private static boolean tryLockWithoutTruncating(Path osPath) throws IOException
     {
-        boolean created = Files.notExists(osPath);
-        if (created)
+        if (Files.notExists(osPath))
         {
-            if (osPath.getParent() != null)
-            {
-                Files.createDirectories(osPath.getParent());
-            }
-            Files.createFile(osPath);
+            return true;
         }
-        boolean held = false;
         try
         {
             try (FileChannel channel = FileChannel.open(osPath, StandardOpenOption.WRITE))
@@ -745,7 +914,6 @@ public class YamlClusterStore
                         return false;
                     }
                     lock.release();
-                    held = true;
                     return true;
                 }
                 catch (OverlappingFileLockException overlapping)
@@ -758,20 +926,13 @@ public class YamlClusterStore
         {
             return false;
         }
-        finally
-        {
-            if (created && !held)
-            {
-                Files.deleteIfExists(osPath);
-            }
-        }
     }
 
     /**
-     * Replaces {@code target} with {@code temporary}.
+     * Replaces {@code target} with {@code temporary}, retrying a refused atomic move.
      * <p>
-     * An atomic move is used when the platform can replace the target that way. Otherwise the
-     * temporary file is moved over the target with replace.
+     * There is deliberately no non-atomic fallback: if every atomic attempt fails, the destination
+     * remains intact and the failure is returned to the caller.
      * </p>
      *
      * @param temporary the staged file
@@ -780,17 +941,50 @@ public class YamlClusterStore
      */
     private static void moveReplacing(Path temporary, Path target) throws IOException
     {
-        try
+        moveReplacing(temporary, target, (source, destination) -> Files.move(source, destination,
+            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING), Thread::sleep);
+    }
+
+    /**
+     * Repeats an atomic replacement through injectable move and sleep operations.
+     *
+     * @param temporary the staged file
+     * @param target the destination
+     * @param mover the atomic move operation
+     * @param sleeper the delay operation between attempts
+     * @throws IOException when every attempt fails or the retry wait is interrupted
+     */
+    static void moveReplacing(Path temporary, Path target, AtomicMover mover, RetrySleeper sleeper)
+        throws IOException
+    {
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= ATOMIC_MOVE_ATTEMPTS; attempt++)
         {
-            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING);
+            try
+            {
+                mover.move(temporary, target);
+                return;
+            }
+            catch (IOException e)
+            {
+                lastFailure = e;
+            }
+            if (attempt < ATOMIC_MOVE_ATTEMPTS)
+            {
+                try
+                {
+                    sleeper.sleep(ATOMIC_MOVE_RETRY_MILLIS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    IOException interrupted = new IOException("Interrupted while retrying atomic replacement", e); //$NON-NLS-1$
+                    interrupted.addSuppressed(lastFailure);
+                    throw interrupted;
+                }
+            }
         }
-        catch (AtomicMoveNotSupportedException | AccessDeniedException unsupported)
-        {
-            // An atomic replace of an existing file is not available on every volume. The staged
-            // bytes are already complete, and a plain replace does not truncate the destination first.
-            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+        throw lastFailure;
     }
 
 

@@ -88,50 +88,12 @@ public final class ClusterWorkspaceProbe
     }
 
     /**
-     * Sets or clears the write bit on the clusters file.
-     *
-     * @param readOnly {@code true} to refuse writers
-     * @throws IOException when the bit cannot be set
-     */
-    public void setReadOnly(boolean readOnly) throws IOException
-    {
-        Path file = clustersFile();
-        boolean changed = file.toFile().setWritable(!readOnly, false);
-        try
-        {
-            Files.setAttribute(file, "dos:readonly", readOnly); //$NON-NLS-1$
-            changed = true;
-        }
-        catch (UnsupportedOperationException | IllegalArgumentException notDos)
-        {
-            // The write bit above is the portable switch.
-        }
-        if (readOnly && !changed)
-        {
-            throw new IOException("could not mark " + file.getFileName() + " read-only"); //$NON-NLS-1$ //$NON-NLS-2$
-        }
-    }
-
-    /**
      * Deletes the project and the temporary directory.
      *
      * @throws Exception when the project cannot be deleted
      */
     public void close() throws Exception
     {
-        Path file = clustersFile();
-        if (Files.exists(file))
-        {
-            try
-            {
-                Files.setAttribute(file, "dos:readonly", false); //$NON-NLS-1$
-            }
-            catch (UnsupportedOperationException | IllegalArgumentException notDos)
-            {
-                // Not a DOS volume.
-            }
-            file.toFile().setWritable(true, false);
-        }
         if (project.exists())
         {
             project.delete(true, true, new NullProgressMonitor());

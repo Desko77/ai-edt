@@ -19,8 +19,8 @@ public interface IClusterStore
      * Loads a project's clusters.
      *
      * @param project the project
-     * @return the stored clusters, never <code>null</code>; empty when there is no file or it cannot be
-     *         read
+     * @return the stored clusters; empty when there is no file, or <code>null</code> when an existing
+     *         file could not be read
      */
     ClusterStore load(IProject project);
 

@@ -148,7 +148,7 @@ public class ClusterManagerImpl
 
 
 
-    private final IClusterStore repository = new YamlClusterStore();
+    private final IClusterStore repository;
 
 
 
@@ -185,6 +185,28 @@ public class ClusterManagerImpl
 
 
     private volatile Thread watchThread;
+
+    /**
+     * Creates a manager backed by the YAML cluster repository.
+     */
+    public ClusterManagerImpl()
+    {
+        this(new YamlClusterStore());
+    }
+
+    /**
+     * Creates a manager backed by the supplied repository.
+     *
+     * @param repository the repository used for every load and save
+     */
+    ClusterManagerImpl(IClusterStore repository)
+    {
+        if (repository == null)
+        {
+            throw new IllegalArgumentException("repository must not be null"); //$NON-NLS-1$
+        }
+        this.repository = repository;
+    }
 
 
 
@@ -310,7 +332,8 @@ public class ClusterManagerImpl
 
         {
 
-            return loadStorageLocked(project);
+            ClusterStore loaded = loadStorageLocked(project);
+            return loaded == null ? new ClusterStore() : loaded;
 
         }
 
@@ -407,6 +430,10 @@ public class ClusterManagerImpl
         try
         {
             ClusterStore storage = loadStorageLocked(project);
+            if (storage == null)
+            {
+                return null;
+            }
             if (storage.getClusterByFullPath(buildFullPath(path, name)) != null)
             {
                 return null;
@@ -578,6 +605,24 @@ public class ClusterManagerImpl
 
         }
 
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean holdsObjectOrDescendant(IProject project, String objectFqn)
+    {
+        ClusterStore storage = getClusterStorage(project);
+        cacheLock.readLock().lock();
+        try
+        {
+            return storage.holdsObjectOrDescendant(objectFqn);
+        }
+        finally
+        {
+            cacheLock.readLock().unlock();
+        }
     }
 
 
@@ -765,6 +810,10 @@ public class ClusterManagerImpl
         try
         {
             ClusterStore storage = loadStorageLocked(project);
+            if (storage == null)
+            {
+                return false;
+            }
             changed = edit.test(storage);
             if (changed)
             {
@@ -802,7 +851,7 @@ public class ClusterManagerImpl
 
      * @param project the project
 
-     * @return the cached storage
+     * @return the cached storage, or <code>null</code> when the repository could not load it
 
      */
 
@@ -826,7 +875,13 @@ public class ClusterManagerImpl
 
         ClusterStore loaded = repository.load(project);
 
-        projectStorageCache.put(key, loaded);
+        if (loaded != null)
+
+        {
+
+            projectStorageCache.put(key, loaded);
+
+        }
 
         return loaded;
 

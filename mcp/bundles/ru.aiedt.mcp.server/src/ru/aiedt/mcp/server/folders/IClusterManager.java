@@ -68,7 +68,8 @@ public interface IClusterManager
      * @param name the cluster name
      * @param path the collection path; may be <code>null</code> for a root cluster
      * @param description the description; may be <code>null</code>
-     * @return the created cluster, or <code>null</code> if a cluster already occupies that full path
+     * @return the created cluster, or <code>null</code> if the path is occupied or the file could not
+     *         be loaded or saved
      */
     Cluster createCluster(IProject project, String name, String path, String description);
 
@@ -78,7 +79,8 @@ public interface IClusterManager
      * @param project the project
      * @param oldFullPath the full path of the cluster to rename
      * @param newName the new name
-     * @return <code>true</code> if the cluster was found and renamed
+     * @return <code>true</code> if the cluster was found, renamed and saved; <code>false</code> when
+     *         it was absent or the file could not be loaded or saved
      */
     boolean renameCluster(IProject project, String oldFullPath, String newName);
 
@@ -89,7 +91,8 @@ public interface IClusterManager
      * @param oldFullPath the full path of the cluster to update
      * @param newName the new name
      * @param description the new description; may be <code>null</code>
-     * @return <code>true</code> if the cluster was found and updated
+     * @return <code>true</code> if the cluster was found, updated and saved; <code>false</code> when
+     *         it was absent or the file could not be loaded or saved
      */
     boolean updateCluster(IProject project, String oldFullPath, String newName, String description);
 
@@ -99,7 +102,8 @@ public interface IClusterManager
      *
      * @param project the project
      * @param fullPath the full path of the cluster to delete
-     * @return <code>true</code> if a cluster was removed
+     * @return <code>true</code> if a cluster was removed and the result was saved; <code>false</code>
+     *         when it was absent or the file could not be loaded or saved
      */
     boolean deleteCluster(IProject project, String fullPath);
 
@@ -109,8 +113,8 @@ public interface IClusterManager
      * @param project the project
      * @param objectFqn the fully qualified name of the object
      * @param clusterFullPath the full path of the target cluster
-     * @return <code>true</code> only if the target exists and the object was not already one of its
-     *         children
+     * @return <code>true</code> only if the target exists, the object was not already one of its
+     *         children, and the result was saved; <code>false</code> also reports a load or save failure
      */
     boolean addObjectToCluster(IProject project, String objectFqn, String clusterFullPath);
 
@@ -119,7 +123,8 @@ public interface IClusterManager
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return <code>true</code> if it was in at least one cluster
+     * @return <code>true</code> if it was in at least one cluster and the result was saved;
+     *         <code>false</code> also reports a load or save failure
      */
     boolean removeObjectFromCluster(IProject project, String objectFqn);
 
@@ -151,6 +156,15 @@ public interface IClusterManager
     boolean hasClustersAtPath(IProject project, String path);
 
     /**
+     * Tells whether any cluster holds an object name or a name nested under it.
+     *
+     * @param project the project
+     * @param objectFqn the fully qualified object name
+     * @return <code>true</code> when the object or a descendant is held
+     */
+    boolean holdsObjectOrDescendant(IProject project, String objectFqn);
+
+    /**
      * Drops a project's cache entry and tells the listeners, without touching the file.
      * <p>
      * Used when the clusters may have changed on disk and the in-memory copy is to be reloaded on next
@@ -168,7 +182,8 @@ public interface IClusterManager
      * @param project the project
      * @param oldFqn the current fully qualified name
      * @param newFqn the fully qualified name to give it
-     * @return <code>true</code> if at least one cluster named the old FQN or a name nested under it
+     * @return <code>true</code> if at least one matching name was changed and saved;
+     *         <code>false</code> also reports a load or save failure
      */
     boolean renameObject(IProject project, String oldFqn, String newFqn);
 
@@ -177,7 +192,8 @@ public interface IClusterManager
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return <code>true</code> if it was in at least one cluster
+     * @return <code>true</code> if it was in at least one cluster and the result was saved;
+     *         <code>false</code> also reports a load or save failure
      */
     boolean removeObject(IProject project, String objectFqn);
 

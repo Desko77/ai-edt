@@ -50,7 +50,7 @@ public class ClusterRenameRefactorHook
             return null;
         }
         IClusterManager service = Activator.getClusterServiceStatic();
-        if (service == null || !holdsObjectOrDescendant(service.getClusterStorage(project), oldFqn))
+        if (service == null || !service.holdsObjectOrDescendant(project, oldFqn))
         {
             return null;
         }
@@ -149,7 +149,12 @@ public class ClusterRenameRefactorHook
         @Override
         public Change perform(IProgressMonitor monitor)
         {
-            apply(Activator.getClusterServiceStatic(), project, oldFqn, newFqn);
+            if (!apply(Activator.getClusterServiceStatic(), project, oldFqn, newFqn))
+            {
+                String projectName = project == null ? "<unknown>" : project.getName(); //$NON-NLS-1$
+                Activator.logWarning("Cluster membership for " + oldFqn + " was not saved after rename to " //$NON-NLS-1$ //$NON-NLS-2$
+                    + newFqn + " in project " + projectName); //$NON-NLS-1$
+            }
             return new ClusterFqnRenameChange(project, newFqn, oldFqn);
         }
 

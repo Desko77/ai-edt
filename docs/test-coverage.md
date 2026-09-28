@@ -5,28 +5,25 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 125 | a test class named after it |
-| exercised | 168 | reached by some other test |
+| direct | 126 | a test class named after it |
+| exercised | 169 | reached by some other test |
 | tool-sweep | 56 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 45 | needs a display or an extension point |
-| workspace-bound | 36 | drives a live EDT project or debug session |
+| ui-bound | 44 | needs a display or an extension point |
+| workspace-bound | 35 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **430** | across 448 test classes |
+| **total** | **430** | across 449 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (36)
+## workspace-bound (35)
 
 **folders**
 - IClusterManager
 
 **folders/refactoring**
 - ClusterDeleteRefactorHook
-
-**folders/repository**
-- IClusterStore
 
 **labels**
 - MarkerHelpers
@@ -71,14 +68,13 @@ _none_
 - RouteMapOps
 - SpecializedOps
 
-## ui-bound (45)
+## ui-bound (44)
 
 **(root)**
 - McpAutoStart
 
 **folders/handlers**
 - AddToClusterCommand
-- ClusterCommandHandler
 - CopyClusterCommand
 - DeleteClusterCommand
 - NewClusterCommand
@@ -198,7 +194,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (168)
+## exercised (169)
 
 **(root)**
 - Activator
@@ -218,6 +214,7 @@ _none_
 - ClusterStore
 
 **folders/repository**
+- IClusterStore
 - YamlClusterStore
 
 **labels**
@@ -402,11 +399,14 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (125)
+## direct (126)
 
 **(root)**
 - BrowserOrigin
 - OperatorSignal
+
+**folders/handlers**
+- ClusterCommandHandler
 
 **folders/refactoring**
 - ClusterRenameRefactorHook
@@ -564,18 +564,19 @@ closes.
 
 | Test methods | Classes |
 |---:|---:|
-| 1 | 0 |
+| 1 | 1 |
 | 2 | 1 |
 | 3-4 | 14 |
 | 5-8 | 39 |
 | 9-16 | 51 |
 | 17+ | 20 |
 
-3666 test methods across 448 test classes; 125 classes have a test of their own, median 9 methods each.
+3678 test methods across 449 test classes; 126 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 125 of 430 classes have one: 56 are covered by the registry-wide contract sweep and 36 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 126 of 430 classes have one: 56 are covered by the registry-wide contract sweep and 35 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
-### Resting on 2 test method(s) or fewer (1)
+### Resting on 2 test method(s) or fewer (2)
 
+- folders/handlers/ClusterCommandHandler - 1
 - support/BmInfobaseCredentialsHelper - 2
 

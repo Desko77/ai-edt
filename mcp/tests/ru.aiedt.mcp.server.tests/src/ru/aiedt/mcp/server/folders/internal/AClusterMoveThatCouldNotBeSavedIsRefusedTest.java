@@ -6,13 +6,10 @@
 
 package ru.aiedt.mcp.server.folders.internal;
 
-import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-
-import java.nio.file.Files;
 
 import org.junit.After;
 import org.junit.Before;
@@ -21,13 +18,14 @@ import org.junit.Test;
 import ru.aiedt.mcp.server.folders.ClusterWorkspaceProbe;
 import ru.aiedt.mcp.server.folders.IClusterChangeObserver;
 import ru.aiedt.mcp.server.folders.model.Cluster;
+import ru.aiedt.mcp.server.folders.model.ClusterStore;
+import ru.aiedt.mcp.server.folders.repository.IClusterStore;
 
 /**
  * A cluster edit whose file cannot be written must answer failure and must not announce a change.
  * <p>
- * The service is the real one, backed by {@link ru.aiedt.mcp.server.folders.repository.YamlClusterStore},
- * over a temporary project. The first edit creates the file. The file is then marked read-only, and
- * the next edit has nowhere to go.
+ * The service is backed by a deterministic store whose save operation can be refused. The tests do
+ * not rely on filesystem permissions, which differ between operating systems and privileged users.
  * </p>
  */
 public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
@@ -35,6 +33,8 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
     private ClusterWorkspaceProbe probe;
 
     private ClusterManagerImpl manager;
+
+    private RefusingStore store;
 
     private int notices;
 
@@ -47,12 +47,13 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
     public void aProjectAndAService() throws Exception
     {
         probe = ClusterWorkspaceProbe.open("AiEdtClusterMove"); //$NON-NLS-1$
-        manager = new ClusterManagerImpl();
+        store = new RefusingStore();
+        manager = new ClusterManagerImpl(store);
         notices = 0;
     }
 
     /**
-     * Closes the project, clearing a read-only bit first so the delete can remove the file.
+     * Closes the project.
      *
      * @throws Exception when the project cannot be deleted
      */
@@ -67,59 +68,58 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
 
     /**
      * Moving an object into a cluster whose file cannot be written answers {@code false}, leaves the
-     * bytes that were saved, does not tell listeners, and does not keep the unsaved member.
+     * saved storage unchanged, does not tell listeners, and does not keep the unsaved member.
      *
-     * @throws Exception when the file cannot be read or marked read-only
+     * @throws Exception when the project cannot be inspected
      */
     @Test
     public void aMoveThatCannotBeSavedIsRefusedAndNotAnnounced() throws Exception
     {
         assertNotNull(manager.createCluster(probe.project, "Shelf", "Catalogs", null)); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(manager.addObjectToCluster(probe.project, "Catalog.A", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
-        byte[] saved = Files.readAllBytes(probe.clustersFile());
-        assertTrue(saved.length > 0);
-
+        assertTrue(manager.holdsObjectOrDescendant(probe.project, "Catalog")); //$NON-NLS-1$
         manager.addClusterChangeListener(noticed());
-        probe.setReadOnly(true);
-        try
-        {
-            assertFalse(manager.addObjectToCluster(probe.project, "Catalog.B", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
-            assertArrayEquals(saved, Files.readAllBytes(probe.clustersFile()));
-            assertTrue(manager.findClusterForObject(probe.project, "Catalog.A") != null); //$NON-NLS-1$
-            assertNull(manager.findClusterForObject(probe.project, "Catalog.B")); //$NON-NLS-1$
-            assertTrue(notices == 0);
-        }
-        finally
-        {
-            probe.setReadOnly(false);
-        }
+        store.refuseSaves = true;
+
+        assertFalse(manager.addObjectToCluster(probe.project, "Catalog.B", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.findClusterForObject(probe.project, "Catalog.A") != null); //$NON-NLS-1$
+        assertNull(manager.findClusterForObject(probe.project, "Catalog.B")); //$NON-NLS-1$
+        assertTrue(notices == 0);
     }
 
     /**
      * Creating a cluster whose file cannot be written answers {@code null} and does not tell listeners.
      *
-     * @throws Exception when the file cannot be marked read-only
+     * @throws Exception when the project cannot be inspected
      */
     @Test
     public void aClusterThatCannotBeSavedIsRefusedAndNotAnnounced() throws Exception
     {
         Cluster first = manager.createCluster(probe.project, "Shelf", "Catalogs", null); //$NON-NLS-1$ //$NON-NLS-2$
         assertNotNull(first);
-        byte[] saved = Files.readAllBytes(probe.clustersFile());
-
         manager.addClusterChangeListener(noticed());
-        probe.setReadOnly(true);
-        try
-        {
-            assertNull(manager.createCluster(probe.project, "Other", "Catalogs", null)); //$NON-NLS-1$ //$NON-NLS-2$
-            assertArrayEquals(saved, Files.readAllBytes(probe.clustersFile()));
-            assertNull(manager.getClusterStorage(probe.project).getClusterByFullPath("Catalogs/Other")); //$NON-NLS-1$
-            assertTrue(notices == 0);
-        }
-        finally
-        {
-            probe.setReadOnly(false);
-        }
+        store.refuseSaves = true;
+
+        assertNull(manager.createCluster(probe.project, "Other", "Catalogs", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(manager.getClusterStorage(probe.project).getClusterByFullPath("Catalogs/Other")); //$NON-NLS-1$
+        assertTrue(notices == 0);
+    }
+
+    /**
+     * A failed load is not cached as an empty store, and no edit based on that failed load is saved.
+     */
+    @Test
+    public void aFailedLoadIsNotCachedOrSaved()
+    {
+        store.saved.addCluster(new Cluster("Shelf", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+        store.refuseLoads = true;
+
+        assertTrue(manager.getClusterStorage(probe.project).isEmpty());
+        assertFalse(manager.addObjectToCluster(probe.project, "Catalog.A", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(store.saveCalls == 0);
+
+        store.refuseLoads = false;
+        assertNotNull(manager.getClusterStorage(probe.project).getClusterByFullPath("Catalogs/Shelf")); //$NON-NLS-1$
     }
 
     /**
@@ -128,5 +128,69 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
     private IClusterChangeObserver noticed()
     {
         return project -> notices++;
+    }
+
+    /** A controllable repository that persists copies only when a save is accepted. */
+    private static final class RefusingStore
+        implements IClusterStore
+    {
+        private ClusterStore saved = new ClusterStore();
+
+        private boolean refuseSaves;
+
+        private boolean refuseLoads;
+
+        private int saveCalls;
+
+        @Override
+        public ClusterStore load(org.eclipse.core.resources.IProject project)
+        {
+            return refuseLoads ? null : copy(saved);
+        }
+
+        @Override
+        public boolean save(org.eclipse.core.resources.IProject project, ClusterStore storage)
+        {
+            saveCalls++;
+            if (refuseSaves)
+            {
+                return false;
+            }
+            saved = copy(storage);
+            return true;
+        }
+
+        @Override
+        public boolean exists(org.eclipse.core.resources.IProject project)
+        {
+            return !saved.isEmpty();
+        }
+
+        @Override
+        public boolean delete(org.eclipse.core.resources.IProject project)
+        {
+            saved = new ClusterStore();
+            return true;
+        }
+
+        /**
+         * Copies storage deeply enough that a rejected edit cannot alter persisted state.
+         *
+         * @param source the storage to copy
+         * @return an independent copy
+         */
+        private static ClusterStore copy(ClusterStore source)
+        {
+            ClusterStore result = new ClusterStore();
+            for (Cluster cluster : source.getGroups())
+            {
+                Cluster copied = new Cluster(cluster.getName(), cluster.getPath());
+                copied.setDescription(cluster.getDescription());
+                copied.setOrder(cluster.getOrder());
+                copied.setChildren(cluster.getChildren());
+                result.addCluster(copied);
+            }
+            return result;
+        }
     }
 }

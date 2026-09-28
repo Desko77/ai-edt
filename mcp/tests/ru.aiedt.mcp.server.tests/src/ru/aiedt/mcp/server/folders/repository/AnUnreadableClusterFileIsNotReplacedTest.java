@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.folders.repository;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -76,7 +77,7 @@ public class AnUnreadableClusterFileIsNotReplacedTest
     {
         probe.writeClusters(CONFLICT);
         ClusterStore loaded = store.load(probe.project);
-        assertTrue(loaded.isEmpty());
+        assertNull(loaded);
 
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -130,5 +131,67 @@ public class AnUnreadableClusterFileIsNotReplacedTest
         assertEquals(1, loaded.getClusterCount());
         assertEquals("Shelf", loaded.getGroups().get(0).getName()); //$NON-NLS-1$
         assertTrue(loaded.findClusterForObject("Catalog.A") != null); //$NON-NLS-1$
+    }
+
+    /**
+     * A malformed UTF-8 sequence makes the file unreadable and prevents replacement.
+     *
+     * @throws Exception when the file cannot be written or read back
+     */
+    @Test
+    public void malformedUtf8IsNotLoadedOrReplaced() throws Exception
+    {
+        byte[] malformed = new byte[] {'g', 'r', 'o', 'u', 'p', 's', ':', '\n', '-', ' ',
+            'n', 'a', 'm', 'e', ':', ' ', (byte)0xc3, (byte)0x28, '\n'};
+        probe.writeClusters(malformed);
+
+        assertNull(store.load(probe.project));
+        ClusterStore replacement = new ClusterStore();
+        replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(store.save(probe.project, replacement));
+        assertArrayEquals(malformed, Files.readAllBytes(probe.clustersFile()));
+    }
+
+    /**
+     * A file created directly on disk is protected even before the workspace resource tree sees it.
+     *
+     * @throws Exception when the file cannot be written or read back
+     */
+    @Test
+    public void anUnrefreshedDiskFileIsNotReplaced() throws Exception
+    {
+        Files.createDirectories(probe.clustersFile().getParent());
+        Files.write(probe.clustersFile(), CONFLICT);
+        assertFalse(probe.project.getFile(ClusterKeys.CLUSTERS_PATH).exists());
+
+        ClusterStore replacement = new ClusterStore();
+        replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(store.save(probe.project, replacement));
+        assertArrayEquals(CONFLICT, Files.readAllBytes(probe.clustersFile()));
+    }
+
+    /**
+     * Repeated refused saves preserve the first unreadable backup instead of overwriting it.
+     *
+     * @throws Exception when the file cannot be written or read back
+     */
+    @Test
+    public void repeatedRefusedSavesPreserveTheFirstBackup() throws Exception
+    {
+        probe.writeClusters(CONFLICT);
+        ClusterStore replacement = new ClusterStore();
+        replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertFalse(store.save(probe.project, replacement));
+        java.nio.file.Path backup = probe.clustersFile()
+            .resolveSibling(ClusterKeys.CLUSTERS_FILE + ".bak"); //$NON-NLS-1$
+        assertArrayEquals(CONFLICT, Files.readAllBytes(backup));
+
+        byte[] laterConflict = "not: [valid".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        probe.writeClusters(laterConflict);
+        assertFalse(store.save(probe.project, replacement));
+
+        assertArrayEquals(CONFLICT, Files.readAllBytes(backup));
+        assertArrayEquals(laterConflict, Files.readAllBytes(probe.clustersFile()));
     }
 }
