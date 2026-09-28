@@ -2366,7 +2366,7 @@ public class EditMetadataTool implements IMcpTool
             + "   - edit_metadata operation=setupSettingsComposerOnForm \\\n" //$NON-NLS-1$
             + "       formFqn=Report.Sales.Forms.Form\n" //$NON-NLS-1$
             + "4. Optionally pre-fill default settings:\n" //$NON-NLS-1$
-            + "   - dcs_workshop operation=add_grouping field=Manager groupingType=Standard\n" //$NON-NLS-1$
+            + "   - dcs_workshop operation=add_grouping field=Manager groupingType=Items\n" //$NON-NLS-1$
             + "   - dcs_workshop operation=add_filter field=Period comparisonType=Between\n"; //$NON-NLS-1$
     }
 
@@ -2377,7 +2377,7 @@ public class EditMetadataTool implements IMcpTool
             + "2. Add a calculated total: dcs_workshop add_total expression=Quantity \\\n" //$NON-NLS-1$
             + "       aggregateFunction=Sum\n" //$NON-NLS-1$
             + "3. Build the structure - one root with a nested table:\n" //$NON-NLS-1$
-            + "   - dcs_workshop add_grouping field=Product groupingType=Standard\n" //$NON-NLS-1$
+            + "   - dcs_workshop add_grouping field=Product groupingType=Items\n" //$NON-NLS-1$
             + "   - dcs_workshop add_settings_table field=Period (deferred to 1.37+)\n" //$NON-NLS-1$
             + "4. Apply conditional appearance for highlighting:\n" //$NON-NLS-1$
             + "   - dcs_workshop add_appearance conditionType=Greater conditionValue=1000 \\\n" //$NON-NLS-1$
