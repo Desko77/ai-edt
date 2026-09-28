@@ -54,8 +54,18 @@ public class TheToolListHasAWeightBudgetTest
     /**
      * What the whole document may weigh. Measured at 160766 bytes; the allowance is the per-tool
      * headroom spent a few times over, not a free hand.
+     * <p>
+     * Raised from 168000 to 168428 for length, precision, fractionDigits, nonNegative,
+     * dateFractions and allowedLength on dcs_workshop: add_parameter, set_parameter and add_field
+     * write them into the value type.
+     * </p>
+     * <p>
+     * Raised from 168428 to 168575 for writeStub on edit_metadata: add_form_event_handler and
+     * add_command_handler append the handler procedure to the form module unless the call turns
+     * that off.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 168000;
+    private static final int DOCUMENT_BUDGET = 168575;
 
     private LiveServer server;
 

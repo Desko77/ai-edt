@@ -47,6 +47,9 @@ final class FormEventOps
      *   <li>{@code handlerName} - optional. Default:
      *       {@code <itemName><event>} for items, just {@code <event>} for
      *       the form root.</li>
+     *   <li>{@code writeStub} - optional, default true. Appends the handler
+     *       procedure to the form's module after the binding is committed,
+     *       unless the module already declares it.</li>
      * </ul>
      *
      * <p>Bound through the {@code getHandlers} / {@code getEventHandlers}
@@ -145,7 +148,7 @@ final class FormEventOps
         }
 
         String stub = FormEventRegistry.generateBslStub(handlerName, spec);
-        return ToolResult.success()
+        ToolResult answer = ToolResult.success()
             .put("operation", "add_form_event_handler") //$NON-NLS-1$ //$NON-NLS-2$
             .put("formFqn", formFqn) //$NON-NLS-1$
             .put("event", event) //$NON-NLS-1$
@@ -154,13 +157,17 @@ final class FormEventOps
             .put("signature", spec.signature) //$NON-NLS-1$
             .put("scope", spec.scope.name()) //$NON-NLS-1$
             .put("itemName", itemName != null ? itemName : "") //$NON-NLS-1$ //$NON-NLS-2$
-            .put("stub", stub) //$NON-NLS-1$
-            .put("hint", //$NON-NLS-1$
-                "Handler attached to the form's event list. Append the stub to the " //$NON-NLS-1$
-                    + "form's Module.bsl via write_module_source mode=append - the " //$NON-NLS-1$
-                    + "platform cannot generate procedure bodies inside a BM " //$NON-NLS-1$
-                    + "transaction.") //$NON-NLS-1$
-            .toJson();
+            .put("stub", stub); //$NON-NLS-1$
+        if (!JsonUtils.extractBooleanArgument(params, "writeStub", true)) //$NON-NLS-1$
+        {
+            return answer.put("stubWritten", false) //$NON-NLS-1$
+                .put("hint", "Handler attached to the form's event list. Append the stub to the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "form's Module.bsl via write_module_source mode=append.") //$NON-NLS-1$
+                .toJson();
+        }
+        FormModuleStubs.Outcome written = FormModuleStubs.append(project, formFqn, handlerName, stub,
+            formDryRun);
+        return written.putInto(answer).toJson();
     }
 
     /**
@@ -511,6 +518,8 @@ final class FormEventOps
             .put("event", hasEvent ? event : "") //$NON-NLS-1$ //$NON-NLS-2$
             .put("itemName", itemName != null ? itemName : "") //$NON-NLS-1$ //$NON-NLS-2$
             .put("result", execResult) //$NON-NLS-1$
+            .put("moduleProcedure", "kept: the form module is not changed; remove the procedure " //$NON-NLS-1$ //$NON-NLS-2$
+                + "with write_module_source when nothing else calls it") //$NON-NLS-1$
             .toJson();
     }
 
