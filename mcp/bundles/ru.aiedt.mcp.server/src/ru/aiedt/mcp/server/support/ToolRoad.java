@@ -132,9 +132,8 @@ public final class ToolRoad
         String polled = arguments == null ? null : arguments.get(ARG_RUN_KEY);
         IMcpTool named = toolName == null || toolName.isEmpty() ? null
             : McpToolCatalog.getInstance().getTool(toolName);
-        String canonical = named == null ? toolName : named.getName();
         String routed = named == null ? null : named.routesTo(arguments);
-        if (polled != null && !polled.isEmpty() && isOwnPoll(polled, named, canonical, arguments))
+        if (polled != null && !polled.isEmpty() && isOwnPoll(polled, named, arguments))
         {
             // A poll waits on work that is already accounted for; charging it again would count
             // one run as many.
@@ -179,24 +178,57 @@ public final class ToolRoad
     }
 
     /**
+     * The name the generic Pending flow runs a call under: the tool that does the work, whether
+     * the call named it or routed to it.
+     * <p>
+     * A facade is one name over many tools, and some of those tools are listed in
+     * {@link GenericPending}. Read by the called name alone, the facade is not listed, so its call
+     * runs inline on the request thread and no {@code runKey} is ever built - while the same tool
+     * called directly answers {@code Pending}. Reading {@link IMcpTool#routesTo(Map)} as well puts
+     * both doors on one subject: the facade's call and a direct call to the tool it routes to
+     * compute the same key and coalesce onto the same run.
+     * </p>
+     * <p>
+     * An operation outside the list - {@code impact_analysis}, {@code help}, {@code
+     * object_summary}, {@code describe_db_tables} under {@code insights} - has no subject, and the
+     * call runs the way it did before. The list is not extended by this: a tool whose own name is
+     * not listed and which routes nowhere keeps running inline.
+     * </p>
+     *
+     * @param tool the resolved tool the call will run
+     * @param arguments the call arguments, as far as routing reads them; may be {@code null}
+     * @return the subject name, or {@code null} when the call does not go through the generic flow
+     */
+    static String pendingSubject(IMcpTool tool, Map<String, String> arguments)
+    {
+        String name = tool.getName();
+        if (GenericPending.applies(name))
+        {
+            return name;
+        }
+        String routed = tool.routesTo(arguments);
+        return GenericPending.applies(routed) ? routed : null;
+    }
+
+    /**
      * Whether a {@code runKey} argument names a run this call will actually resume.
      * <p>
      * A live entry is not enough, and neither is a name. The call resumes when the tool declares
      * the starter it polls in that entry's domain and the entry was started under that name, or
-     * when the road's own generic wrapper runs the called tool by its own name and will poll the
-     * entry before {@code execute}. A facade that only routes to the starter and then calls
-     * {@code execute} declares nothing and starts a new traversal. A finished entry, still sitting
-     * in the registry until somebody collects it, is not a live run: polling it is a new call.
+     * when the road's own generic wrapper runs the call under a subject of that name and will poll
+     * the entry before {@code execute}. The subject is the work's own name, so a facade whose
+     * {@code routesTo} lands in the generic list polls that entry rather than starting a second
+     * traversal, while one that routes outside the list declares nothing. A finished entry, still
+     * sitting in the registry until somebody collects it, is not a live run: polling it is a new
+     * call.
      * </p>
      *
      * @param polled the key from the arguments; neither null nor empty
      * @param named the called tool, or {@code null} when the catalogue has no such name
-     * @param canonical the called tool's own name
      * @param arguments the call arguments; may be {@code null}
      * @return whether polling the key is this call's own resumption path
      */
-    private static boolean isOwnPoll(String polled, IMcpTool named, String canonical,
-        Map<String, String> arguments)
+    private static boolean isOwnPoll(String polled, IMcpTool named, Map<String, String> arguments)
     {
         PendingWorkRegistry domain = PendingWorkRegistry.domainOf(polled);
         PendingWorkRegistry.PendingEntry entry = domain == null ? null : domain.get(polled);
@@ -204,10 +236,13 @@ public final class ToolRoad
         {
             return false;
         }
-        // The road wraps these tools itself, before execute, and that wrapper is what polls.
-        // A facade whose routesTo names one of them does not: it calls execute and starts again.
-        if (GenericPending.applies(canonical) && domain == PendingWorkRegistry.GENERIC
-            && entry.resumableBy(canonical))
+        // The road wraps this call itself, before execute, and that wrapper is what polls. The
+        // subject is the work's own name: for the listed tool it is the called name, and for a
+        // facade whose routesTo lands in the same list it is the delegate - the run is started
+        // under that subject either way, so the facade polls this entry instead of starting a
+        // second traversal.
+        String subject = named == null ? null : pendingSubject(named, arguments);
+        if (subject != null && domain == PendingWorkRegistry.GENERIC && entry.resumableBy(subject))
         {
             return true;
         }
@@ -276,16 +311,20 @@ public final class ToolRoad
             spend(ticket, result);
             return result;
         }
-        if (!GenericPending.applies(name))
+        String subject = pendingSubject(tool, arguments);
+        if (subject == null)
         {
             String result = tool.execute(arguments);
             spend(ticket, result);
             return result;
         }
-        String runKey = PendingWorkRegistry.computeRunKey(name,
+        // Keyed and reported under the subject, not the called name: the entry a facade's call
+        // starts is the entry a direct call to the tool underneath polls, and the name the work is
+        // stamped with is the one both doors resume by.
+        String runKey = PendingWorkRegistry.computeRunKey(subject,
             GenericPending.canonicalParams(arguments));
-        String result = PendingExecutor.execute(PendingWorkRegistry.GENERIC, name, arguments, runKey,
-            PendingExecutor.DEFAULT_SOFT_TIMEOUT_MS, () -> tool.execute(arguments), null);
+        String result = PendingExecutor.execute(PendingWorkRegistry.GENERIC, subject, arguments,
+            runKey, PendingExecutor.DEFAULT_SOFT_TIMEOUT_MS, () -> tool.execute(arguments), null);
         spend(ticket, result);
         return result;
     }

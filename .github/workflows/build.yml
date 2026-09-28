@@ -81,6 +81,11 @@ jobs:
       - name: Tool catalog census
         run: python3 scripts/check-tool-catalog.py
 
+      # The release job writes release-manifest.json and attests the archives; both run only on a
+      # tag, so the script and the job's shape are checked here on every build.
+      - name: Release manifest script
+        run: python3 scripts/tests/test_write_release_manifest.py
+
       # A facade that delegates without asking whether a preset switched the tool off lets the whole
       # preset be walked around by calling the facade instead. It is structural, so it is counted
       # here rather than in the suite, which cannot read the sources from inside the OSGi runtime.

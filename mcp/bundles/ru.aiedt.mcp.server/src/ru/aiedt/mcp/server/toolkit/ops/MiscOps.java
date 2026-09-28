@@ -507,7 +507,8 @@ final class MiscOps
      */
     String opExtensionAdopt(String op, Map<String, String> params)
     {
-        if (!BmExtensionHelper.isAvailable())
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        if (!dryRun && !BmExtensionHelper.isAvailable())
         {
             return ToolResult.error(BmExtensionHelper.deferredMessage(op))
                 .put("operation", op)
@@ -549,6 +550,10 @@ final class MiscOps
             return noFormNamed(targetFqn, params);
         }
         targetFqn = childAddress;
+        if (dryRun)
+        {
+            return dryRunAdoptPlan(op, targetFqn);
+        }
         // adoptObjects accepts comma-separated FQN list; rest take a single FQN
         if ("adopt_objects".equals(op))
         {
@@ -662,6 +667,45 @@ final class MiscOps
         return err.toJson();
     }
 
+    /**
+     * Builds the response for an extension-adoption preview without contacting the adopt service.
+     *
+     * @param op the adoption operation
+     * @param targetFqn the resolved target or comma-separated targets
+     * @return the dry-run plan as JSON
+     */
+    static String dryRunAdoptPlan(String op, String targetFqn)
+    {
+        if ("adopt_objects".equals(op)) //$NON-NLS-1$
+        {
+            java.util.List<Map<String, Object>> plans = new java.util.ArrayList<>();
+            for (String fqn : targetFqn.split("\\s*,\\s*")) //$NON-NLS-1$
+            {
+                if (!fqn.isEmpty())
+                {
+                    Map<String, Object> plan = new LinkedHashMap<>();
+                    plan.put("targetFqn", fqn); //$NON-NLS-1$
+                    plan.put("action", "wouldBorrow"); //$NON-NLS-1$ //$NON-NLS-2$
+                    plan.put("reason", "dryRun"); //$NON-NLS-1$ //$NON-NLS-2$
+                    plans.add(plan);
+                }
+            }
+            return ToolResult.success()
+                .put("operation", op) //$NON-NLS-1$
+                .put("dryRun", true) //$NON-NLS-1$
+                .put("results", plans) //$NON-NLS-1$
+                .put("totalCount", plans.size()) //$NON-NLS-1$
+                .toJson();
+        }
+        return ToolResult.success()
+            .put("operation", op) //$NON-NLS-1$
+            .put("targetFqn", targetFqn) //$NON-NLS-1$
+            .put("dryRun", true) //$NON-NLS-1$
+            .put("action", "wouldBorrow") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("reason", "dryRun") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("message", "Dry run: the object would be borrowed.") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
     private static int countSegments(String fqn)
     {
         if (fqn == null || fqn.isEmpty())
