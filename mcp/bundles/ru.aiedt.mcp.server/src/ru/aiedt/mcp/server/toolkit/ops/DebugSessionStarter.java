@@ -12,9 +12,7 @@ import java.util.Optional;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
-import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.ILaunchConfigurationType;
@@ -22,14 +20,10 @@ import org.eclipse.debug.core.ILaunchManager;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.model.IDebugTarget;
 import org.eclipse.swt.widgets.Display;
-import org.eclipse.swt.widgets.Shell;
 
 import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumpSupport;
 import com._1c.g5.wiring.ServiceAccess;
 import com.e1c.g5.dt.applications.ApplicationException;
-import com.e1c.g5.dt.applications.ApplicationUpdateState;
-import com.e1c.g5.dt.applications.ApplicationUpdateType;
-import com.e1c.g5.dt.applications.ExecutionContext;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
 import com.google.gson.JsonArray;
@@ -44,6 +38,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.BmExternalObjectDumpHelper;
+import ru.aiedt.mcp.server.support.ApplicationUpdater;
 import ru.aiedt.mcp.server.support.ClientLaunchMode;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -468,6 +463,7 @@ public final class DebugSessionStarter implements IMcpTool
                 application = findApplication(configuredProject, effectiveAppId);
             }
 
+            ApplicationUpdater.Result databaseUpdate = null;
             if (!isAttach && updateBeforeLaunch && configProject != null && !configProject.isEmpty())
             {
                 String notReady = ProjectStateGuard.checkReadyOrError(configProject);
@@ -475,10 +471,16 @@ public final class DebugSessionStarter implements IMcpTool
                 {
                     return ToolResult.error(notReady).toJson();
                 }
-                String updateError = updateDatabaseIfNeeded(configProject, effectiveAppId);
-                if (updateError != null)
+                databaseUpdate = updateDatabaseIfNeeded(configProject, effectiveAppId);
+                String refusal = preLaunchRefusal(databaseUpdate);
+                if (refusal != null)
                 {
-                    return ToolResult.error(updateError).toJson();
+                    return ToolResult.error(refusal)
+                        .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                        .put("applicationId", effectiveAppId) //$NON-NLS-1$
+                        .put("databaseUpdate", databaseUpdate.outcome.toString()) //$NON-NLS-1$
+                        .put("databaseState", stateName(databaseUpdate)) //$NON-NLS-1$
+                        .toJson();
                 }
             }
 
@@ -518,6 +520,10 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("configurationType", typeId) //$NON-NLS-1$
                 .put("attach", isAttach) //$NON-NLS-1$
                 .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (databaseUpdate != null)
+            {
+                result.put("databaseUpdate", databaseUpdate.outcome.toString()); //$NON-NLS-1$
+            }
             if (mode != null)
             {
                 describeClient(result, mode, flagState, application);
@@ -700,12 +706,52 @@ public final class DebugSessionStarter implements IMcpTool
                     .toJson();
             }
 
+            // Before the update and before a configuration is created: a session that is already
+            // running answers without touching the infobase or the launch configurations.
+            // Best-effort: EDT registers the debug target asynchronously, so a target launched a
+            // moment ago may not be visible yet - LAUNCH_LOCK closes the concurrent window.
+            if (applicationId != null && DebugSessionBook.findActiveTarget(applicationId) != null)
+            {
+                String runningConfig = existingConfig != null ? existingConfig.getName() : null;
+                // A running session was started without these arguments; answering success would
+                // lose them. The fix is to stop the session, not to drop the arguments.
+                if (startupOption != null || openedObject != null || waitForEndpoint != null || choice.given())
+                {
+                    return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
+                        + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
+                        + "launch_debugger action=terminate, then launch again. Nothing was " //$NON-NLS-1$
+                        + "launched or updated.") //$NON-NLS-1$
+                        .put("project", projectName) //$NON-NLS-1$
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("launchConfiguration", runningConfig) //$NON-NLS-1$
+                        .put("alreadyRunning", true) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
+                return ToolResult.success()
+                    .put("project", projectName) //$NON-NLS-1$
+                    .put("applicationId", applicationId) //$NON-NLS-1$
+                    .put("launchConfiguration", runningConfig) //$NON-NLS-1$
+                    .put("alreadyRunning", true) //$NON-NLS-1$
+                    .put("attach", false) //$NON-NLS-1$
+                    .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("message", "A debug session for this application is already running - launch skipped.") //$NON-NLS-1$
+                    .toJson();
+            }
+
+            ApplicationUpdater.Result databaseUpdate = null;
             if (updateBeforeLaunch && appManager != null && application != null)
             {
-                String updateError = updateDatabase(appManager, application);
-                if (updateError != null)
+                databaseUpdate = updateDatabase(appManager, application);
+                String refusal = preLaunchRefusal(databaseUpdate);
+                if (refusal != null)
                 {
-                    return ToolResult.error(updateError).toJson();
+                    return ToolResult.error(refusal)
+                        .put("project", projectName) //$NON-NLS-1$
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("databaseUpdate", databaseUpdate.outcome.toString()) //$NON-NLS-1$
+                        .put("databaseState", stateName(databaseUpdate)) //$NON-NLS-1$
+                        .toJson();
                 }
             }
 
@@ -741,40 +787,6 @@ public final class DebugSessionStarter implements IMcpTool
             final String configName = matchingConfig.getName();
             Activator.logInfo("Starting debug launch: config=" + configName + ", project=" + projectName //$NON-NLS-1$ //$NON-NLS-2$
                 + ", app=" + applicationId); //$NON-NLS-1$
-
-            // row 45: mirror launchByConfigName's already-running guard so a second
-            // (serialized) launch for the same application short-circuits instead of
-            // starting a duplicate session. Best-effort: EDT registers the debug
-            // target asynchronously, so a target launched a moment ago may not be
-            // visible yet - the LAUNCH_LOCK closes the concurrent window; this check
-            // catches the common already-registered case.
-            if (applicationId != null && DebugSessionBook.findActiveTarget(applicationId) != null)
-            {
-                // A running session was started without these arguments; answering success would
-                // lose them. The fix is to stop the session, not to drop the arguments.
-                if (startupOption != null || openedObject != null || waitForEndpoint != null || choice.given())
-                {
-                    return ToolResult.error("A debug session for this application is already " //$NON-NLS-1$
-                        + "running, and it was not started with these arguments. Stop it with " //$NON-NLS-1$
-                        + "launch_debugger action=terminate, then launch again. Nothing was " //$NON-NLS-1$
-                        + "launched or updated.") //$NON-NLS-1$
-                        .put("project", projectName) //$NON-NLS-1$
-                        .put("applicationId", applicationId) //$NON-NLS-1$
-                        .put("launchConfiguration", configName) //$NON-NLS-1$
-                        .put("alreadyRunning", true) //$NON-NLS-1$
-                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
-                        .toJson();
-                }
-                return ToolResult.success()
-                    .put("project", projectName) //$NON-NLS-1$
-                    .put("applicationId", applicationId) //$NON-NLS-1$
-                    .put("launchConfiguration", configName) //$NON-NLS-1$
-                    .put("alreadyRunning", true) //$NON-NLS-1$
-                    .put("attach", false) //$NON-NLS-1$
-                    .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
-                    .put("message", "A debug session for this application is already running - launch skipped.") //$NON-NLS-1$
-                    .toJson();
-            }
 
             if (openedObject != null)
             {
@@ -827,6 +839,10 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("message", autoCreatedConfig //$NON-NLS-1$
                     ? "Debug session is now running (a launch configuration was auto-created for it)"
                     : "Debug session is now running");
+            if (databaseUpdate != null)
+            {
+                successResult.put("databaseUpdate", databaseUpdate.outcome.toString()); //$NON-NLS-1$
+            }
             describeClient(successResult, mode, flagState, application);
             String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
             if (endpointNote != null)
@@ -888,7 +904,15 @@ public final class DebugSessionStarter implements IMcpTool
         return refusal.toJson();
     }
 
-    private String updateDatabaseIfNeeded(String projectName, String applicationId)
+    /**
+     * The pre-launch update of a launch by configuration name. An attach-mode application, a
+     * project that does not resolve and a missing application manager skip the update.
+     *
+     * @param projectName the project the launch configuration names
+     * @param applicationId the application the configuration launches
+     * @return the update outcome, or {@code null} when no update applies
+     */
+    private static ApplicationUpdater.Result updateDatabaseIfNeeded(String projectName, String applicationId)
     {
         if (applicationId == null || applicationId.isEmpty()
             || applicationId.startsWith(LaunchConfigAccess.ATTACH_APP_ID_PREFIX))
@@ -905,88 +929,114 @@ public final class DebugSessionStarter implements IMcpTool
         {
             return null;
         }
+        return updateResolvedApplication(appManager, project, applicationId);
+    }
+
+    /**
+     * Resolves the application a launch names and brings its infobase up to date. An application
+     * that is not registered, or that the manager fails to resolve, is an outcome the launch is
+     * refused on, not a reason to skip the update.
+     *
+     * @param appManager the application manager
+     * @param project the project the application belongs to
+     * @param applicationId the application id
+     * @return the update outcome; {@code APPLICATION_NOT_FOUND} or {@code FAILED} when the
+     *     application does not resolve
+     */
+    static ApplicationUpdater.Result updateResolvedApplication(IApplicationManager appManager,
+        IProject project, String applicationId)
+    {
+        String projectName = project == null ? null : project.getName();
         try
         {
             Optional<IApplication> appOpt = appManager.getApplication(project, applicationId);
             if (!appOpt.isPresent())
             {
-                return null;
+                return ApplicationUpdater.Result.appNotFound(applicationId, projectName);
             }
             return updateDatabase(appManager, appOpt.get());
         }
         catch (ApplicationException e)
         {
             Activator.logError("Failed to resolve the application for a pre-launch database update", e); //$NON-NLS-1$
-            return null;
+            return ApplicationUpdater.Result.failed("Could not resolve application '" + applicationId //$NON-NLS-1$
+                + "': " + e.getMessage()); //$NON-NLS-1$
         }
     }
 
-    private String updateDatabase(IApplicationManager appManager, IApplication application)
+    /**
+     * The pre-launch update of a resolved application, with the stored dump-info reading.
+     *
+     * @param appManager the application manager
+     * @param application the application
+     * @return the update outcome
+     */
+    private static ApplicationUpdater.Result updateDatabase(IApplicationManager appManager,
+        IApplication application)
     {
         return updateDatabase(appManager, application, DatabaseUpdater.dumpInfoOf(application));
     }
 
     /**
-     * The pre-launch update. A foreign dump-info format returns before the manager is asked to
-     * check or to load.
+     * The pre-launch update. A foreign dump-info format stops before the manager is asked to check
+     * or to load; otherwise {@link ApplicationUpdater} loads the changes and reads the state the
+     * infobase is left in.
      *
      * @param appManager the application manager
      * @param application the application
      * @param dumpInfo the stored dump-info reading, or {@code null} when there is nothing to compare
-     * @return the error sentence, or {@code null} when the update was not refused
+     * @return the update outcome
      */
-    static String updateDatabase(IApplicationManager appManager, IApplication application,
-        DumpInfoProbe.Reading dumpInfo)
+    static ApplicationUpdater.Result updateDatabase(IApplicationManager appManager,
+        IApplication application, DumpInfoProbe.Reading dumpInfo)
     {
-        String formatStop = DatabaseUpdater.launchUpdateRefusal(dumpInfo);
-        if (formatStop != null)
-        {
-            return formatStop + " Retry with updateBeforeLaunch=false to skip the update."; //$NON-NLS-1$
-        }
-        try
-        {
-            ApplicationUpdateState updateState = appManager.getUpdateState(application);
-            if (updateState == ApplicationUpdateState.UPDATED
-                || updateState == ApplicationUpdateState.BEING_UPDATED)
-            {
-                return null;
-            }
-            Activator.logInfo("Applying pre-launch database update: application=" + application.getId()); //$NON-NLS-1$
+        return ApplicationUpdater.updateIfNeeded(appManager, application, dumpInfo);
+    }
 
-            ExecutionContext context = new ExecutionContext();
-            Display display = Display.getDefault();
-            if (display != null && !display.isDisposed())
-            {
-                final Shell[] shellHolder = new Shell[1];
-                display.syncExec(() -> {
-                    shellHolder[0] = display.getActiveShell();
-                    if (shellHolder[0] == null)
-                    {
-                        Shell[] shells = display.getShells();
-                        if (shells.length > 0)
-                        {
-                            shellHolder[0] = shells[0];
-                        }
-                    }
-                });
-                if (shellHolder[0] != null)
-                {
-                    context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shellHolder[0]);
-                }
-            }
-
-            IProgressMonitor monitor = new NullProgressMonitor();
-            ApplicationUpdateState stateAfter =
-                appManager.update(application, ApplicationUpdateType.INCREMENTAL, context, monitor);
-            Activator.logInfo("Pre-launch database update finished: stateAfter=" + stateAfter); //$NON-NLS-1$
+    /**
+     * Decides whether a launch goes on after its pre-launch update. Only an infobase that is up to
+     * date, or an update that did not apply, lets the client start: an update another process is
+     * running, one that ended in any state other than updated, an unresolved application and a
+     * failed load all refuse the launch.
+     *
+     * @param update the update outcome, or {@code null} when no update was attempted
+     * @return the refusal sentence, or {@code null} when the launch may go on
+     */
+    static String preLaunchRefusal(ApplicationUpdater.Result update)
+    {
+        if (update == null || update.isUpToDate() || update.outcome == ApplicationUpdater.Outcome.SKIPPED)
+        {
             return null;
         }
-        catch (ApplicationException e)
+        StringBuilder why = new StringBuilder("The infobase is not up to date before launch (") //$NON-NLS-1$
+            .append(update.outcome);
+        if (update.stateAfter != null)
         {
-            Activator.logError("Failed to update the database before launch", e); //$NON-NLS-1$
-            return "Could not update the database before launch: " + e.getMessage()
-                + ". Retry with updateBeforeLaunch=false to skip the update.";
+            why.append(", state ").append(update.stateAfter); //$NON-NLS-1$
         }
+        why.append(')');
+        if (update.errorMessage != null)
+        {
+            why.append(": ").append(update.errorMessage); //$NON-NLS-1$
+        }
+        else if (update.hint != null)
+        {
+            why.append(": ").append(update.hint); //$NON-NLS-1$
+        }
+        why.append(" Nothing was launched. Retry with updateBeforeLaunch=false to launch against " //$NON-NLS-1$
+            + "the infobase as it stands."); //$NON-NLS-1$
+        return why.toString();
+    }
+
+    /**
+     * The state an update left the infobase in, for the answer.
+     *
+     * @param update the update outcome
+     * @return the state name, or {@code null} when the outcome carries none
+     */
+    private static String stateName(ApplicationUpdater.Result update)
+    {
+        return update.stateAfter == null ? null : update.stateAfter.name();
     }
 
     /** How long a runtime client is given to register a debug target, in milliseconds. */
