@@ -116,6 +116,21 @@ public class APredefinedCodeTakesTheKindOfItsOwnerTest
         assertNull("the item was left without a code", item.getCode()); //$NON-NLS-1$
     }
 
+    /** The refusal names the owner by type and name, so the caller can tell which object it is. */
+    @Test
+    public void theRefusalNamesTheOwner()
+    {
+        Catalog catalog = catalogWithCodeType(CatalogCodeType.NUMBER);
+        catalog.setName("Товары"); //$NON-NLS-1$
+        CatalogPredefinedItem item = MdClassFactory.eINSTANCE.createCatalogPredefinedItem();
+
+        String reason = PredefinedOps.applyPredefinedCode(catalog, item, noExistingItems(),
+            "Товар"); //$NON-NLS-1$
+
+        assertNotNull(reason);
+        assertTrue(reason, reason.contains("Catalog.Товары")); //$NON-NLS-1$
+    }
+
     /** An owner whose code type cannot be read is a refusal, not a warning beside a success. */
     @Test
     public void anOwnerWithoutACodeTypeIsRefused()

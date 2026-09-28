@@ -278,7 +278,9 @@ final class PredefinedOps
         {
             return "code not applied: " + typeName(item) + " has no setCode."; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        String ownerType = owner.eClass().getName();
+        Object ownerName = reflectNoArg(owner, "getName"); //$NON-NLS-1$
+        String ownerType = owner.eClass().getName()
+            + (ownerName == null || ownerName.toString().isEmpty() ? "" : "." + ownerName); //$NON-NLS-1$ //$NON-NLS-2$
         if (setCode.getParameterTypes()[0] == String.class)
         {
             String usedBy = findItemWithTheSameCode(siblings, code);
