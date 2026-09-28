@@ -58,10 +58,11 @@ public class AnAppearanceItemIsRemovedWhereItWasWrittenTest
         schema = (EObject)built;
         tool = new DcsWorkshopTool();
         // The operation checks the parameter name against the platform's output parameters. The
-        // platform's set is built from the installed 1C:Enterprise, which a test runtime has none
-        // of, so the set the check reads is pinned here to the name this test writes.
+        // platform's set is built by the platform-version bundles of the EDT installation, which
+        // answer only for the versions they carry, so the set the check reads is pinned here to
+        // the spelling pair this test writes.
         DcsWorkshopTool.outputParameterNamesForTests =
-            Collections.unmodifiableList(Arrays.asList("Заголовок", "Title")); //$NON-NLS-1$ //$NON-NLS-2$
+            Collections.unmodifiableList(Arrays.<String[]>asList(new String[] { "Заголовок", "Title" })); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

@@ -162,7 +162,7 @@ public class APreviewSaysItIsAPreviewTest
     public void aListWriteIsAnsweredTheSameWay()
     {
         JsonObject previewed = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
-            "Form.Форма", "Список", "conditional appearance added", true, List.of())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Form.Форма", "Список", "conditional appearance added", true, List.of(), null)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .getAsJsonObject();
 
         assertTrue("the settings on the form keep what they held, and the answer says so", //$NON-NLS-1$
@@ -171,7 +171,7 @@ public class APreviewSaysItIsAPreviewTest
             previewed.get("attributeName").getAsString()); //$NON-NLS-1$
 
         JsonObject applied = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
-            "Form.Форма", "Список", "conditional appearance added", false, List.of())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Form.Форма", "Список", "conditional appearance added", false, List.of(), null)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .getAsJsonObject();
 
         assertTrue(applied.get("success").getAsBoolean()); //$NON-NLS-1$
@@ -187,7 +187,7 @@ public class APreviewSaysItIsAPreviewTest
     {
         JsonObject refused = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
             "Form.Форма", "Список", "Error: no such attribute", true, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            List.of(Map.of("kind", "emptyFilterValue")))) //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(Map.of("kind", "emptyFilterValue")), null)) //$NON-NLS-1$ //$NON-NLS-2$
             .getAsJsonObject();
 
         assertFalse(refused.get("success").getAsBoolean()); //$NON-NLS-1$

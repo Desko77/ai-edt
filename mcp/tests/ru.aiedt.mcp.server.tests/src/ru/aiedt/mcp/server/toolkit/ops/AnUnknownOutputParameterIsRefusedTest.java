@@ -7,7 +7,10 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -25,6 +28,10 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import com._1c.g5.v8.dt.platform.version.Version;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 
 /**
@@ -32,11 +39,15 @@ import ru.aiedt.mcp.server.support.BmDcsHelper;
  * <p>
  * An entry used to be made for whatever name arrived, so a typo answered {@code set} and left a
  * parameter in the model that nothing reads. The refusal carries the closest name and the ones that
- * are allowed, and the call writes nothing.
+ * are allowed, and the call writes nothing. A set of names that could not be read at all is the
+ * opposite corner: the write goes through unchecked and the answer says so, because refusing every
+ * name for want of the list would leave the operation unable to set a parameter at all.
  * </p>
  * <p>
- * The names are read from the platform, whose set is built from the installed 1C:Enterprise, so the
- * tests that go through an operation pin the set instead and say which one they use.
+ * The names are read from the platform, whose set is built by the platform-version bundles of the
+ * EDT installation, so the tests that go through an operation pin the set instead and say which one
+ * they use. The tests that read the real set ask for the version whose bundle the test launch
+ * carries, 8.3.22 - asking for a version without a bundle answers with nothing.
  * </p>
  */
 public class AnUnknownOutputParameterIsRefusedTest
@@ -47,10 +58,22 @@ public class AnUnknownOutputParameterIsRefusedTest
     /** The name the misspelling stands next to. */
     private static final String TITLE = "Заголовок"; //$NON-NLS-1$
 
-    /** Enough of the platform's own set to tell a known name from an unknown one. */
-    private static final List<String> PINNED_NAMES =
+    /** The platform version whose bundle the test launch carries; see this fragment's pom. */
+    private static final Version PRESENT = Version.V8_3_22;
+
+    /**
+     * Enough of the platform's own set to tell a known name from an unknown one, each parameter
+     * as the pair of spellings the platform carries for it.
+     */
+    private static final List<String[]> PINNED_NAMES =
         Collections.unmodifiableList(Arrays.asList(
-            TITLE, "Title", "ВыводитьЗаголовок", "ВыводитьОтбор", "OutputTitle")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            new String[] { TITLE, "Title" }, //$NON-NLS-1$
+            new String[] { "ВыводитьЗаголовок", "OutputTitle" }, //$NON-NLS-1$ //$NON-NLS-2$
+            new String[] { "ВыводитьОтбор", "OutputFilter" })); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** The pinned set, wrapped the way a read of the platform answers it. */
+    private static final DcsWorkshopTool.OutputParameterSet PINNED_SET =
+        DcsWorkshopTool.OutputParameterSet.known(PINNED_NAMES);
 
     private DcsWorkshopTool tool;
 
@@ -165,26 +188,23 @@ public class AnUnknownOutputParameterIsRefusedTest
     }
 
     /**
-     * The same refusal is what a caller sees when the platform cannot be asked for the set at all.
+     * A set of names that could not be read is not a refusal: the write goes through and the
+     * record says the name was not checked.
+     *
+     * @throws Exception if the operation refuses
      */
     @Test
-    public void anUnreadablePlatformSetRefusesWithoutWriting()
+    public void anUnreadablePlatformSetStillWritesWithAWarning() throws Exception
     {
-        DcsWorkshopTool.outputParameterNamesForTests = Collections.<String>emptyList();
-        try
-        {
-            run("set_output_parameter", "name", TITLE, "value", "Sales"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            fail("an unread set of names must not read as 'no name is allowed'"); //$NON-NLS-1$
-        }
-        catch (Exception e)
-        {
-            String message = String.valueOf(e.getMessage());
-            assertTrue("the refusal says the list could not be read: " + message, //$NON-NLS-1$
-                message.contains("output parameter list is unavailable")); //$NON-NLS-1$
-            assertTrue("and that nothing was written: " + message, //$NON-NLS-1$
-                message.contains("nothing was written")); //$NON-NLS-1$
-        }
-        assertEquals("no output parameter entry was created", 0, outputParameterItems()); //$NON-NLS-1$
+        DcsWorkshopTool.outputParameterNamesForTests = Collections.<String[]>emptyList();
+
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("name", TITLE); //$NON-NLS-1$
+        params.put("value", "Sales"); //$NON-NLS-1$ //$NON-NLS-2$
+        String note = tool.outputParameterNameNoteForTest("set_output_parameter", params, schema); //$NON-NLS-1$
+
+        assertNotNull("the answer carries why the name was not checked", note); //$NON-NLS-1$
+        assertEquals("and the write went through", 1, outputParameterItems()); //$NON-NLS-1$
     }
 
     /**
@@ -224,14 +244,19 @@ public class AnUnknownOutputParameterIsRefusedTest
     }
 
     /**
-     * The check matches a name whatever its case.
+     * The check matches a name whatever its case, and answers with the parameter's own pair of
+     * spellings, so the write is keyed by the platform's spelling rather than the caller's.
      */
     @Test
-    public void aNameInEitherCaseIsAccepted()
+    public void aNameInEitherCaseIsMatchedToThePlatformSpelling()
     {
-        DcsWorkshopTool.mustBeKnownOutputParameter(TITLE, PINNED_NAMES);
-        DcsWorkshopTool.mustBeKnownOutputParameter(TITLE.toUpperCase(), PINNED_NAMES);
-        DcsWorkshopTool.mustBeKnownOutputParameter("TITLE", PINNED_NAMES); //$NON-NLS-1$
+        assertSame(PINNED_NAMES.get(0), DcsWorkshopTool.mustBeKnownOutputParameter(TITLE, PINNED_SET));
+        assertSame(PINNED_NAMES.get(0),
+            DcsWorkshopTool.mustBeKnownOutputParameter(TITLE.toUpperCase(), PINNED_SET));
+        assertSame(PINNED_NAMES.get(0),
+            DcsWorkshopTool.mustBeKnownOutputParameter("TITLE", PINNED_SET)); //$NON-NLS-1$
+        assertSame(PINNED_NAMES.get(0),
+            DcsWorkshopTool.mustBeKnownOutputParameter("title", PINNED_SET)); //$NON-NLS-1$
     }
 
     /**
@@ -242,7 +267,7 @@ public class AnUnknownOutputParameterIsRefusedTest
     {
         try
         {
-            DcsWorkshopTool.mustBeKnownOutputParameter(TYPO, PINNED_NAMES);
+            DcsWorkshopTool.mustBeKnownOutputParameter(TYPO, PINNED_SET);
             fail("a name outside the set must be refused"); //$NON-NLS-1$
         }
         catch (RuntimeException e)
@@ -252,27 +277,18 @@ public class AnUnknownOutputParameterIsRefusedTest
     }
 
     /**
-     * A set that could not be read is a refusal in its own right, not an empty set of allowed names.
+     * A set that could not be read matches nothing and refuses nothing: the caller writes the name
+     * unchecked and says so in the answer.
      */
     @Test
-    public void anUnavailableSetIsRefusedWithoutWriting()
+    public void anUnreadableSetMatchesNothingAndRefusesNothing()
     {
-        for (List<String> absent : Arrays.asList(null, Collections.<String>emptyList()))
-        {
-            try
-            {
-                DcsWorkshopTool.mustBeKnownOutputParameter("Title", absent); //$NON-NLS-1$
-                fail("an unread parameter set must not read as 'no name is allowed'"); //$NON-NLS-1$
-            }
-            catch (RuntimeException e)
-            {
-                String message = String.valueOf(e.getMessage());
-                assertTrue("the refusal says the list could not be read: " + message, //$NON-NLS-1$
-                    message.contains("output parameter list is unavailable")); //$NON-NLS-1$
-                assertTrue("and that nothing was written: " + message, //$NON-NLS-1$
-                    message.contains("nothing was written")); //$NON-NLS-1$
-            }
-        }
+        assertNull("an unread set is not an empty set of allowed names", //$NON-NLS-1$
+            DcsWorkshopTool.mustBeKnownOutputParameter("Title", //$NON-NLS-1$
+                DcsWorkshopTool.OutputParameterSet.unavailable("no answer"))); //$NON-NLS-1$
+        assertNull("and an empty one is treated the same", //$NON-NLS-1$
+            DcsWorkshopTool.mustBeKnownOutputParameter("Title", //$NON-NLS-1$
+                DcsWorkshopTool.OutputParameterSet.known(Collections.<String[]>emptyList())));
     }
 
     /**
@@ -281,14 +297,15 @@ public class AnUnknownOutputParameterIsRefusedTest
     @Test
     public void aLongSetIsListedUpToTheCap()
     {
-        List<String> many = new ArrayList<>();
+        List<String[]> many = new ArrayList<>();
         for (int i = 0; i < 60; i++)
         {
-            many.add("Parameter" + i); //$NON-NLS-1$
+            many.add(new String[] { "Parameter" + i, "Parameter" + i }); //$NON-NLS-1$ //$NON-NLS-2$
         }
         try
         {
-            DcsWorkshopTool.mustBeKnownOutputParameter(TYPO, many);
+            DcsWorkshopTool.mustBeKnownOutputParameter(TYPO,
+                DcsWorkshopTool.OutputParameterSet.known(many));
             fail("a name outside the set must be refused"); //$NON-NLS-1$
         }
         catch (RuntimeException e)
@@ -302,17 +319,48 @@ public class AnUnknownOutputParameterIsRefusedTest
     }
 
     /**
-     * The platform's own set answers with both spellings of a parameter, which is what lets a caller
-     * name it either way. Skipped where no 1C:Enterprise installation stands behind the registry.
+     * The answer to a write whose name went in unchecked says so, and a checked name carries
+     * nothing.
+     */
+    @Test
+    public void anUncheckedWriteSaysSoInTheAnswer()
+    {
+        JsonObject unchecked = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(
+            "set_output_parameter", "Form.Форма", "Список", "output parameter 'Title' set", false, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            List.of(), "IllegalArgumentException: no answer")) //$NON-NLS-1$
+            .getAsJsonObject();
+        assertTrue(unchecked.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertFalse("the write went through, and the answer says the name was not checked", //$NON-NLS-1$
+            unchecked.get("outputParameterNameChecked").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("and why", "IllegalArgumentException: no answer", //$NON-NLS-1$ //$NON-NLS-2$
+            unchecked.get("outputParameterNameCheckNote").getAsString()); //$NON-NLS-1$
+
+        JsonObject checked = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(
+            "set_output_parameter", "Form.Форма", "Список", "output parameter 'Title' set", false, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            List.of(), null))
+            .getAsJsonObject();
+        assertFalse("a checked name carries no flag: " + checked, //$NON-NLS-1$
+            checked.has("outputParameterNameChecked")); //$NON-NLS-1$
+    }
+
+    /**
+     * The platform's own set for the version whose bundle the test launch carries answers with
+     * both spellings of a parameter, which is what lets a caller name it either way.
      */
     @Test
     public void thePlatformSetCarriesBothSpellings()
     {
-        List<String> known = DcsWorkshopTool.outputParameterNames(null);
-        Assume.assumeNotNull(known);
-        assertNotNull("the platform answered with a set of names", known); //$NON-NLS-1$
-        assertTrue("the set carries the title parameter: " + known, known.contains(TITLE)); //$NON-NLS-1$
-        assertTrue("and its English spelling: " + known, known.contains("Title")); //$NON-NLS-1$ //$NON-NLS-2$
+        DcsWorkshopTool.OutputParameterSet set = DcsWorkshopTool.outputParameterNames(PRESENT);
+        assertNotNull("the platform answered with a set of names: " + set.unavailableNote, //$NON-NLS-1$
+            set.spellings);
+        List<String> all = new ArrayList<>();
+        for (String[] pair : set.spellings)
+        {
+            all.add(pair[0]);
+            all.add(pair[1]);
+        }
+        assertTrue("the set carries the title parameter: " + all, all.contains(TITLE)); //$NON-NLS-1$
+        assertTrue("and its English spelling: " + all, all.contains("Title")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -322,9 +370,13 @@ public class AnUnknownOutputParameterIsRefusedTest
     @Test
     public void thePlatformSetAcceptsTheNameItCarries()
     {
-        List<String> known = DcsWorkshopTool.outputParameterNames(null);
-        Assume.assumeNotNull(known);
-        String first = known.get(0);
-        DcsWorkshopTool.mustBeKnownOutputParameter(first, known);
+        DcsWorkshopTool.OutputParameterSet set = DcsWorkshopTool.outputParameterNames(PRESENT);
+        assertNotNull("the platform answered with a set of names: " + set.unavailableNote, //$NON-NLS-1$
+            set.spellings);
+        String[] first = set.spellings.get(0);
+        assertSame("the first spelling matches the pair it was read from", first, //$NON-NLS-1$
+            DcsWorkshopTool.mustBeKnownOutputParameter(first[0], set));
+        assertSame("and so does the second", first, //$NON-NLS-1$
+            DcsWorkshopTool.mustBeKnownOutputParameter(first[1], set));
     }
 }
