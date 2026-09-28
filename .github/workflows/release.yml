@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Signing the build provenance of the release archives.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout
@@ -99,11 +102,16 @@ jobs:
           cp "$GITHUB_WORKSPACE/AI-EDT-${{ steps.version.outputs.version }}.zip" \
              "$GITHUB_WORKSPACE/AI-EDT-update-site.zip"
 
-      - name: Checksum manifest
-        run: |
-          # One manifest per release rather than a sidecar per asset: one file names every
-          # archive the release carries, so a downloader verifies the whole set at once.
-          (cd "$GITHUB_WORKSPACE" && sha256sum AI-EDT-*.zip > SHA256SUMS)
+      # One manifest per release rather than a sidecar per asset: one file names every archive
+      # the release carries, so a downloader verifies the whole set at once. release-manifest.json
+      # carries name, size and SHA-256; SHA256SUMS carries the same hashes for sha256sum -c.
+      - name: Release manifest
+        run: python3 scripts/write-release-manifest.py --dir "$GITHUB_WORKSPACE" --check
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: 'AI-EDT-*.zip'
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -115,4 +123,5 @@ jobs:
           files: |
             AI-EDT-*.zip
             SHA256SUMS
+            release-manifest.json
           generate_release_notes: true
