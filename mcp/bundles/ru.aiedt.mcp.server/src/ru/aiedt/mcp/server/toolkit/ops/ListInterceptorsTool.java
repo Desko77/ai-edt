@@ -394,6 +394,12 @@ public class ListInterceptorsTool implements IMcpTool
             {
                 entry.put("controlledDrift", drift); //$NON-NLS-1$
             }
+            else
+            {
+                // A clean answer never travels bare: the comparison normalises formatting and the
+                // case of identifiers, and true read on its own is a promise this check never made.
+                entry.put("controlledNote", ControlledFragment.matchCaveat()); //$NON-NLS-1$
+            }
         }
         catch (Exception cannotCheck)
         {

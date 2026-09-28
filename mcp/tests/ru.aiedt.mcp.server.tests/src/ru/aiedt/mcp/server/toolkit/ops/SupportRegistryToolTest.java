@@ -15,6 +15,8 @@ import java.util.Map;
 
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.support.BmSupportRegistryHelper;
+import ru.aiedt.mcp.server.support.SupportSnapshot;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
@@ -141,5 +143,52 @@ public class SupportRegistryToolTest
         // object and vendor. The schema has to say so, or the argument reads like noise.
         String schema = new SupportRegistryTool().getInputSchema();
         assertTrue(schema.contains("more than one"));
+    }
+
+    @Test
+    public void aRestoreThatFoundDriftAndWroteNothingWarns()
+    {
+        // apply=true over a drift where nothing could be written used to close with the all-clear
+        // sentence - "no mode needed putting back" - over the drift it had just reported, because
+        // every object it tried had been refused or was missing.
+        BmSupportRegistryHelper.Restore restore = new BmSupportRegistryHelper.Restore();
+        restore.restored = 0;
+        SupportSnapshot.Drift drift = new SupportSnapshot.Drift();
+        drift.changed.add("00000000-0000-0000-0000-000000000001: ChangesAllowed -> "
+            + "ChangesNotAllowed");
+        restore.drift = drift;
+
+        String note = SupportRegistryTool.restoreNote(true, restore);
+
+        assertTrue("the note has to name what stands between the caller and a finished restore: "
+            + note, note.contains("refused"));
+        assertTrue("the note has to say how many objects lost their mode: " + note,
+            note.contains("1 object(s)"));
+        assertTrue("the all-clear sentence belongs to a clean restore, and this one found drift: "
+            + note, !note.contains("no mode needed putting back"));
+    }
+
+    @Test
+    public void aCleanAppliedRestoreThatWroteNothingSaysSo()
+    {
+        BmSupportRegistryHelper.Restore restore = new BmSupportRegistryHelper.Restore();
+        restore.restored = 0;
+        restore.drift = new SupportSnapshot.Drift();
+
+        String note = SupportRegistryTool.restoreNote(true, restore);
+
+        assertTrue("a clean restore with nothing to write is the one case the all-clear sentence"
+            + " describes: " + note, note.contains("no mode needed putting back"));
+    }
+
+    @Test
+    public void aDryRunSaysItWroteNothing()
+    {
+        BmSupportRegistryHelper.Restore restore = new BmSupportRegistryHelper.Restore();
+        restore.drift = new SupportSnapshot.Drift();
+
+        String note = SupportRegistryTool.restoreNote(false, restore);
+
+        assertTrue(note, note.contains("pass apply=true"));
     }
 }

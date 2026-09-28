@@ -296,6 +296,10 @@ public class SupportRegistryTool
             // page looks like.
             .put("more", listing.more) //$NON-NLS-1$
             .put("unnamed", listing.unnamed) //$NON-NLS-1$
+            // The helper computes this and the snapshot answer carries it; without it here, a
+            // page full of nameless entries reads as a page of deleted objects on a project
+            // whose index never claimed to be whole.
+            .put("indexComplete", listing.indexComplete) //$NON-NLS-1$
             .put("serviceRoute", listing.serviceRoute) //$NON-NLS-1$
             .toJson();
     }
@@ -482,24 +486,43 @@ public class SupportRegistryTool
                 .put("vendorConfigurationsGone", restore.drift.parentsGone) //$NON-NLS-1$
                 .put("vendorConfigurationsNew", restore.drift.parentsNew); //$NON-NLS-1$
         }
-        // Follows what happened, not what was asked for. It used to key on the apply ARGUMENT, so
-        // apply=true answered "the support model was written" while restored stood at 0 and the
-        // undo file had never been created - the counters said one thing and the sentence beside
-        // them said another.
-        String note;
+        // Follows what happened, not what was asked for - see restoreNote.
+        return result.put("note", restoreNote(apply, restore)).toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * The closing sentence of a restore answer.
+     * <p>
+     * Follows what happened, not what was asked for. It used to key on the apply ARGUMENT, so
+     * apply=true answered "the support model was written" while restored stood at 0 and the undo
+     * file had never been created - the counters said one thing and the sentence beside them said
+     * another. And a restore that was asked to write, found drift, and restored nothing used to
+     * close with "no mode needed putting back" - the all-clear sentence - over a drift it had just
+     * reported in the fields above it, because every object it tried had been refused or was
+     * missing.
+     * </p>
+     *
+     * @param apply whether the call asked to write.
+     * @param restore what the restore did.
+     * @return the sentence for the note field
+     */
+    static String restoreNote(boolean apply, BmSupportRegistryHelper.Restore restore)
+    {
         if (!apply)
         {
-            note = "nothing was written - pass apply=true to put these modes back"; //$NON-NLS-1$
+            return "nothing was written - pass apply=true to put these modes back"; //$NON-NLS-1$
         }
-        else if (restore.restored > 0)
+        if (restore.restored > 0)
         {
-            note = "the support model was written: " + restore.restored + " mode(s) put back"; //$NON-NLS-1$
+            return "the support model was written: " + restore.restored + " mode(s) put back"; //$NON-NLS-1$
         }
-        else
+        if (restore.drift != null && !restore.drift.changed.isEmpty())
         {
-            note = "nothing was written - no mode needed putting back"; //$NON-NLS-1$
+            return "nothing was written although " + restore.drift.changed.size() + " object(s) " //$NON-NLS-1$
+                + "lost their recorded mode and none could be put back - see refused and " //$NON-NLS-1$
+                + "notInTheConfiguration for each one"; //$NON-NLS-1$
         }
-        return result.put("note", note).toJson(); //$NON-NLS-1$
+        return "nothing was written - no mode needed putting back"; //$NON-NLS-1$
     }
 
     /** Every help topic, in the order the catalog names them: operations, then named topics. */

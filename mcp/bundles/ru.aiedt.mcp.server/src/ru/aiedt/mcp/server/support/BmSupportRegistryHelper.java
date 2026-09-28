@@ -586,24 +586,95 @@ public final class BmSupportRegistryHelper
                     // used to skip it: an apply=true restore answered "0 restored" and left the
                     // changed mode standing. Named as refused rather than silently counted done,
                     // because putting a mode back to "no mode" is not something this writes.
-                    if (restore.refused.size() < PAGE_LIMIT)
-                    {
-                        restore.refused.add(name(objects.get(recorded.getKey()), recorded.getKey())
-                            + ": the snapshot recorded no mode (the model default) and the " //$NON-NLS-1$
-                            + "project now holds '" + held + "'. Clearing a mode back to the " //$NON-NLS-1$
-                            + "default is not written from here - do it in the support dialog."); //$NON-NLS-1$
-                    }
+                    refuse(restore, name(objects.get(recorded.getKey()), recorded.getKey())
+                        + ": the snapshot recorded no mode (the model default) and the " //$NON-NLS-1$
+                        + "project now holds '" + held + "'. Clearing a mode back to the " //$NON-NLS-1$
+                        + "default is not written from here - do it in the support dialog."); //$NON-NLS-1$
                     continue;
                 }
-                MdObject object = attachedCopy(tx, objects.get(recorded.getKey()));
-                if (object == null)
+                MdObject known = objects.get(recorded.getKey());
+                if (known == null)
                 {
                     restore.missing++;
+                    continue;
+                }
+                // Decided before the write: a subordinate entity is a real target - the registry
+                // keeps modes for attributes, tabular sections, forms, templates and commands as
+                // readily as for the objects that own them - and an object the write cannot
+                // address is a refusal. Counting it missing stated a deletion nobody established
+                // and left the mode unwritten while the answer called the object absent.
+                if (restoreTargetFor(known) == RestoreTarget.MISSING)
+                {
+                    refuse(restore, name(known, recorded.getKey()) + ": the object is in the " //$NON-NLS-1$
+                        + "configuration but has no owner a mode could be written through"); //$NON-NLS-1$
+                    continue;
+                }
+                MdObject object = attachedCopy(tx, known);
+                if (object == null)
+                {
+                    // In the configuration, addressable, and still not held by the transaction:
+                    // a write that did not happen is named as one, not reported as an object that
+                    // was never there.
+                    refuse(restore, name(known, recorded.getKey()) + ": the object could not be " //$NON-NLS-1$
+                        + "reached inside the write transaction, so its mode was not written"); //$NON-NLS-1$
                     continue;
                 }
                 setOne(service, setter, info, object, recorded, support, restore);
             }
         }
+    }
+
+    /** What a restore can do with the object a recorded entry names. */
+    static enum RestoreTarget
+    {
+        /** A top object or the configuration itself, written directly. */
+        TOP,
+
+        /** A subordinate entity - attribute, tabular section, form, template, command - written through the object that holds it. */
+        CHILD_BY_OWNER,
+
+        /** No route to write a mode onto the object at all. */
+        MISSING
+    }
+
+    /**
+     * Says how a restore can reach the object a recorded entry names.
+     * <p>
+     * <b>The route for a subordinate entity was the whole defect.</b> The write used to ask
+     * {@code bmGetFqn()} first, which answers for top objects only and throws for everything under
+     * one - so every attribute, form, template and command came back unreachable and the restore
+     * counted it as absent from a configuration that had it. Classification here is by structure -
+     * what contains the object - because that is answerable without a transaction and is what
+     * decides the route: an object the configuration holds directly is written as itself, a
+     * subordinate through the object that owns it, and an object with no owner to reach it through
+     * is named as a refusal rather than attempted.
+     * </p>
+     *
+     * @param object the object the index found for a recorded identity; may be <code>null</code>.
+     * @return TOP, CHILD_BY_OWNER or MISSING
+     */
+    static RestoreTarget restoreTargetFor(MdObject object)
+    {
+        if (object == null)
+        {
+            return RestoreTarget.MISSING;
+        }
+        if (object instanceof Configuration)
+        {
+            return RestoreTarget.TOP;
+        }
+        org.eclipse.emf.ecore.EObject container = object.eContainer();
+        while (container != null && !(container instanceof MdObject))
+        {
+            // Through wrappers: a containment reference can hold one, and the owning object sits
+            // above it, not beside it.
+            container = container.eContainer();
+        }
+        if (container == null || container instanceof Configuration)
+        {
+            return RestoreTarget.TOP;
+        }
+        return RestoreTarget.CHILD_BY_OWNER;
     }
 
     /**
@@ -616,41 +687,55 @@ public final class BmSupportRegistryHelper
      * was.
      * </p>
      * <p>
-     * An object with no address of its own, or one the transaction cannot resolve, comes back as
-     * <code>null</code> and is counted as missing rather than written to a copy.
+     * <b>Reached by identity, not by FQN.</b> {@code bmGetFqn()} answers for top objects only and
+     * throws on a subordinate entity, and the FQN route this used to take answered
+     * <code>null</code> for exactly the objects the registry keeps modes for. {@code bmGetId()}
+     * answers for any BM object and {@code getObjectById} returns the transaction's own instance
+     * of it, which is how the rest of this plugin reaches a form or an attribute inside a write.
      * </p>
      *
      * @param tx the write transaction.
      * @param object the object as it was read outside the transaction.
-     * @return the transaction's own instance, or <code>null</code>
+     * @return the transaction's own instance, or <code>null</code> when there is none to reach
      */
     private static MdObject attachedCopy(IBmTransaction tx, MdObject object)
     {
         if (tx == null || object == null)
         {
-            return object;
+            return null;
         }
         if (!(object instanceof com._1c.g5.v8.bm.core.IBmObject))
         {
-            return object;
+            return null;
         }
-        String fqn;
         try
         {
-            fqn = ((com._1c.g5.v8.bm.core.IBmObject)object).bmGetFqn();
+            Object attached = tx.getObjectById(((com._1c.g5.v8.bm.core.IBmObject)object).bmGetId());
+            return attached instanceof MdObject ? (MdObject)attached : null;
         }
-        catch (RuntimeException notATopObject)
-        {
-            // A child carries no address of its own; the mode of a child follows its owner, and the
-            // registry records owners.
-            return null;
-        }
-        if (fqn == null || fqn.isEmpty())
+        catch (RuntimeException notReachable)
         {
             return null;
         }
-        Object attached = tx.getTopObjectByFqn(fqn);
-        return attached instanceof MdObject ? (MdObject)attached : null;
+    }
+
+    /**
+     * Adds one refusal to the report, bounded by the page limit.
+     * <p>
+     * Every branch that names a refused object answers through here. One of them used to check the
+     * bound and the others did not, so a configuration where the write refused wholesale built an
+     * answer the size the object listing is paged to avoid.
+     * </p>
+     *
+     * @param restore where the refusal is recorded.
+     * @param refusal the object and why its mode was not written.
+     */
+    static void refuse(Restore restore, String refusal)
+    {
+        if (restore.refused.size() < PAGE_LIMIT)
+        {
+            restore.refused.add(refusal);
+        }
     }
 
     /**
@@ -675,7 +760,7 @@ public final class BmSupportRegistryHelper
         }
         if (mode == null)
         {
-            restore.refused.add(name(object, recorded.getKey()) + ": the snapshot records mode \"" //$NON-NLS-1$
+            refuse(restore, name(object, recorded.getKey()) + ": the snapshot records mode \"" //$NON-NLS-1$
                 + recorded.getValue() + "\", which this EDT does not have"); //$NON-NLS-1$
             return;
         }
@@ -697,7 +782,7 @@ public final class BmSupportRegistryHelper
             // over a configuration where half the work is still unprotected.
             Throwable cause = refused instanceof java.lang.reflect.InvocationTargetException
                 && refused.getCause() != null ? refused.getCause() : refused;
-            restore.refused.add(name(object, recorded.getKey()) + ": " //$NON-NLS-1$
+            refuse(restore, name(object, recorded.getKey()) + ": " //$NON-NLS-1$
                 + cause.getClass().getSimpleName()
                 + (cause.getMessage() == null ? "" : " " + cause.getMessage())); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -1097,9 +1182,14 @@ public final class BmSupportRegistryHelper
         collectPerParent(support, object.getUuid(), state.perParent);
         state.canEdit = service.manager.canEdit(object);
         state.canDelete = service.manager.canDelete(object);
-        if (!state.canEdit && CHANGES_ALLOWED.equals(state.userMode))
+        // Keyed on the registry's own record, not on the manager's aggregate. In the vendor
+        // distribution file state the manager reduces every mode to ChangesNotAllowed, so keying
+        // the note on the aggregate silenced exactly the case the note exists to explain: the
+        // records say ChangesAllowed, the environment edits nothing, and a reader takes the mode
+        // line over the canEdit line.
+        if (!state.canEdit && registryAllowsEdits(state.userMode, state.perParent))
         {
-            state.editabilityNote = "the registry records " + state.userMode + " for this object " //$NON-NLS-1$ //$NON-NLS-2$
+            state.editabilityNote = "the registry records " + CHANGES_ALLOWED + " for this object " //$NON-NLS-1$ //$NON-NLS-2$
                 + "and the environment still edits nothing: a configuration read as a vendor " //$NON-NLS-1$
                 + "distribution is not editable as a whole, whatever its records say. Read " //$NON-NLS-1$
                 + "fileState from operation=status."; //$NON-NLS-1$
@@ -1183,6 +1273,35 @@ public final class BmSupportRegistryHelper
                 break;
             }
         }
+    }
+
+    /**
+     * Whether the registry itself records that this object may be changed.
+     * <p>
+     * Asked of the manager's aggregate AND of every per-vendor record, because the two can
+     * disagree: in the vendor distribution file state the manager reduces every mode to
+     * ChangesNotAllowed while the records still say ChangesAllowed. The contradiction is what the
+     * editability note exists to explain, so the question is asked of the records as well.
+     * </p>
+     *
+     * @param aggregated the manager's answer across every vendor at once; may be <code>null</code>.
+     * @param perParent what each vendor configuration records for the object.
+     * @return <code>true</code> when any record says the object may be changed
+     */
+    static boolean registryAllowsEdits(String aggregated, List<ParentModes> perParent)
+    {
+        if (CHANGES_ALLOWED.equals(aggregated))
+        {
+            return true;
+        }
+        for (ParentModes modes : perParent)
+        {
+            if (CHANGES_ALLOWED.equals(modes.userMode))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1665,7 +1784,8 @@ public final class BmSupportRegistryHelper
     }
 
     /**
-     * Adds the attributes, tabular sections, forms, templates and commands under one object.
+     * Adds the attributes, tabular sections, forms, templates, commands and nested subsystems
+     * under one object.
      * <p>
      * <b>The registry keeps modes for these, so a restore that cannot reach them restores half of
      * what it took.</b> A support mode belongs to any object the vendor delivered, subordinate ones
@@ -1678,6 +1798,11 @@ public final class BmSupportRegistryHelper
      * Walked rather than enumerated by kind. The model knows what an object contains; a list of
      * kinds written here would go stale the first time the platform adds one, and go stale
      * silently, because a missing kind looks the same as an object that has none.
+     * </p>
+     * <p>
+     * Nested subsystems are asked for by the typed accessor on top of the walk, because they do
+     * not arrive through {@code eAllContents} - the naming walk below the snapshot found the same
+     * thing, and a subsystem nested one level down kept a mode the index could not hand back.
      * </p>
      *
      * @param owner the object to walk under.
@@ -1705,6 +1830,22 @@ public final class BmSupportRegistryHelper
         {
             // One object that will not open its contents costs its subordinates, not the index.
             Activator.logDebug("support: could not walk under an object: " + refused); //$NON-NLS-1$
+        }
+        if (owner instanceof com._1c.g5.v8.dt.metadata.mdclass.Subsystem)
+        {
+            for (com._1c.g5.v8.dt.metadata.mdclass.Subsystem nested
+                : ((com._1c.g5.v8.dt.metadata.mdclass.Subsystem)owner).getSubsystems())
+            {
+                if (nested == null)
+                {
+                    continue;
+                }
+                if (nested.getUuid() != null)
+                {
+                    objects.put(nested.getUuid(), nested);
+                }
+                indexSubordinates(nested, objects);
+            }
         }
     }
 

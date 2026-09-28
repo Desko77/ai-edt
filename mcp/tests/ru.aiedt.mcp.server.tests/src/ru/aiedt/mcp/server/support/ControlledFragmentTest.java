@@ -119,4 +119,90 @@ public class ControlledFragmentTest
         assertEquals(0, ControlledFragment.controlledPartOf(null).size());
         assertNull(ControlledFragment.describeDrift(null, BASE));
     }
+
+    @Test
+    public void aRecasedStringLiteralIsADriftNotAMatch()
+    {
+        // A literal is data: the delivery re-casing "Готово" to "готово" changes what the code
+        // writes, and the platform refuses the extension for it. The comparison lowercased the
+        // whole line, and this read as a match.
+        String handler = String.join("\n",
+            "	Начало();",
+            "	Сообщить(\"Готово\");",
+            "	Конец();");
+        String recased = String.join("\n",
+            "	Начало();",
+            "	Сообщить(\"готово\");",
+            "	Конец();");
+
+        assertNotNull("a re-cased literal is a change in the controlled code, not formatting: "
+            + handler, ControlledFragment.describeDrift(handler, recased));
+    }
+
+    @Test
+    public void aRecasedCommentIsADriftNotAMatch()
+    {
+        String handler = String.join("\n",
+            "	Начало();",
+            "	// Права уже проверены",
+            "	Конец();");
+        String recased = String.join("\n",
+            "	Начало();",
+            "	// права уже проверены",
+            "	Конец();");
+
+        assertNotNull("a comment is text the delivery changed, and the platform compares it: ",
+            ControlledFragment.describeDrift(handler, recased));
+    }
+
+    @Test
+    public void aSlashSlashInsideALiteralDoesNotStartAComment()
+    {
+        // The // in "http://x" is inside a literal, not a comment opener. A parser that opened a
+        // comment there would keep the rest of the line as written - including the real code
+        // after the closing quote - and report a re-cased identifier as drift.
+        String handler = String.join("\n",
+            "	Сообщить(\"http://x\"); Возврат;",
+            "	Конец();");
+        String recased = String.join("\n",
+            "	СООБЩИТЬ(\"http://x\"); возврат;",
+            "	Конец();");
+
+        assertNull("identifier case is still ignored when a literal carries //: " + handler,
+            ControlledFragment.describeDrift(handler, recased));
+    }
+
+    @Test
+    public void escapedQuotesKeepTheLiteralIntact()
+    {
+        // "" inside a literal is an escaped quote, not the end of it. A parser that closed the
+        // string at the first quote of the pair would go on lowercasing literal text.
+        String handler = String.join("\n",
+            "	Начало();",
+            "	Сообщить(\"Контрагент \"\"Ромашка\"\" готов\");",
+            "	Конец();");
+        String same = String.join("\n",
+            "	Начало();",
+            "	Сообщить(\"Контрагент \"\"Ромашка\"\" готов\");",
+            "	Конец();");
+        String recased = String.join("\n",
+            "	Начало();",
+            "	Сообщить(\"Контрагент \"\"Ромашка\"\" ГОТОВ\");",
+            "	Конец();");
+
+        assertNull(ControlledFragment.describeDrift(handler, same));
+        assertNotNull("a re-cased word inside an escaped literal is still inside the literal: ",
+            ControlledFragment.describeDrift(handler, recased));
+    }
+
+    @Test
+    public void theCaveatTravelsWithACleanAnswer()
+    {
+        // A clean answer never travels bare: it says what the comparison normalised, because a
+        // reader who takes true as "the platform will accept it" has been promised something
+        // this check never made.
+        String caveat = ControlledFragment.matchCaveat();
+        assertTrue(caveat, caveat.contains("compared as written"));
+        assertTrue(caveat, caveat.contains("promise"));
+    }
 }
