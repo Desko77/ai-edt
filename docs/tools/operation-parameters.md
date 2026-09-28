@@ -218,8 +218,8 @@
 | `EditMetadataTool` | `remove_form_parameter` | `dryRun:boolean`, `formFqn:string`, `name:string`, `projectName:string` | handler FormItemsOps.opRemoveFormParameter, read in place |
 | `EditMetadataTool` | `remove_functional_option_content` | `dryRun:boolean`, `ownerFqn:string`, `projectName:string`, `valueFqn:string` | handler ContentOps.opFunctionalOptionContent, read in place |
 | `EditMetadataTool` | `remove_help` | `content:string`, `dryRun:boolean`, `format:string`, `language:string`, `objectName:string`, `ownerFqn:string`, `projectName:string` | handler SpecializedOps.opSetHelp, read in place |
-| `EditMetadataTool` | `remove_item` | `containerFqn:string`, `name:string` | handler MiscOps.opRemoveItem, read in place |
-| `EditMetadataTool` | `remove_item_universal` | `containerFqn:string`, `name:string` | handler MiscOps.opRemoveItem, read in place |
+| `EditMetadataTool` | `remove_item` | `containerFqn:string`, `dryRun:boolean`, `formFqn:string`, `name:string`, `projectName:string` | handler MiscOps.opRemoveItem, read in place |
+| `EditMetadataTool` | `remove_item_universal` | `containerFqn:string`, `dryRun:boolean`, `formFqn:string`, `name:string`, `projectName:string` | handler MiscOps.opRemoveItem, read in place |
 | `EditMetadataTool` | `remove_object` | `confirm:boolean`, `objectFqn:string`, `projectName:string` | handler ObjectOps.opRemoveObject, delegate MetadataObjectDeleter |
 | `EditMetadataTool` | `remove_object_attribute` | `dryRun:boolean`, `name:string`, `ownerFqn:string`, `projectName:string` | handler ObjectOps.opRemoveObjectAttribute, read in place |
 | `EditMetadataTool` | `remove_object_reference` | `dryRun:boolean`, `ownerFqn:string`, `projectName:string`, `property:string`, `valueFqn:string` | handler ObjectOps.opObjectReference, read in place |

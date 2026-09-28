@@ -10,6 +10,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.Test;
@@ -17,17 +18,15 @@ import org.junit.Test;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.UnreadArguments;
+
 /**
- * What {@code remove_item} answers, given that it removes nothing anywhere.
+ * What {@code remove_item} answers in each context it can be pointed at.
  * <p>
- * All three of its branches used to come back {@code success: true} carrying a sentence that named
- * another operation. A caller reads the success flag, so the item was taken for removed; measured
- * on a stand 31.08, the element stayed on the form and the marker EDT had raised on it stayed with
- * it, through two identical calls.
- * </p>
- * <p>
- * The branch count matters as much as the branch: three contexts answered this way, and only one of
- * them was measured.
+ * A form item is removed: the form comes from {@code formFqn}, or from {@code containerFqn} as its
+ * alias, and the call reaches the form model. A template and a metadata object are refused with the
+ * operation that removes from them, and never answer {@code success: true} for a removal that did
+ * not happen.
  * </p>
  */
 public class ARemovalThatRemovedNothingSaysSoTest
@@ -49,23 +48,60 @@ public class ARemovalThatRemovedNothingSaysSoTest
             answered.toString().contains("Nothing was removed"));
     }
 
-    @Test
-    public void aFormIsRefusedAndTheFormOperationIsNamed()
+    /**
+     * Asserts that a form removal went past the argument reading and the scope decision to the
+     * project lookup, which is the first step that needs a workspace.
+     *
+     * @param answered the answer of a removal against a project that does not exist
+     */
+    private static void reachedTheProjectLookup(JsonObject answered)
     {
-        JsonObject answered = removeFrom("Catalog.Товары.Form.ФормаСписка.Form");
-        isRefusal(answered);
-        assertTrue("the caller needs the operation that does remove from a form",
-            answered.toString().contains("edit_form operation=remove_item"));
+        String said = answered.toString();
+        assertFalse("formFqn is an argument of remove_item", said.contains("is not read"));
+        assertFalse("a form is removed from, not refused", said.contains("does not touch one"));
+        assertFalse(said.contains("Nothing was removed"));
+        assertTrue("the form branch resolves the project next: " + said,
+            said.contains("Project not found: 'AnyProject'"));
     }
 
-    /** The spelling the neighbouring operation accepted and this one did not. */
     @Test
-    public void aCommonFormIsRefusedAsAForm()
+    public void aFormItemIsRemovedFromTheFormNamedByFormFqn()
     {
-        JsonObject answered = removeFrom("CommonForm.ПодборТоваров");
-        isRefusal(answered);
-        assertTrue("a common form is a form, whichever way its FQN is written",
-            answered.toString().contains("edit_form operation=remove_item"));
+        Map<String, String> params = new HashMap<>();
+        params.put("formFqn", "Catalog.Товары.Form.ФормаСписка.Form");
+        params.put("name", "КнопкаПроверки");
+        params.put("projectName", "AnyProject");
+        reachedTheProjectLookup(
+            JsonParser.parseString(new MiscOps().opRemoveItem(params)).getAsJsonObject());
+    }
+
+    /** containerFqn names the form too, the same way move_item reads it. */
+    @Test
+    public void containerFqnIsAnAliasOfFormFqn()
+    {
+        reachedTheProjectLookup(removeFrom("Catalog.Товары.Form.ФормаСписка.Form"));
+    }
+
+    /** A common form is a form, whichever way its FQN is written. */
+    @Test
+    public void aCommonFormIsRemovedFromAsAForm()
+    {
+        reachedTheProjectLookup(removeFrom("CommonForm.ПодборТоваров"));
+    }
+
+    /** The facade refuses a supplied argument the operation's parameter table does not list. */
+    @Test
+    public void formFqnIsAParameterOfRemoveItem()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("formFqn", "Catalog.Товары.Form.ФормаСписка.Form");
+        params.put("name", "КнопкаПроверки");
+        params.put("projectName", "AnyProject");
+        for (String operation : new String[] { "remove_item", "remove_item_universal" })
+        {
+            List<String> unread = UnreadArguments.of("EditMetadataTool", operation, params);
+            assertTrue(operation + " leaves unread: " + unread, unread.isEmpty());
+        }
     }
 
     /**

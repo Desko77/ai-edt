@@ -280,39 +280,81 @@ final class MiscOps
     }
 
     /**
-     * The universal {@code remove_item}, which removes nothing and says so.
+     * Removes a form item by name, and refuses for a template or a metadata object.
      * <p>
-     * Every context it can be pointed at - a form, a template, a metadata object - has its own
-     * removal operation, and this one forwards to none of them. That is a decision, not a gap: the
-     * typed operations resolve their own containers and report their own failures, and a router
-     * that mutated on their behalf would have to duplicate both.
+     * The form is taken from {@code formFqn}, or from {@code containerFqn} when only that is given,
+     * the same way {@link #opMoveItem(Map)} reads it; {@code name} is the item, at any depth of the
+     * form including its root. The removal is the one {@code edit_form operation=remove_item}
+     * performs, and the answer is a success only when the item was found and removed.
      * </p>
      * <p>
-     * <b>What was wrong is the answer, not the routing.</b> All three branches came back
-     * {@code success: true} carrying a sentence that named another operation. A caller reading the
-     * success flag - which is what a caller reads - took the item for removed. Measured on a stand
-     * 31.08: the element stayed on the form and the marker EDT had raised on it stayed with it,
-     * through two identical calls.
+     * A template and a metadata object each have their own removal operations, and this one does
+     * not forward to them: the answer is a refusal naming the operation that does the work, and
+     * nothing is written.
      * </p>
      *
      * @param params the call's arguments.
-     * @return a refusal naming the operation that does the work, in every context
+     * @return the removal result for a form; a refusal naming the operation for any other container
      */
     String opRemoveItem(Map<String, String> params)
     {
         String containerFqn = JsonUtils.extractStringArgument(params, "containerFqn"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
         String itemName = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
-        if (containerFqn == null || containerFqn.isEmpty() || itemName == null || itemName.isEmpty())
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String named = formFqn != null && !formFqn.isEmpty() ? formFqn : containerFqn;
+        if (named == null || named.isEmpty() || itemName == null || itemName.isEmpty())
         {
-            return ToolResult.error("removeItem requires containerFqn and name parameters.").toJson(); //$NON-NLS-1$
+            return ToolResult.error("remove_item requires name plus formFqn (or containerFqn) " //$NON-NLS-1$
+                + "naming the form that holds it.").toJson(); //$NON-NLS-1$
         }
-        ContainerScope scope = ContainerScope.of(containerFqn);
-        Map<String, Object> routing = new LinkedHashMap<>();
-        routing.put("containerFqn", containerFqn); //$NON-NLS-1$
-        routing.put("itemName", itemName); //$NON-NLS-1$
-        routing.put("scope", scope.name().toLowerCase(java.util.Locale.ROOT)); //$NON-NLS-1$
-        return ToolResult.error(removalRefusal(scope, containerFqn, itemName))
-            .put("removeItemRouting", routing) //$NON-NLS-1$
+        final String target = MetadataTypeCatalog.normalizeFqn(named);
+        ContainerScope scope = ContainerScope.of(target);
+        if (scope != ContainerScope.FORM)
+        {
+            Map<String, Object> routing = new LinkedHashMap<>();
+            routing.put("containerFqn", named); //$NON-NLS-1$
+            routing.put("itemName", itemName); //$NON-NLS-1$
+            routing.put("scope", scope.name().toLowerCase(java.util.Locale.ROOT)); //$NON-NLS-1$
+            return ToolResult.error(removalRefusal(scope, named, itemName))
+                .put("removeItemRouting", routing) //$NON-NLS-1$
+                .toJson();
+        }
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName"); //$NON-NLS-1$
+        if (!err.isEmpty())
+        {
+            return ToolResult.error(err.trim()).toJson();
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+
+        final BmFormHelper fHelper = helper;
+        final String fItemName = itemName;
+        final boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+
+        String result = fHelper.executeFormOperation(project, target, dryRun,
+            (tx, form) -> fHelper.removeItemByName(form, fItemName)
+                ? "Element '" + fItemName + "' removed from form." //$NON-NLS-1$ //$NON-NLS-2$
+                : "Error: Element not found: " + fItemName); //$NON-NLS-1$
+
+        if (result == null || result.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return EditMetadataTool.formatFormResult(result, "remove_item", target); //$NON-NLS-1$
+        }
+        return ToolResult.success()
+            .put("operation", "remove_item") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("formFqn", target) //$NON-NLS-1$
+            .put("name", fItemName) //$NON-NLS-1$
+            .put("dryRun", dryRun) //$NON-NLS-1$
+            .put("message", result) //$NON-NLS-1$
             .toJson();
     }
 
@@ -326,7 +368,7 @@ final class MiscOps
      * an instruction.
      * </p>
      *
-     * @param scope what the container FQN names.
+     * @param scope what the container FQN names; a form never reaches here, it is removed from.
      * @param containerFqn the container, repeated into the sentence so the caller can see what was
      *            read.
      * @param itemName the item the caller wanted gone.
@@ -337,11 +379,6 @@ final class MiscOps
         StringBuilder said = new StringBuilder("Nothing was removed. "); //$NON-NLS-1$
         switch (scope)
         {
-            case FORM:
-                said.append("'").append(containerFqn).append("' names a form, and remove_item does ") //$NON-NLS-1$ //$NON-NLS-2$
-                    .append("not touch one. Call edit_form operation=remove_item with formFqn=") //$NON-NLS-1$
-                    .append(containerFqn).append(" name=").append(itemName).append('.'); //$NON-NLS-1$
-                break;
             case TEMPLATE:
                 said.append("'").append(containerFqn).append("' names a template. Which operation ") //$NON-NLS-1$ //$NON-NLS-2$
                     .append("removes from it depends on what the template holds: dcs_workshop for ") //$NON-NLS-1$

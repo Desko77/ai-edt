@@ -548,8 +548,9 @@ public class EditMetadataTool implements IMcpTool
                 "Child kind for adopt_child: Form / Attribute / TabularSection / Template " //$NON-NLS-1$
                     + "/ Command / Dimension / Resource.") //$NON-NLS-1$
             .stringProperty("containerFqn", //$NON-NLS-1$
-                "remove_item: the form item holding the one named by `name`. move_item: the form itself, with " //$NON-NLS-1$
-                + "parentName naming the destination container.") //$NON-NLS-1$ //$NON-NLS-1$
+                "remove_item and move_item: the form, an alias of formFqn. remove_item finds `name` " //$NON-NLS-1$
+                + "anywhere on the form, root included, so no parent group is passed; move_item takes " //$NON-NLS-1$
+                + "the destination container from parentName.") //$NON-NLS-1$
             // ---- Composition settings, for the operations run by dcs_workshop under an alias ----
             .stringProperty("parentPath", //$NON-NLS-1$
                 "add_settings_group: the group to nest the new one inside, as " //$NON-NLS-1$
@@ -2539,7 +2540,8 @@ public class EditMetadataTool implements IMcpTool
         sb.append("Rights API present (for setRoleRight)? ") //$NON-NLS-1$
             .append(ru.aiedt.mcp.server.support.BmRightsHelper.isAvailable()).append("\n"); //$NON-NLS-1$
         sb.append("Common group (2): move_item moves a form item between containers; " //$NON-NLS-1$
-            + "remove_item routes by FQN shape to the typed remove operation.\n"); //$NON-NLS-1$
+            + "remove_item removes a form item (formFqn or containerFqn plus name); for a template " //$NON-NLS-1$
+            + "or a metadata object it refuses and names the operation that removes from it.\n"); //$NON-NLS-1$
         sb.append("\nDefensive layers (1.40):\n"); //$NON-NLS-1$
         sb.append("- 3.8.1 EventSubscription handler auto-prefix CommonModule.\n"); //$NON-NLS-1$
         sb.append("- 3.8.2 Extension CommonModule guards (privileged, global+server).\n"); //$NON-NLS-1$
@@ -2871,7 +2873,7 @@ public class EditMetadataTool implements IMcpTool
             + "call again with confirm=true to carry it out. Ignored by every other " //$NON-NLS-1$
             + "operation.\n\n"); //$NON-NLS-1$
         sb.append("### containerFqn\n\n"); //$NON-NLS-1$
-        sb.append("For remove_item: FQN of the form-item container - the item (group / table / command bar) that holds the target named by `name`. For move_item: the form FQN, accepted as an alias of formFqn; the destination container is parentName (omit it to move the item to the form root) and beforeName places it in front of a named sibling.\n\n"); //$NON-NLS-1$
+        sb.append("For remove_item and move_item: the form FQN, accepted as an alias of formFqn. remove_item finds the item named by `name` anywhere on the form, root included, and takes no parent group. For move_item the destination container is parentName (omit it to move the item to the form root) and beforeName places it in front of a named sibling.\n\n"); //$NON-NLS-1$
         sb.append("### content\n\n"); //$NON-NLS-1$
         sb.append("Plain-text content for a TextDocument (Template.txt) or HTMLDocument (Template.htmldoc) template. Used by add_template (fill on create), set_template_content (replace whole content, empty string clears), and returned by get_template_content. For SpreadsheetDocument use mxl_workshop, for DataCompositionSchema use dcs_workshop.\n\n"); //$NON-NLS-1$
         sb.append("### disableIndices\n\n"); //$NON-NLS-1$
