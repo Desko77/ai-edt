@@ -151,6 +151,7 @@ public class GetFormStructureTool implements IMcpTool
         // M1: dynamic-list data attributes (query + main table) - read from
         // Form.getAttributes(), not the UI items tree.
         final com.google.gson.JsonArray[] dynamicListsRef = new com.google.gson.JsonArray[1];
+        final List<List<Map<String, Object>>> appearanceRef = new ArrayList<>();
         final boolean includeCi = includeCommandInterface;
 
         String operationError = helper.executeFormOperation(project, fqn, (transaction, form) -> {
@@ -173,6 +174,7 @@ public class GetFormStructureTool implements IMcpTool
                     commandInterfaceObj[0] = collectCommandInterface(form);
                 }
                 dynamicListsRef[0] = collectDynamicLists(form);
+                appearanceRef.add(FormAppearanceOps.describe(form));
             }
             catch (Throwable t)
             {
@@ -218,6 +220,10 @@ public class GetFormStructureTool implements IMcpTool
         if (dynamicListsRef[0] != null && dynamicListsRef[0].size() > 0)
         {
             envelope.add("dynamicLists", dynamicListsRef[0]); //$NON-NLS-1$
+        }
+        if (!appearanceRef.isEmpty() && !appearanceRef.get(0).isEmpty())
+        {
+            envelope.add("conditionalAppearance", new com.google.gson.Gson().toJsonTree(appearanceRef.get(0))); //$NON-NLS-1$
         }
         JsonArray emptyGroups = new JsonArray();
         JsonArray emptyTabs = new JsonArray();

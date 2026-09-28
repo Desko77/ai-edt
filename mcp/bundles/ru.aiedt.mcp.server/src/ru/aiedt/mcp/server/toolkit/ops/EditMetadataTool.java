@@ -118,6 +118,8 @@ public class EditMetadataTool implements IMcpTool
     private final ObjectOps objectOps = new ObjectOps();
     private final SpecializedOps specializedOps = new SpecializedOps();
     private final FormEventOps formEventOps = new FormEventOps();
+
+    private final FormAppearanceOps formAppearanceOps = new FormAppearanceOps();
     private final FormCommandInterfaceOps formCommandInterfaceOps = new FormCommandInterfaceOps();
     private final FormCreateOps formCreateOps = new FormCreateOps();
     private final FormItemsOps formItemsOps = new FormItemsOps();
@@ -479,6 +481,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("formFqn", //$NON-NLS-1$
                 "FQN of the form for form operations (e.g. Catalog.Users.Form.ItemForm, " //$NON-NLS-1$
                     + "CommonForm.X.Form).") //$NON-NLS-1$
+            .stringProperty("itemNames", //$NON-NLS-1$
+                "add_form_appearance_rule: form items to style, comma-separated; omitted = whole form.") //$NON-NLS-1$
+            .stringProperty("field", //$NON-NLS-1$
+                "add/remove_form_appearance_rule: data path the condition reads (Объект.Флаг).") //$NON-NLS-1$
+            .integerProperty("index", //$NON-NLS-1$
+                "remove_form_appearance_rule: 0-based rule index.") //$NON-NLS-1$
             .booleanProperty("keyParameter", //$NON-NLS-1$
                 "add_form_parameter: mark the parameter as a key parameter (FormParameter.keyParameter). " //$NON-NLS-1$
                 + "Default false.") //$NON-NLS-1$
@@ -2867,7 +2875,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_web_service_operation", "Services HTTP/SOAP", "", p -> serviceOps.opRemoveWebServiceOperation(p));
         reg(m, "add_operation_parameter", "Services HTTP/SOAP", "typed Web operation parameter", p -> serviceOps.opAddOperationParameter(p));
 
-        // ---- Forms (27) ----
+        // ---- Forms (30) ----
         reg(m, "create_form", "Forms", "", p -> formCreateOps.opCreateForm(p));
         reg(m, "add_form_attribute", "Forms", "", p -> formItemsOps.opAddFormAttribute(p));
         reg(m, "add_form_attribute_column", "Forms", "", p -> formItemsOps.opAddFormAttributeColumn(p));
@@ -2897,6 +2905,9 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_form_command", "Forms", "delete a form command (form.getFormCommands), incl. orphans", p -> formItemsOps.opRemoveFormCommand(p));
         reg(m, "set_form_command_property", "Forms", "set a form command display property: title / representation (Auto,Text,Picture,TextPicture) / picture (build-limited)", p -> formItemsOps.opSetFormCommandProperty(p));
         reg(m, "set_form_item_property", "Forms", "alias of set_property", p -> formItemsOps.opSetFormItemProperty(p));
+        reg(m, "add_form_appearance_rule", "Forms", "conditional appearance rule: itemNames, condition, appearance", p -> formAppearanceOps.opAddFormAppearanceRule(p));
+        reg(m, "list_form_appearance_rules", "Forms", "the form's conditional appearance rules", p -> formAppearanceOps.opListFormAppearanceRules(p));
+        reg(m, "remove_form_appearance_rule", "Forms", "remove a rule by index or by the field of its condition", p -> formAppearanceOps.opRemoveFormAppearanceRule(p));
 
         // ---- Templates (6) ----
         reg(m, "add_template", "Templates", "", p -> templateOps.opAddTemplate(p));

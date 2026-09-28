@@ -69,8 +69,12 @@ public class TheToolListHasAWeightBudgetTest
      * export_database_extension on config_io: two operations, their overwrite and allowOutOfSync
      * arguments, and the description sentence that an old file can never pass as the result.
      * </p>
+     * <p>
+     * Raised from 169962 to 170245 for itemNames, field and index on edit_metadata:
+     * add_form_appearance_rule, list_form_appearance_rules and remove_form_appearance_rule.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 169962;
+    private static final int DOCUMENT_BUDGET = 170245;
 
     private LiveServer server;
 

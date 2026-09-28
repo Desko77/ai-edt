@@ -492,6 +492,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * export_database_configuration and export_database_extension on config_io. Measured 28.09:
      * 93609.
      * </p>
+     * <p>
+     * And one by 196 for itemNames, field and index on edit_metadata: add_form_appearance_rule and
+     * remove_form_appearance_rule name the styled form items, the field of the condition and the
+     * rule to remove: 93805.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 93609;
+    private static final int DOCUMENT_PROSE = 93805;
 }
