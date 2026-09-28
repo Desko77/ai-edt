@@ -2286,14 +2286,6 @@ public class EditMetadataTool implements IMcpTool
             sb.append("Single constructor across 7 operation groups. ") //$NON-NLS-1$
                 .append("Pass `operation=<name>` plus operation-specific arguments. ") //$NON-NLS-1$
                 .append("Add `dryRun=true` to preview changes inside a BM transaction.\n\n"); //$NON-NLS-1$
-            sb.append("**Status (1.43.0):** 7 operation groups + 1.42 RSV 4.2 parity ops. ") //$NON-NLS-1$
-                .append("Object enhancements (propertyMismatch idempotency, cascade form cleanup) ") //$NON-NLS-1$
-                .append("plus 4 defensive layers (3.8.1-3.8.4) for headless metadata creation. ") //$NON-NLS-1$
-                .append("1.42.5 fixes: canonical primitive Type proxy via IEObjectProvider, ") //$NON-NLS-1$
-                .append("create_form writes Form.form/Module.bsl on disk, full TypeDescription ") //$NON-NLS-1$
-                .append("qualifier wiring (length/precision/fractionDigits/dateFractions/nonNegative). ") //$NON-NLS-1$
-                .append("1.43 deferred-block work: deep Type resolution in in-session BM, ") //$NON-NLS-1$
-                .append("MXL cell mutation persistence to .mxlx, extension top-level form test.\n\n"); //$NON-NLS-1$
 
             sb.append(buildOperationCatalogHelp());
 
@@ -2638,9 +2630,9 @@ public class EditMetadataTool implements IMcpTool
 
         // ---- Command interface (5) ----
         reg(m, "set_subsystems_order", "Command interface", "Configuration: order of subsystem sections", p -> commandInterfaceOps.opSetSubsystemsOrder(p));
-        reg(m, "set_subsystem_visibility", "Command interface", "Configuration: show/hide a subsystem section; role=<Role FQN> sets one role's per-role view (RSV 5.10)", p -> commandInterfaceOps.opSetSubsystemVisibility(p));
-        reg(m, "set_main_section_command_visibility", "Command interface", "Configuration main section: show/hide a command; role=<Role FQN> for per-role (RSV 5.10)", p -> commandInterfaceOps.opSetMainSectionCommandVisibility(p));
-        reg(m, "set_subsystem_command_visibility", "Command interface", "subsystem command interface: show/hide a command; role=<Role FQN> for per-role (RSV 5.10)", p -> commandInterfaceOps.opSetSubsystemCommandVisibility(p));
+        reg(m, "set_subsystem_visibility", "Command interface", "Configuration: show/hide a subsystem section; role=<Role FQN> sets one role's per-role view", p -> commandInterfaceOps.opSetSubsystemVisibility(p));
+        reg(m, "set_main_section_command_visibility", "Command interface", "Configuration main section: show/hide a command; role=<Role FQN> for per-role", p -> commandInterfaceOps.opSetMainSectionCommandVisibility(p));
+        reg(m, "set_subsystem_command_visibility", "Command interface", "subsystem command interface: show/hide a command; role=<Role FQN> for per-role", p -> commandInterfaceOps.opSetSubsystemCommandVisibility(p));
         reg(m, "set_command_placement", "Command interface", "place command into group, optional order", p -> commandInterfaceOps.opSetCommandPlacement(p));
         reg(m, "set_command_order", "Command interface", "batch-reorder commands in one group (commands JSON array)", p -> commandInterfaceOps.opSetCommandOrder(p));
 

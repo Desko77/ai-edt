@@ -164,8 +164,7 @@ public final class StandardCommandRegistry
             return "Standard command '" + standardCommandName //$NON-NLS-1$
                 + "' is not supported on " + ownerEClassName //$NON-NLS-1$
                 + " forms. The platform creates the button but never renders " //$NON-NLS-1$
-                + "it - this is the 'silent button' bug from the RSV 4.2 " //$NON-NLS-1$
-                + "release notes. Use a regular form command via " //$NON-NLS-1$
+                + "it. Use a regular form command via " //$NON-NLS-1$
                 + "addCommandHandler with a procedure in the form module."; //$NON-NLS-1$
         }
         // Unknown owner - permit but warn.

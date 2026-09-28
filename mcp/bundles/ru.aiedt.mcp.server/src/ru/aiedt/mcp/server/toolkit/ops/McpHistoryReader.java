@@ -26,7 +26,7 @@ public final class McpHistoryReader implements IMcpTool
     public static final String NAME = "get_mcp_history"; //$NON-NLS-1$
 
     private static final String DESC =
-        "Recent MCP tool calls on this EDT-MCP server (observability): which tools ran, " //$NON-NLS-1$
+        "Recent MCP tool calls on this AI-EDT server (observability): which tools ran, " //$NON-NLS-1$
             + "with what arguments (truncated), duration and success/failure - what filled the " //$NON-NLS-1$
             + "agent's context. Bounded in-memory ring buffer (last 200), never persisted. " //$NON-NLS-1$
             + "Optional clear=true empties the buffer after reading."; //$NON-NLS-1$

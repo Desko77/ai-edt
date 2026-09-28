@@ -71,7 +71,7 @@ public final class BmHelpHelper
         + "<meta content=\"text/html; charset=utf-8\" http-equiv=\"Content-Type\"></meta>" //$NON-NLS-1$
         + "<link rel=\"stylesheet\" type=\"text/css\" " //$NON-NLS-1$
         + "href=\"" + MdHelpUtil.MD_HELP_CSS_LINK + "\"></link>" //$NON-NLS-1$ //$NON-NLS-2$
-        + "<meta name=\"GENERATOR\" content=\"1C:EDT MCP\"></meta>" //$NON-NLS-1$
+        + "<meta name=\"GENERATOR\" content=\"AI-EDT\"></meta>" //$NON-NLS-1$
         + "</head><body>\n"; //$NON-NLS-1$
 
     private static final String HTML_FOOTER = "\n</body></html>"; //$NON-NLS-1$
