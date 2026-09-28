@@ -6,18 +6,18 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 125 | a test class named after it |
-| exercised | 165 | reached by some other test |
-| tool-sweep | 56 | declaration checked by the registry-wide contract sweep |
+| exercised | 167 | reached by some other test |
+| tool-sweep | 55 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 46 | needs a display or an extension point |
-| workspace-bound | 39 | drives a live EDT project or debug session |
+| workspace-bound | 38 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **431** | across 444 test classes |
+| **total** | **431** | across 448 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (39)
+## workspace-bound (38)
 
 **folders**
 - IClusterChangeObserver
@@ -58,7 +58,6 @@ _none_
 - BslSignatureReader
 - BuildTaskHelper
 - ExternalProjectResolver
-- FileMarkers
 - InfobaseIdentity
 - ProjectReadinessGate
 - ProjectScopeResolver
@@ -146,7 +145,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (56)
+## tool-sweep (55)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -189,7 +188,6 @@ _none_
 - ListExtensionsTool
 - OutgoingStructuresReader
 - PlatformDocReader
-- ProblemSummaryReader
 - ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
@@ -206,7 +204,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (165)
+## exercised (167)
 
 **(root)**
 - Activator
@@ -271,6 +269,7 @@ _none_
 - ErrorTags
 - ExportedFiles
 - FacadeParameterHelp
+- FileMarkers
 - FormEventContainers
 - GitRepositoryAccess
 - HistoryFullText
@@ -372,6 +371,7 @@ _none_
 - ObjectSummaryTool
 - ObjectsRevalidator
 - PredefinedOps
+- ProblemSummaryReader
 - ProjectAdminFacadeTool
 - ProjectMetricsTool
 - ProjectProblemsReader
@@ -570,9 +570,9 @@ closes.
 | 9-16 | 51 |
 | 17+ | 20 |
 
-3654 test methods across 444 test classes; 125 classes have a test of their own, median 9 methods each.
+3674 test methods across 448 test classes; 125 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 125 of 431 classes have one: 56 are covered by the registry-wide contract sweep and 39 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 125 of 431 classes have one: 55 are covered by the registry-wide contract sweep and 38 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (1)
 

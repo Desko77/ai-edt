@@ -47,7 +47,7 @@ public final class FileMarkers
     /**
      * Snapshot of markers grouped by severity classification.
      * <ul>
-     * <li>{@code errors}: BLOCKER, CRITICAL (must-fix to compile/deploy)</li>
+     * <li>{@code errors}: ERRORS, BLOCKER, CRITICAL (must-fix to compile/deploy)</li>
      * <li>{@code warnings}: MAJOR (semantic issues, often real bugs)</li>
      * <li>{@code codeStyle}: MINOR, TRIVIAL (style hints)</li>
      * </ul>
@@ -80,12 +80,17 @@ public final class FileMarkers
     }
 
     /**
-     * Returns markers whose object presentation contains the given FQN
-     * (case-insensitive substring match). Limit applied last.
+     * Returns markers whose object presentation names the given FQN or something under it.
+     * <p>
+     * The match is on whole segments, not on a substring: {@code "Catalog.Products"} keeps
+     * {@code "Catalog.Products"} itself and {@code "Catalog.Products.Form.ItemForm"}, but not
+     * {@code "Catalog.ProductsExtra"}, whose first segments share only a prefix with the request.
+     * Limit applied last.
+     * </p>
      *
      * @param markerManager EDT marker manager (must not be null)
      * @param project filter project (must not be null)
-     * @param objectFqn FQN substring, e.g. {@code "Document.SalesOrder.ObjectModule"}
+     * @param objectFqn FQN to keep, e.g. {@code "Document.SalesOrder"}
      *                  (lowercased before comparison; null/empty returns empty list)
      * @param minSeverity minimum severity to include (null = include all)
      * @param limit maximum results (must be &gt; 0)
@@ -121,12 +126,51 @@ public final class FileMarkers
                 {
                     return false;
                 }
-                return presentation.toLowerCase().contains(fqnLower);
+                return matchesAtSegmentBoundary(presentation.toLowerCase(), fqnLower);
             })
             .limit(limit)
             .forEach(marker -> result.add(toInfo(marker)));
 
         return result;
+    }
+
+    /**
+     * Whether a lowercased presentation holds a lowercased FQN as a whole segment chain.
+     * <p>
+     * A match has to start at the beginning of the presentation or right after a {@code '.'}, and
+     * end at the end of the presentation or right before a {@code '.'}. A plain substring match
+     * also answers {@code true} when the requested FQN is only a prefix of a longer segment -
+     * {@code "Catalog.Products"} against {@code "Catalog.ProductsExtra"} - which reports the
+     * errors of an object nobody asked about as the errors of the one asked about.
+     * </p>
+     *
+     * @param presentation the lowercased object presentation; may be <code>null</code>
+     * @param fqn the lowercased FQN to find; may be <code>null</code>
+     * @return <code>true</code> when the FQN stands in the presentation on segment boundaries
+     */
+    public static boolean matchesAtSegmentBoundary(String presentation, String fqn)
+    {
+        if (presentation == null || fqn == null || fqn.isEmpty())
+        {
+            return false;
+        }
+        int from = 0;
+        for (;;)
+        {
+            int index = presentation.indexOf(fqn, from);
+            if (index < 0)
+            {
+                return false;
+            }
+            boolean startsOnBoundary = index == 0 || presentation.charAt(index - 1) == '.';
+            int end = index + fqn.length();
+            boolean endsOnBoundary = end == presentation.length() || presentation.charAt(end) == '.';
+            if (startsOnBoundary && endsOnBoundary)
+            {
+                return true;
+            }
+            from = index + 1;
+        }
     }
 
     /**
@@ -144,6 +188,7 @@ public final class FileMarkers
             String sev = m.severity != null ? m.severity.toUpperCase() : ""; //$NON-NLS-1$
             switch (sev)
             {
+                case "ERRORS": //$NON-NLS-1$
                 case "BLOCKER": //$NON-NLS-1$
                 case "CRITICAL": //$NON-NLS-1$
                     g.errors.add(m);
