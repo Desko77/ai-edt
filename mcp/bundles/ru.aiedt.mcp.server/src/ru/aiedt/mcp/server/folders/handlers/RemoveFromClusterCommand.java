@@ -17,6 +17,7 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.ISources;
 import org.eclipse.ui.handlers.HandlerUtil;
 
@@ -56,9 +57,14 @@ public class RemoveFromClusterCommand
         {
             return null;
         }
+        Shell shell = HandlerUtil.getActiveShell(event);
         for (ObjectInCluster target : targets)
         {
-            service.removeObjectFromCluster(target.project(), target.fqn());
+            if (!service.removeObjectFromCluster(target.project(), target.fqn()))
+            {
+                ClusterCommandHandler.showSaveFailure(shell, target.project());
+                break;
+            }
         }
         return null;
     }

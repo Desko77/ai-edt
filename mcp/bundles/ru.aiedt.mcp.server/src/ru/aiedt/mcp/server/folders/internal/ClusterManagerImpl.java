@@ -148,11 +148,23 @@ public class ClusterManagerImpl
 
 
 
-    private final IClusterStore repository = new YamlClusterStore();
+    private final IClusterStore repository;
 
 
 
     private final Map<String, ClusterStore> projectStorageCache = new HashMap<>();
+
+    /**
+
+     * Projects whose clusters file could not be loaded since the cache entry was last dropped. The
+
+     * file is not read again until {@link #invalidateCache} or {@link #refresh} clears the mark, so
+
+     * a tree that asks once per element does not read and log the same unreadable file each time.
+
+     */
+
+    private final java.util.Set<String> failedLoads = new java.util.HashSet<>();
 
 
 
@@ -185,6 +197,28 @@ public class ClusterManagerImpl
 
 
     private volatile Thread watchThread;
+
+    /**
+     * Creates a manager backed by the YAML cluster repository.
+     */
+    public ClusterManagerImpl()
+    {
+        this(new YamlClusterStore());
+    }
+
+    /**
+     * Creates a manager backed by the supplied repository.
+     *
+     * @param repository the repository used for every load and save
+     */
+    ClusterManagerImpl(IClusterStore repository)
+    {
+        if (repository == null)
+        {
+            throw new IllegalArgumentException("repository must not be null"); //$NON-NLS-1$
+        }
+        this.repository = repository;
+    }
 
 
 
@@ -245,6 +279,8 @@ public class ClusterManagerImpl
         {
 
             projectStorageCache.clear();
+
+            failedLoads.clear();
 
         }
 
@@ -310,7 +346,8 @@ public class ClusterManagerImpl
 
         {
 
-            return loadStorageLocked(project);
+            ClusterStore loaded = loadStorageLocked(project);
+            return loaded == null ? new ClusterStore() : loaded;
 
         }
 
@@ -386,56 +423,52 @@ public class ClusterManagerImpl
 
 
 
+    /**
+     * Creates a cluster at a path and saves it.
+     * <p>
+     * When the file refuses the write the cluster is not kept and listeners are not told it
+     * appeared. A full path that is already taken answers {@code null} the same way, without a write.
+     * </p>
+     *
+     * @param project the project
+     * @param name the cluster name
+     * @param path the collection path; may be {@code null} for a root cluster
+     * @param description the description; may be {@code null}
+     * @return the created cluster, or {@code null} if the full path was taken or the file was not saved
+     */
     @Override
-
     public Cluster createCluster(IProject project, String name, String path, String description)
-
     {
-
         Cluster created;
-
         cacheLock.writeLock().lock();
-
         try
-
         {
-
             ClusterStore storage = loadStorageLocked(project);
-
-            if (storage.getClusterByFullPath(buildFullPath(path, name)) != null)
-
+            if (storage == null)
             {
-
                 return null;
-
             }
-
+            if (storage.getClusterByFullPath(buildFullPath(path, name)) != null)
+            {
+                return null;
+            }
             Cluster cluster = new Cluster(name, path);
-
             cluster.setDescription(description);
-
             cluster.setOrder(nextOrderAtPath(storage, path));
-
             storage.addCluster(cluster);
-
-            repository.save(project, storage);
-
+            if (!repository.save(project, storage))
+            {
+                projectStorageCache.remove(project.getName());
+                return null;
+            }
             created = cluster;
-
         }
-
         finally
-
         {
-
             cacheLock.writeLock().unlock();
-
         }
-
         fireClustersChanged(project);
-
         return created;
-
     }
 
 
@@ -586,6 +619,24 @@ public class ClusterManagerImpl
 
         }
 
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean holdsObjectOrDescendant(IProject project, String objectFqn)
+    {
+        ClusterStore storage = getClusterStorage(project);
+        cacheLock.readLock().lock();
+        try
+        {
+            return storage.holdsObjectOrDescendant(objectFqn);
+        }
+        finally
+        {
+            cacheLock.readLock().unlock();
+        }
     }
 
 
@@ -753,71 +804,49 @@ public class ClusterManagerImpl
 
 
     /**
-
-     * Applies an edit to a project's storage and, if it changed anything, saves and notifies.
-
+     * Applies an edit to a project's storage and, when the edit changed anything and the file
+     * accepted the write, notifies listeners.
      * <p>
-
-     * The edit runs under the write lock, so the storage cannot be read half-changed elsewhere; the
-
-     * notification is sent after the lock is dropped.
-
+     * The edit runs under the write lock. A save that fails drops the cached storage, so the next
+     * read reloads the file that is actually on disk, and answers {@code false} without notifying
+     * listeners.
      * </p>
-
      *
-
      * @param project the project
-
      * @param edit the edit, returning whether it changed anything
-
-     * @return whatever the edit returned
-
+     * @return {@code true} only when the edit changed the storage and the file was saved
      */
-
     private boolean mutate(IProject project, Predicate<ClusterStore> edit)
-
     {
-
-        boolean changed;
-
+        boolean changed = false;
+        boolean saved = false;
         cacheLock.writeLock().lock();
-
         try
-
         {
-
             ClusterStore storage = loadStorageLocked(project);
-
-            changed = edit.test(storage);
-
-            if (changed)
-
+            if (storage == null)
             {
-
-                repository.save(project, storage);
-
+                return false;
             }
-
+            changed = edit.test(storage);
+            if (changed)
+            {
+                saved = repository.save(project, storage);
+                if (!saved)
+                {
+                    projectStorageCache.remove(project.getName());
+                }
+            }
         }
-
         finally
-
         {
-
             cacheLock.writeLock().unlock();
-
         }
-
-        if (changed)
-
+        if (changed && saved)
         {
-
             fireClustersChanged(project);
-
         }
-
-        return changed;
-
+        return changed && saved;
     }
 
 
@@ -836,7 +865,9 @@ public class ClusterManagerImpl
 
      * @param project the project
 
-     * @return the cached storage
+     * @return the cached storage, or <code>null</code> when the repository could not load it now
+
+     *         or on an earlier call since the cache entry was last dropped
 
      */
 
@@ -856,11 +887,33 @@ public class ClusterManagerImpl
 
         }
 
+        if (failedLoads.contains(key))
+
+        {
+
+            return null;
+
+        }
+
         ensureProjectWatched(project);
 
         ClusterStore loaded = repository.load(project);
 
-        projectStorageCache.put(key, loaded);
+        if (loaded != null)
+
+        {
+
+            projectStorageCache.put(key, loaded);
+
+        }
+
+        else
+
+        {
+
+            failedLoads.add(key);
+
+        }
 
         return loaded;
 
@@ -889,6 +942,8 @@ public class ClusterManagerImpl
         {
 
             projectStorageCache.remove(project.getName());
+
+            failedLoads.remove(project.getName());
 
         }
 

@@ -5,33 +5,25 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 127 | a test class named after it |
-| exercised | 171 | reached by some other test |
+| direct | 129 | a test class named after it |
+| exercised | 176 | reached by some other test |
 | tool-sweep | 53 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 46 | needs a display or an extension point |
-| workspace-bound | 35 | drives a live EDT project or debug session |
+| ui-bound | 43 | needs a display or an extension point |
+| workspace-bound | 31 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **432** | across 463 test classes |
+| **total** | **432** | across 469 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (35)
+## workspace-bound (31)
 
 **folders**
-- IClusterChangeObserver
 - IClusterManager
-
-**folders/internal**
-- ClusterManagerImpl
 
 **folders/refactoring**
 - ClusterDeleteRefactorHook
-
-**folders/repository**
-- IClusterStore
-- YamlClusterStore
 
 **labels**
 - MarkerHelpers
@@ -72,22 +64,17 @@ _none_
 - RouteMapOps
 - SpecializedOps
 
-## ui-bound (46)
+## ui-bound (43)
 
 **(root)**
 - McpAutoStart
 
 **folders/handlers**
-- AddToClusterCommand
-- ClusterCommandHandler
 - CopyClusterCommand
 - DeleteClusterCommand
 - NewClusterCommand
 - RemoveFromClusterCommand
 - RenameClusterCommand
-
-**folders/refactoring**
-- ClusterRenameRefactorHook
 
 **folders/ui**
 - ClusterEditDialog
@@ -199,7 +186,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (171)
+## exercised (176)
 
 **(root)**
 - Activator
@@ -209,10 +196,21 @@ _none_
 
 **folders**
 - ClusterKeys
+- IClusterChangeObserver
+
+**folders/handlers**
+- AddToClusterCommand
+
+**folders/internal**
+- ClusterManagerImpl
 
 **folders/model**
 - Cluster
 - ClusterStore
+
+**folders/repository**
+- IClusterStore
+- YamlClusterStore
 
 **labels**
 - MarkerDecorationHelpers
@@ -402,11 +400,17 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (127)
+## direct (129)
 
 **(root)**
 - BrowserOrigin
 - OperatorSignal
+
+**folders/handlers**
+- ClusterCommandHandler
+
+**folders/refactoring**
+- ClusterRenameRefactorHook
 
 **labels/ui**
 - Messages
@@ -565,17 +569,18 @@ closes.
 | Test methods | Classes |
 |---:|---:|
 | 1 | 0 |
-| 2 | 1 |
-| 3-4 | 13 |
+| 2 | 2 |
+| 3-4 | 14 |
 | 5-8 | 41 |
 | 9-16 | 52 |
 | 17+ | 20 |
 
-3800 test methods across 463 test classes; 127 classes have a test of their own, median 9 methods each.
+3831 test methods across 469 test classes; 129 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 127 of 432 classes have one: 53 are covered by the registry-wide contract sweep and 35 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 129 of 432 classes have one: 53 are covered by the registry-wide contract sweep and 31 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
-### Resting on 2 test method(s) or fewer (1)
+### Resting on 2 test method(s) or fewer (2)
 
+- folders/handlers/ClusterCommandHandler - 2
 - support/BmInfobaseCredentialsHelper - 2
 

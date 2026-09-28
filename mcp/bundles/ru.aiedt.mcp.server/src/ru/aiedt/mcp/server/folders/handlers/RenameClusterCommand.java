@@ -42,8 +42,11 @@ public class RenameClusterCommand
             name -> validateName(service, project, cluster, name));
         if (dialog.open() == Window.OK)
         {
-            service.updateCluster(project, cluster.getFullPath(), dialog.getClusterName(),
-                dialog.getClusterDescription());
+            if (!service.updateCluster(project, cluster.getFullPath(), dialog.getClusterName(),
+                dialog.getClusterDescription()))
+            {
+                showSaveFailure(selection.shell, project);
+            }
         }
         return null;
     }

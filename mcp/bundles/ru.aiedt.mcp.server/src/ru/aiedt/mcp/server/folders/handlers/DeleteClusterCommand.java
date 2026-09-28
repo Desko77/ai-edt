@@ -39,7 +39,10 @@ public class DeleteClusterCommand
                 + "'? Its objects will return to their normal location."); //$NON-NLS-1$
         if (confirmed)
         {
-            service.deleteCluster(selection.project, cluster.getFullPath());
+            if (!service.deleteCluster(selection.project, cluster.getFullPath()))
+            {
+                showSaveFailure(selection.shell, selection.project);
+            }
         }
         return null;
     }
