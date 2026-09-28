@@ -6,18 +6,18 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 127 | a test class named after it |
-| exercised | 167 | reached by some other test |
+| exercised | 170 | reached by some other test |
 | tool-sweep | 54 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 46 | needs a display or an extension point |
-| workspace-bound | 38 | drives a live EDT project or debug session |
+| workspace-bound | 35 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **432** | across 455 test classes |
+| **total** | **432** | across 460 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (38)
+## workspace-bound (35)
 
 **folders**
 - IClusterChangeObserver
@@ -47,8 +47,6 @@ _none_
 - BmEventSubscriptionHelper
 - BmExportHelper
 - BmExtensionProjectHelper
-- BmFormGeneratorHelper
-- BmFormResourceHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
 - BmRouteMapHelper
@@ -69,7 +67,6 @@ _none_
 
 **toolkit/ops**
 - CommandInterfaceOps
-- FormCreateOps
 - FormEventOps
 - RoleOps
 - RouteMapOps
@@ -203,7 +200,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (167)
+## exercised (170)
 
 **(root)**
 - Activator
@@ -241,7 +238,9 @@ _none_
 - BmExternalObjectDumpHelper
 - BmExternalObjectProjectHelper
 - BmFormCleanupHelper
+- BmFormGeneratorHelper
 - BmFormHelper
+- BmFormResourceHelper
 - BmHelpHelper
 - BmInfobaseExtensionHelper
 - BmInfobaseLifecycleHelper
@@ -339,6 +338,7 @@ _none_
 - ExternalObjectWorkshopTool
 - FindRlsViolationsTool
 - FormCommandInterfaceOps
+- FormCreateOps
 - FormItemsOps
 - GenerateEventHandlersTool
 - GetCommandInterfaceTool
@@ -571,9 +571,9 @@ closes.
 | 9-16 | 51 |
 | 17+ | 20 |
 
-3720 test methods across 455 test classes; 127 classes have a test of their own, median 9 methods each.
+3747 test methods across 460 test classes; 127 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 127 of 432 classes have one: 54 are covered by the registry-wide contract sweep and 38 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 127 of 432 classes have one: 54 are covered by the registry-wide contract sweep and 35 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (1)
 
