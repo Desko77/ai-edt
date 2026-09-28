@@ -286,4 +286,40 @@ public class EditFormToolTest
         assertFalse(EditFormTool.isEditOperation("addFeild")); //$NON-NLS-1$
         assertFalse(EditFormTool.isEditOperation("help")); //$NON-NLS-1$
     }
+
+    // -- The warning an add_group answer carries --
+
+    /**
+     * The answer of a write that owes the caller a warning says so in the front matter, beside the
+     * status the caller reads first.
+     */
+    @Test
+    public void aWarnedAnswerCarriesTheWarningBesideItsStatus()
+    {
+        String answer = new EditFormTool().buildSuccess("edit_form", "ГруппаПремии", "add_group", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Group 'ГруппаПремии' added to form successfully.", //$NON-NLS-1$
+            EditFormTool.ADD_GROUP_HAS_NO_CHILDREN_WARNING);
+
+        assertTrue(answer.startsWith("---")); //$NON-NLS-1$
+        assertTrue(answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue(answer.contains("warning:")); //$NON-NLS-1$
+        assertTrue(answer.contains(EditFormTool.ADD_GROUP_HAS_NO_CHILDREN_WARNING));
+    }
+
+    /**
+     * The warning keeps the shape the front-matter writer and its reader agree on: one line, no
+     * quote and no backslash. The writer escapes what it quotes, the reader only strips the quotes,
+     * so a value breaking either rule reaches the caller as an escape sequence or as a second line.
+     */
+    @Test
+    public void theGroupWarningIsOneLineWithoutQuotesOrBackslashes()
+    {
+        String warning = EditFormTool.ADD_GROUP_HAS_NO_CHILDREN_WARNING;
+
+        assertFalse(warning.isEmpty());
+        assertFalse(warning.contains("\"")); //$NON-NLS-1$
+        assertFalse(warning.contains("\\")); //$NON-NLS-1$
+        assertFalse(warning.contains("\n")); //$NON-NLS-1$
+        assertTrue("the caller has to know what to do next", warning.contains("parentName")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
 }
