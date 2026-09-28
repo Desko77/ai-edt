@@ -263,6 +263,167 @@ public class AGitAnswerComesFromTheRepositoryTest
         JsonObject answer = call("commit", "paths", PROJECT + "/src/Nowhere.bsl", "message", "Nowhere"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         assertFalse(answer.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(answer.toString(), answer.get("error").getAsString().contains("does not exist")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(answer.toString(), answer.get("error").getAsString().contains("not tracked")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A refusal for a missing author comes before the index is touched: the named file is not left
+     * staged behind a refusal that says nothing was staged.
+     */
+    @Test
+    public void aRefusedAuthorLeavesTheIndexAsItWas() throws Exception
+    {
+        Path file = repoRoot.resolve(PROJECT).resolve("src/NoAuthor.bsl"); //$NON-NLS-1$
+        Files.writeString(file, "// no author\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            org.eclipse.jgit.lib.StoredConfig config = git.getRepository().getConfig();
+            String name = config.getString("user", null, "name"); //$NON-NLS-1$ //$NON-NLS-2$
+            String email = config.getString("user", null, "email"); //$NON-NLS-1$ //$NON-NLS-2$
+            org.junit.Assume.assumeTrue("the machine's git configuration names an author", //$NON-NLS-1$
+                name == null || name.isEmpty() || email == null || email.isEmpty());
+
+            JsonObject answer = call("commit", "paths", PROJECT + "/src/NoAuthor.bsl", "message", "No author"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+            assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(answer.toString(), answer.get("error").getAsString().contains("names no author")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse("the file must not be left staged", //$NON-NLS-1$
+                git.status().call().getAdded().contains(PROJECT + "/src/NoAuthor.bsl")); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    /**
+     * Every named path is checked before any is staged: a refused second path does not leave the
+     * first one in the index.
+     */
+    @Test
+    public void aRefusedPathLeavesTheOthersUnstaged() throws Exception
+    {
+        Path first = repoRoot.resolve(PROJECT).resolve("src/First.bsl"); //$NON-NLS-1$
+        Files.writeString(first, "// first\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            JsonObject answer = call("commit", "paths", PROJECT + "/src/First.bsl," + PROJECT + "/src/Nowhere.bsl", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "message", "Two", "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+
+            assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(answer.toString(), answer.get("error").getAsString().contains("Nothing was staged")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse("the first path must not be left staged", //$NON-NLS-1$
+                git.status().call().getAdded().contains(PROJECT + "/src/First.bsl")); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.deleteIfExists(first);
+        }
+    }
+
+    /**
+     * The whole work tree, a directory or a pattern is an add-all by another name and is refused.
+     */
+    @Test
+    public void anAddAllByAnotherNameIsRefused()
+    {
+        for (String path : new String[] { ".", "*", PROJECT + "/src", PROJECT + "/src/", PROJECT + "/src/*.bsl", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "../outside.bsl" }) //$NON-NLS-1$
+        {
+            JsonObject answer = call("commit", "paths", path, "message", "Everything", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            assertFalse(path + ": " + answer, answer.get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(path + ": " + answer, answer.get("error").getAsString().contains("Nothing was staged")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+    }
+
+    /**
+     * A tracked file deleted from the work tree is committed as a deletion, and the answer says so.
+     */
+    @Test
+    public void aDeletedTrackedFileIsCommittedAsADeletion() throws Exception
+    {
+        Path file = repoRoot.resolve(PROJECT).resolve("src/Doomed.bsl"); //$NON-NLS-1$
+        Files.writeString(file, "// doomed\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        JsonObject added = call("commit", "paths", PROJECT + "/src/Doomed.bsl", "message", "Doomed", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue(added.toString(), added.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(added.toString(), added.get("changes").toString().contains("added")); //$NON-NLS-1$ //$NON-NLS-2$
+        Files.delete(file);
+
+        JsonObject deleted = call("commit", "paths", PROJECT + "/src/Doomed.bsl", "message", "Gone", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertTrue(deleted.toString(), deleted.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(deleted.toString(), deleted.get("changes").toString().contains("deleted")); //$NON-NLS-1$ //$NON-NLS-2$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            org.eclipse.jgit.revwalk.RevCommit head = git.log().setMaxCount(1).call().iterator().next();
+            try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(
+                git.getRepository(), PROJECT + "/src/Doomed.bsl", head.getTree())) //$NON-NLS-1$
+            {
+                assertNull("the file must be gone from the committed tree", walk); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /**
+     * Only the named paths enter the commit, even when the index holds something else already.
+     */
+    @Test
+    public void aFileStagedBeforeTheCallStaysOutOfTheCommit() throws Exception
+    {
+        Path named = repoRoot.resolve(PROJECT).resolve("src/OnlyThis.bsl"); //$NON-NLS-1$
+        Path staged = repoRoot.resolve(PROJECT).resolve("src/StagedElsewhere.bsl"); //$NON-NLS-1$
+        Files.writeString(named, "// only this\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        Files.writeString(staged, "// staged elsewhere\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            git.add().addFilepattern(PROJECT + "/src/StagedElsewhere.bsl").call(); //$NON-NLS-1$
+
+            JsonObject commit = call("commit", "paths", PROJECT + "/src/OnlyThis.bsl", "message", "Only this", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+            assertTrue(commit.toString(), commit.get("success").getAsBoolean()); //$NON-NLS-1$
+            org.eclipse.jgit.revwalk.RevCommit head = git.log().setMaxCount(1).call().iterator().next();
+            try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(
+                git.getRepository(), PROJECT + "/src/StagedElsewhere.bsl", head.getTree())) //$NON-NLS-1$
+            {
+                assertNull("a file the call did not name must stay out of the commit", walk); //$NON-NLS-1$
+            }
+            assertTrue("and stay staged as it was", //$NON-NLS-1$
+                git.status().call().getAdded().contains(PROJECT + "/src/StagedElsewhere.bsl")); //$NON-NLS-1$
+            git.reset().addPath(PROJECT + "/src/StagedElsewhere.bsl").call(); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.deleteIfExists(staged);
+        }
+    }
+
+    /**
+     * A named file without a change is reported as unchanged; a call where no named file changed is
+     * refused rather than committed empty.
+     */
+    @Test
+    public void aCommitOfUnchangedFilesIsRefused()
+    {
+        JsonObject answer = call("commit", "paths", PROJECT + "/src/Module.bsl", "message", "Nothing new", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(answer.toString(), answer.get("error").getAsString().contains("None of the named paths")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Paths are read the way the index spells them.
+     */
+    @Test
+    public void aPathIsReadTheWayTheIndexSpellsIt()
+    {
+        assertEquals("a/b.bsl", GitTool.normalizePath(" ./a\\b.bsl ")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(GitTool.pathRefusal("src/Module.bsl")); //$NON-NLS-1$
+        assertNotNull(GitTool.pathRefusal("C:/repo/src/Module.bsl")); //$NON-NLS-1$
+        assertNotNull(GitTool.pathRefusal("/src/Module.bsl")); //$NON-NLS-1$
     }
 
     /**

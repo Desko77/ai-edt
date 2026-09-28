@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
@@ -16,7 +17,9 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.lib.BranchTrackingStatus;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 
 import ru.aiedt.mcp.server.Activator;
@@ -181,9 +184,18 @@ public class GitTool
      * <p>
      * A blanket add is what a review cannot be told apart from - everything that happened to be
      * lying in the work tree lands in the commit, including what nobody looked at. Paths are
-     * named, the message is required, and a path that names nothing that exists is refused
-     * rather than silently staged as nothing.
+     * named, the message is required, and every check - the author, each path - runs before the
+     * index is touched. A file that is gone from the work tree but tracked is staged as a deletion;
+     * a path that names nothing on disk and nothing in the index is refused. Only the named paths
+     * enter the commit, whatever else the index holds. When the commit itself fails, the named paths
+     * are unstaged again.
      * </p>
+     *
+     * @param project the project whose repository is written
+     * @param git the repository
+     * @param params the call's arguments
+     * @return the answer JSON
+     * @throws Exception when the repository cannot be read
      */
     private String doCommit(IProject project, Git git, Map<String, String> params)
         throws Exception
@@ -203,53 +215,118 @@ public class GitTool
         List<String> paths = new ArrayList<>();
         for (String part : pathsRaw.split(",")) //$NON-NLS-1$
         {
-            String path = part.trim();
+            String path = normalizePath(part);
             if (!path.isEmpty() && !paths.contains(path))
             {
                 paths.add(path);
             }
         }
-        java.io.File workTree = git.getRepository().getWorkTree();
+        if (paths.isEmpty())
+        {
+            return ToolResult.error("commit requires paths - none of the comma-separated entries " //$NON-NLS-1$
+                + "names a file.").toJson(); //$NON-NLS-1$
+        }
+        Repository repository = git.getRepository();
+        PersonIdent author = authorOf(repository, params);
+        if (author == null)
+        {
+            return ToolResult.error("The repository's configuration names no author, and " //$NON-NLS-1$
+                + "authorName/authorEmail were not given - name one (git config user.name and " //$NON-NLS-1$
+                + "user.email, or pass both arguments). Nothing was staged or committed.").toJson(); //$NON-NLS-1$
+        }
+        java.io.File workTree = repository.getWorkTree();
+        Status before = statusOf(git, paths);
+        List<String> toAdd = new ArrayList<>();
+        List<String> toRemove = new ArrayList<>();
         for (String path : paths)
         {
-            if (!new java.io.File(workTree, path).exists())
+            String refusal = pathRefusal(path);
+            if (refusal != null)
             {
-                return ToolResult.error("Path does not exist in the work tree: " + path //$NON-NLS-1$
-                    + ". Paths are relative to the repository root " + workTree.getAbsolutePath()).toJson(); //$NON-NLS-1$
+                return ToolResult.error(refusal + " Nothing was staged or committed.") //$NON-NLS-1$
+                    .put("path", path).toJson(); //$NON-NLS-1$
             }
-            git.add().addFilepattern(path).call();
-        }
-        org.eclipse.jgit.lib.PersonIdent author;
-        String configuredName = git.getRepository().getConfig().getString("user", null, "name"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        String configuredEmail = git.getRepository().getConfig().getString("user", null, "email"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        if (configuredName != null && !configuredName.isEmpty() && configuredEmail != null
-            && !configuredEmail.isEmpty())
-        {
-            author = new org.eclipse.jgit.lib.PersonIdent(configuredName, configuredEmail);
-        }
-        else
-        {
-            String authorName = JsonUtils.extractStringArgument(params, "authorName"); //$NON-NLS-1$
-            String authorEmail = JsonUtils.extractStringArgument(params, "authorEmail"); //$NON-NLS-1$
-            if (authorName == null || authorName.isEmpty() || authorEmail == null || authorEmail.isEmpty())
+            java.io.File file = new java.io.File(workTree, path);
+            if (file.isDirectory())
             {
-                return ToolResult.error("The repository's configuration names no author, and " //$NON-NLS-1$
-                    + "authorName/authorEmail were not given - name one (git config user.name and " //$NON-NLS-1$
-                    + "user.email, or pass both arguments). Nothing was staged or committed.").toJson(); //$NON-NLS-1$
+                return ToolResult.error("Path names a directory: " + path + ". Staging a directory " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "stages everything under it, which is an add-all by another name - name the " //$NON-NLS-1$
+                    + "files. Nothing was staged or committed.").put("path", path).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
             }
-            author = new org.eclipse.jgit.lib.PersonIdent(authorName, authorEmail);
+            if (file.exists())
+            {
+                toAdd.add(path);
+            }
+            else if (before.getMissing().contains(path) || before.getRemoved().contains(path))
+            {
+                toRemove.add(path);
+            }
+            else
+            {
+                return ToolResult.error("Path does not exist in the work tree and is not tracked by " //$NON-NLS-1$
+                    + "the repository: " + path + ". Paths are relative to the repository root " //$NON-NLS-1$
+                    + workTree.getAbsolutePath() + ". Nothing was staged or committed.") //$NON-NLS-1$
+                    .put("path", path).toJson(); //$NON-NLS-1$
+            }
         }
-        RevCommit commit = git.commit().setAuthor(author).setMessage(message.trim()).call();
+
+        RevCommit commit;
+        List<Map<String, String>> changes;
+        try
+        {
+            for (String path : toAdd)
+            {
+                git.add().addFilepattern(path).call();
+            }
+            for (String path : toRemove)
+            {
+                git.rm().setCached(true).addFilepattern(path).call();
+            }
+            changes = stagedChanges(statusOf(git, paths), paths);
+            if (changes.isEmpty())
+            {
+                unstage(git, paths);
+                return ToolResult.error("None of the named paths has a change to commit: " //$NON-NLS-1$
+                    + String.join(", ", paths) + ". Nothing was committed.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            org.eclipse.jgit.api.CommitCommand command = git.commit().setAuthor(author)
+                .setMessage(message.trim());
+            for (Map<String, String> change : changes)
+            {
+                command.setOnly(change.get("path")); //$NON-NLS-1$
+            }
+            commit = command.call();
+        }
+        catch (Exception e)
+        {
+            unstage(git, paths);
+            Activator.logError("git commit failed", e); //$NON-NLS-1$
+            return ToolResult.error("The commit failed: " + e.getMessage() //$NON-NLS-1$
+                + ". The named paths were unstaged again; nothing was committed.").toJson(); //$NON-NLS-1$
+        }
+
+        List<String> committed = new ArrayList<>();
+        for (Map<String, String> change : changes)
+        {
+            committed.add(change.get("path")); //$NON-NLS-1$
+        }
+        List<String> unchanged = new ArrayList<>(paths);
+        unchanged.removeAll(committed);
         ToolResult answer = ToolResult.success()
             .put("operation", "commit") //$NON-NLS-1$
             .put("projectName", project.getName()) //$NON-NLS-1$
             .put("sha", commit.getName()) //$NON-NLS-1$
             .put("shortSha", commit.getName().substring(0, 8)) //$NON-NLS-1$
             .put("author", author.getName()) //$NON-NLS-1$
-            .put("filesCount", Integer.valueOf(paths.size())) //$NON-NLS-1$
-            .put("files", paths) //$NON-NLS-1$
+            .put("filesCount", Integer.valueOf(committed.size())) //$NON-NLS-1$
+            .put("files", committed) //$NON-NLS-1$
+            .put("changes", changes) //$NON-NLS-1$
             .put("message", commit.getShortMessage()); //$NON-NLS-1$
-        String branch = git.getRepository().getBranch();
+        if (!unchanged.isEmpty())
+        {
+            answer.put("unchanged", unchanged); //$NON-NLS-1$
+        }
+        String branch = repository.getBranch();
         String bound = ru.aiedt.mcp.server.support.BranchInfobaseBook.boundTo(project, branch);
         if (bound != null)
         {
@@ -260,6 +337,150 @@ public class GitTool
                 + "' - update_database on it updates that infobase."); //$NON-NLS-1$
         }
         return answer.toJson();
+    }
+
+    /**
+     * Brings a path as a caller wrote it to the form the index uses: forward slashes, no leading
+     * {@code ./}, no surrounding blanks.
+     *
+     * @param raw one entry of {@code paths}
+     * @return the path, empty when the entry names nothing
+     */
+    static String normalizePath(String raw)
+    {
+        String path = raw.trim().replace('\\', '/');
+        while (path.startsWith("./")) //$NON-NLS-1$
+        {
+            path = path.substring(2);
+        }
+        return path;
+    }
+
+    /**
+     * Tells why a path cannot be staged by name. Does not look at the disk or the index.
+     *
+     * @param path a normalized path
+     * @return the refusal text, or <code>null</code> when the path is a plain relative file path
+     */
+    static String pathRefusal(String path)
+    {
+        if (".".equals(path) || "*".equals(path) || path.endsWith("/")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            return "Path '" + path + "' names the whole work tree or a directory, which is an " //$NON-NLS-1$ //$NON-NLS-2$
+                + "add-all by another name - name the files."; //$NON-NLS-1$
+        }
+        if (path.indexOf('*') >= 0 || path.indexOf('?') >= 0 || path.indexOf('[') >= 0)
+        {
+            return "Path '" + path + "' is a pattern - name the files one by one."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (path.startsWith("/") || (path.length() > 1 && path.charAt(1) == ':')) //$NON-NLS-1$
+        {
+            return "Path '" + path + "' is absolute - paths are relative to the repository root."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        for (String segment : path.split("/")) //$NON-NLS-1$
+        {
+            if ("..".equals(segment)) //$NON-NLS-1$
+            {
+                return "Path '" + path + "' leaves the repository through '..'."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The author a commit is made under: the repository's configured one, else the one the call
+     * names.
+     *
+     * @param repository the repository
+     * @param params the call's arguments
+     * @return the author, or <code>null</code> when neither names one completely
+     */
+    private static PersonIdent authorOf(Repository repository, Map<String, String> params)
+    {
+        String configuredName = repository.getConfig().getString("user", null, "name"); //$NON-NLS-1$ //$NON-NLS-2$
+        String configuredEmail = repository.getConfig().getString("user", null, "email"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (configuredName != null && !configuredName.isEmpty() && configuredEmail != null
+            && !configuredEmail.isEmpty())
+        {
+            return new PersonIdent(configuredName, configuredEmail);
+        }
+        String authorName = JsonUtils.extractStringArgument(params, "authorName"); //$NON-NLS-1$
+        String authorEmail = JsonUtils.extractStringArgument(params, "authorEmail"); //$NON-NLS-1$
+        if (authorName == null || authorName.isEmpty() || authorEmail == null || authorEmail.isEmpty())
+        {
+            return null;
+        }
+        return new PersonIdent(authorName, authorEmail);
+    }
+
+    /**
+     * The status of the named paths only, so a large work tree is not scanned for a commit of a few
+     * files.
+     *
+     * @param git the repository
+     * @param paths the named paths
+     * @return their status
+     * @throws Exception when the repository cannot be read
+     */
+    private static Status statusOf(Git git, List<String> paths) throws Exception
+    {
+        org.eclipse.jgit.api.StatusCommand command = git.status();
+        for (String path : paths)
+        {
+            command.addPath(path);
+        }
+        return command.call();
+    }
+
+    /**
+     * The staged change of each named path, in the order the paths were named.
+     *
+     * @param status the status after staging
+     * @param paths the named paths
+     * @return one {@code {path, change}} per path with a staged change; {@code change} is
+     *         {@code added}, {@code modified} or {@code deleted}
+     */
+    static List<Map<String, String>> stagedChanges(Status status, List<String> paths)
+    {
+        List<Map<String, String>> changes = new ArrayList<>();
+        for (String path : paths)
+        {
+            String change = status.getAdded().contains(path) ? "added" //$NON-NLS-1$
+                : status.getChanged().contains(path) ? "modified" //$NON-NLS-1$
+                : status.getRemoved().contains(path) ? "deleted" : null; //$NON-NLS-1$
+            if (change != null)
+            {
+                Map<String, String> entry = new LinkedHashMap<>();
+                entry.put("path", path); //$NON-NLS-1$
+                entry.put("change", change); //$NON-NLS-1$
+                changes.add(entry);
+            }
+        }
+        return changes;
+    }
+
+    /**
+     * Puts the index entries of the named paths back to HEAD. Failures are logged, not thrown: this
+     * runs on the way out of a refusal whose own reason matters more.
+     *
+     * @param git the repository
+     * @param paths the named paths
+     */
+    private static void unstage(Git git, List<String> paths)
+    {
+        try
+        {
+            org.eclipse.jgit.api.ResetCommand reset = git.reset();
+            for (String path : paths)
+            {
+                reset.addPath(path);
+            }
+            reset.call();
+        }
+        catch (Exception e)
+        {
+            Activator.logError("git commit: could not unstage " + paths, e); //$NON-NLS-1$
+        }
     }
 
     /**
