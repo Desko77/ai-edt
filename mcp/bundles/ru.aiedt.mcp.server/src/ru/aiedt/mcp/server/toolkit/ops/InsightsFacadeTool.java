@@ -247,6 +247,8 @@ public class InsightsFacadeTool implements IMcpTool
                     + "merge.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
                 "compare_three_way: how many matching objects to skip.") //$NON-NLS-1$
+            .integerProperty("sectionsOffset", //$NON-NLS-1$
+                "compare_three_way: module pieces to skip in sections.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
                 "compare_three_way: compare the sides even when they do not identify as " //$NON-NLS-1$
                     + "the same configuration in different versions.") //$NON-NLS-1$
