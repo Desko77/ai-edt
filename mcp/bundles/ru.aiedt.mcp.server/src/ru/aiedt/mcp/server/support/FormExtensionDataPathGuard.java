@@ -13,10 +13,15 @@ import java.util.Collections;
 import java.util.List;
 
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.emf.ecore.EObject;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.FrameworkUtil;
 import org.osgi.framework.ServiceReference;
+
+import com._1c.g5.v8.dt.core.platform.IExtensionProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -59,8 +64,11 @@ import ru.aiedt.mcp.server.Activator;
  * without a marker to warn about it.
  *
  * <p>A form of a configuration project is left alone: the services are not
- * asked at all, because the guard recognises an extension form by its non-null
- * base form before it touches the port.
+ * asked at all. An extension form is recognised by its project -
+ * {@code IV8ProjectManager} answers whether it is an {@code IExtensionProject} -
+ * and only when the project cannot be told (the form is not in a model, or the
+ * service is not there) by its non-null base form: a configuration form can
+ * answer a non-null base form too.
  */
 public final class FormExtensionDataPathGuard
 {
@@ -214,6 +222,8 @@ public final class FormExtensionDataPathGuard
 
     private static volatile Port installed;
 
+    private static volatile ProjectKind installedProjectKind;
+
     private FormExtensionDataPathGuard()
     {
     }
@@ -227,6 +237,37 @@ public final class FormExtensionDataPathGuard
     public static void installPort(Port port)
     {
         installed = port;
+    }
+
+    /**
+     * The seam over the project lookup, parallel to {@link Port}. The one
+     * question it owns - does the form's project make it an extension form -
+     * is decided before the port is touched, and a test installs its own
+     * answer to drive the branches a form built in memory cannot reach: such
+     * a form belongs to no project, so the runtime lookup would always fall
+     * through to the base-form fallback.
+     */
+    public interface ProjectKind
+    {
+        /**
+         * @param form the form
+         * @return TRUE when the form's project is an extension project, FALSE
+         *         when it is a configuration project, null when the project
+         *         cannot be told
+         */
+        Boolean inExtensionProject(Object form);
+    }
+
+    /**
+     * Replaces the project lookup. For tests: the decision the lookup owns has
+     * to be drivable directly, because a form built in memory is in no
+     * project.
+     *
+     * @param kind the lookup to install, or null to fall back to the EDT one
+     */
+    public static void installProjectKind(ProjectKind kind)
+    {
+        installedProjectKind = kind;
     }
 
     /**
@@ -526,17 +567,25 @@ public final class FormExtensionDataPathGuard
     }
 
     /**
-     * Tells an extension form from a configuration one. A form belongs to an
-     * extension exactly when it declares a base form (Form.baseForm); that is a
-     * fact of the form model, not of the services, so the check costs nothing
-     * and asks the port nothing - which is what keeps configuration forms out
-     * of this guard entirely.
+     * Tells an extension form from a configuration one. The project's kind
+     * decides: a form belongs to an extension exactly when its project is an
+     * extension project. The non-null base form (Form.baseForm) is only the
+     * fallback for a form whose project cannot be told - not in a model, or
+     * the project service is not there - because a configuration form can
+     * answer a non-null base form too. Either way the check asks the port
+     * nothing, which is what keeps configuration forms out of this guard
+     * entirely.
      *
      * @param form the form
-     * @return true when the form has a base form, so it is an extension form
+     * @return true when the form is an extension form
      */
     private static boolean isExtensionForm(Object form)
     {
+        Boolean byProject = projectKind(form);
+        if (byProject != null)
+        {
+            return byProject.booleanValue();
+        }
         try
         {
             Method getBaseForm = form.getClass().getMethod("getBaseForm"); //$NON-NLS-1$
@@ -547,6 +596,51 @@ public final class FormExtensionDataPathGuard
             // No base form to read: treat the form as a configuration one, the
             // conservative side - the guard then changes nothing.
             return false;
+        }
+    }
+
+    /**
+     * Asks which kind of project the form belongs to: the installed lookup
+     * first, then {@code IV8ProjectManager} - the same answer
+     * {@code BmCommonModuleGuards.isExtensionProject} reads, here read off the
+     * model object instead of the workspace project.
+     *
+     * @param form the form
+     * @return TRUE for an extension project, FALSE for a configuration one,
+     *         null when the project cannot be told (no service, or the form is
+     *         not in a model)
+     */
+    private static Boolean projectKind(Object form)
+    {
+        ProjectKind mine = installedProjectKind;
+        if (mine != null)
+        {
+            return mine.inExtensionProject(form);
+        }
+        try
+        {
+            Activator activator = Activator.getDefault();
+            if (activator == null || !(form instanceof EObject))
+            {
+                return null;
+            }
+            IV8ProjectManager manager = activator.getV8ProjectManager();
+            if (manager == null)
+            {
+                return null;
+            }
+            IV8Project project = manager.getProject((EObject) form);
+            if (project == null)
+            {
+                return null;
+            }
+            return Boolean.valueOf(project instanceof IExtensionProject);
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("FormExtensionDataPathGuard: project lookup failed: " //$NON-NLS-1$
+                + e.getMessage());
+            return null;
         }
     }
 

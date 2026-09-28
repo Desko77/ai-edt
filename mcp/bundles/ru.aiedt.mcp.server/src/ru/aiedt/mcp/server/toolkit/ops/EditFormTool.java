@@ -373,6 +373,11 @@ public class EditFormTool implements IMcpTool
         boolean hyperlink)
         throws Exception
     {
+        String rootRefusal = refusalForUnknownTableRoot(form, ownerObject, dataPath);
+        if (rootRefusal != null)
+        {
+            return buildError(rootRefusal);
+        }
         // 1.43.x forms-completeness: when no explicit elementType is given and the
         // field binds to a Boolean attribute, render it as a CheckBoxField - the EDT
         // wizard (and our column auto-generator, generateColumnsForTable) do the same.
@@ -676,12 +681,14 @@ public class EditFormTool implements IMcpTool
     }
 
     /**
-     * Why a table cannot be bound to this path, checked before anything is created.
+     * Why a table or a field cannot be bound to this path, checked before
+     * anything is created.
      * <p>
      * A table was created and put on the form before its {@code dataPath} was looked at, so a path
      * that names nothing produced a table bound to nothing and a successful answer - measured
      * 30.08 with a made-up attribute name. The user then sees an empty spot where a table should
-     * be, and the project looks healthy.
+     * be, and the project looks healthy. The field route asks the same question before its path
+     * reaches the extension guard.
      * </p>
      * <p>
      * Only the ROOT segment is judged. Deeper segments are not: a standard attribute such as
@@ -738,12 +745,12 @@ public class EditFormTool implements IMcpTool
         }
         StringBuilder sb = new StringBuilder();
         sb.append("dataPath '").append(dataPath).append("' starts with '").append(root) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            .append("', and this form has no such attribute, so the table would be bound to " //$NON-NLS-1$
+            .append("', and this form has no such attribute, so the element would be bound to " //$NON-NLS-1$
                 + "nothing and show the user an empty spot. Nothing was created. "); //$NON-NLS-1$
         if (known.isEmpty())
         {
             sb.append("The form has no attributes yet - add one first, or drop dataPath to " //$NON-NLS-1$
-                + "place an unbound table."); //$NON-NLS-1$
+                + "place an unbound element."); //$NON-NLS-1$
         }
         else
         {
