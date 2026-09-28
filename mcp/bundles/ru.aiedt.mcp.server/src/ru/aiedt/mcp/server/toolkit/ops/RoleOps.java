@@ -6,6 +6,7 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
@@ -25,14 +26,19 @@ import ru.aiedt.mcp.server.support.BmRightsHelper;
 final class RoleOps
 {
     /**
-     * set_role_right - grants or revokes a single right of a metadata object on a role, by editing the
-     * role's Rights.rights file. Honors dryRun. With cascadeDependencies=true AND value=true, also grants
-     * every prerequisite right the platform dependency model requires (grant-direction only, never revokes).
+     * {@link #opSetRoleRight(Map)} with the caller's own answers for the role, the object and the
+     * right. A {@code null} gate reads the project model.
+     * <p>
+     * A role, object or right the configuration does not have is refused before the file is
+     * written, and that refusal covers the dependency cascade as well: the prerequisites are not
+     * written when the requested right itself was refused.
+     * </p>
      *
      * @param params the tool parameters
+     * @param gate the answers, or {@code null} to read the project model
      * @return the JSON result document
      */
-    String opSetRoleRight(Map<String, String> params)
+    String opSetRoleRight(Map<String, String> params, BmRightsHelper.RightsGate gate)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String roleFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
@@ -67,11 +73,16 @@ final class RoleOps
         // cannot be persisted by a BM commit ("Failed to persist reference value
         // RoleDescriptionImpl"). The parse-merge-write preserves RLS / template blocks;
         // the workspace refresh inside writeRightsFile lets EDT re-read the role.
+        // The same gate is handed to every write, including the cascade, so a missing
+        // object or an inapplicable right stops before the first byte is written.
+        BmRightsHelper.RightsGate effective = gate != null
+            ? gate : BmRightsHelper.RightsGate.forProject(project);
         BmRightsHelper.FileRightResult fr = BmRightsHelper.applyRightToFile(
-            project, roleName, targetFqn, canonical, granted, dryRun);
+            project, roleName, targetFqn, canonical, granted, dryRun, effective);
         if (!fr.ok)
         {
-            return ToolResult.error(fr.error != null ? fr.error : "set_role_right failed").toJson(); //$NON-NLS-1$
+            return refused(fr.error, "set_role_right failed", fr.failureKind, fr.subject, //$NON-NLS-1$
+                fr.subjectName, fr.objectKind, fr.applicableRights, projectName);
         }
         // J5: dependency cascade (opt-in, GRANT direction only). Granting a right whose
         // platform definition requires prerequisites (Update->Read, Posting->Read+Update)
@@ -80,13 +91,13 @@ final class RoleOps
         // Never runs on revoke (value=false): the platform dependency map is grant-direction
         // only, so a cascade can neither over-grant nor auto-revoke. Each prerequisite uses
         // the same idempotent file writer; outcomes surface in cascadedRights.
-        java.util.List<Map<String, Object>> cascaded = new java.util.ArrayList<>();
+        List<Map<String, Object>> cascaded = new java.util.ArrayList<>();
         if (cascade && granted)
         {
             for (String prereq : BmRightsHelper.requiredRightNames(canonical))
             {
                 BmRightsHelper.FileRightResult cr = BmRightsHelper.applyRightToFile(
-                    project, roleName, targetFqn, prereq, true, dryRun);
+                    project, roleName, targetFqn, prereq, true, dryRun, effective);
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("rightName", prereq); //$NON-NLS-1$
                 row.put("ok", cr.ok); //$NON-NLS-1$
@@ -130,17 +141,30 @@ final class RoleOps
     }
 
     /**
-     * J5: adds/updates or removes a root-level named RLS restriction template in a role's
-     * {@code Rights.rights}. A restriction template is a reusable named RLS condition
-     * ({@code <restrictionTemplate><name>..</name><condition>..</condition>}) that object-level
-     * RLS restrictions reference by name via {@code #<name>(...)}. File-level parse-merge-write
-     * (same mechanism as {@link #opSetRoleRight}), preserving all other rights/RLS/templates.
+     * set_role_right - grants or revokes a single right of a metadata object on a role, by editing the
+     * role's Rights.rights file. Honors dryRun. With cascadeDependencies=true AND value=true, also grants
+     * every prerequisite right the platform dependency model requires (grant-direction only, never revokes).
      *
-     * @param remove true -&gt; remove the named template, false -&gt; add/update it
      * @param params the tool parameters
      * @return the JSON result document
      */
-    String opRestrictionTemplate(Map<String, String> params, boolean remove)
+    String opSetRoleRight(Map<String, String> params)
+    {
+        return opSetRoleRight(params, null);
+    }
+
+    /**
+     * {@link #opRestrictionTemplate(Map, boolean)} with the caller's own answers. A {@code null}
+     * gate reads the project model. Only the role is checked: a template has no object and no right.
+     * A role the configuration does not have is refused before the file is written.
+     *
+     * @param params the tool parameters
+     * @param remove true to remove the named template, false to add or update it
+     * @param gate the answers, or {@code null} to read the project model
+     * @return the JSON result document
+     */
+    String opRestrictionTemplate(Map<String, String> params, boolean remove,
+        BmRightsHelper.RightsGate gate)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String roleFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
@@ -168,11 +192,14 @@ final class RoleOps
         {
             return ToolResult.error("ownerFqn must be Role.<name>").toJson();
         }
+        BmRightsHelper.RightsGate effective = gate != null
+            ? gate : BmRightsHelper.RightsGate.forProject(project);
         BmRightsHelper.FileTemplateResult fr = BmRightsHelper.applyRestrictionTemplateToFile(
-            project, roleName, templateName, condition, remove, dryRun);
+            project, roleName, templateName, condition, remove, dryRun, effective);
         if (!fr.ok)
         {
-            return ToolResult.error(fr.error != null ? fr.error : opLabel + " failed").toJson(); //$NON-NLS-1$
+            return refused(fr.error, opLabel + " failed", fr.failureKind, fr.subject, //$NON-NLS-1$
+                fr.subjectName, fr.objectKind, fr.applicableRights, projectName);
         }
         ToolResult tool = ToolResult.success()
             .put("operation", opLabel) //$NON-NLS-1$
@@ -195,6 +222,22 @@ final class RoleOps
     }
 
     /**
+     * J5: adds/updates or removes a root-level named RLS restriction template in a role's
+     * {@code Rights.rights}. A restriction template is a reusable named RLS condition
+     * ({@code <restrictionTemplate><name>..</name><condition>..</condition>}) that object-level
+     * RLS restrictions reference by name via {@code #<name>(...)}. File-level parse-merge-write
+     * (same mechanism as {@link #opSetRoleRight}), preserving all other rights/RLS/templates.
+     *
+     * @param params the tool parameters
+     * @param remove true to remove the named template, false to add or update it
+     * @return the JSON result document
+     */
+    String opRestrictionTemplate(Map<String, String> params, boolean remove)
+    {
+        return opRestrictionTemplate(params, remove, null);
+    }
+
+    /**
      * J5: adds/updates or removes a per-object, per-right ROW-LEVEL RLS condition on a role -
      * {@code <right>..<restrictionByCondition><condition>..</condition></restrictionByCondition>}
      * under the {@code <object>} in the role's {@code Rights.rights}. Complements set_restriction_template
@@ -203,11 +246,16 @@ final class RoleOps
      * (same mechanism as {@link #opSetRoleRight}), preserving all other rights/RLS/templates.
      * Condition-only - field-level restriction is not supported.
      *
-     * @param remove true -&gt; strip the restriction from the right, false -&gt; add/update it
+     * {@link #opRoleRestriction(Map, boolean)} with the caller's own answers. A {@code null} gate
+     * reads the project model. A role, object or right the configuration does not have is refused
+     * before the file is written.
+     *
      * @param params the tool parameters
+     * @param remove true to strip the restriction, false to add or update it
+     * @param gate the answers, or {@code null} to read the project model
      * @return the JSON result document
      */
-    String opRoleRestriction(Map<String, String> params, boolean remove)
+    String opRoleRestriction(Map<String, String> params, boolean remove, BmRightsHelper.RightsGate gate)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String roleFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
@@ -241,11 +289,14 @@ final class RoleOps
         {
             return ToolResult.error("ownerFqn must be Role.<name>").toJson();
         }
+        BmRightsHelper.RightsGate effective = gate != null
+            ? gate : BmRightsHelper.RightsGate.forProject(project);
         BmRightsHelper.FileRestrictionResult fr = BmRightsHelper.applyRoleRestrictionToFile(
-            project, roleName, targetFqn, canonical, condition, remove, dryRun);
+            project, roleName, targetFqn, canonical, condition, remove, dryRun, effective);
         if (!fr.ok)
         {
-            return ToolResult.error(fr.error != null ? fr.error : opLabel + " failed").toJson(); //$NON-NLS-1$
+            return refused(fr.error, opLabel + " failed", fr.failureKind, fr.subject, //$NON-NLS-1$
+                fr.subjectName, fr.objectKind, fr.applicableRights, projectName);
         }
         ToolResult tool = ToolResult.success()
             .put("operation", opLabel) //$NON-NLS-1$
@@ -269,5 +320,62 @@ final class RoleOps
                 + "shows the old RLS this session."); //$NON-NLS-1$
         }
         return tool.toJson();
+    }
+
+    /**
+     * Adds, updates or removes a per-object row-level restriction on a role.
+     *
+     * @param params the tool parameters
+     * @param remove true to strip the restriction, false to add or update it
+     * @return the JSON result document
+     */
+    String opRoleRestriction(Map<String, String> params, boolean remove)
+    {
+        return opRoleRestriction(params, remove, null);
+    }
+
+    /**
+     * A refused write, with the wire tag the helper chose. The tag object names what was missing
+     * or which right does not apply, and the applicable rights are repeated at the top level so a
+     * caller does not have to open the tag to read them.
+     *
+     * @param error the sentence from the helper, or {@code null}
+     * @param fallback the sentence used when the helper gave none
+     * @param failureKind the wire tag, or {@code null} when the refusal has none
+     * @param subject {@code role}, {@code object} or {@code right}
+     * @param subjectName the name that failed
+     * @param objectKind the metadata kind, for an inapplicable right
+     * @param applicable the rights that do apply, or {@code null}
+     * @param projectName the project the call named
+     * @return the JSON error document
+     */
+    private static String refused(String error, String fallback, String failureKind, String subject,
+        String subjectName, String objectKind, List<String> applicable, String projectName)
+    {
+        ToolResult result = ToolResult.error(error != null ? error : fallback);
+        if (failureKind != null)
+        {
+            Map<String, Object> tag = new LinkedHashMap<>();
+            tag.put("kind", subject); //$NON-NLS-1$
+            tag.put("name", subjectName); //$NON-NLS-1$
+            if (objectKind != null)
+            {
+                tag.put("objectKind", objectKind); //$NON-NLS-1$
+            }
+            if (projectName != null)
+            {
+                tag.put("projectName", projectName); //$NON-NLS-1$
+            }
+            if (applicable != null)
+            {
+                tag.put("applicableRights", applicable); //$NON-NLS-1$
+            }
+            result.put(failureKind, tag);
+        }
+        if (applicable != null)
+        {
+            result.put("applicableRights", applicable); //$NON-NLS-1$
+        }
+        return result.toJson();
     }
 }
