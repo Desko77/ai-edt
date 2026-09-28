@@ -236,7 +236,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 5393 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
         PROSE.put("insights", Integer.valueOf(5445));
-        PROSE.put("dcs_workshop", Integer.valueOf(4249));
+        // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
+        // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
+        // them, and a client that builds its call from the schema has to see them there.
+        PROSE.put("dcs_workshop", Integer.valueOf(4761));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
@@ -492,6 +495,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * export_database_configuration and export_database_extension on config_io. Measured 28.09:
      * 93609.
      * </p>
+     * <p>
+     * And a thirty-third, by 253, for use, valueListAllowed and denyIncompleteValues of a schema
+     * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
+     * edit_metadata: 93862.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 93609;
+    private static final int DOCUMENT_PROSE = 93862;
 }

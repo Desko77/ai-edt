@@ -69,8 +69,13 @@ public class TheToolListHasAWeightBudgetTest
      * export_database_extension on config_io: two operations, their overwrite and allowOutOfSync
      * arguments, and the description sentence that an old file can never pass as the result.
      * </p>
+     * <p>
+     * Raised from 169962 to 170444 for valueListAllowed and denyIncompleteValues on dcs_workshop
+     * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
+     * and add_schema_parameter write them into the schema parameter.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 169962;
+    private static final int DOCUMENT_BUDGET = 170444;
 
     private LiveServer server;
 

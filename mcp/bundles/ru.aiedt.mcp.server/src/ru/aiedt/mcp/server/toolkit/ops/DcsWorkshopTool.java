@@ -230,7 +230,11 @@ public class DcsWorkshopTool implements IMcpTool
                 "set_settings_parameter: the identifier under which the parameter appears in " //$NON-NLS-1$
                     + "user settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
             .booleanProperty("use", //$NON-NLS-1$
-                "set_settings_parameter used flag.") //$NON-NLS-1$
+                "set_settings_parameter used flag. Schema parameter: true = Always, false = Auto.") //$NON-NLS-1$
+            .booleanProperty("valueListAllowed", //$NON-NLS-1$
+                "Schema parameter accepts a value list.") //$NON-NLS-1$
+            .booleanProperty("denyIncompleteValues", //$NON-NLS-1$
+                "Schema parameter refuses incomplete values.") //$NON-NLS-1$
             .integerProperty("index", //$NON-NLS-1$
                 "0-based item index for remove/set settings-item ops") //$NON-NLS-1$
             .stringProperty("viewMode", //$NON-NLS-1$
@@ -3214,7 +3218,7 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("DcsFactory.createDataCompositionSchemaParameter not available"); //$NON-NLS-1$
         }
         BmDcsHelper.setProperty(parameter, "name", name); //$NON-NLS-1$
-        applyParameterFields(parameter, params, qualifiersOf(params), project);
+        applyParameterFields(parameter, params, qualifiersOf(params), parameterFieldsOf(params), project);
         EList<EObject> parameters = BmDcsHelper.getEObjectList(schema, "getParameters"); //$NON-NLS-1$
         if (parameters == null)
         {
@@ -3234,7 +3238,7 @@ public class DcsWorkshopTool implements IMcpTool
             throw notFoundTag(name, "parameter"); //$NON-NLS-1$
         }
         // Name change is intentionally ignored (matching conventional behavior).
-        applyParameterFields(parameter, params, qualifiersOf(params), project);
+        applyParameterFields(parameter, params, qualifiersOf(params), parameterFieldsOf(params), project);
         return name + " updated"; //$NON-NLS-1$
     }
 
@@ -3242,30 +3246,140 @@ public class DcsWorkshopTool implements IMcpTool
      * Applies the optional arguments of {@code add_parameter} and {@code set_parameter} to a
      * schema parameter.
      * <p>
-     * The value type goes first: a type or qualifier that cannot be applied refuses the call
-     * before any other field of the parameter is touched. {@code length}, {@code precision} and
-     * the other qualifiers belong to the value type; the parameter has no such fields of its own.
+     * The value {@code use} is resolved first and the value type next: a value, a type or a
+     * qualifier that cannot be applied refuses the call before any other field of the parameter
+     * is touched. {@code length}, {@code precision} and the other qualifiers belong to the value
+     * type; the parameter has no such fields of its own. A field the parameter does not accept
+     * refuses the call.
      * </p>
      *
      * @param parameter the parameter to write into
      * @param params the call's arguments
      * @param qualifiers the value-type qualifiers the call names
+     * @param fields the other optional fields the call names
      * @param project the project whose configuration resolves {@code type}, or <code>null</code>
-     * @throws RuntimeException when the type or a qualifier could not be applied
+     * @throws RuntimeException when {@code use}, the type, a qualifier or a field could not be
+     *             applied
      */
     private void applyParameterFields(Object parameter, Map<String, String> params,
-        BmDefinedTypeHelper.QualifierOptions qualifiers, IProject project)
+        BmDefinedTypeHelper.QualifierOptions qualifiers, ParameterFields fields, IProject project)
     {
+        Object use = fields.use == null ? null : parameterUse(parameter, fields.use);
         applyParameterType(parameter, JsonUtils.extractStringArgument(params, "type"), //$NON-NLS-1$
             qualifiers, project);
         // title is a Presentation object (not a String) - build via the core factory.
         setPresentationProperty(parameter, "title", JsonUtils.extractStringArgument(params, "title")); //$NON-NLS-1$ //$NON-NLS-2$
-        applyOptionalProperty(parameter, "expression", params, "expression"); //$NON-NLS-1$ //$NON-NLS-2$
-        applyOptionalProperty(parameter, "use", params, "use"); //$NON-NLS-1$ //$NON-NLS-2$
-        applyOptionalProperty(parameter, "valueListAllowed", params, //$NON-NLS-1$
-            "valueListAllowed"); //$NON-NLS-1$
-        applyOptionalProperty(parameter, "denyIncompleteValues", params, //$NON-NLS-1$
+        setParameterField(parameter, "expression", fields.expression); //$NON-NLS-1$
+        setParameterField(parameter, "use", use); //$NON-NLS-1$
+        setParameterField(parameter, "valueListAllowed", fields.valueListAllowed); //$NON-NLS-1$
+        setParameterField(parameter, "denyIncompleteValues", fields.denyIncompleteValues); //$NON-NLS-1$
+    }
+
+    /**
+     * The optional scalar fields of a schema parameter a call names; each is <code>null</code>
+     * when the call does not name it.
+     */
+    static final class ParameterFields
+    {
+        /** The expression that computes the parameter value. */
+        String expression;
+
+        /** The value of {@code use} as the caller wrote it. */
+        String use;
+
+        /** Whether the parameter accepts a list of values. */
+        Boolean valueListAllowed;
+
+        /** Whether the parameter refuses incomplete values. */
+        Boolean denyIncompleteValues;
+    }
+
+    /**
+     * Reads the optional scalar fields of a schema parameter a call names.
+     *
+     * @param params the call's arguments
+     * @return the fields, each <code>null</code> when the call does not name it
+     */
+    static ParameterFields parameterFieldsOf(Map<String, String> params)
+    {
+        ParameterFields fields = new ParameterFields();
+        fields.expression = JsonUtils.extractStringArgument(params, "expression"); //$NON-NLS-1$
+        fields.use = JsonUtils.extractStringArgument(params, "use"); //$NON-NLS-1$
+        fields.valueListAllowed = JsonUtils.extractBooleanArgumentNullable(params, "valueListAllowed"); //$NON-NLS-1$
+        fields.denyIncompleteValues = JsonUtils.extractBooleanArgumentNullable(params, //$NON-NLS-1$
             "denyIncompleteValues"); //$NON-NLS-1$
+        return fields;
+    }
+
+    /**
+     * The literal of the parameter's {@code use} enumeration a caller's value names.
+     * <p>
+     * {@code true} and {@code Always} (Russian {@code Всегда}) name Always; {@code false} and
+     * {@code Auto} ({@code Авто}) name Auto, without regard to case. The literal is taken from the
+     * enumeration of the model feature, not built from a string.
+     * </p>
+     *
+     * @param parameter the schema parameter
+     * @param value the value the caller passed
+     * @return the enumeration literal to set
+     * @throws RuntimeException when the value names neither, or the model has no such literal
+     */
+    static Object parameterUse(Object parameter, String value)
+    {
+        String wanted;
+        String text = value.trim();
+        if ("true".equalsIgnoreCase(text) || "Always".equalsIgnoreCase(text) //$NON-NLS-1$ //$NON-NLS-2$
+            || "Всегда".equalsIgnoreCase(text)) //$NON-NLS-1$
+        {
+            wanted = "Always"; //$NON-NLS-1$
+        }
+        else if ("false".equalsIgnoreCase(text) || "Auto".equalsIgnoreCase(text) //$NON-NLS-1$ //$NON-NLS-2$
+            || "Авто".equalsIgnoreCase(text)) //$NON-NLS-1$
+        {
+            wanted = "Auto"; //$NON-NLS-1$
+        }
+        else
+        {
+            throw new RuntimeException("use of a schema parameter is Auto or Always (true = Always, " //$NON-NLS-1$
+                + "false = Auto); got '" + value + "'. Nothing was written."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        org.eclipse.emf.ecore.EStructuralFeature feature = parameter instanceof EObject
+            ? ((EObject)parameter).eClass().getEStructuralFeature("use") : null; //$NON-NLS-1$
+        if (feature != null && feature.getEType() instanceof org.eclipse.emf.ecore.EEnum)
+        {
+            for (org.eclipse.emf.ecore.EEnumLiteral literal
+                : ((org.eclipse.emf.ecore.EEnum)feature.getEType()).getELiterals())
+            {
+                if (wanted.equalsIgnoreCase(literal.getName()) || wanted.equalsIgnoreCase(literal.getLiteral()))
+                {
+                    return literal.getInstance();
+                }
+            }
+        }
+        throw new RuntimeException("use of a schema parameter was not written: the model has no value " //$NON-NLS-1$
+            + wanted + ". Nothing was written."); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes one optional field of a schema parameter.
+     *
+     * @param parameter the schema parameter
+     * @param property the model property
+     * @param value the value, or <code>null</code> to leave the field as it is
+     * @throws RuntimeException naming the field when the parameter does not accept the value
+     */
+    private static void setParameterField(Object parameter, String property, Object value)
+    {
+        if (value == null)
+        {
+            return;
+        }
+        String error = BmDcsHelper.setProperty(parameter, property, value);
+        if (error != null)
+        {
+            throw new RuntimeException("Parameter field '" + property + "' was not written: " + error //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Nothing was written."); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -3421,25 +3535,6 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("Type '" + type + "' was not applied: " //$NON-NLS-1$ //$NON-NLS-2$
                 + (tr == null ? "no result" : tr.error) + ". Nothing was written."); //$NON-NLS-1$ //$NON-NLS-2$
-        }
-    }
-
-    private void applyOptionalProperty(Object target, String propertyName,
-        Map<String, String> params, String paramKey)
-    {
-        if (params == null || !params.containsKey(paramKey))
-        {
-            return;
-        }
-        String value = JsonUtils.extractStringArgument(params, paramKey);
-        if (value == null)
-        {
-            return;
-        }
-        String err = BmDcsHelper.setProperty(target, propertyName, value);
-        if (err != null)
-        {
-            Activator.logWarning("dcs_workshop: " + err); //$NON-NLS-1$
         }
     }
 
