@@ -497,9 +497,8 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("description", //$NON-NLS-1$
                 "add_predefined_item: presentation/description of the predefined item (optional).") //$NON-NLS-1$
             .stringProperty("code", //$NON-NLS-1$
-                "add_predefined_item: item code, in the kind the owner's code type declares - " //$NON-NLS-1$
-                + "a number or text. A code that does not fit, or that another item carries, is " //$NON-NLS-1$
-                + "refused. Optional.") //$NON-NLS-1$
+                "add_predefined_item: item code, a number or text by the owner's code type. " //$NON-NLS-1$
+                + "Optional.") //$NON-NLS-1$
             .booleanProperty("isFolder", //$NON-NLS-1$
                 "add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
                     + "ChartOfCharacteristicTypes only).") //$NON-NLS-1$
@@ -548,9 +547,7 @@ public class EditMetadataTool implements IMcpTool
                 "Child kind for adopt_child: Form / Attribute / TabularSection / Template " //$NON-NLS-1$
                     + "/ Command / Dimension / Resource.") //$NON-NLS-1$
             .stringProperty("containerFqn", //$NON-NLS-1$
-                "remove_item and move_item: the form, an alias of formFqn. remove_item finds `name` " //$NON-NLS-1$
-                + "anywhere on the form, root included, so no parent group is passed; move_item takes " //$NON-NLS-1$
-                + "the destination container from parentName.") //$NON-NLS-1$
+                "remove_item, move_item: the form, alias of formFqn.") //$NON-NLS-1$
             // ---- Composition settings, for the operations run by dcs_workshop under an alias ----
             .stringProperty("parentPath", //$NON-NLS-1$
                 "add_settings_group: the group to nest the new one inside, as " //$NON-NLS-1$
