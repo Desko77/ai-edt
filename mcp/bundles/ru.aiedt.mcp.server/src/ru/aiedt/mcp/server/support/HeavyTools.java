@@ -49,6 +49,12 @@ public final class HeavyTools
         // answers. It dumps the whole configuration through a Designer spawned against the
         // infobase.
         "export_configuration_to_cf", //$NON-NLS-1$
+        // config_io's export_database_configuration and export_database_extension: the guarded
+        // .cf/.cfe dumps - the same Designer spawn against the infobase as
+        // export_configuration_to_cf, run by the facade itself, so the operation name is what
+        // the route answers.
+        "export_database_configuration", //$NON-NLS-1$
+        "export_database_extension", //$NON-NLS-1$
         // convertExternalToXml behind two callers: the standalone tool and config_io's operation of
         // the same name. Runs a Designer against the infobase the caller names.
         "unpack_external_binary", //$NON-NLS-1$

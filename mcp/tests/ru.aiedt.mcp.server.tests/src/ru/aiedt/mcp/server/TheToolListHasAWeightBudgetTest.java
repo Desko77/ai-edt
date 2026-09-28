@@ -64,8 +64,13 @@ public class TheToolListHasAWeightBudgetTest
      * add_command_handler append the handler procedure to the form module unless the call turns
      * that off.
      * </p>
+     * <p>
+     * Raised from 168575 to 169962 for export_database_configuration and
+     * export_database_extension on config_io: two operations, their overwrite and allowOutOfSync
+     * arguments, and the description sentence that an old file can never pass as the result.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 168575;
+    private static final int DOCUMENT_BUDGET = 169962;
 
     private LiveServer server;
 
@@ -218,7 +223,10 @@ public class TheToolListHasAWeightBudgetTest
         // syncOperation value rebuild_dump_info, the rebuild's wait budget, the format override.
         BUDGETS.put("infobase_admin", Integer.valueOf(9056)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
-        BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
+        // Raised by 1803 for export_database_configuration and export_database_extension: the
+        // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
+        // description says an old file can never pass as the result (measured 28.09: 7748).
+        BUDGETS.put("config_io", Integer.valueOf(7748)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
         // sentence in the tool's own description that names the way they compose an action.
         BUDGETS.put("vanessa", Integer.valueOf(7160)); //$NON-NLS-1$

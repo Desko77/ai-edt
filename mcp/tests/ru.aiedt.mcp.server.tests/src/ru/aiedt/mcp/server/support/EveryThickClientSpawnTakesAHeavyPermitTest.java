@@ -104,6 +104,8 @@ public class EveryThickClientSpawnTakesAHeavyPermitTest
     {
         List<Map.Entry<String, Map<String, String>>> calls = new ArrayList<>();
         calls.add(call(ConfigIoFacadeTool.NAME, "export_configuration_to_cf")); //$NON-NLS-1$
+        calls.add(call(ConfigIoFacadeTool.NAME, "export_database_configuration")); //$NON-NLS-1$
+        calls.add(call(ConfigIoFacadeTool.NAME, "export_database_extension")); //$NON-NLS-1$
         calls.add(call(ConfigIoFacadeTool.NAME, "unpack_external_binary")); //$NON-NLS-1$
         calls.add(call(InfobaseAdminFacadeTool.NAME, "create_infobase")); //$NON-NLS-1$
         calls.add(call(ExternalObjectWorkshopTool.NAME, "import_external_object")); //$NON-NLS-1$

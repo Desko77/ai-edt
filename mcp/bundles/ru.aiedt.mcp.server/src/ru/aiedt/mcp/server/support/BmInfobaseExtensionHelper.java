@@ -18,6 +18,7 @@ import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessType;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallation;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallationManager;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ComponentExecutorInfo;
@@ -104,7 +105,14 @@ public final class BmInfobaseExtensionHelper
         public String infobaseName;
         public String extensionName;
         public String inputPath;
+        /** True only when a requested database update is confirmed by the designer log. */
         public boolean databaseUpdated;
+        /**
+         * Why a requested database update could not be confirmed, when it could not;
+         * <code>null</code> otherwise. Carries the honest answer where
+         * {@link #databaseUpdated} once simply echoed the request.
+         */
+        public String databaseUpdateNote;
         public String designerLog;
     }
 
@@ -730,9 +738,85 @@ public final class BmInfobaseExtensionHelper
      * Exports a named configuration extension from the project's infobase to a
      * {@code .cfe} file on disk (read-only on the infobase - writes only the
      * output file).
+     * <p>
+     * The dump lands in a temporary sibling file first and is moved over
+     * {@code outputPath} only after it proves to be the product of this run, so a
+     * file an earlier run left at {@code outputPath} can no longer be reported as
+     * this export's result.
+     * </p>
      */
     public static ExportResult exportExtension(String projectName, String applicationId,
         String extensionName, String outputPath)
+    {
+        return exportCfToFile(projectName, applicationId, extensionName, outputPath,
+            true, false, false, "export_extension"); //$NON-NLS-1$
+    }
+
+    /**
+     * The guarded variant of {@link #exportConfigurationCf} behind config_io's
+     * {@code export_database_configuration}: refuses an occupied {@code outputPath}
+     * unless {@code overwrite}, and refuses to dump while the infobase does not hold
+     * the project's current configuration unless {@code allowOutOfSync}.
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param outputPath absolute path of the {@code .cf} file to write
+     * @param overwrite allow replacing an existing file at {@code outputPath}
+     * @param allowOutOfSync allow dumping while the project and the infobase disagree
+     * @return the export result (check {@link ExportResult#ok})
+     */
+    public static ExportResult exportDatabaseConfiguration(String projectName,
+        String applicationId, String outputPath, boolean overwrite, boolean allowOutOfSync)
+    {
+        return exportCfToFile(projectName, applicationId, null, outputPath,
+            overwrite, true, allowOutOfSync, "export_database_configuration"); //$NON-NLS-1$
+    }
+
+    /**
+     * The guarded variant of {@link #exportExtension} behind config_io's
+     * {@code export_database_extension}: refuses an occupied {@code outputPath} unless
+     * {@code overwrite}, and refuses to dump while the infobase does not hold the
+     * project's current configuration unless {@code allowOutOfSync}.
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param extensionName the exact extension name to export
+     * @param outputPath absolute path of the {@code .cfe} file to write
+     * @param overwrite allow replacing an existing file at {@code outputPath}
+     * @param allowOutOfSync allow dumping while the project and the infobase disagree
+     * @return the export result (check {@link ExportResult#ok})
+     */
+    public static ExportResult exportDatabaseExtension(String projectName, String applicationId,
+        String extensionName, String outputPath, boolean overwrite, boolean allowOutOfSync)
+    {
+        return exportCfToFile(projectName, applicationId, extensionName, outputPath,
+            overwrite, true, allowOutOfSync, "export_database_extension"); //$NON-NLS-1$
+    }
+
+    /**
+     * The shared .cf/.cfe dump: resolve the launcher, guard the destination, dump to a
+     * temporary sibling file, verify the product, move it into place.
+     * <p>
+     * Success is provable only because of the temp file: it exists solely because this
+     * run created it, so a non-empty fresh temp file IS this run's product, and the
+     * destination is touched by the move alone - a failed run leaves whatever sat at
+     * {@code outputPath} byte-for-byte intact. Judging the destination directly, the way
+     * the predecessor of this method did, let a previous run's file pass as the result.
+     * </p>
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param extensionName the extension to dump, or <code>null</code> for the MAIN configuration
+     * @param outputPath absolute path of the file to write
+     * @param overwrite allow replacing an existing file at {@code outputPath}
+     * @param checkEquality refuse while the infobase may not hold the project's configuration
+     * @param allowOutOfSync the caller's opt-out of that refusal
+     * @param operation the name the infobase monopoly claim is taken under
+     * @return the export result (check {@link ExportResult#ok})
+     */
+    private static ExportResult exportCfToFile(String projectName, String applicationId,
+        String extensionName, String outputPath, boolean overwrite, boolean checkEquality,
+        boolean allowOutOfSync, String operation)
     {
         ExportResult r = new ExportResult();
         r.extensionName = extensionName;
@@ -777,14 +861,53 @@ public final class BmInfobaseExtensionHelper
             }
         }
 
+        // The guarded operations refuse an occupied destination before anything runs:
+        // they exist so a file already sitting there is neither silently replaced nor
+        // silently reported as this run's result.
+        String occupied = occupiedOutputRefusal(dest, overwrite);
+        if (occupied != null)
+        {
+            r.error = occupied;
+            r.failureKind = ErrorTags.ALREADY_EXISTS.wire();
+            return r;
+        }
+
+        // A dump reads the INFOBASE. When the project carries changes the infobase does
+        // not hold, the file would silently miss them, so the guarded operations refuse
+        // rather than write a plausible-looking stale dump.
+        if (checkEquality && !allowOutOfSync)
+        {
+            String outOfSync = outOfSyncRefusal(readEqualityState(ctx));
+            if (outOfSync != null)
+            {
+                r.error = outOfSync;
+                r.failureKind = ErrorTags.OUT_OF_SYNC.wire();
+                return r;
+            }
+        }
+
+        java.time.Instant startedAt = java.time.Instant.now();
+        java.nio.file.Path temp;
+        try
+        {
+            temp = java.nio.file.Files.createTempFile(parent, ".aiedt-export-", ".part"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            r.error = "Cannot create the temporary export file in " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + oneLine(causeChainText(e));
+            r.failureKind = ErrorTags.WRITE_FAILED.wire();
+            return r;
+        }
+
         try
         {
             // The in-process lock below keeps this EDT's own callers apart. It says nothing
             // about the EDT next door, and a Designer launched against an infobase another
             // instance is already working on fails with a platform error about a locked
             // configuration - or waits out the timeout. Neither names anybody.
-            MonopolyLock.Claim claim =
-                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_extension"); //$NON-NLS-1$
+            MonopolyLock.Claim claim = MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase),
+                operation);
             if (!claim.granted())
             {
                 r.error = claim.refusal();
@@ -800,8 +923,9 @@ public final class BmInfobaseExtensionHelper
                 // call hangs until the MCP timeout (row 55). ctx.lock alone does not
                 // release that platform lock (live-verified).
                 underThickClientHandshake(ctx, () -> {
+                    // null extension name = the MAIN configuration (not an extension).
                     ctx.launcher.exportCfFromInfobase(ctx.component, ctx.infobase, ctx.args,
-                        extensionName, dest);
+                        extensionName, temp);
                 });
             }
             finally
@@ -812,19 +936,203 @@ public final class BmInfobaseExtensionHelper
         catch (Throwable e)
         {
             classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            deleteQuietly(temp);
             return r;
         }
-        java.io.File out = new java.io.File(outputPath);
-        if (!out.isFile())
+
+        String problem = freshExportProblem(temp, startedAt);
+        if (problem != null)
         {
-            r.error = "The export reported success but no file was written at " //$NON-NLS-1$
-                + outputPath + "."; //$NON-NLS-1$
+            r.error = "The export reported success but its output did not materialize at " //$NON-NLS-1$
+                + dest + ": " + problem + "."; //$NON-NLS-1$ //$NON-NLS-2$
             r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+            deleteQuietly(temp);
+            return r;
+        }
+        String moveError = moveExportIntoPlace(temp, dest, overwrite);
+        if (moveError != null)
+        {
+            r.error = moveError;
+            r.failureKind = !overwrite && java.nio.file.Files.exists(dest)
+                ? ErrorTags.ALREADY_EXISTS.wire() : ErrorTags.WRITE_FAILED.wire();
+            deleteQuietly(temp);
             return r;
         }
         r.ok = true;
-        r.sizeBytes = out.length();
+        try
+        {
+            r.sizeBytes = java.nio.file.Files.size(dest);
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            r.sizeBytes = dest.toFile().length();
+        }
         return r;
+    }
+
+    /**
+     * The refusal a guarded export gives for an occupied destination.
+     * <p>
+     * Package-visible so the guard is testable without an infobase: it is the branch that
+     * keeps a previous file from silently standing in for this run's result - and the
+     * branch that leaves that file byte-for-byte intact.
+     * </p>
+     *
+     * @param dest the destination path
+     * @param overwrite whether the caller allowed replacing an existing file
+     * @return the refusal text, or <code>null</code> when the destination may be written
+     */
+    static String occupiedOutputRefusal(java.nio.file.Path dest, boolean overwrite)
+    {
+        if (overwrite || dest == null || !java.nio.file.Files.exists(dest))
+        {
+            return null;
+        }
+        return "A file already exists at " + dest //$NON-NLS-1$
+            + " and overwrite was not allowed - it was left untouched. Pass overwrite=true " //$NON-NLS-1$
+            + "to replace it, or choose another outputPath."; //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal a guarded export gives when the infobase may not hold what the project
+     * holds.
+     *
+     * @param state the project/infobase equality state; <code>null</code> when unreadable
+     * @return the refusal text, or <code>null</code> when the dump reflects the project
+     */
+    static String outOfSyncRefusal(InfobaseEqualityState state)
+    {
+        if (state == InfobaseEqualityState.EQUAL)
+        {
+            return null;
+        }
+        if (state == null)
+        {
+            return "The project/infobase synchronization state could not be read, so nothing " //$NON-NLS-1$
+                + "vouches for the dump being current. Connect the infobase in EDT and retry, " //$NON-NLS-1$
+                + "or pass allowOutOfSync=true to export without the check."; //$NON-NLS-1$
+        }
+        if (state == InfobaseEqualityState.LOADING)
+        {
+            return "The infobase is being updated right now (equality state LOADING). Wait " //$NON-NLS-1$
+                + "for the synchronization to finish and retry, or pass allowOutOfSync=true " //$NON-NLS-1$
+                + "to export anyway."; //$NON-NLS-1$
+        }
+        return "The infobase does not hold the project's current configuration (equality " //$NON-NLS-1$
+            + "state " + state + "): the dump would silently miss changes not yet applied. " //$NON-NLS-1$ //$NON-NLS-2$
+            + "Run update_database first, or pass allowOutOfSync=true to export what the " //$NON-NLS-1$
+            + "infobase holds now."; //$NON-NLS-1$
+    }
+
+    /**
+     * Reads the project/infobase equality state for a guarded export.
+     *
+     * @param ctx the resolved launcher context
+     * @return the equality state, or <code>null</code> when it cannot be obtained (no
+     *         synchronization manager on this runtime, or the read failed) - the caller
+     *         refuses on <code>null</code>, because a guard that could not run cleared nothing
+     */
+    private static InfobaseEqualityState readEqualityState(LauncherContext ctx)
+    {
+        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
+        if (mgr == null || ctx.project == null)
+        {
+            return null;
+        }
+        try
+        {
+            return mgr.getEqualityState(ctx.project, ctx.infobase);
+        }
+        catch (Throwable e)
+        {
+            Activator.logWarning("getEqualityState failed; treating the synchronization state " //$NON-NLS-1$
+                + "as unreadable: " + oneLine(causeChainText(e))); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Tells what is wrong with a file an export run claims to have written.
+     * <p>
+     * Three judgements, in order: the file must exist, it must be non-empty (the platform
+     * creates an empty file before writing into one), and it must not predate the run -
+     * the check that keeps a previous run's leftover from passing as this one's product.
+     * Package-visible: the .cf/.cfe export and the .epf/.erf dump both judge their product
+     * through it, and a test can exercise it without an infobase.
+     * </p>
+     *
+     * @param file the file the run was pointed at
+     * @param notBefore the moment the run started
+     * @return the problem, or <code>null</code> when the file is this run's non-empty product
+     */
+    static String freshExportProblem(java.nio.file.Path file, java.time.Instant notBefore)
+    {
+        if (file == null || !java.nio.file.Files.isRegularFile(file))
+        {
+            return "no file was written"; //$NON-NLS-1$
+        }
+        try
+        {
+            if (java.nio.file.Files.size(file) == 0L)
+            {
+                return "the written file is empty"; //$NON-NLS-1$
+            }
+            if (notBefore != null)
+            {
+                java.nio.file.attribute.FileTime modified =
+                    java.nio.file.Files.getLastModifiedTime(file);
+                if (modified.toInstant().isBefore(notBefore))
+                {
+                    return "the written file predates this run (last modified " + modified //$NON-NLS-1$
+                        + ", the run started " + notBefore //$NON-NLS-1$
+                        + ") - it is what a previous run left"; //$NON-NLS-1$
+                }
+            }
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            return "the written file could not be verified: " + oneLine(causeChainText(e)); //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Moves a verified export file over its destination.
+     *
+     * @param temp the verified temporary file
+     * @param dest the destination path
+     * @param overwrite whether an existing destination may be replaced
+     * @return the failure text, or <code>null</code> when the file is in place
+     */
+    static String moveExportIntoPlace(java.nio.file.Path temp, java.nio.file.Path dest,
+        boolean overwrite)
+    {
+        try
+        {
+            if (overwrite)
+            {
+                java.nio.file.Files.move(temp, dest,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            else
+            {
+                java.nio.file.Files.move(temp, dest);
+            }
+            return null;
+        }
+        catch (java.nio.file.FileAlreadyExistsException race)
+        {
+            // The destination appeared between the occupied guard and this move; the
+            // guarded caller refuses rather than replaces it.
+            return "A file appeared at " + dest //$NON-NLS-1$
+                + " while the export ran - it was left untouched; pass overwrite=true to " //$NON-NLS-1$
+                + "replace it."; //$NON-NLS-1$
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            return "The export succeeded but the file could not be moved into place at " //$NON-NLS-1$
+                + dest + ": " + oneLine(causeChainText(e)); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -839,6 +1147,13 @@ public final class BmInfobaseExtensionHelper
      * {@code validate_for_export} first to catch export-breakers (e.g. a {@code <help>}
      * page declared in an {@code .mdo} without its {@code Help/<lang>.html} file) that
      * crash the DESIGNER dump.
+     * </p>
+     * <p>
+     * The dump lands in a temporary sibling file first and is moved over
+     * {@code outputPath} only after it proves to be the product of this run, so a
+     * file an earlier run left at {@code outputPath} can no longer be reported as
+     * this export's result.
+     * </p>
      *
      * @param projectName the EDT project that owns the infobase
      * @param applicationId the infobase application id (nullable -> the project default)
@@ -848,92 +1163,8 @@ public final class BmInfobaseExtensionHelper
     public static ExportResult exportConfigurationCf(String projectName, String applicationId,
         String outputPath)
     {
-        ExportResult r = new ExportResult();
-        r.outputPath = outputPath;
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
-        if (ctx.error != null)
-        {
-            r.error = ctx.error;
-            r.failureKind = ctx.failureKind;
-            r.infobaseName = ctx.infobaseName;
-            return r;
-        }
-        r.infobaseName = ctx.infobaseName;
-
-        // Resolve and prepare the output path client-side, before the thick-client call,
-        // so a bad path or missing directory is reported as such instead of being
-        // misclassified as an infobase/runtime failure by classifyThickClientFailure.
-        java.nio.file.Path dest;
-        try
-        {
-            dest = java.nio.file.Paths.get(outputPath);
-        }
-        catch (java.nio.file.InvalidPathException e)
-        {
-            r.error = "outputPath is not a valid file path: " + oneLine(causeChainText(e)); //$NON-NLS-1$
-            r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
-            return r;
-        }
-        java.nio.file.Path parent = dest.toAbsolutePath().getParent();
-        if (parent != null)
-        {
-            try
-            {
-                java.nio.file.Files.createDirectories(parent);
-            }
-            catch (java.io.IOException | RuntimeException e)
-            {
-                r.error = "Cannot create the output directory " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(e));
-                r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
-                return r;
-            }
-        }
-
-        try
-        {
-            // The in-process lock below keeps this EDT's own callers apart. It says nothing
-            // about the EDT next door, and a Designer launched against an infobase another
-            // instance is already working on fails with a platform error about a locked
-            // configuration - or waits out the timeout. Neither names anybody.
-            MonopolyLock.Claim claim =
-                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_configuration_to_cf"); //$NON-NLS-1$
-            if (!claim.granted())
-            {
-                r.error = claim.refusal();
-                r.failureKind = ErrorTags.BUSY.wire();
-                return r;
-            }
-            try
-            {
-                // Same disconnect/reconnect as exportExtension: the dump thick-client needs
-                // EDT's designer agent off the file infobase or it blocks on the monopoly.
-                underThickClientHandshake(ctx, () -> {
-                    // null extension name = the MAIN configuration (not an extension).
-                    ctx.launcher.exportCfFromInfobase(ctx.component, ctx.infobase, ctx.args, null, dest);
-                });
-            }
-            finally
-            {
-                claim.close();
-            }
-        }
-        catch (Throwable e)
-        {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
-            return r;
-        }
-        java.io.File out = new java.io.File(outputPath);
-        if (!out.isFile())
-        {
-            r.error = "The export reported success but no file was written at " //$NON-NLS-1$
-                + outputPath + "."; //$NON-NLS-1$
-            r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
-            return r;
-        }
-        r.ok = true;
-        r.sizeBytes = out.length();
-        return r;
+        return exportCfToFile(projectName, applicationId, null, outputPath,
+            true, false, false, "export_configuration_to_cf"); //$NON-NLS-1$
     }
 
     /**
@@ -1158,8 +1389,96 @@ public final class BmInfobaseExtensionHelper
         }
 
         r.ok = true;
-        r.databaseUpdated = updateDatabase;
+        if (updateDatabase)
+        {
+            // databaseUpdated must say the update happened, not that it was asked for:
+            // the designer log is the only witness the run leaves, so it is read for
+            // what it vouches for, and an unreadable or silent log is answered honestly
+            // rather than claimed as success.
+            DatabaseUpdateOutcome outcome = databaseUpdateOutcome(r.designerLog);
+            if (outcome == DatabaseUpdateOutcome.FAILED)
+            {
+                r.ok = false;
+                r.failureKind = ErrorTags.DATABASE_UPDATE_FAILED.wire();
+                r.error = "The extension was loaded, but the database update reported errors " //$NON-NLS-1$
+                    + "in the designer log - the extension was NOT applied to the database. " //$NON-NLS-1$
+                    + "Fix the cause named in the log and retry."; //$NON-NLS-1$
+            }
+            else if (outcome == DatabaseUpdateOutcome.CONFIRMED)
+            {
+                r.databaseUpdated = true;
+            }
+            else
+            {
+                r.databaseUpdateNote = "The designer log carries no line that confirms the " //$NON-NLS-1$
+                    + "database update, so databaseUpdated stays false rather than being " //$NON-NLS-1$
+                    + "claimed: verify the extension in the Configurator (or apply it there) " //$NON-NLS-1$
+                    + "before relying on it."; //$NON-NLS-1$
+            }
+        }
         return r;
+    }
+
+    /** What the designer log of an install run vouches for about a requested database update. */
+    enum DatabaseUpdateOutcome
+    {
+        /** A success line is present and no failure line is. */
+        CONFIRMED,
+        /** The log says nothing either way (or there is no log). */
+        UNVERIFIED,
+        /** A failure line is present. */
+        FAILED
+    }
+
+    /**
+     * Reads the designer log of an install run for what it says about the database update
+     * the run was asked to perform.
+     * <p>
+     * The platform speaks the language the IDE runs in, so both English and Russian
+     * wordings are matched; a failure line anywhere wins over every success line, and a
+     * summary that counts zero errors ("errors: 0" / its Russian twin) is not a failure
+     * report. Package-visible: the matching turns on prose and is exactly the kind that
+     * stops working without anyone noticing, so a test reads it directly.
+     * </p>
+     *
+     * @param designerLog the captured designer log; may be <code>null</code>
+     * @return what the log vouches for, never <code>null</code>
+     */
+    static DatabaseUpdateOutcome databaseUpdateOutcome(String designerLog)
+    {
+        if (designerLog == null || designerLog.trim().isEmpty())
+        {
+            return DatabaseUpdateOutcome.UNVERIFIED;
+        }
+        boolean failed = false;
+        boolean confirmed = false;
+        for (String raw : designerLog.split("\n")) //$NON-NLS-1$
+        {
+            String line = raw.trim().toLowerCase(Locale.ROOT);
+            if (line.isEmpty())
+            {
+                continue;
+            }
+            boolean zeroCount = line.contains("errors: 0") || line.contains("error: 0") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("ошибок: 0"); //$NON-NLS-1$
+            if (!zeroCount && (line.contains("error") || line.contains("failed") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("failure") || line.contains("exception") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("ошибк") // the Russian error word, any case ending //$NON-NLS-1$
+                || line.contains("не удалось"))) // the Russian "could not" wording //$NON-NLS-1$
+            {
+                failed = true;
+            }
+            if (line.contains("successfully") || line.contains("completed") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("успешно")) // the Russian "successfully" wording //$NON-NLS-1$
+            {
+                confirmed = true;
+            }
+        }
+        if (failed)
+        {
+            return DatabaseUpdateOutcome.FAILED;
+        }
+        return confirmed ? DatabaseUpdateOutcome.CONFIRMED : DatabaseUpdateOutcome.UNVERIFIED;
     }
 
     /**
@@ -1193,8 +1512,12 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    /** Best-effort delete of a path (typically a downloaded temp file); swallows errors. */
-    private static void deleteQuietly(java.nio.file.Path path)
+    /**
+     * Best-effort delete of a path (a temporary export or dump file, a downloaded temp
+     * file); swallows errors. Package-visible: every export path in this package cleans
+     * its temporary product up through it.
+     */
+    static void deleteQuietly(java.nio.file.Path path)
     {
         if (path == null)
         {

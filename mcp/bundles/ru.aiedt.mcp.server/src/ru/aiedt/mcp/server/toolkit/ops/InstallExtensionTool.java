@@ -38,7 +38,9 @@ public class InstallExtensionTool implements IMcpTool
             + "(MUTATES the infobase). Pass projectName, extensionName (the name to register " //$NON-NLS-1$
             + "the extension under), and inputPath (the .cfe to load); applicationId is " //$NON-NLS-1$
             + "optional when the project has one infobase application. updateDatabase (default " //$NON-NLS-1$
-            + "true) also applies the extension to the database (/UpdateDBCfg -Extension). " //$NON-NLS-1$
+            + "true) also applies the extension to the database (/UpdateDBCfg -Extension); " //$NON-NLS-1$
+            + "databaseUpdated in the answer is set only when the designer log confirms the " //$NON-NLS-1$
+            + "update, and a databaseUpdateNote explains it when it does not. " //$NON-NLS-1$
             + "To install YAxUnit, point inputPath at a YAxUnit .cfe with extensionName=YAxUnit. " //$NON-NLS-1$
             + "Runs the 1C:Enterprise thick client - requires a resolvable platform runtime, " //$NON-NLS-1$
             + "valid stored credentials (set_infobase_credentials), and the infobase not be " //$NON-NLS-1$
@@ -63,7 +65,8 @@ public class InstallExtensionTool implements IMcpTool
                     + "application; otherwise required (get_applications lists ids).") //$NON-NLS-1$
             .booleanProperty("updateDatabase", //$NON-NLS-1$
                 "Also apply the extension to the database (/UpdateDBCfg -Extension). " //$NON-NLS-1$
-                    + "Default true.") //$NON-NLS-1$
+                    + "Default true. The answer's databaseUpdated is set only when the " //$NON-NLS-1$
+                    + "designer log confirms the update.") //$NON-NLS-1$
             .build();
     }
 
@@ -128,6 +131,10 @@ public class InstallExtensionTool implements IMcpTool
             .put("extensionName", extensionName) //$NON-NLS-1$
             .put("inputPath", inputPath) //$NON-NLS-1$
             .put("databaseUpdated", r.databaseUpdated); //$NON-NLS-1$
+        if (r.databaseUpdateNote != null)
+        {
+            ok.put("databaseUpdateNote", r.databaseUpdateNote); //$NON-NLS-1$
+        }
         if (r.designerLog != null)
         {
             ok.put("designerLog", r.designerLog); //$NON-NLS-1$

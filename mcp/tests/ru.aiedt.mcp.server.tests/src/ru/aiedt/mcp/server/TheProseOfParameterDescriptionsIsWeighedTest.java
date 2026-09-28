@@ -249,8 +249,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("infobase_admin", Integer.valueOf(5771));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
-        // runKey gained naming that operation (measured 24.09: 3810).
-        PROSE.put("config_io", Integer.valueOf(3810));
+        // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
+        // export_database_configuration and export_database_extension: the new overwrite and
+        // allowOutOfSync arguments, one sentence each, and the sentences extensionName,
+        // applicationId and outputPath gained naming the two operations (measured 28.09: 4734).
+        PROSE.put("config_io", Integer.valueOf(4734));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
@@ -484,6 +487,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * that off, and the switch has to be in the schema to be turned off. Measured with the
      * templateType sentence of add_template one byte shorter: 92685.
      * </p>
+     * <p>
+     * And a thirty-second, by 924, for the overwrite and allowOutOfSync sentences of
+     * export_database_configuration and export_database_extension on config_io. Measured 28.09:
+     * 93609.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92685;
+    private static final int DOCUMENT_PROSE = 93609;
 }
