@@ -505,4 +505,16 @@ public class ADryRunReadsOnlyWhatCannotStartAnUpdateTest
         DatabaseUpdater.exportScanBefore("P", false, false, scan); //$NON-NLS-1$
         assertEquals("an update still scans first", 1, scans[0]); //$NON-NLS-1$
     }
+
+    /**
+     * Reference-type previews record a dry-run plan before any borrow can be attempted.
+     */
+    @Test
+    public void aPreviewDoesNotBorrowWhatItShows()
+    {
+        assertEquals("dryRun", ObjectOps.referenceBorrowSkipReason(true, true)); //$NON-NLS-1$
+        assertEquals("dryRun", ObjectOps.referenceBorrowSkipReason(false, true)); //$NON-NLS-1$
+        assertEquals("auto_borrow=false", ObjectOps.referenceBorrowSkipReason(false, false)); //$NON-NLS-1$
+        assertNull(ObjectOps.referenceBorrowSkipReason(true, false));
+    }
 }

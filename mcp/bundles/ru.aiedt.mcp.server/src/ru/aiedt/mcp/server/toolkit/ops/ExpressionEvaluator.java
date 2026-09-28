@@ -83,13 +83,13 @@ public final class ExpressionEvaluator implements IMcpTool
      *
      * @param frame the suspended frame.
      * @param expression the name to evaluate.
-     * @return a map with name, type and value, or <code>null</code> when nothing came back
+     * @return the value with its name and type, or the reason nothing came back
      */
-    static Map<String, Object> evaluateValue(IStackFrame frame, String expression)
+    static Evaluation evaluateValue(IStackFrame frame, String expression)
     {
         if (frame == null || expression == null || expression.isEmpty())
         {
-            return null;
+            return Evaluation.refused("nothing was given to evaluate"); //$NON-NLS-1$
         }
         try
         {
@@ -98,13 +98,15 @@ public final class ExpressionEvaluator implements IMcpTool
                 debugPlugin == null ? null : debugPlugin.getExpressionManager();
             if (expressionManager == null)
             {
-                return null;
+                return Evaluation.refused("the expression manager cannot be reached " //$NON-NLS-1$
+                    + "(the EDT debug runtime is shutting down)"); //$NON-NLS-1$
             }
-            IWatchExpressionDelegate delegate =
-                expressionManager.newWatchExpressionDelegate(((IDebugElement)frame).getModelIdentifier());
+            String modelId = ((IDebugElement)frame).getModelIdentifier();
+            IWatchExpressionDelegate delegate = expressionManager.newWatchExpressionDelegate(modelId);
             if (delegate == null)
             {
-                return null;
+                return Evaluation.refused("no watch-expression delegate is registered for model " //$NON-NLS-1$
+                    + modelId); //$NON-NLS-1$
             }
             final AtomicReference<IWatchExpressionResult> resultRef = new AtomicReference<>();
             final CountDownLatch latch = new CountDownLatch(1);
@@ -114,25 +116,106 @@ public final class ExpressionEvaluator implements IMcpTool
             });
             if (!latch.await(EVAL_TIMEOUT_MS, TimeUnit.MILLISECONDS))
             {
-                return null;
+                return Evaluation.refused(timeoutRefusal(EVAL_TIMEOUT_MS));
             }
             IWatchExpressionResult result = resultRef.get();
-            if (result == null || result.hasErrors() || result.getValue() == null)
+            if (result == null)
             {
-                return null;
+                return Evaluation.refused("the delegate returned no result"); //$NON-NLS-1$
+            }
+            if (result.hasErrors())
+            {
+                return Evaluation.refused(joinMessages(result.getErrorMessages()));
             }
             IValue value = result.getValue();
+            if (value == null)
+            {
+                return Evaluation.refused("the evaluation returned no value"); //$NON-NLS-1$
+            }
             Map<String, Object> answer = new java.util.LinkedHashMap<>();
             answer.put("name", expression); //$NON-NLS-1$
             answer.put("type", value.getReferenceTypeName()); //$NON-NLS-1$
-            answer.put("value", value.getValueString()); //$NON-NLS-1$
+            answer.putAll(DebugValueSerializer.valueWithCut(value.getValueString()));
             answer.put("readBy", "evaluate"); //$NON-NLS-1$ //$NON-NLS-2$
-            return answer;
+            return Evaluation.of(answer);
         }
         catch (Exception e)
         {
-            Activator.logDebug("evaluating " + expression + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-            return null;
+            String reason = TextSuggest.safeMessage(e);
+            Activator.logDebug("evaluating " + expression + ": " + reason); //$NON-NLS-1$ //$NON-NLS-2$
+            return Evaluation.refused("the evaluation raised " + reason); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * What a wait that ran out is told.
+     * <p>
+     * A timeout does not stop the expression: the delegate has no cancel here, so the code runs on in
+     * the debugged client, and the caller has to know that before it evaluates something beside it.
+     * </p>
+     *
+     * @param timeoutMs how long the wait was
+     * @return the refusal text
+     */
+    static String timeoutRefusal(long timeoutMs)
+    {
+        return "expression evaluation did not finish within " + timeoutMs + "ms. It was not cancelled: " //$NON-NLS-1$ //$NON-NLS-2$
+            + "the expression is still running in the debugged client, and this call will not see its " //$NON-NLS-1$
+            + "result. The next evaluation starts beside it, so wait for the client to reach a stop first."; //$NON-NLS-1$
+    }
+
+    /**
+     * @param messages what the delegate said went wrong
+     * @return them joined into one line; empty, never <code>null</code>
+     */
+    private static String joinMessages(String[] messages)
+    {
+        StringBuilder joined = new StringBuilder();
+        if (messages != null)
+        {
+            for (String message : messages)
+            {
+                if (joined.length() > 0)
+                {
+                    joined.append("; "); //$NON-NLS-1$
+                }
+                joined.append(message);
+            }
+        }
+        return joined.toString();
+    }
+
+    /** What an evaluation answered: the value it produced, or why it produced none. */
+    static final class Evaluation
+    {
+        /** name, type and value with the cut note, or <code>null</code> when nothing came back. */
+        final Map<String, Object> value;
+
+        /** Why nothing came back; <code>null</code> when something did. */
+        final String refusal;
+
+        private Evaluation(Map<String, Object> value, String refusal)
+        {
+            this.value = value;
+            this.refusal = refusal;
+        }
+
+        /**
+         * @param value the value as it is to be reported
+         * @return the evaluation
+         */
+        static Evaluation of(Map<String, Object> value)
+        {
+            return new Evaluation(value, null);
+        }
+
+        /**
+         * @param refusal why the evaluation answered nothing
+         * @return the evaluation, carrying no value
+         */
+        static Evaluation refused(String refusal)
+        {
+            return new Evaluation(null, refusal);
         }
     }
 
@@ -197,7 +280,7 @@ public final class ExpressionEvaluator implements IMcpTool
 
             if (!latch.await(EVAL_TIMEOUT_MS, TimeUnit.MILLISECONDS))
             {
-                return ToolResult.error("expression evaluation did not finish within " + EVAL_TIMEOUT_MS + "ms").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                return ToolResult.error(timeoutRefusal(EVAL_TIMEOUT_MS)).toJson();
             }
 
             IWatchExpressionResult result = resultRef.get();
@@ -233,16 +316,13 @@ public final class ExpressionEvaluator implements IMcpTool
                 return ToolResult.error("Could not read the value: " + de.getMessage()).toJson(); //$NON-NLS-1$
             }
 
-            ToolResult res = ToolResult.success().put("type", type); //$NON-NLS-1$
-            if (stringValue != null && stringValue.length() > DebugValueSerializer.MAX_VALUE_LENGTH)
+            Map<String, Object> cut = DebugValueSerializer.valueWithCut(stringValue);
+            ToolResult res = ToolResult.success().put("type", type) //$NON-NLS-1$
+                .put("value", cut.get("value")); //$NON-NLS-1$ //$NON-NLS-2$
+            if (cut.containsKey("truncated")) //$NON-NLS-1$
             {
-                res.put("value", stringValue.substring(0, DebugValueSerializer.MAX_VALUE_LENGTH)); //$NON-NLS-1$
-                res.put("truncated", true); //$NON-NLS-1$
-                res.put("fullLength", stringValue.length()); //$NON-NLS-1$
-            }
-            else
-            {
-                res.put("value", stringValue); //$NON-NLS-1$
+                res.put("truncated", cut.get("truncated")) //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("fullLength", cut.get("fullLength")); //$NON-NLS-1$ //$NON-NLS-2$
             }
             return res.toJson();
         }

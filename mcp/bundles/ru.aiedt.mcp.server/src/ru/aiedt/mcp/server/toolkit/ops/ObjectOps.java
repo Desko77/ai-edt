@@ -1470,35 +1470,7 @@ final class ObjectOps
         // when already adopted / extension-own) lets the write proceed. Skipped for the
         // Configuration-root sentinel. Best-effort: a failure is recorded, not fatal.
         maybeAutoBorrowOwner(project, ownerFqn, autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
-        if (type != null && !type.isEmpty() && BmDcsHelper.isExtensionProject(project))
-        {
-            for (String targetFqn : extractReferenceTargetFqns(type))
-            {
-                if (autoBorrow)
-                {
-                    BmExtensionHelper.BorrowResult br = BmExtensionHelper.attemptBorrow(project,
-                        null, targetFqn, null);
-                    if (br.ok)
-                    {
-                        autoBorrowed.add(targetFqn);
-                    }
-                    else
-                    {
-                        Map<String, Object> sk = new LinkedHashMap<>();
-                        sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                        sk.put("reason", br.error != null ? br.error : "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
-                        autoBorrowSkipped.add(sk);
-                    }
-                }
-                else
-                {
-                    Map<String, Object> sk = new LinkedHashMap<>();
-                    sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                    sk.put("reason", "auto_borrow=false"); //$NON-NLS-1$ //$NON-NLS-2$
-                    autoBorrowSkipped.add(sk);
-                }
-            }
-        }
+        autoBorrowReferenceTargets(project, type, autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
 
         // Capture configuration for type application inside the BM transaction.
         IConfigurationProvider attrConfigProvider = Activator.getDefault().getConfigurationProvider();
@@ -1791,6 +1763,67 @@ final class ObjectOps
         return out;
     }
 
+    /**
+     * Adds the borrow outcomes for reference targets in an attribute type without mutating an
+     * extension during a dry run.
+     *
+     * @param project the target project
+     * @param typeDescription the requested attribute type
+     * @param autoBorrow whether automatic borrowing was requested
+     * @param dryRun whether the operation is only a preview
+     * @param autoBorrowed targets borrowed successfully
+     * @param autoBorrowSkipped planned or refused targets with their reasons
+     */
+    private void autoBorrowReferenceTargets(IProject project, String typeDescription, boolean autoBorrow,
+        boolean dryRun, List<String> autoBorrowed, List<Map<String, Object>> autoBorrowSkipped)
+    {
+        if (typeDescription == null || typeDescription.isEmpty() || !BmDcsHelper.isExtensionProject(project))
+        {
+            return;
+        }
+        for (String targetFqn : extractReferenceTargetFqns(typeDescription))
+        {
+            String skipReason = referenceBorrowSkipReason(autoBorrow, dryRun);
+            if (skipReason != null)
+            {
+                Map<String, Object> skipped = new LinkedHashMap<>();
+                skipped.put("targetFqn", targetFqn); //$NON-NLS-1$
+                skipped.put("reason", skipReason); //$NON-NLS-1$
+                autoBorrowSkipped.add(skipped);
+                continue;
+            }
+            BmExtensionHelper.BorrowResult borrowed = BmExtensionHelper.attemptBorrow(project, null,
+                targetFqn, null);
+            if (borrowed.ok)
+            {
+                autoBorrowed.add(targetFqn);
+            }
+            else
+            {
+                Map<String, Object> skipped = new LinkedHashMap<>();
+                skipped.put("targetFqn", targetFqn); //$NON-NLS-1$
+                skipped.put("reason", borrowed.error != null ? borrowed.error : "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
+                autoBorrowSkipped.add(skipped);
+            }
+        }
+    }
+
+    /**
+     * Chooses the reason a reference target must not be borrowed.
+     *
+     * @param autoBorrow whether automatic borrowing was requested
+     * @param dryRun whether the operation is only a preview
+     * @return the skip reason, or {@code null} when the target may be borrowed
+     */
+    static String referenceBorrowSkipReason(boolean autoBorrow, boolean dryRun)
+    {
+        if (dryRun)
+        {
+            return "dryRun"; //$NON-NLS-1$
+        }
+        return autoBorrow ? null : "auto_borrow=false"; //$NON-NLS-1$
+    }
+
     /** Maps ONE reference-type token ({@code CatalogRef.X}) to its object FQN ({@code Catalog.X}), else null. */
     private String refFqnForSegment(String t)
     {
@@ -2062,35 +2095,7 @@ final class ObjectOps
             maybeAutoBorrowOwner(project, ownerFqn + ".TabularSection." + tcName, //$NON-NLS-1$
                 autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
         }
-        if (type != null && !type.isEmpty() && BmDcsHelper.isExtensionProject(project))
-        {
-            for (String targetFqn : extractReferenceTargetFqns(type))
-            {
-                if (autoBorrow)
-                {
-                    BmExtensionHelper.BorrowResult br = BmExtensionHelper.attemptBorrow(project,
-                        null, targetFqn, null);
-                    if (br.ok)
-                    {
-                        autoBorrowed.add(targetFqn);
-                    }
-                    else
-                    {
-                        Map<String, Object> sk = new LinkedHashMap<>();
-                        sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                        sk.put("reason", br.error != null ? br.error : "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
-                        autoBorrowSkipped.add(sk);
-                    }
-                }
-                else
-                {
-                    Map<String, Object> sk = new LinkedHashMap<>();
-                    sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                    sk.put("reason", "auto_borrow=false"); //$NON-NLS-1$ //$NON-NLS-2$
-                    autoBorrowSkipped.add(sk);
-                }
-            }
-        }
+        autoBorrowReferenceTargets(project, type, autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
 
         // Capture configuration for type application inside the BM transaction.
         IConfigurationProvider tcConfigProvider = Activator.getDefault().getConfigurationProvider();
