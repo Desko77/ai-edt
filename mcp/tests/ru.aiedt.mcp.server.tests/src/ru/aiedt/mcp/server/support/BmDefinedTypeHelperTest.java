@@ -200,4 +200,48 @@ public class BmDefinedTypeHelperTest
         assertFalse(BmDefinedTypeHelper.isAcceptableBareName(null, PlatformTypeNames.Verdict.KNOWN));
         assertFalse(BmDefinedTypeHelper.isAcceptableBareName("", PlatformTypeNames.Verdict.KNOWN)); //$NON-NLS-1$
     }
+
+    /**
+     * Ensures Number warns about a string-only length while retaining numeric qualifiers.
+     */
+    @Test
+    public void numberLengthIsReportedAsAnIgnoredQualifier()
+    {
+        BmDefinedTypeHelper.QualifierOptions qualifiers =
+            new BmDefinedTypeHelper.QualifierOptions();
+        qualifiers.length = Integer.valueOf(50);
+        qualifiers.precision = Integer.valueOf(15);
+        qualifiers.fractionDigits = Integer.valueOf(2);
+
+        assertEquals(Arrays.asList(
+            "length - Number (use precision for the total digit count)"), //$NON-NLS-1$
+            qualifiers.ignoredFor("Number")); //$NON-NLS-1$
+
+        BmDefinedTypeHelper.QualifierOptions stringQualifiers =
+            new BmDefinedTypeHelper.QualifierOptions();
+        stringQualifiers.length = Integer.valueOf(50);
+        assertTrue(stringQualifiers.ignoredFor("String").isEmpty()); //$NON-NLS-1$
+
+        BmDefinedTypeHelper.QualifierOptions numberQualifiers =
+            new BmDefinedTypeHelper.QualifierOptions();
+        numberQualifiers.precision = Integer.valueOf(15);
+        numberQualifiers.fractionDigits = Integer.valueOf(2);
+        assertTrue(numberQualifiers.ignoredFor("Number").isEmpty()); //$NON-NLS-1$
+    }
+
+    /**
+     * A qualifier one type of a composition accepts is not reported; one no type accepts is
+     * reported once, naming the whole composition.
+     */
+    @Test
+    public void aCompositionIsJudgedAsAWhole()
+    {
+        BmDefinedTypeHelper.QualifierOptions stringLength = new BmDefinedTypeHelper.QualifierOptions();
+        stringLength.length = Integer.valueOf(50);
+        assertTrue(stringLength.ignoredFor("String,CatalogRef.Goods").isEmpty()); //$NON-NLS-1$
+
+        assertEquals(Arrays.asList(
+            "length - Number,Date (use precision for the total digit count)"), //$NON-NLS-1$
+            stringLength.ignoredFor("Number, Date")); //$NON-NLS-1$
+    }
 }
