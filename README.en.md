@@ -254,6 +254,18 @@ The repository name is arbitrary, for example `AI-EDT`.
 
 After the restart, continue with **4. Start and verify** below.
 
+#### 🔏 Verifying a release archive
+
+Every release carries `release-manifest.json` (name, size in bytes and SHA-256 of each archive) and `SHA256SUMS`, and GitHub issues a build attestation for the archives themselves. To check an archive downloaded for installation through **Archive**, download it and `release-manifest.json` from the same release, compare the size and hash with the manifest entry, then verify the attestation (GitHub CLI required):
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\AI-EDT-update-site.zip
+(Get-Item .\AI-EDT-update-site.zip).Length
+gh attestation verify .\AI-EDT-update-site.zip --repo Desko77/ai-edt
+```
+
+On Linux and in Git Bash, `sha256sum -c SHA256SUMS --ignore-missing` checks the hashes of every downloaded archive. `gh attestation verify` passes only for an archive built by this repository's release workflow.
+
 #### ⌨️ From the command line
 
 The Equinox P2 director installs the same feature with no UI. Close the EDT session you are updating first: a running instance keeps the old plugin in memory until it restarts, so the restart is needed anyway, and a session that is itself running a provisioning operation holds the profile lock.
