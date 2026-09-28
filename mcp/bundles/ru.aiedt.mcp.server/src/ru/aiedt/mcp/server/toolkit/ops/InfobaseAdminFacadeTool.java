@@ -32,6 +32,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *   <li>{@code read_event_log} - what actually happened in a file infobase</li>
  *   <li>{@code get_applications} - a project's applications, the infobase
  *       launch targets (delegates to {@link ApplicationsReader})</li>
+ *   <li>{@code list_registered_infobases} - the infobases registered in EDT, with their groups
+ *       (delegates to {@link RegisteredInfobasesReader})</li>
  *   <li>{@code create_infobase} - create a FILE infobase and register it in
  *       EDT's list (delegates to {@link InfobaseCreator}; MUTATING)</li>
  *   <li>{@code register_infobase} - register an EXISTING infobase (file or
@@ -148,6 +150,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         Map<String, Supplier<IMcpTool>> m = new LinkedHashMap<>();
         m.put("get_applications", ApplicationsReader::new); //$NON-NLS-1$
+        m.put("list_registered_infobases", RegisteredInfobasesReader::new); //$NON-NLS-1$
         m.put("read_event_log", EventLogTool::new); //$NON-NLS-1$
         m.put("create_infobase", InfobaseCreator::new); //$NON-NLS-1$
         m.put("register_infobase", InfobaseRegistrar::new); //$NON-NLS-1$
@@ -174,13 +177,13 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         return "Infobase and launch administration - list applications, create / register / delete an " //$NON-NLS-1$
             + "infobase, set credentials, create a launch configuration, start a 1C client from " //$NON-NLS-1$
             + "one, update the database, control EDT<->infobase sync. Operations: " //$NON-NLS-1$
-            + "get_applications, read_event_log, create_infobase, register_infobase, delete_infobase, " //$NON-NLS-1$
+            + "get_applications, list_registered_infobases, read_event_log, create_infobase, " //$NON-NLS-1$
+            + "register_infobase, delete_infobase, " //$NON-NLS-1$
             + "set_infobase_credentials, " //$NON-NLS-1$
             + "create_launch_config, start_client, branch_infobase, update_database, " //$NON-NLS-1$
-            + "sync_control, help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
-            + "getApplications is also accepted); remaining parameters follow the per-operation " //$NON-NLS-1$
+            + "sync_control, help. Pass operation=<name>; remaining parameters follow the per-operation " //$NON-NLS-1$
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
-            + "register_infobase / delete_infobase / set_infobase_credentials / update_database mutate, and " //$NON-NLS-1$
+            + "register_infobase / delete_infobase / set_infobase_credentials / update_database mutate. " //$NON-NLS-1$
             + "A real run of update_database / sync_control may reply with a Pending status and " //$NON-NLS-1$
             + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
             + "face and start nothing, answered in place with no runKey. sync_control has its own " //$NON-NLS-1$
@@ -250,7 +253,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "get_applications / read_event_log / create_infobase / register_infobase / delete_infobase / " //$NON-NLS-1$
+                "get_applications / list_registered_infobases / read_event_log / create_infobase / " //$NON-NLS-1$
+                    + "register_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
                     + "branch_infobase / update_database / sync_control / help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like getApplications is also accepted). " //$NON-NLS-1$
@@ -406,7 +410,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         if (operation == null || operation.isBlank())
         {
             return ToolResult.error("operation is required. Allowed: get_applications / " //$NON-NLS-1$
-                + "read_event_log / " //$NON-NLS-1$
+                + "list_registered_infobases / read_event_log / " //$NON-NLS-1$
                 + "create_infobase / register_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
                 + "create_launch_config / start_client / branch_infobase / update_database / " //$NON-NLS-1$
                 + "sync_control / " //$NON-NLS-1$
@@ -439,6 +443,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         {
             case "get_applications": //$NON-NLS-1$
                 return new ApplicationsReader().execute(params);
+            case "list_registered_infobases": //$NON-NLS-1$
+                return new RegisteredInfobasesReader().execute(params);
             case "read_event_log": //$NON-NLS-1$
                 return new EventLogTool().execute(params);
             case "create_infobase": //$NON-NLS-1$
@@ -520,6 +526,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("# infobase_admin - operations\n\n"); //$NON-NLS-1$
             sb.append("- **get_applications** - a project's applications, the infobase launch " //$NON-NLS-1$
                 + "targets.\n"); //$NON-NLS-1$
+            sb.append("- **list_registered_infobases** - every infobase registered in EDT, with its " //$NON-NLS-1$
+                + "group, type, connection string (passwords masked), version and bound projects.\n"); //$NON-NLS-1$
             sb.append("- **create_infobase** - create a FILE infobase and register it in " //$NON-NLS-1$
                 + "EDT's list. MUTATING.\n"); //$NON-NLS-1$
             sb.append("- **register_infobase** - register an EXISTING infobase (file or " //$NON-NLS-1$
@@ -561,6 +569,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("|------|-----------|\n"); //$NON-NLS-1$
             sb.append("| What applications (infobases) can this project run against | " //$NON-NLS-1$
                 + "get_applications |\n"); //$NON-NLS-1$
+            sb.append("| Which infobases EDT knows, in which groups, bound to which projects | " //$NON-NLS-1$
+                + "list_registered_infobases |\n"); //$NON-NLS-1$
             sb.append("| Create a brand-new FILE infobase | create_infobase |\n"); //$NON-NLS-1$
             sb.append("| Register an EXISTING infobase (file or server) and bind it to a " //$NON-NLS-1$
                 + "project | register_infobase |\n"); //$NON-NLS-1$
@@ -583,7 +593,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
-            "get_applications", "read_event_log", //$NON-NLS-1$ //$NON-NLS-2$
+            "get_applications", "list_registered_infobases", "read_event_log", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "create_infobase", //$NON-NLS-1$
             "register_infobase", //$NON-NLS-1$
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$

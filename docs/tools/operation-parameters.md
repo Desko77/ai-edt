@@ -317,6 +317,7 @@
 | `InfobaseAdminFacadeTool` | `create_launch_config` | `infobaseName:string`, `projectName:string`, `syncOperation:string` | delegate LaunchConfigCreator |
 | `InfobaseAdminFacadeTool` | `delete_infobase` | `deleteContent:boolean`, `name:string`, `projectName:string`, `syncOperation:string` | delegate InfobaseRemover |
 | `InfobaseAdminFacadeTool` | `get_applications` | `projectName:string`, `syncOperation:string` | delegate ApplicationsReader |
+| `InfobaseAdminFacadeTool` | `list_registered_infobases` | `find:string`, `operation:string`, `syncOperation:string`, `topic:string` | read in place |
 | `InfobaseAdminFacadeTool` | `read_event_log` | `applicationId:string`, `event:string`, `from:string`, `limit:integer`, `projectName:string`, `severity:string`, `syncOperation:string`, `to:string`, `user:string` | delegate EventLogTool |
 | `InfobaseAdminFacadeTool` | `register_infobase` | `accessMode:string`, `connectionString:string`, `makeDefault:boolean`, `name:string`, `password:string`, `path:string`, `projectName:string`, `syncOperation:string`, `userName:string` | delegate InfobaseRegistrar |
 | `InfobaseAdminFacadeTool` | `set_infobase_credentials` | `accessMode:string`, `applicationId:string`, `password:string`, `projectName:string`, `syncOperation:string`, `userName:string` | delegate InfobaseCredentialsWriter |

@@ -43,6 +43,7 @@ public final class ToolAnnotations
      */
     static final Set<String> READS_INSIDE_WRITE_GROUPS = Set.of(
         "get_applications", //$NON-NLS-1$
+        "list_registered_infobases", //$NON-NLS-1$
         "list_configurations", //$NON-NLS-1$
         "read_event_log", //$NON-NLS-1$
         "list_extension", //$NON-NLS-1$

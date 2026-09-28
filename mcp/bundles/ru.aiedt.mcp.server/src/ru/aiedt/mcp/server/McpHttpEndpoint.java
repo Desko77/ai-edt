@@ -101,6 +101,7 @@ import ru.aiedt.mcp.server.toolkit.ops.FindRlsViolationsTool;
 import ru.aiedt.mcp.server.toolkit.ops.GenerateEventHandlersTool;
 import ru.aiedt.mcp.server.toolkit.ops.GenerateHealthSnapshotTool;
 import ru.aiedt.mcp.server.toolkit.ops.ApplicationsReader;
+import ru.aiedt.mcp.server.toolkit.ops.RegisteredInfobasesReader;
 import ru.aiedt.mcp.server.toolkit.ops.BookmarksReader;
 import ru.aiedt.mcp.server.toolkit.ops.CheckDocReader;
 import ru.aiedt.mcp.server.toolkit.ops.GetCommandInterfaceTool;
@@ -1442,6 +1443,7 @@ public class McpHttpEndpoint
             new SelfStatusTool(),
             new SelfUpkeepTool(),
             new ApplicationsReader(),
+            new RegisteredInfobasesReader(),
             new EventLogTool(),
             new DatabaseUpdater(),
             new DebugSessionStarter(),

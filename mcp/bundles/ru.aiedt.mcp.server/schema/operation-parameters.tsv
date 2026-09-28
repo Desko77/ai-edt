@@ -318,6 +318,7 @@ InfobaseAdminFacadeTool	create_infobase	name:string,path:string,platform:string,
 InfobaseAdminFacadeTool	create_launch_config	infobaseName:string,projectName:string	delegate LaunchConfigCreator	syncOperation:string
 InfobaseAdminFacadeTool	delete_infobase	deleteContent:boolean,name:string,projectName:string	delegate InfobaseRemover	syncOperation:string
 InfobaseAdminFacadeTool	get_applications	projectName:string	delegate ApplicationsReader	syncOperation:string
+InfobaseAdminFacadeTool	list_registered_infobases	find:string,operation:string,topic:string	read in place	syncOperation:string
 InfobaseAdminFacadeTool	read_event_log	applicationId:string,event:string,from:string,limit:integer,projectName:string,severity:string,to:string,user:string	delegate EventLogTool	syncOperation:string
 InfobaseAdminFacadeTool	register_infobase	accessMode:string,connectionString:string,makeDefault:boolean,name:string,password:string,path:string,projectName:string,userName:string	delegate InfobaseRegistrar	syncOperation:string
 InfobaseAdminFacadeTool	set_infobase_credentials	accessMode:string,applicationId:string,password:string,projectName:string,userName:string	delegate InfobaseCredentialsWriter	syncOperation:string
