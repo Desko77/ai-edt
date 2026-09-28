@@ -193,6 +193,23 @@ public final class PendingWorkRegistry
     private final ConcurrentHashMap<String, PendingEntry> entries = new ConcurrentHashMap<>();
 
     /**
+     * Runs that were cancelled or detached while their body was still executing, until the body
+     * leaves.
+     * <p>
+     * A call with the same arguments computes the same runKey. With the entry gone from
+     * {@link #entries} it would start a second copy of work the first copy is still doing; a key
+     * found here is refused instead (see {@link #getOrStart(String, Function)}).
+     * </p>
+     */
+    private final ConcurrentHashMap<String, PendingEntry> stopping = new ConcurrentHashMap<>();
+
+    /**
+     * How long a cancel through the call's flag waits for the work to leave before it reports the
+     * work as still running. Tests shorten it.
+     */
+    static volatile long flagStopWaitMs = 3000L;
+
+    /**
      * Runs inside a supplier before the body claims its start, when a test has set it.
      * <p>
      * Production leaves it {@code null}. The consumer is handed the entry so the test can cancel
@@ -296,6 +313,16 @@ public final class PendingWorkRegistry
      */
     public PendingEntry getOrStart(String runKey, Function<PendingEntry, String> work)
     {
+        PendingEntry stillStopping = stopping.get(runKey);
+        if (stillStopping != null && !stillStopping.workHasLeft())
+        {
+            return PendingEntry.refused(runKey, ru.aiedt.mcp.server.wire.ToolResult.error(
+                "A cancelled run with the same arguments is still stopping; nothing was started. " //$NON-NLS-1$
+                    + "Call again once it has stopped.") //$NON-NLS-1$
+                .put("runKey", runKey) //$NON-NLS-1$
+                .put("stillStopping", true) //$NON-NLS-1$
+                .toJson());
+        }
         // Capture the calling (worker) thread's whole call scope and re-enter it on the executor
         // thread for the duration of the work. The scope carries more than the cancellation flag
         // now: it carries the heavy-permit ticket a nested heavy call inherits, and the work runs
@@ -599,7 +626,12 @@ public final class PendingWorkRegistry
      * <p>
      * A domain that has declared a stopper through {@link #stopsWith} is the exception: its work
      * is stopped as well, because it owns something it can stop. That is what a cancel arriving
-     * as {@code tasks/cancel} goes through.
+     * as {@code tasks/cancel} goes through. In a domain without one, the cancellation flag of the
+     * call that started the run is raised: work that reads it stops at its next boundary.
+     * </p>
+     * <p>
+     * Until a running body leaves, a call with the same runKey is refused rather than started
+     * again.
      *
      * @param runKey the key.
      * @return true if a tracked entry existed and was removed
@@ -633,6 +665,7 @@ public final class PendingWorkRegistry
      */
     private boolean drop(String runKey, boolean stopTheWork)
     {
+        PendingEntry entry = entries.get(runKey);
         boolean known = dropEntry(runKey);
         // After the future, so work that has not begun is already stopped by then and the stopper
         // only has to deal with work that has. Asked even for an unknown key: the tool's own cancel
@@ -642,8 +675,15 @@ public final class PendingWorkRegistry
         {
             stopsIt.apply(runKey);
         }
+        else if (stopTheWork && entry != null && entry.cancellation != null && !entry.workHasLeft())
+        {
+            entry.cancellation.cancel(CANCEL_REASON);
+        }
         return known;
     }
+
+    /** The reason a cancel through this registry writes on the call's flag. */
+    private static final String CANCEL_REASON = "the run was cancelled"; //$NON-NLS-1$
 
     /**
      * Drops the entry and completes its tracking future.
@@ -658,6 +698,14 @@ public final class PendingWorkRegistry
         if (known && entry.future != null && !entry.future.isDone())
         {
             entry.future.cancel(true);
+        }
+        if (known && entry.workIsRunning())
+        {
+            PendingEntry detached = entry;
+            stopping.put(runKey, detached);
+            // Runs at once when the body left in between, so the key is never held by a run that
+            // is already gone.
+            detached.attachWorkExit(() -> stopping.remove(runKey, detached));
         }
         return known;
     }
@@ -700,13 +748,52 @@ public final class PendingWorkRegistry
     public StopOutcome cancelAndStop(String runKey)
     {
         Function<String, StopOutcome> stopsIt = stopper;
+        PendingEntry entry = entries.get(runKey);
+        boolean wasRunning = entry != null && !entry.isDone();
         dropEntry(runKey);
         if (stopsIt == null)
         {
-            return StopOutcome.NOTHING_TO_STOP;
+            return wasRunning ? stopThroughFlag(entry) : StopOutcome.NOTHING_TO_STOP;
         }
         StopOutcome outcome = stopsIt.apply(runKey);
         return outcome == null ? StopOutcome.NOTHING_TO_STOP : outcome;
+    }
+
+    /**
+     * Stops a run in a domain without a stopper, through the cancellation flag of the call that
+     * started it, and waits up to {@link #flagStopWaitMs} for the body to leave.
+     * <p>
+     * A run whose body had not begun is stopped by the cancelled future alone. A run started outside
+     * a call has no flag and is reported as still running.
+     * </p>
+     *
+     * @param entry the run, already dropped from the registry
+     * @return {@link StopOutcome#STOPPED} when the body left or never began,
+     *         {@link StopOutcome#STILL_RUNNING} when it is still executing after the wait
+     */
+    private static StopOutcome stopThroughFlag(PendingEntry entry)
+    {
+        if (entry.workHasLeft())
+        {
+            return StopOutcome.STOPPED;
+        }
+        if (entry.cancellation == null)
+        {
+            return StopOutcome.STILL_RUNNING;
+        }
+        entry.cancellation.cancel(CANCEL_REASON);
+        java.util.concurrent.CountDownLatch left = new java.util.concurrent.CountDownLatch(1);
+        entry.attachWorkExit(left::countDown);
+        try
+        {
+            return left.await(flagStopWaitMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                ? StopOutcome.STOPPED : StopOutcome.STILL_RUNNING;
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            return StopOutcome.STILL_RUNNING;
+        }
     }
 
     /**
@@ -1076,6 +1163,37 @@ public final class PendingWorkRegistry
             {
                 return workExitSettled;
             }
+        }
+
+        /**
+         * Whether the body has claimed its start and not yet left.
+         *
+         * @return {@code true} while the work is executing
+         */
+        boolean workIsRunning()
+        {
+            synchronized (workLife)
+            {
+                return workBegan && !workExitSettled;
+            }
+        }
+
+        /**
+         * An entry that answers at once and runs nothing: what a call receives when its key is held
+         * by a cancelled run that is still stopping. It is not tracked by any registry.
+         *
+         * @param runKey the key the call asked for
+         * @param answer the answer, a tool result
+         * @return a completed entry whose work counts as never begun
+         */
+        static PendingEntry refused(String runKey, String answer)
+        {
+            PendingEntry entry = new PendingEntry(runKey);
+            entry.future = CompletableFuture.completedFuture(answer);
+            entry.cachedResult = answer;
+            entry.completedAt = System.currentTimeMillis();
+            entry.settleIfWorkNeverBegan();
+            return entry;
         }
 
         /**
