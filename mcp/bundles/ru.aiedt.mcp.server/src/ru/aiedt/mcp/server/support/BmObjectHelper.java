@@ -296,6 +296,10 @@ public final class BmObjectHelper
     {
         Result r = new Result();
         r.fqn = ownerFqn;
+        if (dryRun)
+        {
+            r.tags.put("dryRun", true); //$NON-NLS-1$
+        }
         if (project == null || ownerFqn == null || ownerFqn.isEmpty())
         {
             r.error = "project and ownerFqn are required"; //$NON-NLS-1$

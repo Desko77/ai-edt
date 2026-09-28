@@ -13,16 +13,10 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
-import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
 
-import com._1c.g5.v8.bm.core.IBmObject;
-import com._1c.g5.v8.bm.core.IBmTransaction;
-import com._1c.g5.v8.bm.integration.AbstractBmTask;
-import com._1c.g5.v8.bm.integration.IBmModel;
-import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.AccountingRegister;
 import com._1c.g5.v8.dt.metadata.mdclass.AccumulationRegister;
@@ -46,6 +40,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.ExternalProjectResolver;
 import ru.aiedt.mcp.server.support.MetadataGuards;
@@ -107,6 +102,7 @@ public class AttributeAdder implements IMcpTool
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String parentFqn = JsonUtils.extractStringArgument(params, "parentFqn"); //$NON-NLS-1$
         String attributeName = JsonUtils.extractStringArgument(params, "attributeName"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         if (projectName == null || projectName.isEmpty())
         {
@@ -133,7 +129,7 @@ public class AttributeAdder implements IMcpTool
             try
             {
                 resultRef.set(executeInternal(projectName, parentFqn, attributeName,
-                    JsonUtils.extractStringArgument(params, "synonym"))); //$NON-NLS-1$
+                    JsonUtils.extractStringArgument(params, "synonym"), dryRun)); //$NON-NLS-1$
             }
             catch (Exception e)
             {
@@ -145,7 +141,7 @@ public class AttributeAdder implements IMcpTool
     }
 
     private String executeInternal(String projectName, String parentFqn, String attributeName,
-        String synonym)
+        String synonym, boolean dryRun)
     {
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -173,25 +169,12 @@ public class AttributeAdder implements IMcpTool
             return ToolResult.error("Unable to load configuration for project: " + projectName).toJson();
         }
 
-        IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
-        if (bmModelManager == null)
-        {
-            return ToolResult.error("IBmModelManager is not available in this workspace").toJson();
-        }
-
-        IBmModel bmModel = bmModelManager.getModel(project);
-        if (bmModel == null)
-        {
-            return ToolResult.error("BM model could not be obtained for project: " + projectName).toJson();
-        }
-
         parentFqn = MetadataTypeCatalog.normalizeFqn(parentFqn);
         String[] parts = parentFqn.split("\\.", 2); //$NON-NLS-1$
         if (parts.length < 2)
         {
-            return ToolResult.error("Not a valid FQN: " + parentFqn).toJson();
+            return ToolResult.error("Not a valid FQN: " + parentFqn).toJson(); //$NON-NLS-1$
         }
-
         MdObject parentObject = MetadataTypeCatalog.findObject(config, parts[0], parts[1]);
         if (parentObject == null)
         {
@@ -199,7 +182,6 @@ public class AttributeAdder implements IMcpTool
                 + ". Confirm the FQN follows 'Type.Name' (for example 'Catalog.Products', 'Document.SalesOrder')."
                 + " The get_metadata_objects tool lists what is available.").toJson();
         }
-
         if (!supportsAttributes(parentObject))
         {
             return ToolResult.error("Unsupported object type '" + parentObject.eClass().getName()
@@ -208,120 +190,66 @@ public class AttributeAdder implements IMcpTool
                 + " BusinessProcess, Task, DataProcessor, Report, InformationRegister,"
                 + " AccumulationRegister, AccountingRegister.").toJson();
         }
-
-        if (!(parentObject instanceof IBmObject))
-        {
-            return ToolResult.error("Resolved parent object is not a BM object").toJson();
-        }
-
-        long parentBmId = ((IBmObject)parentObject).bmGetId();
         final String normalizedParentFqn = parentFqn;
         // The synonym is best-effort by design, so its outcome has to reach the
         // caller: an attribute created with no synonym is still a half-done job,
         // and reporting a bare success would hide it.
         final EditMetadataTool.SynonymResult[] synonymOut = { null };
-
-        try
-        {
-            bmModel.execute(new AbstractBmTask<Void>("AddMetadataAttribute") //$NON-NLS-1$
-            {
-                @Override
-                public Void execute(IBmTransaction tx, IProgressMonitor pm)
+        BmObjectHelper.Result result = BmObjectHelper.executeWriteOnObject(project,
+            normalizedParentFqn, dryRun, (tx, parent) -> {
+                MdObject newAttribute = createAttribute(parent);
+                if (newAttribute == null)
                 {
-                    MdObject parent = (MdObject)tx.getObjectById(parentBmId);
-                    if (parent == null)
-                    {
-                        throw new RuntimeException("Could not locate the parent object inside the transaction"); //$NON-NLS-1$
-                    }
-
-                    MetadataGuards.Verdict lock = MetadataGuards.checkSupplierLock(parent);
-                    if (lock.blocked)
-                    {
-                        throw new MetadataGuards.BlockedGuardException(lock);
-                    }
-
-                    MetadataGuards.Verdict conflict =
-                        MetadataGuards.checkStandardAttributeConflict(parent, attributeName);
-                    if (conflict.blocked)
-                    {
-                        throw new MetadataGuards.BlockedGuardException(conflict);
-                    }
-
-                    MetadataGuards.Verdict alphabet =
-                        MetadataGuards.checkOneAlphabet(attributeName);
-                    if (alphabet.blocked)
-                    {
-                        throw new MetadataGuards.BlockedGuardException(alphabet);
-                    }
-
-                    if (hasAttribute(parent, attributeName))
-                    {
-                        Map<String, Object> data = new LinkedHashMap<>();
-                        data.put("name", attributeName); //$NON-NLS-1$
-                        data.put("ownerFqn", normalizedParentFqn); //$NON-NLS-1$
-                        data.put("kind", "attribute"); //$NON-NLS-1$ //$NON-NLS-2$
-                        throw new MetadataGuards.BlockedGuardException(MetadataGuards.Verdict.block(
-                            "An attribute with this name already exists: " + attributeName, //$NON-NLS-1$
-                            "Choose a different name, or delete the existing attribute before retrying.", //$NON-NLS-1$
-                            new MetadataGuards.ErrorTag(ErrorTags.ALREADY_EXISTS.wire(), data)));
-                    }
-
-                    MdObject newAttribute = createAttribute(parent);
-                    if (newAttribute == null)
-                    {
-                        throw new RuntimeException("Do not know how to create an attribute for: " + parent.eClass().getName()); //$NON-NLS-1$
-                    }
-
-                    newAttribute.setName(attributeName);
-                    // An attribute with no synonym shows its technical name wherever a
-                    // user reads it. The editor fills one in from the name and every
-                    // attribute of a reference configuration has one, so this tool
-                    // stopped being the exception.
-                    synonymOut[0] = EditMetadataTool.applyMdObjectSynonym(newAttribute, synonym,
-                        attributeName, project);
-                    newAttribute.setUuid(UUID.randomUUID());
-                    addAttribute(parent, newAttribute);
-                    return null;
+                    throw new RuntimeException("Do not know how to create an attribute for: " //$NON-NLS-1$
+                        + parent.eClass().getName());
+                }
+                newAttribute.setName(attributeName);
+                synonymOut[0] = EditMetadataTool.applyMdObjectSynonym(newAttribute, synonym,
+                    attributeName, project);
+                newAttribute.setUuid(UUID.randomUUID());
+                addAttribute(parent, newAttribute);
+                return dryRun ? "Dry run: attribute would be created." //$NON-NLS-1$
+                    : "Attribute created."; //$NON-NLS-1$
+            }, parent -> {
+                MetadataGuards.Verdict conflict =
+                    MetadataGuards.checkStandardAttributeConflict(parent, attributeName);
+                if (conflict.blocked)
+                {
+                    throw new MetadataGuards.BlockedGuardException(conflict);
+                }
+                MetadataGuards.Verdict alphabet = MetadataGuards.checkOneAlphabet(attributeName);
+                if (alphabet.blocked)
+                {
+                    throw new MetadataGuards.BlockedGuardException(alphabet);
+                }
+                if (hasAttribute(parent, attributeName))
+                {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("name", attributeName); //$NON-NLS-1$
+                    data.put("ownerFqn", normalizedParentFqn); //$NON-NLS-1$
+                    data.put("kind", "attribute"); //$NON-NLS-1$ //$NON-NLS-2$
+                    throw new MetadataGuards.BlockedGuardException(MetadataGuards.Verdict.block(
+                        "An attribute with this name already exists: " + attributeName, //$NON-NLS-1$
+                        "Choose a different name, or delete the existing attribute before retrying.", //$NON-NLS-1$
+                        new MetadataGuards.ErrorTag(ErrorTags.ALREADY_EXISTS.wire(), data)));
                 }
             });
-        }
-        catch (Exception e)
+        if (!result.ok)
         {
-            MetadataGuards.BlockedGuardException blocked = MetadataGuards.BlockedGuardException.unwrap(e);
-            if (blocked != null)
-            {
-                MetadataGuards.Verdict v = blocked.verdict;
-                String errMsg = v.error != null ? v.error : "operation blocked"; //$NON-NLS-1$
-                if (v.hint != null && !v.hint.isEmpty())
-                {
-                    errMsg = errMsg + " - " + v.hint; //$NON-NLS-1$
-                }
-                ToolResult err = ToolResult.error("Could not add attribute: " + errMsg)
-                    .put("parentFqn", normalizedParentFqn) //$NON-NLS-1$
-                    .put("attributeName", attributeName); //$NON-NLS-1$
-                if (v.tag != null)
-                {
-                    err.put(v.tag.name, v.tag.data);
-                }
-                return err.toJson();
-            }
-            else
-            {
-                Activator.logError("Failed while adding attribute", e); //$NON-NLS-1$
-                String msg = e.getMessage();
-                if (e.getCause() != null && e.getCause().getMessage() != null)
-                {
-                    msg = e.getCause().getMessage();
-                }
-                return ToolResult.error("Could not add attribute: " + msg).toJson();
-            }
+            ToolResult err = ToolResult.error("Could not add attribute: " + result.error) //$NON-NLS-1$
+                .put("parentFqn", normalizedParentFqn) //$NON-NLS-1$
+                .put("attributeName", attributeName); //$NON-NLS-1$
+            EditMetadataTool.applyTags(err, result.tags);
+            return err.toJson();
         }
-
         ToolResult ok = ToolResult.success()
             .put("parentFqn", normalizedParentFqn) //$NON-NLS-1$
             .put("attributeName", attributeName) //$NON-NLS-1$
+            .put("dryRun", dryRun) //$NON-NLS-1$
             .put("message", //$NON-NLS-1$
-                "Attribute '" + attributeName + "' was created on " + normalizedParentFqn);
+                (dryRun ? "Dry run: attribute '" : "Attribute '") + attributeName //$NON-NLS-1$ //$NON-NLS-2$
+                    + (dryRun ? " would be created on " : " was created on ") //$NON-NLS-1$ //$NON-NLS-2$
+                    + normalizedParentFqn);
         // Same tag names the edit_metadata operations use, so a caller reads one
         // vocabulary whichever route it took to create the attribute.
         EditMetadataTool.SynonymResult sr = synonymOut[0];
