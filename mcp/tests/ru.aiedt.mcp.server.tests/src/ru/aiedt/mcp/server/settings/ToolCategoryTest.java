@@ -148,7 +148,9 @@ public class ToolCategoryTest
         // On 2026-09-23 register_infobase joined APPLICATIONS (+1 -> 135): it adds an existing
         // infobase to EDT's list and binds it to a project, the same write to the list and the
         // project's applications as create_infobase beside it.
-        assertEquals(135, ToolCategory.getTotalToolCount());
+        // On 2026-09-28 list_registered_infobases joined APPLICATIONS (+1 -> 136): it reads the
+        // same list of EDT that create_infobase and register_infobase write to.
+        assertEquals(136, ToolCategory.getTotalToolCount());
     }
 
     @Test

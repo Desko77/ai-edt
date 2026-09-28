@@ -214,7 +214,8 @@ public class CanonicalSurfaceContractTest
         // action travels as a separate "syncOperation" parameter and is not part of this
         // vocabulary.
         m.put("infobase_admin", Set.of(
-            "get_applications", "read_event_log", "create_infobase", "register_infobase",
+            "get_applications", "list_registered_infobases", "read_event_log", "create_infobase",
+            "register_infobase",
             "delete_infobase",
             "set_infobase_credentials", "create_launch_config", "start_client", "branch_infobase",
             "update_database",
@@ -338,7 +339,8 @@ public class CanonicalSurfaceContractTest
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
         // On 2026-09-23 register_infobase joined the infobase_admin coverage (+1 -> 87).
-        assertEquals(87, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-09-28 list_registered_infobases joined the infobase_admin coverage (+1 -> 88).
+        assertEquals(88, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

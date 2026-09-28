@@ -117,6 +117,7 @@ public class ToolRegistrationTest
         // 2026-08-19: compare_three_way declared (+1 -> 128).
         // On 2026-09-23 naparnik joined the declaration list (+1 -> 134).
         // On 2026-09-23 register_infobase joined the declaration list (+1 -> 135).
-        assertEquals(135, declared.size());
+        // On 2026-09-28 list_registered_infobases joined the declaration list (+1 -> 136).
+        assertEquals(136, declared.size());
     }
 }

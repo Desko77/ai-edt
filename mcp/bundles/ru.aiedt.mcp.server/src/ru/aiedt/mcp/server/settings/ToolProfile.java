@@ -307,6 +307,7 @@ public enum ToolProfile
 
             // infobase_admin covers these
             "get_applications", //$NON-NLS-1$
+            "list_registered_infobases", //$NON-NLS-1$
             "create_infobase", //$NON-NLS-1$
             "register_infobase", //$NON-NLS-1$
             "delete_infobase", //$NON-NLS-1$
