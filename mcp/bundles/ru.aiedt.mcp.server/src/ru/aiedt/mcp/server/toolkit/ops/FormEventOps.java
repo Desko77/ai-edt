@@ -47,9 +47,12 @@ final class FormEventOps
      *   <li>{@code handlerName} - optional. Default:
      *       {@code <itemName><event>} for items, just {@code <event>} for
      *       the form root.</li>
-     *   <li>{@code writeStub} - optional, default true. Appends the handler
-     *       procedure to the form's module after the binding is committed,
-     *       unless the module already declares it.</li>
+     *   <li>{@code writeStub} - optional, default true. Adds the handler
+     *       procedure to the form's module after the binding is committed, into
+     *       the region of form events, header item events or the table's item
+     *       events, unless the module already declares it; a declared procedure
+     *       with another directive or number of parameters is reported as
+     *       {@code existingProcedureMismatch}.</li>
      * </ul>
      *
      * <p>Bound through the {@code getHandlers} / {@code getEventHandlers}
@@ -165,8 +168,12 @@ final class FormEventOps
                     + "form's Module.bsl via write_module_source mode=append.") //$NON-NLS-1$
                 .toJson();
         }
+        FormModuleStubs.Region region = itemName == null || itemName.isEmpty()
+            ? FormModuleStubs.FORM_EVENTS
+            : spec.scope == FormEventRegistry.Scope.TABLE ? FormModuleStubs.Region.tableItemEvents(itemName)
+                : FormModuleStubs.HEADER_ITEM_EVENTS;
         FormModuleStubs.Outcome written = FormModuleStubs.append(project, formFqn, handlerName, stub,
-            formDryRun);
+            region, formDryRun);
         return written.putInto(answer).toJson();
     }
 

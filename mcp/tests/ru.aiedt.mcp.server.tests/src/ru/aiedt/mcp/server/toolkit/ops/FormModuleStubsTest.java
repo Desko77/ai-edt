@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -30,7 +31,9 @@ import org.junit.Test;
  * What {@link FormModuleStubs} writes into the module of a form.
  * <p>
  * A procedure the module does not declare is appended in the module's own line delimiters; one it
- * declares, in any letter case, is left alone and reported as already present. A module that does
+ * declares, in any letter case, is left alone and reported as already present, with the difference
+ * when its directive or parameters are not what the event calls. A procedure with a region goes before
+ * the end of that region, or into the region created at the end of the module. A module that does
  * not exist yet is created. A preview writes nothing.
  * </p>
  */
@@ -144,6 +147,107 @@ public class FormModuleStubsTest
         assertFalse(outcome.written);
         assertEquals(FormModuleStubs.DRY_RUN, outcome.skippedReason);
         assertEquals(ORIGINAL, read(itemFormModule()));
+    }
+
+    @Test
+    public void aHandlerGoesIntoItsRegionBeforeItsEnd() throws Exception
+    {
+        String module = String.join(CRLF, "#Область ОбработчикиСобытийФормы", "", //$NON-NLS-1$ //$NON-NLS-2$
+            "&НаСервере", "Процедура ПриСозданииНаСервере(Отказ, СтандартнаяОбработка)", //$NON-NLS-1$ //$NON-NLS-2$
+            "КонецПроцедуры", "", "#КонецОбласти", "", "#Область СлужебныеПроцедурыИФункции", "", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            "#КонецОбласти", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        writeItemForm(module);
+
+        FormModuleStubs.Outcome outcome = FormModuleStubs.append(project, FORM, "ПриОткрытии", //$NON-NLS-1$
+            "\n&НаКлиенте\nПроцедура ПриОткрытии(Отказ)\n    \nКонецПроцедуры\n", //$NON-NLS-1$
+            FormModuleStubs.FORM_EVENTS, false);
+
+        assertTrue(String.valueOf(outcome.error), outcome.written);
+        assertEquals("ОбработчикиСобытийФормы", outcome.region); //$NON-NLS-1$
+        assertFalse(outcome.regionCreated);
+        String text = read(itemFormModule());
+        int added = text.indexOf("Процедура ПриОткрытии(Отказ)"); //$NON-NLS-1$
+        assertTrue(text, added > text.indexOf("Процедура ПриСозданииНаСервере")); //$NON-NLS-1$
+        assertTrue(text, added < text.indexOf("#КонецОбласти")); //$NON-NLS-1$
+        assertTrue(text, text.contains("КонецПроцедуры" + CRLF + CRLF + "#КонецОбласти" + CRLF + CRLF //$NON-NLS-1$ //$NON-NLS-2$
+            + "#Область СлужебныеПроцедурыИФункции")); //$NON-NLS-1$
+        assertFalse("a bare LF among CRLF: " + text, text.replace(CRLF, "").contains("\n")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    @Test
+    public void aModuleWithoutTheRegionGetsItAtTheEnd() throws Exception
+    {
+        FormModuleStubs.Outcome outcome = FormModuleStubs.append(project, FORM, "Обновить", //$NON-NLS-1$
+            FormModuleStubs.commandHandlerStub("Обновить"), FormModuleStubs.COMMANDS, false); //$NON-NLS-1$
+
+        assertTrue(String.valueOf(outcome.error), outcome.written);
+        assertEquals("ОбработчикиКомандФормы", outcome.region); //$NON-NLS-1$
+        assertTrue(outcome.regionCreated);
+        String text = read(itemFormModule());
+        assertTrue(text, text.startsWith(ORIGINAL));
+        int opens = text.indexOf("#Область ОбработчикиКомандФормы"); //$NON-NLS-1$
+        assertTrue(text, opens > 0 && opens < text.indexOf("Процедура Обновить(Команда)")); //$NON-NLS-1$
+        assertTrue(text, text.trim().endsWith("#КонецОбласти")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aModuleWithEnglishRegionsGetsAnEnglishOne() throws Exception
+    {
+        writeItemForm(String.join(CRLF, "#Region FormEventHandlers", "", "#EndRegion", "")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        FormModuleStubs.Outcome outcome = FormModuleStubs.append(project, FORM, "Обновить", //$NON-NLS-1$
+            FormModuleStubs.commandHandlerStub("Обновить"), FormModuleStubs.COMMANDS, false); //$NON-NLS-1$
+
+        assertTrue(String.valueOf(outcome.error), outcome.written);
+        assertEquals("FormCommandsEventHandlers", outcome.region); //$NON-NLS-1$
+        String text = read(itemFormModule());
+        assertTrue(text, text.contains("#Region FormCommandsEventHandlers")); //$NON-NLS-1$
+        assertTrue(text, text.trim().endsWith("#EndRegion")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theEndOfARegionCountsTheRegionsInsideIt()
+    {
+        String text = String.join("\n", "#Область ОбработчикиКомандФормы", "#Область Печать", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "#КонецОбласти", "", "#КонецОбласти", "#region formcommandseventhandlers", "#endregion"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        assertEquals(5, FormModuleStubs.regionEndLine(text, FormModuleStubs.COMMANDS));
+        assertEquals(-1, FormModuleStubs.regionEndLine(text, FormModuleStubs.FORM_EVENTS));
+        assertEquals(-1, FormModuleStubs.regionEndLine("#Область ОбработчикиКомандФормы\n", //$NON-NLS-1$
+            FormModuleStubs.COMMANDS));
+    }
+
+    @Test
+    public void aDeclaredProcedureOfAnotherShapeIsReported() throws Exception
+    {
+        FormModuleStubs.Outcome outcome = FormModuleStubs.append(project, FORM, "Другая", //$NON-NLS-1$
+            FormModuleStubs.commandHandlerStub("Другая"), FormModuleStubs.COMMANDS, false); //$NON-NLS-1$
+
+        assertEquals(FormModuleStubs.ALREADY_PRESENT, outcome.skippedReason);
+        assertTrue(String.valueOf(outcome.existingMismatch), outcome.existingMismatch != null
+            && outcome.existingMismatch.contains("&НаСервере") && outcome.existingMismatch.contains("&НаКлиенте")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(ORIGINAL, read(itemFormModule()));
+    }
+
+    @Test
+    public void aDeclaredProcedureOfTheSameShapeIsNotReported()
+    {
+        String stub = FormModuleStubs.commandHandlerStub("Обновить"); //$NON-NLS-1$
+
+        assertNull(FormModuleStubs.shapeMismatch("&НаКлиенте\nПроцедура обновить(Кнопка)\nКонецПроцедуры\n", //$NON-NLS-1$
+            "Обновить", stub)); //$NON-NLS-1$
+        assertNull(FormModuleStubs.shapeMismatch("&AtClient\nProcedure Обновить(Command)\nEndProcedure\n", //$NON-NLS-1$
+            "Обновить", stub)); //$NON-NLS-1$
+        assertNotNull(FormModuleStubs.shapeMismatch("&НаКлиенте\nПроцедура Обновить()\nКонецПроцедуры\n", //$NON-NLS-1$
+            "Обновить", stub)); //$NON-NLS-1$
+        assertNotNull(FormModuleStubs.shapeMismatch("Процедура Обновить(Команда)\nКонецПроцедуры\n", //$NON-NLS-1$
+            "Обновить", stub)); //$NON-NLS-1$
+    }
+
+    private static void writeItemForm(String text) throws Exception
+    {
+        Files.write(itemFormModule(), text.getBytes(StandardCharsets.UTF_8));
+        project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
     }
 
     private static Path itemFormModule()
