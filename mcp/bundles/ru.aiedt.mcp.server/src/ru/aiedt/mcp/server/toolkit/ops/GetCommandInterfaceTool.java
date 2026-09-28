@@ -10,18 +10,25 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.InternalEObject;
 
+import com._1c.g5.v8.bm.core.IBmTransaction;
+import com._1c.g5.v8.bm.integration.AbstractBmTask;
+import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.cmi.model.CommandInterface;
 import com._1c.g5.v8.dt.cmi.model.CommandsOrderFragment;
 import com._1c.g5.v8.dt.cmi.model.CommandsPlacementFragment;
 import com._1c.g5.v8.dt.cmi.model.CommandsVisibilityFragment;
 import com._1c.g5.v8.dt.cmi.model.SubsystemsVisibilityFragment;
+import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.mcore.Command;
 import com._1c.g5.v8.dt.mcore.CommandGroup;
@@ -36,6 +43,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ProjectStateGuard;
 
 /**
  * J3: reads the command interface of the Configuration root, its main section
@@ -105,6 +113,11 @@ public class GetCommandInterfaceTool implements IMcpTool
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
+        String notReady = ProjectStateGuard.checkReadyOrError(project.getName());
+        if (notReady != null)
+        {
+            return ToolResult.error(notReady).toJson();
+        }
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
         if (configProvider == null)
         {
@@ -117,6 +130,48 @@ public class GetCommandInterfaceTool implements IMcpTool
                 + "' (external-object projects have no command interface).").toJson(); //$NON-NLS-1$
         }
 
+        IBmModelManager bmManager = Activator.getDefault().getBmModelManager();
+        IBmModel bmModel = bmManager != null ? bmManager.getModel(project) : null;
+        if (bmModel == null)
+        {
+            return ToolResult.error("object model not loaded for project: " + project.getName()).toJson(); //$NON-NLS-1$
+        }
+        final String target = ownerFqn;
+        return readInTransaction(bmModel, () -> readTarget(config, target));
+    }
+
+    /**
+     * Runs a read of the model inside a read-only transaction of that model, so a write committed
+     * at the same time is either wholly seen or not seen at all.
+     *
+     * @param bmModel the project's object model
+     * @param read the read, answering the tool's JSON
+     * @return what the read answered
+     */
+    static String readInTransaction(IBmModel bmModel, Supplier<String> read)
+    {
+        AtomicReference<String> answer = new AtomicReference<>();
+        bmModel.executeReadonlyTask(new AbstractBmTask<Void>("get_command_interface") //$NON-NLS-1$
+        {
+            @Override
+            public Void execute(IBmTransaction tx, IProgressMonitor monitor)
+            {
+                answer.set(read.get());
+                return null;
+            }
+        });
+        return answer.get();
+    }
+
+    /**
+     * Reads the command interface of the configuration or of one subsystem.
+     *
+     * @param config the configuration
+     * @param ownerFqn {@code Configuration} or {@code Subsystem.<name>}
+     * @return the tool's JSON answer
+     */
+    private String readTarget(Configuration config, String ownerFqn)
+    {
         if ("Configuration".equalsIgnoreCase(ownerFqn)) //$NON-NLS-1$
         {
             return readConfiguration(config).toJson();
