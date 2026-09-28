@@ -49,7 +49,8 @@ public class AnExceptionBreakpointFiltersOnSomethingTest
         params.put("catchAll", "false"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("message", "   "); //$NON-NLS-1$ //$NON-NLS-2$
         String answer = new SetExceptionBreakpointTool().execute(params);
-        assertTrue(answer, answer.contains("catchAll=false")); //$NON-NLS-1$
-        assertFalse(answer, answer.contains("\"success\":true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("No breakpoint was set")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("\"success\":false")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("NoSuchProject") && answer.contains("not found")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }
