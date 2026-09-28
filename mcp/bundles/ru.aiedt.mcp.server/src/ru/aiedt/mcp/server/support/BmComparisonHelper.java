@@ -1304,8 +1304,12 @@ public final class BmComparisonHelper
             // write in progress; forgetting the handle leaves it running with nothing able to
             // release it. So an unfinished merge keeps its session whatever the intent, and the
             // answer already carries mergeStatus for the caller to act on.
-            keepSession = !closeSession
-                && (intent == Intent.REPORT || mergeStillRunning(outcome));
+            boolean mergeRunning = mergeStillRunning(outcome);
+            keepSession = !closeSession && (intent == Intent.REPORT || mergeRunning);
+            if (keepSession && mergeRunning)
+            {
+                ComparisonSessions.markMergeRunning(held);
+            }
             return outcome;
         }
         catch (NoClassDefFoundError absent)
