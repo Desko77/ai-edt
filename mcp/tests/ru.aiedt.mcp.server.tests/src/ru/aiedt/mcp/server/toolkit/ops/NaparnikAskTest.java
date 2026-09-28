@@ -509,6 +509,38 @@ public class NaparnikAskTest
         assertTrue(host.cancels >= 1);
     }
 
+    /**
+     * A crash inside the wait, after the question already started its tools, still names those
+     * tools: the refusal does not blank the list the question collected.
+     */
+    @Test
+    public void aCrashAfterTheQuestionStartedKeepsTheToolsCalled()
+    {
+        host.script = List.of("Read"); //$NON-NLS-1$
+        host.crashInAwait = true;
+
+        JsonObject doc = ask();
+
+        assertFalse(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(doc.get("error").getAsString(), //$NON-NLS-1$
+            doc.get("error").getAsString().contains("blew up")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(List.of("Read"), strings(doc, "toolsCalled")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A crash before the question exists has no tools to name: the refusal list stays empty.
+     */
+    @Test
+    public void aCrashBeforeTheQuestionExistsNamesNoTools()
+    {
+        host.crashBeforeRun = true;
+
+        JsonObject doc = ask();
+
+        assertFalse(doc.toString(), doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(List.of(), strings(doc, "toolsCalled")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Test
     public void cancelStopsTheQuestion()
     {
@@ -1098,6 +1130,12 @@ public class NaparnikAskTest
 
         private volatile boolean surviveCancel;
 
+        /** Makes {@code ask} throw before any question exists. */
+        private volatile boolean crashBeforeRun;
+
+        /** Makes {@code await} record the scripted tools and throw. */
+        private volatile boolean crashInAwait;
+
         private volatile boolean release;
 
         private volatile boolean sawNonPositiveLimit;
@@ -1175,6 +1213,10 @@ public class NaparnikAskTest
         public RunningQuestion ask(Object facade, BundleCopy source, Question question)
             throws NaparnikAccessException
         {
+            if (crashBeforeRun)
+            {
+                throw new IllegalStateException("the ask blew up"); //$NON-NLS-1$
+            }
             sent.add(question);
             if (question.allowedTools() != null)
             {
@@ -1309,6 +1351,20 @@ public class NaparnikAskTest
             @Override
             public boolean await(long timeoutMs)
             {
+                if (crashInAwait)
+                {
+                    synchronized (tools)
+                    {
+                        for (String name : script)
+                        {
+                            if (!tools.contains(name))
+                            {
+                                tools.add(name);
+                            }
+                        }
+                    }
+                    throw new IllegalStateException("the wait blew up"); //$NON-NLS-1$
+                }
                 waits.add(Long.valueOf(timeoutMs));
                 long deadline = System.currentTimeMillis() + timeoutMs;
                 while (!future.isDone())
