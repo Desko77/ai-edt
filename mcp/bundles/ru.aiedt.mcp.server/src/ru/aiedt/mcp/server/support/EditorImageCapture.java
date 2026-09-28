@@ -159,7 +159,8 @@ public final class EditorImageCapture
      * <p>
      * An editor that is already open for this form is closed first, without saving. That looks wasteful
      * and is not: the render mode is chosen when the editor is built, and an editor built before we
-     * turned buffering on will never give up an image.
+     * turned buffering on will never give up an image. An open editor holding unsaved changes is not
+     * closed: the call is refused instead ({@link #reopenRefusal}).
      * </p>
      * <p>
      * Must run on the UI thread.
@@ -202,6 +203,11 @@ public final class EditorImageCapture
             }
 
             IEditorPart open = page.findEditor(new FileEditorInput(formFile));
+            String refusal = reopenRefusal(formPath, open != null, open != null && open.isDirty());
+            if (refusal != null)
+            {
+                return ToolResult.error(refusal).toJson();
+            }
             if (open != null)
             {
                 page.closeEditor(open, false);
@@ -221,6 +227,30 @@ public final class EditorImageCapture
             Activator.logError("Opening the form editor failed for " + formPath, e); //$NON-NLS-1$
             return ToolResult.error("Could not open the form editor: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Decides whether the form's open editor may be closed and reopened for the picture.
+     * <p>
+     * Reopening closes the editor without saving. That is harmless for an editor with nothing
+     * unsaved, and would throw away the user's edits for one that has some - so a dirty editor is
+     * left alone and the call is refused.
+     * </p>
+     *
+     * @param formPath the form, for the text.
+     * @param editorOpen whether an editor for the form is open.
+     * @param editorDirty whether that editor holds unsaved changes.
+     * @return <code>null</code> when the editor may be reopened, otherwise the refusal
+     */
+    static String reopenRefusal(String formPath, boolean editorOpen, boolean editorDirty)
+    {
+        if (!editorOpen || !editorDirty)
+        {
+            return null;
+        }
+        return "The editor of " + formPath + " holds unsaved changes. Taking the picture reopens the " //$NON-NLS-1$ //$NON-NLS-2$
+            + "editor, which would discard them, so nothing was closed. Save or revert the form in " //$NON-NLS-1$
+            + "EDT, then call again."; //$NON-NLS-1$
     }
 
     /**
@@ -663,9 +693,9 @@ public final class EditorImageCapture
     }
 
     /**
-     * Depth-first search of the form for an item of a given name. Exact match, case and all - a form
-     * may hold two items whose names differ only in case, and guessing between them is not this
-     * method's business.
+     * Depth-first search of the form for an item of a given name. An exact match wins; only when
+     * there is none is the name compared ignoring case, the way 1C compares identifiers - a caller
+     * writing the page name in another case otherwise gets no page at all.
      *
      * @param container the form, or a group inside it
      * @param name the name to find
@@ -679,7 +709,25 @@ public final class EditorImageCapture
         {
             return null;
         }
-        return findItemNamed(container, name, containerClass, namedClass);
+        Object exact = findItemNamed(container, name, containerClass, namedClass, true);
+        return exact != null ? exact : findItemNamed(container, name, containerClass, namedClass, false);
+    }
+
+    /**
+     * Says whether an item's name is the one looked for.
+     *
+     * @param itemName the item's name; may be <code>null</code>.
+     * @param name the name looked for.
+     * @param exact <code>true</code> to compare case and all, <code>false</code> to ignore case.
+     * @return whether they match
+     */
+    static boolean nameMatches(Object itemName, String name, boolean exact)
+    {
+        if (!(itemName instanceof String))
+        {
+            return false;
+        }
+        return exact ? name.equals(itemName) : name.equalsIgnoreCase((String)itemName);
     }
 
     /**
@@ -687,20 +735,22 @@ public final class EditorImageCapture
      * @param name the name to find
      * @param containerClass EDT's FormItemContainer
      * @param namedClass EDT's NamedElement
+     * @param exact <code>true</code> to compare case and all, <code>false</code> to ignore case
      * @return the first item so named, or <code>null</code>
      */
-    private static Object findItemNamed(Object container, String name, Class<?> containerClass, Class<?> namedClass)
+    private static Object findItemNamed(Object container, String name, Class<?> containerClass, Class<?> namedClass,
+        boolean exact)
     {
         for (Object item : itemsOf(container))
         {
-            if (namedClass.isInstance(item) && name.equals(call(item, "getName"))) //$NON-NLS-1$
+            if (namedClass.isInstance(item) && nameMatches(call(item, "getName"), name, exact)) //$NON-NLS-1$
             {
                 return item;
             }
 
             if (containerClass.isInstance(item))
             {
-                Object found = findItemNamed(item, name, containerClass, namedClass);
+                Object found = findItemNamed(item, name, containerClass, namedClass, exact);
                 if (found != null)
                 {
                     return found;
