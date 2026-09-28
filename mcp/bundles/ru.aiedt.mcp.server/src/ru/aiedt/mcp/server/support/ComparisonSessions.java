@@ -180,10 +180,45 @@ public final class ComparisonSessions
      */
     public static synchronized void markMergeRunning(Session session)
     {
+        setMergeRunning(session, true);
+    }
+
+    /**
+     * Records whether the environment is still applying a session's merge.
+     * <p>
+     * Cleared as soon as a call or the sweep sees the merge end: the flag exempts the session from
+     * the idle limit and from eviction, so one left set would keep a finished comparison open for
+     * the life of the process.
+     * </p>
+     *
+     * @param session the session; <code>null</code> is ignored.
+     * @param running whether its merge is still running
+     */
+    public static synchronized void setMergeRunning(Session session, boolean running)
+    {
         if (session != null)
         {
-            session.mergeRunning = true;
+            session.mergeRunning = running;
         }
+    }
+
+    /**
+     * The sessions whose merge was still running when last seen, for the sweep to ask the
+     * environment about.
+     *
+     * @return a copy of those sessions
+     */
+    public static synchronized List<Session> mergesRunning()
+    {
+        List<Session> running = new ArrayList<>();
+        for (Session session : OPEN.values())
+        {
+            if (session.mergeRunning)
+            {
+                running.add(session);
+            }
+        }
+        return running;
     }
 
     /**

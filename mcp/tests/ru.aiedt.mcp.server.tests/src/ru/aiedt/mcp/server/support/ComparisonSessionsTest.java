@@ -159,6 +159,41 @@ public class ComparisonSessionsTest
     }
 
     /**
+     * A session whose merge was seen to end is under the idle limit again, and is no longer listed
+     * for the sweep to ask about.
+     */
+    @Test
+    public void aSessionWhoseMergeEndedExpiresAgain()
+    {
+        long opened = 1_000L;
+        ComparisonSessions.Session session = ComparisonSessions.open(SIDES, "handle", opened);
+        ComparisonSessions.markMergeRunning(session);
+        ComparisonSessions.release(session);
+        assertTrue(ComparisonSessions.mergesRunning().contains(session));
+
+        ComparisonSessions.setMergeRunning(session, false);
+
+        assertFalse(ComparisonSessions.mergesRunning().contains(session));
+        assertFalse(ComparisonSessions.list(opened + ComparisonSessions.IDLE_LIMIT_MS + 1)
+            .contains(session));
+        assertTrue(ComparisonSessions.drainDropped().contains(session));
+    }
+
+    /**
+     * Only a status naming an unfinished merge keeps the protection; no status and the three ends
+     * release it.
+     */
+    @Test
+    public void onlyAnUnfinishedMergeStatusKeepsTheSession()
+    {
+        assertFalse(BmComparisonHelper.stillMerging(null));
+        assertFalse(BmComparisonHelper.stillMerging("MERGE_PROCESS_FINISHED")); //$NON-NLS-1$
+        assertFalse(BmComparisonHelper.stillMerging("MERGE_PROCESS_DISCARDED")); //$NON-NLS-1$
+        assertFalse(BmComparisonHelper.stillMerging("COMPARISON_MERGE_PROCESS_CANCELLED")); //$NON-NLS-1$
+        assertTrue(BmComparisonHelper.stillMerging("MERGE_PROCESS_VALIDATION_FINISHED")); //$NON-NLS-1$
+    }
+
+    /**
      * Verifies that eviction drops the oldest free session instead of a session a call holds.
      */
     @Test
