@@ -399,7 +399,13 @@ public class EditMetadataTool implements IMcpTool
                 "add_exchange_plan_content: per-item auto change registration - Deny (default) or Allow.") //$NON-NLS-1$
             .stringProperty("use", //$NON-NLS-1$
                 "add_common_attribute_content: per-object usage of the common attribute - " //$NON-NLS-1$
-                + "Auto (default), Use or DontUse.") //$NON-NLS-1$
+                + "Auto (default), Use or DontUse. Schema parameter: Auto or Always.") //$NON-NLS-1$
+            .stringProperty("expression", //$NON-NLS-1$
+                "Schema parameter value expression.") //$NON-NLS-1$
+            .booleanProperty("valueListAllowed", //$NON-NLS-1$
+                "Schema parameter accepts a value list.") //$NON-NLS-1$
+            .booleanProperty("denyIncompleteValues", //$NON-NLS-1$
+                "Schema parameter refuses incomplete values.") //$NON-NLS-1$
             .stringProperty("subsystems", //$NON-NLS-1$
                 "set_subsystems_order: comma-separated top-level subsystems in the wanted " //$NON-NLS-1$
                     + "leading order.") //$NON-NLS-1$

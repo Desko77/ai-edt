@@ -62,6 +62,19 @@ public class AnArgumentNobodyReadsIsRefusedTest
         assertTrue(unread.toString(), unread.isEmpty());
     }
 
+    /**
+     * The optional fields of a schema parameter reach the composition workshop through
+     * {@code add_schema_parameter}, so they are not refused as unread.
+     */
+    @Test
+    public void theFieldsOfASchemaParameterAreRead()
+    {
+        List<String> unread = UnreadArguments.of(FACADE, "add_schema_parameter", //$NON-NLS-1$
+            args("name", "Период", "expression", "ТекущаяДата()", "use", "Auto", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+                "valueListAllowed", "true", "denyIncompleteValues", "true")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        assertTrue(unread.toString(), unread.isEmpty());
+    }
+
     @Test
     public void aNameTheOperationDoesNotReadIsNamed()
     {
