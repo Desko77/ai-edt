@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -92,8 +93,27 @@ public class ReferenceLocator implements IMcpTool
     private static final int MAX_TIMEOUT_SECONDS = 120;
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
 
-    /** Per-phase soft cap (headroom before the global {@code limit} is applied in formatOutput). */
+    /**
+     * How many hits one phase may keep, as a multiple of the rows {@code formatOutput} shows for
+     * one category. Deduplication inside the phase drops some of what was seen, so the multiple is
+     * headroom above that row cap. The budget belongs to the phase: a full metadata phase does not
+     * spend the BSL phase's share.
+     */
     private static final int PER_PHASE_CAP_MULTIPLIER = 10;
+
+    private static final String PHASE_BACK = "back"; //$NON-NLS-1$
+    private static final String PHASE_PRODUCED = "produced"; //$NON-NLS-1$
+    private static final String PHASE_PREDEFINED = "predefined"; //$NON-NLS-1$
+    private static final String PHASE_FIELDS = "fields"; //$NON-NLS-1$
+    private static final String PHASE_BSL = "bsl"; //$NON-NLS-1$
+
+    /**
+     * What a caller gets when {@code limit} is zero or negative. The sample is a value that can be
+     * sent unchanged. Without the refusal the walk stops before the first hit and the report says
+     * nothing references the object.
+     */
+    private static final String NON_POSITIVE_LIMIT =
+        "Error: limit must be a positive whole number, for example 100"; //$NON-NLS-1$
 
     /**
      * What a reference search established, beside the text it rendered.
@@ -141,14 +161,21 @@ public class ReferenceLocator implements IMcpTool
         /** Projects in scope that could not be searched. */
         public final List<String> projectsNotSearched;
 
+        /**
+         * Why a phase did not finish, or {@code null} when every phase that ran did finish. A BSL
+         * phase that threw leaves the count a floor even when metadata references were found.
+         */
+        public final String phaseFailure;
+
         Result(String markdown, int count, Certainty certainty, List<String> phasesNotRun,
-            List<String> projectsNotSearched)
+            List<String> projectsNotSearched, String phaseFailure)
         {
             this.markdown = markdown;
             this.count = count;
             this.certainty = certainty;
             this.phasesNotRun = Collections.unmodifiableList(new ArrayList<>(phasesNotRun));
             this.projectsNotSearched = Collections.unmodifiableList(new ArrayList<>(projectsNotSearched));
+            this.phaseFailure = phaseFailure;
         }
 
         /** @return <code>true</code> when the count is the whole answer rather than a floor. */
@@ -168,8 +195,24 @@ public class ReferenceLocator implements IMcpTool
                 return phasesNotRun.isEmpty() ? "the operator stopped the walk" //$NON-NLS-1$
                     : "the operator stopped the walk before " + String.join(", ", phasesNotRun); //$NON-NLS-1$ //$NON-NLS-2$
             case PARTIAL:
-                return "these projects could not be searched: " //$NON-NLS-1$
-                    + String.join(", ", projectsNotSearched); //$NON-NLS-1$
+                String projects = projectsNotSearched.isEmpty() ? "" //$NON-NLS-1$
+                    : "these projects could not be searched: " //$NON-NLS-1$
+                        + String.join(", ", projectsNotSearched); //$NON-NLS-1$
+                String phase = phaseFailure == null ? "" //$NON-NLS-1$
+                    : "the BSL phase did not finish: " + phaseFailure; //$NON-NLS-1$
+                if (!projects.isEmpty() && !phase.isEmpty())
+                {
+                    return projects + "; " + phase; //$NON-NLS-1$
+                }
+                if (!projects.isEmpty())
+                {
+                    return projects;
+                }
+                if (!phase.isEmpty())
+                {
+                    return phase;
+                }
+                return "the search is incomplete"; //$NON-NLS-1$
             case FAILED:
                 return "the search did not run to an answer"; //$NON-NLS-1$
             default:
@@ -186,6 +229,8 @@ public class ReferenceLocator implements IMcpTool
         boolean stopped;
         List<String> phasesNotRun = new ArrayList<>();
         final List<String> projectsNotSearched = new ArrayList<>();
+        /** Set when the BSL phase threw. Outranks the cap: the missing phase is a wider gap. */
+        String phaseFailure;
 
         Result toResult(String markdown)
         {
@@ -198,7 +243,7 @@ public class ReferenceLocator implements IMcpTool
             {
                 certainty = Result.Certainty.CANCELLED;
             }
-            else if (!projectsNotSearched.isEmpty())
+            else if (!projectsNotSearched.isEmpty() || phaseFailure != null)
             {
                 certainty = Result.Certainty.PARTIAL;
             }
@@ -210,7 +255,8 @@ public class ReferenceLocator implements IMcpTool
             {
                 certainty = Result.Certainty.COMPLETE;
             }
-            return new Result(markdown, count, certainty, phasesNotRun, projectsNotSearched);
+            return new Result(markdown, count, certainty, phasesNotRun, projectsNotSearched,
+                phaseFailure);
         }
     }
 
@@ -241,7 +287,7 @@ public class ReferenceLocator implements IMcpTool
         {
             return new Result(markdown == null ? "Error: the reference search returned nothing" //$NON-NLS-1$
                 : markdown, -1, Result.Certainty.FAILED, Collections.emptyList(),
-                Collections.emptyList());
+                Collections.emptyList(), null);
         }
         return sink.toResult(markdown);
     }
@@ -313,7 +359,9 @@ public class ReferenceLocator implements IMcpTool
                     + "(e.g. 'Catalog.Products', 'Document.SalesOrder', 'CommonModule.Common'). " //$NON-NLS-1$
                     + "Russian type names work too (e.g. 'Справочник.Номенклатура')", //$NON-NLS-1$
                 true)
-            .integerProperty("limit", "Cap on how many results each category returns. Default: 100") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("limit", //$NON-NLS-1$
+                "Cap on how many results each category returns. Default: 100. " //$NON-NLS-1$
+                    + "Zero and below is refused.") //$NON-NLS-1$
             .booleanProperty("deep", //$NON-NLS-1$
                 "Widen produced-type tracking: tag each discovered type-reference with its concrete kind " //$NON-NLS-1$
                     + "(Object, Reference, Selection, Manager, Cache, List) derived from its EClass. Default: false. " //$NON-NLS-1$
@@ -370,6 +418,16 @@ public class ReferenceLocator implements IMcpTool
         return PendingWorkRegistry.REFERENCES.domain().equals(domain) ? NAME : null;
     }
 
+    /**
+     * Locates every reference to one metadata object.
+     * <p>
+     * A limit of zero or below is refused before a project is opened. That value used to make
+     * every phase look finished at once and the report then said nothing references the object.
+     * </p>
+     *
+     * @param params the call arguments; {@code objectFqn} is required, {@code limit} defaults to 100
+     * @return the markdown report, the refusal, or a Pending envelope when the search is still running
+     */
     @Override
     public String execute(Map<String, String> params)
     {
@@ -392,6 +450,17 @@ public class ReferenceLocator implements IMcpTool
             return "Error: objectFqn must be supplied"; //$NON-NLS-1$
         }
 
+        if (skipBsl && bslOnly)
+        {
+            return "Error: skipBsl and bslOnly cannot both be set"; //$NON-NLS-1$
+        }
+
+        int limit = readLimit(limitStr);
+        if (limit < 0)
+        {
+            return NON_POSITIVE_LIMIT;
+        }
+
         // Auto-detect the owning project when omitted (1.42). Falls back to a helpful error when the
         // workspace holds no 1C project that owns the FQN.
         OwnerInfo owner = null;
@@ -405,24 +474,6 @@ public class ReferenceLocator implements IMcpTool
             }
         }
         final String resolvedProjectName = owner != null ? owner.projectName : projectName;
-
-        if (skipBsl && bslOnly)
-        {
-            return "Error: skipBsl and bslOnly cannot both be set"; //$NON-NLS-1$
-        }
-
-        int limit = 100;
-        if (limitStr != null && !limitStr.isEmpty())
-        {
-            try
-            {
-                limit = Math.min((int)Double.parseDouble(limitStr), 500);
-            }
-            catch (NumberFormatException e)
-            {
-                // keep the default - a bad limit is not a fatal error
-            }
-        }
 
         CategoryFilter filter = CategoryFilter.from(categoriesCsv, skipBsl, bslOnly);
 
@@ -525,6 +576,41 @@ public class ReferenceLocator implements IMcpTool
         return body.toJson();
     }
 
+    /**
+     * Reads the caller's limit. A missing or unreadable value keeps the default of 100. Zero,
+     * a fraction below 1, and any negative value are refused: they used to stop the walk before
+     * the first hit.
+     *
+     * @param limitStr the raw argument, or {@code null} when the caller omitted it
+     * @return the cap to apply, or {@code -1} when the call must be refused
+     */
+    private static int readLimit(String limitStr)
+    {
+        if (limitStr == null || limitStr.isEmpty())
+        {
+            return 100;
+        }
+        try
+        {
+            double parsed = Double.parseDouble(limitStr);
+            if (Double.isNaN(parsed) || parsed <= 0)
+            {
+                return -1;
+            }
+            int limit = (int)parsed;
+            if (limit <= 0)
+            {
+                return -1;
+            }
+            return Math.min(limit, 500);
+        }
+        catch (NumberFormatException e)
+        {
+            // A bad limit is not a fatal error - the default still searches.
+            return 100;
+        }
+    }
+
     // -- = --
     // Worker
     // -- = --
@@ -560,6 +646,11 @@ public class ReferenceLocator implements IMcpTool
     private String findReferencesInternal(String projectName, String objectFqn, int limit, boolean deep,
         CategoryFilter filter, Sink sink)
     {
+        if (limit <= 0)
+        {
+            return NON_POSITIVE_LIMIT;
+        }
+
         Activator.logInfo("find_references filter: back=" + filter.back //$NON-NLS-1$
             + " produced=" + filter.produced //$NON-NLS-1$
             + " predefined=" + filter.predefined //$NON-NLS-1$
@@ -647,9 +738,15 @@ public class ReferenceLocator implements IMcpTool
 
             for (int i = 1; i < scope.projects.size(); i++)
             {
-                if (master.references.size() >= limit || watch.raised())
+                if (watch.raised())
                 {
-                    break; // global cap reached, or the operator stopped
+                    break;
+                }
+                // A full metadata phase must not close a sister that can still contribute code.
+                if (master.everyEnabledPhaseIsFull())
+                {
+                    nameSistersNotOpened(scope.projects, i, master.projectsSkippedByCap);
+                    break;
                 }
                 IProject sister = scope.projects.get(i);
                 IBmModel sisterBm = bmModelManager.getModel(sister);
@@ -665,18 +762,8 @@ public class ReferenceLocator implements IMcpTool
                 try
                 {
                     sisterBm.executeReadonlyTask(sisterCollector, true);
-                    master.references.addAll(sisterCollector.references);
-                    master.seenReferences.addAll(sisterCollector.seenReferences);
+                    master.absorb(sisterCollector);
                     searchedProjectNames.add(sister.getName());
-                    // Enforce the global cap after the merge.
-                    synchronized (master.references)
-                    {
-                        int size = master.references.size();
-                        if (size > limit)
-                        {
-                            master.references.subList(limit, size).clear();
-                        }
-                    }
                 }
                 catch (Exception sisterEx)
                 {
@@ -700,14 +787,11 @@ public class ReferenceLocator implements IMcpTool
             return "Error: the reference search failed: " + e.getMessage(); //$NON-NLS-1$
         }
 
+        String report = formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
         if (sink != null)
         {
-            sink.count = master.getTotalCount();
-            sink.capped = master.getTotalCount() >= limit;
-            sink.stopped = watch.stopped() || !master.phasesCutShort.isEmpty();
-            sink.phasesNotRun = master.phasesCutShort;
+            recordOutcome(sink, master, watch);
         }
-        String report = formatOutput(objectFqn, master, filter, scope, searchedProjectNames, watch);
         if (!filter.bsl)
         {
             return report;
@@ -720,6 +804,46 @@ public class ReferenceLocator implements IMcpTool
             searched.add(ResourcesPlugin.getWorkspace().getRoot().getProject(name));
         }
         return ModuleSources.appendCoverage(searched, "references", report); //$NON-NLS-1$
+    }
+
+    /**
+     * Names the sister projects a full collection budget kept closed, from {@code from} to the end
+     * of the scope. The report lists those names next to the truncation mark so a short answer is
+     * not read as the whole workspace.
+     *
+     * @param scope the projects in search order, owner first
+     * @param from the first index that was not opened
+     * @param skipped where the names are recorded
+     */
+    private static void nameSistersNotOpened(List<IProject> scope, int from, List<String> skipped)
+    {
+        for (int index = from; index < scope.size(); index++)
+        {
+            IProject project = scope.get(index);
+            if (project != null && project.getName() != null)
+            {
+                skipped.add(project.getName());
+            }
+        }
+    }
+
+    /**
+     * Copies what the walk established onto the sink the caller reads as a value. A category whose
+     * rows were cut, a phase that filled its collection budget, or a sister left closed makes the
+     * count a floor. A BSL phase that threw is a wider gap than the cap and is recorded on its own.
+     *
+     * @param sink where the outcome is recorded
+     * @param master the walk that just finished
+     * @param watch the operator's cancel flag for this walk
+     */
+    private static void recordOutcome(Sink sink, BmReferenceHarvester master, WatchForCancel watch)
+    {
+        sink.count = master.getTotalCount();
+        sink.capped = master.outputTruncated || master.anyPhaseHitCap()
+            || !master.projectsSkippedByCap.isEmpty();
+        sink.stopped = watch.stopped() || !master.phasesCutShort.isEmpty();
+        sink.phasesNotRun = master.phasesCutShort;
+        sink.phaseFailure = master.bslPhaseError;
     }
 
     /**
@@ -827,13 +951,17 @@ public class ReferenceLocator implements IMcpTool
     // -- = --
 
     /**
-     * Renders the MARKDOWN report.
+     * Renders the MARKDOWN report. Code references come first, metadata after them, and each
+     * category shows at most {@code limit} rows. The header names how many references were found
+     * and how many rows are shown. A category that was cut, a phase that filled its collection
+     * budget, or a sister project left closed is marked truncated, and those projects are named.
      *
      * @param objectFqn the FQN
      * @param collector the populated reference collector
      * @param filter the active filter
      * @param scope the search scope (may be {@code null})
      * @param searchedProjectNames the projects actually searched
+     * @param watch the operator's cancel flag for this walk
      * @return the MARKDOWN string
      */
     private static String formatOutput(String objectFqn, BmReferenceHarvester collector, CategoryFilter filter,
@@ -841,9 +969,19 @@ public class ReferenceLocator implements IMcpTool
         WatchForCancel watch)
     {
         int totalCount = collector.getTotalCount();
+        List<String> bslRows = bslRows(collector);
+        List<String> metadataRows = metadataRows(collector);
+        int limit = collector.limit;
+        int bslShown = Math.min(Math.max(limit, 0), bslRows.size());
+        int metaShown = Math.min(Math.max(limit, 0), metadataRows.size());
+        collector.outputTruncated = bslRows.size() > bslShown || metadataRows.size() > metaShown;
+        boolean cut = collector.outputTruncated || collector.anyPhaseHitCap()
+            || !collector.projectsSkippedByCap.isEmpty();
+
         StringBuilder out = new StringBuilder();
         out.append("# Usages of ").append(objectFqn).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("**Total references located:** ").append(totalCount).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        out.append("**Shown:** ").append(bslShown + metaShown).append(" rows\n"); //$NON-NLS-1$ //$NON-NLS-2$
         if (watch.stopped())
         {
             // "cross-references", not "references": the count is what the metadata phases examined,
@@ -903,26 +1041,91 @@ public class ReferenceLocator implements IMcpTool
             out.append("\n"); //$NON-NLS-1$
         }
 
+        if (cut)
+        {
+            out.append("\n> **truncated** - each category shows at most ").append(limit).append(" rows."); //$NON-NLS-1$ //$NON-NLS-2$
+            if (!collector.projectsSkippedByCap.isEmpty())
+            {
+                out.append(" These projects were not searched: ") //$NON-NLS-1$
+                    .append(String.join(", ", collector.projectsSkippedByCap)).append("."); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            out.append("\n"); //$NON-NLS-1$
+        }
+
+        if (collector.bslPhaseError != null)
+        {
+            out.append("\n> **incomplete** - the BSL phase did not finish (") //$NON-NLS-1$
+                .append(oneLine(collector.bslPhaseError))
+                .append("), so this answer may be missing code references.\n"); //$NON-NLS-1$
+        }
+
         if (totalCount == 0)
         {
-            // Only sayable when the search finished. Stopped short, nothing found means
-            // nothing was looked at, which is a different statement entirely.
-            out.append(watch.stopped()
-                ? "\nNothing had been found when the search stopped.\n" //$NON-NLS-1$
-                : "\nNothing references this object.\n"); //$NON-NLS-1$
+            // Only sayable when the search finished and the BSL phase did not fail. Stopped short,
+            // nothing found means nothing was looked at, which is a different statement entirely.
+            // A failed BSL phase is not "nothing references this object".
+            if (collector.bslPhaseError == null)
+            {
+                out.append(watch.stopped()
+                    ? "\nNothing had been found when the search stopped.\n" //$NON-NLS-1$
+                    : "\nNothing references this object.\n"); //$NON-NLS-1$
+            }
             return out.toString();
         }
 
-        // Split references: BSL refs group by module -> sorted line numbers; the rest sorts by path.
+        appendCategory(out, "BSL code references", bslRows, limit); //$NON-NLS-1$
+        appendCategory(out, "Metadata references", metadataRows, limit); //$NON-NLS-1$
+        return out.toString();
+    }
+
+    /**
+     * Code-reference rows, one per module, modules in path order and lines in numeric order.
+     *
+     * @param collector the populated reference collector
+     * @return the rows, never {@code null}
+     */
+    private static List<String> bslRows(BmReferenceHarvester collector)
+    {
         TreeMap<String, List<Integer>> bslByModule = new TreeMap<>();
-        List<UsageHit> metadataRefs = new ArrayList<>();
         for (UsageHit ref : collector.references)
         {
             if (ref.isBslReference)
             {
                 bslByModule.computeIfAbsent(ref.sourcePath, k -> new ArrayList<>()).add(Integer.valueOf(ref.line));
             }
-            else
+        }
+        List<String> rows = new ArrayList<>();
+        for (Map.Entry<String, List<Integer>> entry : bslByModule.entrySet())
+        {
+            String modulePath = stripLeadingSlash(entry.getKey());
+            List<Integer> lines = entry.getValue();
+            Collections.sort(lines);
+            StringBuilder lineList = new StringBuilder();
+            for (Integer line : lines)
+            {
+                if (lineList.length() > 0)
+                {
+                    lineList.append("; "); //$NON-NLS-1$
+                }
+                lineList.append("Line ").append(line); //$NON-NLS-1$
+            }
+            rows.add(modulePath + " [" + lineList + "]"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return rows;
+    }
+
+    /**
+     * Metadata-reference rows, sorted by path. One hit is one row.
+     *
+     * @param collector the populated reference collector
+     * @return the rows, never {@code null}
+     */
+    private static List<String> metadataRows(BmReferenceHarvester collector)
+    {
+        List<UsageHit> metadataRefs = new ArrayList<>();
+        for (UsageHit ref : collector.references)
+        {
+            if (!ref.isBslReference)
             {
                 metadataRefs.add(ref);
             }
@@ -932,46 +1135,74 @@ public class ReferenceLocator implements IMcpTool
             String pb = b.sourcePath != null ? b.sourcePath : ""; //$NON-NLS-1$
             return pa.compareToIgnoreCase(pb);
         });
-
+        List<String> rows = new ArrayList<>();
         for (UsageHit ref : metadataRefs)
         {
-            String displayPath = ref.sourcePath != null && ref.sourcePath.startsWith("/") //$NON-NLS-1$
-                ? ref.sourcePath.substring(1)
-                : ref.sourcePath;
-            out.append("\n- ").append(displayPath); //$NON-NLS-1$
+            String line = stripLeadingSlash(ref.sourcePath);
             if (ref.feature != null && !ref.feature.isEmpty())
             {
-                out.append(" - ").append(ref.feature); //$NON-NLS-1$
+                line = line + " - " + ref.feature; //$NON-NLS-1$
             }
+            rows.add(line);
         }
+        return rows;
+    }
 
-        if (!bslByModule.isEmpty())
+    /**
+     * Appends one category: its own found and shown counts, at most {@code limit} rows, and the
+     * number of rows that did not fit.
+     *
+     * @param out the report being built
+     * @param heading the section title
+     * @param rows the rows, already in display order
+     * @param limit how many rows this category may show
+     */
+    private static void appendCategory(StringBuilder out, String heading, List<String> rows, int limit)
+    {
+        if (rows.isEmpty())
         {
-            out.append("\n\n### BSL code references\n"); //$NON-NLS-1$
-            for (Map.Entry<String, List<Integer>> entry : bslByModule.entrySet())
-            {
-                String modulePath = entry.getKey();
-                if (modulePath != null && modulePath.startsWith("/")) //$NON-NLS-1$
-                {
-                    modulePath = modulePath.substring(1);
-                }
-                List<Integer> lines = entry.getValue();
-                Collections.sort(lines);
-                StringBuilder lineList = new StringBuilder();
-                for (Integer line : lines)
-                {
-                    if (lineList.length() > 0)
-                    {
-                        lineList.append("; "); //$NON-NLS-1$
-                    }
-                    lineList.append("Line ").append(line); //$NON-NLS-1$
-                }
-                out.append("\n- ").append(modulePath).append(" [").append(lineList).append("]"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            }
-            out.append("\n"); //$NON-NLS-1$
+            return;
         }
+        int shown = Math.min(Math.max(limit, 0), rows.size());
+        int omitted = rows.size() - shown;
+        out.append("\n\n### ").append(heading) //$NON-NLS-1$
+            .append(" (").append(rows.size()).append(" found, ") //$NON-NLS-1$ //$NON-NLS-2$
+            .append(shown).append(" shown)\n"); //$NON-NLS-1$
+        for (int index = 0; index < shown; index++)
+        {
+            out.append("\n- ").append(rows.get(index)); //$NON-NLS-1$
+        }
+        if (omitted > 0)
+        {
+            out.append("\n... and ").append(omitted).append(" more"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        out.append("\n"); //$NON-NLS-1$
+    }
 
-        return out.toString();
+    /**
+     * Drops a single leading slash so a platform path and a project-relative path print the same way.
+     *
+     * @param path the stored path, possibly {@code null}
+     * @return the path to print; {@code null} stays {@code null}
+     */
+    private static String stripLeadingSlash(String path)
+    {
+        if (path != null && path.startsWith("/")) //$NON-NLS-1$
+        {
+            return path.substring(1);
+        }
+        return path;
+    }
+
+    /**
+     * Flattens a failure detail so it stays on the report line that names it.
+     *
+     * @param detail the exception message or class name
+     * @return the same text with newlines turned into spaces
+     */
+    private static String oneLine(String detail)
+    {
+        return detail.replace("\n", " ").replace("\r", " "); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     }
 
     // -- = --
@@ -1127,6 +1358,14 @@ public class ReferenceLocator implements IMcpTool
 
         final List<UsageHit> references = Collections.synchronizedList(new ArrayList<>());
         final Set<String> seenReferences = Collections.synchronizedSet(new HashSet<>());
+        /** Hits kept by each phase after deduplication. The collection cap reads this, not the shared list. */
+        private final Map<String, Integer> keptByPhase = new HashMap<>();
+        /** Sister projects left closed because every enabled phase had already filled its cap. */
+        final List<String> projectsSkippedByCap = new ArrayList<>();
+        /** Set when the BSL phase threw. The report names it instead of looking finished. */
+        String bslPhaseError;
+        /** Set by formatOutput when a category showed fewer rows than it had. */
+        boolean outputTruncated;
 
         BmReferenceHarvester(IBmModel bmModel, MdObject targetObject, int limit, boolean deep, CategoryFilter filter,
             WatchForCancel watch)
@@ -1206,11 +1445,13 @@ public class ReferenceLocator implements IMcpTool
         /**
          * Dedup + internal-path filter. Self-references are intentionally kept (EDT shows them); the
          * internal-path filter catches EDT-internal artifacts that would only confuse an agent.
+         * A hit that is kept counts toward that phase's own collection budget.
          *
+         * @param phase the phase the hit belongs to
          * @param ref the reference to add
          * @return {@code true} when added
          */
-        boolean addReference(UsageHit ref)
+        boolean addReference(String phase, UsageHit ref)
         {
             String key = ref.category + ":" + ref.sourcePath + ":" //$NON-NLS-1$ //$NON-NLS-2$
                 + (ref.isBslReference ? ref.line : ref.feature);
@@ -1225,20 +1466,138 @@ public class ReferenceLocator implements IMcpTool
                     return false;
                 }
                 seenReferences.add(key);
+                keptByPhase.merge(phase, Integer.valueOf(1), Integer::sum);
             }
             references.add(ref);
             return true;
         }
 
         /**
-         * Whether this loop has gathered all it is going to: the per-phase cap, or the
-         * operator. Which of the two it was is read off the watch.
+         * Folds a sister project's hits into this walk. Dedup keys were shared before the sister
+         * ran, so the lists do not repeat a hit the owner already kept. Phase budgets add up, and
+         * the first BSL failure is the one the report names.
          *
-         * @return <code>true</code> when the caller should stop the loop it is in
+         * @param sister the walk that just finished on one sister project
          */
-        private boolean enough()
+        void absorb(BmReferenceHarvester sister)
         {
-            return references.size() >= limit * PER_PHASE_CAP_MULTIPLIER || watch.stopHere();
+            references.addAll(sister.references);
+            seenReferences.addAll(sister.seenReferences);
+            synchronized (seenReferences)
+            {
+                for (Map.Entry<String, Integer> entry : sister.keptByPhase.entrySet())
+                {
+                    keptByPhase.merge(entry.getKey(), entry.getValue(), Integer::sum);
+                }
+            }
+            if (bslPhaseError == null && sister.bslPhaseError != null)
+            {
+                bslPhaseError = sister.bslPhaseError;
+            }
+        }
+
+        /**
+         * How many hits this phase has kept after deduplication.
+         *
+         * @param phase the phase
+         * @return the kept count
+         */
+        private int kept(String phase)
+        {
+            synchronized (seenReferences)
+            {
+                Integer count = keptByPhase.get(phase);
+                return count == null ? 0 : count.intValue();
+            }
+        }
+
+        /**
+         * Whether this phase has kept as many hits as its collection budget allows.
+         *
+         * @param phase the phase
+         * @return {@code true} when another hit would pass the per-phase cap
+         */
+        private boolean phaseFull(String phase)
+        {
+            if (limit <= 0)
+            {
+                return true;
+            }
+            return kept(phase) >= limit * PER_PHASE_CAP_MULTIPLIER;
+        }
+
+        /**
+         * Whether this loop has gathered all it is going to: this phase's own cap, or the operator.
+         * Which of the two it was is read off the watch. Other phases do not spend this budget.
+         *
+         * @param phase the phase being scanned
+         * @return {@code true} when the caller should stop the loop it is in
+         */
+        private boolean enough(String phase)
+        {
+            return phaseFull(phase) || watch.stopHere();
+        }
+
+        /**
+         * Whether every phase the filter left on has filled its collection budget. A disabled phase
+         * does not count. While any enabled phase is still short, a sister project can still add a
+         * hit this walk would keep, so the walk keeps going.
+         *
+         * @return {@code true} when every enabled phase has filled its collection budget
+         */
+        boolean everyEnabledPhaseIsFull()
+        {
+            if (limit <= 0)
+            {
+                return false;
+            }
+            if (filter.back && !phaseFull(PHASE_BACK))
+            {
+                return false;
+            }
+            if (filter.produced && !phaseFull(PHASE_PRODUCED))
+            {
+                return false;
+            }
+            if (filter.predefined && !phaseFull(PHASE_PREDEFINED))
+            {
+                return false;
+            }
+            if (filter.fields && !phaseFull(PHASE_FIELDS))
+            {
+                return false;
+            }
+            if (filter.bsl && !phaseFull(PHASE_BSL))
+            {
+                return false;
+            }
+            return filter.back || filter.produced || filter.predefined || filter.fields || filter.bsl;
+        }
+
+        /**
+         * Whether any phase stopped because it had kept its collection budget. The count is then a
+         * floor even when deduplication later collapsed those hits into fewer shown rows.
+         *
+         * @return {@code true} when at least one phase filled its cap
+         */
+        boolean anyPhaseHitCap()
+        {
+            if (limit <= 0)
+            {
+                return false;
+            }
+            int cap = limit * PER_PHASE_CAP_MULTIPLIER;
+            synchronized (seenReferences)
+            {
+                for (Integer kept : keptByPhase.values())
+                {
+                    if (kept.intValue() >= cap)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         int getTotalCount()
@@ -1248,12 +1607,18 @@ public class ReferenceLocator implements IMcpTool
 
         // ---- Phase 1: back-references ----
 
+        /**
+         * Collects direct back-references. Stops when this phase's own budget is full.
+         *
+         * @param engine the BM engine
+         * @param target the object being searched
+         */
         private void scanBackRefs(IBmEngine engine, IBmObject target)
         {
             Collection<IBmCrossReference> refs = engine.getBackReferences(target);
             for (IBmCrossReference ref : refs)
             {
-                if (enough())
+                if (enough(PHASE_BACK))
                 {
                     break;
                 }
@@ -1274,12 +1639,19 @@ public class ReferenceLocator implements IMcpTool
                 }
                 EStructuralFeature feature = ref.getFeature();
                 String featureName = feature != null ? feature.getName() : null;
-                addReference(UsageHit.metadata(category, sourcePath, featureName));
+                addReference(PHASE_BACK, UsageHit.metadata(category, sourcePath, featureName));
             }
         }
 
         // ---- Phase 2: produced-type references ----
 
+        /**
+         * Collects references to the types this object produces. Stops when this phase's own
+         * budget is full, which does not spend the budget of the phases before or after it.
+         *
+         * @param engine the BM engine
+         * @param target the object being searched
+         */
         private void collectProducedTypesReferences(IBmEngine engine, MdObject target)
         {
             MdTypes producedTypes = MdClassUtil.getProducedTypes(target);
@@ -1305,7 +1677,7 @@ public class ReferenceLocator implements IMcpTool
                 Collection<IBmCrossReference> refs = engine.getBackReferences((IBmObject)typeItem);
                 for (IBmCrossReference ref : refs)
                 {
-                    if (enough())
+                    if (enough(PHASE_PRODUCED))
                     {
                         break;
                     }
@@ -1324,13 +1696,19 @@ public class ReferenceLocator implements IMcpTool
                     String featureName = feature != null ? feature.getName() : ""; //$NON-NLS-1$
                     String featureLabel =
                         typeKind != null ? "Type[" + typeKind + "]: " + featureName : "Type: " + featureName; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                    addReference(UsageHit.metadata(category, sourcePath, featureLabel));
+                    addReference(PHASE_PRODUCED, UsageHit.metadata(category, sourcePath, featureLabel));
                 }
             }
         }
 
         // ---- Phase 3: predefined-item references ----
 
+        /**
+         * Collects references to this object's predefined items, against this phase's own budget.
+         *
+         * @param engine the BM engine
+         * @param target the object being searched
+         */
         private void collectPredefinedItemsReferences(IBmEngine engine, MdObject target)
         {
             for (PredefinedItem item : PredefinedItemUtil.getItems((EObject)target))
@@ -1346,7 +1724,7 @@ public class ReferenceLocator implements IMcpTool
                 Collection<IBmCrossReference> refs = engine.getBackReferences((IBmObject)item);
                 for (IBmCrossReference ref : refs)
                 {
-                    if (enough())
+                    if (enough(PHASE_PREDEFINED))
                     {
                         break;
                     }
@@ -1362,13 +1740,19 @@ public class ReferenceLocator implements IMcpTool
                         continue;
                     }
                     String feature = item.getName();
-                    addReference(UsageHit.metadata(category, sourcePath, feature));
+                    addReference(PHASE_PREDEFINED, UsageHit.metadata(category, sourcePath, feature));
                 }
             }
         }
 
         // ---- Phase 4: field references ----
 
+        /**
+         * Collects references to this object's fields, against this phase's own budget.
+         *
+         * @param engine the BM engine
+         * @param target the object being searched
+         */
         private void collectFieldReferences(IBmEngine engine, MdObject target)
         {
             if (!(target instanceof FieldSource))
@@ -1390,7 +1774,7 @@ public class ReferenceLocator implements IMcpTool
                 Collection<IBmCrossReference> refs = engine.getBackReferences(field);
                 for (IBmCrossReference ref : refs)
                 {
-                    if (enough())
+                    if (enough(PHASE_FIELDS))
                     {
                         break;
                     }
@@ -1415,13 +1799,19 @@ public class ReferenceLocator implements IMcpTool
                     {
                         feature = ((NamedElement)field).getName();
                     }
-                    addReference(UsageHit.metadata(category, sourcePath, feature));
+                    addReference(PHASE_FIELDS, UsageHit.metadata(category, sourcePath, feature));
                 }
             }
         }
 
         // ---- Phase 5: BSL references (the slow phase) ----
 
+        /**
+         * Collects BSL code references through the Xtext index. A failure is recorded on this
+         * harvester instead of being dropped, so the report does not read as a finished list.
+         *
+         * @param target the object being searched
+         */
         private void collectBslReferences(IBmObject target)
         {
             try
@@ -1456,6 +1846,27 @@ public class ReferenceLocator implements IMcpTool
                     }
                 }
 
+                runBslFinder(finder, targetURIs);
+            }
+            catch (Exception e)
+            {
+                Activator.logError("Failed to find BSL references", e); //$NON-NLS-1$
+                noteBslPhaseFailed(e);
+            }
+        }
+
+        /**
+         * Runs the index search for BSL references. An exception is recorded on this harvester so
+         * the report says the phase is missing, instead of ending as a complete list with no code
+         * references.
+         *
+         * @param finder the BSL reference index
+         * @param targetURIs the objects whose code references are wanted
+         */
+        private void runBslFinder(IReferenceFinder finder, List<URI> targetURIs)
+        {
+            try
+            {
                 // The finder polls this between resources; a NullProgressMonitor here meant
                 // an index-wide search no cancel could ever cut short.
                 finder.findAllReferences(targetURIs, null, this::onBslRefHit,
@@ -1471,13 +1882,38 @@ public class ReferenceLocator implements IMcpTool
             catch (Exception e)
             {
                 Activator.logError("Failed to find BSL references", e); //$NON-NLS-1$
+                noteBslPhaseFailed(e);
             }
         }
 
-        /** The acceptor callback for {@link IReferenceFinder#findAllReferences}. */
+        /**
+         * Records that the BSL phase threw. The first failure is the one the report names.
+         *
+         * @param failure the exception the phase raised
+         */
+        private void noteBslPhaseFailed(Exception failure)
+        {
+            if (bslPhaseError != null)
+            {
+                return;
+            }
+            String detail = failure.getMessage();
+            if (detail == null || detail.isEmpty())
+            {
+                detail = failure.getClass().getSimpleName();
+            }
+            bslPhaseError = detail;
+        }
+
+        /**
+         * The acceptor callback for {@link IReferenceFinder#findAllReferences}. A hit is kept
+         * against the BSL phase's own budget, so a full metadata list does not drop it.
+         *
+         * @param refDesc one reference the index reported
+         */
         private void onBslRefHit(IReferenceDescription refDesc)
         {
-            if (references.size() >= limit * PER_PHASE_CAP_MULTIPLIER || watch.raised())
+            if (phaseFull(PHASE_BSL) || watch.raised())
             {
                 return;
             }
@@ -1493,7 +1929,7 @@ public class ReferenceLocator implements IMcpTool
             }
             String modulePath = reduceToModulePath(path);
             int line = extractLineNumberFromSourceUri(sourceUri);
-            addReference(UsageHit.bsl("BSL modules", modulePath, line)); //$NON-NLS-1$
+            addReference(PHASE_BSL, UsageHit.bsl("BSL modules", modulePath, line)); //$NON-NLS-1$
         }
 
         /**
