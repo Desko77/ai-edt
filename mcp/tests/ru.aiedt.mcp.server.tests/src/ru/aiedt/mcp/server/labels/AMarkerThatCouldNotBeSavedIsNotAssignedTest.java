@@ -12,10 +12,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeFalse;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.DosFileAttributeView;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Set;
@@ -108,8 +110,7 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
         Path yaml = markerFile();
         if (Files.exists(yaml))
         {
-            Files.setAttribute(yaml, "dos:readonly", false); //$NON-NLS-1$
-            yaml.toFile().setWritable(true);
+            readOnly(yaml, false);
             Files.deleteIfExists(yaml);
         }
         project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
@@ -132,11 +133,10 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
         assertTrue(manager.assignMarker(project, "Catalog.Keep", "bug")); //$NON-NLS-1$ //$NON-NLS-2$
         Path yaml = markerFile();
         byte[] before = Files.readAllBytes(yaml);
-        yaml.toFile().setWritable(false);
-        Files.setAttribute(yaml, "dos:readonly", true); //$NON-NLS-1$
+        readOnly(yaml, true);
         try
         {
-            assertFalse(Files.isWritable(yaml));
+            assumeFalse("the file system lets this user write a read-only file", Files.isWritable(yaml)); //$NON-NLS-1$
             assertFalse(manager.assignMarker(project, "Catalog.X", "bug")); //$NON-NLS-1$ //$NON-NLS-2$
             MarkerStore stored = manager.getMarkerStorage(project);
             assertTrue(stored.getMarkerNames("Catalog.X").isEmpty()); //$NON-NLS-1$
@@ -145,8 +145,7 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
         }
         finally
         {
-            Files.setAttribute(yaml, "dos:readonly", false); //$NON-NLS-1$
-            yaml.toFile().setWritable(true);
+            readOnly(yaml, false);
         }
     }
 
@@ -214,6 +213,24 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
         assertTrue(manager.assignMarker(project, "Catalog.Fresh", "bug")); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertFalse(cache.contains(project));
+    }
+
+    /**
+     * Sets or clears the read-only state of a file. The DOS attribute exists only on Windows file
+     * systems; elsewhere the permission bits carry it.
+     *
+     * @param file the file to change
+     * @param readOnly true to make the file read-only
+     * @throws Exception when the attribute cannot be set
+     */
+    private static void readOnly(Path file, boolean readOnly) throws Exception
+    {
+        file.toFile().setWritable(!readOnly);
+        DosFileAttributeView dos = Files.getFileAttributeView(file, DosFileAttributeView.class);
+        if (dos != null)
+        {
+            dos.setReadOnly(readOnly);
+        }
     }
 
     /**
