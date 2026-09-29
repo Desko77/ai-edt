@@ -5066,6 +5066,10 @@ public class BmFormHelper
      * under it, and only then set on the form. A form that is not a registered top object - one built
      * in memory - keeps the container on the reference itself.
      * </p>
+     * <p>
+     * The export of the form does not write this object either: a caller that changed it exports
+     * {@link #conditionalAppearanceFqn} with {@link #exportTopObject}.
+     * </p>
      *
      * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
      * @param form the form
@@ -5085,11 +5089,8 @@ public class BmFormHelper
         {
             return null;
         }
-        // bmGetFqn refuses a detached object, so a form built in memory is recognised by the
-        // missing transaction before its FQN is asked for.
-        String formFqn = transaction instanceof IBmTransaction && form instanceof IBmObject
-            ? ((IBmObject)form).bmGetFqn() : null;
-        if (formFqn == null || formFqn.isEmpty())
+        String appearanceFqn = conditionalAppearanceFqn(transaction, form);
+        if (appearanceFqn == null)
         {
             Object current = formObject.eGet(feature);
             if (current instanceof EObject || !create)
@@ -5105,7 +5106,6 @@ public class BmFormHelper
             return (EObject)built;
         }
         IBmTransaction tx = (IBmTransaction)transaction;
-        String appearanceFqn = formFqn + "." + CONDITIONAL_APPEARANCE; //$NON-NLS-1$
         IBmObject attached = tx.getTopObjectByFqn(appearanceFqn);
         if (attached == null && create)
         {
@@ -5121,6 +5121,52 @@ public class BmFormHelper
             attached = tx.getTopObjectByFqn(appearanceFqn);
         }
         return attached;
+    }
+
+    /**
+     * The FQN under which a form's conditional appearance is registered.
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @return {@code <form FQN>.ConditionalAppearance}, or <code>null</code> outside a transaction or
+     *         for a form that is not a registered top object
+     */
+    public static String conditionalAppearanceFqn(Object transaction, Object form)
+    {
+        // bmGetFqn refuses a detached object, so a form built in memory is recognised by the
+        // missing transaction before its FQN is asked for.
+        if (!(transaction instanceof IBmTransaction) || !(form instanceof IBmObject))
+        {
+            return null;
+        }
+        String formFqn = ((IBmObject)form).bmGetFqn();
+        return formFqn == null || formFqn.isEmpty() ? null : formFqn + "." + CONDITIONAL_APPEARANCE; //$NON-NLS-1$
+    }
+
+    /**
+     * Writes one top object of a project to disk and waits for the write.
+     *
+     * @param project the project
+     * @param fqn the top object
+     * @return <code>null</code> when the object was written, otherwise why it was not
+     */
+    public static String exportTopObject(IProject project, String fqn)
+    {
+        IBmModelManager manager = Activator.getDefault().getBmModelManager();
+        if (manager == null)
+        {
+            return "object model manager is not published as a service"; //$NON-NLS-1$
+        }
+        BmExportHelper.Result written = BmExportHelper.forceExportAndWait(manager, project, fqn);
+        if (written == null)
+        {
+            return "forceExport returned no result"; //$NON-NLS-1$
+        }
+        if (!written.isOk())
+        {
+            return written.error != null ? written.error : "forceExport returned not-ok"; //$NON-NLS-1$
+        }
+        return written.syncFlushPending ? "the write to disk did not confirm within the wait" : null; //$NON-NLS-1$
     }
 
     /**

@@ -90,6 +90,7 @@ final class FormAppearanceOps
         }
         List<String> names = splitNames(itemNames);
         int[] index = { -1 };
+        String[] appearanceFqn = { null };
         String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
             try
             {
@@ -108,6 +109,7 @@ final class FormAppearanceOps
                 }
                 selectItems(built.item, names);
                 index[0] = addToForm(tx, form, built.item);
+                appearanceFqn[0] = BmFormHelper.conditionalAppearanceFqn(tx, form);
                 return null;
             }
             catch (Exception e)
@@ -132,6 +134,10 @@ final class FormAppearanceOps
         if (dryRun)
         {
             answer.put("dryRun", true); //$NON-NLS-1$
+        }
+        else
+        {
+            putPersistWarning(answer, project, appearanceFqn[0]);
         }
         return answer.toJson();
     }
@@ -215,10 +221,12 @@ final class FormAppearanceOps
             return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
         }
         List<Integer> removed = new ArrayList<>();
+        String[] appearanceFqn = { null };
         String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
             try
             {
                 removed.addAll(removeFromForm(tx, form, index, field));
+                appearanceFqn[0] = BmFormHelper.conditionalAppearanceFqn(tx, form);
                 return null;
             }
             catch (RuntimeException refused)
@@ -238,7 +246,33 @@ final class FormAppearanceOps
         {
             answer.put("dryRun", true); //$NON-NLS-1$
         }
+        else
+        {
+            putPersistWarning(answer, project, appearanceFqn[0]);
+        }
         return answer.toJson();
+    }
+
+    /**
+     * Writes the form's conditional appearance to disk, which the export of the form leaves out, and
+     * names the failure in the answer.
+     *
+     * @param answer the answer of the write
+     * @param project the project
+     * @param appearanceFqn the conditional appearance the write changed, or <code>null</code>
+     */
+    private static void putPersistWarning(ToolResult answer, IProject project, String appearanceFqn)
+    {
+        if (appearanceFqn == null)
+        {
+            return;
+        }
+        String notWritten = BmFormHelper.exportTopObject(project, appearanceFqn);
+        if (notWritten != null)
+        {
+            answer.put("persistWarning", appearanceFqn + " is changed in the model and not on disk: " //$NON-NLS-1$ //$NON-NLS-2$
+                + notWritten + ". Write it with project_admin resync_to_disk."); //$NON-NLS-1$
+        }
     }
 
     /**
