@@ -451,8 +451,9 @@ public class DtSnapshotRunnerTest
     }
 
     /**
-     * A load whose store record could not be written still reports the load, and says the copy was
-     * not marked.
+     * A load whose store record could not be written still reports the load and says the copy was
+     * not marked. The answer names the step that rewrites the copy, because the next incremental
+     * update will not see this load until that copy is rebuilt.
      */
     @Test
     public void aLoadWhoseRecordCannotBeWrittenSaysSo() throws IOException
@@ -469,8 +470,11 @@ public class DtSnapshotRunnerTest
 
         assertTrue(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
         assertFalse(answer.get("copyMarked").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(answer.get("infobaseChangeCheck").getAsString().contains("disk full")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(answer.has("nextStep")); //$NON-NLS-1$
+        String check = answer.get("infobaseChangeCheck").getAsString(); //$NON-NLS-1$
+        assertTrue(check.contains("disk full")); //$NON-NLS-1$
+        assertTrue(check.contains("will not see this load")); //$NON-NLS-1$
+        assertTrue(check.contains("until the copy is rebuilt")); //$NON-NLS-1$
+        assertEquals(DtSnapshotRunner.REBUILD_COPY_STEP, answer.get("nextStep").getAsString()); //$NON-NLS-1$
     }
 
     /**

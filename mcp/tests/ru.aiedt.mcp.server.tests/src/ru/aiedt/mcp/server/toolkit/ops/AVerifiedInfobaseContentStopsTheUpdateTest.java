@@ -91,9 +91,26 @@ public class AVerifiedInfobaseContentStopsTheUpdateTest
 
         assertNotNull(stop);
         JsonObject refusal = JsonParser.parseString(stop).getAsJsonObject();
-        assertEquals("infobaseChanged", refusal.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("thickClientFailed", refusal.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(refusal.get("error").getAsString().contains("designer refused")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(refusal.get("error").getAsString().contains("not started")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A read that names why it failed keeps that tag. The infobase's content was not compared, so
+     * the refusal is not a change of the infobase.
+     */
+    @Test
+    public void aFailedReadKeepsItsOwnTag()
+    {
+        assertEquals("busy", tagOf(DumpInfoRebuilder.ContentProbe.failed("held by pid 7"), "busy")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals("infobaseNotReleased", //$NON-NLS-1$
+            tagOf(DumpInfoRebuilder.ContentProbe.failed("could not release"), "infobaseNotReleased")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("thickClientFailed", //$NON-NLS-1$
+            tagOf(DumpInfoRebuilder.ContentProbe.failed("the Designer run timed out"), //$NON-NLS-1$
+                "thickClientFailed")); //$NON-NLS-1$
+        assertEquals("resolveFailed", //$NON-NLS-1$
+            tagOf(DumpInfoRebuilder.ContentProbe.failed("cannot be identified"), "resolveFailed")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -120,5 +137,13 @@ public class AVerifiedInfobaseContentStopsTheUpdateTest
         String on = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false, //$NON-NLS-1$ //$NON-NLS-2$
             true, false, true);
         assertNotEquals(off, on);
+    }
+
+    /** The tag {@link DatabaseUpdater#stopWhenTheInfobaseDiffers} puts on a failed read. */
+    private static String tagOf(DumpInfoRebuilder.ContentProbe probe, String failureKind)
+    {
+        probe.failureKind = failureKind;
+        String stop = DatabaseUpdater.stopWhenTheInfobaseDiffers(stored("stored-content", 10), probe); //$NON-NLS-1$
+        return JsonParser.parseString(stop).getAsJsonObject().get("tag").getAsString(); //$NON-NLS-1$
     }
 }

@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -331,6 +332,100 @@ public class InfobaseOutsideChangesTest
         }
         finally
         {
+            deleteTree(dir);
+        }
+    }
+
+    /**
+     * A copy that cannot be read after an update still drops a load mark, and keeps the identity
+     * and the content the record already named. A record with no mark is left byte for byte.
+     */
+    @Test
+    public void aLoadMarkIsClearedWhenTheCopyCannotBeReread() throws IOException
+    {
+        Path dir = Files.createTempDirectory("clear-load-"); //$NON-NLS-1$
+        try
+        {
+            Path record = dir.resolve(InfobaseOutsideChange.FILE_NAME);
+            InfobaseOutsideChange.of(CURRENT_BASE, "content-then", 4) //$NON-NLS-1$
+                .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z").writeTo(record); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertNull(InfobaseOutsideChange.clearTheLoad(record));
+            InfobaseOutsideChange cleared = InfobaseOutsideChange.read(record);
+            assertFalse(cleared.replacedByLoad());
+            assertNull(cleared.replacedAt);
+            assertEquals(CURRENT_BASE, cleared.identity);
+            assertEquals("content-then", cleared.fingerprint); //$NON-NLS-1$
+            assertEquals(4, cleared.records);
+
+            byte[] unmarked = Files.readAllBytes(record);
+            assertNull(InfobaseOutsideChange.clearTheLoad(record));
+            assertTrue("a record with no mark is not rewritten", //$NON-NLS-1$
+                java.util.Arrays.equals(unmarked, Files.readAllBytes(record)));
+        }
+        finally
+        {
+            deleteTree(dir);
+        }
+    }
+
+    /**
+     * A mark that is the record's only key is still cleared. Leaving the file as it was would keep
+     * the next incremental update refusing.
+     */
+    @Test
+    public void aLoadMarkThatNamesNoCopyIsClearedToo() throws IOException
+    {
+        Path dir = Files.createTempDirectory("clear-load-only-"); //$NON-NLS-1$
+        try
+        {
+            Path record = dir.resolve(InfobaseOutsideChange.FILE_NAME);
+            InfobaseOutsideChange.of(null, null, InfobaseOutsideChange.UNKNOWN_RECORDS)
+                .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z").writeTo(record); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(InfobaseOutsideChange.read(record).replacedByLoad());
+
+            assertNull(InfobaseOutsideChange.clearTheLoad(record));
+
+            assertFalse(InfobaseOutsideChange.read(record).replacedByLoad());
+        }
+        finally
+        {
+            deleteTree(dir);
+        }
+    }
+
+    /**
+     * A mark that cannot be rewritten stays, and the reason is returned for the answer that names
+     * the record.
+     */
+    @Test
+    public void aLoadMarkThatCannotBeRewrittenNamesTheReason() throws IOException
+    {
+        Path dir = Files.createTempDirectory("clear-load-fail-"); //$NON-NLS-1$
+        Path record = dir.resolve(InfobaseOutsideChange.FILE_NAME);
+        try
+        {
+            InfobaseOutsideChange.of(CURRENT_BASE, "content-then", 4) //$NON-NLS-1$
+                .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z").writeTo(record); //$NON-NLS-1$ //$NON-NLS-2$
+            Files.setAttribute(record, "dos:readonly", Boolean.TRUE); //$NON-NLS-1$
+
+            String reason = InfobaseOutsideChange.clearTheLoad(record);
+
+            assertNotNull(reason);
+            assertTrue(reason.length() > 0);
+            assertTrue("the mark stays when the rewrite fails", //$NON-NLS-1$
+                InfobaseOutsideChange.read(record).replacedByLoad());
+        }
+        finally
+        {
+            try
+            {
+                Files.setAttribute(record, "dos:readonly", Boolean.FALSE); //$NON-NLS-1$
+            }
+            catch (IOException ignored)
+            {
+                // The directory is removed either way.
+            }
             deleteTree(dir);
         }
     }

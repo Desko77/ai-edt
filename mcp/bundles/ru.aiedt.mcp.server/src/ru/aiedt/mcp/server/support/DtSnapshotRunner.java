@@ -921,9 +921,14 @@ public final class DtSnapshotRunner
         }
         else if (RESTORE_OPERATION.equals(operation) && out.markFailure != null)
         {
+            // The load has already replaced the infobase. The next incremental update reads the
+            // copy, and a copy that was not marked still describes the base from before the load,
+            // so the answer names the step that rewrites it.
             ok.put("copyMarked", Boolean.FALSE) //$NON-NLS-1$
                 .put("infobaseChangeCheck", "the load replaced the infobase but the stored copy " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "could not be marked: " + out.markFailure); //$NON-NLS-1$
+                    + "could not be marked: " + out.markFailure //$NON-NLS-1$
+                    + ". The next incremental update will not see this load until the copy is rebuilt") //$NON-NLS-1$
+                .put("nextStep", REBUILD_COPY_STEP); //$NON-NLS-1$
         }
         return ok.toJson();
     }
