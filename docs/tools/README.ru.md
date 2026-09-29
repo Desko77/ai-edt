@@ -443,7 +443,8 @@
 (псевдоним `waitSeconds`): дольше - ответ `Pending` с `runKey`, повторный вызов с `runKey` ждет дальше,
 `cancel=true` снимает отслеживание - запуск, ушедший в платформу, не прерывается, начавшаяся загрузка не
 откатывается. Ответ успеха несет `status` (`Exported` / `Loaded`), `path`, `sizeBytes`, `durationMs`,
-`infobase`, у загрузки - `backup` и `backupSizeBytes`; запуск, брошенный по бюджету в 600 секунд, пока процесс
+`infobase`, у загрузки - `backup` и `backupSizeBytes`; отказ загрузки, у которой копия уже записана, тоже
+несет `backup` и `backupSizeBytes`; запуск, брошенный по бюджету в 600 секунд, пока процесс
 жив, держит блокировку базы, и ответ называет `leftBehind` (файл, в который пишет живой процесс) и
 `lockHeldForProcess`.
 
@@ -618,8 +619,9 @@
 `formSetterWarnings`; пустая управляемая форма (`layout=empty`) получает на корне внутренней формы
 свойства генераторной формы: `SaveWindowSettings`, `AutoTitle`, `AutoUrl`, `Group=Vertical`,
 `AutoFillCheck`, `AllowFormCustomize`, `Enabled`, `ShowTitle`, `ShowCloseButton` - все `true`, кроме
-`Group`, - плюс `autoCommandBar` с `horizontalAlign=Left` и `autoFill=true` и пустой `commandInterface`
-с панелями навигации и команд; то же получает внутренняя форма общей формы. `formScaffolded` в ответе -
+`Group`, - плюс `autoCommandBar` с `horizontalAlign=Left` и `autoFill=true` (панель, которой у формы не
+было, создается с именем `ФормаКоманднаяПанель` и `id` -1) и пустой `commandInterface` с панелями
+навигации и команд; то же получает внутренняя форма общей формы. `formScaffolded` в ответе -
 число поставленных свойств, свойство без сеттера на текущей сборке EDT пропускается молча; отказ
 `create_form` поля `message` не несет - `message` ставится только в успешном ответе. `formName` и имя
 владельца - один элемент пути, иначе отказ до записи.
