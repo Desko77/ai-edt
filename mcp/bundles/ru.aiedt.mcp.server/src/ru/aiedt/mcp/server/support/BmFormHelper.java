@@ -456,6 +456,7 @@ public class BmFormHelper
                             // commits nothing, leaving Form.form untouched.
                             throw new BmDcsHelper.DryRunAbort();
                         }
+                        rollBackOnRefusal(actionResult);
                         return actionResult;
                     }
                     return null;
@@ -507,15 +508,21 @@ public class BmFormHelper
                         + "is NOT run in a dry run, so a clean preview does not by itself guarantee the real " //$NON-NLS-1$
                         + "operation validates clean." + note; //$NON-NLS-1$
                 }
+                String refused = refusalRolledBack(invokeEx);
+                if (refused != null)
+                {
+                    abandonWrite();
+                    return refused;
+                }
                 throw invokeEx;
             }
 
-            // Error case: the proxy / action returns a String prefixed with
-            // "Error:" to surface a fatal condition (form not found, etc.).
+            // Error case: the task returns a String prefixed with "Error:" when it
+            // refuses before the action runs (form not found, etc.); an action's
+            // own refusal rolled the transaction back above.
             if (result instanceof String && ((String) result).startsWith("Error:")) //$NON-NLS-1$
             {
-                // The action ran but its result is an error, and the persist
-                // below is skipped: nothing of this write reached the file.
+                // The persist below is skipped: nothing of this write reached the file.
                 abandonWrite();
                 return (String) result;
             }
@@ -570,6 +577,74 @@ public class BmFormHelper
             String rootMsg = root.getMessage() != null ? root.getMessage()
                 : root.getClass().getSimpleName();
             return "Error: BM API error: " + rootMsg; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Rolls the form transaction back when the action refused.
+     * <p>
+     * An action that refuses after it changed the form - created a container, removed the first of
+     * several items - leaves those changes in the transaction. Committed, they stay in the model while
+     * the file is not exported, and a caller repeating the refused call meets them. Thrown out of the
+     * task, the refusal takes them back with the transaction.
+     * </p>
+     *
+     * @param actionResult what the action returned
+     * @throws RefusalRollback when the result is a refusal in either shape {@link #dryRunRefusal}
+     *             reads
+     */
+    static void rollBackOnRefusal(Object actionResult)
+    {
+        if (dryRunRefusal(actionResult) != null)
+        {
+            throw new RefusalRollback((String)actionResult);
+        }
+    }
+
+    /**
+     * The refusal a rolled-back form transaction carries.
+     *
+     * @param failure what the task execution threw, wrapped by reflection or by the model
+     * @return the action's refusal as it returned it, or <code>null</code> when the failure is not a
+     *         refusal
+     */
+    static String refusalRolledBack(Throwable failure)
+    {
+        Throwable t = failure;
+        for (int i = 0; i < 16 && t != null; i++)
+        {
+            if (t instanceof RefusalRollback)
+            {
+                return ((RefusalRollback)t).answer;
+            }
+            Throwable next = t.getCause();
+            if (next == t)
+            {
+                break;
+            }
+            t = next;
+        }
+        return null;
+    }
+
+    /**
+     * Thrown out of a form transaction to roll back an action that refused; carries the refusal to
+     * the caller.
+     */
+    static final class RefusalRollback extends RuntimeException
+    {
+        private static final long serialVersionUID = 1L;
+
+        /** The action's refusal, as it returned it. */
+        final String answer;
+
+        /**
+         * @param answer the action's refusal
+         */
+        RefusalRollback(String answer)
+        {
+            super(null, null, false, false);
+            this.answer = answer;
         }
     }
 
