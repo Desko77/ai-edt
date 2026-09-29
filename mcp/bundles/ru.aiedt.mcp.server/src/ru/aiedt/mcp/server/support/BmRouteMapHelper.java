@@ -81,6 +81,30 @@ public final class BmRouteMapHelper
     }
 
     /**
+     * The path under {@code src/} of the object module of a BusinessProcess. A path rather than
+     * a module address, because a BusinessProcess created without code has no module file, and
+     * the module writer resolves an address only against a file that exists.
+     *
+     * @param bpFqn the BusinessProcess FQN, {@code BusinessProcess.<Name>}
+     * @return {@code BusinessProcesses/<Name>/ObjectModule.bsl}, or null when the FQN is not a
+     *         BusinessProcess
+     */
+    public static String objectModulePath(String bpFqn)
+    {
+        if (bpFqn == null)
+        {
+            return null;
+        }
+        String[] parts = bpFqn.trim().split("\\.", 2); //$NON-NLS-1$
+        if (parts.length != 2 || parts[1].isEmpty() || parts[1].contains(".") //$NON-NLS-1$
+            || !("BusinessProcess".equals(parts[0]) || "БизнесПроцесс".equals(parts[0]))) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return null;
+        }
+        return "BusinessProcesses/" + parts[1] + "/ObjectModule.bsl"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Parses the route map of {@code bpFqn}. On success {@code exists=true} and
      * points / transitions are populated; when there is no Flowchart.scheme
      * {@code exists=false} with no error; on a real failure {@code error} is set.
@@ -1218,6 +1242,16 @@ public final class BmRouteMapHelper
         {
             return (top + bottom) / 2;
         }
+
+        /**
+         * The horizontal centre of the point, where its top and bottom ports sit.
+         *
+         * @return the centre x coordinate
+         */
+        int midX()
+        {
+            return (left + right) / 2;
+        }
     }
 
     /** A resolved transition (source / target point, ports, optional title). */
@@ -1484,12 +1518,12 @@ public final class BmRouteMapHelper
         case 1:
             return new int[] {pl.left, pl.midY()};
         case 2:
-            return new int[] {200, pl.top};
+            return new int[] {pl.midX(), pl.top};
         case 3:
             return new int[] {pl.right, pl.midY()};
         case 4:
         default:
-            return new int[] {200, pl.bottom};
+            return new int[] {pl.midX(), pl.bottom};
         }
     }
 

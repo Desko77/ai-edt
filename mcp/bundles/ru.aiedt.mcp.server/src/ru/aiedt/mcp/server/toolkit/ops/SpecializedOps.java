@@ -595,8 +595,15 @@ final class SpecializedOps
             ? regCfgProvider.getConfiguration(project) : null;
         final List<String> created = new ArrayList<>();
         final Map<String, Object> readBack = new LinkedHashMap<>();
+        String taskFqn = linkedTaskFqn(regConfig, ownerFqn);
+        if (taskFqn == null)
+        {
+            return ToolResult.error("BusinessProcess " + ownerFqn //$NON-NLS-1$
+                + " has no linked Task; set its 'task' property first " //$NON-NLS-1$
+                + "(set_object_reference property=task). Nothing was changed.").toJson(); //$NON-NLS-1$
+        }
 
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, taskFqn, dryRun,
             (tx, owner) -> {
                 Task task = taskOf(owner, ownerFqn);
                 InformationRegister writtenRegister = null;
@@ -798,6 +805,36 @@ final class SpecializedOps
         }
         throw new RuntimeException("ownerFqn must name a Task or a BusinessProcess; " + ownerFqn //$NON-NLS-1$
             + " is neither. Nothing was changed."); //$NON-NLS-1$
+    }
+
+    /**
+     * The object the addressing write opens its transaction on: the Task itself, or the Task a
+     * BusinessProcess is linked to. The transaction exports its own object to disk, so a write
+     * opened on the BusinessProcess would leave the changed Task in the model only.
+     *
+     * @param config the configuration, or null when it is not available
+     * @param ownerFqn the owner the caller named
+     * @return the FQN to write through; {@code ownerFqn} itself when it is not a BusinessProcess
+     *         or the BusinessProcess is not found (the transaction then reports it), and null when
+     *         the BusinessProcess has no linked Task
+     */
+    static String linkedTaskFqn(Configuration config, String ownerFqn)
+    {
+        String normalized = MetadataTypeCatalog.normalizeFqn(ownerFqn.trim());
+        String[] parts = normalized.split("\\.", 2); //$NON-NLS-1$
+        if (config == null || parts.length != 2 || !"BusinessProcess".equals(parts[0])) //$NON-NLS-1$
+        {
+            return ownerFqn;
+        }
+        for (BusinessProcess process : config.getBusinessProcesses())
+        {
+            if (process.getName() != null && process.getName().equalsIgnoreCase(parts[1]))
+            {
+                Task task = process.getTask();
+                return task != null && task.getName() != null ? "Task." + task.getName() : null; //$NON-NLS-1$
+            }
+        }
+        return ownerFqn;
     }
 
     /**

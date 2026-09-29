@@ -118,6 +118,26 @@ public class ARoutePointKeepsItsPlaceAndItsHandlersTest
         assertEquals(Integer.valueOf(260), location.get("right")); //$NON-NLS-1$
     }
 
+    /**
+     * The lines into and out of a point the caller placed start and end at that point's own top
+     * and bottom, not at the column of the default layout.
+     */
+    @Test
+    public void theLinesFollowAPlacedPoint()
+    {
+        List<Map<String, String>> points = threePoints();
+        points.get(1).put("location", //$NON-NLS-1$
+            "{\"top\":200,\"left\":300,\"bottom\":260,\"right\":420}"); //$NON-NLS-1$
+        BmRouteMapHelper.WritePlan plan = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", points, twoTransitions(), null, null); //$NON-NLS-1$
+        assertNull(plan.error, plan.error);
+
+        assertTrue("the line into the point ends at its top centre: " + plan.xml, //$NON-NLS-1$
+            plan.xml.contains("<Point x=\"360\" y=\"200\"/>")); //$NON-NLS-1$
+        assertTrue("the line out of the point starts at its bottom centre: " + plan.xml, //$NON-NLS-1$
+            plan.xml.contains("<Point x=\"360\" y=\"260\"/>")); //$NON-NLS-1$
+    }
+
     /** A point the caller placed is answered with the coordinates it was written at. */
     @Test
     public void theAnswerNamesThePlaceEveryPointWasWrittenAt()

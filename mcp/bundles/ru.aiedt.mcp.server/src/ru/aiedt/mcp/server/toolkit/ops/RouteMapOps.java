@@ -99,7 +99,11 @@ final class RouteMapOps
         {
             return ToolResult.error(wr.error).toJson();
         }
-        String modulePath = bpFqn + ".ObjectModule"; //$NON-NLS-1$
+        String modulePath = BmRouteMapHelper.objectModulePath(bpFqn);
+        if (modulePath == null)
+        {
+            modulePath = bpFqn + ".ObjectModule"; //$NON-NLS-1$
+        }
         HandlerStubs stubs = planHandlerStubs(wr.handlers, readModuleText(project, modulePath));
         if (dryRun)
         {
@@ -203,7 +207,7 @@ final class RouteMapOps
      * has no file yet.
      *
      * @param project the project that owns the module
-     * @param modulePath the module address, e.g. {@code BusinessProcess.X.ObjectModule}
+     * @param modulePath the module path under src/, e.g. {@code BusinessProcesses/X/ObjectModule.bsl}
      * @param text the procedures to append
      * @return the writer's refusal, or null when the text was appended
      */
@@ -229,7 +233,7 @@ final class RouteMapOps
      * The text of a module by its address, or null when it has no file yet or cannot be read.
      *
      * @param project the project that owns the module
-     * @param modulePath the module address, e.g. {@code BusinessProcess.X.ObjectModule}
+     * @param modulePath the module path under src/, e.g. {@code BusinessProcesses/X/ObjectModule.bsl}
      * @return the module text, or null
      */
     private static String readModuleText(IProject project, String modulePath)
