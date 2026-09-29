@@ -255,8 +255,9 @@ form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
 - `add_object_attribute`, `add_tabular_section_attribute` and `set_object_type` answer
   `qualifierIgnored` when the qualifier applies to none of the types in the composition (`length` on
   a `Number`, for one). Under `dryRun` the first two do not borrow the reference types' targets and
-  list them in `autoBorrowSkipped` (`targetFqn`, or `ownerFqn` for the owner itself, with
-  `reason: dryRun`); `add_metadata_attribute` reads `dryRun` as well. The adoption operations
+  list them in `autoBorrowSkipped` (`targetFqn`, `reason: dryRun`) and do not borrow the owner either;
+  outside a dry run a failed borrow of the owner is listed there as `ownerFqn` with the borrow's own
+  reason. `add_metadata_attribute` reads `dryRun` as well. The adoption operations
   (`adopt_object`, `adopt_objects`, `adopt_child`,
   `adopt_form_item`, `adopt_module`) answer a dry run with a `wouldBorrow` plan.
 - `remove_object_attribute`, `remove_tabular_section` and `remove_tabular_section_attribute` refuse
