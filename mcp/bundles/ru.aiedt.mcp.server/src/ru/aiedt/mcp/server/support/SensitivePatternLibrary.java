@@ -100,8 +100,16 @@ public final class SensitivePatternLibrary
     }
 
     /**
-     * Returns true if the given attribute name (case-insensitive, after
-     * removing underscores) matches a known sensitive pattern.
+     * Whether the given attribute name matches a known sensitive word.
+     * <p>
+     * A dictionary word counts where it is a word of the identifier, not a substring of one:
+     * UserPassword carries password, but Setting does not carry tin and Длинный does not carry
+     * инн. A compound dictionary entry (apikey, номеркарты) counts when the words it is made of
+     * stand next to each other - UserCardNumber carries cardnumber. Comparison folds case.
+     * </p>
+     *
+     * @param name the attribute name; may be <code>null</code>
+     * @return whether the name looks like sensitive data
      */
     public static boolean isSensitiveName(String name)
     {
@@ -109,21 +117,95 @@ public final class SensitivePatternLibrary
         {
             return false;
         }
-        String normalized = name.toLowerCase().replace("_", "").trim(); //$NON-NLS-1$ //$NON-NLS-2$
-        // Direct match
-        if (SENSITIVE_NAMES.contains(normalized))
+        List<String> words = identifierWords(name.trim());
+        // A run of consecutive words is one candidate: a single word for entries like token,
+        // several joined for compound entries like cardnumber or датарождения.
+        for (int from = 0; from < words.size(); from++)
         {
-            return true;
-        }
-        // Substring match for compound names like UserPassword, ParolPolzovatelya
-        for (String sensitive : SENSITIVE_NAMES)
-        {
-            if (normalized.contains(sensitive))
+            StringBuilder joined = new StringBuilder();
+            for (int to = from; to < words.size(); to++)
             {
-                return true;
+                joined.append(words.get(to));
+                if (SENSITIVE_NAMES.contains(joined.toString()))
+                {
+                    return true;
+                }
             }
         }
         return false;
+    }
+
+    /**
+     * Splits a 1C identifier into the words it is written with.
+     * <p>
+     * A word ends where the writing says it ends: at an underscore, where letters run into digits
+     * or digits into letters, where a lower-case letter hands over to a capital, and where an
+     * acronym hands over to a word - the last capital of ИННКонтрагента opens Контрагента.
+     * </p>
+     *
+     * @param name the identifier, already trimmed
+     * @return the words, lower case, in order
+     */
+    private static List<String> identifierWords(String name)
+    {
+        List<String> words = new ArrayList<>();
+        int start = 0;
+        for (int at = 1; at < name.length(); at++)
+        {
+            if (wordBreaks(name, at))
+            {
+                addWord(words, name, start, at);
+                start = at;
+            }
+        }
+        addWord(words, name, start, name.length());
+        return words;
+    }
+
+    /**
+     * Whether one word ends and another begins between the characters at {@code at - 1} and
+     * {@code at}.
+     *
+     * @param name the identifier
+     * @param at the position the second character sits at
+     * @return whether the position is a word boundary
+     */
+    private static boolean wordBreaks(String name, int at)
+    {
+        char before = name.charAt(at - 1);
+        char current = name.charAt(at);
+        if (before == '_' || current == '_')
+        {
+            return true;
+        }
+        if (Character.isDigit(before) != Character.isDigit(current))
+        {
+            return true;
+        }
+        if (Character.isLowerCase(before) && Character.isUpperCase(current))
+        {
+            return true;
+        }
+        // An acronym followed by a word: the capital a lower-case letter follows starts the word.
+        return Character.isUpperCase(before) && Character.isUpperCase(current)
+            && at + 1 < name.length() && Character.isLowerCase(name.charAt(at + 1));
+    }
+
+    /**
+     * Adds one slice of the identifier to the words, lower case and without underscores.
+     *
+     * @param words where the word goes
+     * @param name the identifier
+     * @param start where the slice begins
+     * @param end where it ends
+     */
+    private static void addWord(List<String> words, String name, int start, int end)
+    {
+        String word = name.substring(start, end).replace("_", "").toLowerCase(); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!word.isEmpty())
+        {
+            words.add(word);
+        }
     }
 
     /**
