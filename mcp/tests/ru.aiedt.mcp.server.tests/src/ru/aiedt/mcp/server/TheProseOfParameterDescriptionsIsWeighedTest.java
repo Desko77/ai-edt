@@ -292,7 +292,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("get_form_screenshot", Integer.valueOf(1154));
         PROSE.put("code_review", Integer.valueOf(1129));
         PROSE.put("get_metadata_objects", Integer.valueOf(1090));
-        PROSE.put("yaxunit_tests", Integer.valueOf(1077));
+        // Raised from 1077 to 1123 for reuseRecent on the facade: the flag that takes a report of a
+        // run finished within the last five minutes, whose default (false) is the whole point of it
+        // - a second call after a delivered report runs the tests again (measured 29.09: 1123).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1123));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -500,6 +503,14 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
      * edit_metadata: 93862.
      * </p>
+     * <p>
+     * And a thirty-fourth, by 127, for reuseRecent on the yaxunit_tests facade: the flag that takes
+     * the report of a run finished within the last five minutes has to say so in its own sentence,
+     * because its default - run again - is the answer a caller cannot guess from the name. The 127
+     * bytes are that sentence and nothing else; the two hidden aliases, run_yaxunit_tests and
+     * debug_yaxunit_tests, gained declarations of the same flags and are not weighed here, because
+     * {@code tools/list} under the default preset does not advertise them. Measured 29.09: 93989.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 93862;
+    private static final int DOCUMENT_PROSE = 93989;
 }

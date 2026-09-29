@@ -907,12 +907,16 @@ public final class DebugSessionStarter implements IMcpTool
     /**
      * The pre-launch update of a launch by configuration name. An attach-mode application, a
      * project that does not resolve and a missing application manager skip the update.
+     * <p>
+     * Shared with the YAXUnit launches, which were declaring this step and running none of it:
+     * a launch that updates the infobase has to do it the one way, or the two ways drift.
+     * </p>
      *
      * @param projectName the project the launch configuration names
      * @param applicationId the application the configuration launches
      * @return the update outcome, or {@code null} when no update applies
      */
-    private static ApplicationUpdater.Result updateDatabaseIfNeeded(String projectName, String applicationId)
+    static ApplicationUpdater.Result updateDatabaseIfNeeded(String projectName, String applicationId)
     {
         if (applicationId == null || applicationId.isEmpty()
             || applicationId.startsWith(LaunchConfigAccess.ATTACH_APP_ID_PREFIX))

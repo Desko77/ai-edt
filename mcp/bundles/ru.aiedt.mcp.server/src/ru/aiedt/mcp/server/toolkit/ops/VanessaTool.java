@@ -57,8 +57,9 @@ import com.google.gson.JsonObject;
  * and {@link PrefKeys#PREF_VANESSA_1C_EXE} at the 1C thick client
  * ({@code 1cv8.exe}); this tool launches
  * {@code 1cv8 ENTERPRISE /IBConnectionString ... /Execute <epf> /C "StartFeaturePlayer;VAParams=<json>"},
- * waits for the run to finish, parses the JUnit XML Vanessa writes, and returns
- * scenario counts + failure details + failure screenshots. When either path is
+ * waits for the run to finish, reads the result files Vanessa writes - one
+ * {@code <uuid>-result.json} per scenario, under the Allure output key it was given - and
+ * returns scenario counts + failure details + failure screenshots. When either path is
  * not configured it returns a setup hint instead of failing hard.
  *
  * <p><b>Tier-1 (synchronous)</b>: the run blocks up to {@code timeoutSeconds};
@@ -757,7 +758,7 @@ public class VanessaTool implements IMcpTool
                         .put("infobaseNotReleased", heldBack).toJson(); //$NON-NLS-1$
                 }
                 String incomplete = whatTheDistributionIsMissing(epfFile);
-                return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
+                return ToolResult.error("Vanessa produced no result files (exit " + pr.exitCode //$NON-NLS-1$
                     + "). The run may not have started (bad connectionString, an unadopted Vanessa " //$NON-NLS-1$
                     + "extension in the infobase, a login window, or Vanessa-version-specific launch " //$NON-NLS-1$
                     + "parameters - the launched command and the key names of VAParams.json " //$NON-NLS-1$
@@ -800,13 +801,15 @@ public class VanessaTool implements IMcpTool
                 .put("failures", results.getFailures()) //$NON-NLS-1$
                 .put("errors", results.getErrors()) //$NON-NLS-1$
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
-                .put("junitXmlPath", junitFile.getAbsolutePath()) //$NON-NLS-1$
                 .put("screenshots", shots) //$NON-NLS-1$
                 .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
                 .put("screenshotsByStep", attributed.byStep()) //$NON-NLS-1$
                 .put("screenshotsNotAttributed", attributed.unattributed()) //$NON-NLS-1$
                 .put("markdown", JUnitReportFormatter.format(results) //$NON-NLS-1$
                     + attributed.toMarkdown(pathByName));
+            // The path the answer names is the one this run was read from, chosen by which of the
+            // two the run actually produced.
+            ok = withProducedPaths(ok, resultDir, junitFile, vanessaReported);
             if (sought != null)
             {
                 ok.put("sought", sought); //$NON-NLS-1$
@@ -848,7 +851,7 @@ public class VanessaTool implements IMcpTool
                 CANCELLED.remove(jobKey);
             }
         }
-        // The output dir (junit.xml + screenshots) is intentionally NOT deleted: the
+        // The output dir (Vanessa's result files + screenshots) is intentionally NOT deleted: the
         // agent reads the returned screenshot paths. It is a temp dir the OS reclaims.
     }
 
@@ -3226,6 +3229,40 @@ public class VanessaTool implements IMcpTool
         {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Names what the run really produced, under names its reader can act on.
+     * <p>
+     * Vanessa is asked for a machine-readable result through the Allure pair and writes one
+     * {@code <uuid>-result.json} per scenario into the directory it was given, choosing the file
+     * names itself. An answer that named {@code out/junit.xml} on that branch named a file nothing
+     * ever wrote, and a caller that opened it found nothing where the run's results were said to
+     * be. The directory and the files are reported as they are; a JUnit file is named only on the
+     * branch where the run was read from one, which is a caller-supplied {@code vanessaParams}
+     * document that orders JUnit output itself.
+     * </p>
+     *
+     * @param answer the answer so far.
+     * @param resultDir the directory the run's results were read from.
+     * @param junitFile the file a JUnit reader takes, whether or not it exists.
+     * @param vanessaReported whether the run left Vanessa's own result files in that directory.
+     * @return the answer with the produced paths on it
+     */
+    static ToolResult withProducedPaths(ToolResult answer, File resultDir, File junitFile,
+        boolean vanessaReported)
+    {
+        if (vanessaReported)
+        {
+            List<String> names = new ArrayList<>();
+            for (File one : AllureResultReader.resultsIn(resultDir))
+            {
+                names.add(one.getName());
+            }
+            return answer.put("resultsDir", resultDir.getAbsolutePath()) //$NON-NLS-1$
+                .put("resultFiles", names); //$NON-NLS-1$
+        }
+        return answer.put("junitXmlPath", junitFile.getAbsolutePath()); //$NON-NLS-1$
     }
 
     static List<String> collectScreenshots(File shotsDir)

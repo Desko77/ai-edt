@@ -55,6 +55,8 @@ public final class YaxunitDebugRunner implements IMcpTool
         + "to block until a breakpoint is reached, then inspect state via get_variables / " //$NON-NLS-1$
         + "evaluate_expression / step / resume. " //$NON-NLS-1$
         + "Narrow the tests filter to a single test method to keep the cycle predictable. " //$NON-NLS-1$
+        + "The infobase is updated before the launch unless updateBeforeLaunch=false; an update " //$NON-NLS-1$
+        + "that does not finish refuses the launch and nothing is started. " //$NON-NLS-1$
         + "Requires an existing 1C launch configuration with YAXUnit installed in the target infobase."; //$NON-NLS-1$
 
     private static final AtomicLong LAUNCH_COUNTER = new AtomicLong(0);
@@ -87,6 +89,9 @@ public final class YaxunitDebugRunner implements IMcpTool
                 "Comma-separated module names to restrict which tests are run") //$NON-NLS-1$
             .stringProperty("tests", //$NON-NLS-1$
                 "Comma-separated test names, each given as Module.Method (best practice: target exactly one test)") //$NON-NLS-1$
+            .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
+                "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
+                    + "finish refuses the launch. Set false to launch against the infobase as it stands.") //$NON-NLS-1$
             .build();
     }
 
@@ -105,6 +110,14 @@ public final class YaxunitDebugRunner implements IMcpTool
         String extensions = JsonUtils.extractStringArgument(params, "extensions"); //$NON-NLS-1$
         String modules = JsonUtils.extractStringArgument(params, "modules"); //$NON-NLS-1$
         String tests = JsonUtils.extractStringArgument(params, "tests"); //$NON-NLS-1$
+
+        String unsupported = YaxunitTestRunner.unsupportedFilter(params);
+        if (unsupported != null)
+        {
+            // Answered as this tool answers: JSON with the refusal in it. The text is the run
+            // runner's, so both modes refuse a filter neither of them applies with one wording.
+            return ToolResult.error(unsupported).toJson();
+        }
 
         boolean hasName = configName != null && !configName.isEmpty();
         if (!hasName)
@@ -197,6 +210,17 @@ public final class YaxunitDebugRunner implements IMcpTool
                 {
                     return ToolResult.error("Could not validate application: " + e.getMessage()).toJson(); //$NON-NLS-1$
                 }
+            }
+
+            // The same pre-launch step the other modes run, decided by the same code: a debug
+            // session started against an infobase EDT still has to bring up to date hangs at the
+            // "Update configuration?" modal the debugger cannot answer.
+            boolean updateBeforeLaunch = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
+            String updateRefusal = YaxunitTestRunner.preLaunchUpdateRefusal(updateBeforeLaunch,
+                projectName, applicationId, DebugSessionStarter::updateDatabaseIfNeeded);
+            if (updateRefusal != null)
+            {
+                return ToolResult.error(updateRefusal).toJson();
             }
 
             Path reportDir = Paths.get(System.getProperty("java.io.tmpdir"), //$NON-NLS-1$

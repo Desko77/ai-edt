@@ -72,6 +72,28 @@ public class RunnerFailureStaysAFailureTest
     }
 
     /**
+     * A filter the launch does not apply is refused through the facade too.
+     * <p>
+     * The facade is what a caller reaches by default, and the promise it makes about these
+     * arguments - refused rather than ignored - has to hold at that door: a call carrying
+     * {@code tags} that reached the launch would run every test in the suite and answer success.
+     */
+    @Test
+    public void aFilterTheLaunchDoesNotApplyIsRefusedThroughTheFacade()
+    {
+        Map<String, String> arguments = new LinkedHashMap<>();
+        arguments.put("tags", "smoke"); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject answer = call(arguments);
+
+        assertFalse("a call that ran nothing is not a success", //$NON-NLS-1$
+            answer.has("success") && answer.get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the refused argument is named: " + answer, //$NON-NLS-1$
+            answer.toString().contains("tags")); //$NON-NLS-1$
+        assertTrue("and so is what to use instead: " + answer, //$NON-NLS-1$
+            answer.toString().contains("extensions")); //$NON-NLS-1$
+    }
+
+    /**
      * Calls the tool and parses what it returns.
      *
      * @param arguments the call shape.
