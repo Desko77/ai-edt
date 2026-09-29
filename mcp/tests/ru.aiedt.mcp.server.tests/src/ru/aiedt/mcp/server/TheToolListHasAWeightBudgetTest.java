@@ -86,8 +86,12 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 170459 to 170725 for the security_audit orphan mode contract and its boolean
      * apply argument.
      * </p>
+     * <p>
+     * Raised from 174185 to 174710 for reportAffectedSettings on dcs_workshop: a removal lists the
+     * settings that still reference what was removed.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 174185;
+    private static final int DOCUMENT_BUDGET = 174710;
 
     private LiveServer server;
 
@@ -230,7 +234,9 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("git", Integer.valueOf(1330)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
-        BUDGETS.put("dcs_workshop", Integer.valueOf(8523)); //$NON-NLS-1$
+        // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a
+        // parameter lists the settings that still reference it, and the schema says so.
+        BUDGETS.put("dcs_workshop", Integer.valueOf(9341)); //$NON-NLS-1$
         BUDGETS.put("code_search", Integer.valueOf(7248)); //$NON-NLS-1$
         // Raised by 787 for runMode and clientType on start_client: a configuration on ordinary
         // forms starts under the thick client in the ordinary run mode, and the caller names both.

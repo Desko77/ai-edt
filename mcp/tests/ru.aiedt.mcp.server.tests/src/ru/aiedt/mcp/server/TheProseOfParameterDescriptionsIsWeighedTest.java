@@ -225,7 +225,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
     {
-        PROSE.put("edit_metadata", Integer.valueOf(13730));
+        // Raised from 13730 to 14475 for reportAffectedSettings: the facade names the removal
+        // operations, workshop and its own, that list settings still pointing at what was removed.
+        PROSE.put("edit_metadata", Integer.valueOf(14475));
         // git: operation, projectName and the log's limit are the whole surface a client builds
         // the call from - the repository answers the rest. Grown to 875 for the commit's five
         // arguments (paths by name - there is no add-all - the message, and the author pair a
@@ -516,6 +518,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * Raised from 93877 to 94099 for security_audit orphan cleanup: the facade now exposes its
      * role, apply behavior and full object-type contract.
      * </p>
+     * <p>
+     * Raised from 96170 to 96614 for reportAffectedSettings on dcs_workshop and edit_metadata: the
+     * removal operations list settings that still reference what was removed.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 96170;
+    private static final int DOCUMENT_PROSE = 96614;
 }
