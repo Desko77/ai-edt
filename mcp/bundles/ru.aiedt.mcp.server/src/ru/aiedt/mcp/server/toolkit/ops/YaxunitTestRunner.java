@@ -19,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
@@ -60,11 +59,13 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 /**
  * Runs YAXUnit tests for a 1C:Enterprise project. Updates the infobase unless the call turns that
  * off, launches the runtime client with the {@code RunUnitTests} startup parameter, polls until the
- * launch terminates or the polling window expires, then parses the JUnit XML report into Markdown.
- * Non-blocking: a launch still running at timeout returns {@code **Pending**} and the caller
- * re-invokes with the same arguments - the next call picks up that run's report rather than
- * starting another, and a call after a report was handed over starts a new run unless it asked for
- * the recent report with {@code reuseRecent=true}.
+ * launch terminates or the polling window expires, then parses the JUnit XML report. The alias
+ * answers JSON on every branch: a refusal, a run still in progress, and a finished result. The
+ * markdown report rides in {@code output}. Non-blocking: a launch still running at timeout returns
+ * that JSON with {@code **Pending**} in {@code output}, and the caller re-invokes with the same
+ * arguments - the next call picks up that run's report rather than starting another, and a call
+ * after a report was handed over starts a new run unless it asked for the recent report with
+ * {@code reuseRecent=true}.
  */
 public final class YaxunitTestRunner
     implements IMcpTool
@@ -87,7 +88,31 @@ public final class YaxunitTestRunner
      * an edit-and-rerun loop means by calling the tool a second time.
      * </p>
      */
-    private static final Set<String> UNDELIVERED_RUNS = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<String, Boolean> UNDELIVERED_RUNS = new ConcurrentHashMap<>();
+
+    /**
+     * Parked by a test so two deliveries reach the claim together. Production leaves it idle, and
+     * the claim that follows it is what decides which delivery files the receipt.
+     */
+    static volatile Runnable beforeClaim = () -> {
+        // idle
+    };
+
+    /**
+     * Files one run receipt. Production writes into the plugin state location; a test writes into
+     * a directory of its own.
+     */
+    @FunctionalInterface
+    interface ReceiptWriter
+    {
+        /**
+         * Files one receipt.
+         *
+         * @param fields the receipt fields
+         * @return the outcome of the write
+         */
+        RunReceipts.Outcome write(Map<String, Object> fields);
+    }
 
     /**
      * The literal a cached answer marks itself with. The facade reads it back to state
@@ -107,7 +132,7 @@ public final class YaxunitTestRunner
      * that chose what ran. Carried rather than kept in a field - the instance registered as the
      * back-compat alias serves concurrent calls.
      */
-    private static final class RunContext
+    static final class RunContext
     {
         final String projectName;
 
@@ -117,6 +142,14 @@ public final class YaxunitTestRunner
 
         final String tests;
 
+        /**
+         * Records the project and the filters a receipt names the run by.
+         *
+         * @param projectName the project the launch resolved to
+         * @param extensions the extensions filter, or <code>null</code> when the call named none
+         * @param modules the modules filter, or <code>null</code> when the call named none
+         * @param tests the tests filter, or <code>null</code> when the call named none
+         */
         RunContext(String projectName, String extensions, String modules, String tests)
         {
             this.projectName = projectName;
@@ -126,21 +159,48 @@ public final class YaxunitTestRunner
         }
     }
 
+    /**
+     * Remembers a run whose report has not been handed over. The launch that starts the run is
+     * the caller; a test uses it to stage the same state.
+     *
+     * @param runKey the run
+     */
+    static void noteUndelivered(String runKey)
+    {
+        UNDELIVERED_RUNS.put(runKey, Boolean.TRUE);
+    }
+
+    /**
+     * Forgets a run staged by {@link #noteUndelivered}, so a test leaves the map as it found it.
+     *
+     * @param runKey the run
+     */
+    static void forgetUndelivered(String runKey)
+    {
+        UNDELIVERED_RUNS.remove(runKey);
+    }
+
     @Override
     public String getName()
     {
         return NAME;
     }
 
+    /**
+     * What a caller is told this alias does, including that every branch answers JSON.
+     *
+     * @return the tool description
+     */
     @Override
     public String getDescription()
     {
         return "Back-compat alias of `yaxunit_tests` `mode=run`; prefer the facade for new prompts. " //$NON-NLS-1$
             + "Executes the YAXUnit test suite for a 1C:Enterprise project. " //$NON-NLS-1$
             + "Starts the application with the RunUnitTests parameter, then polls " //$NON-NLS-1$
-            + "for up to `timeoutSeconds` seconds (60 by default) until it finishes, returning the outcome as a JUnit Markdown report. " //$NON-NLS-1$
+            + "for up to `timeoutSeconds` seconds (60 by default) until it finishes, returning a JSON " //$NON-NLS-1$
+            + "object whose output is the JUnit Markdown report. " //$NON-NLS-1$
             + "If the launch has not completed once the polling window closes, the response is " //$NON-NLS-1$
-            + "**Pending** - invoke this tool again with the same arguments to keep waiting and "
+            + "JSON whose output opens with **Pending** - invoke this tool again with the same arguments to keep waiting and " //$NON-NLS-1$
             + "pick up the result once the launch finishes. The launch itself is not aborted on timeout. " //$NON-NLS-1$
             + "The infobase is updated before the launch unless updateBeforeLaunch=false; an update "
             + "that does not finish refuses the launch and nothing is started. "
@@ -178,14 +238,50 @@ public final class YaxunitTestRunner
             .build();
     }
 
+    /**
+     * The alias answers JSON on every branch: a refusal, a run still in progress, and a result.
+     *
+     * @return {@link ResponseType#JSON}
+     */
     @Override
     public ResponseType getResponseType()
     {
-        return ResponseType.MARKDOWN;
+        return ResponseType.JSON;
     }
 
+    /**
+     * Runs the call and returns JSON. A refusal and a run still in progress go through the same
+     * envelope the facade uses; a finished run is already that JSON and passes through it.
+     *
+     * @param params the call arguments
+     * @return the JSON answer
+     */
     @Override
     public String execute(Map<String, String> params)
+    {
+        return publish(dispatch(params));
+    }
+
+    /**
+     * The alias's answer: the same JSON envelope the facade wraps a delegate's text in.
+     *
+     * @param raw markdown the run produced, or a JSON object it already built
+     * @return a JSON object
+     */
+    static String publish(String raw)
+    {
+        return YaxunitTestsTool.asJsonEnvelope(raw);
+    }
+
+    /**
+     * Runs the call and returns the runner's own text: markdown for a refusal or a run still in
+     * progress, and the JSON object of a finished run. The facade wraps this; {@link #execute}
+     * publishes it through the same wrap, so the facade's own answer stays the one it builds.
+     *
+     * @param params the call arguments
+     * @return the unwrapped answer
+     */
+    String dispatch(Map<String, String> params)
     {
         String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -439,7 +535,7 @@ public final class YaxunitTestRunner
                     File junitXml = findJunitXml(reportDir);
                     if (junitXml != null)
                     {
-                        return deliver(runKey, junitXml, null, runContext, true);
+                        return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
                     }
                     return "**Error:** The previous launch finished, but no JUnit XML report was found in " + reportDir //$NON-NLS-1$
                         + ". Confirm the YAXUnit extension is installed."; //$NON-NLS-1$
@@ -455,7 +551,7 @@ public final class YaxunitTestRunner
             File cached = findJunitXml(reportDir);
             boolean recent = cached != null
                 && (System.currentTimeMillis() - cached.lastModified()) < CACHE_TTL_MS;
-            boolean uncollected = UNDELIVERED_RUNS.contains(runKey);
+            boolean uncollected = UNDELIVERED_RUNS.containsKey(runKey);
             if (servesFromCache(cached != null, recent, uncollected, reuseRecent))
             {
                 // Two different calls arrive here and they must not be answered the same way. One
@@ -467,8 +563,7 @@ public final class YaxunitTestRunner
                 Activator.logInfo("Serving the report of the finished YAXUnit run for " + runKey //$NON-NLS-1$
                     + (reuseRecent ? " (reuseRecent=true)" : " (uncollected)") //$NON-NLS-1$ //$NON-NLS-2$
                     + " from " + cached); //$NON-NLS-1$
-                return deliver(runKey, cached, cacheMark(reuseRecent, cached.lastModified()), runContext,
-                    uncollected);
+                return handOverCached(runKey, cached, reuseRecent, runContext, RunReceipts::write);
             }
 
             // Only a launch needs an infobase that is up to date: a call answered from a report
@@ -514,7 +609,7 @@ public final class YaxunitTestRunner
                     // A run started here whose report nobody has read yet. This is what makes the
                     // next call a pickup rather than a request for a new run, and it is cleared
                     // the moment the report is handed over.
-                    UNDELIVERED_RUNS.add(runKey);
+                    noteUndelivered(runKey);
                 }
             }
 
@@ -567,26 +662,67 @@ public final class YaxunitTestRunner
                 + " procedure after editing a test module - rebuild (clean_project) and run again;" //$NON-NLS-1$
                 + " (3) the test module has compile errors - verify with get_project_errors."; //$NON-NLS-1$
         }
-        return deliver(runKey, junitXml, null, runContext, true);
+        return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
     }
 
     /**
-     * Hands a report over and marks the run as read.
+     * The answer once an active launch has terminated and its report is on disk. The first
+     * delivery of a run this server started is not marked cached; that decision is the claim
+     * inside {@link #deliver}.
      *
-     * @param runKey the run the report belongs to.
-     * @param junitXml the report.
-     * @param cacheMark the line saying the report is a previous run's, or <code>null</code> when
-     *            this call ran the tests itself
+     * @param runKey the run the report belongs to
+     * @param junitXml the report
      * @param runContext the project and the filters the run was chosen by
-     * @param fileReceipt whether this delivery files the run's receipt - <code>false</code> for a
-     *            report already handed over once, whose receipt exists
+     * @param receipts where the receipt is written
      * @return the answer
      */
-    private String deliver(String runKey, File junitXml, String cacheMark, RunContext runContext,
-        boolean fileReceipt)
+    static String handOverFinishedLaunch(String runKey, File junitXml, RunContext runContext,
+        ReceiptWriter receipts)
     {
-        UNDELIVERED_RUNS.remove(runKey);
-        return readResults(junitXml, cacheMark, runContext, fileReceipt);
+        return deliver(runKey, junitXml, false, junitXml.lastModified(), runContext, receipts);
+    }
+
+    /**
+     * The answer when the report is read from the run's directory after the launch has left the
+     * active set. A run still waiting to be handed over is not marked cached, even when the call
+     * asked for a recent report; a repeat of a result already handed over is.
+     *
+     * @param runKey the run the report belongs to
+     * @param junitXml the report
+     * @param reuseRecent whether the call asked for a recent report
+     * @param runContext the project and the filters the run was chosen by
+     * @param receipts where the receipt is written
+     * @return the answer
+     */
+    static String handOverCached(String runKey, File junitXml, boolean reuseRecent, RunContext runContext,
+        ReceiptWriter receipts)
+    {
+        return deliver(runKey, junitXml, reuseRecent, junitXml.lastModified(), runContext, receipts);
+    }
+
+    /**
+     * Hands a report over. The call whose {@link #UNDELIVERED_RUNS} removal returns non-null is
+     * the first delivery: it files the receipt and does not mark the answer cached. A call that
+     * finds the run already taken is a repeat, marks {@code cached}, and files nothing. The check
+     * that used to decide this before the removal is not consulted: two callers can both have
+     * seen the key, and only the removal orders them.
+     *
+     * @param runKey the run the report belongs to
+     * @param junitXml the report
+     * @param reuseRecent whether the call asked for a recent report; used only when this call did
+     *            not claim the run
+     * @param reportTime when the report was written, in milliseconds since the epoch
+     * @param runContext the project and the filters the run was chosen by
+     * @param receipts where the receipt is written
+     * @return the answer
+     */
+    private static String deliver(String runKey, File junitXml, boolean reuseRecent, long reportTime,
+        RunContext runContext, ReceiptWriter receipts)
+    {
+        beforeClaim.run();
+        boolean claimed = UNDELIVERED_RUNS.remove(runKey) != null;
+        String cacheMark = claimed ? null : cacheMark(reuseRecent, reportTime);
+        return readResults(junitXml, cacheMark, runContext, claimed, receipts);
     }
 
     /**
@@ -637,11 +773,12 @@ public final class YaxunitTestRunner
      * @param junitXml the report the run left behind
      * @param cacheMark the line saying the report is a previous run's, or <code>null</code>
      * @param runContext the project and the filters the run was chosen by
-     * @param fileReceipt whether to file the run's receipt
+     * @param fileReceipt whether to file the run's receipt - the call that claimed the run
+     * @param receipts where the receipt is written
      * @return the answer
      */
-    private String readResults(File junitXml, String cacheMark, RunContext runContext,
-        boolean fileReceipt)
+    private static String readResults(File junitXml, String cacheMark, RunContext runContext,
+        boolean fileReceipt, ReceiptWriter receipts)
     {
         try
         {
@@ -689,7 +826,7 @@ public final class YaxunitTestRunner
             }
             if (fileReceipt)
             {
-                RunReceipts.Outcome receipt = writeReceipt(runContext, results, reportPath);
+                RunReceipts.Outcome receipt = writeReceipt(runContext, results, reportPath, receipts);
                 answer.put("receiptPath", receipt.path == null ? null : receipt.path.toString()) //$NON-NLS-1$
                     .put("receiptError", receipt.error); //$NON-NLS-1$
             }
@@ -709,10 +846,11 @@ public final class YaxunitTestRunner
      * @param runContext the project and the filters the run was chosen by
      * @param results what the JUnit report said
      * @param reportPath the report the caller is pointed at
+     * @param receipts where the receipt is written
      * @return the outcome of the write - the file, or the reason there is none
      */
     private static RunReceipts.Outcome writeReceipt(RunContext runContext, JUnitRunOutcome results,
-        String reportPath)
+        String reportPath, ReceiptWriter receipts)
     {
         Map<String, Object> filters = new LinkedHashMap<>();
         filters.put("mode", "run"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -738,7 +876,7 @@ public final class YaxunitTestRunner
         fields.put("errors", results.getErrors()); //$NON-NLS-1$
         fields.put("skipped", results.getSkipped()); //$NON-NLS-1$
         fields.put("reportPath", reportPath); //$NON-NLS-1$
-        return RunReceipts.write(fields);
+        return receipts.write(fields);
     }
 
     private static void ensureLaunchListenerRegistered()
@@ -801,11 +939,29 @@ public final class YaxunitTestRunner
         });
     }
 
-    private String buildPendingMessage(Path reportDir)
+    /**
+     * The text a run still in progress answers with, before the alias wraps it as JSON.
+     *
+     * @param reportDir the directory the report will be written to
+     * @return the pending text
+     */
+    static String pendingText(Path reportDir)
     {
         return "**Pending:** YAXUnit tests are still in progress.\n\nReport directory: `" + reportDir //$NON-NLS-1$
             + "`\n\nCall `run_yaxunit_tests` again with the same arguments to keep waiting and retrieve" //$NON-NLS-1$
             + " the JUnit XML once the launch is done.\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * The pending branch's own text. {@link #execute} wraps it; the facade wraps the same text
+     * when it calls {@link #dispatch}.
+     *
+     * @param reportDir the directory the report will be written to
+     * @return the pending text
+     */
+    private String buildPendingMessage(Path reportDir)
+    {
+        return pendingText(reportDir);
     }
 
     private Path stableReportDir(String runKey)

@@ -226,7 +226,9 @@ public class YaxunitTestsTool implements IMcpTool
         switch (mode)
         {
             case "run":
-                result = new YaxunitTestRunner().execute(params);
+                // The runner's own text. The envelope below wraps it; the alias wraps the same
+                // text in its execute.
+                result = new YaxunitTestRunner().dispatch(params);
                 break;
             case "debug":
                 result = new YaxunitDebugRunner().execute(params);
@@ -262,7 +264,7 @@ public class YaxunitTestsTool implements IMcpTool
      * @param result what the delegate returned.
      * @return the same JSON object, or the text wrapped in one
      */
-    private static String asJsonEnvelope(String result)
+    static String asJsonEnvelope(String result)
     {
         if (result == null || result.isEmpty())
         {

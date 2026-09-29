@@ -855,8 +855,7 @@ public class VanessaTool implements IMcpTool
             receiptFields.put("failures", results.getFailures()); //$NON-NLS-1$
             receiptFields.put("errors", results.getErrors()); //$NON-NLS-1$
             receiptFields.put("skipped", results.getSkipped()); //$NON-NLS-1$
-            receiptFields.put("reportPath", //$NON-NLS-1$
-                vanessaReported ? resultDir.getAbsolutePath() : junitFile.getAbsolutePath());
+            receiptFields.put("reportPath", receiptReportPath(resultDir, junitFile, vanessaReported)); //$NON-NLS-1$
             receiptFields.put("screenshots", shots); //$NON-NLS-1$
             RunReceipts.Outcome receipt = RunReceipts.write(receiptFields);
             if (receipt.path != null)
@@ -3291,6 +3290,25 @@ public class VanessaTool implements IMcpTool
         {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * The path a receipt records as {@code reportPath}: the results directory on the Allure
+     * branch, which is the directory the answer names as {@code resultsDir}, and the JUnit file
+     * on the branch that was read from one.
+     *
+     * @param resultDir the directory the run's results were read from
+     * @param junitFile the file a JUnit reader takes, whether or not it exists
+     * @param vanessaReported whether the run left Vanessa's own result files in that directory
+     * @return the path the receipt and the answer both point at
+     */
+    static String receiptReportPath(File resultDir, File junitFile, boolean vanessaReported)
+    {
+        if (vanessaReported)
+        {
+            return resultDir.getAbsolutePath();
+        }
+        return junitFile.getAbsolutePath();
     }
 
     /**

@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -15,7 +16,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.After;
@@ -25,6 +28,7 @@ import org.junit.Test;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.RunReceipts;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
@@ -187,5 +191,36 @@ public class WhatTheScenarioRunnerHandsBackTest
         assertEquals(junit.getAbsolutePath(), answer.get("junitXmlPath").getAsString()); //$NON-NLS-1$
         assertFalse("the Allure fields belong to the other branch: " + json, //$NON-NLS-1$
             json.contains("resultsDir")); //$NON-NLS-1$
+    }
+
+    /**
+     * On the Allure branch the receipt's {@code reportPath} is the results directory the answer
+     * names, the directory the result files were read from.
+     *
+     * @throws Exception when the stand-in result or the receipt cannot be written
+     */
+    @Test
+    public void anAllureReceiptNamesTheSameDirectoryTheAnswerDoes() throws Exception
+    {
+        Files.write(dir.resolve("abcd-result.json"), "{}".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$ //$NON-NLS-2$
+        File junitNotWritten = dir.resolve("junit.xml").toFile(); //$NON-NLS-1$
+
+        String json = VanessaTool.withProducedPaths(ToolResult.success(), dir.toFile(),
+            junitNotWritten, true).toJson();
+        String resultsDir = JsonParser.parseString(json).getAsJsonObject().get("resultsDir").getAsString(); //$NON-NLS-1$
+
+        String reportPath = VanessaTool.receiptReportPath(dir.toFile(), junitNotWritten, true);
+        assertEquals(resultsDir, reportPath);
+        assertFalse(reportPath.endsWith("junit.xml")); //$NON-NLS-1$
+
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("tool", "vanessa"); //$NON-NLS-1$ //$NON-NLS-2$
+        fields.put("reportPath", reportPath); //$NON-NLS-1$
+        Path receipts = dir.resolve("receipts"); //$NON-NLS-1$
+        RunReceipts.Outcome written = RunReceipts.writeTo(receipts, fields);
+        assertNull(written.error);
+        JsonObject receipt = JsonParser.parseString(
+            new String(Files.readAllBytes(written.path), StandardCharsets.UTF_8)).getAsJsonObject();
+        assertEquals(resultsDir, receipt.get("reportPath").getAsString()); //$NON-NLS-1$
     }
 }

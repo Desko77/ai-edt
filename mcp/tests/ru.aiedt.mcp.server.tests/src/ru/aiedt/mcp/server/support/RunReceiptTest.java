@@ -20,7 +20,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.junit.After;
@@ -78,6 +84,11 @@ public class RunReceiptTest
         }
     }
 
+    /**
+     * The directory keeps the newest receipts and drops the oldest once the keep limit is passed.
+     *
+     * @throws IOException when a receipt cannot be written or listed
+     */
     @Test
     public void theTwentyFirstReceiptRemovesTheOldest() throws IOException
     {
@@ -103,6 +114,11 @@ public class RunReceiptTest
         }
     }
 
+    /**
+     * The receipt stores the counters, the filters and the report path the caller filed.
+     *
+     * @throws IOException when the receipt cannot be written or read
+     */
     @Test
     public void theNumbersAndFiltersAreTheOnesTheCallerPassed() throws IOException
     {
@@ -129,6 +145,11 @@ public class RunReceiptTest
         assertEquals("Module7.Test", filters.get("tests").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * A Vanessa receipt keeps the screenshot paths the run produced.
+     *
+     * @throws IOException when the receipt cannot be written or read
+     */
     @Test
     public void aVanessaReceiptCarriesItsScreenshots() throws IOException
     {
@@ -149,6 +170,11 @@ public class RunReceiptTest
             receipt.getAsJsonArray("screenshots").get(0).getAsString()); //$NON-NLS-1$
     }
 
+    /**
+     * A password or a scenario text filed at the top or one level down is left out of the file.
+     *
+     * @throws IOException when the receipt cannot be written or read
+     */
     @Test
     public void aSecretKeyNeverReachesTheFile() throws IOException
     {
@@ -173,6 +199,11 @@ public class RunReceiptTest
             receipt.getAsJsonObject("filters").has("extensions")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * A directory that cannot be created comes back as text on the outcome and is not thrown.
+     *
+     * @throws IOException when the blocking file cannot be written
+     */
     @Test
     public void anUnwritableDirectoryAnswersAnErrorAndThrowsNothing() throws IOException
     {
@@ -185,6 +216,167 @@ public class RunReceiptTest
 
         assertNull(written.path);
         assertNotNull("the failure is handed back as text, not thrown", written.error); //$NON-NLS-1$
+    }
+
+    /**
+     * Resolving the directory is part of the write. A lookup that throws, the way
+     * {@code getStateLocation} does when the plugin is stopping, becomes the outcome's error.
+     */
+    @Test
+    public void aDirectoryThatCannotBeResolvedBecomesAReceiptError()
+    {
+        RunReceipts.Outcome written = RunReceipts.writeResolving(receiptFields(0), tool -> {
+            throw new IllegalStateException("plugin state is gone"); //$NON-NLS-1$
+        });
+
+        assertNull(written.path);
+        assertNotNull(written.error);
+        assertTrue(written.error, written.error.contains("plugin state is gone")); //$NON-NLS-1$
+    }
+
+    /**
+     * A secret key is dropped however deep it sits: a map three levels down, and a map inside a
+     * list. An honest field beside it is kept.
+     *
+     * @throws IOException when the receipt cannot be written or read
+     */
+    @Test
+    public void aSecretNestedThreeDeepOrInsideAListNeverReachesTheFile() throws IOException
+    {
+        Map<String, Object> fields = receiptFields(0);
+        Map<String, Object> level3 = new LinkedHashMap<>();
+        level3.put("password", "deep-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+        level3.put("kept", "visible"); //$NON-NLS-1$ //$NON-NLS-2$
+        Map<String, Object> level2 = new LinkedHashMap<>();
+        level2.put("inner", level3); //$NON-NLS-1$
+        Map<String, Object> level1 = new LinkedHashMap<>();
+        level1.put("nested", level2); //$NON-NLS-1$
+        fields.put("context", level1); //$NON-NLS-1$
+
+        Map<String, Object> inList = new LinkedHashMap<>();
+        inList.put("pwd", "list-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+        inList.put("name", "step"); //$NON-NLS-1$ //$NON-NLS-2$
+        List<Object> steps = new ArrayList<>();
+        steps.add(inList);
+        fields.put("steps", steps); //$NON-NLS-1$
+
+        Map<String, Object> inArray = new LinkedHashMap<>();
+        inArray.put("scenarioText", "array-secret"); //$NON-NLS-1$ //$NON-NLS-2$
+        fields.put("batch", new Object[] { inArray }); //$NON-NLS-1$
+
+        RunReceipts.Outcome written = RunReceipts.writeTo(dir, fields);
+        assertNull(written.error);
+
+        String text = new String(Files.readAllBytes(written.path), StandardCharsets.UTF_8);
+        assertFalse(text, text.contains("deep-secret")); //$NON-NLS-1$
+        assertFalse(text, text.contains("list-secret")); //$NON-NLS-1$
+        assertFalse(text, text.contains("array-secret")); //$NON-NLS-1$
+        assertTrue(text, text.contains("visible")); //$NON-NLS-1$
+        assertTrue(text, text.contains("step")); //$NON-NLS-1$
+    }
+
+    /**
+     * A prune that throws after the file has been moved still returns the file. The cleanup
+     * error is not a failed write.
+     *
+     * @throws IOException when the receipt cannot be written
+     */
+    @Test
+    public void aPruneFailureAfterTheFileIsMovedStillNamesTheReceipt() throws IOException
+    {
+        RunReceipts.Outcome written = RunReceipts.writeTo(dir, receiptFields(1), () -> {
+            throw new IOException("prune failed"); //$NON-NLS-1$
+        });
+
+        assertNull(written.error);
+        assertNotNull(written.path);
+        assertTrue(Files.exists(written.path));
+        String text = new String(Files.readAllBytes(written.path), StandardCharsets.UTF_8);
+        assertTrue(text, text.contains("SSL_Demo")); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes that run together each land in their own file. A shared clock is not a shared name.
+     *
+     * @throws Exception when a writer fails or the directory cannot be listed
+     */
+    @Test
+    public void concurrentWritesEachLeaveTheirOwnFile() throws Exception
+    {
+        int writers = 12;
+        CyclicBarrier barrier = new CyclicBarrier(writers);
+        ExecutorService pool = Executors.newFixedThreadPool(writers);
+        try
+        {
+            List<Future<RunReceipts.Outcome>> tasks = new ArrayList<>();
+            for (int i = 0; i < writers; i++)
+            {
+                int seed = i;
+                tasks.add(pool.submit(() -> {
+                    barrier.await(10, TimeUnit.SECONDS);
+                    return RunReceipts.writeTo(dir, receiptFields(seed));
+                }));
+            }
+            for (Future<RunReceipts.Outcome> task : tasks)
+            {
+                RunReceipts.Outcome written = task.get(30, TimeUnit.SECONDS);
+                assertNull(written.error);
+                assertNotNull(written.path);
+            }
+        }
+        finally
+        {
+            pool.shutdownNow();
+        }
+
+        List<Path> kept = receiptsOnDisk();
+        assertEquals(writers, kept.size());
+        StringBuilder all = new StringBuilder();
+        for (Path path : kept)
+        {
+            all.append(new String(Files.readAllBytes(path), StandardCharsets.UTF_8));
+        }
+        for (int i = 0; i < writers; i++)
+        {
+            assertTrue("receipt " + i + " was overwritten", //$NON-NLS-1$ //$NON-NLS-2$
+                all.indexOf("out/report-" + i + ".md") >= 0); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * A file that will not delete is left, and the next oldest goes, until the directory itself
+     * holds the keep limit.
+     *
+     * @throws IOException when the stand-in receipts cannot be written or listed
+     */
+    @Test
+    public void aReceiptThatWillNotDeleteIsSkippedAndTheNextOldestGoes() throws IOException
+    {
+        Files.createDirectories(dir);
+        List<Path> created = new ArrayList<>();
+        for (int i = 0; i < RunReceipts.KEEP + 2; i++)
+        {
+            Path file = dir.resolve(String.format(Locale.ROOT, "%013d.json", Integer.valueOf(i))); //$NON-NLS-1$
+            Files.write(file, new byte[] { '{' });
+            created.add(file);
+        }
+        Path oldest = created.get(0);
+        Path next = created.get(1);
+        Path afterNext = created.get(2);
+
+        RunReceipts.prune(dir, path -> {
+            if (path.getFileName().equals(oldest.getFileName()))
+            {
+                throw new IOException("locked"); //$NON-NLS-1$
+            }
+            Files.deleteIfExists(path);
+        });
+
+        List<Path> kept = receiptsOnDisk();
+        assertEquals(RunReceipts.KEEP, kept.size());
+        assertTrue("the file that would not delete stays", Files.exists(oldest)); //$NON-NLS-1$
+        assertFalse(Files.exists(next));
+        assertFalse(Files.exists(afterNext));
     }
 
     /**
