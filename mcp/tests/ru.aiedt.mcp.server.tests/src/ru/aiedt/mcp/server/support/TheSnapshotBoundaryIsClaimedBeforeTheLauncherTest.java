@@ -75,7 +75,7 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
         "the platform process is still running"; //$NON-NLS-1$
 
     /** The words of an abandonment that kept the Designer run from starting. */
-    private static final String NOTHING_LAUNCHED = "no Designer run was launched"; //$NON-NLS-1$
+    private static final String NOTHING_LAUNCHED = "that run was not launched"; //$NON-NLS-1$
 
     private Path work;
 
@@ -137,7 +137,7 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
         assertTrue(failed.toString(), failed.get("cancelled").getAsBoolean()); //$NON-NLS-1$
         assertFalse("a call that never started is not reported as running: " + failed, //$NON-NLS-1$
             failed.get("error").getAsString().contains(PROCESS_STILL_RUNNING)); //$NON-NLS-1$
-        assertTrue("the answer says no Designer run was launched: " + failed, //$NON-NLS-1$
+        assertTrue("the answer says the Designer run was not launched: " + failed, //$NON-NLS-1$
             failed.get("error").getAsString().contains(NOTHING_LAUNCHED)); //$NON-NLS-1$
         assertFalse("the answer does not call a run that never started still running: " + failed, //$NON-NLS-1$
             failed.get("error").getAsString().contains("while it was still running")); //$NON-NLS-1$
