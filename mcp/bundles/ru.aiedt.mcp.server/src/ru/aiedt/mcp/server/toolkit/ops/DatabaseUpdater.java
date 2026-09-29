@@ -56,6 +56,7 @@ import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.GitBranch;
 import ru.aiedt.mcp.server.support.InfobaseHolders;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
+import ru.aiedt.mcp.server.support.InfobaseUpdateQuestionGuard;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.MonopolyLock;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
@@ -141,6 +142,9 @@ public class DatabaseUpdater implements IMcpTool
             + "For an extension project - which has no infobase of its own - the infobase of the " //$NON-NLS-1$
             + "configuration it extends is updated, which is what carries the extension's code into it. " //$NON-NLS-1$
             + "Handles both a full update (complete reload) and an incremental update (changes only). " //$NON-NLS-1$
+            + "A restructuring that would delete data stops for a confirmation (protectData, default on): " //$NON-NLS-1$
+            + "the answer names the metadata addresses the question carried (dataLossTables) and " //$NON-NLS-1$
+            + "status=confirmationRequired; resend with acceptDataLoss=true to carry it through. " //$NON-NLS-1$
             + "A slow full / restructure run replies with a Pending status and a runKey instead of blocking - " //$NON-NLS-1$
             + "call this tool again passing that runKey to keep waiting (cancel=true plus the runKey stops tracking)."; //$NON-NLS-1$
     }
@@ -168,6 +172,23 @@ public class DatabaseUpdater implements IMcpTool
                     + "claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("protectData", //$NON-NLS-1$
+                "Stop the update when restructuring would delete data (default: true). While the " //$NON-NLS-1$
+                    + "update runs, the infobase's ask-confirmation-on-restructure preference is " //$NON-NLS-1$
+                    + "switched on, a question handler is registered and the workbench is watched, " //$NON-NLS-1$
+                    + "so the data-loss question reaches this server instead of silently deleting " //$NON-NLS-1$
+                    + "the tables. The answer carries questionRoute (service / dialog / none), the " //$NON-NLS-1$
+                    + "raw question and answers, dataLossTables - the metadata addresses named in " //$NON-NLS-1$
+                    + "the question - and, when the update stopped for the confirmation, " //$NON-NLS-1$
+                    + "status=confirmationRequired. The preference is restored once the awaited " //$NON-NLS-1$
+                    + "update has ended. Off, the platform restructures silently and the answer " //$NON-NLS-1$
+                    + "says so.") //$NON-NLS-1$
+            .booleanProperty("acceptDataLoss", //$NON-NLS-1$
+                "Answer the data-loss question with the acceptance so the restructure proceeds " //$NON-NLS-1$
+                    + "(default: false). Without it, the question is answered with the refusal: " //$NON-NLS-1$
+                    + "the update stops, the base is not restructured, and resending with " //$NON-NLS-1$
+                    + "acceptDataLoss=true is what carries the update through. Only the question " //$NON-NLS-1$
+                    + "protectData stopped for is ever accepted.") //$NON-NLS-1$
             .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
                 + "on is bound to a different application (see branch_infobase). Off by default: " //$NON-NLS-1$
                 + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
@@ -387,6 +408,8 @@ public class DatabaseUpdater implements IMcpTool
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         boolean fullUpdate = JsonUtils.extractBooleanArgument(params, "fullUpdate", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoRestructure = JsonUtils.extractBooleanArgument(params, "autoRestructure", true); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean protectData = JsonUtils.extractBooleanArgument(params, "protectData", true); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean acceptDataLoss = JsonUtils.extractBooleanArgument(params, "acceptDataLoss", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoFreeClients = JsonUtils.extractBooleanArgument(params, "autoFreeClients", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean ignoreBranchBinding =
             JsonUtils.extractBooleanArgument(params, "ignoreBranchBinding", false); //$NON-NLS-1$
@@ -458,20 +481,24 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
+        final boolean fProtect = protectData;
+        final boolean fAcceptLoss = acceptDataLoss;
         final boolean fIgnoreDumpInfo =
             JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
-        // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
-        // the key below is the one a real update under these arguments owns.
+        // to a caller who had said to go ahead. The data-loss pair is part of it for the same
+        // reason - a refused call and its accepted resend are two intentions, and a caller who
+        // accepted the loss must not be served a run that refused it. A probe carries none of it -
+        // it is not a run, and the key below is the one a real update under these arguments owns.
         String runKey = runKeyFor(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-            fIgnoreDumpInfo);
+            fIgnoreDumpInfo, fProtect, fAcceptLoss);
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
         return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, checkOnly, params));
+                fSkipValidation, checkOnly, fProtect, fAcceptLoss, params));
     }
 
     /**
@@ -485,15 +512,18 @@ public class DatabaseUpdater implements IMcpTool
      * @param autoFreeClients whether client sessions are freed
      * @param ignoreBranchBinding whether the branch-binding check is bypassed
      * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @param protectData whether the data-loss guard is armed
+     * @param acceptDataLoss whether the data-loss question is answered with the acceptance
      * @return the run key
      */
     static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean ignoreDumpInfoFormat)
+        boolean ignoreDumpInfoFormat, boolean protectData, boolean acceptDataLoss)
     {
         return PendingWorkRegistry.computeRunKey(projectName, applicationId,
             String.valueOf(fullUpdate), String.valueOf(autoRestructure), String.valueOf(autoFreeClients),
-            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat));
+            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat),
+            String.valueOf(protectData), String.valueOf(acceptDataLoss));
     }
 
     /**
@@ -1021,12 +1051,15 @@ public class DatabaseUpdater implements IMcpTool
      * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
      * @param checkOnly whether to answer what an update would face and start nothing. Reached only
      *            from the caller's thread - a probe is never a tracked run, see {@link #runOrAnswer}
+     * @param protectData whether the update stops for a restructure that would delete data
+     * @param acceptDataLoss whether the caller accepted that loss up front
      * @param params the full call, for the refreshWorkspace flag
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean skipValidation, boolean checkOnly, Map<String, String> params)
+        boolean skipValidation, boolean checkOnly, boolean protectData, boolean acceptDataLoss,
+        Map<String, String> params)
     {
         String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
             DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
@@ -1035,6 +1068,11 @@ public class DatabaseUpdater implements IMcpTool
             return blocked;
         }
         String applicationId = requestedApplicationId;
+
+        // The data-loss protection, armed before the update runs and taken down in the closing
+        // step. Declared out here so every exit path restores the preference and ends the run.
+        InfobaseUpdateQuestionGuard.Run guardRun = null;
+        RestructurePromptGuard promptGuard = null;
 
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
@@ -1251,7 +1289,35 @@ public class DatabaseUpdater implements IMcpTool
                 return switched.toJson();
             }
 
-            ApplicationUpdateState stateAfter = appManager.update(application, updateType, context, monitor);
+            // Armed last, so the preference stays on and the question handler stays registered
+            // for the update alone and not for the preparation above it. Fail closed: the
+            // preference is what makes the platform ask at all, and an update of an infobase that
+            // cannot be guarded is refused rather than run silently restructured. An application
+            // with no infobase has nothing to restructure, and the update of it runs unguarded.
+            if (protectData && application instanceof IInfobaseApplication)
+            {
+                InfobaseReference guardBase = ((IInfobaseApplication)application).getInfobase();
+                java.util.UUID guardBaseId = guardBase == null ? null : guardBase.getUuid();
+                promptGuard = RestructurePromptGuard.engage(platformPromptAccess(), guardBaseId);
+                if (promptGuard == null)
+                {
+                    ToolResult unprotected = ToolResult.error(dataLossProtectionRefusal())
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("projectName", projectName); //$NON-NLS-1$
+                    unprotected.put("freedClients", freedClients); //$NON-NLS-1$
+                    return unprotected.toJson();
+                }
+                InfobaseUpdateQuestionGuard guard = InfobaseUpdateQuestionGuard.get();
+                guardRun = guard.beginRun(infobaseIdentity, acceptDataLoss, handler -> {
+                    Activator activator = Activator.getDefault();
+                    return activator == null ? null
+                        : activator.registerInfobaseQuestionHandler(handler);
+                });
+            }
+
+            ApplicationUpdateState stateAfter =
+                updateAwaitAndRestore(appManager, application, updateType, context, monitor,
+                    promptGuard);
 
             // update() can hand back BEING_UPDATED: the work goes on inside EDT after this call
             // returns. Releasing the claim then would announce the infobase free while it is being
@@ -1262,14 +1328,10 @@ public class DatabaseUpdater implements IMcpTool
             String stillUpdating = null;
             if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
             {
-                stateAfter = awaitUpdateEnd(appManager, application);
-                if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
-                {
-                    stillUpdating = "The update was still running after " //$NON-NLS-1$
-                        + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
-                        + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
-                        + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
-                }
+                stillUpdating = "The update was still running after " //$NON-NLS-1$
+                    + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
+                    + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
+                    + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
             }
 
             boolean updateComplete = stateAfter == ApplicationUpdateState.UPDATED;
@@ -1289,6 +1351,11 @@ public class DatabaseUpdater implements IMcpTool
             {
                 result.put("withoutCrossProcessClaim", infobaseClaim.unprotectedReason()); //$NON-NLS-1$
             }
+
+            // What the data-loss guard saw, said in the same answer the update answers with: the
+            // route a question arrived by, the question itself, and the addresses it named.
+            putDataLossReport(result, InfobaseUpdateQuestionGuard.get(), guardRun, infobaseIdentity,
+                protectData, updateComplete);
 
             if (stillUpdating != null)
             {
@@ -1346,6 +1413,8 @@ public class DatabaseUpdater implements IMcpTool
                     .put("stateBefore", stateBefore.name()) //$NON-NLS-1$
                     .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                     .put("updateComplete", Boolean.FALSE); //$NON-NLS-1$
+                putDataLossReport(refusal, InfobaseUpdateQuestionGuard.get(), guardRun,
+                    infobaseIdentity, protectData, false);
                 if (stillUpdating != null)
                 {
                     refusal.put("claimReleased", stillUpdating); //$NON-NLS-1$
@@ -1396,6 +1465,20 @@ public class DatabaseUpdater implements IMcpTool
         }
         finally
         {
+            // The closing step of the data-loss protection. On the normal path the preference is
+            // already back - updateAwaitAndRestore restored it once the awaited state settled -
+            // and restore() is idempotent; on a path that leaves by exception it runs here, which
+            // is the earliest moment that is still after the call that failed. The guard run ends
+            // after it, so a question still in flight when the preference comes back finds the
+            // handler in place one last time.
+            if (promptGuard != null)
+            {
+                promptGuard.restore();
+            }
+            if (guardRun != null)
+            {
+                guardRun.end();
+            }
             if (infobaseClaim != null)
             {
                 infobaseClaim.close();
@@ -1525,6 +1608,275 @@ public class DatabaseUpdater implements IMcpTool
             }
         }
         return ApplicationUpdateState.BEING_UPDATED;
+    }
+
+    /**
+     * Runs the update and the wait it may need, restoring the restructure-confirmation preference
+     * only once the awaited state has settled.
+     * <p>
+     * The update call can return BEING_UPDATED with the restructure still running inside EDT, and
+     * the preference has to stay on for as long as it does: restored on the return, it would leave
+     * a question arriving after it unanswered and the preference of the base changed for good.
+     * So the restore runs after {@link #awaitUpdateEnd} has settled the state - or given up
+     * waiting - and the closing step of the update calls it again, idempotently, for the paths
+     * that leave by exception.
+     * </p>
+     *
+     * @param appManager the application manager
+     * @param application the application being updated
+     * @param updateType full or incremental
+     * @param context the execution context
+     * @param monitor the progress monitor
+     * @param promptGuard the engaged preference guard, or {@code null} when the run is unguarded
+     * @return the state the update settled on
+     */
+    static ApplicationUpdateState updateAwaitAndRestore(IApplicationManager appManager,
+        IApplication application, ApplicationUpdateType updateType, ExecutionContext context,
+        IProgressMonitor monitor, RestructurePromptGuard promptGuard)
+    {
+        ApplicationUpdateState stateAfter =
+            appManager.update(application, updateType, context, monitor);
+        if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
+        {
+            stateAfter = awaitUpdateEnd(appManager, application);
+        }
+        if (promptGuard != null)
+        {
+            promptGuard.restore();
+        }
+        return stateAfter;
+    }
+
+    /**
+     * The refusal an update answers when the data-loss protection could not be armed. Fail
+     * closed: with the preference unreadable nothing would make the platform ask before deleting
+     * data, and an update that ran anyway would delete it while the answer reported a guard.
+     *
+     * @return the refusal sentence
+     */
+    static String dataLossProtectionRefusal()
+    {
+        return "The update was not started: the data-loss protection could not be armed. The " //$NON-NLS-1$
+            + "infobase's ask-confirmation-on-restructure preference is what makes the platform " //$NON-NLS-1$
+            + "ask before it deletes data, and it could not be read or written for this base, so " //$NON-NLS-1$
+            + "a restructure would have dropped tables with nothing to stop it. Repair the " //$NON-NLS-1$
+            + "preference service, or pass protectData=false to update unprotected."; //$NON-NLS-1$
+    }
+
+    /**
+     * Adds what the data-loss guard saw to an answer.
+     * <p>
+     * An unguarded update says just that, in one field, because a caller reading protectData
+     * needs to know the update ran with the platform restructuring silently. A guarded one names
+     * the route the question took - service, dialog, or none, which is what a stand measurement
+     * reads - and, when a question arrived, its raw text, its answer options and the metadata
+     * addresses parsed out of it. An update that did not complete, stopped by a question the
+     * guard refused, answers with {@code status=confirmationRequired} and the resend instruction;
+     * the acceptance is never implied by anything but {@code acceptDataLoss}.
+     * </p>
+     *
+     * @param answer the answer being built
+     * @param guard the guard the run armed
+     * @param run the armed run, or {@code null} when the application had no infobase to guard
+     * @param infobaseIdentity the identity of the infobase
+     * @param protectData whether the caller asked for the protection
+     * @param updateComplete whether the update reached UPDATED
+     */
+    static void putDataLossReport(ToolResult answer, InfobaseUpdateQuestionGuard guard,
+        InfobaseUpdateQuestionGuard.Run run, String infobaseIdentity, boolean protectData,
+        boolean updateComplete)
+    {
+        if (!protectData)
+        {
+            answer.put("protectData", Boolean.FALSE); //$NON-NLS-1$
+            return;
+        }
+        answer.put("protectData", Boolean.TRUE); //$NON-NLS-1$
+        java.util.Optional<InfobaseUpdateQuestionGuard.ParkedQuestion> parked =
+            run != null ? run.parked() : guard.parkedOf(infobaseIdentity);
+        answer.put("questionRoute", //$NON-NLS-1$
+            parked.isPresent() ? parked.get().route : "none"); //$NON-NLS-1$
+        if (run != null)
+        {
+            // A route that could not be armed is a fact, not a detail: an answer that left it out
+            // would read "questionRoute=none" the same whether the service never fired or was
+            // never registered.
+            answer.put("questionServiceRegistered", Boolean.valueOf(run.serviceArmed())); //$NON-NLS-1$
+        }
+        if (parked.isEmpty())
+        {
+            return;
+        }
+        InfobaseUpdateQuestionGuard.ParkedQuestion question = parked.get();
+        for (Map.Entry<String, Object> field : question.toJson().entrySet())
+        {
+            answer.put(field.getKey(), field.getValue());
+        }
+        if (!updateComplete && !question.accepted)
+        {
+            answer.put("status", "confirmationRequired"); //$NON-NLS-1$ //$NON-NLS-2$
+            answer.put("nextStep", "resend the same call with acceptDataLoss=true"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The preference access against the running environment: the platform's own infobase
+     * preferences manager, wherever it is tracked, and no preference rather than an error where
+     * it is not.
+     *
+     * @return the access, whose reads answer {@code null} when the service is missing
+     */
+    static RestructurePromptGuard.Access platformPromptAccess()
+    {
+        return new RestructurePromptGuard.Access()
+        {
+            @Override
+            public Boolean promptConfirmationOnRestructure(java.util.UUID infobaseId)
+            {
+                if (infobaseId == null)
+                {
+                    return null;
+                }
+                Activator activator = Activator.getDefault();
+                com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager manager =
+                    activator == null ? null : activator.getInfobasePreferencesManager();
+                if (manager == null)
+                {
+                    return null;
+                }
+                try
+                {
+                    return Boolean.valueOf(manager.getPromptConfirmationOnRestructure(infobaseId));
+                }
+                catch (RuntimeException | LinkageError unreadable)
+                {
+                    return null;
+                }
+            }
+
+            @Override
+            public boolean setPromptConfirmationOnRestructure(java.util.UUID infobaseId, boolean value)
+            {
+                if (infobaseId == null)
+                {
+                    return false;
+                }
+                Activator activator = Activator.getDefault();
+                com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager manager =
+                    activator == null ? null : activator.getInfobasePreferencesManager();
+                if (manager == null)
+                {
+                    return false;
+                }
+                try
+                {
+                    manager.setPromptConfirmationOnRestructure(infobaseId, value);
+                    return true;
+                }
+                catch (RuntimeException | LinkageError unwritable)
+                {
+                    return false;
+                }
+            }
+        };
+    }
+
+    /**
+     * Switches the infobase's ask-confirmation-on-restructure preference on for one update and
+     * puts it back afterwards.
+     * <p>
+     * The preference is what makes the platform ask before a restructure deletes data. With it
+     * off - the platform default - the restructure runs silently, which is the loss this guard
+     * exists to stop. It is visible to every session of this EDT while it is on, so the restore
+     * is idempotent and happens even on the paths that leave by exception: a preference left
+     * changed is a base the user's own next update asks questions about, or stops asking.
+     * </p>
+     */
+    static final class RestructurePromptGuard
+    {
+        /** Reads and writes the preference; a stand-in records what was asked of it. */
+        interface Access
+        {
+            /**
+             * The preference of one infobase.
+             *
+             * @param infobaseId the infobase's UUID
+             * @return the value, or {@code null} when it cannot be read
+             */
+            Boolean promptConfirmationOnRestructure(java.util.UUID infobaseId);
+
+            /**
+             * Writes the preference of one infobase.
+             *
+             * @param infobaseId the infobase's UUID
+             * @param value the value to write
+             * @return whether the write went through
+             */
+            boolean setPromptConfirmationOnRestructure(java.util.UUID infobaseId, boolean value);
+        }
+
+        private final Access access;
+
+        private final java.util.UUID infobaseId;
+
+        /** Whether the preference was already on: a base that asks needs nothing written. */
+        private final boolean wasAlreadyAsking;
+
+        private boolean restored;
+
+        private RestructurePromptGuard(Access access, java.util.UUID infobaseId, boolean wasAlreadyAsking)
+        {
+            this.access = access;
+            this.infobaseId = infobaseId;
+            this.wasAlreadyAsking = wasAlreadyAsking;
+        }
+
+        /**
+         * Engages the guard: reads the preference and, when it is off, switches it on.
+         *
+         * @param access the preference access
+         * @param infobaseId the infobase whose preference this is
+         * @return the engaged guard, or {@code null} when the preference cannot be read or
+         *         written - which the caller treats as a protection it cannot promise
+         */
+        static RestructurePromptGuard engage(Access access, java.util.UUID infobaseId)
+        {
+            if (access == null || infobaseId == null)
+            {
+                return null;
+            }
+            Boolean asking = access.promptConfirmationOnRestructure(infobaseId);
+            if (asking == null)
+            {
+                return null;
+            }
+            if (asking.booleanValue())
+            {
+                return new RestructurePromptGuard(access, infobaseId, true);
+            }
+            if (!access.setPromptConfirmationOnRestructure(infobaseId, true))
+            {
+                return null;
+            }
+            return new RestructurePromptGuard(access, infobaseId, false);
+        }
+
+        /**
+         * Puts the preference back to what it was. Idempotent, and a no-op for a base that was
+         * already asking.
+         */
+        synchronized void restore()
+        {
+            if (restored)
+            {
+                return;
+            }
+            restored = true;
+            if (!wasAlreadyAsking)
+            {
+                access.setPromptConfirmationOnRestructure(infobaseId, false);
+            }
+        }
     }
 
     /**

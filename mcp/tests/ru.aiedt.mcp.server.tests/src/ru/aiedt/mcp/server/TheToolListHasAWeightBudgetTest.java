@@ -74,8 +74,13 @@ public class TheToolListHasAWeightBudgetTest
      * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
      * and add_schema_parameter write them into the schema parameter.
      * </p>
+     * <p>
+     * And from 173621 to 173735 for the data-loss protection of update_database - protectData and
+     * acceptDataLoss in its own schema and the facade's - and the inspect_database_sync
+     * operation of infobase_admin.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 173621;
+    private static final int DOCUMENT_BUDGET = 173735;
 
     private LiveServer server;
 

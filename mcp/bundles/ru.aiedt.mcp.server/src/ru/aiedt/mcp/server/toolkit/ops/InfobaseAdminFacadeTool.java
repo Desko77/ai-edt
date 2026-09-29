@@ -51,6 +51,10 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *   <li>{@code update_database} - push the current configuration into an
  *       application's infobase (delegates to {@link DatabaseUpdater};
  *       MUTATING, may reply Pending with a runKey)</li>
+ *   <li>{@code inspect_database_sync} - read what stands between a project and its
+ *       infobase: the update state, the restructure-confirmation preference and any
+ *       data-loss question an update parked (runs {@link DatabaseSyncInspector};
+ *       read-only)</li>
  *   <li>{@code sync_control} - inspect and control EDT&lt;-&gt;infobase
  *       synchronization (delegates to {@link SyncControlTool})</li>
  *   <li>{@code help} - built-in topic-driven help</li>
@@ -181,12 +185,15 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "register_infobase, delete_infobase, " //$NON-NLS-1$
             + "set_infobase_credentials, " //$NON-NLS-1$
             + "create_launch_config, start_client, branch_infobase, update_database, " //$NON-NLS-1$
-            + "sync_control, help. Pass operation=<name>; remaining parameters follow the per-operation " //$NON-NLS-1$
-            + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
-            + "register_infobase / delete_infobase / set_infobase_credentials / update_database mutate. " //$NON-NLS-1$
+            + "inspect_database_sync, sync_control, help. Pass operation=<name>; remaining parameters " //$NON-NLS-1$
+            + "follow the per-operation contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
+            + "register_infobase / delete_infobase / set_infobase_credentials / update_database mutate; " //$NON-NLS-1$
+            + "inspect_database_sync reads and changes nothing. " //$NON-NLS-1$
             + "A real run of update_database / sync_control may reply with a Pending status and " //$NON-NLS-1$
             + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
-            + "face and start nothing, answered in place with no runKey. sync_control has its own " //$NON-NLS-1$
+            + "face and start nothing, answered in place with no runKey, and protectData (default on) " //$NON-NLS-1$
+            + "to stop a data-deleting restructure (acceptDataLoss=true carries it through). " //$NON-NLS-1$
+            + "sync_control has its own " //$NON-NLS-1$
             + "inner operation (status / diagnose / suppress / ...): pass it as syncOperation, " //$NON-NLS-1$
             + "not operation - operation here always selects the infobase_admin routing target. " //$NON-NLS-1$
             + "The standalone tools remain available for back-compat."; //$NON-NLS-1$
@@ -237,6 +244,12 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "has no infobase of its own - to the default of the configuration it " //$NON-NLS-1$
             + "extends."); //$NON-NLS-1$
         rules.put("accessMode", "Optional - defaults to INFOBASE when userName is supplied, else OS."); //$NON-NLS-1$
+        rules.put("protectData", "update_database only. The guard fails closed: an infobase whose " //$NON-NLS-1$
+            + "ask-confirmation preference cannot be read or written refuses the update rather " //$NON-NLS-1$
+            + "than running unprotected. The answer reports questionRoute (service / dialog / " //$NON-NLS-1$
+            + "none) and whether the question service was registered - what a stand measurement " //$NON-NLS-1$
+            + "reads. The dialog route is parked, never answered; answer_dialog presses a button " //$NON-NLS-1$
+            + "when a person decides to."); //$NON-NLS-1$
         rules.put("syncOperation", "Kept separate from this facade's routing operation on purpose - " //$NON-NLS-1$
             + "sync_control has its own operation concept."); //$NON-NLS-1$
         rules.put("name", "sync_control release_support_snapshot: a protected snapshot is the only " //$NON-NLS-1$
@@ -256,7 +269,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "get_applications / list_registered_infobases / read_event_log / create_infobase / " //$NON-NLS-1$
                     + "register_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
-                    + "branch_infobase / update_database / sync_control / help (snake_case " //$NON-NLS-1$
+                    + "branch_infobase / update_database / inspect_database_sync / sync_control / " //$NON-NLS-1$
+                    + "help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like getApplications is also accepted). " //$NON-NLS-1$
                     + "operation=help lists them; topic=<operation> answers what that one " //$NON-NLS-1$
                     + "takes.", true) //$NON-NLS-1$
@@ -354,7 +368,13 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "update instead (default false).") //$NON-NLS-1$
             .booleanProperty("autoRestructure", //$NON-NLS-1$
                 "update_database: apply infobase restructuring automatically when required " //$NON-NLS-1$
-                    + "(default true).") //$NON-NLS-1$
+                    + "(default true).")
+            .booleanProperty("protectData", //$NON-NLS-1$
+                "update_database: stop a data-deleting restructure and answer dataLossTables " //$NON-NLS-1$
+                    + "with status=confirmationRequired (default true).")
+            .booleanProperty("acceptDataLoss", //$NON-NLS-1$
+                "update_database: accept the data loss so the restructure proceeds (default " //$NON-NLS-1$
+                    + "false - the question is refused instead).") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", //$NON-NLS-1$
                 "update_database: before updating, stop this project's own matching " //$NON-NLS-1$
                     + "runtime-client sessions so they cannot keep the infobase locked " //$NON-NLS-1$
@@ -413,7 +433,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "list_registered_infobases / read_event_log / " //$NON-NLS-1$
                 + "create_infobase / register_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
                 + "create_launch_config / start_client / branch_infobase / update_database / " //$NON-NLS-1$
-                + "sync_control / " //$NON-NLS-1$
+                + "inspect_database_sync / sync_control / " //$NON-NLS-1$
                 + "help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
@@ -463,6 +483,11 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 return new BranchInfobaseTool().execute(params);
             case "update_database": //$NON-NLS-1$
                 return new DatabaseUpdater().execute(params);
+            // A facade-run operation with no standalone behind it: the inspection is this
+            // facade's own work, which is also why DESCRIBED does not name it - there is no
+            // delegate schema to describe it from.
+            case "inspect_database_sync": //$NON-NLS-1$
+                return DatabaseSyncInspector.inspect(params);
             case "sync_control": //$NON-NLS-1$
                 return routeSyncControl(params);
             default:
@@ -542,7 +567,14 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("- **create_launch_config** - associate an existing infobase to a " //$NON-NLS-1$
                 + "project. MUTATING.\n"); //$NON-NLS-1$
             sb.append("- **update_database** - push the current configuration into an " //$NON-NLS-1$
-                + "application's infobase. MUTATING; may reply Pending with a runKey.\n"); //$NON-NLS-1$
+                + "application's infobase. MUTATING; may reply Pending with a runKey. A " //$NON-NLS-1$
+                + "restructure that would delete data stops for a confirmation (protectData, " //$NON-NLS-1$
+                + "default on): the answer names the addresses (dataLossTables) and " //$NON-NLS-1$
+                + "status=confirmationRequired; acceptDataLoss=true carries it through.\n"); //$NON-NLS-1$
+            sb.append("- **inspect_database_sync** - read what stands between a project and its " //$NON-NLS-1$
+                + "infobase: the update state, the restructure-confirmation preference, and any " //$NON-NLS-1$
+                + "data-loss question an update parked. Read-only - starts nothing, writes " //$NON-NLS-1$
+                + "nothing.\n"); //$NON-NLS-1$
             sb.append("- **sync_control** - inspect and control EDT<->infobase " //$NON-NLS-1$
                 + "synchronization. Pass its own action as syncOperation, not operation; " //$NON-NLS-1$
                 + "some syncOperation values (reseed_baseline, mark_synchronized, " //$NON-NLS-1$
@@ -580,6 +612,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("| Associate an existing infobase to a project | " //$NON-NLS-1$
                 + "create_launch_config |\n"); //$NON-NLS-1$
             sb.append("| Push the configuration into an infobase | update_database |\n"); //$NON-NLS-1$
+            sb.append("| Read the state between a project and its infobase, and the data-loss " //$NON-NLS-1$
+                + "question an update was stopped by | inspect_database_sync |\n"); //$NON-NLS-1$
             sb.append("| Predict or control whether the next update is FULL or incremental | " //$NON-NLS-1$
                 + "sync_control (syncOperation=status / diagnose / suppress / ...) |\n"); //$NON-NLS-1$
             return sb.toString();
@@ -599,7 +633,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$
             "create_launch_config", "start_client", //$NON-NLS-1$ //$NON-NLS-2$
             "branch_infobase", //$NON-NLS-1$
-            "update_database", "sync_control")) //$NON-NLS-1$ //$NON-NLS-2$
+            "update_database", "inspect_database_sync", "sync_control")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         {
             m.put(op, op);
         }

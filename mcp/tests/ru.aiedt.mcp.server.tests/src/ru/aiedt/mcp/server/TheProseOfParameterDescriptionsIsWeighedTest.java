@@ -501,6 +501,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
      * edit_metadata: 93862.
      * </p>
+     * <p>
+     * And a thirty-fourth, by 292, for protectData and acceptDataLoss of update_database on
+     * infobase_admin, and the same pair plus inspect_database_sync in the operation list.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 95737;
+    private static final int DOCUMENT_PROSE = 95832;
 }
