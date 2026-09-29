@@ -751,6 +751,7 @@ public class GetFormStructureTool implements IMcpTool
         }
         catch (ReflectiveOperationException e)
         {
+            // No getItems() is the answer itself: the element is a leaf.
             return false;
         }
     }
