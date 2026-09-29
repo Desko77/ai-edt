@@ -36,6 +36,11 @@ public class ClientDialogReaderTest
 {
     private static final String SCRIPT_ENTRY = "scripts/read-client-dialogs.ps1"; //$NON-NLS-1$
 
+    /** What the reader returns when a login dialog is holding the client. */
+    private static final String HELD_WINDOW = "{\"windows\":[{\"pid\":10," //$NON-NLS-1$
+        + "\"className\":\"V8TopLevelFrameSDIsec\",\"title\":\"held\"," //$NON-NLS-1$
+        + "\"texts\":[\"Type a password\"],\"buttons\":[\"OK\"],\"modal\":true}]}"; //$NON-NLS-1$
+
     /**
      * A shadow frame and a notification are not dialogs. A button caption keeps the word and loses
      * the padding the platform draws around it. The modal flag is the one the script reported.
@@ -214,30 +219,90 @@ public class ClientDialogReaderTest
 
     /**
      * Snapshots go to the receipt directory when the caller has one, and to a temporary directory
-     * under the plugin state location otherwise.
+     * under the plugin state location otherwise. Neither is created by the lookup: a read that
+     * never runs, on a machine with no PowerShell or no Windows, leaves no directory behind.
      *
      * @throws IOException when the temporary directories cannot be created
      */
     @Test
     public void snapshotsGoToTheReceiptDirectoryWhenThereIsOne() throws IOException
     {
-        Path receipt = Files.createTempDirectory("aiedt-receipts"); //$NON-NLS-1$
-        Path state = Files.createTempDirectory("aiedt-state"); //$NON-NLS-1$
+        Path root = Files.createTempDirectory("aiedt-receipts"); //$NON-NLS-1$
+        Path state = Files.createDirectory(root.resolve("state")); //$NON-NLS-1$
+        Path receipt = root.resolve("run-receipts"); //$NON-NLS-1$
         Path created = null;
         try
         {
             assertEquals(receipt, ClientDialogReader.imageDirectory(receipt, state));
-            assertTrue(Files.isDirectory(receipt));
+            assertFalse("naming the receipt directory must not create it", Files.exists(receipt)); //$NON-NLS-1$
             created = ClientDialogReader.imageDirectory(null, state);
             assertTrue(created.startsWith(state));
             assertTrue(created.getFileName().toString().startsWith("blocking-windows-")); //$NON-NLS-1$
+            assertFalse("a temporary directory is created by the read, not by the lookup", //$NON-NLS-1$
+                Files.exists(created));
         }
         finally
         {
             remove(created);
-            remove(receipt);
+            remove(root);
+        }
+    }
+
+    /**
+     * A temporary snapshot directory exists for one read: an empty one is removed afterwards, and
+     * one that holds a snapshot stays, because the answer names that file.
+     *
+     * @throws IOException when the temporary directories cannot be created
+     */
+    @Test
+    public void aTemporarySnapshotDirectoryDoesNotOutliveAnEmptyRead() throws IOException
+    {
+        Path state = Files.createTempDirectory("aiedt-state"); //$NON-NLS-1$
+        Path empty = null;
+        Path kept = null;
+        try
+        {
+            empty = ClientDialogReader.imageDirectory(null, state);
+            ClientDialogReader.Outcome nothing = ClientDialogReader.capture(
+                List.of(Long.valueOf(10L)), empty, windowsWith(Path.of("pwsh.exe")), //$NON-NLS-1$
+                writingRunner(new ArrayList<>(), "{\"windows\":[]}"), Path.of("reader.ps1")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull(nothing.error());
+            assertFalse("a read that took no snapshot leaves no directory", Files.exists(empty)); //$NON-NLS-1$
+
+            kept = ClientDialogReader.imageDirectory(null, state);
+            ClientDialogReader.Outcome held = ClientDialogReader.capture(
+                List.of(Long.valueOf(10L)), kept, windowsWith(Path.of("pwsh.exe")), //$NON-NLS-1$
+                writingRunnerWithASnapshot(new ArrayList<>(), HELD_WINDOW), Path.of("reader.ps1")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertNull(held.error());
+            assertTrue("a snapshot keeps the directory it is in", Files.exists(kept.resolve("blocking-10-0.png"))); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            remove(empty);
+            remove(kept);
             remove(state);
         }
+    }
+
+    /**
+     * A read with no snapshot directory is given no {@code -ImageDir} argument at all. The script
+     * declares that argument as a path, so an empty one is refused before the read starts and the
+     * caller gets no windows for a reason that says nothing about the machine.
+     *
+     * @throws IOException when the temporary directories cannot be created
+     */
+    @Test
+    public void aReadWithNoSnapshotDirectoryIsGivenNoImageArgument() throws IOException
+    {
+        List<String> command = new ArrayList<>();
+        ClientDialogReader.Outcome read = ClientDialogReader.capture(List.of(Long.valueOf(10L)), null,
+            windowsWith(Path.of("pwsh.exe")), writingRunner(command, HELD_WINDOW), //$NON-NLS-1$
+            Path.of("reader.ps1")); //$NON-NLS-1$
+        assertNull(read.error());
+        assertEquals(1, read.windows().size());
+        assertNull(read.windows().get(0).imageFile());
+        assertFalse("an empty -ImageDir is not sent", command.contains("-ImageDir")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(command.contains("-ResultPath")); //$NON-NLS-1$
     }
 
     /**
@@ -255,19 +320,57 @@ public class ClientDialogReaderTest
         assertTrue(properties, properties.contains(SCRIPT_ENTRY));
         assertTrue(Files.isRegularFile(project.resolve(SCRIPT_ENTRY)));
 
+        String script = scriptOfTheBundle();
+        assertTrue(script, script.contains("UIAutomationClient")); //$NON-NLS-1$
+        assertTrue(script, script.contains("WriteAllText")); //$NON-NLS-1$
+        assertTrue(script, script.contains("[System.Text.Encoding]::UTF8")); //$NON-NLS-1$
+    }
+
+    /**
+     * The script draws the window itself instead of copying the screen: an application covering
+     * the client must not end up in the picture that is handed to the caller.
+     *
+     * @throws IOException when the script cannot be read
+     */
+    @Test
+    public void theScriptDrawsTheWindowInsteadOfTheScreen() throws IOException
+    {
+        String script = scriptOfTheBundle();
+        assertTrue(script, script.contains("public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags)")); //$NON-NLS-1$
+        assertTrue(script, script.contains("PrintWindow($hwnd, $deviceContext, 2)")); //$NON-NLS-1$
+        assertFalse("the screen is no longer copied", script.contains("CopyFromScreen")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The message of a 1C question box is the name of a pane rather than a text element, so the
+     * walk collects pane names as message lines along with the text elements.
+     *
+     * @throws IOException when the script cannot be read
+     */
+    @Test
+    public void theScriptReadsPaneNamesAsMessageLines() throws IOException
+    {
+        String script = scriptOfTheBundle();
+        assertTrue(script, script.contains("[System.Windows.Automation.ControlType]::Pane.Id")); //$NON-NLS-1$
+        assertTrue(script, script.contains("$typeId -eq $paneTypeId")); //$NON-NLS-1$
+    }
+
+    /**
+     * The reader script as the bundle carries it.
+     *
+     * @return the script text
+     * @throws IOException when the bundle entry or the file cannot be read
+     */
+    private static String scriptOfTheBundle() throws IOException
+    {
         Bundle bundle = FrameworkUtil.getBundle(ClientDialogReader.class);
         assertNotNull(bundle);
         URL entry = bundle.getEntry(SCRIPT_ENTRY);
         assertNotNull(entry);
-        String script;
         try (InputStream stream = entry.openStream())
         {
-            script = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
         }
-        assertTrue(script.contains("UIAutomationClient")); //$NON-NLS-1$
-        assertTrue(script.contains("WriteAllText")); //$NON-NLS-1$
-        assertTrue(script.contains("CopyFromScreen")); //$NON-NLS-1$
-        assertTrue(script.contains("[System.Text.Encoding]::UTF8")); //$NON-NLS-1$
     }
 
     /**
@@ -353,6 +456,80 @@ public class ClientDialogReaderTest
             started.set(true);
             return "started"; //$NON-NLS-1$
         };
+    }
+
+    /**
+     * A runner that writes the document where the command says the result goes, the way the
+     * script does, and reports that it finished.
+     *
+     * @param command the command is recorded into this list
+     * @param json the document to write
+     * @return the runner
+     */
+    private static ClientDialogReader.Runner writingRunner(List<String> command, String json)
+    {
+        return (arguments, timeoutSec) -> {
+            command.addAll(arguments);
+            try
+            {
+                Files.writeString(resultOf(arguments), json, StandardCharsets.UTF_8);
+                return null;
+            }
+            catch (IOException cannotWrite)
+            {
+                return "The dialog reader could not be started: " + cannotWrite.getMessage(); //$NON-NLS-1$
+            }
+        };
+    }
+
+    /**
+     * A runner that writes the document and saves a picture beside it, the way the script leaves
+     * the snapshot it drew.
+     *
+     * @param command the command is recorded into this list
+     * @param json the document to write
+     * @return the runner
+     */
+    private static ClientDialogReader.Runner writingRunnerWithASnapshot(List<String> command,
+        String json)
+    {
+        return (arguments, timeoutSec) -> {
+            command.addAll(arguments);
+            try
+            {
+                Files.writeString(resultOf(arguments), json, StandardCharsets.UTF_8);
+                Path directory = Path.of(argumentOf(arguments, "-ImageDir")); //$NON-NLS-1$
+                Files.write(directory.resolve("blocking-10-0.png"), new byte[] { 1 }); //$NON-NLS-1$
+                return null;
+            }
+            catch (IOException cannotWrite)
+            {
+                return "The dialog reader could not be started: " + cannotWrite.getMessage(); //$NON-NLS-1$
+            }
+        };
+    }
+
+    /**
+     * The file a command tells the script to write its document to.
+     *
+     * @param arguments one command
+     * @return the path
+     */
+    private static Path resultOf(List<String> arguments)
+    {
+        return Path.of(argumentOf(arguments, "-ResultPath")); //$NON-NLS-1$
+    }
+
+    /**
+     * The value of one argument of a command.
+     *
+     * @param arguments one command
+     * @param name the argument name
+     * @return the value that follows it
+     */
+    private static String argumentOf(List<String> arguments, String name)
+    {
+        return arguments.get(arguments.indexOf(name) + 1);
     }
 
     /**

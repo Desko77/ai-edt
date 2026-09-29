@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -29,6 +30,18 @@ public class TheTimeoutNamesTheWindowHoldingTheRunTest
 
     private static final String TEXT =
         "\u041d\u0435\u0432\u0435\u0440\u043d\u043e \u0443\u043a\u0430\u0437\u0430\u043d \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0438\u043b\u0438 \u043f\u0430\u0440\u043e\u043b\u044c"; //$NON-NLS-1$
+
+    /** The title of the frame a question box is drawn over. */
+    private static final String BASE_TITLE =
+        "1\u0421:\u041f\u0440\u0435\u0434\u043f\u0440\u0438\u044f\u0442\u0438\u0435 8.3 (8.3.27.2214)"; //$NON-NLS-1$
+
+    /** The question a client asks when the infobase is not there, as a pane carries it. */
+    private static final String QUESTION =
+        "\u041d\u0435 \u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u0430 \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f \u0431\u0430\u0437\u0430!"; //$NON-NLS-1$
+
+    /** The line the question continues on inside the same pane name. */
+    private static final String FOLLOW_UP =
+        "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043d\u043e\u0432\u0443\u044e?"; //$NON-NLS-1$
 
     /**
      * The catalogue description tells the caller that a timeout held by a window comes back as
@@ -127,6 +140,29 @@ public class TheTimeoutNamesTheWindowHoldingTheRunTest
         assertEquals("The dialog reader timed out.", //$NON-NLS-1$
             answer.get("blockingWindowsError").getAsString()); //$NON-NLS-1$
         assertEquals(0, answer.getAsJsonArray("blockingWindows").size()); //$NON-NLS-1$
+    }
+
+    /**
+     * A question box reports its message as the name of a pane rather than as a text element, and
+     * that message arrives with its line breaks. The timeout names it: the caller reads what the
+     * window is asking instead of a frame title, and the whole message travels in the window.
+     */
+    @Test
+    public void aPaneMessageWithLineBreaksIsWhatTheTimeoutNames()
+    {
+        String question = QUESTION + "\n" + FOLLOW_UP;
+        ClientDialogReader.Outcome read = ClientDialogReader.parse("{\"windows\":[{\"pid\":9," //$NON-NLS-1$
+            + "\"className\":\"V8NewLocalFrameBaseWnd\",\"title\":\"" + BASE_TITLE + "\"," //$NON-NLS-1$ //$NON-NLS-2$
+            + "\"texts\":[\"" + QUESTION + "\\n" + FOLLOW_UP + "\"]," //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + "\"buttons\":[\"Да\",\"Нет\"],\"modal\":true}]}"); //$NON-NLS-1$
+        assertNull(read.error());
+        assertEquals(question, read.windows().get(0).texts().get(0));
+
+        String error = answer(300, false, null, "hello", read).get("error").getAsString(); //$NON-NLS-1$
+        assertTrue(error, error.contains(BASE_TITLE));
+        assertTrue("the question is what the caller needs", error.contains(QUESTION)); //$NON-NLS-1$
+        assertTrue(error, error.contains(question));
+        assertFalse(error, error.contains("timeoutSeconds")); //$NON-NLS-1$
     }
 
     /**

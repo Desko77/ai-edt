@@ -43,7 +43,9 @@ import ru.aiedt.mcp.server.wire.GsonHolder;
  * <li>a receipt reaches its final name by a temporary file and a move, so a file cut short by a
  * crash is never read as a receipt;</li>
  * <li>after a successful write at most {@link #KEEP} files remain for the tool, the oldest by name
- * leaving first - the directory is a record of recent runs, not an archive;</li>
+ * leaving first - the directory is a record of recent runs, not an archive; the window snapshots
+ * a timeout wrote beside them are trimmed to the same count, the least recently written one
+ * leaving first;</li>
  * <li>a write that fails fails nothing else: the caller gets the error as text and the run keeps
  * its answer. A failure while deleting old receipts is recorded and does not take back the
  * receipt just written;</li>
@@ -64,6 +66,12 @@ public final class RunReceipts
 
     /** Directory under the state location the per-tool receipt directories live in. */
     private static final String ROOT_DIR = "run-receipts"; //$NON-NLS-1$
+
+    /** Name prefix of a window snapshot, which shares the directory with the receipts. */
+    private static final String SNAPSHOT_PREFIX = "blocking-"; //$NON-NLS-1$
+
+    /** Name suffix of a window snapshot. */
+    private static final String SNAPSHOT_SUFFIX = ".png"; //$NON-NLS-1$
 
     /**
      * Distinguishes two receipts written in the same millisecond. The clock alone does not: two
@@ -429,10 +437,11 @@ public final class RunReceipts
     }
 
     /**
-     * Deletes the oldest receipts until at most {@link #KEEP} remain. Names are zero-padded, so
-     * the name order is the order the runs happened. A file that cannot be deleted is skipped and
-     * the next oldest is tried; the count is taken from the directory after each deletion, so a
-     * file the local list has forgotten but the disk still holds is still counted.
+     * Deletes the oldest receipts and window snapshots until at most {@link #KEEP} of each remain.
+     * Names are zero-padded, so the name order of the receipts is the order the runs happened. A
+     * file that cannot be deleted is skipped and the next oldest is tried; the count is taken from
+     * the directory after each deletion, so a file the local list has forgotten but the disk still
+     * holds is still counted.
      *
      * @param directory the tool's receipt directory
      * @throws IOException when the directory cannot be listed
@@ -440,6 +449,86 @@ public final class RunReceipts
     private static void prune(Path directory) throws IOException
     {
         prune(directory, Files::deleteIfExists);
+        pruneSnapshots(directory);
+    }
+
+    /**
+     * Deletes the oldest window snapshots until at most {@link #KEEP} remain, so the pictures a
+     * timeout took do not outlive the receipts they belong to. A snapshot is named after the
+     * process and the order its window was read in, which is not the order the snapshots were
+     * taken in, so the modification time decides which are the newest. A snapshot that will not
+     * delete is left where it is and the others still go.
+     *
+     * @param directory the tool's receipt directory
+     * @throws IOException when the directory cannot be listed
+     */
+    private static void pruneSnapshots(Path directory) throws IOException
+    {
+        List<Path> snapshots = listSnapshots(directory);
+        if (snapshots.size() <= KEEP)
+        {
+            return;
+        }
+        for (Path stale : snapshots.subList(KEEP, snapshots.size()))
+        {
+            try
+            {
+                Files.deleteIfExists(stale);
+            }
+            catch (IOException stays)
+            {
+                // The rest are still deleted.
+            }
+        }
+    }
+
+    /**
+     * The window snapshots in a directory, newest first.
+     *
+     * @param directory the tool's receipt directory
+     * @return the {@code blocking-*.png} files, the most recently modified one first
+     * @throws IOException when the directory cannot be listed
+     */
+    private static List<Path> listSnapshots(Path directory) throws IOException
+    {
+        List<Path> snapshots = new ArrayList<>();
+        try (Stream<Path> entries = Files.list(directory))
+        {
+            entries.filter(RunReceipts::isSnapshot).forEach(snapshots::add);
+        }
+        snapshots.sort(Comparator.comparingLong(RunReceipts::modifiedAt).reversed());
+        return snapshots;
+    }
+
+    /**
+     * Whether a file in a receipt directory is a window snapshot.
+     *
+     * @param path one entry of the directory
+     * @return {@code true} for a {@code blocking-*.png} file
+     */
+    private static boolean isSnapshot(Path path)
+    {
+        String name = path.getFileName().toString();
+        return name.startsWith(SNAPSHOT_PREFIX) && name.endsWith(SNAPSHOT_SUFFIX);
+    }
+
+    /**
+     * The time a file was last changed, used to order snapshots. A file whose time cannot be read
+     * counts as the oldest, so an unreadable one is deleted before a dated one.
+     *
+     * @param path the file
+     * @return the time in milliseconds, or zero when it cannot be read
+     */
+    private static long modifiedAt(Path path)
+    {
+        try
+        {
+            return Files.getLastModifiedTime(path).toMillis();
+        }
+        catch (IOException unknown)
+        {
+            return 0L;
+        }
     }
 
     /**

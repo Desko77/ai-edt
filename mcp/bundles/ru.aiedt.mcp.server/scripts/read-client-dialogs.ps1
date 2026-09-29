@@ -1,11 +1,13 @@
 param(
     [Parameter(Mandatory = $true)][string]$Pids,
-    [Parameter(Mandatory = $true)][string]$ImageDir,
+    [Parameter(Mandatory = $false)][string]$ImageDir = '',
     [Parameter(Mandatory = $true)][string]$ResultPath
 )
 
 # Reads the 1C windows that are holding the named processes: title, message texts, buttons,
-# whether the window is the enabled dialog over a disabled owner, and a PNG of its rectangle.
+# whether the window is the enabled dialog over a disabled owner, and a PNG of the window.
+# An empty ImageDir reports the windows without a picture: the directory is only written into
+# when the caller named one.
 # The document is written to ResultPath as UTF-8. Stdout is not used: a console code page
 # would turn Cyrillic titles into a different string on the way out.
 
@@ -67,13 +69,14 @@ public class AiedtClientDialogNative {
     [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hwnd, StringBuilder text, int capacity);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint command);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     public const uint GW_OWNER = 4;
 }
 "@
 
-    if (-not (Test-Path -LiteralPath $ImageDir)) {
+    if (-not [string]::IsNullOrWhiteSpace($ImageDir) -and -not (Test-Path -LiteralPath $ImageDir)) {
         New-Item -ItemType Directory -Force -Path $ImageDir | Out-Null
     }
 
@@ -101,6 +104,7 @@ public class AiedtClientDialogNative {
 
     $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
     $textTypeId = [System.Windows.Automation.ControlType]::Text.Id
+    $paneTypeId = [System.Windows.Automation.ControlType]::Pane.Id
     $buttonTypeId = [System.Windows.Automation.ControlType]::Button.Id
     $windowTypeId = [System.Windows.Automation.ControlType]::Window.Id
     $fragments = New-Object System.Collections.Generic.List[string]
@@ -127,6 +131,7 @@ public class AiedtClientDialogNative {
         if (-not $modal) { continue }
 
         $texts = New-Object System.Collections.Generic.List[string]
+        $seenTexts = New-Object 'System.Collections.Generic.HashSet[string]'
         $buttons = New-Object System.Collections.Generic.List[string]
         try {
             $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
@@ -143,8 +148,14 @@ public class AiedtClientDialogNative {
                     $typeId = $element.Current.ControlType.Id
                     if ($typeId -eq $windowTypeId) { continue }
                     $name = $element.Current.Name
-                    if ($typeId -eq $textTypeId -and -not [string]::IsNullOrWhiteSpace($name)) {
-                        $texts.Add($name)
+                    if (($typeId -eq $textTypeId -or $typeId -eq $paneTypeId) -and -not [string]::IsNullOrWhiteSpace($name)) {
+                        # A 1C question box reports its message as the name of a pane, and a pane
+                        # that only repeats the frame title is not a message line. One line is
+                        # listed once, in the order the walk reaches it.
+                        $isTitle = [string]::Equals($name.Trim(), $title.Trim(), [System.StringComparison]::Ordinal)
+                        if (-not $isTitle -and $seenTexts.Add($name)) {
+                            $texts.Add($name)
+                        }
                     } elseif ($typeId -eq $buttonTypeId -and -not [string]::IsNullOrWhiteSpace($name)) {
                         $buttons.Add($name)
                     }
@@ -161,23 +172,35 @@ public class AiedtClientDialogNative {
 
         $imageFile = ''
         try {
-            $rect = New-Object AiedtClientDialogNative+RECT
-            $gotRect = [AiedtClientDialogNative]::GetWindowRect($hwnd, [ref]$rect)
-            $width = $rect.Right - $rect.Left
-            $height = $rect.Bottom - $rect.Top
-            if ($gotRect -and $width -gt 0 -and $height -gt 0) {
-                $bitmap = New-Object System.Drawing.Bitmap $width, $height
-                $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-                try {
-                    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
-                    $imageFile = [System.IO.Path]::GetFullPath((Join-Path $ImageDir ("blocking-{0}-{1}.png" -f $processId, $index)))
-                    $bitmap.Save($imageFile, [System.Drawing.Imaging.ImageFormat]::Png)
-                } finally {
-                    $graphics.Dispose()
-                    $bitmap.Dispose()
+            if (-not [string]::IsNullOrWhiteSpace($ImageDir)) {
+                $rect = New-Object AiedtClientDialogNative+RECT
+                $gotRect = [AiedtClientDialogNative]::GetWindowRect($hwnd, [ref]$rect)
+                $width = $rect.Right - $rect.Left
+                $height = $rect.Bottom - $rect.Top
+                if ($gotRect -and $width -gt 0 -and $height -gt 0) {
+                    $bitmap = New-Object System.Drawing.Bitmap $width, $height
+                    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                    try {
+                        $deviceContext = $graphics.GetHdc()
+                        try {
+                            # PrintWindow draws the window itself, so an application covering it
+                            # does not end up in the picture. Flag 2 is PW_RENDERFULLCONTENT.
+                            $drawn = [AiedtClientDialogNative]::PrintWindow($hwnd, $deviceContext, 2)
+                        } finally {
+                            $graphics.ReleaseHdc($deviceContext)
+                        }
+                        if ($drawn) {
+                            $imageFile = [System.IO.Path]::GetFullPath((Join-Path $ImageDir ("blocking-{0}-{1}.png" -f $processId, $index)))
+                            $bitmap.Save($imageFile, [System.Drawing.Imaging.ImageFormat]::Png)
+                        }
+                    } finally {
+                        $graphics.Dispose()
+                        $bitmap.Dispose()
+                    }
                 }
             }
         } catch {
+            # A window that cannot be drawn is still reported, without a picture.
             $imageFile = ''
         }
 

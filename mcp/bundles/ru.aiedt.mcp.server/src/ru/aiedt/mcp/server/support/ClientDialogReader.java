@@ -19,7 +19,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.osgi.framework.Bundle;
 import org.osgi.framework.FrameworkUtil;
@@ -65,6 +67,9 @@ public final class ClientDialogReader
 
     /** Answer member carrying why the windows could not be read. */
     public static final String ERROR = "blockingWindowsError"; //$NON-NLS-1$
+
+    /** Name prefix of the temporary snapshot directory a read falls back to. */
+    private static final String TEMPORARY_DIR_PREFIX = "blocking-windows-"; //$NON-NLS-1$
 
     private static final String NO_JSON = "The dialog reader returned no JSON."; //$NON-NLS-1$
 
@@ -362,36 +367,33 @@ public final class ClientDialogReader
      * Where the snapshots of one run are written.
      * <p>
      * The receipt directory when the caller has one, and a temporary directory under the plugin
-     * state location otherwise. Both are created. When neither was given, a temporary directory
-     * in the system default is created instead.
+     * state location otherwise. Nothing is created here: the read takes the directory, and a read
+     * that never runs - a machine that is not Windows, or one with no PowerShell - leaves no
+     * directory behind. A temporary directory the read created and left empty is removed again.
      * </p>
      *
      * @param receiptDirectory the run's receipt directory, or {@code null} when there is none
      * @param stateLocation the plugin state location, used only when the receipt directory is
      *            absent
      * @return the directory the PNGs go to
-     * @throws IOException when the directory cannot be created
      */
-    public static Path imageDirectory(Path receiptDirectory, Path stateLocation) throws IOException
+    public static Path imageDirectory(Path receiptDirectory, Path stateLocation)
     {
         if (receiptDirectory != null)
         {
-            Files.createDirectories(receiptDirectory);
             return receiptDirectory;
         }
-        if (stateLocation != null)
-        {
-            Files.createDirectories(stateLocation);
-            return Files.createTempDirectory(stateLocation, "blocking-windows-"); //$NON-NLS-1$
-        }
-        return Files.createTempDirectory("aiedt-blocking-windows-"); //$NON-NLS-1$
+        Path parent = stateLocation != null
+            ? stateLocation : Path.of(System.getProperty("java.io.tmpdir", ".")); //$NON-NLS-1$ //$NON-NLS-2$
+        return parent.resolve(TEMPORARY_DIR_PREFIX + UUID.randomUUID());
     }
 
     /**
      * The directory a timeout of {@code tool} writes its snapshots into.
      * <p>
      * The tool's receipt directory when the plugin can name one, and a temporary directory under
-     * the plugin state location otherwise.
+     * the plugin state location otherwise. Nothing is created here: the directory is made by the
+     * read, so a machine where the windows cannot be read keeps no directory at all.
      * </p>
      *
      * @param tool the tool name the receipt directory is named after
@@ -409,19 +411,7 @@ public final class ClientDialogReader
             // The state location cannot be asked while the plugin is stopping.
             receipts = null;
         }
-        Path state = null;
-        if (receipts == null)
-        {
-            state = stateLocation();
-        }
-        try
-        {
-            return imageDirectory(receipts, state);
-        }
-        catch (IOException cannotCreate)
-        {
-            return Path.of(System.getProperty("java.io.tmpdir", ".")); //$NON-NLS-1$ //$NON-NLS-2$
-        }
+        return imageDirectory(receipts, receipts == null ? stateLocation() : null);
     }
 
     /**
@@ -511,6 +501,7 @@ public final class ClientDialogReader
         Path scriptFile = null;
         boolean deleteScript = false;
         Path resultFile = null;
+        boolean createdDirectory = false;
         try
         {
             if (script != null)
@@ -524,6 +515,7 @@ public final class ClientDialogReader
             }
             if (imageDirectory != null)
             {
+                createdDirectory = !Files.exists(imageDirectory);
                 Files.createDirectories(imageDirectory);
             }
             resultFile = Files.createTempFile("aiedt-client-dialogs-", ".json"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -550,6 +542,7 @@ public final class ClientDialogReader
             {
                 deleteQuietly(scriptFile);
             }
+            discardTemporaryDirectory(imageDirectory, createdDirectory);
         }
     }
 
@@ -559,7 +552,8 @@ public final class ClientDialogReader
      * @param shell the PowerShell executable
      * @param script the script file
      * @param pids the process ids, comma separated
-     * @param imageDirectory where the PNGs are written
+     * @param imageDirectory where the PNGs are written, or {@code null} to report the windows
+     *            without a picture
      * @param resultFile where the JSON is written
      * @return the command, one element per argument
      */
@@ -577,8 +571,12 @@ public final class ClientDialogReader
         command.add(script.toString());
         command.add("-Pids"); //$NON-NLS-1$
         command.add(pids);
-        command.add("-ImageDir"); //$NON-NLS-1$
-        command.add(imageDirectory == null ? "" : imageDirectory.toString()); //$NON-NLS-1$
+        if (imageDirectory != null)
+        {
+            // Left out rather than sent empty: the script declares this argument as a path.
+            command.add("-ImageDir"); //$NON-NLS-1$
+            command.add(imageDirectory.toString());
+        }
         command.add("-ResultPath"); //$NON-NLS-1$
         command.add(resultFile.toString());
         return command;
@@ -1032,6 +1030,47 @@ public final class ClientDialogReader
         {
             Thread.currentThread().interrupt();
             return "The dialog reader was interrupted."; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Removes a temporary snapshot directory this read created and left empty.
+     * <p>
+     * A temporary directory exists for one read, so one that holds no snapshot is debris: the
+     * answer names the picture it took, and a read that took none has nothing to point at. A
+     * directory that holds a file stays where it is. A receipt directory is never removed: it is
+     * shared with the JSON receipts, which a run finishing at that moment may be writing.
+     * </p>
+     *
+     * @param directory the directory the read was given, or {@code null}
+     * @param createdByThisRead whether the directory did not exist before this read
+     */
+    private static void discardTemporaryDirectory(Path directory, boolean createdByThisRead)
+    {
+        if (!createdByThisRead || directory == null || directory.getFileName() == null
+            || !directory.getFileName().toString().startsWith(TEMPORARY_DIR_PREFIX))
+        {
+            return;
+        }
+        try (Stream<Path> entries = Files.list(directory))
+        {
+            if (entries.findAny().isPresent())
+            {
+                return;
+            }
+        }
+        catch (IOException notListed)
+        {
+            // A directory that cannot be listed is left alone.
+            return;
+        }
+        try
+        {
+            Files.deleteIfExists(directory);
+        }
+        catch (IOException stillNeeded)
+        {
+            // Something landed in it between the listing and the delete. It stays.
         }
     }
 
