@@ -186,6 +186,20 @@ public class FacadeF3cTest
         assertTrue(schema.contains("\"required\"")); //$NON-NLS-1$
     }
 
+    /** The facade exposes every argument needed to preview and apply orphan cleanup. */
+    @Test
+    public void securityAuditSchemaDeclaresTheOrphanContract()
+    {
+        String schema = new SecurityAuditFacadeTool().getInputSchema();
+
+        assertTrue(schema, schema.contains("orphans")); //$NON-NLS-1$
+        assertTrue(schema, schema.contains("\"apply\"")); //$NON-NLS-1$
+        assertTrue(schema, schema.contains("lists them in `removed`")); //$NON-NLS-1$
+        assertTrue(schema, schema.contains("mode\\u003dorphans")); //$NON-NLS-1$
+        assertTrue(schema, schema.contains("any metadata type")); //$NON-NLS-1$
+        assertTrue(schema, schema.contains("Register selects every register kind")); //$NON-NLS-1$
+    }
+
     // -- security_audit: routing table --
 
     @Test

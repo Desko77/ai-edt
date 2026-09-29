@@ -261,6 +261,7 @@ public class FindRlsViolationsTool implements IMcpTool
             }
         }
         List<String> unread = new ArrayList<>();
+        boolean restricted = false;
         for (Role role : roles)
         {
             RoleRightsAnalyzer.RightsTable table;
@@ -275,13 +276,11 @@ public class FindRlsViolationsTool implements IMcpTool
                 unread.add(role.getName());
                 continue;
             }
-            for (Boolean restricted : table.hasRls.values())
-            {
-                if (Boolean.TRUE.equals(restricted))
-                {
-                    return new RlsVerdict(Boolean.FALSE, null, List.of(), null);
-                }
-            }
+            restricted |= table.hasRls.containsValue(Boolean.TRUE);
+        }
+        if (restricted)
+        {
+            return new RlsVerdict(Boolean.FALSE, null, unread, null);
         }
         if (unread.isEmpty())
         {
@@ -352,8 +351,8 @@ public class FindRlsViolationsTool implements IMcpTool
 
         /**
          * Writes the verdict into the answer: {@code noRlsConfigured} when no role restricts rows,
-         * nothing when some role does, {@code rlsNotDetermined} with the reason and the unread roles
-         * otherwise.
+         * {@code rlsNotDetermined} with the reason when the answer is unknown, and the unread roles
+         * whenever there are any, including when another role proves that RLS exists.
          *
          * @param answer the answer
          */
@@ -364,13 +363,12 @@ public class FindRlsViolationsTool implements IMcpTool
                 answer.put("noRlsConfigured", true); //$NON-NLS-1$
                 return;
             }
-            if (noRlsConfigured != null)
+            if (noRlsConfigured == null)
             {
-                return;
+                answer.put("rlsNotDetermined", true) //$NON-NLS-1$
+                    .put("rlsNote", "Whether row-level security is configured could not be determined: " //$NON-NLS-1$ //$NON-NLS-2$
+                        + reason + "."); //$NON-NLS-1$
             }
-            answer.put("rlsNotDetermined", true) //$NON-NLS-1$
-                .put("rlsNote", "Whether row-level security is configured could not be determined: " //$NON-NLS-1$ //$NON-NLS-2$
-                    + reason + "."); //$NON-NLS-1$
             if (!unreadRoles.isEmpty())
             {
                 answer.put("rightsNotRead", unreadRoles.subList(0, Math.min(NAMED_LIMIT, unreadRoles.size()))) //$NON-NLS-1$

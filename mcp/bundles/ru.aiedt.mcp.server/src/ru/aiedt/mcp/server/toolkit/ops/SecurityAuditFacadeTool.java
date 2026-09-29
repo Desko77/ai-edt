@@ -120,6 +120,7 @@ public class SecurityAuditFacadeTool implements IMcpTool
             + "for back-compat."; //$NON-NLS-1$
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getInputSchema()
     {
@@ -145,17 +146,18 @@ public class SecurityAuditFacadeTool implements IMcpTool
             .stringProperty("subsystemName", //$NON-NLS-1$
                 "sensitive_data_scan: subsystem name.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
-                "audit_role_rights: rights / missing / conflicts / impact (default rights).") //$NON-NLS-1$
+                "audit_role_rights: rights / missing / conflicts / impact / orphans (default rights).") //$NON-NLS-1$
             .stringProperty("roleName", //$NON-NLS-1$
-                "audit_role_rights: role name, required for mode=rights / mode=missing. " //$NON-NLS-1$
+                "audit_role_rights: role name, required for mode=rights / mode=missing / mode=orphans. " //$NON-NLS-1$
                     + "find_rls_violations: optional, limit checks to RLS of this role " //$NON-NLS-1$
                     + "(default: any RLS).") //$NON-NLS-1$
             .stringProperty("roleNames", //$NON-NLS-1$
                 "audit_role_rights: comma-separated role names, for mode=conflicts / " //$NON-NLS-1$
                     + "mode=impact.") //$NON-NLS-1$
             .stringProperty("objectType", //$NON-NLS-1$
-                "audit_role_rights: Catalog / Document / Register / Report / all (default " //$NON-NLS-1$
-                    + "all).") //$NON-NLS-1$
+                "audit_role_rights: " + AuditRoleRightsTool.OBJECT_TYPE_DESCRIPTION) //$NON-NLS-1$
+            .booleanProperty("apply", //$NON-NLS-1$
+                "audit_role_rights " + AuditRoleRightsTool.ORPHANS_APPLY_DESCRIPTION) //$NON-NLS-1$
             .booleanProperty("includeRls", //$NON-NLS-1$
                 "audit_role_rights: include a hasRls flag in the output (default false).") //$NON-NLS-1$
             .stringProperty("checks", //$NON-NLS-1$

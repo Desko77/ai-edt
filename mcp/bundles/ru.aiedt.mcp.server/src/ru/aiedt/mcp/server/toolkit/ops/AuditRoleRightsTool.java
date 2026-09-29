@@ -41,6 +41,16 @@ public class AuditRoleRightsTool implements IMcpTool
 {
     public static final String NAME = "audit_role_rights"; //$NON-NLS-1$
 
+    /** The description of {@code apply}, shared with the security_audit facade. */
+    static final String ORPHANS_APPLY_DESCRIPTION =
+        "orphans mode: removes the entries this call finds and lists them in `removed`; " //$NON-NLS-1$
+            + "call without apply first to read the list."; //$NON-NLS-1$
+
+    /** The description of {@code objectType}, shared with the security_audit facade. */
+    static final String OBJECT_TYPE_DESCRIPTION =
+        "Catalog | Document | Register | Report | any metadata type | all (default all). " //$NON-NLS-1$
+            + "Register selects every register kind."; //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -58,23 +68,19 @@ public class AuditRoleRightsTool implements IMcpTool
             + "XML imports - and removes them only when asked with apply=true."; //$NON-NLS-1$
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("roleName", "Role name (required for rights / missing modes)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("roleName", "Role name (required for rights / missing / orphans modes)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("roleNames", //$NON-NLS-1$
                 "Comma-separated role names (for conflicts / impact modes)") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
                 "rights | missing | conflicts | impact | orphans (default rights)") //$NON-NLS-1$
-            .booleanProperty("apply", //$NON-NLS-1$
-                "orphans mode: actually remove what was found. Off by default - a rights entry " //$NON-NLS-1$
-                    + "removed is a security change nobody reviews afterwards, so the first answer " //$NON-NLS-1$
-                    + "is always a list to read.") //$NON-NLS-1$
-            .stringProperty("objectType", //$NON-NLS-1$
-                "Catalog | Document | Register | Report | any metadata type | all (default all). " //$NON-NLS-1$
-                    + "Register selects every register kind.") //$NON-NLS-1$
+            .booleanProperty("apply", ORPHANS_APPLY_DESCRIPTION) //$NON-NLS-1$
+            .stringProperty("objectType", OBJECT_TYPE_DESCRIPTION) //$NON-NLS-1$
             .stringProperty("objectFqn", "Specific object FQN to focus on") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("format", "json | markdown (default json). markdown applies to mode=rights") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("includeRls", "Include hasRls flag in output (default false)") //$NON-NLS-1$ //$NON-NLS-2$
@@ -520,7 +526,7 @@ public class AuditRoleRightsTool implements IMcpTool
      * @param format the requested format; this mode answers JSON
      * @return the report
      */
-    private static String orphans(Map<String, String> params, IProject project, Configuration configuration,
+    static String orphans(Map<String, String> params, IProject project, Configuration configuration,
         String format)
     {
         String roleName = JsonUtils.extractStringArgument(params, "roleName"); //$NON-NLS-1$
@@ -528,6 +534,12 @@ public class AuditRoleRightsTool implements IMcpTool
         {
             return ToolResult.error("roleName is required for mode=orphans").toJson(); //$NON-NLS-1$
         }
+        Role role = RoleRightsAnalyzer.findRole(configuration, roleName);
+        if (role == null)
+        {
+            return errorRoleNotFound(configuration, roleName);
+        }
+        roleName = role.getName();
         boolean apply = JsonUtils.extractBooleanArgument(params, "apply", false); //$NON-NLS-1$
         if (apply)
         {
@@ -554,7 +566,8 @@ public class AuditRoleRightsTool implements IMcpTool
             .put("objectsInFile", sweep.total) //$NON-NLS-1$
             .put("orphanedCount", sweep.orphaned.size()) //$NON-NLS-1$
             .put("orphaned", sweep.orphaned) //$NON-NLS-1$
-            .put("removed", sweep.changed); //$NON-NLS-1$
+            .put("removedCount", sweep.removed.size()) //$NON-NLS-1$
+            .put("removed", sweep.removed); //$NON-NLS-1$
         if (!sweep.undecided.isEmpty())
         {
             // Reported as its own list, not folded into the orphans. These were left alone, and a
@@ -570,7 +583,7 @@ public class AuditRoleRightsTool implements IMcpTool
         }
         else if (sweep.changed)
         {
-            result.put("message", "Removed " + sweep.orphaned.size() //$NON-NLS-1$ //$NON-NLS-2$
+            result.put("message", "Removed " + sweep.removed.size() //$NON-NLS-1$ //$NON-NLS-2$
                 + " entries. Revalidate the role to bring the in-memory model in step with the " //$NON-NLS-1$
                 + "file."); //$NON-NLS-1$
         }
