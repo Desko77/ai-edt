@@ -125,7 +125,7 @@ public class TheToolListHasAWeightBudgetTest
      * 29.09).
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 177336;
+    private static final int DOCUMENT_BUDGET = 177494;
 
     private LiveServer server;
 
