@@ -26,6 +26,7 @@ import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.core.model.IModelObjectFactory;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProject;
@@ -35,6 +36,8 @@ import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.wiring.ServiceAccess;
+import com._1c.g5.wiring.ServiceProperties;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -58,6 +61,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  */
 public final class BmObjectHelper
 {
+    /** Service name of the metadata model factory among the registered {@code IModelObjectFactory} services. */
+    private static final String MD_OBJECT_FACTORY_SERVICE = "MdObjectFactory"; //$NON-NLS-1$
+
     private BmObjectHelper()
     {
         // utility class
@@ -704,6 +710,130 @@ public final class BmObjectHelper
     }
 
     /**
+     * Creates a top-level metadata object through the project-aware model object
+     * factory - the route the EDT wizard takes - so the object carries the
+     * per-type defaults the wizard writes into the {@code .mdo} (level count,
+     * code length, standard commands, produced types, ...).
+     *
+     * <p>{@link MdClassFactory} instantiates the EClass and stops there, which
+     * leaves those features at their Ecore defaults. The factory runs the type's
+     * {@code IMdObjectInitializer} for the given project version instead, and
+     * falls back to {@link MdClassFactory} itself for an EClass that has no
+     * initializer, so no type loses its old behaviour. A UUID is still ensured
+     * here, as the other creation routes in this class do - the catalog and the
+     * document initializers set one, but nothing in the factory contract makes
+     * every initializer do so.
+     *
+     * @param typeName English bare type name, e.g. {@code "Catalog"},
+     *     {@code "Document"}.
+     * @param v8Project project whose version and configuration the defaults are
+     *     taken from; when {@code null} no initialization is possible and the
+     *     caller has to use {@link #createGenericObject(String)}.
+     * @return the initialized {@link MdObject}, or {@code null} when the type
+     *     does not resolve or the factory is unavailable on this runtime.
+     */
+    public static MdObject createInitializedObject(String typeName, IV8Project v8Project)
+    {
+        if (typeName == null || typeName.isEmpty() || v8Project == null)
+        {
+            return null;
+        }
+        EClass eClass = resolveMdEClass(typeName);
+        // EFactory.create() throws IllegalArgumentException on an abstract or
+        // interface EClass, and the factory turns that into null - which the
+        // caller would read as "the type does not resolve". Asked here instead,
+        // so an unusable type name is refused before the fallback hides it.
+        if (eClass == null || eClass.isAbstract() || eClass.isInterface())
+        {
+            return null;
+        }
+        IModelObjectFactory factory = modelObjectFactory();
+        if (factory == null)
+        {
+            return null;
+        }
+        try
+        {
+            Object created = factory.create(eClass, v8Project);
+            if (created instanceof MdObject)
+            {
+                MdObject obj = (MdObject) created;
+                if (obj.getUuid() == null)
+                {
+                    obj.setUuid(UUID.randomUUID());
+                }
+                return obj;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("MdObjectFactory.create(" + typeName //$NON-NLS-1$
+                + ") failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * The metadata model object factory EDT publishes for the application model.
+     *
+     * <p>Taken by service name because {@code IModelObjectFactory} is registered
+     * by several bundles - the metadata model, forms, graphical schemes and the
+     * core - and an unfiltered {@code ServiceAccess.get} refuses to choose
+     * between them. The name is the one {@code MdPlugin} registers itself under.
+     *
+     * @return the factory, or {@code null} when it is not registered or the
+     *     registry holds more than one match.
+     */
+    private static IModelObjectFactory modelObjectFactory()
+    {
+        try
+        {
+            return ServiceAccess.get(IModelObjectFactory.class,
+                ServiceProperties.SERVICE_NAME, MD_OBJECT_FACTORY_SERVICE);
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("Metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' is not available: " + e.getMessage()); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Resolves the EClass of a bare English metadata type name through
+     * {@code MdClassPackage.eINSTANCE.get<typeName>()}.
+     *
+     * @param typeName English bare type name, e.g. {@code "Catalog"}.
+     * @return the EClass, or {@code null} when the name has no package getter.
+     */
+    private static EClass resolveMdEClass(String typeName)
+    {
+        if (typeName == null || typeName.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            Method getter = MdClassPackage.class.getMethod("get" + typeName); //$NON-NLS-1$
+            Object lookup = getter.invoke(MdClassPackage.eINSTANCE);
+            if (lookup instanceof EClass)
+            {
+                return (EClass) lookup;
+            }
+        }
+        catch (NoSuchMethodException nsme)
+        {
+            return null;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("EClass lookup for " + typeName //$NON-NLS-1$
+                + " failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
      * Creates a child metadata object (Attribute, TabularSection, Form,
      * Command, Predefined, PredefinedItem, Dimension, Resource, ContentItem)
      * inside the given owner.
@@ -912,30 +1042,7 @@ public final class BmObjectHelper
      */
     private static MdObject createViaPackage(String typeName)
     {
-        if (typeName == null || typeName.isEmpty())
-        {
-            return null;
-        }
-        EClass eClass = null;
-        try
-        {
-            Method getter = MdClassPackage.class.getMethod("get" + typeName); //$NON-NLS-1$
-            Object lookup = getter.invoke(MdClassPackage.eINSTANCE);
-            if (lookup instanceof EClass)
-            {
-                eClass = (EClass) lookup;
-            }
-        }
-        catch (NoSuchMethodException nsme)
-        {
-            return null;
-        }
-        catch (Exception e)
-        {
-            Activator.logWarning("createViaPackage(" + typeName //$NON-NLS-1$
-                + ") - EClass lookup failed: " + e.getMessage()); //$NON-NLS-1$
-            return null;
-        }
+        EClass eClass = resolveMdEClass(typeName);
         if (eClass == null)
         {
             return null;

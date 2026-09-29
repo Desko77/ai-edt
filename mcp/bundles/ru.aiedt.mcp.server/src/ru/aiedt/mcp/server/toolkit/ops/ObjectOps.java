@@ -22,6 +22,8 @@ import com._1c.g5.v8.bm.integration.IBmTask;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -409,6 +411,11 @@ final class ObjectOps
             }
         }
 
+        // The project-aware creation route needs the V8 project, and the task body below is an
+        // anonymous class - so the project is resolved once, here, and captured by it.
+        IV8ProjectManager v8ProjectManager = Activator.getDefault().getV8ProjectManager();
+        IV8Project v8Project = v8ProjectManager != null ? v8ProjectManager.getProject(project) : null;
+
         // Create+add inside a write task
         IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
         IBmModel bmModel = bmModelManager != null ? bmModelManager.getModel(project) : null;
@@ -439,13 +446,20 @@ final class ObjectOps
                 @Override
                 public Void execute(IBmTransaction tx, IProgressMonitor pm)
                 {
-                    MdObject created = BmObjectHelper.createGenericObject(englishType);
+                    // Through the project-aware factory, so the new object carries the defaults
+                    // the EDT wizard would have written into the .mdo. The raw factory below
+                    // stays as the fallback for a runtime where that service is unavailable.
+                    MdObject created = BmObjectHelper.createInitializedObject(englishType, v8Project);
+                    if (created == null)
+                    {
+                        created = BmObjectHelper.createGenericObject(englishType);
+                    }
                     if (created == null)
                     {
                         finalErr.append("Cannot create '" + englishType //$NON-NLS-1$
-                            + "' - neither MdClassFactory.create" + englishType //$NON-NLS-1$
-                            + "() nor MdClassPackage.eINSTANCE.get" + englishType //$NON-NLS-1$
-                            + "() resolves on this EDT runtime."); //$NON-NLS-1$
+                            + "' - MdObjectFactory.create, MdClassFactory.create" + englishType //$NON-NLS-1$
+                            + "() and MdClassPackage.eINSTANCE.get" + englishType //$NON-NLS-1$
+                            + "() all fail on this EDT runtime."); //$NON-NLS-1$
                         return null;
                     }
                     created.setName(name);
