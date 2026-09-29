@@ -36,6 +36,15 @@ than all of them.
   runtime facts rather than configuration; a server infobase and the single-file SQLite form of the
   log are both refused by name rather than answered with an empty list.
 
+- **The configuration the infobase holds, as opposed to the one the project holds.**
+  `config_io operation=export_database_configuration` and `operation=export_database_extension`
+  dump the configuration or the extension out of the infobase into a `.cf` / `.cfe`. Both read the
+  base as it stands: an occupied `outputPath` is refused unless `overwrite=true`, and a base that
+  is not in `EQUAL` state is refused unless `allowOutOfSync=true`. `infobase_admin
+  operation=list_registered_infobases` answers what EDT's own infobase list holds - group, type,
+  connection string and additional parameters with the passwords masked, platform version, and the
+  projects each is bound to.
+
 - **Working inside an extension.** Borrowing (`extension_workshop operation=borrow_object` /
   `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
   extend the one it came from, and says so on the response; call borrow again on an object
@@ -107,13 +116,13 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `diagnostics` | Project errors, summaries, revalidation, export readiness, check documentation. |
 | `launch_debugger` | The whole debugger: launch and attach, breakpoints, stepping, variables, evaluation, profiling. |
 | `project_admin` | Projects, configurations, subsystems, resync to disk, restarting EDT. |
-| `infobase_admin` | Infobases and launching: applications, create and delete, credentials, starting a client, database update, sync control. |
-| `config_io` | Import and export of the configuration and of individual artifacts, including unpacking a binary `.epf` / `.erf` into XML. |
+| `infobase_admin` | Infobases and launching: applications, the infobases EDT has registered, create and delete, credentials, starting a client, database update, sync control. |
+| `config_io` | Import and export of the configuration and of individual artifacts, including the configuration or the extension the infobase itself holds, and unpacking a binary `.epf` / `.erf` into XML. |
 | `insights` | Metrics, dependency graphs, configuration comparison, impact analysis. |
 | `security_audit` | Role rights, RLS violations, sensitive-data scan. |
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
-| `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch. |
+| `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch, what changed in a file, putting one file back, and a restore point taken before a merge. |
 | `yaxunit_tests` | YAxUnit unit tests. |
 
 Constructors are called directly, not through a facade: `dcs_workshop` (data composition schemas),
@@ -144,7 +153,10 @@ EDT runtime supports.
 1. **Write BSL through `write_module_source`**, never by editing `.bsl` files directly. A direct
    file write is invisible to EDT until a refresh, and it skips validation. Prefer the targeted
    modes (`replaceMethod`, `replaceLines`, `insertBefore` / `insertAfter`) over whole-module
-   `replace`, which overwrites everything.
+   `replace`, which overwrites everything. `normalizeInvalidCharacters` (default true) replaces
+   typographic dashes, no-break spaces and soft hyphens outside BSL string literals with plain
+   characters, and reports what it replaced and where in `invalidCharactersReplaced` and
+   `invalidCharactersPositions`.
 2. **Edit managed forms through `edit_metadata` form operations**, not by hand-writing `.form` XML.
 3. **Validate every query you write or change** with `validate_query`, immediately, not in a batch
    at the end. For data composition queries pass `dcsMode=true`. Add `describeResult=true` before

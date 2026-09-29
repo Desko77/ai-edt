@@ -128,7 +128,11 @@ launch instead.
 1. `validate_for_export`. Findings block the update: fix, do not force.
 2. `infobase_admin operation=sync_control syncOperation=status` to see whether the next update will
    be incremental or full, and why.
-3. `infobase_admin operation=update_database`.
+3. When it is not clear whether the restructure would delete data, `infobase_admin
+   operation=inspect_database_sync` answers that before the call: `pendingDataLoss` names what an
+   update would drop, and `nextStep` says what to do about it. See `expected-behavior.md` - only the
+   user decides to carry a deletion through.
+4. `infobase_admin operation=update_database`.
 
 ## Audit security
 
