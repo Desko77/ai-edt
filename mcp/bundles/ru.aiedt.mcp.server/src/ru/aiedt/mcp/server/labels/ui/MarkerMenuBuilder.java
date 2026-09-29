@@ -9,7 +9,6 @@ package ru.aiedt.mcp.server.labels.ui;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 import org.eclipse.core.commands.Command;
 import org.eclipse.core.commands.IParameter;
@@ -92,7 +91,7 @@ public class MarkerMenuBuilder
             return new IContributionItem[0];
         }
 
-        Map<String, MarkerEntry> entries = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, MarkerEntry> entries = MarkerMenuIndex.byName();
         MarkerManager service = MarkerManager.getInstance();
         for (ObjectInfo info : objects)
         {
