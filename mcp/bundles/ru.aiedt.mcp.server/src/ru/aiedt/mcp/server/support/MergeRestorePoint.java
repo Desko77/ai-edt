@@ -382,8 +382,9 @@ public final class MergeRestorePoint
 
     /**
      * Writes each file from the restore commit, then removes project files the point does not have.
-     * The bytes come from the same blob read {@code revert_file} uses, and are written by
-     * {@link GitFileRestore#putBytes}.
+     * The blob of a point holds the work-tree bytes as they were read, so they are written as stored
+     * by {@link GitFileRestore#putBytes}; the checkout line-ending rule {@code revert_file} applies
+     * to a commit blob is not applied to them.
      *
      * @param project the project
      * @param record the point

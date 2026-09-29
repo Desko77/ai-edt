@@ -286,8 +286,8 @@ public class MergeRestorePointTest
     }
 
     /**
-     * Putting the files back is the same write as revert_file, so a preset that switched that door
-     * off refuses the restore before a byte is written.
+     * Putting the files back passes the write door of revert_file, so a preset that switched that
+     * door off refuses the restore before a byte is written.
      */
     @Test
     public void anUnregisteredRestoreDoorWritesNothing() throws Exception
