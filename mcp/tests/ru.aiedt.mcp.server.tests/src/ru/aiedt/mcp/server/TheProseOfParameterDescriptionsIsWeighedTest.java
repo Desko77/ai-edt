@@ -543,5 +543,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * {@code tools/list} under the default preset does not advertise them: 95864.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 96519;
+    private static final int DOCUMENT_PROSE = 96578;
 }

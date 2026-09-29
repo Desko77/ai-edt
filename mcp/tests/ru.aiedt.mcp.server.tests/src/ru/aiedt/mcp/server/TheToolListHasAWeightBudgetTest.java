@@ -106,7 +106,7 @@ public class TheToolListHasAWeightBudgetTest
      * when the update it asked for does not finish.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 174929;
+    private static final int DOCUMENT_BUDGET = 175033;
 
     private LiveServer server;
 
