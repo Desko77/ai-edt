@@ -327,7 +327,7 @@ public class AnUnknownOutputParameterIsRefusedTest
     {
         JsonObject unchecked = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(
             "set_output_parameter", "Form.Форма", "Список", "output parameter 'Title' set", false, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            List.of(), "IllegalArgumentException: no answer")) //$NON-NLS-1$
+            List.of(), "IllegalArgumentException: no answer", null)) //$NON-NLS-1$
             .getAsJsonObject();
         assertTrue(unchecked.get("success").getAsBoolean()); //$NON-NLS-1$
         assertFalse("the write went through, and the answer says the name was not checked", //$NON-NLS-1$
@@ -337,7 +337,7 @@ public class AnUnknownOutputParameterIsRefusedTest
 
         JsonObject checked = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(
             "set_output_parameter", "Form.Форма", "Список", "output parameter 'Title' set", false, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            List.of(), null))
+            List.of(), null, null))
             .getAsJsonObject();
         assertFalse("a checked name carries no flag: " + checked, //$NON-NLS-1$
             checked.has("outputParameterNameChecked")); //$NON-NLS-1$

@@ -858,6 +858,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         SettingsWritten written = beginSettingsScope();
         String outcome;
+        String[] settingsFqn = { null };
         try
         {
             outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
@@ -868,6 +869,7 @@ public class DcsWorkshopTool implements IMcpTool
                         + formFqn + ", or its settings could not be created."; //$NON-NLS-1$
                 }
                 Object applied = applySchemaMutation(op, params, (EObject)settings, project);
+                settingsFqn[0] = helper.listSettingsFqn(form, attributeName);
                 return applied == null ? "" : applied.toString(); //$NON-NLS-1$
             });
         }
@@ -875,8 +877,20 @@ public class DcsWorkshopTool implements IMcpTool
         {
             endSettingsScope(written);
         }
+        String notWritten = null;
+        if (!dryRun && settingsFqn[0] != null && (outcome == null || !outcome.startsWith("Error:"))) //$NON-NLS-1$
+        {
+            // The export of the form writes Form.form only; the settings are a top object of
+            // their own, stored in ListSettings.dcss.
+            notWritten = BmFormHelper.exportTopObject(project, settingsFqn[0]);
+            if (notWritten != null)
+            {
+                notWritten = settingsFqn[0] + " is changed in the model and not on disk: " + notWritten //$NON-NLS-1$
+                    + ". Write it with project_admin resync_to_disk."; //$NON-NLS-1$
+            }
+        }
         return dynamicListAnswer(op, formFqn, attributeName, outcome, dryRun, written.warnings,
-            written.outputParameterNameNote);
+            written.outputParameterNameNote, notWritten);
     }
 
     /**
@@ -896,10 +910,13 @@ public class DcsWorkshopTool implements IMcpTool
      * @param warnings what the completeness check found, carried only by a write that landed.
      * @param outputParameterNameNote why an output parameter name went in unchecked, or null when
      *        the name was checked against the platform's set.
+     * @param notWritten why the settings did not reach the disk, <code>null</code> when they did or
+     *            when nothing was written.
      * @return the JSON answer
      */
     static String dynamicListAnswer(String op, String formFqn, String attributeName, String outcome,
-        boolean dryRun, List<Map<String, Object>> warnings, String outputParameterNameNote)
+        boolean dryRun, List<Map<String, Object>> warnings, String outputParameterNameNote,
+        String notWritten)
     {
         if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
         {
@@ -923,6 +940,10 @@ public class DcsWorkshopTool implements IMcpTool
             // A list preview is discarded the same way a schema preview is: the settings on the
             // form hold what they held before the call.
             result.put("dryRun", Boolean.TRUE); //$NON-NLS-1$
+        }
+        if (notWritten != null)
+        {
+            result.put("persistWarning", notWritten); //$NON-NLS-1$
         }
         return withOutputParameterNameCheck(withSettingsWarnings(result, warnings),
             outputParameterNameNote).toJson();
