@@ -104,6 +104,9 @@ public class ConfigurationBinaryImporter implements IMcpTool
                 "For a .cfe: a .cf to load into the staging infobase first, so the extension " //$NON-NLS-1$
                     + "has the configuration it borrows from. Omit to stage it against an empty " //$NON-NLS-1$
                     + "infobase, which works for an extension that adopts nothing.") //$NON-NLS-1$
+            .stringProperty("baseProjectName", //$NON-NLS-1$
+                "For a .cfe: the workspace project of the configuration the extension extends. " //$NON-NLS-1$
+                    + "Ignored for a .cf.") //$NON-NLS-1$
             .stringProperty("keepXmlPath", //$NON-NLS-1$
                 "Write the intermediate Designer-XML here and keep it, instead of using a " //$NON-NLS-1$
                     + "temporary directory that is deleted. The directory must be empty or " //$NON-NLS-1$
@@ -139,6 +142,7 @@ public class ConfigurationBinaryImporter implements IMcpTool
         String platform = JsonUtils.extractStringArgument(params, "platform"); //$NON-NLS-1$
         String extensionName = JsonUtils.extractStringArgument(params, "extensionName"); //$NON-NLS-1$
         String basePath = JsonUtils.extractStringArgument(params, "baseConfigurationPath"); //$NON-NLS-1$
+        String baseProjectName = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
         String keepXmlPath = JsonUtils.extractStringArgument(params, "keepXmlPath"); //$NON-NLS-1$
 
         if (binaryPath == null || binaryPath.isEmpty())
@@ -183,6 +187,16 @@ public class ConfigurationBinaryImporter implements IMcpTool
             return ToolResult.error("A project under this name is already in the workspace: " //$NON-NLS-1$
                 + projectName + ". This import creates a NEW project - pick a name that is not " //$NON-NLS-1$
                 + "in use.").put(ErrorTags.ALREADY_EXISTS.wire(), true).toJson(); //$NON-NLS-1$
+        }
+        if (kind != BmBinaryImportHelper.BinaryKind.EXTENSION || baseProjectName == null
+            || baseProjectName.isEmpty())
+        {
+            baseProjectName = null;
+        }
+        String baseRefusal = ConfigurationXmlImporter.baseProjectRefusal(baseProjectName);
+        if (baseRefusal != null)
+        {
+            return ToolResult.error(baseRefusal).put(ErrorTags.PROJECT_NOT_FOUND.wire(), true).toJson();
         }
 
         Path base = null;
@@ -242,6 +256,7 @@ public class ConfigurationBinaryImporter implements IMcpTool
         final String finalProjectName = projectName;
         final String finalPlatform = platform;
         final String finalExtensionName = extensionName;
+        final String finalBaseProject = baseProjectName;
         final BmBinaryImportHelper.BinaryKind finalKind = kind;
 
         // Every option that changes what the run DOES is part of its identity. Keyed on the
@@ -252,6 +267,7 @@ public class ConfigurationBinaryImporter implements IMcpTool
             finalBinary.toString(), finalPlatform == null ? "" : finalPlatform, //$NON-NLS-1$
             finalExtensionName == null ? "" : finalExtensionName, //$NON-NLS-1$
             finalBase == null ? "" : finalBase.toString(), //$NON-NLS-1$
+            finalBaseProject == null ? "" : finalBaseProject, //$NON-NLS-1$
             finalKeepDir == null ? "" : finalKeepDir.toString()); //$NON-NLS-1$
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
@@ -267,8 +283,8 @@ public class ConfigurationBinaryImporter implements IMcpTool
             registry.remove(runKey);
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
-                finalExtensionName, finalBase, finalKeepDir));
+            startedRun -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
+                finalExtensionName, finalBase, finalBaseProject, finalKeepDir, startedRun));
         // The name a poll of this run arrives under, so a live key exempts only this tool's own
         // resumption path from the heavy gates.
         entry.startedBy = NAME;
@@ -338,6 +354,30 @@ public class ConfigurationBinaryImporter implements IMcpTool
     }
 
     /**
+     * The arguments the XML import of a staged binary is called with. An extension carries the
+     * project it extends; a configuration never does.
+     *
+     * @param xmlDir the folder the staging run dumped the XML into
+     * @param projectName the project to create
+     * @param kind whether the binary was a configuration or an extension
+     * @param baseProjectName the workspace project an extension extends, or <code>null</code>
+     * @return the arguments for {@link ConfigurationXmlImporter#execute(Map)}
+     */
+    static Map<String, String> xmlImportParams(Path xmlDir, String projectName,
+        BmBinaryImportHelper.BinaryKind kind, String baseProjectName)
+    {
+        Map<String, String> importParams = new LinkedHashMap<>();
+        importParams.put("importPath", xmlDir.toString()); //$NON-NLS-1$
+        importParams.put("projectName", projectName); //$NON-NLS-1$
+        if (kind == BmBinaryImportHelper.BinaryKind.EXTENSION && baseProjectName != null
+            && !baseProjectName.isEmpty())
+        {
+            importParams.put("baseProjectName", baseProjectName); //$NON-NLS-1$
+        }
+        return importParams;
+    }
+
+    /**
      * The part that takes time: stage the binary into an infobase, dump its XML, import that.
      *
      * @param binary the .cf or .cfe
@@ -346,12 +386,16 @@ public class ConfigurationBinaryImporter implements IMcpTool
      * @param platform the platform version for the staging infobase, or <code>null</code>
      * @param extensionName the name to load an extension under, or <code>null</code>
      * @param base a .cf to seed the staging infobase with, or <code>null</code>
+     * @param baseProjectName the workspace project an extension extends, or <code>null</code>
      * @param keepDir the caller's directory for the intermediate XML, or <code>null</code> for
      *            a temporary one that is deleted afterwards
+     * @param entry the run this import belongs to; the launch boundary of the staging process is
+     *            claimed on it
      * @return the reply JSON
      */
     private String stageAndImport(Path binary, BmBinaryImportHelper.BinaryKind kind,
-        String projectName, String platform, String extensionName, Path base, Path keepDir)
+        String projectName, String platform, String extensionName, Path base, String baseProjectName,
+        Path keepDir, PendingWorkRegistry.PendingEntry entry)
     {
         boolean keepXml = keepDir != null;
         Path xmlDir;
@@ -366,6 +410,21 @@ public class ConfigurationBinaryImporter implements IMcpTool
         }
         try
         {
+            // The launch boundary: staging starts a Configurator process, and from inside one
+            // there is nothing on this side that can stop it. A cancel that arrived earlier raised
+            // the call's flag, and here it keeps the process from starting rather than leaving a
+            // second 1C running that nobody can reach.
+            if (!entry.claimTheLaunch())
+            {
+                return ToolResult.error("The import was cancelled before the staging process " //$NON-NLS-1$
+                    + "started. No project was created.") //$NON-NLS-1$
+                    .put("tag", ErrorTags.CANCELLED.wire()) //$NON-NLS-1$
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .put("projectName", projectName) //$NON-NLS-1$
+                    .put("binaryPath", binary.toString()) //$NON-NLS-1$
+                    .toJson();
+            }
+
             BmBinaryImportHelper.XmlResult staged =
                 BmBinaryImportHelper.toXml(binary, platform, extensionName, base, xmlDir);
             if (!staged.ok)
@@ -382,10 +441,8 @@ public class ConfigurationBinaryImporter implements IMcpTool
                 return err.toJson();
             }
 
-            Map<String, String> importParams = new LinkedHashMap<>();
-            importParams.put("importPath", xmlDir.toString()); //$NON-NLS-1$
-            importParams.put("projectName", projectName); //$NON-NLS-1$
-            String imported = new ConfigurationXmlImporter().execute(importParams);
+            String imported = new ConfigurationXmlImporter()
+                .execute(xmlImportParams(xmlDir, projectName, kind, baseProjectName));
 
             // Asked of the import itself, not of the workspace. The XML import sets the project up
             // before it brings anything across, so the folder exists whether or not the import
@@ -410,6 +467,10 @@ public class ConfigurationBinaryImporter implements IMcpTool
             if (staged.extensionName != null)
             {
                 ok.put("extensionName", staged.extensionName); //$NON-NLS-1$
+            }
+            if (baseProjectName != null)
+            {
+                ok.put("baseProjectName", baseProjectName); //$NON-NLS-1$
             }
             if (keepXml)
             {

@@ -76,6 +76,65 @@ public final class MetadataDiffEngine
             m.put("renamedCount", renamed.size()); //$NON-NLS-1$
             return m;
         }
+
+        /**
+         * Keeps the entries that name the given object or something under it.
+         * <p>
+         * Both sides of the comparison are put through {@link MetadataTypeCatalog#normalizeFqn}
+         * first. The entries are named after the EMF collection the object came from -
+         * {@code Catalogs.Goods} - while a caller names the type as the catalogue spells it -
+         * {@code Catalog.Goods} - so comparing the text as it stands dropped every entry for an
+         * object that was asked for by its canonical name. Normalizing is idempotent, so an entry
+         * that already carries the canonical spelling keeps it.
+         * </p>
+         *
+         * @param fqn the object a {@code scope=objectFqn} call named, in any recognized spelling.
+         */
+        public void retainOnly(String fqn)
+        {
+            if (fqn == null)
+            {
+                return;
+            }
+            String wanted = MetadataTypeCatalog.normalizeFqn(fqn);
+            String under = wanted + "."; //$NON-NLS-1$
+            added.removeIf(name -> !covers(name, wanted, under));
+            removed.removeIf(name -> !covers(name, wanted, under));
+            modified.removeIf(entry -> !covers(entry.get("fqn"), wanted, under)); //$NON-NLS-1$
+            renamed.removeIf(entry -> coversNeither(entry, wanted, under));
+        }
+
+        /**
+         * Whether an entry names the retained object or something under it.
+         *
+         * @param name the entry's name, or a half of a rename; may be absent.
+         * @param fqn the retained object, already normalized.
+         * @param under the retained object's prefix, already normalized.
+         * @return whether the name falls inside the object; false for an absent name
+         */
+        private static boolean covers(Object name, String fqn, String under)
+        {
+            if (name == null)
+            {
+                return false;
+            }
+            String normalized = MetadataTypeCatalog.normalizeFqn(name.toString());
+            return normalized.equals(fqn) || normalized.startsWith(under);
+        }
+
+        /**
+         * Whether neither half of a rename names the retained object.
+         *
+         * @param rename the rename entry.
+         * @param fqn the retained object, already normalized.
+         * @param under the retained object's prefix, already normalized.
+         * @return whether both halves fall outside the object
+         */
+        private static boolean coversNeither(Map<String, Object> rename, String fqn, String under)
+        {
+            return !covers(rename.get("from"), fqn, under) //$NON-NLS-1$
+                && !covers(rename.get("to"), fqn, under); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -423,6 +482,31 @@ public final class MetadataDiffEngine
                         {
                             return false;
                         }
+                        // The elements are compared, not only counted. A type list that swapped
+                        // CatalogRef.A for CatalogRef.B keeps its size, and compared by size alone
+                        // the change was invisible at every level of the comparison: the object
+                        // read as equal and no level below it was ever asked.
+                        for (int i = 0; i < aList.size(); i++)
+                        {
+                            EObject aElem = aList.get(i);
+                            EObject bElem = bList.get(i);
+                            if (aElem == null || bElem == null)
+                            {
+                                if (aElem != bElem)
+                                {
+                                    return false;
+                                }
+                                continue;
+                            }
+                            if (aElem.eClass() != bElem.eClass())
+                            {
+                                return false;
+                            }
+                            if (!java.util.Objects.equals(nameOf(aElem), nameOf(bElem)))
+                            {
+                                return false;
+                            }
+                        }
                     }
                     else if (av != null && bv != null)
                     {
@@ -441,6 +525,20 @@ public final class MetadataDiffEngine
         return true;
     }
 
+    /**
+     * The features whose content differs between two objects of one class.
+     * <p>
+     * Containment features are compared by the same structural walk the equality above uses, so a
+     * change that lives inside a contained child - an attribute's type, a qualifier - is named by
+     * the feature that holds it instead of leaving the object modified with an empty list of
+     * changes. The next level of the diff still descends into these features; naming them says
+     * where the difference lives before that descent.
+     * </p>
+     *
+     * @param a one side.
+     * @param b the other.
+     * @return the names of the features whose content differs
+     */
     private static List<String> listChanges(EObject a, EObject b)
     {
         List<String> changes = new ArrayList<>();
@@ -451,20 +549,70 @@ public final class MetadataDiffEngine
             {
                 continue;
             }
-            if (feature instanceof EReference && ((EReference) feature).isContainment())
-            {
-                continue; // handled by diffAttributes at the next level
-            }
             Object av = a.eGet(feature);
             Object bv = b.eGet(feature);
-            boolean same = feature instanceof EReference
-                ? sameTarget(av, bv) : java.util.Objects.equals(av, bv);
+            boolean same;
+            if (feature instanceof EReference)
+            {
+                same = ((EReference) feature).isContainment() ? sameContent(av, bv)
+                    : sameTarget(av, bv);
+            }
+            else
+            {
+                same = java.util.Objects.equals(av, bv);
+            }
             if (!same)
             {
                 changes.add(feature.getName());
             }
         }
         return changes;
+    }
+
+    /**
+     * Whether two values of a containment feature hold the same content.
+     *
+     * @param ours the value on one side.
+     * @param theirs the value on the other.
+     * @return whether the content is the same, element by element for a list
+     */
+    private static boolean sameContent(Object ours, Object theirs)
+    {
+        if (ours == null || theirs == null)
+        {
+            return ours == theirs;
+        }
+        if (ours instanceof EList && theirs instanceof EList)
+        {
+            EList<?> mine = (EList<?>)ours;
+            EList<?> yours = (EList<?>)theirs;
+            if (mine.size() != yours.size())
+            {
+                return false;
+            }
+            for (int at = 0; at < mine.size(); at++)
+            {
+                if (!(mine.get(at) instanceof EObject) || !(yours.get(at) instanceof EObject))
+                {
+                    return false;
+                }
+                if (!java.util.Objects.equals(nameOf((EObject)mine.get(at)),
+                    nameOf((EObject)yours.get(at))))
+                {
+                    return false;
+                }
+                if (!structurallyEqual((EObject)mine.get(at), (EObject)yours.get(at)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (ours instanceof EObject && theirs instanceof EObject)
+        {
+            return structurallyEqual((EObject)ours, (EObject)theirs);
+        }
+        return java.util.Objects.equals(ours, theirs);
     }
 
     /**

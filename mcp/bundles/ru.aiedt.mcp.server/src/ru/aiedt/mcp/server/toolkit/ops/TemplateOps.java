@@ -9,6 +9,7 @@ import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.Enumerator;
 
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -55,9 +56,46 @@ final class TemplateOps
     }
 
     /**
+     * The template type the model holds on the object, as its literal name.
+     * <p>
+     * Read through {@code Enumerator.getLiteral()} rather than {@code Enum.name()}: measured on EDT
+     * 2025.2.3, the model's values carry {@code SpreadsheetDocument} as their literal while their
+     * Java constant is {@code SPREADSHEET_DOCUMENT}, and it is the literal a caller writes and the
+     * model answers to.
+     * </p>
+     *
+     * @param template the template object, just written to
+     * @return the literal, or <code>null</code> when the model carries no type for it
+     */
+    private static String typeOf(MdObject template)
+    {
+        org.eclipse.emf.ecore.EStructuralFeature feature =
+            template.eClass().getEStructuralFeature("templateType"); //$NON-NLS-1$
+        return typeLiteralOf(feature == null ? null : template.eGet(feature));
+    }
+
+    /**
+     * The literal a value the model holds for a template type is written as.
+     *
+     * @param modelValue the value read back from the template; may be <code>null</code>
+     * @return the literal, or <code>null</code> when there is no value
+     */
+    static String typeLiteralOf(Object modelValue)
+    {
+        if (modelValue == null)
+        {
+            return null;
+        }
+        return modelValue instanceof Enumerator ? ((Enumerator)modelValue).getLiteral()
+            : modelValue.toString();
+    }
+
+    /**
      * add_template - creates a Template (mdclass Template) under an owner metadata object. Fills
      * SpreadsheetDocument .mxlx and TextDocument/HTMLDocument content files post-commit so the
-     * template is usable right away. Honors dryRun.
+     * template is usable right away. Honors dryRun. A templateType with no literal in this model,
+     * and one the model refuses to set, both fail the operation instead of leaving the template
+     * without a type.
      *
      * @param params the tool parameters
      * @return the JSON result document
@@ -87,12 +125,23 @@ final class TemplateOps
             return ProjectResolver.notFound(projectName).toJson();
         }
         String canonicalType = BmTemplateHelper.canonicalTemplateType(templateTypeAlias);
+        // A type the model does not have is refused before anything is created: the reflection
+        // setter reports it as an error rather than throwing, and the error was logged and dropped,
+        // so the template came out with no type at all while the answer named the one asked for.
+        if (BmTemplateHelper.resolveTemplateTypeLiteral(canonicalType) == null)
+        {
+            return ToolResult.error("templateType '" + templateTypeAlias //$NON-NLS-1$
+                + "' is not a template type this EDT model has. Known types: " //$NON-NLS-1$
+                + BmTemplateHelper.templateTypeValues() + ".").toJson(); //$NON-NLS-1$
+        }
         String schemaRefusal = refusalForSchemaTemplate(canonicalType);
         if (schemaRefusal != null)
         {
             return ToolResult.error(schemaRefusal).toJson();
         }
         final String resolvedTemplateName = templateName;
+        final String resolvedTemplateType = canonicalType;
+        final String[] installedType = new String[1];
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 @SuppressWarnings("unchecked")
@@ -114,11 +163,17 @@ final class TemplateOps
                         + "lookup both unavailable on this EDT runtime.");
                 }
                 template.setName(resolvedTemplateName);
-                String setErr = BmObjectHelper.setProperty(template, "templateType", canonicalType);
+                String setErr = BmObjectHelper.setProperty(template, "templateType", //$NON-NLS-1$
+                    resolvedTemplateType);
                 if (setErr != null)
                 {
-                    Activator.logWarning("addTemplate setProperty templateType: " + setErr); //$NON-NLS-1$
+                    // The type is what the template is: a template without one is not the template
+                    // the caller asked for, and answering success would have left it to be found
+                    // later, by whatever reads the template and finds a different format inside.
+                    throw new RuntimeException("Template type '" + resolvedTemplateType //$NON-NLS-1$
+                        + "' was refused by the model: " + setErr); //$NON-NLS-1$
                 }
+                installedType[0] = typeOf(template);
                 templates.add(template);
                 // Note: content slot initialization happens AFTER this BM
                 // transaction commits - see post-commit block below.
@@ -127,15 +182,15 @@ final class TemplateOps
                 // transaction (BM rejects with "Failed to persist reference
                 // value..."). Instead we write Template.mxlx directly to
                 // disk and let EDT's validator pick it up.
-                return resolvedTemplateName + " (type=" + canonicalType + ")";
+                return resolvedTemplateName + " (type=" + resolvedTemplateType + ")";
             });
         // Post-commit: write empty Template.mxlx for SpreadsheetDocument
         // templates so subsequent set_cell / merge_cells / draw work
         // without requiring a manual EDT GUI open-and-save first.
-        if (r.ok && !dryRun && "SpreadsheetDocument".equals(canonicalType)) //$NON-NLS-1$
+        if (r.ok && !dryRun && "SpreadsheetDocument".equals(resolvedTemplateType)) //$NON-NLS-1$
         {
             String mxlxErr = BmTemplateHelper.writeEmptyMxlxFile(project, ownerFqn,
-                resolvedTemplateName, canonicalType);
+                resolvedTemplateName, resolvedTemplateType);
             if (mxlxErr != null)
             {
                 Activator.logWarning("addTemplate Template.mxlx write for " //$NON-NLS-1$
@@ -146,11 +201,11 @@ final class TemplateOps
         // Post-commit: for text templates (TextDocument / HTMLDocument) write the
         // content file (Template.txt / Template.htmldoc) so the template is usable
         // right away. Fills it with the `content` param when provided, else empty.
-        if (r.ok && !dryRun && BmTemplateHelper.templateContentFileName(canonicalType) != null)
+        if (r.ok && !dryRun && BmTemplateHelper.templateContentFileName(resolvedTemplateType) != null)
         {
             String content = JsonUtils.extractStringArgument(params, "content"); //$NON-NLS-1$
             String txtErr = BmTemplateHelper.writeTextTemplateContent(project, ownerFqn,
-                resolvedTemplateName, canonicalType, content);
+                resolvedTemplateName, resolvedTemplateType, content);
             if (txtErr != null)
             {
                 Activator.logWarning("addTemplate text content write for " //$NON-NLS-1$
@@ -159,14 +214,23 @@ final class TemplateOps
             }
             else if (content != null && !content.isEmpty())
             {
-                r.tags.put("contentWritten", BmTemplateHelper.templateContentFileName(canonicalType)); //$NON-NLS-1$
+                r.tags.put("contentWritten", //$NON-NLS-1$
+                    BmTemplateHelper.templateContentFileName(resolvedTemplateType));
             }
         }
+        // The answer names the type the model holds, not the one that was asked for: the two differ
+        // exactly when the write did not land the way it was meant to, and that is what a caller
+        // reads this field to find out.
+        String reportedType = installedType[0] != null ? installedType[0] : resolvedTemplateType;
         ToolResult tool = r.ok ? ToolResult.success() : ToolResult.error(r.error != null ? r.error : "addTemplate failed");
         tool.put("operation", "add_template")
             .put("ownerFqn", ownerFqn)
             .put("templateName", resolvedTemplateName)
-            .put("templateType", canonicalType);
+            .put("templateType", reportedType);
+        if (r.ok && !reportedType.equals(resolvedTemplateType))
+        {
+            tool.put("requestedTemplateType", resolvedTemplateType); //$NON-NLS-1$
+        }
         if (r.message != null)
         {
             tool.put("message", r.message);
@@ -179,7 +243,9 @@ final class TemplateOps
      * set_template_content - replaces the plain-text content of a TextDocument (Template.txt) or
      * HTMLDocument (Template.htmldoc) template. The type is taken from the templateType param, else
      * auto-detected from an existing content file (default TextDocument). Non-text templates
-     * (spreadsheet / DCS / binary) are rejected with a pointer to the right tool.
+     * (spreadsheet / DCS / binary) are rejected with a pointer to the right tool, and so is a
+     * template that is not on disk at all: the file is only ever written into a template's own
+     * folder, never into one built on the way.
      *
      * @param params the tool parameters
      * @return the JSON result document
@@ -221,6 +287,17 @@ final class TemplateOps
         if (templateTypeAlias != null && !templateTypeAlias.isEmpty())
         {
             canonicalType = BmTemplateHelper.canonicalTemplateType(templateTypeAlias);
+            // An explicit type says what the template is, not that it is there. Without this the
+            // write went to a folder built on the way - src/<Type>/<Owner>/Templates/<Name>/
+            // Template.txt - so a mistyped name left a template file behind a name nothing
+            // declares, and the call answered success.
+            if (!BmTemplateHelper.templateExists(project, ownerFqn, templateName))
+            {
+                String reason = BmTemplateHelper.templateDirRefusal(ownerFqn, templateName);
+                return ToolResult.error("Template '" + templateName + "' under '" + ownerFqn //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' does not exist" + (reason == null ? "" : ": " + reason) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + " - create it first with add_template.").toJson(); //$NON-NLS-1$
+            }
         }
         else
         {
@@ -257,6 +334,17 @@ final class TemplateOps
                 .toJson();
         }
         int bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        // The same guard for a template that is there but holds another format: a text file written
+        // beside a spreadsheet template makes the folder hold two contents, which is not a template
+        // EDT can open.
+        String onDisk = BmTemplateHelper.existingContentFileName(project, ownerFqn, templateName);
+        if (onDisk != null && !onDisk.equals(contentFile))
+        {
+            return ToolResult.error("Template '" + templateName + "' under '" + ownerFqn //$NON-NLS-1$ //$NON-NLS-2$
+                + "' holds " + onDisk + ", not " + contentFile + ": pass the type that matches the " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + "file on disk, or use the workshop that owns that format - mxl_workshop for " //$NON-NLS-1$
+                + "SpreadsheetDocument, dcs_workshop for DataCompositionSchema.").toJson(); //$NON-NLS-1$
+        }
         if (dryRun)
         {
             return ToolResult.success()

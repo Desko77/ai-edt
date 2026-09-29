@@ -23,6 +23,7 @@ import com._1c.g5.v8.dt.core.platform.IConfigurationProjectManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDerivedDataManagerProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
+import com._1c.g5.v8.dt.core.platform.IEditingLanguageManager;
 import com._1c.g5.v8.dt.core.platform.IExtensionProjectManager;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProjectManager;
 import com._1c.g5.v8.dt.import_.IImportOperationFactory;
@@ -36,6 +37,7 @@ import com._1c.g5.v8.dt.navigator.providers.INavigatorContentProviderStateProvid
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager;
 import com._1c.g5.v8.dt.platform.services.core.operations.IInfobaseCreationOperation;
 import com._1c.g5.v8.dt.platform.services.core.operations.ISectionDeleteOperation;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallationManager;
@@ -142,6 +144,8 @@ public class Activator
 
     private ServiceTracker<IConfigurationProvider, IConfigurationProvider> configurationProviderTracker;
 
+    private ServiceTracker<IEditingLanguageManager, IEditingLanguageManager> editingLanguageManagerTracker;
+
     /** The services other bundles publish for this server: tools and module source providers. */
     private volatile boolean uiPending;
 
@@ -169,6 +173,8 @@ public class Activator
     private ServiceTracker<IInfobaseAccessManager, IInfobaseAccessManager> infobaseAccessManagerTracker;
 
     private ServiceTracker<IInfobaseManager, IInfobaseManager> infobaseManagerTracker;
+
+    private ServiceTracker<IInfobasePreferencesManager, IInfobasePreferencesManager> infobasePreferencesManagerTracker;
 
     private ServiceTracker<IInfobaseAssociationManager, IInfobaseAssociationManager> infobaseAssociationManagerTracker;
 
@@ -511,6 +517,17 @@ public class Activator
     }
 
     /**
+     * Returns the manager of the projects' editing language - the code the New Form wizard keys
+     * generated titles by.
+     *
+     * @return the service, or <code>null</code> when EDT does not offer it
+     */
+    public IEditingLanguageManager getEditingLanguageManager()
+    {
+        return service(editingLanguageManagerTracker);
+    }
+
+    /**
      * Returns the manager of validation markers.
      *
      * @return the service, or <code>null</code> when EDT does not offer it
@@ -619,6 +636,17 @@ public class Activator
     public IInfobaseManager getInfobaseManager()
     {
         return service(infobaseManagerTracker);
+    }
+
+    /**
+     * Returns the manager of per-infobase preferences, among them whether a restructure asks for
+     * confirmation before it deletes data.
+     *
+     * @return the service, or <code>null</code> when EDT does not offer it
+     */
+    public IInfobasePreferencesManager getInfobasePreferencesManager()
+    {
+        return service(infobasePreferencesManagerTracker);
     }
 
     /**
@@ -905,6 +933,7 @@ public class Activator
         dtProjectManagerTracker = openTracker(context, IDtProjectManager.class);
         resourceStoreManagerTracker = openTracker(context, IResourceStoreManager.class);
         configurationProviderTracker = openTracker(context, IConfigurationProvider.class);
+        editingLanguageManagerTracker = openTracker(context, IEditingLanguageManager.class);
         markerManagerTracker = openTracker(context, IMarkerManager.class);
         checkSchedulerTracker = openTracker(context, ICheckScheduler.class);
         checkRepositoryTracker = openTracker(context, ICheckRepository.class);
@@ -916,6 +945,7 @@ public class Activator
         applicationManagerTracker = openTracker(context, IApplicationManager.class);
         infobaseAccessManagerTracker = openTracker(context, IInfobaseAccessManager.class);
         infobaseManagerTracker = openTracker(context, IInfobaseManager.class);
+        infobasePreferencesManagerTracker = openTracker(context, IInfobasePreferencesManager.class);
         infobaseAssociationManagerTracker = openTracker(context, IInfobaseAssociationManager.class);
         infobaseCreationOperationTracker = openTracker(context, IInfobaseCreationOperation.class);
         sectionDeleteOperationTracker = openTracker(context, ISectionDeleteOperation.class);
@@ -948,6 +978,7 @@ public class Activator
         dtProjectManagerTracker = closeTracker(dtProjectManagerTracker);
         resourceStoreManagerTracker = closeTracker(resourceStoreManagerTracker);
         configurationProviderTracker = closeTracker(configurationProviderTracker);
+        editingLanguageManagerTracker = closeTracker(editingLanguageManagerTracker);
         markerManagerTracker = closeTracker(markerManagerTracker);
         checkSchedulerTracker = closeTracker(checkSchedulerTracker);
         checkRepositoryTracker = closeTracker(checkRepositoryTracker);
@@ -959,6 +990,7 @@ public class Activator
         applicationManagerTracker = closeTracker(applicationManagerTracker);
         infobaseAccessManagerTracker = closeTracker(infobaseAccessManagerTracker);
         infobaseManagerTracker = closeTracker(infobaseManagerTracker);
+        infobasePreferencesManagerTracker = closeTracker(infobasePreferencesManagerTracker);
         infobaseAssociationManagerTracker = closeTracker(infobaseAssociationManagerTracker);
         infobaseCreationOperationTracker = closeTracker(infobaseCreationOperationTracker);
         sectionDeleteOperationTracker = closeTracker(sectionDeleteOperationTracker);

@@ -28,6 +28,11 @@ Usage:
 
 --check exits non-zero when anything we use is missing, which is what makes a removal in EDT turn a
 build red instead of a note somebody has to read.
+
+A javap that does not run stops the pass with its own exit code, whatever --check says. The first
+pass reads the bytecode, so a javap that failed leaves it nothing to read, and an empty reading
+prints the same clean count as a release that still has everything we call. An unanswered question
+must not be shown as an answered one - that is the whole reason this script exists.
 """
 
 import argparse
@@ -103,6 +108,35 @@ def target_release():
     with open(TARGET_FILE, encoding="utf-8") as handle:
         found = re.search(r"/downloads/releases/ruby/([\d.]+)/", handle.read())
     return found.group(1) if found else None
+
+
+class DisassemblyFailed(Exception):
+    """javap did not answer, so nothing about the bytecode can be checked."""
+
+
+def run_javap(arguments):
+    """Runs javap over the arguments and returns the finished process."""
+    return subprocess.run([javap()] + arguments, capture_output=True, text=True)
+
+
+def disassemble(batch):
+    """The disassembly of one batch of classes, or a failure that stops the census.
+
+    The exit status is read, not only the output. A javap that never ran writes nothing, an empty
+    disassembly is indistinguishable from classes that refer to nothing, and the census would then
+    report a clean count of a set it never looked at - a green build over an unanswered question.
+    Whatever javap said on its error stream is carried into the failure, because the reason is
+    usually there (a JDK too old for the class files, a class file removed by a rebuild).
+
+    @param batch the class files to disassemble
+    @return javap's output
+    @raises DisassemblyFailed when javap exits non-zero
+    """
+    result = run_javap(["-p", "-c", "-s"] + batch)
+    if result.returncode != 0:
+        said = " | ".join(line.strip() for line in (result.stderr or "").splitlines()[-3:])
+        raise DisassemblyFailed("javap exited %d%s" % (result.returncode, ": " + said if said else ""))
+    return result.stdout
 
 
 def fetch(url, cache_path, attempts=3, refresh=False):
@@ -388,8 +422,7 @@ def compiled_references():
         # -s prints the JVM descriptor of every declared method and field. Without it a type used
         # only in a signature - a parameter, a return, a field - appears solely in the human-readable
         # declaration, which this does not parse, and so escaped the census entirely.
-        output = subprocess.run([javap(), "-p", "-c", "-s"] + batch,
-                                capture_output=True, text=True).stdout
+        output = disassemble(batch)
         for line in output.splitlines():
             for descriptor in DESCRIPTOR_TYPE.finditer(line):
                 types.add(descriptor.group(1).replace("/", "."))
@@ -677,7 +710,12 @@ def main():
             % os.path.relpath(REGISTRY, REPO_ROOT))
         return 1
 
-    types, members = compiled_references()
+    try:
+        types, members = compiled_references()
+    except DisassemblyFailed as failure:
+        log("the compiled classes could not be disassembled - %s" % failure)
+        log("nothing about the bytecode was checked; run it where a JDK 17 javap is available")
+        return 2
     if types is None:
         log("no compiled classes at %s - build the plugin first" % CLASSES)
         return 2

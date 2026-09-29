@@ -83,6 +83,9 @@ public final class ComparisonSessions
          */
         boolean inUse;
 
+        /** Whether the environment is still applying this session's merge. */
+        boolean mergeRunning;
+
         Session(String key, String fingerprint, Object handle, long now)
         {
             this.key = key;
@@ -168,6 +171,54 @@ public final class ComparisonSessions
         {
             session.inUse = false;
         }
+    }
+
+    /**
+     * Protects a session while its merge continues after the caller stopped waiting.
+     *
+     * @param session the session whose merge is still running; <code>null</code> is ignored.
+     */
+    public static synchronized void markMergeRunning(Session session)
+    {
+        setMergeRunning(session, true);
+    }
+
+    /**
+     * Records whether the environment is still applying a session's merge.
+     * <p>
+     * Cleared as soon as a call or the sweep sees the merge end: the flag exempts the session from
+     * the idle limit and from eviction, so one left set would keep a finished comparison open for
+     * the life of the process.
+     * </p>
+     *
+     * @param session the session; <code>null</code> is ignored.
+     * @param running whether its merge is still running
+     */
+    public static synchronized void setMergeRunning(Session session, boolean running)
+    {
+        if (session != null)
+        {
+            session.mergeRunning = running;
+        }
+    }
+
+    /**
+     * The sessions whose merge was still running when last seen, for the sweep to ask the
+     * environment about.
+     *
+     * @return a copy of those sessions
+     */
+    public static synchronized List<Session> mergesRunning()
+    {
+        List<Session> running = new ArrayList<>();
+        for (Session session : OPEN.values())
+        {
+            if (session.mergeRunning)
+            {
+                running.add(session);
+            }
+        }
+        return running;
     }
 
     /**
@@ -290,7 +341,7 @@ public final class ComparisonSessions
         while (sessions.hasNext())
         {
             Session session = sessions.next();
-            if (now - session.touchedAt > IDLE_LIMIT_MS)
+            if (!session.inUse && !session.mergeRunning && now - session.touchedAt > IDLE_LIMIT_MS)
             {
                 Activator.logDebug("comparison session " + session.key //$NON-NLS-1$
                     + " expired after " + IDLE_LIMIT_MS / 60000 + " idle minutes"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -301,7 +352,7 @@ public final class ComparisonSessions
     }
 
     /**
-     * Drops the oldest session when there are more than the ceiling allows.
+     * Drops the oldest session that no call or merge is using when there are too many open.
      *
      * @return the session dropped, or <code>null</code> when none needed to be
      */
@@ -312,12 +363,19 @@ public final class ComparisonSessions
             return null;
         }
         Iterator<Session> sessions = OPEN.values().iterator();
-        Session oldest = sessions.next();
-        sessions.remove();
-        DROPPED.add(oldest);
-        Activator.logDebug("comparison session " + oldest.key //$NON-NLS-1$
-            + " dropped: more than " + MAX_SESSIONS + " were open"); //$NON-NLS-1$ //$NON-NLS-2$
-        return oldest;
+        while (sessions.hasNext())
+        {
+            Session oldest = sessions.next();
+            if (!oldest.inUse && !oldest.mergeRunning)
+            {
+                sessions.remove();
+                DROPPED.add(oldest);
+                Activator.logDebug("comparison session " + oldest.key //$NON-NLS-1$
+                    + " dropped: more than " + MAX_SESSIONS + " were open"); //$NON-NLS-1$ //$NON-NLS-2$
+                return oldest;
+            }
+        }
+        return null;
     }
 
     /**

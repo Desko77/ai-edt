@@ -60,7 +60,7 @@ public class SetExceptionBreakpointTool implements IMcpTool
                     + "Omit to break on any error.") //$NON-NLS-1$
             .booleanProperty("catchAll", //$NON-NLS-1$
                 "Break on any raised error. Default true; default false when message is set. " //$NON-NLS-1$
-                    + "Pass explicitly to override the default.") //$NON-NLS-1$
+                    + "Pass explicitly to override the default; false requires message.") //$NON-NLS-1$
             .build();
     }
 
@@ -68,6 +68,25 @@ public class SetExceptionBreakpointTool implements IMcpTool
     public ResponseType getResponseType()
     {
         return ResponseType.JSON;
+    }
+
+    /**
+     * Refuses a breakpoint that would filter on nothing: with {@code catchAll=false} the breakpoint
+     * breaks only on the given message, so without one it never breaks.
+     *
+     * @param catchAll whether the breakpoint breaks on any error
+     * @param hasMessage whether a non-blank message was given
+     * @return the refusal sentence, or {@code null} when the combination is usable
+     */
+    static String filterRefusal(boolean catchAll, boolean hasMessage)
+    {
+        if (catchAll || hasMessage)
+        {
+            return null;
+        }
+        return "catchAll=false breaks only on the error text given in message, and no message was " //$NON-NLS-1$
+            + "given, so the breakpoint would never break. Pass message=<error text>, or omit " //$NON-NLS-1$
+            + "catchAll to break on any error. No breakpoint was set."; //$NON-NLS-1$
     }
 
     @Override
@@ -84,6 +103,11 @@ public class SetExceptionBreakpointTool implements IMcpTool
         // Default catchAll=true, but a specific message implies catchAll=false.
         Boolean catchAllArg = JsonUtils.extractBooleanArgumentNullable(params, "catchAll"); //$NON-NLS-1$
         boolean catchAll = catchAllArg != null ? catchAllArg.booleanValue() : !hasMessage;
+        String refusal = filterRefusal(catchAll, hasMessage);
+        if (refusal != null)
+        {
+            return ToolResult.error(refusal).put("projectName", projectName).toJson(); //$NON-NLS-1$
+        }
 
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)

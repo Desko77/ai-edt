@@ -24,10 +24,12 @@ import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmFormGeneratorHelper;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
+import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.StockPictures;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.TypeApplication;
 
@@ -946,7 +948,15 @@ final class FormItemsOps
     }
 
     /**
-     * Adds a new command to an existing form.
+     * Adds a new command to an existing form, or binds the handler to the command of that name.
+     * <p>
+     * With {@code writeStub} (default true) the handler procedure is added to the form's module
+     * after the command is committed, into the region of form command handlers, unless the module
+     * already declares it.
+     * </p>
+     *
+     * @param params projectName, formFqn, commandName; optionally title, handler, writeStub, dryRun
+     * @return the answer as JSON
      */
     String opAddFormCommand(Map<String, String> params)
     {
@@ -1007,21 +1017,24 @@ final class FormItemsOps
         {
             return EditMetadataTool.formatFormResult(result, "add_form_command", formFqn); //$NON-NLS-1$
         }
-        // Success: surface the handler name + a hint to add its BSL body (the
-        // platform cannot generate a procedure body inside a BM transaction),
-        // mirroring opAddFormEventHandler.
         ToolResult ok = ToolResult.success()
             .put("operation", "add_form_command") //$NON-NLS-1$ //$NON-NLS-2$
             .put("formFqn", formFqn) //$NON-NLS-1$
             .put("commandName", commandName) //$NON-NLS-1$
             .put("handler", handler) //$NON-NLS-1$
-            .put("message", result != null ? result : "ok") //$NON-NLS-1$ //$NON-NLS-2$
-            .put("hint", //$NON-NLS-1$
-                "Command action wired to handler '" + handler //$NON-NLS-1$
-                    + "'. Add the procedure to the form's Module.bsl via " //$NON-NLS-1$
-                    + "write_module_source mode=append: &НаКлиенте Процедура " //$NON-NLS-1$
-                    + handler + "(Команда) ... КонецПроцедуры - the platform " //$NON-NLS-1$
-                    + "cannot generate procedure bodies inside a BM transaction."); //$NON-NLS-1$
+            .put("message", result != null ? result : "ok"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (JsonUtils.extractBooleanArgument(params, "writeStub", true)) //$NON-NLS-1$
+        {
+            FormModuleStubs.append(project, formFqn, handler, FormModuleStubs.commandHandlerStub(handler),
+                FormModuleStubs.COMMANDS, formDryRun).putInto(ok);
+        }
+        else
+        {
+            ok.put("stubWritten", false) //$NON-NLS-1$
+                .put("hint", "Command action wired to handler '" + handler //$NON-NLS-1$ //$NON-NLS-2$
+                    + "'. Add the procedure to the form's Module.bsl via write_module_source " //$NON-NLS-1$
+                    + "mode=append."); //$NON-NLS-1$
+        }
         // Nudge toward EDT naming: a form command is named by its action, not by
         // a "Command"/"Команда" suffix (that reads as machine-generated). EDT
         // itself names command "X", handler "X", and the button "ФормаX".
@@ -1358,7 +1371,9 @@ final class FormItemsOps
      * A successful answer also carries the {@code adoptedFormAttributes} line when
      * {@link ru.aiedt.mcp.server.support.BmFormHelper#annotateAdopted(String)} wrote one,
      * as a JSON array under the same key: a write that borrowed base-form attributes
-     * names them to the caller.
+     * names them to the caller. A {@code warning} line becomes a JSON field of the same name:
+     * the operation succeeded and still owes the caller something to know before it acts on
+     * the answer.
      *
      * @param markdown the raw EditFormTool response (YamlFrontMatter + body)
      * @param op the unified (snake_case) operation name for the response
@@ -1376,6 +1391,7 @@ final class FormItemsOps
         String status = null;
         List<String> adopted = null;
         List<String> notPerformed = null;
+        String warning = null;
         String body = markdown;
         // Parse a leading YamlFrontMatter block: "---\n" <lines> "---\n" <body>.
         // Strip a leading UTF-8 BOM defensively (YamlFrontMatter.build() never emits
@@ -1416,6 +1432,12 @@ final class FormItemsOps
                         // every check passed.
                         notPerformed = parseScalarList(
                             unquoteYamlScalar(line.substring(colon + 1).trim()));
+                    }
+                    else if ("warning".equals(key)) //$NON-NLS-1$
+                    {
+                        // Dropping the line here would make a write whose result needs a word of
+                        // caution read as a write with nothing left to do.
+                        warning = unquoteYamlScalar(line.substring(colon + 1).trim());
                     }
                 }
             }
@@ -1466,6 +1488,10 @@ final class FormItemsOps
         if (notPerformed != null && !notPerformed.isEmpty())
         {
             ok.put("dataPathChecksNotPerformed", notPerformed); //$NON-NLS-1$
+        }
+        if (warning != null && !warning.isEmpty())
+        {
+            ok.put("warning", warning); //$NON-NLS-1$
         }
         return ok.toJson();
     }
@@ -1560,6 +1586,16 @@ final class FormItemsOps
      * RadioButton ext-info (see {@code createRadioButtonsFieldExtInfo}). Caller
      * may still pass {@code elementType} explicitly; we set it here only when
      * absent.
+     * <p>
+     * {@link EditFormTool} answers MARKDOWN while {@code edit_metadata} answers
+     * JSON, so its response is passed through
+     * {@link #convertEditFormMarkdownToJson} the same way the neighbouring
+     * {@link #delegateToEditForm} route does. The raw markdown leaves the JSON
+     * protocol handler with a body it cannot parse (-32603
+     * MalformedJsonException) even though the write already happened.
+     *
+     * @param params the edit_metadata parameters of add_radio_button
+     * @return the JSON answer of the operation, naming the form it wrote to
      */
     String delegateToEditFormAsRadioButton(Map<String, String> params)
     {
@@ -1567,70 +1603,55 @@ final class FormItemsOps
         forwarded.put("operation", "add_field"); //$NON-NLS-1$ //$NON-NLS-2$
         forwarded.putIfAbsent("elementType", "RadioButton"); //$NON-NLS-1$ //$NON-NLS-2$
         EditFormTool editForm = new EditFormTool();
-        return editForm.execute(forwarded);
+        String markdown = editForm.execute(forwarded);
+        return convertEditFormMarkdownToJson(markdown, "add_radio_button", //$NON-NLS-1$
+            forwarded.get("formFqn")); //$NON-NLS-1$
     }
 
     /**
-     * 1.40: list available stock pictures by name. Probes
-     * {@code com._1c.g5.v8.dt.platform.pictures.StandardPictures} when present
-     * and falls back to the user's CommonPicture library exposed via the
-     * project's configuration.
+     * Lists the pictures a form element or command can take: the stock pictures of the project's
+     * platform version, standard and extended, and the common pictures of the project's
+     * configuration. {@code filter} matches the English or the Russian name of a stock picture.
+     * <p>
+     * A runtime that registers no stock pictures answers with a refusal tagged
+     * {@code serviceUnavailable} carrying the common pictures, not with an empty stock list.
+     * </p>
+     *
+     * @param params projectName (optional; its platform version, the newest without it) and filter
+     * @return the JSON answer
      */
     String opListPictures(Map<String, String> params)
     {
         String filter = JsonUtils.extractStringArgument(params, "filter"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        java.util.List<String> stock = listStockPictures(filter);
+        java.util.List<StockPictures.Entry> all = StockPictures.read(StockPictures.versionOf(projectName));
         java.util.List<String> common = listCommonPictures(projectName, filter);
+        if (all.isEmpty())
+        {
+            return ToolResult.error("This EDT registers no stock pictures for the platform version, " //$NON-NLS-1$
+                + "so StdPicture and StdExtPicture names cannot be listed or checked.") //$NON-NLS-1$
+                .put("operation", "list_pictures") //$NON-NLS-1$ //$NON-NLS-2$
+                .put(ErrorTags.SERVICE_UNAVAILABLE.wire(), "stockPictures") //$NON-NLS-1$
+                .put("commonPictureCount", common.size()) //$NON-NLS-1$
+                .put("commonPictures", common) //$NON-NLS-1$
+                .toJson();
+        }
+        java.util.List<String> stock = StockPictures.names(all, StockPictures.STD, filter);
+        java.util.List<String> extended = StockPictures.names(all, StockPictures.STD_EXT, filter);
         return ToolResult.success()
             .put("operation", "list_pictures") //$NON-NLS-1$ //$NON-NLS-2$
             .put("filter", filter == null ? "" : filter) //$NON-NLS-1$ //$NON-NLS-2$
-            .put("stockPictureCount", stock.size())
-            .put("stockPictures", stock)
-            .put("commonPictureCount", common.size())
-            .put("commonPictures", common)
-            .put("hint", "Stock picture: pass to setProperty as bare name. " //$NON-NLS-1$
-                + "CommonPicture: pass as 'CommonPicture.<Name>'.")
+            .put("stockPictureCount", stock.size()) //$NON-NLS-1$
+            .put("stockPictures", stock) //$NON-NLS-1$
+            .put("stockExtPictureCount", extended.size()) //$NON-NLS-1$
+            .put("stockExtPictures", extended) //$NON-NLS-1$
+            .put("commonPictureCount", common.size()) //$NON-NLS-1$
+            .put("commonPictures", common) //$NON-NLS-1$
+            .put("hint", "Stock picture: pass as StdPicture.<Name> or the bare name. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Extended stock picture: StdExtPicture.<Name>. Common picture: CommonPicture.<Name>.") //$NON-NLS-1$
             .toJson();
     }
 
-    private static java.util.List<String> listStockPictures(String filter)
-    {
-        // Probe several candidate StandardPictures classes - present on most
-        // EDT builds but namespaced differently across versions.
-        for (String cls : new String[] {
-            "com._1c.g5.v8.dt.platform.pictures.StandardPictures",
-            "com._1c.g5.v8.dt.platform.pictures.PlatformPictures",
-            "com._1c.g5.v8.dt.ui.platform.PlatformPictures"
-        })
-        {
-            try
-            {
-                Class<?> clazz = Class.forName(cls);
-                java.util.List<String> names = new java.util.ArrayList<>();
-                for (java.lang.reflect.Field f : clazz.getDeclaredFields())
-                {
-                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
-                        && java.lang.reflect.Modifier.isPublic(f.getModifiers()))
-                    {
-                        String n = f.getName();
-                        if (filter == null || filter.isEmpty()
-                            || n.toLowerCase().contains(filter.toLowerCase()))
-                        {
-                            names.add(n);
-                        }
-                    }
-                }
-                java.util.Collections.sort(names);
-                return names;
-            }
-            catch (ClassNotFoundException ignored)
-            {
-                // try next
-            }
-        }
-        return java.util.Collections.emptyList();
-    }
 
     private static java.util.List<String> listCommonPictures(String projectName, String filter)
     {

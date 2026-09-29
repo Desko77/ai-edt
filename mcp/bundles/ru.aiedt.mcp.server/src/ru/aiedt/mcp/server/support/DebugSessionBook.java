@@ -344,12 +344,17 @@ public final class DebugSessionBook
 
     /**
      * Whether a remembered position still exists in a stack of this size.
+     * <p>
+     * The one range rule: the lookup above reads a remembered position through it, and so does a
+     * caller that resolved a position itself. A position outside the stack is answered with -1 and
+     * never folded into the nearest frame.
+     * </p>
      *
      * @param liveCount how many frames the thread has now.
      * @param index the remembered position.
      * @return the index to read, or -1 when the stack no longer reaches it
      */
-    static int pickIndex(int liveCount, int index)
+    public static int pickIndex(int liveCount, int index)
     {
         return index >= 0 && index < liveCount ? index : -1;
     }
@@ -651,7 +656,7 @@ public final class DebugSessionBook
      *
      * @param applicationId the application; ignored when <code>null</code>
      */
-    private synchronized void forget(String applicationId)
+    synchronized void forget(String applicationId)
     {
         if (applicationId == null)
         {
@@ -659,28 +664,50 @@ public final class DebugSessionBook
         }
 
         snapshots.remove(applicationId);
-        evictOwnedBy(applicationId, threadOwners, threadsById);
-        evictOwnedBy(applicationId, frameOwners, framesById);
+
+        List<IThread> goneThreads = new ArrayList<>();
+        for (Long threadId : takeOwnedBy(applicationId, threadOwners))
+        {
+            IThread thread = threadsById.remove(threadId);
+            if (thread != null)
+            {
+                goneThreads.add(thread);
+            }
+        }
+
+        List<Long> goneFrames = takeOwnedBy(applicationId, frameOwners);
+        framesById.keySet().removeAll(goneFrames);
+
+        // A reference names an address in a thread's stack, so it stops describing anything the
+        // moment that stack moves on. The references this application issued go, and so do the ones
+        // pointing into its threads - the owner map alone misses a frame whose application could not
+        // be resolved when it was registered.
+        framePlaces.keySet().removeAll(goneFrames);
+        framePlaces.values().removeIf(place -> goneThreads.contains(place.thread));
 
         notifyAll();
     }
 
     /**
+     * Removes the ids an application owns from a map and answers them.
+     *
      * @param applicationId the application whose ids are to go
      * @param owners id to application
-     * @param objects id to the object it named
+     * @return the ids that were owned; empty, never <code>null</code>
      */
-    private static void evictOwnedBy(String applicationId, Map<Long, String> owners, Map<Long, ?> objects)
+    private static List<Long> takeOwnedBy(String applicationId, Map<Long, String> owners)
     {
+        List<Long> taken = new ArrayList<>();
         for (Iterator<Map.Entry<Long, String>> it = owners.entrySet().iterator(); it.hasNext();)
         {
             Map.Entry<Long, String> owned = it.next();
             if (applicationId.equals(owned.getValue()))
             {
-                objects.remove(owned.getKey());
+                taken.add(owned.getKey());
                 it.remove();
             }
         }
+        return taken;
     }
 
     /**

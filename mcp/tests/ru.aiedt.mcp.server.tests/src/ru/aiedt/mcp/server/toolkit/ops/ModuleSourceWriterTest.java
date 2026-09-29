@@ -96,6 +96,22 @@ public class ModuleSourceWriterTest
         assertTrue(schema.contains("\"dryRun\""));
     }
 
+    /**
+     * The character pass is advertised, and its default is stated.
+     * <p>
+     * A caller who does not know the text is passed through a replacement step before it is written
+     * cannot tell a write that changed the text from one that wrote it verbatim.
+     * </p>
+     */
+    @Test
+    public void schemaDeclaresTheCharacterNormalizationSwitch()
+    {
+        String schema = freshTool().getInputSchema();
+        assertTrue("schema should declare normalizeInvalidCharacters", //$NON-NLS-1$
+            schema.contains("\"normalizeInvalidCharacters\"")); //$NON-NLS-1$
+        assertTrue("the default has to be stated", schema.contains("default: true")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Test
     public void schemaMarksProjectNameAsRequired()
     {

@@ -49,6 +49,12 @@ public final class HeavyTools
         // answers. It dumps the whole configuration through a Designer spawned against the
         // infobase.
         "export_configuration_to_cf", //$NON-NLS-1$
+        // config_io's export_database_configuration and export_database_extension: the guarded
+        // .cf/.cfe dumps - the same Designer spawn against the infobase as
+        // export_configuration_to_cf, run by the facade itself, so the operation name is what
+        // the route answers.
+        "export_database_configuration", //$NON-NLS-1$
+        "export_database_extension", //$NON-NLS-1$
         // convertExternalToXml behind two callers: the standalone tool and config_io's operation of
         // the same name. Runs a Designer against the infobase the caller names.
         "unpack_external_binary", //$NON-NLS-1$
@@ -58,8 +64,12 @@ public final class HeavyTools
         // create_infobase: the physical creation is a CREATEINFOBASE batch child process.
         "create_infobase", //$NON-NLS-1$
         // sync_control's rebuild_dump_info: the infobase is released to a Designer that dumps
-        // ConfigDumpInfo.xml. The other sync_control operations read files in-process.
+        // ConfigDumpInfo.xml.
         "rebuild_dump_info", //$NON-NLS-1$
+        // sync_control's retrieve_database_changes: pulls the infobase into the project and can
+        // reload the whole configuration into the model. The other sync_control operations read
+        // files in-process.
+        "retrieve_database_changes", //$NON-NLS-1$
         // extension_workshop's check_platform_verdict: the facade runs it itself, and the run
         // creates a staging infobase and puts the delivery and the extension to a Designer
         // there. Named by the operation, as the facade's route answers it.

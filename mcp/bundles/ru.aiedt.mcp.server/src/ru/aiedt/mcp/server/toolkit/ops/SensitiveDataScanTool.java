@@ -11,7 +11,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,6 +53,10 @@ public class SensitiveDataScanTool implements IMcpTool
 
     private static final Pattern STRING_LITERAL = Pattern.compile("\"([^\"]*)\""); //$NON-NLS-1$
 
+    /** The check names the scan knows, in the spelling the schema and the answer use. */
+    private static final List<String> CHECK_NAMES = java.util.List.of("ATTRIBUTE_NAME", //$NON-NLS-1$
+        "HARDCODED_SECRET", "COMMENT_LEAK", "LOG_SENSITIVE"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
     @Override
     public String getName()
     {
@@ -81,10 +84,13 @@ public class SensitiveDataScanTool implements IMcpTool
                 "Module FQN, for example CommonModule.Sales.") //$NON-NLS-1$
             .stringProperty("subsystemName", "Subsystem name.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("checks", //$NON-NLS-1$
-                "Comma-separated: ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, LOG_SENSITIVE") //$NON-NLS-1$
-            .stringProperty("severity_filter", "info | warning | error | all (default warning)") //$NON-NLS-1$ //$NON-NLS-2$
+                "Comma-separated: ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, LOG_SENSITIVE, " //$NON-NLS-1$
+                    + "or all (default all). Unknown names refuse the call.") //$NON-NLS-1$
+            .stringProperty("severity_filter", "info | warning | error | all (default warning). " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Findings below it are counted as omittedBelowSeverityFilter.") //$NON-NLS-1$
             .stringProperty("customPatterns", //$NON-NLS-1$
-                "Comma-separated additional regex patterns for ATTRIBUTE_NAME") //$NON-NLS-1$
+                "Comma-separated additional regex patterns for ATTRIBUTE_NAME, or a JSON array of them " //$NON-NLS-1$
+                    + "written as text. A pattern that does not compile refuses the call.") //$NON-NLS-1$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
@@ -145,7 +151,15 @@ public class SensitiveDataScanTool implements IMcpTool
     String runScan(IProject project, Map<String, String> params, WalkNarrowing.Decision decision)
         throws Exception
     {
-        Set<String> checks = parseChecks(JsonUtils.extractStringArgument(params, "checks")); //$NON-NLS-1$
+        Set<String> checks;
+        try
+        {
+            checks = parseChecks(JsonUtils.extractStringArgument(params, "checks")); //$NON-NLS-1$
+        }
+        catch (IllegalArgumentException unknown)
+        {
+            return ToolResult.error(unknown.getMessage()).toJson();
+        }
         String severity = orDefault(JsonUtils.extractStringArgument(params, "severity_filter"), //$NON-NLS-1$
             "warning"); //$NON-NLS-1$
         if (!"all".equalsIgnoreCase(severity) && !"error".equalsIgnoreCase(severity) //$NON-NLS-1$ //$NON-NLS-2$
@@ -155,8 +169,16 @@ public class SensitiveDataScanTool implements IMcpTool
                 java.util.Arrays.asList("error", "warning", "info", "all"))).toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         }
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
-        Set<Pattern> custom = parseCustomPatterns(
-            JsonUtils.extractStringArgument(params, "customPatterns")); //$NON-NLS-1$
+        Set<Pattern> custom;
+        try
+        {
+            custom = parseCustomPatterns(
+                JsonUtils.extractStringArgument(params, "customPatterns")); //$NON-NLS-1$
+        }
+        catch (IllegalArgumentException broken)
+        {
+            return ToolResult.error(broken.getMessage()).toJson();
+        }
         SubsystemMembership membership = null;
         IFile onlyModule = null;
         if (WalkNarrowing.SUBSYSTEM.equals(decision.area()))
@@ -202,6 +224,7 @@ public class SensitiveDataScanTool implements IMcpTool
 
         // Severity filter
         List<Map<String, Object>> filtered = new ArrayList<>();
+        int omitted = 0;
         for (Map<String, Object> f : findings)
         {
             String sev = (String) f.get("severity"); //$NON-NLS-1$
@@ -209,9 +232,19 @@ public class SensitiveDataScanTool implements IMcpTool
             {
                 filtered.add(f);
             }
+            else
+            {
+                omitted++;
+            }
         }
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("findings", filtered.size()); //$NON-NLS-1$
+        if (omitted > 0)
+        {
+            // A finding the filter dropped is still a finding: without the count an all-INFO
+            // result reads as a clean project.
+            stats.put("omittedBelowSeverityFilter", Integer.valueOf(omitted)); //$NON-NLS-1$
+        }
         // One watch spans two walks that count different things - metadata objects, then module
         // files - so the unit names both. "files" would report a count of objects as a count of
         // files whenever ATTRIBUTE_NAME is on, which it is by default.
@@ -309,6 +342,14 @@ public class SensitiveDataScanTool implements IMcpTool
         }
     }
 
+    /**
+     * Scans one metadata object's attributes, dimensions and resources for sensitive data.
+     * A collection getter this build does not expose is skipped.
+     *
+     * @param obj the object to scan
+     * @param custom the caller's extra name patterns
+     * @param findings the list findings are added to
+     */
     @SuppressWarnings("unchecked")
     private void scanMdObjectAttributes(MdObject obj, Set<Pattern> custom,
         List<Map<String, Object>> findings)
@@ -663,40 +704,182 @@ public class SensitiveDataScanTool implements IMcpTool
         return enabled == null || enabled.isEmpty() || enabled.contains(check);
     }
 
+    /**
+     * Reads the checks argument into the canonical check names.
+     * <p>
+     * Names are matched without regard to case, because the schema spells them upper case and
+     * callers do not. The word {@code all} - which the facade schema names as the default - selects
+     * every check and reads as no selection. A name that is none of these is rejected rather than
+     * dropped, beside {@code all} as well as alone.
+     * </p>
+     *
+     * @param raw the argument value, or <code>null</code>
+     * @return the canonical names, or <code>null</code> when every check is selected
+     * @throws IllegalArgumentException on an unknown name; the message is the refusal text
+     */
     private static Set<String> parseChecks(String raw)
     {
         if (raw == null || raw.isEmpty())
         {
             return null;
         }
-        Set<String> set = new HashSet<>(Arrays.asList(raw.split("\\s*,\\s*"))); //$NON-NLS-1$
-        set.removeIf(String::isEmpty);
-        return set;
+        Set<String> set = new HashSet<>();
+        boolean all = false;
+        for (String part : raw.split("\\s*,\\s*")) //$NON-NLS-1$
+        {
+            if (part.isEmpty())
+            {
+                continue;
+            }
+            if ("all".equalsIgnoreCase(part)) //$NON-NLS-1$
+            {
+                all = true;
+                continue;
+            }
+            String canonical = null;
+            for (String known : CHECK_NAMES)
+            {
+                if (known.equalsIgnoreCase(part))
+                {
+                    canonical = known;
+                    break;
+                }
+            }
+            if (canonical == null)
+            {
+                List<String> valid = new ArrayList<>(CHECK_NAMES);
+                valid.add("all"); //$NON-NLS-1$
+                throw new IllegalArgumentException(
+                    TextSuggest.invalidValue("checks", part, valid)); //$NON-NLS-1$
+            }
+            set.add(canonical);
+        }
+        return all ? null : set;
     }
 
-    private static Set<Pattern> parseCustomPatterns(String raw)
+    /**
+     * Reads the customPatterns argument into compiled patterns.
+     * <p>
+     * Case folds for the whole of Unicode, because attribute names are written in Cyrillic as
+     * often as in Latin, and the word classes read Cyrillic letters as word characters for the
+     * same reason. A pattern that does not compile refuses the call: skipping it would answer
+     * "nothing found" for a check that never ran.
+     * </p>
+     *
+     * @param raw the argument value, or <code>null</code>
+     * @return the compiled patterns, or <code>null</code> when the argument is absent
+     * @throws IllegalArgumentException on a pattern that does not compile; the message names it
+     */
+    static Set<Pattern> parseCustomPatterns(String raw)
     {
-        if (raw == null || raw.isEmpty())
+        List<String> texts = splitPatterns(raw);
+        if (texts == null)
         {
             return null;
         }
         Set<Pattern> patterns = new java.util.LinkedHashSet<>();
-        for (String s : raw.split("\\s*,\\s*")) //$NON-NLS-1$
+        for (String text : texts)
         {
-            if (s.isEmpty())
-            {
-                continue;
-            }
             try
             {
-                patterns.add(Pattern.compile(s, Pattern.CASE_INSENSITIVE));
+                patterns.add(Pattern.compile(text, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+                    | Pattern.UNICODE_CHARACTER_CLASS));
             }
-            catch (Exception ignored)
+            catch (java.util.regex.PatternSyntaxException broken)
             {
-                // skip invalid pattern
+                throw new IllegalArgumentException("customPatterns: the pattern '" + text //$NON-NLS-1$
+                    + "' does not compile: " + broken.getMessage()); //$NON-NLS-1$
             }
         }
         return patterns;
+    }
+
+    /**
+     * Splits the customPatterns argument into pattern texts.
+     * <p>
+     * A value that opens as a JSON array is read as one, so a pattern is never cut at a comma it
+     * carries. Anything else splits at commas, except a comma inside a {n,m} quantifier, which is
+     * part of the pattern it sits in.
+     * </p>
+     *
+     * @param raw the argument value, or <code>null</code>
+     * @return the pattern texts, or <code>null</code> when the argument is absent or yields nothing
+     */
+    private static List<String> splitPatterns(String raw)
+    {
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        String value = raw.trim();
+        if (value.startsWith("[")) //$NON-NLS-1$
+        {
+            List<String> fromArray = new ArrayList<>();
+            try
+            {
+                com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(value);
+                if (parsed.isJsonArray())
+                {
+                    for (com.google.gson.JsonElement element : parsed.getAsJsonArray())
+                    {
+                        if (element.isJsonPrimitive())
+                        {
+                            String text = element.getAsString().trim();
+                            if (!text.isEmpty())
+                            {
+                                fromArray.add(text);
+                            }
+                        }
+                    }
+                    return fromArray.isEmpty() ? null : fromArray;
+                }
+            }
+            catch (RuntimeException notJson)
+            {
+                // Not the array it opened like - read it as a comma-separated string below.
+            }
+        }
+        List<String> texts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int braceDepth = 0;
+        for (int at = 0; at < value.length(); at++)
+        {
+            char character = value.charAt(at);
+            if (character == '{')
+            {
+                braceDepth++;
+            }
+            else if (character == '}' && braceDepth > 0)
+            {
+                braceDepth--;
+            }
+            if (character == ',' && braceDepth == 0)
+            {
+                addPatternText(texts, current);
+            }
+            else
+            {
+                current.append(character);
+            }
+        }
+        addPatternText(texts, current);
+        return texts.isEmpty() ? null : texts;
+    }
+
+    /**
+     * Closes one pattern text of a comma-separated customPatterns value.
+     *
+     * @param texts where the trimmed text goes
+     * @param current the characters gathered so far; emptied by the call
+     */
+    private static void addPatternText(List<String> texts, StringBuilder current)
+    {
+        String text = current.toString().trim();
+        current.setLength(0);
+        if (!text.isEmpty())
+        {
+            texts.add(text);
+        }
     }
 
     private static boolean matchesSeverity(String sev, String filter)
@@ -723,6 +906,11 @@ public class SensitiveDataScanTool implements IMcpTool
     {
         StringBuilder sb = new StringBuilder("# Sensitive data scan\n\n"); //$NON-NLS-1$
         sb.append("**Findings:** ").append(stats.get("findings")).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Object omitted = stats.get("omittedBelowSeverityFilter"); //$NON-NLS-1$
+        if (omitted != null)
+        {
+            sb.append(omitted).append(" findings below severity_filter were omitted.\n\n"); //$NON-NLS-1$
+        }
         if (cancelled != null)
         {
             sb.append("> **").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$

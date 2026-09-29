@@ -33,10 +33,12 @@ import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
 /**
  * A poll is free only when the call that arrived will actually resume the run.
  * <p>
- * The heavy gates used to treat a matching route as that proof. A batch poll and an
- * {@code object_references} poll are real resumptions and must pass at a limit of one. A direct
- * rename, a text search, and {@code insights} {@code project_metrics} are not, so they take a
- * permit. A finished entry that nobody has collected yet is not a live run. A batch that is
+ * The heavy gates used to treat a matching route as that proof. A batch poll, an
+ * {@code object_references} poll and {@code insights} {@code project_metrics} are real resumptions
+ * and must pass at a limit of one: an operation whose own tool is in the generic list names the
+ * run that tool starts, so the facade resumes it. A direct rename and a text search are not, so
+ * they take a permit, and an {@code insights} operation whose delegate is outside the list is not
+ * either. A finished entry that nobody has collected yet is not a live run. A batch that is
  * handed an update's key refuses it and leaves the update's entry where it was.
  * </p>
  */
@@ -182,23 +184,29 @@ public class ThePollBelongsToTheCallThatResumesItTest
     }
 
     /**
-     * {@code insights} {@code project_metrics} routes at a heavy tool and then calls {@code execute},
-     * which starts a new traversal. A live key of that traversal does not exempt the call, and the
-     * body is not run once the gate has refused it.
+     * {@code insights} {@code project_metrics} is the same run as the {@code project_metrics} tool
+     * underneath: the facade names the delegate, and the delegate is what the run is stamped with.
+     * A live key of that run is therefore this call's own poll - it takes no permit at the limit,
+     * and the call resumes the entry rather than starting a second traversal.
      */
     @Test
-    public void projectMetricsThroughInsightsGoesThroughTheGateAndDoesNotRun() throws Exception
+    public void projectMetricsThroughInsightsIsItsOwnPoll() throws Exception
     {
         PermitHold hold = holdTheOnlyPermit();
-        String key = live(PendingWorkRegistry.GENERIC, "project_metrics"); //$NON-NLS-1$
+        String key = liveForAWhile(PendingWorkRegistry.GENERIC, "project_metrics", 3_000L); //$NON-NLS-1$
         ensure(new InsightsFacadeTool());
         Map<String, String> arguments = Map.of("operation", "project_metrics", "runKey", key); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         ToolRoad.Admission admission = hold.road.admit(InsightsFacadeTool.NAME, arguments);
-        assertEquals(ToolRoad.MSG_HEAVY_BUSY, admission.refusal());
+        assertNull("an insights poll of its own run is refused at the limit: " //$NON-NLS-1$
+            + admission.refusal(), admission.refusal());
+        assertFalse("an insights poll of its own run takes a permit", admission.ticket().holdsPermit()); //$NON-NLS-1$
+        assertEquals(0, hold.permits.availablePermits());
         ToolRoadOutcome called = hold.road.call(InsightsFacadeTool.NAME,
             Map.of("operation", "project_metrics", "runKey", key), "poll-test"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        assertEquals("insights ran a second project_metrics traversal without a permit: " //$NON-NLS-1$
-            + called.text(), ToolRoad.MSG_HEAVY_BUSY, called.refusal());
+        assertFalse("insights was refused instead of polling its own run: " + called.refusal(), //$NON-NLS-1$
+            called.refused());
+        assertEquals("the poll started a second traversal instead of resuming the run it names", //$NON-NLS-1$
+            "live", called.text()); //$NON-NLS-1$
         assertEquals(0, hold.permits.availablePermits());
     }
 
@@ -291,8 +299,9 @@ public class ThePollBelongsToTheCallThatResumesItTest
         ensure(new EditMetadataTool());
         ensure(new MetadataObjectRenamer());
         String operations = "[{\"operation\":\"not_a_real_op_" + System.nanoTime() + "\"}]"; //$NON-NLS-1$ //$NON-NLS-2$
-        String runKey = PendingWorkRegistry.computeRunKey("batch", null, null, "false", "false", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            operations);
+        Map<String, String> keyed = new LinkedHashMap<>();
+        keyed.put("operations", operations); //$NON-NLS-1$
+        String runKey = EditMetadataTool.batchRunKey(keyed);
         Semaphore permits = new Semaphore(1);
         ToolRoad road = new ToolRoad(permits);
         CountDownLatch entered = new CountDownLatch(1);
@@ -364,6 +373,35 @@ public class ThePollBelongsToTheCallThatResumesItTest
         assertTrue("the holder never took the permit: " + failure.get(), //$NON-NLS-1$
             eventually(() -> permits.availablePermits() == 0));
         return new PermitHold(road, permits);
+    }
+
+    /**
+     * A live generic-{@code Pending} entry under {@code startedBy}, whose work answers on its own
+     * after {@code holdMillis}. A poll of it resumes the entry and comes back with that answer
+     * instead of waiting out the whole soft timeout, so a test can poll a real run in seconds.
+     *
+     * @param domain the registry the entry lives in
+     * @param startedBy the name the run is stamped with, which a poll has to declare
+     * @param holdMillis how long the work stays inside before answering
+     * @return the run's key
+     */
+    private String liveForAWhile(PendingWorkRegistry domain, String startedBy, long holdMillis)
+        throws Exception
+    {
+        String key = "poll-live-" + System.nanoTime(); //$NON-NLS-1$
+        PendingWorkRegistry.PendingEntry entry = domain.getOrStart(key, job -> {
+            try
+            {
+                Thread.sleep(holdMillis);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return "live"; //$NON-NLS-1$
+        });
+        entry.startedBy = startedBy;
+        return key;
     }
 
     private String live(PendingWorkRegistry domain, String startedBy) throws Exception

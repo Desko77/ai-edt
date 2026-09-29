@@ -47,12 +47,13 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
  * generated-form attach, owner-type mapping). Extracted verbatim from
  * {@link EditMetadataTool} (Inc4 god-class split); the handler is package-visible
  * and dispatched through the single-source op-registry. Shared stateless helpers
- * live on {@link EditMetadataTool} (qualified calls); the 17 cluster-local creation
+ * live on {@link EditMetadataTool} (qualified calls); the 19 cluster-local creation
  * helpers (normalizeFormType, extractCommonFormName, isCommonFormType,
- * pickDefaultFormSetter, deriveFormPurpose, equalsAny, nameContains,
- * isObjectOwningType, isRegisterType, mainTypeFqnForOwner, ensureObjectFormContent,
- * resolveFormFactory, applyAdjustableCommon, createAdjustableBooleanCommon,
- * invokeNoArg, isBoxedMatch, attachGeneratedForm) are private here. The CommonForm
+ * generatorRunsFor, generatorRefusalText, purposeToken, formPurposeFor, defaultFormSetterFor,
+ * deriveFormPurpose, equalsAny, nameContains, isObjectOwningType, isRegisterType,
+ * mainTypeFqnForOwner, ensureObjectFormContent, resolveFormFactory, applyAdjustableCommon,
+ * createAdjustableBooleanCommon, invokeNoArg, isBoxedMatch, attachGeneratedForm) are private
+ * here. The CommonForm
  * redirect delegates to {@link ObjectOps#opCreateObject} via a local ObjectOps ref.
  */
 final class FormCreateOps
@@ -103,10 +104,27 @@ final class FormCreateOps
     /**
      * Creates a new form on a metadata owner (Catalog / Document / Report / etc.).
      * <p>
-     * Implementation: generates a {@code Form} metadata stub via
-     * {@code MdClassFactory.createForm()} (or the type-specific variant),
-     * sets name + form type, and attaches it to {@code owner.getForms()}.
-     * The Form.form file content is created lazily by EDT on first edit.
+     * A managed form without an explicit {@code layout=empty} is built by EDT's own
+     * {@code IFormGenerator} - the engine the New Form wizard drives - inside the same BM
+     * read-write transaction that creates the wrapper: main attribute, default field layout,
+     * command interface. {@code formType=ORDINARY} and an explicit {@code layout=empty} skip
+     * the generator; the form is then created by the empty path (inner form, base properties,
+     * deterministic main attribute).
+     * <p>
+     * When the generator was asked for and did not deliver a form - no generator on this
+     * runtime, no field tree, an exception, a form that would not attach - the whole operation
+     * is refused: throwing from inside the BM task rolls the transaction back (the same abort
+     * {@code dryRun} and the guards use), so no wrapper, no owner .mdo entry and no Form.form
+     * are left behind, and the response names the reason. The response then carries
+     * {@code formGeneratorNotFound} or {@code formGeneratorFailed} plus the generator facts
+     * ({@code formFieldsOverloadArgs}, {@code formFieldTreeSize}, {@code formCoercionMismatches},
+     * {@code formFieldsError}) and the {@code layout=empty} retry that creates a form without
+     * the generator. A successful generation answers {@code formGenerated=true} with
+     * {@code formLayout=auto}; an explicit {@code layout=empty} answers
+     * {@code formLayout=empty}.
+     * <p>
+     * The Form.form file is force-exported after the transaction commits, so the form is on
+     * disk and discoverable by FQN, not only in the in-session BM.
      */
     String opCreateForm(Map<String, String> params)
     {
@@ -169,8 +187,28 @@ final class FormCreateOps
         {
             return ToolResult.error(formNameErr.trim()).toJson();
         }
+        // Audit W06 F3: a name that is not one path element cannot address the form's folder on
+        // disk. Writing the .mdo first and discovering this afterwards left a form the object no
+        // longer resolved (measured: formName=../TraversalProbe).
+        if (!MetadataGuards.isPlainName(formName))
+        {
+            return ToolResult.error("formName must be a plain name, got '" + formName + "'") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("hint", "A form name is a single path element: no separator, no '..'.") //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
+        }
+        // The form's purpose, resolved once and used by every step that depends on it: the
+        // generator's FormType, the deterministic main attribute, and the default-form property
+        // setAsDefault points at. An explicit `purpose` states it; a legacy `formType` value that
+        // names a purpose (ItemForm / ListForm / ...) still does; without either, the owner type and
+        // the form name decide.
+        final String purposeConstant = formPurposeFor(purposeRaw, formTypeRaw, ownerFqn, formName);
         // 3.8.3: track scaffold tags for response
         AtomicReference<Integer> scaffoldedProps = new AtomicReference<>(0);
+        // An empty managed form is born without the base properties the EDT wizard sets. Ordinary
+        // forms carry their own layout, so the scaffolding applies to managed forms only.
+        final boolean isManagedEmpty = "empty".equalsIgnoreCase(layout) //$NON-NLS-1$
+            && !"ORDINARY".equalsIgnoreCase(formType); //$NON-NLS-1$
         // Audit B2/G10: capture setter / inner-form-attach failures that were
         // previously only logged, so the JSON response tells the agent that part
         // of create_form silently did not apply (otherwise a follow-up form op
@@ -180,10 +218,18 @@ final class FormCreateOps
         AtomicReference<String> innerFormAttach = new AtomicReference<>(null);
         // Form-generator path (renderable form, identical to EDT "New Form"
         // wizard) outcome holders. formGenerated / formPurpose carry success;
-        // formGeneratorNotFound / formGeneratorFailed carry graceful-degradation
-        // hints so a fallback to the empty path is visible to the agent.
+        // formGeneratorNotFound / formGeneratorFailed carry the refusal the
+        // operation answers with when the generator did not deliver (no form
+        // is created then - the transaction rolls back). The full generator
+        // Result is kept too: it names the layout the generator actually
+        // produced (item count, fields-overload arity, field-tree size,
+        // argument type mismatches, the exception the field computation threw),
+        // which is what tells an impoverished tree from a wizard-grade one
+        // without opening the form.
         AtomicReference<String> formGeneratedRef = new AtomicReference<>(null);
         AtomicReference<String> formGeneratorMiss = new AtomicReference<>(null);
+        AtomicReference<BmFormGeneratorHelper.Result> generatorOutcomeRef =
+            new AtomicReference<>(null);
         // Deterministic-content holders. Whatever path produces the inner Form
         // (generator or empty fallback), an OBJECT/RECORD purpose form still
         // needs a main attribute (so it has a data context and renders) plus an
@@ -296,29 +342,21 @@ final class FormCreateOps
                     formSetterWarnings.add("defaultForm: " + de.getMessage()); //$NON-NLS-1$
                 }
 
-                // 3.8.3 defensive layer: apply 11 base properties for a managed
-                // form with layout=empty (groupHorizontalAlign / commandBar /
-                // commandInterface / etc). Without these the editor refuses to
-                // open the form and tables collapse at runtime. Bug A: the gate
-                // used to key off the literal formType "Generic", which is no
-                // longer a valid FormType - it now keys off layout=empty (the
-                // managed form is the only kind we create).
-                boolean isManagedEmpty = "empty".equalsIgnoreCase(layout)
-                    && !"ORDINARY".equalsIgnoreCase(formType);
-                if (isManagedEmpty)
-                {
-                    int applied = FormBaseSetup.applyDefaults(form);
-                    scaffoldedProps.set(applied);
-                }
-
-                // setAsDefault - point owner.defaultListForm or defaultObjectForm at this form
+                // setAsDefault - point the owner's default-list / default-object / ... property at
+                // this form. Which property that is follows from the form's purpose (audit W05 F3:
+                // the choice used to be made from the raw formType, so a caller who gave a purpose
+                // and no formType got no setter at all and an answer of success).
                 if (setAsDefault)
                 {
-                    // Use the RAW form type (purpose name, e.g. ItemForm / ListForm)
-                    // here, not the normalized ORDINARY/MANAGED - the default-form
-                    // setter is chosen by the form's purpose.
-                    String setterName = pickDefaultFormSetter(formTypeRaw);
-                    if (setterName != null)
+                    String setterName = defaultFormSetterFor(purposeConstant);
+                    if (setterName == null)
+                    {
+                        // Nothing to point at: the purpose names no default-form property. Say so
+                        // instead of answering success.
+                        formSetterWarnings.add("setAsDefault: the " + purposeConstant //$NON-NLS-1$
+                            + " purpose names no default-form property of " + ownerFqn); //$NON-NLS-1$
+                    }
+                    else
                     {
                         String setErr = BmObjectHelper.setProperty(owner, setterName, form);
                         if (setErr != null)
@@ -335,14 +373,14 @@ final class FormCreateOps
                 // empty path below only builds a bare Form root, so a form
                 // created that way opens "empty". The generator runs inside
                 // this same BM read-write transaction (the EMF objects it
-                // builds belong to the model graph). On any miss/failure we
-                // fall back to the empty path unchanged.
+                // builds belong to the model graph). An ORDINARY form and an
+                // explicit layout=empty never reach it.
                 boolean generatedAttached = false;
-                if (!"ORDINARY".equalsIgnoreCase(formType))
+                if (generatorRunsFor(formType, layout))
                 {
-                    String purposeConst = deriveFormPurpose(purposeRaw, ownerFqn, formName);
                     BmFormGeneratorHelper.Result genResult = BmFormGeneratorHelper.generate(
-                        owner, form, purposeConst, formGenConfig, formGenProject);
+                        owner, form, purposeConstant, formGenConfig, formGenProject);
+                    generatorOutcomeRef.set(genResult);
                     if (genResult.ok && genResult.generatedForm != null)
                     {
                         // Attach the generated Form root to the BasicForm
@@ -375,13 +413,23 @@ final class FormCreateOps
                                     + attachEx.getMessage());
                                 innerFormAttach.set("generated-form attach failed (" //$NON-NLS-1$
                                     + formFqn + "): " + attachEx.getMessage()); //$NON-NLS-1$
+                                formGeneratorMiss.set("generated-form top-object attach failed: " //$NON-NLS-1$
+                                    + attachEx.getMessage()); //$NON-NLS-1$
                             }
                         }
                         else if (!attachedToWrapper)
                         {
                             Activator.logWarning("createForm: generated form could not " //$NON-NLS-1$
-                                + "be attached to wrapper - falling back to empty path"); //$NON-NLS-1$
+                                + "be attached to wrapper"); //$NON-NLS-1$
                             formGeneratorMiss.set("generated form not attachable to wrapper"); //$NON-NLS-1$
+                        }
+                        else
+                        {
+                            // Attached to the wrapper but not an IBmObject: it cannot be
+                            // registered as a BM top-object, so no follow-up operation would
+                            // resolve the form by FQN - a refusal, not an undiscoverable form.
+                            formGeneratorMiss.set("generated form is not a BM object: " //$NON-NLS-1$
+                                + genResult.generatedForm.getClass().getName()); //$NON-NLS-1$
                         }
                     }
                     else if (genResult.generatorNotFound)
@@ -395,11 +443,23 @@ final class FormCreateOps
                         formGeneratorMiss.set("failed: " + genResult.error); //$NON-NLS-1$
                     }
                 }
+                // A form that asked for the generated layout and did not get one is not
+                // created: throwing here aborts the BM task (the same abort dryRun and the
+                // guards use), the transaction rolls back and nothing reaches disk - the
+                // caller is told why and offered the layout=empty retry, which creates the
+                // form without asking the generator. ORDINARY and layout=empty never reach
+                // this: they skip the generator by design, so they cannot be refused over
+                // its miss.
+                if (generatorRunsFor(formType, layout) && !generatedAttached)
+                {
+                    throw new RuntimeException(generatorRefusalText(formGeneratorMiss.get()));
+                }
 
-                // FALLBACK PATH (generator unavailable / failed, or ORDINARY
-                // form): attach the inner Form as a BM top-object so
-                // subsequent edit_form / get_form_structure / add_field
-                // operations can resolve the form by FQN
+                // EMPTY PATH (an ORDINARY form or an explicit layout=empty; a
+                // generator miss was already refused above): attach the inner
+                // Form as a BM top-object so subsequent edit_form /
+                // get_form_structure / add_field operations can resolve the
+                // form by FQN
                 // <ownerFqn>.Form.<formName>.Form. Without this the form
                 // exists in the wrapper's containment list but is not
                 // discoverable via tx.getTopObjectByFqn(...) - every
@@ -487,11 +547,22 @@ final class FormCreateOps
                 // non-OBJECT purposes (LIST / GENERIC / register RECORD_SET) we
                 // skip the main attribute and just ensure the autoCommandBar.
                 Object innerFormForContent = innerFormModelRef.get();
+                if (innerFormForContent != null && isManagedEmpty)
+                {
+                    // 3.8.3 defensive layer: the base root properties of a generated form
+                    // (enabled, titles, window settings, autoCommandBar, commandInterface).
+                    // A form born without them keeps the model defaults of those features -
+                    // the booleans default to false, so the client would see a disabled
+                    // form with no title and no close button. They live on the inner
+                    // form.model.Form, so they can only be applied once that object
+                    // exists - applying them to the metadata wrapper reached no setter at all and
+                    // reported zero (audit W06 F1).
+                    scaffoldedProps.set(FormBaseSetup.applyDefaults(innerFormForContent));
+                }
                 if (innerFormForContent != null && !"ORDINARY".equalsIgnoreCase(formType)) //$NON-NLS-1$
                 {
-                    String purposeForContent = deriveFormPurpose(purposeRaw, ownerFqn, formName);
                     ensureObjectFormContent(innerFormForContent, owner, ownerFqn,
-                        purposeForContent, formGenProject, formGenConfig,
+                        purposeConstant, formGenProject, formGenConfig,
                         mainAttrAddedRef, autoCmdBarAddedRef, contentWarnings);
                 }
                 return formName;
@@ -596,8 +667,11 @@ final class FormCreateOps
         }
         ToolResult result = r.ok ? ToolResult.success() : ToolResult.error(r.error != null ? r.error : "createForm failed");
         result.put("operation", "create_form")
-            .put("ownerFqn", r.fqn)
-            .put("message", r.message != null ? r.message : "ok");
+            .put("ownerFqn", r.fqn);
+        if (r.message != null || r.ok)
+        {
+            result.put("message", r.message != null ? r.message : "ok");
+        }
         if (scaffoldedProps.get() > 0)
         {
             result.put("formScaffolded", scaffoldedProps.get());
@@ -633,12 +707,44 @@ final class FormCreateOps
         }
         // Form-generator outcome tags. formGenerated=true means a renderable
         // form (main attribute + default layout) was produced - the agent can
-        // open it immediately. The miss tags signal a graceful fallback to the
-        // empty path: the form is created but may need manual layout.
+        // open it immediately. The miss tags carry the refusal the operation
+        // answered with: no form exists, and layout=empty is the retry that
+        // creates one without the generator.
+        BmFormGeneratorHelper.Result generatorOutcome = generatorOutcomeRef.get();
+        if (generatorOutcome != null)
+        {
+            // What the generator was actually given and built, success or miss:
+            // the getFormGeneratorFields overload that answered and the size of
+            // its field tree, the item count of the produced layout, every
+            // generateForm argument whose value failed its parameter type, and
+            // the exception the field computation threw, if it threw one.
+            r.tags.put("formFieldsOverloadArgs", Integer.valueOf(generatorOutcome.fieldsOverloadArgs)); //$NON-NLS-1$
+            if (generatorOutcome.fieldTreeSize >= 0)
+            {
+                r.tags.put("formFieldTreeSize", Integer.valueOf(generatorOutcome.fieldTreeSize)); //$NON-NLS-1$
+            }
+            if (generatorOutcome.itemCount >= 0)
+            {
+                r.tags.put("formItemCount", Integer.valueOf(generatorOutcome.itemCount)); //$NON-NLS-1$
+            }
+            if (!generatorOutcome.coercionMismatches.isEmpty())
+            {
+                r.tags.put("formCoercionMismatches", //$NON-NLS-1$
+                    String.join("; ", generatorOutcome.coercionMismatches)); //$NON-NLS-1$
+            }
+            if (generatorOutcome.fieldsError != null)
+            {
+                r.tags.put("formFieldsError", generatorOutcome.fieldsError); //$NON-NLS-1$
+            }
+        }
         if (formGeneratedRef.get() != null)
         {
             r.tags.put("formGenerated", Boolean.TRUE); //$NON-NLS-1$
             r.tags.put("formPurpose", formGeneratedRef.get()); //$NON-NLS-1$
+            // The generated layout is the generator's automatic one (the same
+            // engine the New Form wizard drives), named the way a caller
+            // comparing layouts expects.
+            r.tags.put("formLayout", "auto"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         else if (formGeneratorMiss.get() != null)
         {
@@ -646,16 +752,22 @@ final class FormCreateOps
             if ("not-found".equals(miss)) //$NON-NLS-1$
             {
                 r.tags.put("formGeneratorNotFound", Boolean.TRUE); //$NON-NLS-1$
-                r.tags.put("hint", "EDT form generator unavailable on this runtime - " //$NON-NLS-1$
-                    + "the form was created empty and may need manual layout " //$NON-NLS-1$
-                    + "(add_field / add_group / edit_form)."); //$NON-NLS-1$
+                r.tags.put("hint", "EDT form generator unavailable on this runtime - no " //$NON-NLS-1$
+                    + "form was created; retry with layout=empty to create the form " //$NON-NLS-1$
+                    + "without the generator."); //$NON-NLS-1$
             }
             else
             {
                 r.tags.put("formGeneratorFailed", miss); //$NON-NLS-1$
-                r.tags.put("hint", "Form generator did not complete - the form was " //$NON-NLS-1$
-                    + "created empty and may need manual layout."); //$NON-NLS-1$
+                r.tags.put("hint", "Form generator did not complete - no form was created; " //$NON-NLS-1$
+                    + "retry with layout=empty to create the form without the generator."); //$NON-NLS-1$
             }
+        }
+        if (isManagedEmpty)
+        {
+            // The caller asked for the empty layout by name and got it: the
+            // generator was never asked.
+            r.tags.put("formLayout", "empty"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         EditMetadataTool.applyTags(result, r.tags);
         return result.toJson();
@@ -796,23 +908,110 @@ final class FormCreateOps
     }
 
     /**
-     * Picks the appropriate "default form" setter on the owner depending on
-     * the form type. Returns null when no canonical mapping exists.
+     * Whether {@code create_form} asks EDT's form generator to build this form's layout: a
+     * managed form without an explicit empty-layout request. An ORDINARY form carries its own
+     * layout, and {@code layout=empty} names the empty path - neither reaches the generator, so
+     * neither can be refused over a generator miss.
+     *
+     * @param formType the normalized form-type literal ({@code MANAGED} / {@code ORDINARY});
+     *            comparison is case-insensitive
+     * @param layout  the caller's {@code layout} argument; may be null/empty
+     * @return true when the generator runs for this call
      */
-    private static String pickDefaultFormSetter(String formType)
+    static boolean generatorRunsFor(String formType, String layout)
     {
-        if (formType == null)
+        return !"ORDINARY".equalsIgnoreCase(formType) //$NON-NLS-1$
+            && !"empty".equalsIgnoreCase(layout); //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal {@code create_form} answers when the generator was asked for and did not
+     * deliver a form: the miss reason, the fact that nothing was created, and the empty-layout
+     * retry that creates a form without the generator.
+     *
+     * @param missReason the recorded generator miss ("not-found" or the failure text); may be
+     *            null when no reason was captured
+     * @return the refusal message, never null
+     */
+    static String generatorRefusalText(String missReason)
+    {
+        String reason = "not-found".equals(missReason) //$NON-NLS-1$
+            ? "the form generator is not available on this runtime" //$NON-NLS-1$
+            : missReason != null ? missReason : "the generator produced no form"; //$NON-NLS-1$
+        return "create_form refused: the form generator did not deliver a layout (" + reason //$NON-NLS-1$
+            + "). No form was created - the transaction was rolled back. Retry with " //$NON-NLS-1$
+            + "layout=empty to create the form without the generator."; //$NON-NLS-1$
+    }
+
+    /**
+     * The purpose the created form is being given, as a token the purpose table accepts.
+     * <p>
+     * An explicit {@code purpose} states it. A {@code formType} does too when it names one of the
+     * legacy purpose values ({@code ItemForm} / {@code ListForm} / ...), which is what callers of
+     * that older spelling meant; {@code MANAGED} and {@code ORDINARY} name the form model, not a
+     * purpose, and leave the question to the owner type and the form name.
+     *
+     * @param purposeRaw the caller's {@code purpose}, may be null/empty
+     * @param legacyFormTypeRaw the caller's {@code formType}, may be null/empty
+     * @return the purpose token, or null when the caller named none
+     */
+    static String purposeToken(String purposeRaw, String legacyFormTypeRaw)
+    {
+        if (purposeRaw != null && !purposeRaw.trim().isEmpty())
+        {
+            return purposeRaw;
+        }
+        String legacy = legacyFormTypeRaw == null ? null : legacyFormTypeRaw.trim();
+        if (legacy == null || legacy.isEmpty()
+            || "MANAGED".equalsIgnoreCase(legacy) || "ORDINARY".equalsIgnoreCase(legacy)) //$NON-NLS-1$ //$NON-NLS-2$
         {
             return null;
         }
-        switch (formType)
+        return legacy;
+    }
+
+    /**
+     * The EDT {@code FormType} constant the created form's purpose resolves to, from the caller's
+     * purpose (or a legacy formType that names one) and, when neither is given, from the owner type
+     * and the form name.
+     *
+     * @param purposeRaw the caller's {@code purpose}, may be null/empty
+     * @param legacyFormTypeRaw the caller's {@code formType}, may be null/empty
+     * @param ownerFqn FQN of the owning metadata object
+     * @param formName the form name (used by the name heuristic)
+     * @return a FormType constant name, never null
+     */
+    static String formPurposeFor(String purposeRaw, String legacyFormTypeRaw, String ownerFqn,
+        String formName)
+    {
+        return deriveFormPurpose(purposeToken(purposeRaw, legacyFormTypeRaw), ownerFqn, formName);
+    }
+
+    /**
+     * The owner property that declares a form of this purpose as the owner's default one, or null
+     * when the owner has no such property for that purpose.
+     * <p>
+     * {@code GENERIC} and {@code RECORD_SET} name no default-form property: a caller who asks for
+     * {@code setAsDefault} with one of those purposes has nothing to set, and the caller of this
+     * method reports that rather than answering success.
+     *
+     * @param purposeConstant a {@code FormType} constant name, as {@link #deriveFormPurpose} returns
+     * @return the property name ({@code defaultListForm}, ...), or null when there is none
+     */
+    static String defaultFormSetterFor(String purposeConstant)
+    {
+        if (purposeConstant == null)
         {
-            case "ItemForm": return "defaultObjectForm";
-            case "ListForm": return "defaultListForm";
-            case "ChoiceForm": return "defaultChoiceForm";
-            case "FolderForm": return "defaultFolderForm";
-            case "FolderChoiceForm": return "defaultFolderChoiceForm";
-            case "RecordForm": return "defaultRecordForm";
+            return null;
+        }
+        switch (purposeConstant)
+        {
+            case "OBJECT": return "defaultObjectForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "LIST": return "defaultListForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "CHOICE": return "defaultChoiceForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FOLDER": return "defaultFolderForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "FOLDER_CHOICE": return "defaultFolderChoiceForm"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "RECORD": return "defaultRecordForm"; //$NON-NLS-1$ //$NON-NLS-2$
             default: return null;
         }
     }

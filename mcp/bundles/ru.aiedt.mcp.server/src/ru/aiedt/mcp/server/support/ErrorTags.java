@@ -269,6 +269,11 @@ public enum ErrorTags
      * stopped before anything was asked of the infobase. */
     DUMP_INFO_FORMAT("dumpInfoFormat"), //$NON-NLS-1$
 
+    /** update_database: the store's ConfigDumpInfo.xml was recorded for a
+     * different infobase than the one the call targets, so an incremental
+     * update would be decided against the wrong base. */
+    INFOBASE_CHANGED("infobaseChanged"), //$NON-NLS-1$
+
     /** set_infobase_credentials: writing the settings to secure storage
      * failed. */
     WRITE_FAILED("writeFailed"), //$NON-NLS-1$
@@ -308,7 +313,18 @@ public enum ErrorTags
 
     /** export_object: the external-object build failed for a reason not
      * otherwise classified. */
-    DUMP_FAILED("dumpFailed"); //$NON-NLS-1$
+    DUMP_FAILED("dumpFailed"), //$NON-NLS-1$
+
+    /** export_database_configuration / export_database_extension: the
+     * infobase does not hold the project's current configuration (or the
+     * synchronization state could not be read), so the dump was refused
+     * rather than written from stale content. */
+    OUT_OF_SYNC("outOfSync"), //$NON-NLS-1$
+
+    /** install_extension with {@code updateDatabase=true}: the designer
+     * log of the run reports the database update failed; the extension may
+     * be registered but it was NOT applied to the database. */
+    DATABASE_UPDATE_FAILED("databaseUpdateFailed"); //$NON-NLS-1$
 
     private final String wire;
 

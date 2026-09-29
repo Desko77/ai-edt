@@ -10,6 +10,7 @@ import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.expressions.IEvaluationContext;
 import org.eclipse.core.resources.IProject;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.swt.widgets.Shell;
@@ -17,6 +18,7 @@ import org.eclipse.ui.ISources;
 import org.eclipse.ui.handlers.HandlerUtil;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.folders.ClusterKeys;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.folders.model.Cluster;
 import ru.aiedt.mcp.server.folders.ui.ClusterNavigatorBridge;
@@ -69,6 +71,30 @@ public abstract class ClusterCommandHandler
     protected IClusterManager getClusterService()
     {
         return Activator.getClusterServiceStatic();
+    }
+
+    /**
+     * Shows the common error reported when a cluster edit could not be persisted.
+     *
+     * @param shell the parent shell
+     * @param project the project whose cluster file rejected the edit
+     */
+    static void showSaveFailure(Shell shell, IProject project)
+    {
+        MessageDialog.openError(shell, "Clusters Not Saved", saveFailureMessage(project)); //$NON-NLS-1$
+    }
+
+    /**
+     * Builds the common save-failure message independently of the dialog.
+     *
+     * @param project the project whose cluster file rejected the edit
+     * @return an English message naming the file and project
+     */
+    static String saveFailureMessage(IProject project)
+    {
+        String projectName = project == null ? "<unknown>" : project.getName(); //$NON-NLS-1$
+        return "The cluster changes were not saved. Check " + ClusterKeys.CLUSTERS_PATH //$NON-NLS-1$
+            + " in project '" + projectName + "' and try again."; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

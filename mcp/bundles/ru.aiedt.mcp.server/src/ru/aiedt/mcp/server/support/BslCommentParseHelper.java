@@ -606,7 +606,10 @@ public final class BslCommentParseHelper
         return sb.toString().trim();
     }
 
-    /** Best-effort text of an IDescriptionPart - TextPart.getText(); LinkPart/TagPart skipped. */
+    /**
+     * Best-effort text of an IDescriptionPart - TextPart.getText(); LinkPart, TagPart and a
+     * part that does not answer with text give {@code null}.
+     */
     private static String partText(Object part)
     {
         if (part == null)

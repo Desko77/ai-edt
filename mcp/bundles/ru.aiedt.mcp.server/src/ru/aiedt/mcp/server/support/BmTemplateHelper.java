@@ -30,17 +30,31 @@ import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 
+import com._1c.g5.v8.dt.mcore.Color;
+import com._1c.g5.v8.dt.mcore.ColorDef;
+import com._1c.g5.v8.dt.mcore.Font;
+import com._1c.g5.v8.dt.mcore.FontDef;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
+import com._1c.g5.v8.dt.mcore.MutableFont;
 import com._1c.g5.v8.dt.mcore.Point;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.TemplateType;
 import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Drawing;
 import com._1c.g5.v8.dt.moxel.Format;
 import com._1c.g5.v8.dt.moxel.Merge;
 import com._1c.g5.v8.dt.moxel.Column;
 import com._1c.g5.v8.dt.moxel.Columns;
+import com._1c.g5.v8.dt.moxel.PageOrientation;
+import com._1c.g5.v8.dt.moxel.PrintSettings;
+import com._1c.g5.v8.dt.moxel.content.CellLine;
+import com._1c.g5.v8.dt.moxel.content.CellLineStyle;
+import com._1c.g5.v8.dt.moxel.content.FillType;
+import com._1c.g5.v8.dt.moxel.content.Pattern;
+import com._1c.g5.v8.dt.moxel.content.SpreadsheetLine;
 import com._1c.g5.v8.dt.moxel.content.TextPlacement;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.Enumerator;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.ColumnsArea;
 import com._1c.g5.v8.dt.moxel.NamedItem;
@@ -196,6 +210,11 @@ public final class BmTemplateHelper
     /**
      * Maps an English/Russian template-type alias to its canonical EDT enum
      * literal name. Used by {@code addTemplate} when setting Template.templateType.
+     *
+     * <p>An alias nobody recognizes is passed through unchanged rather than refused here: this
+     * method only spells a caller's word the way the model spells it. Whether the model has such a
+     * literal is a separate question, answered by {@link #resolveTemplateTypeLiteral}, and the
+     * caller refuses on {@code null} from that one.
      */
     public static String canonicalTemplateType(String alias)
     {
@@ -233,11 +252,15 @@ public final class BmTemplateHelper
             case "htmldocument":
                 return "HTMLDocument";
             case "geographicschema":
+            case "geographicalschema":
+            case "geographical schema":
             case "geo":
             case "географическая":
             case "географическаясхема":
                 return "GeographicalSchema";
             case "graphicalschema":
+            case "graphicalscheme":
+            case "graphical scheme":
             case "graph":
             case "графическая":
             case "графическаясхема":
@@ -253,6 +276,57 @@ public final class BmTemplateHelper
             default:
                 return alias; // pass through, EDT will reject if invalid
         }
+    }
+
+    /**
+     * The model's own literal for a canonical template type.
+     * <p>
+     * The type is set through reflection, where an unrecognized value is not an exception but a
+     * returned error the caller can drop - and dropping it left the template with no type at all
+     * while the answer named the one that was asked for. So the caller asks the model itself
+     * whether the literal exists before it writes anything.
+     * </p>
+     * <p>
+     * Measured on EDT 2025.2.3: {@code getByName} and {@code get} answer to the literal
+     * ({@code SpreadsheetDocument}), not to the Java constant ({@code SPREADSHEET_DOCUMENT}), so the
+     * literal is what a caller writes and what this returns.
+     * </p>
+     *
+     * @param canonicalType a name from {@link #canonicalTemplateType}; may be <code>null</code>
+     * @return the literal, or <code>null</code> when the model has no such template type
+     */
+    public static String resolveTemplateTypeLiteral(String canonicalType)
+    {
+        if (canonicalType == null || canonicalType.isEmpty())
+        {
+            return null;
+        }
+        TemplateType byName = TemplateType.getByName(canonicalType);
+        return byName == null ? null : byName.getLiteral();
+    }
+
+    /**
+     * The template types this EDT model has, separated by a comma - the values a caller may ask for.
+     * <p>
+     * The literal, not the Java constant: a caller writes {@code SpreadsheetDocument}, while
+     * {@code SPREADSHEET_DOCUMENT} is refused by {@code getByName} on EDT 2025.2.3, and a list of
+     * refused words in a refusal message is worse than no list at all.
+     * </p>
+     *
+     * @return the literals, in the order the model declares them
+     */
+    public static String templateTypeValues()
+    {
+        StringBuilder values = new StringBuilder();
+        for (TemplateType type : TemplateType.values())
+        {
+            if (values.length() > 0)
+            {
+                values.append(", "); //$NON-NLS-1$
+            }
+            values.append(type.getLiteral());
+        }
+        return values.toString();
     }
 
     /**
@@ -547,8 +621,8 @@ public final class BmTemplateHelper
         if (templateDir == null)
         {
             return "Cannot resolve template directory for " + ownerFqn //$NON-NLS-1$
-                + "/Templates/" + templateName //$NON-NLS-1$
-                + " (project location is not on the local filesystem)"; //$NON-NLS-1$
+                + "/Templates/" + templateName + ": " + unresolvableReason(project, ownerFqn, //$NON-NLS-1$ //$NON-NLS-2$
+                    templateName);
         }
         Path mxlxFile = templateDir.resolve("Template.mxlx"); //$NON-NLS-1$
         if (Files.exists(mxlxFile))
@@ -684,8 +758,8 @@ public final class BmTemplateHelper
         if (templateDir == null)
         {
             return "Cannot resolve template directory for " + ownerFqn //$NON-NLS-1$
-                + "/Templates/" + templateName //$NON-NLS-1$
-                + " (project location is not on the local filesystem)"; //$NON-NLS-1$
+                + "/Templates/" + templateName + ": " + unresolvableReason(project, ownerFqn, //$NON-NLS-1$ //$NON-NLS-2$
+                    templateName);
         }
         try
         {
@@ -720,7 +794,8 @@ public final class BmTemplateHelper
         if (templateDir == null)
         {
             result.error = "Cannot resolve template directory for " + ownerFqn //$NON-NLS-1$
-                + "/Templates/" + templateName; //$NON-NLS-1$
+                + "/Templates/" + templateName + ": " + unresolvableReason(project, ownerFqn, //$NON-NLS-1$ //$NON-NLS-2$
+                    templateName);
             return result;
         }
         for (String candidate : new String[] { "Template.txt", "Template.htmldoc" }) //$NON-NLS-1$ //$NON-NLS-2$
@@ -1022,10 +1097,149 @@ public final class BmTemplateHelper
     }
 
     /**
+     * Maps an English or Russian metadata type prefix to the plural folder name EDT uses under
+     * {@code src/} - the directory a template of that owner lives in.
+     * <p>
+     * The name is asked of {@link MetadataTypeCatalog}, the one place a type name is spelled out:
+     * a second table beside it is a second answer to the same question, and the two drift. A
+     * prefix no type answers to is refused rather than pluralized, which is how an owner FQN in a
+     * language this build does not know used to end up as a folder named after the caller's own
+     * word - {@code Справочникs} for {@code Справочник.Товары}.
+     * </p>
+     *
+     * @param typePrefix the owner's type, English or Russian, singular or plural; may be
+     *            <code>null</code>
+     * @return the folder name, for example {@code Catalogs}, or <code>null</code> when no metadata
+     *         type answers to that name
+     */
+    public static String englishTypePlural(String typePrefix)
+    {
+        MetadataTypeCatalog.MetadataTypeInfo type = MetadataTypeCatalog.resolve(typePrefix);
+        return type == null ? null : type.getEnglishPlural();
+    }
+
+    /**
+     * The template's folder relative to the project root, or <code>null</code> when the owner FQN or
+     * the template name cannot address one.
+     * <p>
+     * Both the owner name and the template name are single path elements and are checked as such
+     * before anything is joined: a name carrying a separator or standing for a parent directory
+     * would otherwise place the write outside the template it names, and an owner type nobody
+     * recognizes would place it in a folder that exists nowhere.
+     * </p>
+     *
+     * @param ownerFqn the owner's FQN, {@code <Type>.<Name>} in either language
+     * @param templateName the template's name
+     * @return the relative folder, for example {@code src/Catalogs/Tovary/Templates/Main}, or
+     *         <code>null</code> when the two cannot address one
+     */
+    public static Path templateDirRelativePath(String ownerFqn, String templateName)
+    {
+        int dot = ownerFqn == null ? -1 : ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return null;
+        }
+        if (!isPlainName(templateName))
+        {
+            return null;
+        }
+        String typePrefix = ownerFqn.substring(0, dot);
+        String ownerName = ownerFqn.substring(dot + 1);
+        String typeDirectory = englishTypePlural(typePrefix);
+        if (typeDirectory == null || !isPlainName(ownerName))
+        {
+            return null;
+        }
+        Path src = Path.of("src"); //$NON-NLS-1$
+        if (MetadataTypeCatalog.MetadataTypeInfo.COMMON_TEMPLATE
+            == MetadataTypeCatalog.resolve(typePrefix))
+        {
+            // A common template is the whole object: src/CommonTemplates/<Name>, with no owner
+            // folder and no Templates level - the shape its .mdo lives in.
+            return src.resolve(typeDirectory).resolve(templateName);
+        }
+        return src.resolve(typeDirectory).resolve(ownerName).resolve("Templates").resolve(templateName); //$NON-NLS-1$
+    }
+
+    /**
+     * Why the owner FQN and the template name do not address a template folder, or <code>null</code>
+     * when they do. Both answer from the same rule as {@link #templateDirRelativePath}: this one
+     * names the reason, that one builds the path.
+     *
+     * @param ownerFqn the owner's FQN
+     * @param templateName the template's name
+     * @return the reason, or <code>null</code> when the two address a folder
+     */
+    public static String templateDirRefusal(String ownerFqn, String templateName)
+    {
+        if (ownerFqn == null || ownerFqn.isEmpty())
+        {
+            return "ownerFqn is required"; //$NON-NLS-1$
+        }
+        int dot = ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return "ownerFqn must be <Type>.<Name>, got '" + ownerFqn + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String typePrefix = ownerFqn.substring(0, dot);
+        if (englishTypePlural(typePrefix) == null)
+        {
+            return "ownerFqn names no metadata type that owns templates: '" + typePrefix + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!isPlainName(ownerFqn.substring(dot + 1)))
+        {
+            return "the owner name must be a plain name, got '" + ownerFqn.substring(dot + 1) //$NON-NLS-1$
+                + "'"; //$NON-NLS-1$
+        }
+        if (!isPlainName(templateName))
+        {
+            return "the template name must be a plain name, got '" + templateName + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return null;
+    }
+
+    /**
+     * Whether a name is one path element: not empty, not this or the parent directory, and carrying
+     * no separator of either kind. The rule itself lives in {@link MetadataGuards#isPlainName} so
+     * that every path joining a caller's name onto {@code src/} - templates and forms alike - gets
+     * the same answer.
+     *
+     * @param name the name to test; may be <code>null</code>
+     * @return <code>true</code> when the name is a single, ordinary path element
+     */
+    private static boolean isPlainName(String name)
+    {
+        return MetadataGuards.isPlainName(name);
+    }
+
+    /**
+     * Whether the template has a folder on disk, which is where EDT keeps its content file.
+     * <p>
+     * Measured on real configurations: a template is declared inline in its owner's {@code .mdo},
+     * and the folder under {@code src/.../Templates/} holds the content. So a folder is what a
+     * template that exists has, and its absence is what a mistyped name looks like.
+     * </p>
+     *
+     * @param project the EDT project (must be open)
+     * @param ownerFqn FQN of the owning metadata object
+     * @param templateName name of the template
+     * @return <code>true</code> when the template's folder exists
+     */
+    public static boolean templateExists(IProject project, String ownerFqn, String templateName)
+    {
+        Path dir = project == null ? null : resolveTemplateDir(project, ownerFqn, templateName);
+        return dir != null && Files.isDirectory(dir);
+    }
+
+    /**
      * Resolves the on-disk template directory:
      * {@code <project>/src/<OwnerCollection>/<OwnerName>/Templates/<TemplateName>}
      * for object-owned templates, or
      * {@code <project>/src/CommonTemplates/<TemplateName>} for CommonTemplate.
+     *
+     * <p>The result is normalized and checked to be inside the project: a path that would land
+     * outside the project the caller named is not resolved at all.
      */
     private static Path resolveTemplateDir(IProject project, String ownerFqn,
         String templateName)
@@ -1034,20 +1248,35 @@ public final class BmTemplateHelper
         {
             return null;
         }
-        Path projectRoot = project.getLocation().toFile().toPath();
-        String[] parts = ownerFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
+        Path relative = templateDirRelativePath(ownerFqn, templateName);
+        if (relative == null)
         {
             return null;
         }
-        String typePlural = englishTypePlural(parts[0]);
-        String ownerName = parts[1];
-        if ("CommonTemplate".equals(parts[0]) || "ОбщийМакет".equals(parts[0])) //$NON-NLS-1$ //$NON-NLS-2$
+        Path projectRoot = project.getLocation().toFile().toPath().toAbsolutePath().normalize();
+        Path resolved = projectRoot.resolve(relative).normalize();
+        return resolved.startsWith(projectRoot) ? resolved : null;
+    }
+
+    /**
+     * Why the template directory could not be resolved: the owner or the name does not address one,
+     * or - when both do - the project has no location on the local filesystem.
+     *
+     * @param project the EDT project
+     * @param ownerFqn the owner's FQN
+     * @param templateName the template's name
+     * @return the reason, for the caller's error message
+     */
+    private static String unresolvableReason(IProject project, String ownerFqn, String templateName)
+    {
+        String refusal = templateDirRefusal(ownerFqn, templateName);
+        if (refusal != null)
         {
-            return projectRoot.resolve("src").resolve("CommonTemplates").resolve(templateName); //$NON-NLS-1$ //$NON-NLS-2$
+            return refusal;
         }
-        return projectRoot.resolve("src").resolve(typePlural).resolve(ownerName) //$NON-NLS-1$
-            .resolve("Templates").resolve(templateName); //$NON-NLS-1$
+        return project == null || project.getLocation() == null
+            ? "the project has no location on the local filesystem" //$NON-NLS-1$
+            : "the template path leaves the project"; //$NON-NLS-1$
     }
 
     /**
@@ -1058,69 +1287,17 @@ public final class BmTemplateHelper
     private static IFolder locateTemplateFolder(IProject project, String ownerFqn,
         String templateName)
     {
-        String[] parts = ownerFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
+        Path relative = templateDirRelativePath(ownerFqn, templateName);
+        if (relative == null)
         {
             return null;
         }
-        if ("CommonTemplate".equals(parts[0]) || "ОбщийМакет".equals(parts[0])) //$NON-NLS-1$ //$NON-NLS-2$
+        IFolder folder = project.getFolder(relative.getName(0).toString());
+        for (int index = 1; index < relative.getNameCount(); index++)
         {
-            return project.getFolder("src").getFolder("CommonTemplates").getFolder(templateName); //$NON-NLS-1$ //$NON-NLS-2$
+            folder = folder.getFolder(relative.getName(index).toString());
         }
-        return project.getFolder("src") //$NON-NLS-1$
-            .getFolder(englishTypePlural(parts[0]))
-            .getFolder(parts[1])
-            .getFolder("Templates") //$NON-NLS-1$
-            .getFolder(templateName);
-    }
-
-    /**
-     * Maps an English-singular metadata type prefix to the plural folder
-     * name EDT uses on disk. Falls back to {@code prefix + "s"} when no
-     * special case applies.
-     */
-    private static String englishTypePlural(String typePrefix)
-    {
-        if (typePrefix == null || typePrefix.isEmpty())
-        {
-            return ""; //$NON-NLS-1$
-        }
-        switch (typePrefix)
-        {
-            case "Catalog": //$NON-NLS-1$
-                return "Catalogs"; //$NON-NLS-1$
-            case "Document": //$NON-NLS-1$
-                return "Documents"; //$NON-NLS-1$
-            case "DataProcessor": //$NON-NLS-1$
-                return "DataProcessors"; //$NON-NLS-1$
-            case "Report": //$NON-NLS-1$
-                return "Reports"; //$NON-NLS-1$
-            case "ChartOfAccounts": //$NON-NLS-1$
-                return "ChartsOfAccounts"; //$NON-NLS-1$
-            case "ChartOfCalculationTypes": //$NON-NLS-1$
-                return "ChartsOfCalculationTypes"; //$NON-NLS-1$
-            case "ChartOfCharacteristicTypes": //$NON-NLS-1$
-                return "ChartsOfCharacteristicTypes"; //$NON-NLS-1$
-            case "BusinessProcess": //$NON-NLS-1$
-                return "BusinessProcesses"; //$NON-NLS-1$
-            case "ExchangePlan": //$NON-NLS-1$
-                return "ExchangePlans"; //$NON-NLS-1$
-            case "InformationRegister": //$NON-NLS-1$
-                return "InformationRegisters"; //$NON-NLS-1$
-            case "AccumulationRegister": //$NON-NLS-1$
-                return "AccumulationRegisters"; //$NON-NLS-1$
-            case "AccountingRegister": //$NON-NLS-1$
-                return "AccountingRegisters"; //$NON-NLS-1$
-            case "CalculationRegister": //$NON-NLS-1$
-                return "CalculationRegisters"; //$NON-NLS-1$
-            case "Task": //$NON-NLS-1$
-                return "Tasks"; //$NON-NLS-1$
-            case "Enum": //$NON-NLS-1$
-            case "Enumeration": //$NON-NLS-1$
-                return "Enums"; //$NON-NLS-1$
-            default:
-                return typePrefix + "s"; //$NON-NLS-1$
-        }
+        return folder;
     }
 
     /**
@@ -1139,6 +1316,31 @@ public final class BmTemplateHelper
     public static void setCellText(SpreadsheetDocument doc, int row, int col, String text,
         String language)
     {
+        Cell c = cellAt(doc, row, col);
+        String lang = (language == null || language.isEmpty()) ? "ru" : language; //$NON-NLS-1$
+        LocalString ls = c.getText();
+        if (ls == null)
+        {
+            ls = ContentFactory.eINSTANCE.createLocalString();
+            c.setText(ls);
+        }
+        ls.getContent().put(lang, text == null ? "" : text); //$NON-NLS-1$
+    }
+
+    /**
+     * The cell at a 1-based position, creating the row and the cell when they are absent.
+     * <p>
+     * The moxel maps are 0-based. The conversion stays at this boundary so every writer lands on
+     * the same physical cell.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row 1-based row index
+     * @param col 1-based column index
+     * @return the cell
+     */
+    private static Cell cellAt(SpreadsheetDocument doc, int row, int col)
+    {
         if (doc == null)
         {
             throw new IllegalArgumentException("doc must not be null"); //$NON-NLS-1$
@@ -1147,13 +1349,8 @@ public final class BmTemplateHelper
         {
             throw new IllegalArgumentException("row and col must be 1-based positive integers"); //$NON-NLS-1$
         }
-        // The moxel row/cell EMaps are 0-based (platform-authored templates
-        // store the top-left cell at key 0), while this API is 1-based. Convert
-        // at the boundary so set_cell(1,1) lands on the physical top-left cell,
-        // matching the documented contract and the inverse readSpreadsheet.
         int rowKey = row - 1;
         int colKey = col - 1;
-        String lang = (language == null || language.isEmpty()) ? "ru" : language; //$NON-NLS-1$
         EMap<Integer, Row> rows = doc.getRows();
         Row r = rows.get(Integer.valueOf(rowKey));
         if (r == null)
@@ -1168,14 +1365,152 @@ public final class BmTemplateHelper
             c = MoxelFactory.eINSTANCE.createCell();
             cells.put(Integer.valueOf(colKey), c);
         }
-        LocalString ls = c.getText();
-        if (ls == null)
-        {
-            ls = ContentFactory.eINSTANCE.createLocalString();
-            c.setText(ls);
-        }
-        ls.getContent().put(lang, text == null ? "" : text); //$NON-NLS-1$
+        return c;
     }
+
+    /**
+     * Why a fill request cannot be applied.
+     * <p>
+     * A parameter cell is how a template is filled from BSL: the cell carries the parameter name and
+     * its format says the fill is a parameter. A template cell keeps the text, placeholders and all.
+     * Asking for a parameter without a name, for plain text and a name together, or for a part the
+     * file does not store on that fill, is refused here so the call does not report success and
+     * leave the cell changed in the model alone.
+     * </p>
+     *
+     * @param fillType text, parameter or template; empty means parameter when a name is present
+     * @param parameter the parameter name, or {@code null}
+     * @param textPassed whether the caller named a text, including an empty one
+     * @return the reason, or {@code null} when the request can be applied
+     */
+    public static String fillProblem(String fillType, String parameter, boolean textPassed)
+    {
+        boolean named = parameter != null && !parameter.isEmpty();
+        if ((fillType == null || fillType.isEmpty()) && !named)
+        {
+            return null;
+        }
+        String kind = (fillType == null || fillType.isEmpty()) ? "parameter" : fillType; //$NON-NLS-1$
+        FillType resolved = enumNamed(FillType.VALUES, kind);
+        if (resolved == null)
+        {
+            return "fillType must be one of " + enumLiterals(FillType.VALUES) + " - got: " + kind; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (resolved == FillType.PARAMETER && !named)
+        {
+            return "fillType parameter needs a parameter name"; //$NON-NLS-1$
+        }
+        if (resolved == FillType.TEXT && named)
+        {
+            return "fillType text does not take a parameter"; //$NON-NLS-1$
+        }
+        if (resolved == FillType.PARAMETER && textPassed)
+        {
+            return "fillType parameter does not store text - the value arrives from BSL when the " //$NON-NLS-1$
+                + "template is filled"; //$NON-NLS-1$
+        }
+        if (resolved == FillType.TEMPLATE && named)
+        {
+            return "fillType template does not take a parameter - the placeholders in the text name " //$NON-NLS-1$
+                + "what BSL fills"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Sets a cell's text, its template parameter, and how the cell is filled.
+     * <p>
+     * Text is written only when the caller passed it, or when the call is a plain text write. A
+     * parameter on its own must not blank the text that was already there. The fill lives on the
+     * cell's format, copied the same way as any other presentation change. A fill that asks for a
+     * part the file does not store on it - text on a parameter fill, a name on a template fill - is
+     * refused before anything is written. A text or template fill also drops the parameter name an
+     * earlier call may have left on the cell: the file stores that name only on a parameter fill.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row 1-based row index
+     * @param col 1-based column index
+     * @param text the text to write
+     * @param textPassed whether the caller named a text, including an empty one
+     * @param language language tag for the text; {@code null} means {@code ru}
+     * @param fillType text, parameter or template, or {@code null} to leave the fill
+     * @param parameter the parameter name, or {@code null} to leave it
+     * @return {@code null} when applied, or the reason it was refused
+     */
+    public static String setCellContent(SpreadsheetDocument doc, int row, int col, String text,
+        boolean textPassed, String language, String fillType, String parameter)
+    {
+        String problem = fillProblem(fillType, parameter, textPassed);
+        if (problem != null)
+        {
+            return problem;
+        }
+        boolean named = parameter != null && !parameter.isEmpty();
+        String kind = fillType;
+        if ((kind == null || kind.isEmpty()) && named)
+        {
+            kind = "parameter"; //$NON-NLS-1$
+        }
+        boolean legacy = !textPassed && (kind == null || kind.isEmpty());
+        if (textPassed || legacy)
+        {
+            setCellText(doc, row, col, text, language);
+        }
+        else
+        {
+            cellAt(doc, row, col);
+        }
+        Cell cell = cellAt(doc, row, col);
+        if (named)
+        {
+            cell.setParameter(parameter);
+        }
+        else if (kind != null)
+        {
+            FillType resolved = enumNamed(FillType.VALUES, kind);
+            if (resolved == FillType.TEXT || resolved == FillType.TEMPLATE)
+            {
+                cell.setParameter(null);
+            }
+        }
+        if (kind != null && !kind.isEmpty())
+        {
+            CellLook look = new CellLook();
+            look.fillType = kind;
+            FormatOutcome outcome = applyCellFormat(doc, row, col, row, col, null, null, null,
+                null, null, null, look);
+            if (outcome.error != null)
+            {
+                return outcome.error;
+            }
+        }
+        return null;
+    }
+
+    /** Smallest rotation a caller may ask for, in degrees. */
+    private static final int MIN_TEXT_DEGREES = 0;
+
+    /** Largest rotation a caller may ask for, in degrees. A full circle, and no further. */
+    private static final int MAX_TEXT_DEGREES = 360;
+
+    /**
+     * How many model units one degree is. Templates store the angle in tenths of a degree: a
+     * vertical caption is 900, which the editor shows as 90 degrees.
+     */
+    private static final int TEXT_ORIENTATION_TENTHS = 10;
+
+    /** The line width a border gets when the caller names a style and no width. */
+    private static final int DEFAULT_BORDER_WIDTH = 1;
+
+    /** Face used when a font is asked for and the cell has none to copy. */
+    private static final String DEFAULT_FONT_FACE = "Arial"; //$NON-NLS-1$
+
+    /** Height, in the units the template stores, of a font created from nothing. */
+    private static final float DEFAULT_FONT_HEIGHT = 10f;
+
+    /** Scale the template stores on an absolute font. */
+    private static final int DEFAULT_FONT_SCALE = 100;
 
     /**
      * What a formatting request changes, and what it left alone.
@@ -1193,6 +1528,138 @@ public final class BmTemplateHelper
 
         /** Why nothing happened, when nothing did. */
         public String error;
+    }
+
+    /**
+     * Presentation and print settings asked of a template, beyond placement, rotation and size.
+     * <p>
+     * Every field is optional. {@code null} means leave that property alone. Colours are
+     * {@code #RRGGBB}. Lengths of margins are millimetres. Font height is the number the template
+     * stores, in points.
+     * </p>
+     */
+    public static final class CellLook
+    {
+        /** text, parameter or template. */
+        public String fillType;
+
+        /** Line style applied to every side that has no style of its own. */
+        public String border;
+
+        /** Width of the lines this request adds. {@code null} takes the default of 1. */
+        public Integer borderWidth;
+
+        /** Line style of the left side, or {@code null} to leave it or to take {@link #border}. */
+        public String leftBorder;
+
+        /** Line style of the top side. */
+        public String topBorder;
+
+        /** Line style of the right side. */
+        public String rightBorder;
+
+        /** Line style of the bottom side. */
+        public String bottomBorder;
+
+        /** Font face, or {@code null} to keep the cell's. */
+        public String fontName;
+
+        /** Font height in the units the template stores, or {@code null} to keep it. */
+        public Float fontSize;
+
+        /** Bold, or {@code null} to leave it. */
+        public Boolean fontBold;
+
+        /** Italic, or {@code null} to leave it. */
+        public Boolean fontItalic;
+
+        /** Underline, or {@code null} to leave it. */
+        public Boolean fontUnderline;
+
+        /** Strikeout, or {@code null} to leave it. */
+        public Boolean fontStrikeout;
+
+        /** Text colour {@code #RRGGBB}, or {@code null}. */
+        public String textColor;
+
+        /** Background colour {@code #RRGGBB}, or {@code null}. */
+        public String backColor;
+
+        /** Border colour {@code #RRGGBB}, or {@code null}. */
+        public String borderColor;
+
+        /** Pattern colour {@code #RRGGBB}, or {@code null}. */
+        public String patternColor;
+
+        /** Fill pattern, or {@code null} to leave it. */
+        public String pattern;
+
+        /** portrait or landscape. */
+        public String pageOrientation;
+
+        /** Print scale in percent, or {@code null}. */
+        public Integer scale;
+
+        /** Copies, or {@code null}. */
+        public Integer copies;
+
+        /** Pages per sheet, or {@code null}. */
+        public Integer perPage;
+
+        /** Fit to page, or {@code null} to leave it. */
+        public Boolean fitToPage;
+
+        /** Top margin in millimetres, or {@code null}. Fractions allowed. */
+        public Float topMargin;
+
+        /** Left margin in millimetres, or {@code null}. Fractions allowed. */
+        public Float leftMargin;
+
+        /** Bottom margin in millimetres, or {@code null}. Fractions allowed. */
+        public Float bottomMargin;
+
+        /** Right margin in millimetres, or {@code null}. Fractions allowed. */
+        public Float rightMargin;
+
+        /**
+         * Whether any cell-presentation field is set.
+         *
+         * @return {@code true} when a cell's format would change
+         */
+        public boolean changesCells()
+        {
+            return filled(fillType) || filled(border) || borderWidth != null || filled(leftBorder)
+                || filled(topBorder) || filled(rightBorder) || filled(bottomBorder)
+                || filled(fontName) || fontSize != null || fontBold != null || fontItalic != null
+                || fontUnderline != null || fontStrikeout != null || filled(textColor)
+                || filled(backColor) || filled(borderColor) || filled(patternColor)
+                || filled(pattern);
+        }
+
+        /**
+         * Whether any print field is set.
+         *
+         * @return {@code true} when the document's print settings would change
+         */
+        public boolean changesPrint()
+        {
+            return filled(pageOrientation) || scale != null || copies != null || perPage != null
+                || fitToPage != null || topMargin != null || leftMargin != null
+                || bottomMargin != null || rightMargin != null;
+        }
+
+        /**
+         * Whether a string field carries a request. Empty and {@code null} both mean "leave it
+         * alone", and this is the one place that rule is spelled out for every string field of the
+         * request.
+         *
+         * @param value the field's value
+         * @return {@code true} when the field asks for a change
+         */
+        private static boolean filled(String value)
+        {
+            return value != null && !value.isEmpty();
+        }
     }
 
     /**
@@ -1254,7 +1721,8 @@ public final class BmTemplateHelper
      * @param toRow last row, inclusive.
      * @param toCol last column, inclusive.
      * @param placement text placement (wrap / cut / block / auto), or {@code null} to leave it.
-     * @param orientation text rotation in degrees, or {@code null} to leave it.
+     * @param orientation text rotation in degrees from 0 to 360, or {@code null} to leave it. The
+     *            template stores tenths of a degree, so 90 is written as 900.
      * @param rowHeight an explicit row height, or {@code null} to leave it. There is no
      *            auto-height flag in this model: a row whose height is unset and whose cells wrap
      *            is what the platform grows to fit the text.
@@ -1267,7 +1735,47 @@ public final class BmTemplateHelper
         int toRow, int toCol, String placement, Integer orientation, Integer rowHeight,
         Boolean autoColumnWidth, Integer columnWidth, Integer widthWeight)
     {
+        return applyCellFormat(doc, fromRow, fromCol, toRow, toCol, placement, orientation,
+            rowHeight, autoColumnWidth, columnWidth, widthWeight, null);
+    }
+
+    /**
+     * Applies presentation properties to a rectangle of cells, and column width to its columns.
+     * <p>
+     * The same sharing rule as the shorter form. {@code look} carries borders, font, colours, the
+     * fill and the pattern; {@code null} leaves all of those alone. A font change rides on the font
+     * the cell renders with - its own format's, else the row's, else the column's, else the default
+     * format's - and a font the model exposes no setters for is refused before anything changes.
+     * Print settings are not applied here - they belong to the document, and
+     * {@link #applyPrintSettings} writes them.
+     * </p>
+     *
+     * @param doc the spreadsheet.
+     * @param fromRow first row, 1-based inclusive.
+     * @param fromCol first column, 1-based inclusive.
+     * @param toRow last row, inclusive.
+     * @param toCol last column, inclusive.
+     * @param placement text placement (wrap / cut / block / auto), or {@code null} to leave it.
+     * @param orientation text rotation in degrees from 0 to 360, or {@code null} to leave it. The
+     *            template stores tenths of a degree, so 90 is written as 900.
+     * @param rowHeight an explicit row height, or {@code null} to leave it.
+     * @param autoColumnWidth whether column width follows the content, or {@code null} to leave it.
+     * @param columnWidth an explicit column width, or {@code null} to leave it.
+     * @param widthWeight the column's share when widths are distributed, or {@code null}.
+     * @param look further presentation, or {@code null}.
+     * @return what changed
+     */
+    public static FormatOutcome applyCellFormat(SpreadsheetDocument doc, int fromRow, int fromCol,
+        int toRow, int toCol, String placement, Integer orientation, Integer rowHeight,
+        Boolean autoColumnWidth, Integer columnWidth, Integer widthWeight, CellLook look)
+    {
         FormatOutcome outcome = new FormatOutcome();
+        String problem = presentationProblem(orientation, look);
+        if (problem != null)
+        {
+            outcome.error = problem;
+            return outcome;
+        }
         if (doc == null)
         {
             outcome.error = "no spreadsheet to format"; //$NON-NLS-1$
@@ -1286,6 +1794,20 @@ public final class BmTemplateHelper
                 return outcome;
             }
         }
+        boolean fontAsked = fontRequestOf(look) != null;
+        if (fontAsked)
+        {
+            // Checked before the line and colour tables grow, so a refusal leaves nothing behind.
+            String refusal = uneditableFontProblem(doc, fromRow, fromCol, toRow, toCol);
+            if (refusal != null)
+            {
+                outcome.error = refusal;
+                return outcome;
+            }
+        }
+        FormatDelta cellsWanted = cellDelta(doc, wanted, orientation, look);
+        FormatDelta heightWanted = new FormatDelta();
+        heightWanted.height = rowHeight;
         EMap<Integer, Row> rows = doc.getRows();
         for (int row = fromRow; row <= toRow; row++)
         {
@@ -1299,8 +1821,7 @@ public final class BmTemplateHelper
             {
                 // Height belongs to the ROW's own format, not to the cells in it - a cell cannot
                 // make the line it sits on taller by itself.
-                r.setFormatIndex(indexOfFormatWith(doc, r.getFormatIndex(), null, null,
-                    rowHeight, null, null, null));
+                r.setFormatIndex(indexOfFormatWith(doc, r.getFormatIndex(), heightWanted, null));
             }
             EMap<Integer, Cell> cells = r.getCells();
             for (int col = fromCol; col <= toCol; col++)
@@ -1312,7 +1833,8 @@ public final class BmTemplateHelper
                     cells.put(Integer.valueOf(col - 1), c);
                 }
                 int before = c.getFormatIndex();
-                int after = indexOfFormatWith(doc, before, wanted, orientation, null, null, null, null);
+                Font inherited = fontAsked ? inheritedCellFont(doc, r, c, col - 1) : null;
+                int after = indexOfFormatWith(doc, before, cellsWanted, inherited);
                 if (after != before)
                 {
                     c.setFormatIndex(after);
@@ -1330,6 +1852,13 @@ public final class BmTemplateHelper
 
     /**
      * Points a range of columns at a format carrying the requested width behaviour.
+     * <p>
+     * A width belongs to a column, and columns live in the document's column set. A template that
+     * was authored with cells but never with a column set has none - and returning there left the
+     * caller with an answer saying nothing about the width, after a call that named one. The set is
+     * therefore made, and its declared size grown to cover the columns being formatted: a set that
+     * stopped short of them would put the width outside the set the page is measured by.
+     * </p>
      *
      * @param doc the spreadsheet.
      * @param fromCol first column, 1-based inclusive.
@@ -1345,7 +1874,12 @@ public final class BmTemplateHelper
         Columns columns = doc.getColumns();
         if (columns == null)
         {
-            return 0;
+            columns = MoxelFactory.eINSTANCE.createColumns();
+            doc.setColumns(columns);
+        }
+        if (columns.getSize() < toCol)
+        {
+            columns.setSize(toCol);
         }
         EMap<Integer, Column> byIndex = columns.getColumns();
         int changed = 0;
@@ -1358,7 +1892,11 @@ public final class BmTemplateHelper
                 byIndex.put(Integer.valueOf(col - 1), c);
             }
             int before = c.getFormatIndex();
-            int after = indexOfFormatWith(doc, before, null, null, null, autoWidth, width, weight);
+            FormatDelta widthWanted = new FormatDelta();
+            widthWanted.autoWidth = autoWidth;
+            widthWanted.width = width;
+            widthWanted.weight = weight;
+            int after = indexOfFormatWith(doc, before, widthWanted, null);
             if (after != before)
             {
                 c.setFormatIndex(after);
@@ -1369,57 +1907,170 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The properties a format should gain. A null field keeps the base format's value.
+     */
+    private static final class FormatDelta
+    {
+        private TextPlacement placement;
+
+        /** Degrees, not tenths. Written multiplied by ten. */
+        private Integer orientationDegrees;
+
+        private Integer height;
+
+        private Boolean autoWidth;
+
+        private Integer width;
+
+        private Integer weight;
+
+        private FillType fillType;
+
+        private FontRequest font;
+
+        private Integer leftBorder;
+
+        private Integer topBorder;
+
+        private Integer rightBorder;
+
+        private Integer bottomBorder;
+
+        private Integer textColor;
+
+        private Integer backColor;
+
+        private Integer borderColor;
+
+        private Integer patternColor;
+
+        private Pattern pattern;
+    }
+
+    /**
+     * A font change asked relative to the font the cell already has.
+     */
+    private static final class FontRequest
+    {
+        private String face;
+
+        private Float size;
+
+        private Boolean bold;
+
+        private Boolean italic;
+
+        private Boolean underline;
+
+        private Boolean strikeout;
+    }
+
+    /**
      * Finds - or adds - a format that differs from an existing one in exactly the given properties.
      * <p>
      * Reuse first. A template that sets the same wrap on two hundred cells should end with one new
      * format, not two hundred: the format table is written into the file, and a table that grows by
      * one entry per formatted cell makes the template larger every time it is touched.
      * </p>
+     * <p>
+     * Index 0 is the "no format" slot: the serializer skips it when writing and the reader looks at
+     * a cell's format only when the index is not 0. A document loaded from a file has an empty
+     * placeholder there, so a document whose table is still empty gets one before its first real
+     * format - otherwise that format would land at 0 and neither the file nor the base would ever
+     * see it. Because the placeholder is empty, a format carrying any property never equals it and
+     * this never returns 0 for one.
+     * </p>
      *
      * @param doc the spreadsheet holding the format table.
      * @param baseIndex the format the element points at now.
-     * @param placement the wanted placement, or {@code null} to keep the base's.
-     * @param orientation the wanted rotation, or {@code null} to keep the base's.
-     * @param height the wanted height, or {@code null} to keep the base's.
-     * @param autoWidth the wanted auto-width, or {@code null} to keep the base's.
-     * @param width the wanted width, or {@code null} to keep the base's.
-     * @param weight the wanted width weight, or {@code null} to keep the base's.
+     * @param delta the properties to change. Rotation is in degrees and is stored as tenths.
+     * @param inheritedFont the font the element renders with when its own format names none - the
+     *            base a font change rides on; {@code null} when the caller has none to offer
      * @return the index to point at
      */
-    private static int indexOfFormatWith(SpreadsheetDocument doc, int baseIndex,
-        TextPlacement placement, Integer orientation, Integer height, Boolean autoWidth,
-        Integer width, Integer weight)
+    private static int indexOfFormatWith(SpreadsheetDocument doc, int baseIndex, FormatDelta delta,
+        Font inheritedFont)
     {
         EList<Format> formats = doc.getFormats();
+        ensureFormatPlaceholder(doc);
         Format base = baseIndex >= 0 && baseIndex < formats.size() ? formats.get(baseIndex) : null;
         Format wanted = MoxelFactory.eINSTANCE.createFormat();
         if (base != null)
         {
             wanted = EcoreUtil.copy(base);
         }
-        if (placement != null)
+        if (delta.placement != null)
         {
-            wanted.setTextPlacement(placement);
+            wanted.setTextPlacement(delta.placement);
         }
-        if (orientation != null)
+        if (delta.orientationDegrees != null)
         {
-            wanted.setTextOrientation(orientation.intValue());
+            wanted.setTextOrientation(delta.orientationDegrees.intValue() * TEXT_ORIENTATION_TENTHS);
         }
-        if (height != null)
+        if (delta.height != null)
         {
-            wanted.setHeight(height.intValue());
+            wanted.setHeight(delta.height.intValue());
         }
-        if (autoWidth != null)
+        if (delta.autoWidth != null)
         {
-            wanted.setAutoWidthCalculation(autoWidth.booleanValue());
+            wanted.setAutoWidthCalculation(delta.autoWidth.booleanValue());
         }
-        if (width != null)
+        if (delta.width != null)
         {
-            wanted.setWidth(width.intValue());
+            wanted.setWidth(delta.width.intValue());
         }
-        if (weight != null)
+        if (delta.weight != null)
         {
-            wanted.setWidthWeightFactor(weight.intValue());
+            wanted.setWidthWeightFactor(delta.weight.intValue());
+        }
+        if (delta.fillType != null)
+        {
+            wanted.setFillType(delta.fillType);
+        }
+        if (delta.pattern != null)
+        {
+            wanted.setPattern(delta.pattern);
+        }
+        if (delta.leftBorder != null)
+        {
+            wanted.setLeftBorder(delta.leftBorder.intValue());
+        }
+        if (delta.topBorder != null)
+        {
+            wanted.setTopBorder(delta.topBorder.intValue());
+        }
+        if (delta.rightBorder != null)
+        {
+            wanted.setRightBorder(delta.rightBorder.intValue());
+        }
+        if (delta.bottomBorder != null)
+        {
+            wanted.setBottomBorder(delta.bottomBorder.intValue());
+        }
+        if (delta.textColor != null)
+        {
+            wanted.setTextColor(delta.textColor.intValue());
+        }
+        if (delta.backColor != null)
+        {
+            wanted.setBackColor(delta.backColor.intValue());
+        }
+        if (delta.borderColor != null)
+        {
+            wanted.setBorderColor(delta.borderColor.intValue());
+        }
+        if (delta.patternColor != null)
+        {
+            wanted.setPatternColor(delta.patternColor.intValue());
+        }
+        if (delta.font != null)
+        {
+            Font baseFont = fontOfFormat(doc, base);
+            if (baseFont == null)
+            {
+                baseFont = inheritedFont;
+            }
+            wanted.setFont(indexOfFont(doc, baseFont, delta.font));
         }
         for (int i = 0; i < formats.size(); i++)
         {
@@ -1430,6 +2081,829 @@ public final class BmTemplateHelper
         }
         formats.add(wanted);
         return formats.size() - 1;
+    }
+
+    /**
+     * Gives a document with no formats the empty placeholder a file-loaded document has at index 0,
+     * and points the default format index at it.
+     * <p>
+     * The serializer and the reader both read index 0 as "no format", so a real format placed there
+     * is lost on write and every formatless cell inherits it on read - which is what the first
+     * format added to a freshly created document did. Mirrors what
+     * {@code SheetAccessor.removeFormats} does to a document it reads from a file.
+     * </p>
+     *
+     * @param doc the spreadsheet; a document that already has formats is left as it is
+     */
+    private static void ensureFormatPlaceholder(SpreadsheetDocument doc)
+    {
+        if (!doc.getFormats().isEmpty())
+        {
+            return;
+        }
+        doc.getFormats().add(MoxelFactory.eINSTANCE.createFormat());
+        doc.setDefaultFormatIndex(0);
+    }
+
+    /**
+     * The font a format names, or {@code null} when it names none or names one outside the table.
+     *
+     * @param doc the spreadsheet holding the font table
+     * @param format the format, or {@code null}
+     * @return the font, or {@code null}
+     */
+    private static Font fontOfFormat(SpreadsheetDocument doc, Format format)
+    {
+        if (format == null || !format.isSetFont())
+        {
+            return null;
+        }
+        int index = format.getFont();
+        if (index < 0 || index >= doc.getFonts().size())
+        {
+            return null;
+        }
+        return doc.getFonts().get(index);
+    }
+
+    /**
+     * The font a cell renders with when its own format names none: the row's, then the column's,
+     * then the document default format's.
+     * <p>
+     * A platform-authored template carries its look on the row and column formats, and a bold asked
+     * of a cell that only inherits that look has to ride on the inherited font - rebuilding the
+     * font from defaults would trade Verdana 8 for Arial 10 and nobody asked for that.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row the cell's row
+     * @param cell the cell
+     * @param colKey the cell's 0-based column key
+     * @return the font the cell renders with, or {@code null} when nothing names one
+     */
+    private static Font inheritedCellFont(SpreadsheetDocument doc, Row row, Cell cell, int colKey)
+    {
+        Font own = fontOfFormat(doc, formatAt(doc, cell.getFormatIndex()));
+        if (own != null)
+        {
+            return own;
+        }
+        Font rowFont = fontOfFormat(doc, formatAt(doc, row.getFormatIndex()));
+        if (rowFont != null)
+        {
+            return rowFont;
+        }
+        Column column = doc.getColumns() == null ? null
+            : doc.getColumns().getColumns().get(Integer.valueOf(colKey));
+        Font columnFont = fontOfFormat(doc,
+            column == null ? null : formatAt(doc, column.getFormatIndex()));
+        if (columnFont != null)
+        {
+            return columnFont;
+        }
+        return fontOfFormat(doc, formatAt(doc, doc.getDefaultFormatIndex()));
+    }
+
+    /**
+     * Why a font change cannot ride on the fonts a rectangle of cells renders with, or
+     * {@code null} when it can.
+     * <p>
+     * A font the model exposes no setters for cannot carry a bold or a size change, and quietly
+     * replacing it with an absolute font would drop the style it points at. The refusal names the
+     * font so the caller knows what to name in full.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param fromRow first row, 1-based inclusive
+     * @param fromCol first column, 1-based inclusive
+     * @param toRow last row, inclusive
+     * @param toCol last column, inclusive
+     * @return the reason, or {@code null} when every cell's font can carry the change
+     */
+    private static String uneditableFontProblem(SpreadsheetDocument doc, int fromRow, int fromCol,
+        int toRow, int toCol)
+    {
+        EMap<Integer, Row> rows = doc.getRows();
+        for (int row = fromRow; row <= toRow; row++)
+        {
+            Row r = rows.get(Integer.valueOf(row - 1));
+            if (r == null)
+            {
+                continue;
+            }
+            for (int col = fromCol; col <= toCol; col++)
+            {
+                Cell c = r.getCells().get(Integer.valueOf(col - 1));
+                if (c == null)
+                {
+                    continue;
+                }
+                Font font = inheritedCellFont(doc, r, c, col - 1);
+                if (font != null && !(font instanceof MutableFont))
+                {
+                    return "cannot change the font of a cell rendered by a " //$NON-NLS-1$
+                        + font.eClass().getName() + " this runtime exposes no setters for (" //$NON-NLS-1$
+                        + font.faceName() + ") - set fontName, fontSize and the flags in full"; //$NON-NLS-1$
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The cell properties of a request, with borders and colours already placed in their tables.
+     *
+     * @param doc the spreadsheet the tables belong to
+     * @param placement the resolved placement, or {@code null}
+     * @param orientation degrees, or {@code null}
+     * @param look further presentation, or {@code null}
+     * @return the delta the cell loop applies
+     */
+    private static FormatDelta cellDelta(SpreadsheetDocument doc, TextPlacement placement,
+        Integer orientation, CellLook look)
+    {
+        FormatDelta delta = new FormatDelta();
+        delta.placement = placement;
+        delta.orientationDegrees = orientation;
+        if (look == null)
+        {
+            return delta;
+        }
+        if (look.fillType != null && !look.fillType.isEmpty())
+        {
+            delta.fillType = enumNamed(FillType.VALUES, look.fillType);
+        }
+        if (look.pattern != null && !look.pattern.isEmpty())
+        {
+            delta.pattern = enumNamed(Pattern.VALUES, look.pattern);
+        }
+        delta.leftBorder = borderIndex(doc, look.leftBorder, look.border, look.borderWidth);
+        delta.topBorder = borderIndex(doc, look.topBorder, look.border, look.borderWidth);
+        delta.rightBorder = borderIndex(doc, look.rightBorder, look.border, look.borderWidth);
+        delta.bottomBorder = borderIndex(doc, look.bottomBorder, look.border, look.borderWidth);
+        delta.textColor = colorIndex(doc, look.textColor);
+        delta.backColor = colorIndex(doc, look.backColor);
+        delta.borderColor = colorIndex(doc, look.borderColor);
+        delta.patternColor = colorIndex(doc, look.patternColor);
+        delta.font = fontRequestOf(look);
+        return delta;
+    }
+
+    /**
+     * The font change a look asks for, or {@code null} when it asks for none.
+     * <p>
+     * One place decides which look fields make up a font request: the delta builder and the
+     * feasibility check ahead of it must agree on what is a font change, or a look could pass the
+     * check and still carry a font into the table.
+     * </p>
+     *
+     * @param look the request's further presentation, or {@code null}
+     * @return the font change, or {@code null}
+     */
+    private static FontRequest fontRequestOf(CellLook look)
+    {
+        if (look == null)
+        {
+            return null;
+        }
+        if (look.fontName != null || look.fontSize != null || look.fontBold != null
+            || look.fontItalic != null || look.fontUnderline != null || look.fontStrikeout != null)
+        {
+            FontRequest font = new FontRequest();
+            font.face = look.fontName;
+            font.size = look.fontSize;
+            font.bold = look.fontBold;
+            font.italic = look.fontItalic;
+            font.underline = look.fontUnderline;
+            font.strikeout = look.fontStrikeout;
+            return font;
+        }
+        return null;
+    }
+
+    /**
+     * The line-table index of a border, or {@code null} when that side is not part of the request.
+     * <p>
+     * A side of its own wins over the style asked for every side. The line is reused when the
+     * document already has one of that style and width, so a sheet of boxed cells shares one line.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param side the style of this side, or empty to fall back to {@code all}
+     * @param all the style asked for every side, or empty
+     * @param width the line width, or {@code null} for the default
+     * @return the index, or {@code null} when this side stays as it is
+     */
+    private static Integer borderIndex(SpreadsheetDocument doc, String side, String all,
+        Integer width)
+    {
+        String styleName = side != null && !side.isEmpty() ? side : all;
+        if (styleName == null || styleName.isEmpty())
+        {
+            return null;
+        }
+        CellLineStyle style = enumNamed(CellLineStyle.VALUES, styleName);
+        int lineWidth = width == null ? DEFAULT_BORDER_WIDTH : width.intValue();
+        return Integer.valueOf(indexOfLine(doc, style, lineWidth));
+    }
+
+    /**
+     * Finds or adds a cell line of the given style and width.
+     *
+     * @param doc the spreadsheet
+     * @param style the line style
+     * @param width the line width
+     * @return the index in the document's line table
+     */
+    private static int indexOfLine(SpreadsheetDocument doc, CellLineStyle style, int width)
+    {
+        EList<SpreadsheetLine> lines = doc.getLines();
+        for (int i = 0; i < lines.size(); i++)
+        {
+            SpreadsheetLine line = lines.get(i);
+            if (line instanceof CellLine)
+            {
+                CellLine cellLine = (CellLine)line;
+                if (cellLine.getStyle() == style && cellLine.getWidth() == width && !cellLine.isGap())
+                {
+                    return i;
+                }
+            }
+        }
+        CellLine created = ContentFactory.eINSTANCE.createCellLine();
+        created.setStyle(style);
+        created.setWidth(width);
+        created.setGap(false);
+        lines.add(created);
+        return lines.size() - 1;
+    }
+
+    /**
+     * The colour-table index of a {@code #RRGGBB} colour, or {@code null} when none was asked.
+     *
+     * @param doc the spreadsheet
+     * @param hex the colour, or empty
+     * @return the index, or {@code null}
+     */
+    private static Integer colorIndex(SpreadsheetDocument doc, String hex)
+    {
+        int[] rgb = rgbOf(hex);
+        if (rgb == null)
+        {
+            return null;
+        }
+        return Integer.valueOf(indexOfColor(doc, rgb[0], rgb[1], rgb[2]));
+    }
+
+    /**
+     * Finds or adds an absolute colour.
+     *
+     * @param doc the spreadsheet
+     * @param red red, 0..255
+     * @param green green, 0..255
+     * @param blue blue, 0..255
+     * @return the index in the document's colour table
+     */
+    private static int indexOfColor(SpreadsheetDocument doc, int red, int green, int blue)
+    {
+        EList<Color> colors = doc.getColors();
+        for (int i = 0; i < colors.size(); i++)
+        {
+            Color color = colors.get(i);
+            if (color instanceof ColorDef)
+            {
+                ColorDef defined = (ColorDef)color;
+                if (defined.getRed() == red && defined.getGreen() == green && defined.getBlue() == blue)
+                {
+                    return i;
+                }
+            }
+        }
+        ColorDef created = McoreFactory.eINSTANCE.createColorDef();
+        created.setRed(red);
+        created.setGreen(green);
+        created.setBlue(blue);
+        colors.add(created);
+        return colors.size() - 1;
+    }
+
+    /**
+     * Finds or adds the font a request describes, starting from the font the cell already uses.
+     *
+     * @param doc the spreadsheet
+     * @param base the font the cell renders with, or {@code null}
+     * @param request what to change
+     * @return the index in the document's font table
+     */
+    private static int indexOfFont(SpreadsheetDocument doc, Font base, FontRequest request)
+    {
+        Font wanted = fontWith(base, request);
+        if (wanted == null)
+        {
+            throw new IllegalStateException("a font this runtime exposes no setters for cannot " //$NON-NLS-1$
+                + "carry a change: " + (base == null ? null : base.eClass().getName())); //$NON-NLS-1$
+        }
+        EList<Font> fonts = doc.getFonts();
+        for (int i = 0; i < fonts.size(); i++)
+        {
+            if (EcoreUtil.equals(fonts.get(i), wanted))
+            {
+                return i;
+            }
+        }
+        fonts.add(wanted);
+        return fonts.size() - 1;
+    }
+
+    /**
+     * A font with the requested fields changed and the rest taken from the base.
+     * <p>
+     * The base is copied, not rebuilt: a style-bound font keeps its binding and only the requested
+     * fields move, so a cell that only asks to be bold stays on the face and height it renders
+     * with. A cell with no font anywhere to copy starts from Arial at the default height, which is
+     * what a new absolute font in a template carries. A base the model exposes no setters for
+     * cannot carry a partial change, and {@code null} says so: the caller refuses rather than
+     * replace a style binding with an absolute font.
+     * </p>
+     *
+     * @param base the font to copy, or {@code null}
+     * @param request the changes
+     * @return the font to store, or {@code null} when the base cannot carry the change
+     */
+    private static Font fontWith(Font base, FontRequest request)
+    {
+        Font wanted;
+        if (base != null)
+        {
+            wanted = EcoreUtil.copy(base);
+        }
+        else
+        {
+            FontDef fresh = McoreFactory.eINSTANCE.createFontDef();
+            fresh.setFaceName(DEFAULT_FONT_FACE);
+            fresh.setHeight(DEFAULT_FONT_HEIGHT);
+            fresh.setScale(DEFAULT_FONT_SCALE);
+            wanted = fresh;
+        }
+        if (wanted instanceof FontDef && ((FontDef)wanted).getScale() == 0)
+        {
+            // The model's own default for scale is 100; a font table entry read with 0 is not a
+            // usable font and the file stores no scale at all for it.
+            ((FontDef)wanted).setScale(DEFAULT_FONT_SCALE);
+        }
+        if (!(wanted instanceof MutableFont))
+        {
+            return null;
+        }
+        MutableFont editable = (MutableFont)wanted;
+        if (request.face != null && !request.face.isEmpty())
+        {
+            editable.setFaceName(request.face);
+        }
+        if (request.size != null)
+        {
+            editable.setHeight(request.size.floatValue());
+        }
+        if (request.bold != null)
+        {
+            editable.setBold(request.bold.booleanValue());
+        }
+        if (request.italic != null)
+        {
+            editable.setItalic(request.italic.booleanValue());
+        }
+        if (request.underline != null)
+        {
+            editable.setUnderline(request.underline.booleanValue());
+        }
+        if (request.strikeout != null)
+        {
+            editable.setStrikeout(request.strikeout.booleanValue());
+        }
+        return wanted;
+    }
+
+    /**
+     * Why a presentation request cannot be applied.
+     * <p>
+     * Checked before any table grows, so a bad colour or a rotation past a full circle leaves the
+     * template untouched. Rotation is degrees, 0 through 360.
+     * </p>
+     *
+     * @param orientation degrees, or {@code null} when rotation is not part of the request
+     * @param look the rest of the request, or {@code null}
+     * @return the reason, or {@code null} when the request can be applied
+     */
+    public static String presentationProblem(Integer orientation, CellLook look)
+    {
+        if (orientation != null && (orientation.intValue() < MIN_TEXT_DEGREES
+            || orientation.intValue() > MAX_TEXT_DEGREES))
+        {
+            return "textOrientation must be between " + MIN_TEXT_DEGREES + " and " //$NON-NLS-1$
+                + MAX_TEXT_DEGREES + " degrees - got: " + orientation; //$NON-NLS-1$
+        }
+        if (look == null)
+        {
+            return null;
+        }
+        if (look.fillType != null && !look.fillType.isEmpty()
+            && enumNamed(FillType.VALUES, look.fillType) == null)
+        {
+            return "fillType must be one of " + enumLiterals(FillType.VALUES) + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
+                + look.fillType;
+        }
+        String border = borderProblem("border", look.border); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("leftBorder", look.leftBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("topBorder", look.topBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("rightBorder", look.rightBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        border = borderProblem("bottomBorder", look.bottomBorder); //$NON-NLS-1$
+        if (border != null)
+        {
+            return border;
+        }
+        boolean anySide = filled(look.border) || filled(look.leftBorder) || filled(look.topBorder)
+            || filled(look.rightBorder) || filled(look.bottomBorder);
+        if (look.borderWidth != null && !anySide)
+        {
+            return "borderWidth needs a border style"; //$NON-NLS-1$
+        }
+        if (look.borderWidth != null && look.borderWidth.intValue() < 0)
+        {
+            return "borderWidth must be 0 or greater - got: " + look.borderWidth; //$NON-NLS-1$
+        }
+        String color = colorProblem("textColor", look.textColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        color = colorProblem("backColor", look.backColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        color = colorProblem("borderColor", look.borderColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        color = colorProblem("patternColor", look.patternColor); //$NON-NLS-1$
+        if (color != null)
+        {
+            return color;
+        }
+        if (look.pattern != null && !look.pattern.isEmpty()
+            && enumNamed(Pattern.VALUES, look.pattern) == null)
+        {
+            return "pattern must be one of " + enumLiterals(Pattern.VALUES) + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
+                + look.pattern;
+        }
+        if (look.fontName != null && look.fontName.trim().isEmpty())
+        {
+            return "fontName must not be blank"; //$NON-NLS-1$
+        }
+        if (look.fontSize != null && (!Float.isFinite(look.fontSize.floatValue())
+            || look.fontSize.floatValue() <= 0f))
+        {
+            return "fontSize must be a finite number of points greater than 0 - got: " //$NON-NLS-1$
+                + look.fontSize;
+        }
+        if (look.pageOrientation != null && !look.pageOrientation.isEmpty()
+            && enumNamed(PageOrientation.VALUES, look.pageOrientation) == null)
+        {
+            return "pageOrientation must be one of " + enumLiterals(PageOrientation.VALUES) //$NON-NLS-1$
+                + " - got: " + look.pageOrientation; //$NON-NLS-1$
+        }
+        if (look.scale != null && look.scale.intValue() < 1)
+        {
+            return "scale must be 1 or greater - got: " + look.scale; //$NON-NLS-1$
+        }
+        if (look.copies != null && look.copies.intValue() < 1)
+        {
+            return "copies must be 1 or greater - got: " + look.copies; //$NON-NLS-1$
+        }
+        if (look.perPage != null && look.perPage.intValue() < 1)
+        {
+            return "perPage must be 1 or greater - got: " + look.perPage; //$NON-NLS-1$
+        }
+        String margin = marginProblem("topMargin", look.topMargin); //$NON-NLS-1$
+        if (margin != null)
+        {
+            return margin;
+        }
+        margin = marginProblem("leftMargin", look.leftMargin); //$NON-NLS-1$
+        if (margin != null)
+        {
+            return margin;
+        }
+        margin = marginProblem("bottomMargin", look.bottomMargin); //$NON-NLS-1$
+        if (margin != null)
+        {
+            return margin;
+        }
+        return marginProblem("rightMargin", look.rightMargin); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes the print settings a request names.
+     * <p>
+     * Margins are millimetres at the boundary and hundredths of a millimetre in the model, which is
+     * how a template file stores a 10 mm margin as 1000; a fraction of a millimetre is stored as
+     * the nearest whole hundredth. Only the fields that were passed change.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param look the request; print fields that are {@code null} are left alone
+     * @return {@code null} when applied, or the reason it was refused
+     */
+    public static String applyPrintSettings(SpreadsheetDocument doc, CellLook look)
+    {
+        String problem = presentationProblem(null, look);
+        if (problem != null)
+        {
+            return problem;
+        }
+        if (doc == null)
+        {
+            return "no spreadsheet to format"; //$NON-NLS-1$
+        }
+        if (look == null || !look.changesPrint())
+        {
+            return null;
+        }
+        PrintSettings settings = doc.getPrintSettings();
+        if (settings == null)
+        {
+            settings = MoxelFactory.eINSTANCE.createPrintSettings();
+            doc.setPrintSettings(settings);
+        }
+        if (look.pageOrientation != null && !look.pageOrientation.isEmpty())
+        {
+            settings.setPageOrientation(enumNamed(PageOrientation.VALUES, look.pageOrientation));
+        }
+        if (look.scale != null)
+        {
+            settings.setScale(look.scale.intValue());
+        }
+        if (look.copies != null)
+        {
+            settings.setCopies(look.copies.intValue());
+        }
+        if (look.perPage != null)
+        {
+            settings.setPerPage(look.perPage.intValue());
+        }
+        if (look.fitToPage != null)
+        {
+            settings.setFitToPage(look.fitToPage.booleanValue());
+        }
+        if (look.topMargin != null)
+        {
+            settings.setTopMargin(hundredthsOf(look.topMargin));
+        }
+        if (look.leftMargin != null)
+        {
+            settings.setLeftMargin(hundredthsOf(look.leftMargin));
+        }
+        if (look.bottomMargin != null)
+        {
+            settings.setBottomMargin(hundredthsOf(look.bottomMargin));
+        }
+        if (look.rightMargin != null)
+        {
+            settings.setRightMargin(hundredthsOf(look.rightMargin));
+        }
+        return null;
+    }
+
+    /**
+     * Millimetres in the model's unit: hundredths, rounded to the nearest whole one.
+     *
+     * @param millimetres the margin in millimetres
+     * @return the value the model stores
+     */
+    private static int hundredthsOf(Float millimetres)
+    {
+        return (int)Math.round(millimetres.doubleValue() * 100.0);
+    }
+
+    /**
+     * The rotation a format stores, in degrees.
+     * <p>
+     * The model keeps tenths of a degree. Dividing by ten is the inverse of the write, so a
+     * vertical caption stored as 900 is read back as 90.
+     * </p>
+     *
+     * @param format the format, or {@code null}
+     * @return degrees, or {@code null} when the format does not set a rotation
+     */
+    public static Integer textOrientationDegrees(Format format)
+    {
+        if (format == null || !format.isSetTextOrientation())
+        {
+            return null;
+        }
+        return Integer.valueOf(format.getTextOrientation() / TEXT_ORIENTATION_TENTHS);
+    }
+
+    /**
+     * Why a border style cannot be applied.
+     *
+     * @param argument the argument's name, for the message
+     * @param style the line style the caller wrote, or empty to leave it
+     * @return the reason, or {@code null} when the style is one the model has
+     */
+    private static String borderProblem(String argument, String style)
+    {
+        if (style == null || style.isEmpty())
+        {
+            return null;
+        }
+        if (enumNamed(CellLineStyle.VALUES, style) == null)
+        {
+            return argument + " must be one of " + enumLiterals(CellLineStyle.VALUES) + " - got: " //$NON-NLS-1$ //$NON-NLS-2$
+                + style;
+        }
+        return null;
+    }
+
+    /**
+     * Why a colour cannot be applied.
+     *
+     * @param argument the argument's name, for the message
+     * @param hex the colour as {@code #RRGGBB}, or empty to leave it
+     * @return the reason, or {@code null} when the colour parses
+     */
+    private static String colorProblem(String argument, String hex)
+    {
+        if (hex == null || hex.isEmpty())
+        {
+            return null;
+        }
+        if (rgbOf(hex) == null)
+        {
+            return argument + " must be #RRGGBB - got: " + hex; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Why a margin cannot be applied.
+     * <p>
+     * The model stores hundredths of a millimetre in an int, so a margin is bounded by what that
+     * conversion can hold; fractions of a millimetre are fine, values the int cannot store are not.
+     * </p>
+     *
+     * @param argument the argument's name, for the message
+     * @param millimetres the margin in millimetres, or {@code null}
+     * @return the reason, or {@code null} when the margin can be applied
+     */
+    private static String marginProblem(String argument, Float millimetres)
+    {
+        if (millimetres == null)
+        {
+            return null;
+        }
+        if (!Float.isFinite(millimetres.floatValue()))
+        {
+            return argument + " must be a finite number of millimetres - got: " + millimetres; //$NON-NLS-1$
+        }
+        if (millimetres.floatValue() < 0f)
+        {
+            return argument + " must be 0 or greater millimetres - got: " + millimetres; //$NON-NLS-1$
+        }
+        if (millimetres.doubleValue() * 100.0 > Integer.MAX_VALUE)
+        {
+            return argument + " must be " + (Integer.MAX_VALUE / 100) + " millimetres or less, " //$NON-NLS-1$ //$NON-NLS-2$
+                + "what the model's int can store - got: " + millimetres; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Whether a request's string field asks for anything. The same rule as
+     * {@link CellLook}'s own {@code filled}: {@code null} and empty both mean "leave it alone".
+     *
+     * @param value the field's value
+     * @return {@code true} when the field names a value
+     */
+    private static boolean filled(String value)
+    {
+        return value != null && !value.isEmpty();
+    }
+
+    /**
+     * An enumerator by the name or the literal a caller wrote, ignoring case and underscores.
+     *
+     * @param values the enumerator's published values
+     * @param wanted the text the caller wrote
+     * @param <T> the enumerator type
+     * @return the value, or {@code null} when nothing matches
+     */
+    private static <T extends Enumerator> T enumNamed(List<T> values, String wanted)
+    {
+        if (wanted == null)
+        {
+            return null;
+        }
+        String folded = wanted.trim().replace("_", "").replace("-", ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        for (T candidate : values)
+        {
+            String literal = candidate.getLiteral() == null ? "" //$NON-NLS-1$
+                : candidate.getLiteral().replace("_", ""); //$NON-NLS-1$
+            String name = candidate.getName() == null ? "" //$NON-NLS-1$
+                : candidate.getName().replace("_", ""); //$NON-NLS-1$
+            if (literal.equalsIgnoreCase(folded) || name.equalsIgnoreCase(folded))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The literals an enumerator publishes, for a refusal.
+     *
+     * @param values the enumerator's published values
+     * @return the literals, comma separated
+     */
+    private static String enumLiterals(List<? extends Enumerator> values)
+    {
+        StringBuilder text = new StringBuilder();
+        for (Enumerator candidate : values)
+        {
+            if (text.length() > 0)
+            {
+                text.append(", "); //$NON-NLS-1$
+            }
+            text.append(candidate.getLiteral());
+        }
+        return text.toString();
+    }
+
+    /**
+     * {@code #RRGGBB} or {@code RRGGBB} as three channels, or {@code null} when it is not that.
+     * <p>
+     * Every character must be a hexadecimal digit: the number parser also accepts a sign, and a
+     * colour of signed pairs would silently read as a valid dark grey.
+     * </p>
+     *
+     * @param hex the text
+     * @return red, green and blue, or {@code null}
+     */
+    private static int[] rgbOf(String hex)
+    {
+        if (hex == null)
+        {
+            return null;
+        }
+        String text = hex.trim();
+        if (text.startsWith("#")) //$NON-NLS-1$
+        {
+            text = text.substring(1);
+        }
+        if (text.length() != 6)
+        {
+            return null;
+        }
+        for (int i = 0; i < text.length(); i++)
+        {
+            char c = text.charAt(i);
+            boolean digit = c >= '0' && c <= '9';
+            boolean lower = c >= 'a' && c <= 'f';
+            boolean upper = c >= 'A' && c <= 'F';
+            if (!digit && !lower && !upper)
+            {
+                return null;
+            }
+        }
+        try
+        {
+            return new int[] {
+                Integer.parseInt(text.substring(0, 2), 16),
+                Integer.parseInt(text.substring(2, 4), 16),
+                Integer.parseInt(text.substring(4, 6), 16)
+            };
+        }
+        catch (NumberFormatException notHex)
+        {
+            return null;
+        }
     }
 
     /**
@@ -1675,7 +3149,11 @@ public final class BmTemplateHelper
      * this read adds 1 at the boundary. Populates:
      * <ul>
      * <li>{@code rowCount} / {@code colCount} / {@code cellCount}
-     * <li>{@code cells} - array of {@code {row, col, text}} for non-empty cells
+     * <li>{@code cells} - array of {@code {row, col, text}} for cells that carry text, a
+     * parameter, a parameter or template fill, or a non-zero rotation. A default text fill and a
+     * zero rotation are what an untouched cell reads as, so an empty cell carrying only those is
+     * not listed and does not grow the counts. {@code textOrientation} is degrees (the model value
+     * divided by ten). {@code parameter} and {@code fillType} are present when the cell has them.
      * <li>{@code merges} - array of {@code {fromRow, fromCol, toRow, toCol}} (1-based, inclusive)
      * <li>{@code drawings} - array of {@code {id}}
      * </ul>
@@ -1706,8 +3184,18 @@ public final class BmTemplateHelper
                     {
                         continue;
                     }
-                    String text = cellText(ce.getValue(), language);
-                    if (text == null || text.isEmpty())
+                    Cell held = ce.getValue();
+                    String text = cellText(held, language);
+                    String parameter = held.getParameter();
+                    boolean named = parameter != null && !parameter.isEmpty();
+                    Format format = formatAt(doc, held.getFormatIndex());
+                    Integer degrees = textOrientationDegrees(format);
+                    boolean turned = degrees != null && degrees.intValue() != 0;
+                    FillType fill = format != null && format.isSetFillType()
+                        ? format.getFillType() : null;
+                    boolean fillToShow = fill == FillType.PARAMETER || fill == FillType.TEMPLATE;
+                    boolean hasText = text != null && !text.isEmpty();
+                    if (!hasText && !named && !fillToShow && !turned)
                     {
                         continue;
                     }
@@ -1715,7 +3203,22 @@ public final class BmTemplateHelper
                     Map<String, Object> cm = new LinkedHashMap<>();
                     cm.put("row", Integer.valueOf(rowIdx)); //$NON-NLS-1$
                     cm.put("col", Integer.valueOf(colIdx)); //$NON-NLS-1$
-                    cm.put("text", text); //$NON-NLS-1$
+                    if (hasText)
+                    {
+                        cm.put("text", text); //$NON-NLS-1$
+                    }
+                    if (named)
+                    {
+                        cm.put("parameter", parameter); //$NON-NLS-1$
+                    }
+                    if (fillToShow)
+                    {
+                        cm.put("fillType", fill.getLiteral()); //$NON-NLS-1$
+                    }
+                    if (turned)
+                    {
+                        cm.put("textOrientation", degrees); //$NON-NLS-1$
+                    }
                     cells.add(cm);
                     maxRow = Math.max(maxRow, rowIdx);
                     maxCol = Math.max(maxCol, colIdx);
@@ -1763,6 +3266,22 @@ public final class BmTemplateHelper
         // exactly what building a load template from an existing one needs.
         out.put("namedAreas", listNamedAreas(doc)); //$NON-NLS-1$
         return out;
+    }
+
+    /**
+     * The format a cell points at, or {@code null} when the index is outside the table.
+     *
+     * @param doc the spreadsheet
+     * @param index the format index
+     * @return the format, or {@code null}
+     */
+    private static Format formatAt(SpreadsheetDocument doc, int index)
+    {
+        if (doc == null || index < 0 || index >= doc.getFormats().size())
+        {
+            return null;
+        }
+        return doc.getFormats().get(index);
     }
 
     /**
@@ -1915,10 +3434,13 @@ public final class BmTemplateHelper
         // With no explicit formatIndex (formatIndex < 0) append a fresh empty
         // Format and point the drawing at it (empty -> serialized as <format/>,
         // no stroke/fill until a styled formatIndex is supplied). EDT likewise
-        // gives every drawing its own format.
+        // gives every drawing its own format. The placeholder comes first, so
+        // on a fresh document the drawing's format is not the one the writer
+        // reads as "no format".
         int effectiveFormatIndex;
         if (formatIndex < 0)
         {
+            ensureFormatPlaceholder(doc);
             doc.getFormats().add(MoxelFactory.eINSTANCE.createFormat());
             effectiveFormatIndex = doc.getFormats().size() - 1;
         }

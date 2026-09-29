@@ -119,6 +119,26 @@ public final class BmComparisonHelper
     static final int PAGE_LIMIT = 500;
 
     /**
+     * How many refused decisions the note names before it stops and leaves the counting to
+     * {@code decisionsRefused}.
+     */
+    private static final int NOTE_LIMIT = 10;
+
+    /**
+     * What a comparison node's qualified name ends with when the node is a module.
+     * <p>
+     * Measured on a live tree with {@code methodLevel} on: an object's module is
+     * {@code Catalog.X.ObjectModule}, its manager module {@code Catalog.X.ManagerModule}, a form's
+     * module {@code Catalog.X.Form.F.Module} - and only the last of those ends in {@code .Module},
+     * which is all the first version of this list checked. Object and manager modules fell out of
+     * the module handling entirely: their methods never reached {@code sections}, because nothing
+     * recognised the node above them as a module at all.
+     * </p>
+     */
+    private static final List<String> MODULE_SUFFIXES = List.of(".Module", ".ObjectModule", //$NON-NLS-1$ //$NON-NLS-2$
+        ".ManagerModule", ".RecordSetModule", ".ValueManagerModule", ".CommandModule"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+    /**
      * How many objects one decision about a class may cover.
      * <p>
      * A real update runs to tens of thousands of changed objects, and all of them may legitimately
@@ -276,6 +296,7 @@ public final class BmComparisonHelper
             }
             page.limit = page.limit <= 0 ? PAGE_LIMIT : Math.min(page.limit, PAGE_LIMIT);
             page.offset = Math.max(0, page.offset);
+            page.sectionsOffset = Math.max(0, page.sectionsOffset);
         }
     }
 
@@ -313,6 +334,9 @@ public final class BmComparisonHelper
 
         /** How many matching objects to skip. */
         public int offset;
+
+        /** How many module pieces to skip before the reported page of sections starts. */
+        public int sectionsOffset;
 
         /** How many to name, capped at {@link #PAGE_LIMIT}. */
         public int limit = PAGE_LIMIT;
@@ -619,6 +643,16 @@ public final class BmComparisonHelper
         public int decided;
 
         /**
+         * How many refused decisions are already named in {@link #decisionsNote}.
+         * <p>
+         * Internal: the count a caller reads is {@link #decisionsRefused}. The note stops naming
+         * them after a few, because a caller who passes ten thousand decisions must not be handed
+         * a ten-thousand-sentence answer.
+         * </p>
+         */
+        transient int refusalsNoted;
+
+        /**
          * Decisions the environment would not take.
          * <p>
          * Counted apart from {@link #decided}, because the call that records a decision returns a
@@ -795,6 +829,27 @@ public final class BmComparisonHelper
          */
         public final transient List<Long> bothNodesGoneFromDelivery = new ArrayList<>();
 
+        /**
+         * Top nodes three sides were present for and nobody could attribute.
+         * <p>
+         * Not reported: it drives protection. An unattributed node answers to no side, which means
+         * nothing can promise it carries no work of ours - and leaving it to the merge defaults is
+         * exactly how {@code whyNotUnchanged} reads the unattributed count, only one mode up.
+         * </p>
+         */
+        public final transient List<Long> unknownNodes = new ArrayList<>();
+
+        /**
+         * Module roots whose methods the comparison enumerated as top nodes of their own.
+         * <p>
+         * Measured with {@code parseBslModuleStructure} on: the tree holds the module root AND each
+         * of its methods, and both are top nodes a rule can be set on. A subtree rule set on such a
+         * root reaches down and overwrites the rules of the methods beneath it, so these roots are
+         * skipped when rules are handed out - the methods answer for themselves.
+         * </p>
+         */
+        public final transient java.util.Set<Long> moduleRootsWithMethods = new java.util.HashSet<>();
+
         /** How many objects were held back from the update and confirmed to carry the rule. */
         public int protectedFromUpdate;
 
@@ -862,6 +917,12 @@ public final class BmComparisonHelper
 
         /** True when there were more sections than the page holds. */
         public boolean moreSections;
+
+        /** Where the reported page of sections starts inside all of them. */
+        public int sectionsOffset;
+
+        /** How many sections the tree held, whatever the page named. Not reported. */
+        transient int sectionsSeen;
 
         /** How long the comparison itself took, so the cost of looking inside modules is visible. */
         public long comparedInMs;
@@ -1096,6 +1157,7 @@ public final class BmComparisonHelper
 
         Outcome outcome = new Outcome();
         outcome.changedOffset = page.offset;
+        outcome.sectionsOffset = page.sectionsOffset;
         // Before anything is compared, and not after: an ancestor from the wrong configuration
         // inverts every attribution in the answer, and nothing downstream would notice.
         OriginCheck.Verdict origin =
@@ -1215,6 +1277,14 @@ public final class BmComparisonHelper
                 return outcome;
             }
             read(manager, handle, outcome, page);
+            if (outcome.cannotTell != null)
+            {
+                // The comparison finished but its tree could not be read, and every count in this
+                // answer is zero because nothing was read - not because nothing moved. Continuing
+                // from here is how an update takes a whole delivery on the strength of counts that
+                // say nothing: nothing may be decided, protected or merged off an unread tree.
+                return outcome;
+            }
             reportScope(scope, outcome);
             // Before the merge, never after: a move whose dependencies are discovered as broken
             // references in somebody's configuration has been discovered too late.
@@ -1304,8 +1374,9 @@ public final class BmComparisonHelper
             // write in progress; forgetting the handle leaves it running with nothing able to
             // release it. So an unfinished merge keeps its session whatever the intent, and the
             // answer already carries mergeStatus for the caller to act on.
-            keepSession = !closeSession
-                && (intent == Intent.REPORT || mergeStillRunning(outcome));
+            boolean mergeRunning = mergeStillRunning(outcome);
+            keepSession = !closeSession && (intent == Intent.REPORT || mergeRunning);
+            ComparisonSessions.setMergeRunning(held, keepSession && mergeRunning);
             return outcome;
         }
         catch (NoClassDefFoundError absent)
@@ -1405,6 +1476,16 @@ public final class BmComparisonHelper
                 // the exact leak this sweep exists to close. Leave them queued for the next tick.
                 Activator.logDebug("idle sweep: no comparison manager, sessions left queued"); //$NON-NLS-1$
                 return 0;
+            }
+            for (ComparisonSessions.Session merging : ComparisonSessions.mergesRunning())
+            {
+                if (merging.handle instanceof ComparisonProcessHandle)
+                {
+                    ComparisonProcessStatus status =
+                        manager.getStatus((ComparisonProcessHandle)merging.handle);
+                    ComparisonSessions.setMergeRunning(merging,
+                        stillMerging(status == null ? null : status.name()));
+                }
             }
             ComparisonSessions.expireIdle();
             for (ComparisonSessions.Session dropped : ComparisonSessions.drainDropped())
@@ -1547,15 +1628,15 @@ public final class BmComparisonHelper
     /**
      * Says what state the project is in after a merge has written to it.
      * <p>
-     * Only after a merge, and only for the objects it touched. A merge that succeeds and leaves the
-     * configuration broken is the ordinary case rather than the exception - taking the other side's
-     * version of one object routinely breaks whatever referred to the old one - so an answer that
-     * stops at "merged" is true and useless. The objects are revalidated first, because a count
-     * taken off stale markers describes the configuration as it was before the merge.
+     * Only after a merge, and only for the objects it could have touched. A merge that succeeds and
+     * leaves the configuration broken is the ordinary case rather than the exception - taking the
+     * other side's version of one object routinely breaks whatever referred to the old one - so an
+     * answer that stops at "merged" is true and useless. The objects are revalidated first, because
+     * a count taken off stale markers describes the configuration as it was before the merge.
      * </p>
      *
      * @param projectName the project that was merged into.
-     * @param decisions what the caller decided, which names the objects that could have changed.
+     * @param decisions what the caller decided, which names objects that could have changed.
      * @param outcome the answer being built.
      */
     private static void reportProjectState(String projectName, List<Decision> decisions,
@@ -1565,45 +1646,19 @@ public final class BmComparisonHelper
         {
             return;
         }
-        List<String> objects = new ArrayList<>();
-        if (decisions != null)
+        List<String> objects = revalidationTargets(decisions, outcome);
+        if (outcome.moreChanged)
         {
-            for (Decision decision : decisions)
-            {
-                if (decision.object != null && !decision.object.isEmpty())
-                {
-                    objects.add(decision.object);
-                }
-            }
-        }
-        if (objects.isEmpty())
-        {
-            // A merge driven from a settings file passes no decisions here, and skipping the check
-            // for exactly those merges would leave the ones somebody prepared by hand - the larger,
-            // riskier ones - as the only merges whose result nobody looks at. The objects the
-            // comparison found are the only ones that can have moved.
-            //
-            // But outcome.changed is the PAGE, capped, and a merge can move thousands. Measured: a
-            // run that wrote 5181 files revalidated at most 500 of them and reported
-            // errorsAfterMerge off that slice. The count is still taken - it is just no longer
-            // allowed to read as a statement about the whole merge.
-            if (outcome.moreChanged)
-            {
-                outcome.revalidationNote = "only the " + outcome.changed.size() //$NON-NLS-1$
-                    + " object(s) on this page were revalidated, out of " + outcome.objectsChanged //$NON-NLS-1$
-                    + " the comparison found. errorsAfterMerge counts that slice; " //$NON-NLS-1$
-                    + "projectErrorsBefore and projectErrorsAfter are the whole-project figures " //$NON-NLS-1$
-                    + "and are what the merge should be judged by."; //$NON-NLS-1$
-            }
-            for (Change change : outcome.changed)
-            {
-                String named = change.main != null && !change.main.isEmpty() ? change.main
-                    : change.other;
-                if (named != null && !named.isEmpty())
-                {
-                    objects.add(named);
-                }
-            }
+            // The revalidated set is what the decisions named plus this page of the comparison,
+            // and a merge can move thousands past it. Measured: a run that wrote 5181 files
+            // revalidated at most 500 of them and reported errorsAfterMerge off that slice. The
+            // count is still taken - it is just not allowed to read as a statement about the whole
+            // merge.
+            outcome.revalidationNote = "the " + outcome.changed.size() + " object(s) on this page" //$NON-NLS-1$ //$NON-NLS-2$
+                + " and whatever the decisions named were revalidated, out of " //$NON-NLS-1$
+                + outcome.objectsChanged + " the comparison found. errorsAfterMerge counts that " //$NON-NLS-1$
+                + "set; projectErrorsBefore and projectErrorsAfter are the whole-project figures " //$NON-NLS-1$
+                + "and are what the merge should be judged by."; //$NON-NLS-1$
         }
         if (objects.isEmpty())
         {
@@ -1629,6 +1684,45 @@ public final class BmComparisonHelper
     }
 
     /**
+     * The objects a merge could have moved, for the after-merge check.
+     * <p>
+     * The decisions the caller passed AND the whole page of the comparison, not the decisions
+     * alone: an update driven by intent rather than by decisions moves every object the comparison
+     * found, and revalidating only what was named by hand left the larger merges - the ones driven
+     * by a settings file or by UPDATE_KEEPING_OURS - as the only ones whose result nobody looked
+     * at. Names that appear in both are kept once.
+     * </p>
+     *
+     * @param decisions what the caller decided; may be <code>null</code>.
+     * @param outcome the answer, whose page of changed objects joins the set.
+     * @return the objects to revalidate, in the order they were named
+     */
+    static List<String> revalidationTargets(List<Decision> decisions, Outcome outcome)
+    {
+        java.util.Set<String> objects = new java.util.LinkedHashSet<>();
+        if (decisions != null)
+        {
+            for (Decision decision : decisions)
+            {
+                if (decision.object != null && !decision.object.isEmpty())
+                {
+                    objects.add(decision.object);
+                }
+            }
+        }
+        for (Change change : outcome.changed)
+        {
+            String named = change.main != null && !change.main.isEmpty() ? change.main
+                : change.other;
+            if (named != null && !named.isEmpty())
+            {
+                objects.add(named);
+            }
+        }
+        return new ArrayList<>(objects);
+    }
+
+    /**
      * Marks the caller's decisions on the comparison and writes them to a file.
      * <p>
      * Marking is separate from merging, and stays separate even now that this class can merge. What
@@ -1638,8 +1732,15 @@ public final class BmComparisonHelper
      * only when the intent said so.
      * </p>
      * <p>
-     * A decision naming an object the comparison did not report is refused rather than ignored: a
-     * settings file that quietly lacks half the decisions somebody wrote is worse than no file.
+     * A decision naming an object the comparison did not report, a rule that is not one, or a rule
+     * this call cannot carry out is refused and counted, and the decisions after it are still
+     * marked: one unusable decision used to stop the marking where it stood, leaving the tail
+     * unmarked while the merge went ahead on whatever had been recorded before it. What stops the
+     * merge is the refused count, not the loop - see {@link #whyNotDecided(Intent, Outcome)}.
+     * </p>
+     * <p>
+     * A settings file is written only when every decision was recorded: a file that quietly lacks
+     * half the decisions somebody wrote is worse than no file.
      * </p>
      *
      * @param manager the comparison service.
@@ -1651,14 +1752,46 @@ public final class BmComparisonHelper
     private static void decide(IComparisonManager manager, ComparisonProcessHandle handle,
         List<Decision> decisions, String path, Outcome outcome)
     {
+        decide(manager.getComparisonSession(handle), decisions, path, outcome, () -> {
+            try
+            {
+                manager.serializeMergeSettings(Collections.singletonList(handle), path);
+            }
+            catch (java.io.IOException cannotWrite)
+            {
+                // Runnable carries no checked exceptions; the seam catches this and says it the
+                // same way it said the IOException when the call stood inline.
+                throw new IllegalArgumentException(cannotWrite);
+            }
+        });
+    }
+
+    /**
+     * Marks the caller's decisions on a comparison session.
+     * <p>
+     * Kept free of the manager so a test can drive it with a session of its own; the writing of the
+     * settings file is the one call that needs the manager and arrives as a function.
+     * </p>
+     *
+     * @param session the comparison's session; may be <code>null</code> when it offered none.
+     * @param decisions what the caller decided; may be empty.
+     * @param path where to write the settings, or <code>null</code> to only mark them.
+     * @param outcome the answer being built.
+     * @param writer writes the environment's settings file for the recorded decisions.
+     */
+    static void decide(IComparisonSession session, List<Decision> decisions, String path,
+        Outcome outcome, Runnable writer)
+    {
         if (decisions == null || decisions.isEmpty())
         {
             return;
         }
-        IComparisonSession session = manager.getComparisonSession(handle);
         if (session == null)
         {
-            outcome.decisionsNote = "the comparison offered no session, so nothing was decided"; //$NON-NLS-1$
+            // Counted as refused rather than said and forgotten: a merge that runs because the
+            // decisions were never attempted is exactly what the refused-count gate stops.
+            outcome.decisionsRefused += decisions.size();
+            noteRefusal(outcome, "the comparison offered no session, so no decision was recorded"); //$NON-NLS-1$
             return;
         }
         for (Decision decision : decisions)
@@ -1687,22 +1820,25 @@ public final class BmComparisonHelper
             long nodeId = target != null ? target.nodeId : findTopNode(session, decision.object);
             if (nodeId < 0)
             {
-                outcome.decisionsNote = "no object named " + decision.object //$NON-NLS-1$
-                    + " takes part in this comparison, so no decision was recorded for it"; //$NON-NLS-1$
-                return;
+                outcome.decisionsRefused++;
+                noteRefusal(outcome, "no object named " + decision.object //$NON-NLS-1$
+                    + " takes part in this comparison, so no decision was recorded for it"); //$NON-NLS-1$
+                continue;
             }
             MergeRule rule = ruleNamed(decision.rule);
             if (rule == null)
             {
-                outcome.decisionsNote = decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
-                    + ruleNames();
-                return;
+                outcome.decisionsRefused++;
+                noteRefusal(outcome, decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
+                    + ruleNames());
+                continue;
             }
             String impossible = whyRuleCannotRun(rule);
             if (impossible != null)
             {
-                outcome.decisionsNote = impossible;
-                return;
+                outcome.decisionsRefused++;
+                noteRefusal(outcome, impossible);
+                continue;
             }
             // To the subtree, because a decision about an object is a decision about what the
             // object is made of. The narrower call needs a comparison context this has no honest
@@ -1713,11 +1849,8 @@ public final class BmComparisonHelper
             if (!session.setMergeRuleToSubtree(nodeId, rule))
             {
                 outcome.decisionsRefused++;
-                if (outcome.decisionsNote == null)
-                {
-                    outcome.decisionsNote = "the environment refused " + rule.name() + " for " //$NON-NLS-1$ //$NON-NLS-2$
-                        + decision.object + describeAvailable(session, nodeId);
-                }
+                noteRefusal(outcome, "the environment refused " + rule.name() + " for " //$NON-NLS-1$ //$NON-NLS-2$
+                    + decision.object + describeAvailable(session, nodeId));
                 continue;
             }
             if (target != null)
@@ -1729,6 +1862,15 @@ public final class BmComparisonHelper
         }
         if (path == null || path.isEmpty())
         {
+            return;
+        }
+        if (outcome.decisionsRefused > 0)
+        {
+            // Refused rather than written short: a settings file that quietly lacks half the
+            // decisions somebody wrote is worse than no file. What was recorded stays marked on
+            // the comparison and dies with it.
+            noteRefusal(outcome, "the decisions were marked but not written to " + path + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + outcome.decisionsRefused + " could not be recorded"); //$NON-NLS-1$
             return;
         }
         if (!path.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) //$NON-NLS-1$
@@ -1743,7 +1885,7 @@ public final class BmComparisonHelper
         }
         try
         {
-            manager.serializeMergeSettings(Collections.singletonList(handle), path);
+            writer.run();
             outcome.decisionsWrittenTo = path;
         }
         catch (Exception cannotWrite)
@@ -1753,6 +1895,27 @@ public final class BmComparisonHelper
             outcome.decisionsNote = "the decisions were marked but could not be written to " + path //$NON-NLS-1$
                 + ": " + describe(cannotWrite); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Adds one refused decision to the note, keeping what is already there.
+     * <p>
+     * The count a caller reads is {@code decisionsRefused}; the note names the first few so a
+     * person can see which decisions they were, and stops before the note outgrows the answer.
+     * </p>
+     *
+     * @param outcome the answer being built.
+     * @param refusal what happened to one decision.
+     */
+    private static void noteRefusal(Outcome outcome, String refusal)
+    {
+        if (outcome.refusalsNoted >= NOTE_LIMIT)
+        {
+            return;
+        }
+        outcome.refusalsNoted++;
+        outcome.decisionsNote = outcome.decisionsNote == null || outcome.decisionsNote.isEmpty()
+            ? refusal : outcome.decisionsNote + "; " + refusal; //$NON-NLS-1$
     }
 
     /**
@@ -1917,22 +2080,25 @@ public final class BmComparisonHelper
         {
             // Refused by name rather than ignored. A selector nobody implements that is silently
             // skipped reads, in the answer, exactly like a selector that matched nothing.
-            outcome.decisionsNote = decision.select + " is not a selector. The only one is " //$NON-NLS-1$
+            outcome.decisionsRefused++;
+            noteRefusal(outcome, decision.select + " is not a selector. The only one is " //$NON-NLS-1$
                 + "matching, which covers every object the filter arguments matched - use " //$NON-NLS-1$
-                + "changedBy, type, oneSided and mustBeMergedOnly to say which those are."; //$NON-NLS-1$
+                + "changedBy, type, oneSided and mustBeMergedOnly to say which those are."); //$NON-NLS-1$
             return;
         }
         MergeRule rule = ruleNamed(decision.rule);
         if (rule == null)
         {
-            outcome.decisionsNote = decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
-                + ruleNames();
+            outcome.decisionsRefused++;
+            noteRefusal(outcome, decision.rule + " is not a merge rule. Use one of: " //$NON-NLS-1$
+                + ruleNames());
             return;
         }
         String impossible = whyRuleCannotRun(rule);
         if (impossible != null)
         {
-            outcome.decisionsNote = impossible;
+            outcome.decisionsRefused++;
+            noteRefusal(outcome, impossible);
             return;
         }
         if (outcome.matchingNodes.isEmpty())
@@ -2406,7 +2572,7 @@ public final class BmComparisonHelper
      * @return the relative directory, or <code>null</code> when the name does not open with a
      *         metadata type this EDT knows.
      */
-    static String objectDirectoryOf(String fqn)
+    public static String objectDirectoryOf(String fqn)
     {
         if (fqn == null || fqn.isBlank())
         {
@@ -2941,6 +3107,11 @@ public final class BmComparisonHelper
      * willing to carry out the deletion. Holding it and naming it in the queue turns a silent loss
      * into a decision somebody makes.
      * </p>
+     * <p>
+     * Objects nobody could attribute are held too, and for the same reason they stop an
+     * unchanged-configuration update: an unattributed object answers to no side, so nothing can
+     * promise it carries no work of ours, and the merge defaults are not a promise.
+     * </p>
      *
      * @param manager the comparison service.
      * @param handle the process.
@@ -2949,10 +3120,26 @@ public final class BmComparisonHelper
     private static void protectOurs(IComparisonManager manager, ComparisonProcessHandle handle,
         Outcome outcome)
     {
-        IComparisonSession session = manager.getComparisonSession(handle);
+        protectOurs(manager.getComparisonSession(handle), outcome);
+    }
+
+    /**
+     * Holds back everything this side reworked, on a comparison session.
+     * <p>
+     * Kept free of the manager so a test can drive it with a session of its own. A missing session
+     * lands in {@code protectionRefused} rather than in a note: this mode's gate refuses on that
+     * list, and a protection nobody attempted must not read as protection that succeeded.
+     * </p>
+     *
+     * @param session the comparison's session; may be <code>null</code> when it offered none.
+     * @param outcome the answer being built.
+     */
+    static void protectOurs(IComparisonSession session, Outcome outcome)
+    {
         if (session == null)
         {
-            outcome.decisionsNote = "the comparison offered no session, so nothing was protected"; //$NON-NLS-1$
+            outcome.protectionRefused
+                .add("the comparison offered no session, so nothing could be protected"); //$NON-NLS-1$
             return;
         }
         // Objects only we touched are held. Objects BOTH sides touched are merged with the
@@ -2984,6 +3171,15 @@ public final class BmComparisonHelper
         // that decides it method by method.
         for (Long nodeId : outcome.bothNodes)
         {
+            if (outcome.moduleRootsWithMethods.contains(nodeId))
+            {
+                // Measured with methodLevel on: the tree holds this module root AND each of its
+                // methods as top nodes of their own. A subtree rule here reaches down and
+                // overwrites whatever the methods were decided to carry - including a method
+                // settled by an explicit decision - and the root is not a unit the merge counts.
+                // The methods answer for themselves.
+                continue;
+            }
             if (outcome.sectionsWanted)
             {
                 mergeWithDeliveryInFront(session, nodeId, outcome);
@@ -3006,10 +3202,33 @@ public final class BmComparisonHelper
                     + "one deliberately."); //$NON-NLS-1$
             }
         }
+        // Unattributed, so held for the same reason the unchanged-configuration route refuses on
+        // them: no side can be named as the one that moved this object, and the merge defaults
+        // would decide it instead. Named, because "the delivery's change did not arrive" is the
+        // fact a reader of this mode has to be able to see.
+        for (Long nodeId : outcome.unknownNodes)
+        {
+            if (outcome.deliveryNotApplied.size() < PAGE_LIMIT)
+            {
+                outcome.deliveryNotApplied.add(nameOf(session, nodeId)
+                    + " could not be attributed to either side, so it is HELD: the delivery's " //$NON-NLS-1$
+                    + "change to it is NOT applied, because nothing can promise it carries no " //$NON-NLS-1$
+                    + "work of ours. Decide that one deliberately."); //$NON-NLS-1$
+            }
+        }
         List<Long> hold = new ArrayList<>(outcome.oursNodes);
         hold.addAll(outcome.bothNodesGoneFromDelivery);
+        hold.addAll(outcome.unknownNodes);
         for (Long nodeId : hold)
         {
+            if (outcome.moduleRootsWithMethods.contains(nodeId))
+            {
+                // The same rule as above, on the other setter: a subtree hold on a module root
+                // whose methods are enumerated would overwrite the rules those methods carry -
+                // and this loop runs after the conflicts were merged, so it is exactly the one
+                // that would undo them.
+                continue;
+            }
             if (!session.setMergeRuleToSubtree(nodeId, MergeRule.DO_NOT_MERGE))
             {
                 // A refusal to SET is not a refusal to HOLD. The environment answers false when it
@@ -3194,6 +3413,43 @@ public final class BmComparisonHelper
     }
 
     /**
+     * Says why a merge cannot run on the decisions this call recorded.
+     * <p>
+     * Two separate questions, and the first used to be the only one asked. A merge with nothing to
+     * apply has been refused from the start. A merge with SOME of what was asked - a decision naming
+     * an object the comparison does not hold, a rule that is not one, a rule the environment would
+     * not take - used to run on whatever had been recorded before the marking stopped, and the
+     * caller read {@code merged=true} as everything they decided having been done. One unusable
+     * decision now refuses the merge rather than shrinking it.
+     * </p>
+     * <p>
+     * The nothing-to-apply half stays off the two update intents: they carry their own decisions
+     * and need none from the caller, and {@code decided} is what the protection itself counted.
+     * </p>
+     *
+     * @param intent what the caller asked for.
+     * @param outcome what was recorded.
+     * @return the reason, or <code>null</code> when the decisions carry a merge
+     */
+    static String whyNotDecided(Intent intent, Outcome outcome)
+    {
+        if (outcome.decisionsRefused > 0)
+        {
+            return "no merge was run: " + outcome.decisionsRefused + " decision(s) could not be " //$NON-NLS-1$ //$NON-NLS-2$
+                + "recorded, and merging on the rest would apply part of what was asked and leave " //$NON-NLS-1$
+                + "the rest standing. decisionsNote names them; nothing has been written."; //$NON-NLS-1$
+        }
+        if (intent != Intent.UPDATE_KEEPING_OURS && intent != Intent.UPDATE_UNCHANGED
+            && outcome.decided == 0 && !outcome.decisionsRestored)
+        {
+            return "no merge was run: there are no decisions to apply. Pass " //$NON-NLS-1$
+                + "decisions naming what to do with each object, or decisionsFrom pointing at a " //$NON-NLS-1$
+                + "settings file that carries them."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
      * Says why a configuration cannot be updated as an unchanged one.
      * <p>
      * The condition is strict on purpose, and all three counts matter. A zero for our own changes
@@ -3211,11 +3467,15 @@ public final class BmComparisonHelper
      * corrected for exactly that, and if it ever regresses this check goes back to being a promise
      * it cannot keep.
      * </p>
+     * <p>
+     * An answer that could not be read at all refuses before the counts are believed: zeros from an
+     * unread tree say nothing was counted, not that nothing moved.
+     * </p>
      *
      * @param outcome what the comparison found.
      * @return the reason, or <code>null</code> when the fast path is legitimate
      */
-    private static String whyNotUnchanged(Outcome outcome)
+    static String whyNotUnchanged(Outcome outcome)
     {
         if (!outcome.threeWay)
         {
@@ -3227,6 +3487,12 @@ public final class BmComparisonHelper
         {
             return "no merge was run: the comparison did not finish, so its counts say nothing " //$NON-NLS-1$
                 + "about whether this configuration was reworked."; //$NON-NLS-1$
+        }
+        if (outcome.cannotTell != null)
+        {
+            return "no merge was run: the comparison finished but its answer could not be read (" //$NON-NLS-1$
+                + outcome.cannotTell + "), so its counts say nothing about whether this " //$NON-NLS-1$
+                + "configuration was reworked."; //$NON-NLS-1$
         }
         if (outcome.objectsChangedByUs > 0 || outcome.objectsChangedByBoth > 0
             || outcome.objectsChangedUnattributed > 0)
@@ -3246,8 +3512,9 @@ public final class BmComparisonHelper
      * <p>
      * This is the only irreversible thing in this class, and everything about it is arranged so it
      * cannot happen by accident: the caller has to ask by name, has to have supplied decisions
-     * (there is nothing to apply otherwise), and has to ask a second time in different words to
-     * proceed past a problem the environment called blocking.
+     * (there is nothing to apply otherwise) that all recorded - a decision that could not be
+     * recorded refuses the merge rather than shrinking it - and has to ask a second time in
+     * different words to proceed past a problem the environment called blocking.
      * </p>
      * <p>
      * What blocks a merge is decided by the environment, not here, and this is measured rather than
@@ -3320,11 +3587,10 @@ public final class BmComparisonHelper
                 return;
             }
         }
-        else if (outcome.decided == 0 && !outcome.decisionsRestored)
+        String undecidable = whyNotDecided(intent, outcome);
+        if (undecidable != null)
         {
-            outcome.mergeRefused = "no merge was run: there are no decisions to apply. Pass " //$NON-NLS-1$
-                + "decisions naming what to do with each object, or decisionsFrom pointing at a " //$NON-NLS-1$
-                + "settings file that carries them."; //$NON-NLS-1$
+            outcome.mergeRefused = undecidable;
             return;
         }
         try
@@ -3384,11 +3650,33 @@ public final class BmComparisonHelper
      */
     private static boolean mergeStillRunning(Outcome outcome)
     {
-        String status = outcome.mergeStatus;
-        return status != null
-            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name())
-            && !status.equals(ComparisonProcessStatus.MERGE_PROCESS_DISCARDED.name())
-            && !status.equals(ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED.name());
+        return stillMerging(outcome.mergeStatus);
+    }
+
+    /**
+     * Says whether a comparison process status names a merge that has not ended yet.
+     * <p>
+     * The finished state is also reported decorated - {@code "MERGE_PROCESS_FINISHED (session
+     * discarded on completion)"} - and an exact comparison read that as a merge still going. What
+     * followed: the session stayed open past its end, and its key travelled to the caller for a
+     * session the environment had already discarded. The name is compared without the decoration,
+     * which is the part of the string the status actually is.
+     * </p>
+     *
+     * @param status the status name, or <code>null</code> when the environment gave none.
+     * @return <code>false</code> for no status and for the finished, discarded and cancelled ends
+     */
+    static boolean stillMerging(String status)
+    {
+        if (status == null)
+        {
+            return false;
+        }
+        int decoration = status.indexOf(" ("); //$NON-NLS-1$
+        String name = decoration < 0 ? status : status.substring(0, decoration);
+        return !name.equals(ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name())
+            && !name.equals(ComparisonProcessStatus.MERGE_PROCESS_DISCARDED.name())
+            && !name.equals(ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED.name());
     }
 
     /**
@@ -3503,11 +3791,21 @@ public final class BmComparisonHelper
      * environment is already expected. A dropped session whose comparison is never closed leaves
      * the environment holding a comparison nobody can name.
      * </p>
+     * <p>
+     * Without a manager the queue is left alone, on the same policy as the idle sweep: draining
+     * destroys the only handles that can release those transactions, and the registry then reads
+     * empty while the comparisons run on.
+     * </p>
      *
-     * @param manager the comparison manager.
+     * @param manager the comparison manager; may be <code>null</code> when the call never reached
+     *            one.
      */
-    private static void closeDropped(IComparisonManager manager)
+    static void closeDropped(IComparisonManager manager)
     {
+        if (manager == null)
+        {
+            return;
+        }
         for (ComparisonSessions.Session dropped : ComparisonSessions.drainDropped())
         {
             if (dropped.handle instanceof ComparisonProcessHandle)
@@ -3740,17 +4038,45 @@ public final class BmComparisonHelper
         Outcome outcome, Page page)
     {
         IComparisonSession session = manager.getComparisonSession(handle);
+        readTree(session, outcome, page);
+        if (outcome.cannotTell != null)
+        {
+            return;
+        }
+        readProblems(manager, handle, outcome);
+    }
+
+    /**
+     * Reads the tree of a finished comparison, or says why there is nothing to read.
+     * <p>
+     * Both failures have to refuse rather than answer from an empty model: a comparison whose tree
+     * was never read leaves every count at zero, and zero reads as "nothing moved" to everything
+     * downstream - the merge included. Kept free of the manager so a test can drive it with a
+     * session of its own.
+     * </p>
+     *
+     * @param session the comparison's session; may be <code>null</code> when it offered none.
+     * @param outcome the answer being built.
+     * @param page which changed objects are to be named, and which page of them.
+     */
+    static void readTree(IComparisonSession session, Outcome outcome, Page page)
+    {
         if (session == null)
         {
             outcome.cannotTell = "the comparison finished but produced no session to read"; //$NON-NLS-1$
             return;
         }
         ComparisonNode root = session.getRootNode();
-        if (root != null)
+        if (root == null)
         {
-            walk(root, outcome, page, null);
+            outcome.cannotTell = "the comparison finished but produced no tree to read, so its " //$NON-NLS-1$
+                + "counts say nothing about what moved"; //$NON-NLS-1$
+            return;
         }
-        readProblems(manager, handle, outcome);
+        // Carried into the outcome here rather than only in the caller, so the page the tree was
+        // read under and the offset the sections obeyed are the same value by construction.
+        outcome.sectionsOffset = page.sectionsOffset;
+        walk(root, outcome, page, null);
     }
 
     /**
@@ -3856,6 +4182,12 @@ public final class BmComparisonHelper
 
     /**
      * Records one differing piece of a module.
+     * <p>
+     * Counted whole and listed by the page, like the object list: the count never shrinks with the
+     * page, and the page starts where {@code sectionsOffset} says rather than at the first piece
+     * the walk met. Before the offset existed, the only way past the page was narrowing the scope
+     * - which re-runs the comparison rather than turning it.
+     * </p>
      *
      * @param node the node inside the module.
      * @param outcome the answer being built.
@@ -3865,6 +4197,11 @@ public final class BmComparisonHelper
     private static void recordSection(ComparisonNode node, Outcome outcome, String module,
         boolean oneSided)
     {
+        outcome.sectionsSeen++;
+        if (outcome.sectionsSeen <= outcome.sectionsOffset)
+        {
+            return;
+        }
         if (outcome.sections.size() >= PAGE_LIMIT)
         {
             outcome.moreSections = true;
@@ -4200,6 +4537,24 @@ public final class BmComparisonHelper
                             ? change.main : String.valueOf(change.other));
                     }
                 }
+                else if (AttributionRule.UNKNOWN.equals(change.changedBy))
+                {
+                    // Only where an ancestor took part: without one every object is UNKNOWN and
+                    // the list would hold the whole comparison for a mode that refuses two-sided
+                    // runs anyway. With one, an unattributed node is a node nobody can speak for,
+                    // and the mode that protects work has to hold it rather than trust defaults.
+                    if (outcome.threeWay)
+                    {
+                        if (outcome.unknownNodes.size() < HOLD_LIMIT)
+                        {
+                            outcome.unknownNodes.add(change.nodeId);
+                        }
+                        else
+                        {
+                            outcome.protectionTruncated = true;
+                        }
+                    }
+                }
                 if (page.wants(change))
                 {
                     outcome.changedMatching++;
@@ -4233,11 +4588,18 @@ public final class BmComparisonHelper
             {
                 named = symlinkOf((TopComparisonNode)node, ComparisonSide.OTHER);
             }
-            if (named != null && named.endsWith(".Module")) //$NON-NLS-1$
+            if (named != null && isModuleName(named)
+                && (insideModule == null || !named.startsWith(insideModule + "."))) //$NON-NLS-1$
             {
                 // A module is a top node of its own - measured, and the same holds for form and
-                // template content. Everything below it belongs to that module.
+                // template content. Everything below it belongs to that module. A name already
+                // sitting inside another module is a piece of that module, however it ends: a
+                // method called Module would otherwise pass for a module of its own.
                 insideModule = named;
+                if (outcome.sectionsWanted && enumeratesMethods(node, named))
+                {
+                    outcome.moduleRootsWithMethods.add(node.bmGetId());
+                }
             }
             else if (insideModule != null)
             {
@@ -4262,6 +4624,72 @@ public final class BmComparisonHelper
                 walk(child, outcome, page, insideModule);
             }
         }
+    }
+
+    /**
+     * Says whether a qualified node name names a module.
+     * <p>
+     * Decided by suffix, because that is all the name carries: object and manager modules,
+     * record sets, value managers and command modules each end in their own word, and a form's
+     * module ends in {@code .Module} like a common module's. The list is one constant so the walk
+     * and whatever reads its answers cannot disagree about what a module is.
+     * </p>
+     *
+     * @param named the node's qualified name; may be <code>null</code>.
+     * @return <code>true</code> when the name carries a module suffix
+     */
+    static boolean isModuleName(String named)
+    {
+        if (named == null)
+        {
+            return false;
+        }
+        for (String suffix : MODULE_SUFFIXES)
+        {
+            if (named.endsWith(suffix))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Says whether a module node's children are top nodes the comparison told apart on their own.
+     * <p>
+     * With {@code parseBslModuleStructure} on, a module's methods arrive as top nodes named
+     * {@code <module>.<method>} - measured on object, manager and form modules alike. That is the
+     * case where a rule set on the module would overwrite rules the methods can carry themselves,
+     * so the caller needs to know which kind of module node it holds.
+     * </p>
+     *
+     * @param node the module node.
+     * @param module the module's qualified name.
+     * @return <code>true</code> when at least one child names a piece of this module
+     */
+    private static boolean enumeratesMethods(ComparisonNode node, String module)
+    {
+        if (!node.hasChildren())
+        {
+            return false;
+        }
+        for (ComparisonNode child : node.<ComparisonNode> getChildren())
+        {
+            if (child == null || !(child instanceof TopComparisonNode))
+            {
+                continue;
+            }
+            String named = symlinkOf((TopComparisonNode)child, ComparisonSide.MAIN);
+            if (named == null || named.isEmpty())
+            {
+                named = symlinkOf((TopComparisonNode)child, ComparisonSide.OTHER);
+            }
+            if (named != null && named.startsWith(module + ".")) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

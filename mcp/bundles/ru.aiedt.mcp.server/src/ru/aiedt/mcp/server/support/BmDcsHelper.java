@@ -675,6 +675,15 @@ public final class BmDcsHelper
         public String schemaFqn;
         public String message;
         public DcsExtensionExportHelper.Result directSave; // populated for all non-dry-run writes
+        /**
+         * Whether the write was a preview: the transaction was rolled back and the model and the
+         * file both hold what they held before the call.
+         * <p>
+         * Carried on the result because the caller cannot tell a preview from a write by the rest
+         * of the answer - both report {@code ok} and a message.
+         * </p>
+         */
+        public boolean dryRun;
         public Map<String, Object> tags = new LinkedHashMap<>();
     }
 
@@ -794,6 +803,7 @@ public final class BmDcsHelper
         boolean dryRun, DcsAction action)
     {
         Result r = new Result();
+        r.dryRun = dryRun;
         if (project == null || ownerFqn == null || ownerFqn.isEmpty())
         {
             r.error = "project and ownerFqn are required"; //$NON-NLS-1$
@@ -1203,6 +1213,7 @@ public final class BmDcsHelper
         String templateName, boolean dryRun)
     {
         Result r = new Result();
+        r.dryRun = dryRun;
         if (!isAvailable())
         {
             r.error = "DCS API not available"; //$NON-NLS-1$

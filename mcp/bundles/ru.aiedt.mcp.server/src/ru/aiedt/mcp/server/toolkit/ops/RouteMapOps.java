@@ -6,11 +6,16 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 
+import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmRouteMapHelper;
@@ -27,7 +32,8 @@ final class RouteMapOps
     /**
      * create_route_map - draws a BusinessProcess route map (Flowchart.scheme) from a JSON list of
      * points and transitions. Honors dryRun and overwrite. Pass the BusinessProcess FQN as ownerFqn
-     * (or bpFqn).
+     * (or bpFqn). Every handler the scheme names and the object module does not declare gets a
+     * procedure in the object module; the scheme validator reports a handler without one.
      *
      * @param params the tool parameters
      * @return the JSON result document
@@ -93,29 +99,158 @@ final class RouteMapOps
         {
             return ToolResult.error(wr.error).toJson();
         }
+        String modulePath = BmRouteMapHelper.objectModulePath(bpFqn);
+        if (modulePath == null)
+        {
+            modulePath = bpFqn + ".ObjectModule"; //$NON-NLS-1$
+        }
+        String moduleText = null;
+        String unreadable = null;
+        try
+        {
+            moduleText = BslModuleAccess.readModuleIfPresent(project, modulePath);
+        }
+        catch (Exception cannotRead)
+        {
+            unreadable = "the module " + modulePath + " exists and could not be read (" //$NON-NLS-1$ //$NON-NLS-2$
+                + cannotRead.getMessage() + "), so no procedure was appended: the handlers it already " //$NON-NLS-1$
+                + "declares cannot be told apart and would be written twice"; //$NON-NLS-1$
+            Activator.logWarning("create_route_map: " + unreadable); //$NON-NLS-1$
+        }
+        HandlerStubs stubs = planHandlerStubs(wr.handlers, moduleText);
         if (dryRun)
         {
-            return ToolResult.success()
+            ToolResult preview = ToolResult.success()
                 .put("operation", "create_route_map") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("ownerFqn", bpFqn) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
+                .put("replaced", wr.replaced) //$NON-NLS-1$
                 .put("pointCount", wr.pointCount) //$NON-NLS-1$
                 .put("transitionCount", wr.transitionCount) //$NON-NLS-1$
+                .put("points", wr.points) //$NON-NLS-1$
+                .put("handlers", wr.handlers) //$NON-NLS-1$
+                .put("stubsToWrite", stubs.names) //$NON-NLS-1$
+                .put("stubsAlreadyPresent", stubs.alreadyPresent) //$NON-NLS-1$
                 .put("previewXml", wr.xml) //$NON-NLS-1$
                 .put("message", "Preview: generated Flowchart.scheme (no changes applied). " //$NON-NLS-1$
-                    + "Run without dryRun to write it, then update_database to verify.") //$NON-NLS-1$
-                .toJson();
+                    + "Run without dryRun to write it, then update_database to verify."); //$NON-NLS-1$
+            if (unreadable != null)
+            {
+                preview.put("stubWriteFailed", unreadable); //$NON-NLS-1$
+            }
+            return preview.toJson();
         }
-        return ToolResult.success()
+        String stubFailure = stubs.names.isEmpty() ? null
+            : unreadable != null ? unreadable
+            : appendToModule(project, modulePath, stubs.text.toString());
+        ToolResult result = ToolResult.success()
             .put("operation", "create_route_map") //$NON-NLS-1$ //$NON-NLS-2$
             .put("ownerFqn", bpFqn) //$NON-NLS-1$
             .put("written", wr.written) //$NON-NLS-1$
+            .put("replaced", wr.replaced) //$NON-NLS-1$
             .put("pointCount", wr.pointCount) //$NON-NLS-1$
             .put("transitionCount", wr.transitionCount) //$NON-NLS-1$
+            .put("points", wr.points) //$NON-NLS-1$
+            .put("handlers", wr.handlers) //$NON-NLS-1$
+            .put("stubsWritten", stubFailure == null ? stubs.names : new ArrayList<String>()) //$NON-NLS-1$
+            .put("stubsAlreadyPresent", stubs.alreadyPresent) //$NON-NLS-1$
             .put("message", "Route map (Flowchart.scheme) written with " + wr.pointCount //$NON-NLS-1$
                 + " point(s) and " + wr.transitionCount //$NON-NLS-1$
-                + " transition(s). Run get_project_errors then update_database to verify.") //$NON-NLS-1$
-            .toJson();
+                + " transition(s)" //$NON-NLS-1$
+                + (wr.replaced ? ", replacing the route map that was there" : "") //$NON-NLS-1$ //$NON-NLS-2$
+                + (stubFailure != null
+                    ? ". The handler procedures were NOT written to " + modulePath //$NON-NLS-1$
+                        + " - the scheme names handlers the module does not declare" //$NON-NLS-1$
+                    : "") //$NON-NLS-1$
+                + ". Run get_project_errors then update_database to verify."); //$NON-NLS-1$
+        if (stubFailure != null)
+        {
+            result.put("stubWriteFailed", stubFailure); //$NON-NLS-1$
+        }
+        return result.toJson();
+    }
+
+    /** The handler procedures a route map needs in the object module, and those already there. */
+    static final class HandlerStubs
+    {
+        /** Handler names whose procedure is to be written, first spelling of each name. */
+        final List<String> names = new ArrayList<>();
+        /** Handler names the module already declares. */
+        final List<String> alreadyPresent = new ArrayList<>();
+        /** The procedures to append, one blank line apart. */
+        final StringBuilder text = new StringBuilder();
+    }
+
+    /**
+     * Decides which handler procedures a written route map still needs.
+     * <p>
+     * A handler the module already declares is left alone, and a name given to several events is
+     * written once, with the parameters of the first event that names it. Names are compared
+     * without regard to case, as the platform binds them.
+     * </p>
+     *
+     * @param handlers the handlers written into the scheme, as {point, event, handler}
+     * @param moduleText the object module as it stands, or null when there is none
+     * @return the procedures to write and the names already declared
+     */
+    static HandlerStubs planHandlerStubs(List<Map<String, String>> handlers, String moduleText)
+    {
+        HandlerStubs plan = new HandlerStubs();
+        Set<String> seen = new HashSet<>();
+        for (Map<String, String> entry : handlers)
+        {
+            String handler = entry.get("handler"); //$NON-NLS-1$
+            if (handler == null || !seen.add(handler.toLowerCase(Locale.ROOT)))
+            {
+                continue;
+            }
+            if (moduleText != null && GenerateEventHandlersTool.declares(moduleText, handler))
+            {
+                plan.alreadyPresent.add(handler);
+                continue;
+            }
+            String stub = BmRouteMapHelper.handlerStub(handler, entry.get("event")); //$NON-NLS-1$
+            if (stub == null)
+            {
+                continue;
+            }
+            if (plan.names.isEmpty() && moduleText != null && !moduleText.trim().isEmpty())
+            {
+                // Measured: the writer appends by lines and drops the module's trailing blank line,
+                // so without this the first procedure follows the last one with no line between.
+                plan.text.append("\n"); //$NON-NLS-1$
+            }
+            plan.names.add(handler);
+            plan.text.append(stub).append("\n\n"); //$NON-NLS-1$
+        }
+        return plan;
+    }
+
+    /**
+     * Appends procedures to a module through the module writer, which creates the module when it
+     * has no file yet.
+     *
+     * @param project the project that owns the module
+     * @param modulePath the module path under src/, e.g. {@code BusinessProcesses/X/ObjectModule.bsl}
+     * @param text the procedures to append
+     * @return the writer's refusal, or null when the text was appended
+     */
+    private static String appendToModule(IProject project, String modulePath, String text)
+    {
+        Map<String, String> writeParams = new LinkedHashMap<>();
+        writeParams.put("projectName", project.getName()); //$NON-NLS-1$
+        writeParams.put("modulePath", modulePath); //$NON-NLS-1$
+        writeParams.put("mode", ModuleSourceWriter.MODE_APPEND); //$NON-NLS-1$
+        writeParams.put("content", text); //$NON-NLS-1$
+        ModuleSourceWriter writer = new ModuleSourceWriter();
+        String answer = writer.execute(writeParams);
+        if (answer == null)
+        {
+            return "the module writer answered nothing"; //$NON-NLS-1$
+        }
+        boolean refused = answer.contains("\"success\": false") || answer.contains("\"success\":false") //$NON-NLS-1$ //$NON-NLS-2$
+            || answer.startsWith("Error:") || answer.startsWith("**Error"); //$NON-NLS-1$ //$NON-NLS-2$
+        return refused ? answer : null;
     }
 
     /**

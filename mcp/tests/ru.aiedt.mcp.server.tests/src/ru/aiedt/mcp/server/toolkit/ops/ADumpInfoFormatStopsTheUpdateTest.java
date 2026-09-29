@@ -52,6 +52,7 @@ import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.support.ApplicationUpdater;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
+import ru.aiedt.mcp.server.support.InfobaseOutsideChange;
 
 /**
  * A stored ConfigDumpInfo.xml whose format is not the one recorded for that infobase stops an update
@@ -103,7 +104,7 @@ public class ADumpInfoFormatStopsTheUpdateTest
         assertEquals("2.7", refusal.get("expectedDumpInfoFormat").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("8.3.27.2214", refusal.get("platformVersion").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("dumpInfoFormat", refusal.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("sync_control syncOperation=rebuild_dump_info confirm=true", //$NON-NLS-1$
+        assertEquals("infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true", //$NON-NLS-1$
             refusal.get("nextStep").getAsString()); //$NON-NLS-1$
         assertTrue(refusal.get("dumpInfoFile").getAsString().endsWith("ConfigDumpInfo.xml")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("the refusal says what the update would silently become", //$NON-NLS-1$
@@ -112,6 +113,27 @@ public class ADumpInfoFormatStopsTheUpdateTest
             refusal.get("error").getAsString().contains("ignoreDumpInfoFormat")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("nothing was asked of the application manager while the format was foreign", //$NON-NLS-1$
             manager.calls.isEmpty());
+    }
+
+    /**
+     * The two checks read the same file and answer for different things: the format gate compares
+     * the file's shape, the base gate which infobase the file describes. A copy of another base
+     * carrying a format this base's own Designer writes passes the first and is stopped by the
+     * second - neither answer is the other's, and a caller that fixes one has not fixed the other.
+     */
+    @Test
+    public void aForeignFormatAndAForeignBaseAreTwoDifferentAnswers()
+    {
+        DumpInfoProbe.Reading reading = DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            null, InfobaseOutsideChange.of("file:e:/bases/now", "content-now", 5), //$NON-NLS-1$ //$NON-NLS-2$
+            InfobaseOutsideChange.of("file:e:/bases/then", "content-then", 4)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertNull("the format is the one this base's Designer writes", //$NON-NLS-1$
+            DatabaseUpdater.stopOnForeignDumpInfoFormat(reading, false));
+        assertTrue("and the format check says the two agree", //$NON-NLS-1$
+            DatabaseUpdater.describeDumpInfoFormatCheck(reading, false).startsWith("matched")); //$NON-NLS-1$
+        assertNotNull("while the stored copy describes another base", //$NON-NLS-1$
+            DatabaseUpdater.stopOnAnotherInfobase(reading, false));
     }
 
     /**
@@ -414,13 +436,15 @@ public class ADumpInfoFormatStopsTheUpdateTest
         assertEquals(ApplicationUpdater.Outcome.ALREADY_UP_TO_DATE, went.outcome);
         assertEquals(List.of("getUpdateState"), matching.calls); //$NON-NLS-1$
 
-        String debugRefusal = DebugSessionStarter.updateDatabase(manager, application, foreignFile());
+        String debugRefusal = DebugSessionStarter.preLaunchRefusal(
+            DebugSessionStarter.updateDatabase(manager, application, foreignFile()));
         assertNotNull(debugRefusal);
         assertTrue(debugRefusal.contains("2.20")); //$NON-NLS-1$
         assertTrue("the debugger's update did not ask the manager", manager.calls.isEmpty()); //$NON-NLS-1$
 
-        String debugWent = DebugSessionStarter.updateDatabase(matching, application,
-            DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        String debugWent = DebugSessionStarter.preLaunchRefusal(DebugSessionStarter.updateDatabase(
+            matching, application,
+            DumpInfoProbe.reading("file", "2.7", "2.7", "8.3.27.2214"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         assertNull(debugWent);
         assertEquals(List.of("getUpdateState", "getUpdateState"), matching.calls); //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -434,11 +458,11 @@ public class ADumpInfoFormatStopsTheUpdateTest
     @Test
     public void theFormatOverrideIsPartOfTheRunIdentity()
     {
-        String plain = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false); //$NON-NLS-1$ //$NON-NLS-2$
-        String overriding = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, true); //$NON-NLS-1$ //$NON-NLS-2$
+        String plain = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false, true, false); //$NON-NLS-1$ //$NON-NLS-2$
+        String overriding = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, true, true, false); //$NON-NLS-1$ //$NON-NLS-2$
         assertNotEquals("the override separates two otherwise identical runs", plain, overriding); //$NON-NLS-1$
         assertEquals("the same arguments still key the same run", plain, //$NON-NLS-1$
-            DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false)); //$NON-NLS-1$ //$NON-NLS-2$
+            DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false, true, false)); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

@@ -85,6 +85,7 @@ public enum ToolCategory
         "Infobase lifecycle, database update, sync control, launch, testing, " //$NON-NLS-1$
             + "extension deployment, EDT restart", //$NON-NLS-1$
         "get_applications", //$NON-NLS-1$
+        "list_registered_infobases", //$NON-NLS-1$
         "read_event_log", //$NON-NLS-1$
         "list_configurations", //$NON-NLS-1$
         "update_database", //$NON-NLS-1$
@@ -118,21 +119,24 @@ public enum ToolCategory
 
     /** The repository the project lives in: reading it now, writing it in later stages. */
     VCS("vcs", "Version Control", //$NON-NLS-1$ //$NON-NLS-2$
-        "Git status, branches and history of the project's repository, inside the IDE", //$NON-NLS-1$
+        "Git status, branches, history, file diff and restoring one file, inside the IDE", //$NON-NLS-1$
         "git", //$NON-NLS-1$
         "git_commit", //$NON-NLS-1$
-        "git_checkout"), //$NON-NLS-1$
+        "git_checkout", //$NON-NLS-1$
+        "git_revert_file"), //$NON-NLS-1$
 
     /** Everything that drives a debug session, including the two ways of ending one. */
     DEBUG("debug", "Debug & Profiling", //$NON-NLS-1$ //$NON-NLS-2$
         "Breakpoints, stepping, variable inspection, expression evaluation, and profiling", //$NON-NLS-1$
         "set_breakpoint", //$NON-NLS-1$
         "remove_breakpoint", //$NON-NLS-1$
+        "set_breakpoint_state", //$NON-NLS-1$
         "list_breakpoints", //$NON-NLS-1$
         "wait_for_break", //$NON-NLS-1$
         "get_variables", //$NON-NLS-1$
         "step", //$NON-NLS-1$
         "resume", //$NON-NLS-1$
+        "pause_thread", //$NON-NLS-1$
         "evaluate_expression", //$NON-NLS-1$
         "debug_yaxunit_tests", //$NON-NLS-1$
         "debug_status", //$NON-NLS-1$

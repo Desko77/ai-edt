@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.folders.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -226,6 +227,52 @@ public class Cluster
         }
         children.set(index, newFqn);
         return true;
+    }
+
+    /**
+     * Rewrites a held name and every held name nested under it, keeping each one's position.
+     * <p>
+     * A nested name is one that continues past {@code oldFqn} with a dot, so
+     * {@code Catalog.ProductsExtra} is not nested under {@code Catalog.Products}. The exact name
+     * and its descendants are rewritten in one pass over the names as they stand now. If a rewrite
+     * produces a name already present in the cluster, only its first occurrence is kept.
+     * </p>
+     *
+     * @param oldFqn the current fully qualified name
+     * @param newFqn the fully qualified name to give it
+     * @return <code>true</code> if at least one held name was rewritten
+     */
+    public boolean renameChildTree(String oldFqn, String newFqn)
+    {
+        if (oldFqn == null || newFqn == null || oldFqn.isEmpty() || oldFqn.equals(newFqn))
+        {
+            return false;
+        }
+        String nestedPrefix = oldFqn + "."; //$NON-NLS-1$
+        boolean renamed = false;
+        for (int i = 0; i < children.size(); i++)
+        {
+            String child = children.get(i);
+            if (child == null)
+            {
+                continue;
+            }
+            if (child.equals(oldFqn))
+            {
+                children.set(i, newFqn);
+                renamed = true;
+            }
+            else if (child.startsWith(nestedPrefix))
+            {
+                children.set(i, newFqn + child.substring(oldFqn.length()));
+                renamed = true;
+            }
+        }
+        if (renamed)
+        {
+            children = new ArrayList<>(new LinkedHashSet<>(children));
+        }
+        return renamed;
     }
 
     /**

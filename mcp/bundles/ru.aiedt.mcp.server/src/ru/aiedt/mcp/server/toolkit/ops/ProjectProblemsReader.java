@@ -40,6 +40,7 @@ import ru.aiedt.mcp.server.session.SessionChangeTracker;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
+import ru.aiedt.mcp.server.support.FileMarkers;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.modules.ModuleSources;
@@ -96,7 +97,7 @@ public class ProjectProblemsReader
             + "ERRORS+BLOCKER+CRITICAL+MAJOR; WARNING adds MINOR; INFO adds TRIVIAL; ALL removes the filter) " //$NON-NLS-1$
             + "or the concrete EDT levels themselves (ERRORS, BLOCKER, CRITICAL, MAJOR, MINOR, TRIVIAL, " //$NON-NLS-1$
             + "NONE). A typo such as 'ERORR' raises a clear error instead of silently returning everything. " //$NON-NLS-1$
-            + "Scope (default 'session') limits the scan to files touched in the current MCP session - " //$NON-NLS-1$
+            + "Scope (default 'session') limits the scan to files touched since EDT started - " //$NON-NLS-1$
             + "handy right after write_module_source / edit_metadata. Each finding carries the " //$NON-NLS-1$
             + "line it sits on where the check reports one, or @<character offset> where the " //$NON-NLS-1$
             + "check gives only that; the cell is empty for a finding on an object as a whole. " //$NON-NLS-1$
@@ -131,7 +132,7 @@ public class ProjectProblemsReader
                     + "these objects, and implies scope=object when set.") //$NON-NLS-1$
             .integerProperty("limit", "Cap on the number of results (default: 100, max: 1000)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("scope", //$NON-NLS-1$
-                "Marker scope: 'session' (default - only files this MCP session has touched, tracked " //$NON-NLS-1$
+                "Marker scope: 'session' (default - only files touched since EDT started, tracked " //$NON-NLS-1$
                     + "internally), 'object' (needs 'objects'), 'project' (every marker in the " //$NON-NLS-1$
                     + "project, auto-summarized past 200), 'all' (every open project). Passing " //$NON-NLS-1$
                     + "'objects' implies scope=object. Note: a full revalidation (revalidate_objects " //$NON-NLS-1$
@@ -172,7 +173,13 @@ public class ProjectProblemsReader
         }
         String severity = JsonUtils.extractStringArgument(params, "severity"); //$NON-NLS-1$
         String checkId = JsonUtils.extractStringArgument(params, "checkId"); //$NON-NLS-1$
-        List<String> objects = parseObjectsList(JsonUtils.extractStringArgument(params, "objects")); //$NON-NLS-1$
+        String objectsRaw = JsonUtils.extractStringArgument(params, "objects"); //$NON-NLS-1$
+        String objectsRefusal = objectsNotArrayRefusal(objectsRaw);
+        if (objectsRefusal != null)
+        {
+            return objectsRefusal;
+        }
+        List<String> objects = parseObjectsList(objectsRaw);
         String scope = JsonUtils.extractStringArgument(params, "scope"); //$NON-NLS-1$
         String fileFilter = JsonUtils.extractStringArgument(params, "fileFilter"); //$NON-NLS-1$
         boolean waitForRefresh = JsonUtils.extractBooleanArgument(params, "waitForRefresh", true); //$NON-NLS-1$
@@ -347,8 +354,8 @@ public class ProjectProblemsReader
             boolean sessionScope = "session".equals(resolvedScope); //$NON-NLS-1$
             if (sessionScope && SessionChangeTracker.size() == 0)
             {
-                return "# No Session Changes\n\nscope=session is set, but no files have been touched in the " //$NON-NLS-1$
-                    + "current MCP session yet.\n\nUse scope=project to scan the whole project, or write a " //$NON-NLS-1$
+                return "# No Session Changes\n\nscope=session is set, but no files have been touched since " //$NON-NLS-1$
+                    + "EDT started yet.\n\nUse scope=project to scan the whole project, or write a " //$NON-NLS-1$
                     + "module first via write_module_source / edit_metadata."; //$NON-NLS-1$
             }
 
@@ -510,6 +517,39 @@ public class ProjectProblemsReader
             // Not a JSON array; leave the list empty.
         }
         return result;
+    }
+
+    /**
+     * The refusal for an {@code objects} argument that is not a JSON array.
+     * <p>
+     * A scalar or unparseable value parses to the same empty list as an omitted argument, and the
+     * query then runs unfiltered while the caller reads the answer as filtered. Refusing with the
+     * shape the argument should have had is cheaper than a wrong answer that looks right.
+     * </p>
+     *
+     * @param raw the raw argument value; may be <code>null</code>
+     * @return the refusal markdown, or <code>null</code> when the argument is absent, blank or a
+     *         JSON array
+     */
+    static String objectsNotArrayRefusal(String raw)
+    {
+        if (raw == null || raw.trim().isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            if (JsonParser.parseString(raw.trim()).isJsonArray())
+            {
+                return null;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            // Not JSON at all; the refusal below says what was expected.
+        }
+        return "# Request Failed\n\nobjects must be a JSON array of FQN strings, " //$NON-NLS-1$
+            + "e.g. [\"Catalog.Products\", \"Document.SalesOrder\"] - got: " + raw; //$NON-NLS-1$
     }
 
     /**
@@ -1638,11 +1678,11 @@ public class ProjectProblemsReader
         private boolean matchesPresentation(String presentation)
         {
             String presLower = presentation == null ? "" : presentation.toLowerCase(Locale.ROOT); //$NON-NLS-1$
-            if (!objectFqns.isEmpty() && !containsAny(presLower, objectFqns))
+            if (!objectFqns.isEmpty() && !containsAnySegment(presLower, objectFqns))
             {
                 return false;
             }
-            if (sessionScope && !containsAny(presLower, sessionFqns))
+            if (sessionScope && !containsAnySegment(presLower, sessionFqns))
             {
                 return false;
             }
@@ -1654,11 +1694,24 @@ public class ProjectProblemsReader
             return true;
         }
 
-        private static boolean containsAny(String haystack, Set<String> needles)
+        /**
+         * Whether the presentation names any of the FQNs, whole segments only.
+         * <p>
+         * A substring match keeps {@code "Catalog.ProductsExtra"} for a request about
+         * {@code "Catalog.Products"}, so the markers of an object nobody asked about arrive as the
+         * markers of the one asked about. {@code fileFilter} stays a documented substring filter;
+         * the object and session sets are FQNs and match on segment boundaries.
+         * </p>
+         *
+         * @param haystack the lowercased presentation
+         * @param needles the lowercased FQN variants
+         * @return <code>true</code> when any FQN stands in the presentation on segment boundaries
+         */
+        private static boolean containsAnySegment(String haystack, Set<String> needles)
         {
             for (String needle : needles)
             {
-                if (haystack.contains(needle))
+                if (FileMarkers.matchesAtSegmentBoundary(haystack, needle))
                 {
                     return true;
                 }

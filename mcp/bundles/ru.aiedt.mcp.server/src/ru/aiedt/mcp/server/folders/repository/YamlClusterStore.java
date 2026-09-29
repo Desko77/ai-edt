@@ -32,13 +32,31 @@ import java.nio.channels.FileLock;
 
 import java.nio.channels.OverlappingFileLockException;
 
+import java.nio.charset.CodingErrorAction;
+
 import java.nio.charset.StandardCharsets;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+
+import java.nio.file.DirectoryStream;
+
+import java.nio.file.FileAlreadyExistsException;
 
 import java.nio.file.Files;
 
 import java.nio.file.Path;
 
 import java.nio.file.StandardOpenOption;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileAttribute;
+
+import java.nio.file.attribute.PosixFileAttributeView;
+
+import java.nio.file.attribute.PosixFilePermission;
+
+import java.nio.file.attribute.PosixFilePermissions;
 
 import java.util.ArrayList;
 
@@ -46,9 +64,11 @@ import java.util.Comparator;
 
 import java.util.List;
 
+import java.util.Map;
 import java.util.Set;
 
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 
@@ -75,6 +95,7 @@ import org.yaml.snakeyaml.constructor.Constructor;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import org.yaml.snakeyaml.introspector.Property;
+import org.yaml.snakeyaml.introspector.PropertyUtils;
 
 import org.yaml.snakeyaml.nodes.Tag;
 
@@ -124,13 +145,29 @@ import ru.aiedt.mcp.server.folders.model.ClusterStore;
 
  * <p>
 
- * On the way in, the loader is hardened two ways. It refuses global YAML markers, so a file arriving
+ * On the way in, the loader refuses global YAML markers, so a file arriving through a clone cannot
 
- * through a clone cannot name an arbitrary class for the parser to instantiate. And a file it cannot
+ * name an arbitrary class for the parser to instantiate. A file it cannot parse degrades to no
 
- * parse - bad syntax, or a key it does not know - degrades to no clusters rather than throwing out into
+ * clusters for the reader rather than throwing into the Navigator, and a later save refuses to
 
- * the Navigator.
+ * replace that file: the bytes stay, and a copy is kept beside it. A key the loader does not know
+
+ * is skipped, so a file written by a newer build still reads.
+
+ * </p>
+
+ * <p>
+
+ * The file on disk, not the resource tree, is what a project's clusters are read from: a file
+
+ * written by another process - git, a checkout, an editor outside the workspace - is read even while
+
+ * the resource tree still reports the resource absent. What a set was read from is remembered, and a
+
+ * save whose file no longer holds those bytes is refused rather than applied: replacing what nobody
+
+ * read is how a valid file loses the clusters it carried.
 
  * </p>
 
@@ -154,6 +191,61 @@ public class YamlClusterStore
 
                 String.CASE_INSENSITIVE_ORDER);
 
+    private static final int ATOMIC_MOVE_ATTEMPTS = 4;
+
+    private static final long ATOMIC_MOVE_RETRY_MILLIS = 75L;
+    private static final long STALE_TEMPORARY_MILLIS = 24L * 60L * 60L * 1000L;
+
+    private static final Set<PosixFilePermission> DEFAULT_POSIX_FILE_PERMISSIONS = Set.of(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.GROUP_READ,
+        PosixFilePermission.OTHERS_READ);
+
+    /** What stands for a project whose clusters file was not there when its set was read. */
+    private static final String NO_FILE_FINGERPRINT = "-"; //$NON-NLS-1$
+
+    /**
+     * The digest of the bytes each project's set was read from, by project name.
+     * <p>
+     * The state is kept here rather than in {@link ClusterStore}, which is what the YAML is written
+     * from: a field on the store would be dumped into the file, and a reader of another build would
+     * meet a key it does not know. The map is per instance, and the manager that owns this store is
+     * the only writer for a project's file. A name that is absent means this store never read that
+     * project - which is not the same as having read no file, and is stored as
+     * {@link #NO_FILE_FINGERPRINT} instead.
+     * </p>
+     */
+    private final Map<String, String> loadedFingerprints = new ConcurrentHashMap<>();
+
+
+    /** Performs one atomic replacement attempt. */
+    @FunctionalInterface
+    interface AtomicMover
+    {
+        /**
+         * Moves the staged file over the destination atomically.
+         *
+         * @param source the staged file
+         * @param target the destination
+         * @throws IOException when the atomic replacement is refused
+         */
+        void move(Path source, Path target) throws IOException;
+    }
+
+    /** Waits between atomic replacement attempts. */
+    @FunctionalInterface
+    interface RetrySleeper
+    {
+        /**
+         * Waits for the requested retry delay.
+         *
+         * @param milliseconds the delay in milliseconds
+         * @throws InterruptedException when the waiting thread is interrupted
+         */
+        void sleep(long milliseconds) throws InterruptedException;
+    }
+
 
 
     @Override
@@ -164,23 +256,165 @@ public class YamlClusterStore
 
         IFile file = clustersFile(project);
 
-        if (!file.exists())
+        byte[] bytes;
+
+        try
 
         {
+
+            bytes = readClustersBytes(file);
+
+        }
+
+        catch (CoreException | IOException e)
+
+        {
+
+            Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
+
+            forgetFingerprint(project);
+
+            return null;
+
+        }
+
+        if (bytes == null)
+
+        {
+
+            rememberFingerprint(project, NO_FILE_FINGERPRINT);
 
             return new ClusterStore();
 
         }
 
-        try (InputStream in = file.getContents();
+        return readClusters(project, bytes);
 
-            Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8))
+    }
+
+    /**
+     * Reads the clusters file, following it onto the local disk when the resource tree does not have
+     * it yet.
+     * <p>
+     * Another process writes the file - git checks a branch out, an editor outside the workspace saves
+     * it - while the tree still answers that there is no such resource. The bytes on disk are the ones
+     * the project has, so this refreshes that one resource and reads it; a refresh the workspace
+     * refuses, which a folder it does not know causes, leaves the disk bytes as the only source and
+     * they are read directly.
+     * </p>
+     *
+     * @param file the clusters file handle
+     * @return the bytes, or {@code null} when the file is not there at all
+     * @throws CoreException when the file cannot be read through the workspace
+     * @throws IOException when the file cannot be read from disk
+     */
+    private static byte[] readClustersBytes(IFile file) throws CoreException, IOException
+
+    {
+
+        if (file.exists())
 
         {
 
-            Yaml yaml = new Yaml(new Constructor(ClusterStore.class, createLoaderOptions()));
+            return contents(file);
+
+        }
+
+        IPath location = file.getLocation();
+
+        if (location == null)
+
+        {
+
+            return null;
+
+        }
+
+        Path path = location.toFile().toPath();
+
+        if (!Files.exists(path))
+
+        {
+
+            return null;
+
+        }
+
+        try
+
+        {
+
+            file.refreshLocal(IResource.DEPTH_ZERO, null);
+
+        }
+
+        catch (CoreException e)
+
+        {
+
+            // The tree has no parent for this file, so the refresh has nothing to attach to; the
+            // bytes on disk are the project's own either way and are read below.
+
+        }
+
+        return file.exists() ? contents(file) : Files.readAllBytes(path);
+
+    }
+
+    /**
+     * Reads the bytes of a workspace file.
+
+     *
+
+     * @param file the file to read
+
+     * @return the bytes
+
+     * @throws CoreException when the workspace refuses the read
+
+     * @throws IOException when the stream cannot be read
+
+     */
+
+    private static byte[] contents(IFile file) throws CoreException, IOException
+
+    {
+
+        try (InputStream in = file.getContents())
+
+        {
+
+            return in.readAllBytes();
+
+        }
+
+    }
+
+    /**
+     * Reads a project's clusters out of the bytes the file held, and records those bytes.
+     * <p>
+     * What was read is remembered before the parse is judged: a set that came from these bytes is a
+     * base a later save may build on, and bytes the loader cannot read are remembered as nothing read
+     * at all, so no save overwrites them.
+     * </p>
+     *
+     * @param project the project, for the log line and the fingerprint
+     * @param bytes the file contents
+     * @return the clusters, or {@code null} when the bytes are not a document this loader accepts
+     */
+    private ClusterStore readClusters(IProject project, byte[] bytes)
+
+    {
+
+        try (Reader reader = strictUtf8Reader(new ByteArrayInputStream(bytes)))
+
+        {
+
+            Yaml yaml = createLoadYaml();
 
             ClusterStore storage = yaml.load(reader);
+
+            rememberFingerprint(project, fingerprint(bytes));
 
             if (storage == null)
 
@@ -200,46 +434,261 @@ public class YamlClusterStore
 
         {
 
+            forgetFingerprint(project);
+
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
 
-                + " could not be parsed and was ignored: " + e.getMessage()); //$NON-NLS-1$
+                + " could not be parsed and was left unchanged: " + e.getMessage()); //$NON-NLS-1$
 
-            return new ClusterStore();
+            return null;
 
         }
 
-        catch (CoreException | IOException e)
+        catch (IOException e)
 
         {
 
+            forgetFingerprint(project);
+
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
 
-            return new ClusterStore();
+            return null;
 
         }
 
     }
 
+    /**
+     * Remembers the fingerprint of the content a project's clusters were read from.
 
+     *
 
-    @Override
+     * @param project the project
 
-    public boolean save(IProject project, ClusterStore storage)
+     * @param fingerprint the digest of the bytes, or {@link #NO_FILE_FINGERPRINT}
+
+     */
+
+    private void rememberFingerprint(IProject project, String fingerprint)
 
     {
 
-        if (storage == null || storage.isEmpty())
+        loadedFingerprints.put(project.getName(), fingerprint);
+
+    }
+
+    /**
+     * Forgets what a project's clusters were read from, so no save counts the file as a base.
+
+     *
+
+     * @param project the project
+
+     */
+
+    private void forgetFingerprint(IProject project)
+
+    {
+
+        loadedFingerprints.remove(project.getName());
+
+    }
+
+    /**
+     * The digest of a file's bytes, the identity of the content a set was read from.
+
+     *
+
+     * @param bytes the file contents
+
+     * @return the hexadecimal SHA-256 of the bytes
+
+     */
+
+    private static String fingerprint(byte[] bytes)
+
+    {
+
+        try
 
         {
 
-            return deleteIfExists(project);
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes); //$NON-NLS-1$
+
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+
+            for (byte value : digest)
+
+            {
+
+                hex.append(Character.forDigit((value >> 4) & 0xf, 16));
+
+                hex.append(Character.forDigit(value & 0xf, 16));
+
+            }
+
+            return hex.toString();
 
         }
 
+        catch (NoSuchAlgorithmException e)
+
+        {
+
+            // Every runtime that runs this bundle ships SHA-256. One that does not still has to tell
+            // the file it read from another one, and a shortened digest would not, so the content
+            // itself stands in for it.
+            return new String(bytes, StandardCharsets.ISO_8859_1);
+
+        }
+
+    }
+
+    /**
+     * Creates a reader that refuses malformed or unmappable UTF-8 instead of replacing it.
+     *
+     * @param input the byte stream to decode
+     * @return a strict UTF-8 reader
+     */
+    private static Reader strictUtf8Reader(InputStream input)
+    {
+        return new InputStreamReader(input, StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT));
+    }
+
+
+
+    /**
+     * Saves a project's clusters.
+     * <p>
+     * An existing file that this loader cannot parse is not replaced: the bytes stay and a copy is
+     * written beside the file, and this method answers {@code false}. A file that changed after the
+     * set was read is not replaced either - see {@link #isTheFileThatWasRead(IProject)}. Saving an
+     * empty set still deletes a file that did parse, as long as it is the one the empty set came
+     * from.
+     * </p>
+     *
+     * @param project the project
+     * @param storage the clusters to save
+     * @return {@code true} on success
+     */
+    @Override
+    public boolean save(IProject project, ClusterStore storage)
+    {
+        if (unreadableFileBlocksSave(project))
+        {
+            return false;
+        }
+        if (!isTheFileThatWasRead(project))
+        {
+            return false;
+        }
+        if (storage == null || storage.isEmpty())
+        {
+            if (!deleteIfExists(project))
+            {
+                return false;
+            }
+            rememberWhatTheFileHolds(project);
+            return true;
+        }
         String content = dump(sortForOutput(storage));
+        if (!saveWithLock(project, content))
+        {
+            return false;
+        }
+        rememberWhatTheFileHolds(project);
+        return true;
+    }
 
-        return saveWithLock(project, content);
+    /**
+     * Tells whether the clusters file still holds what the set in hand was read from.
+     * <p>
+     * The set was read from the file as it stood. Another process may have written the file since -
+     * git checks a branch out, an editor outside the workspace saves it - and what the file then
+     * holds is a set nobody read. Writing over it replaces content that was never in hand, which is
+     * how a valid file loses the clusters it carried, so the write is refused and the file is left
+     * alone. A file that was absent when the set was read and is there now counts as changed for the
+     * same reason: the set was built without it.
+     * </p>
+     * <p>
+     * A store that never read this project has nothing the set could have come from. It may create a
+     * file where there is none and may not replace one that is there.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the write may go ahead
+     */
+    private boolean isTheFileThatWasRead(IProject project)
+    {
+        String onDisk = diskFingerprint(clustersFile(project));
+        if (onDisk == null)
+        {
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " could not be read before writing it; the write was refused"); //$NON-NLS-1$
+            return false;
+        }
+        String read = loadedFingerprints.get(project.getName());
+        if (read == null ? NO_FILE_FINGERPRINT.equals(onDisk) : read.equals(onDisk))
+        {
+            return true;
+        }
+        if (read == null)
+        {
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " exists on disk and this store has not read it; the write was refused and the file " //$NON-NLS-1$
+                + "was left as it is"); //$NON-NLS-1$
+            return false;
+        }
+        Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+            + " changed on disk after it was read; the write was refused and the file was left as " //$NON-NLS-1$
+            + "it is"); //$NON-NLS-1$
+        return false;
+    }
 
+    /**
+     * Records what the file holds after a write that changed or removed it, so the next save compares
+     * against what is really there.
+     *
+     * @param project the project
+     */
+    private void rememberWhatTheFileHolds(IProject project)
+    {
+        String onDisk = diskFingerprint(clustersFile(project));
+        if (onDisk == null)
+        {
+            forgetFingerprint(project);
+        }
+        else
+        {
+            rememberFingerprint(project, onDisk);
+        }
+    }
+
+    /**
+     * The fingerprint of the clusters file as it stands now, or {@code null} when it cannot be read.
+     * <p>
+     * The bytes are taken the same way {@link #load(IProject)} takes them, so a file that only exists
+     * on disk is compared by what it holds rather than by a resource the tree does not have.
+     * </p>
+     *
+     * @param file the clusters file handle
+     * @return the fingerprint, {@link #NO_FILE_FINGERPRINT} when there is no file, or {@code null}
+     *         when the file cannot be read
+     */
+    private static String diskFingerprint(IFile file)
+    {
+        try
+        {
+            byte[] bytes = readClustersBytes(file);
+            return bytes == null ? NO_FILE_FINGERPRINT : fingerprint(bytes);
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Failed to read aiedt-clusters.yaml before writing it", e); //$NON-NLS-1$
+            return null;
+        }
     }
 
 
@@ -323,35 +772,158 @@ public class YamlClusterStore
 
 
     /**
-
-     * Builds the loader options.
-
+     * Builds the reader-side YAML with the clusters file's root type fixed, unknown properties
+     * ignored, and global YAML markers refused.
      * <p>
-
-     * The marker inspector answers no to every global marker. The standard map, sequence and scalar markers our
-
-     * own files use are not global and are never put to it, so nothing legitimate is refused; a crafted
-
-     * global marker - the SnakeYAML deserialization-gadget vector - is.
-
+     * The marker inspector answers no to every global marker. The standard map, sequence and scalar
+     * markers our own files use are not global and are never put to it, so nothing legitimate is
+     * refused; a crafted global marker is. Unknown keys are skipped so a file written by a newer
+     * build still reads instead of degrading to an empty set.
      * </p>
-
      *
-
-     * @return the loader options
-
+     * @return the configured reader
      */
-
-    private static LoaderOptions createLoaderOptions()
-
+    private static Yaml createLoadYaml()
     {
-
         LoaderOptions options = new LoaderOptions();
-
         options.setTagInspector(marker -> false);
+        Constructor constructor = new Constructor(ClusterStore.class, options);
+        PropertyUtils propertyUtils = new PropertyUtils();
+        propertyUtils.setSkipMissingProperties(true);
+        constructor.setPropertyUtils(propertyUtils);
+        return new Yaml(constructor);
+    }
 
-        return options;
+    /**
+     * Refuses to overwrite a clusters file that is not valid YAML, and keeps a copy beside it.
+     * <p>
+     * A reader treats that file as no clusters. Writing an edited set back would replace the bytes
+     * the reader could not understand, so the first edit after a bad read leaves the file alone.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the save must stop and leave the file as it is
+     */
+    private boolean unreadableFileBlocksSave(IProject project)
+    {
+        IFile file = clustersFile(project);
+        IPath location = file.getLocation();
+        if (location == null)
+        {
+            return unreadableWorkspaceFileBlocksSave(project, file);
+        }
+        Path path = location.toFile().toPath();
+        if (Files.notExists(path))
+        {
+            return false;
+        }
+        byte[] bytes;
+        try
+        {
+            bytes = Files.readAllBytes(path);
+        }
+        catch (IOException e)
+        {
+            Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " before writing it; the write was refused", e); //$NON-NLS-1$
+            return true;
+        }
+        if (bytes.length == 0 || parses(bytes))
+        {
+            return false;
+        }
+        backupUnreadable(project, path, bytes);
+        return true;
+    }
 
+    /**
+     * Checks a non-local workspace file when no operating-system path is available.
+     *
+     * @param project the project, for diagnostics
+     * @param file the workspace file
+     * @return {@code true} when the save must be refused
+     */
+    private boolean unreadableWorkspaceFileBlocksSave(IProject project, IFile file)
+    {
+        if (!file.exists())
+        {
+            return false;
+        }
+        try (InputStream in = file.getContents())
+        {
+            byte[] bytes = in.readAllBytes();
+            if (bytes.length == 0 || parses(bytes))
+            {
+                return false;
+            }
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " could not be parsed; the write was refused"); //$NON-NLS-1$
+            return true;
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " before writing it; the write was refused", e); //$NON-NLS-1$
+            return true;
+        }
+    }
+
+    /**
+     * Tells whether the bytes are a clusters document this loader accepts.
+     * <p>
+     * An unknown key is accepted. A syntax error, including conflict markers, is not.
+     * </p>
+     *
+     * @param bytes the file contents
+     * @return {@code true} when {@link #createLoadYaml()} can read them
+     */
+    private static boolean parses(byte[] bytes)
+    {
+        try (Reader reader = strictUtf8Reader(new ByteArrayInputStream(bytes)))
+        {
+            createLoadYaml().load(reader);
+            return true;
+        }
+        catch (YAMLException | IOException e)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Copies the first unreadable clusters file to {@code aiedt-clusters.yaml.bak} beside it.
+     * <p>
+     * The original is not modified, and an existing backup is preserved so repeated refused saves do
+     * not destroy the first recoverable snapshot. A failed copy is logged and still leaves the original
+     * in place, because the caller refuses the write either way.
+     * </p>
+     *
+     * @param project the project, for the log line
+     * @param file the clusters file on disk
+     * @param bytes the bytes to copy
+     */
+    private static void backupUnreadable(IProject project, Path file, byte[] bytes)
+    {
+        Path backup = file.resolveSibling(ClusterKeys.CLUSTERS_FILE + ".bak"); //$NON-NLS-1$
+        try
+        {
+            Files.write(backup, bytes, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " could not be parsed; the write was refused and a copy kept at " //$NON-NLS-1$
+                + backup.getFileName());
+        }
+        catch (FileAlreadyExistsException e)
+        {
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " is still unreadable; the existing backup was preserved at " //$NON-NLS-1$
+                + backup.getFileName());
+        }
+        catch (IOException e)
+        {
+            Activator.logError("Could not back up unreadable aiedt-clusters.yaml for " //$NON-NLS-1$
+                + project.getName(), e);
+        }
     }
 
 
@@ -452,9 +1024,9 @@ public class YamlClusterStore
 
     /**
 
-     * Writes the content by locking the file directly, falling back to the workspace when that is not
+     * Writes the content by replacing the file under an exclusive lock. When the file has no location
 
-     * possible.
+     * on disk, writes through the workspace instead. A lock that cannot be taken refuses the write.
 
      *
 
@@ -502,27 +1074,15 @@ public class YamlClusterStore
 
                 Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
 
-                    + " is locked by another process; writing it through the workspace instead"); //$NON-NLS-1$
+                    + " could not be locked or opened for writing; the write was refused"); //$NON-NLS-1$
 
-                return saveDirectly(project, clustersFile, content);
+                return false;
 
             }
 
             clustersFile.refreshLocal(IResource.DEPTH_ZERO, null);
 
             return true;
-
-        }
-
-        catch (OverlappingFileLockException e)
-
-        {
-
-            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
-
-                + " is already being written in this process; writing it through the workspace instead"); //$NON-NLS-1$
-
-            return saveDirectly(project, clustersFile, content);
 
         }
 
@@ -541,65 +1101,262 @@ public class YamlClusterStore
 
 
     /**
-
-     * Opens the file, takes an exclusive whole-file lock without blocking, and writes.
-
+     * Stages the content in a temporary file, probes the destination with an exclusive lock, and
+     * replaces the destination atomically after that probe succeeds.
+     * <p>
+     * The lock is taken on the destination as it stands. A lock another process holds, or one this
+     * process already holds, answers {@code false} and leaves the destination byte for byte. The lock
+     * is released before the move, so it is an availability probe rather than synchronization around
+     * replacement. The bytes are forced to the temporary file first, and only an atomic replacement
+     * makes them visible; an unavailable destination is retried and never falls back to a delete-first
+     * move.
+     * </p>
      *
-
      * @param osPath the file's location on disk
-
      * @param content the YAML to write
-
-     * @return <code>true</code> if written, <code>false</code> if the lock could not be taken because
-
-     *         another process holds it
-
-     * @throws IOException if the write fails
-
-     * @throws OverlappingFileLockException if this process already holds an overlapping lock
-
+     * @return {@code true} if the destination was replaced, {@code false} if the lock could not be taken
+     * @throws IOException if staging or replacing fails; the destination is left as it was when the
+     *             failure happens before the replace
      */
-
-    private static boolean writeChannelLocked(Path osPath, String content) throws IOException
-
+    static boolean writeChannelLocked(Path osPath, String content) throws IOException
     {
-
-        try (FileChannel channel = FileChannel.open(osPath, StandardOpenOption.CREATE,
-
-            StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING))
-
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        Path directory = osPath.getParent();
+        if (directory != null)
         {
-
-            FileLock lock = channel.tryLock();
-
-            if (lock == null)
-
-            {
-
-                return false;
-
-            }
-
-            try
-
-            {
-
-                channel.write(ByteBuffer.wrap(content.getBytes(StandardCharsets.UTF_8)));
-
-            }
-
-            finally
-
-            {
-
-                lock.release();
-
-            }
-
-            return true;
-
+            Files.createDirectories(directory);
         }
+        Path stagingDirectory = directory == null ? Path.of(".") : directory; //$NON-NLS-1$
+        cleanupStaleTemporaryFiles(osPath, stagingDirectory);
+        Path temporary = createTemporaryFile(osPath, stagingDirectory);
+        IOException failure = null;
+        try
+        {
+            writeForced(temporary, bytes);
+            if (!tryLockWithoutTruncating(osPath))
+            {
+                return false;
+            }
+            moveReplacing(temporary, osPath);
+            return true;
+        }
+        catch (IOException e)
+        {
+            failure = e;
+            throw e;
+        }
+        finally
+        {
+            try
+            {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException cleanupFailure)
+            {
+                if (failure == null)
+                {
+                    throw cleanupFailure;
+                }
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
 
+    /**
+     * Creates a sibling staging file with the destination's POSIX permissions when available.
+     * <p>
+     * A new destination starts with ordinary 0644 permissions subject to the process umask. Other
+     * file-system providers receive no unsupported attributes.
+     * </p>
+     *
+     * @param target the destination whose permissions should be retained
+     * @param directory the directory in which to create the staging file
+     * @return the new staging file
+     * @throws IOException when the file or its permissions cannot be created
+     */
+    private static Path createTemporaryFile(Path target, Path directory) throws IOException
+    {
+        Set<PosixFilePermission> permissions = DEFAULT_POSIX_FILE_PERMISSIONS;
+        if (Files.getFileAttributeView(directory, PosixFileAttributeView.class) != null)
+        {
+            if (Files.exists(target))
+            {
+                permissions = Files.getPosixFilePermissions(target);
+            }
+            FileAttribute<Set<PosixFilePermission>> attribute =
+                PosixFilePermissions.asFileAttribute(permissions);
+            return Files.createTempFile(directory, target.getFileName().toString() + ".", ".tmp", //$NON-NLS-1$ //$NON-NLS-2$
+                attribute);
+        }
+        return Files.createTempFile(directory, target.getFileName().toString() + ".", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Removes staging files left by an earlier process once they are old enough not to be active.
+     *
+     * @param target the destination whose staging-file prefix identifies owned files
+     * @param directory the directory containing the destination
+     */
+    private static void cleanupStaleTemporaryFiles(Path target, Path directory)
+    {
+        long cutoff = System.currentTimeMillis() - STALE_TEMPORARY_MILLIS;
+        String pattern = target.getFileName().toString() + ".*.tmp"; //$NON-NLS-1$
+        try (DirectoryStream<Path> stagedFiles = Files.newDirectoryStream(directory, pattern))
+        {
+            for (Path stagedFile : stagedFiles)
+            {
+                try
+                {
+                    if (Files.getLastModifiedTime(stagedFile).toMillis() < cutoff)
+                    {
+                        Files.deleteIfExists(stagedFile);
+                    }
+                }
+                catch (IOException e)
+                {
+                    Activator.logError("Failed to remove stale cluster staging file " //$NON-NLS-1$
+                        + stagedFile.getFileName(), e);
+                }
+            }
+        }
+        catch (IOException e)
+        {
+            Activator.logError("Failed to inspect cluster staging files beside " //$NON-NLS-1$
+                + target.getFileName(), e);
+        }
+    }
+
+    /**
+     * Writes every byte of {@code bytes} to {@code path} and forces them to disk.
+     *
+     * @param path the file to write; it is truncated because it is a temporary file, not the destination
+     * @param bytes the bytes to write
+     * @throws IOException if the write stops short or the channel cannot be forced
+     */
+    private static void writeForced(Path path, byte[] bytes) throws IOException
+    {
+        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE,
+            StandardOpenOption.TRUNCATE_EXISTING))
+        {
+            ByteBuffer buffer = ByteBuffer.wrap(bytes);
+            int written = 0;
+            while (buffer.hasRemaining())
+            {
+                int count = channel.write(buffer);
+                if (count <= 0)
+                {
+                    throw new IOException("writing " + path.getFileName() + " made no progress"); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                written += count;
+            }
+            if (written != bytes.length)
+            {
+                throw new IOException("short write to " + path.getFileName()); //$NON-NLS-1$
+            }
+            channel.force(true);
+        }
+    }
+
+    /**
+     * Takes an exclusive lock on {@code osPath} without truncating it.
+     * <p>
+     * A missing destination needs no lock and is left absent until the atomic move. An existing file
+     * is opened for write without {@code TRUNCATE_EXISTING}.
+     * </p>
+     *
+     * @param osPath the destination
+     * @return {@code true} when the lock was taken and released, {@code false} when it could not be taken
+     * @throws IOException when the file cannot be created or opened for a reason other than access
+     */
+    private static boolean tryLockWithoutTruncating(Path osPath) throws IOException
+    {
+        if (Files.notExists(osPath))
+        {
+            return true;
+        }
+        try
+        {
+            try (FileChannel channel = FileChannel.open(osPath, StandardOpenOption.WRITE))
+            {
+                try
+                {
+                    FileLock lock = channel.tryLock();
+                    if (lock == null)
+                    {
+                        return false;
+                    }
+                    lock.release();
+                    return true;
+                }
+                catch (OverlappingFileLockException overlapping)
+                {
+                    return false;
+                }
+            }
+        }
+        catch (AccessDeniedException denied)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Replaces {@code target} with {@code temporary}, retrying a refused atomic move.
+     * <p>
+     * There is deliberately no non-atomic fallback: if every atomic attempt fails, the destination
+     * remains intact and the failure is returned to the caller.
+     * </p>
+     *
+     * @param temporary the staged file
+     * @param target the destination
+     * @throws IOException if the move fails
+     */
+    private static void moveReplacing(Path temporary, Path target) throws IOException
+    {
+        moveReplacing(temporary, target, (source, destination) -> Files.move(source, destination,
+            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING), Thread::sleep);
+    }
+
+    /**
+     * Repeats an atomic replacement through injectable move and sleep operations.
+     *
+     * @param temporary the staged file
+     * @param target the destination
+     * @param mover the atomic move operation
+     * @param sleeper the delay operation between attempts
+     * @throws IOException when every attempt fails or the retry wait is interrupted
+     */
+    static void moveReplacing(Path temporary, Path target, AtomicMover mover, RetrySleeper sleeper)
+        throws IOException
+    {
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= ATOMIC_MOVE_ATTEMPTS; attempt++)
+        {
+            try
+            {
+                mover.move(temporary, target);
+                return;
+            }
+            catch (IOException e)
+            {
+                lastFailure = e;
+            }
+            if (attempt < ATOMIC_MOVE_ATTEMPTS)
+            {
+                try
+                {
+                    sleeper.sleep(ATOMIC_MOVE_RETRY_MILLIS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    IOException interrupted = new IOException("Interrupted while retrying atomic replacement", e); //$NON-NLS-1$
+                    interrupted.addSuppressed(lastFailure);
+                    throw interrupted;
+                }
+            }
+        }
+        throw lastFailure;
     }
 
 

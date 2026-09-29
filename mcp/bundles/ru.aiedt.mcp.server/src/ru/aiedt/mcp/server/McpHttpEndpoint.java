@@ -101,6 +101,7 @@ import ru.aiedt.mcp.server.toolkit.ops.FindRlsViolationsTool;
 import ru.aiedt.mcp.server.toolkit.ops.GenerateEventHandlersTool;
 import ru.aiedt.mcp.server.toolkit.ops.GenerateHealthSnapshotTool;
 import ru.aiedt.mcp.server.toolkit.ops.ApplicationsReader;
+import ru.aiedt.mcp.server.toolkit.ops.RegisteredInfobasesReader;
 import ru.aiedt.mcp.server.toolkit.ops.BookmarksReader;
 import ru.aiedt.mcp.server.toolkit.ops.CheckDocReader;
 import ru.aiedt.mcp.server.toolkit.ops.GetCommandInterfaceTool;
@@ -141,6 +142,7 @@ import ru.aiedt.mcp.server.toolkit.ops.ListInterceptorsTool;
 import ru.aiedt.mcp.server.toolkit.ops.ModulesLister;
 import ru.aiedt.mcp.server.toolkit.ops.GitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitCommitTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitFileRestore;
 import ru.aiedt.mcp.server.toolkit.ops.GitCheckoutTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectsLister;
 import ru.aiedt.mcp.server.toolkit.ops.MxlWorkshopTool;
@@ -150,10 +152,12 @@ import ru.aiedt.mcp.server.toolkit.ops.ProjectMetricsTool;
 import ru.aiedt.mcp.server.toolkit.ops.MethodSourceReader;
 import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceReader;
 import ru.aiedt.mcp.server.toolkit.ops.BreakpointRemover;
+import ru.aiedt.mcp.server.toolkit.ops.BreakpointStateSetter;
 import ru.aiedt.mcp.server.toolkit.ops.MetadataObjectRenamer;
 import ru.aiedt.mcp.server.toolkit.ops.DialogAnswerer;
 import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.toolkit.ops.DebugResumer;
+import ru.aiedt.mcp.server.toolkit.ops.DebugPauser;
 import ru.aiedt.mcp.server.toolkit.ops.DiskResynchronizer;
 import ru.aiedt.mcp.server.toolkit.ops.ObjectsRevalidator;
 import ru.aiedt.mcp.server.toolkit.ops.RunToLineTool;
@@ -1442,6 +1446,7 @@ public class McpHttpEndpoint
             new SelfStatusTool(),
             new SelfUpkeepTool(),
             new ApplicationsReader(),
+            new RegisteredInfobasesReader(),
             new EventLogTool(),
             new DatabaseUpdater(),
             new DebugSessionStarter(),
@@ -1456,12 +1461,14 @@ public class McpHttpEndpoint
             new SetExceptionBreakpointTool(),
             new RunToLineTool(),
             new BreakpointRemover(),
+            new BreakpointStateSetter(),
             new BreakpointsLister(),
             new SuspendWaiter(),
             new DebugVariablesReader(),
             new DebugVariableWriter(),
             new DebugStepper(),
             new DebugResumer(),
+            new DebugPauser(),
             new LaunchTerminator(),
             new RestartEdtTool(),
             new DialogAnswerer(),
@@ -1480,6 +1487,7 @@ public class McpHttpEndpoint
             new GitTool(),
             new GitCommitTool(),
             new GitCheckoutTool(),
+            new GitFileRestore(),
             new CodeTextSearcher(),
             new DcsSearchTool(),
             new MethodSourceReader(),

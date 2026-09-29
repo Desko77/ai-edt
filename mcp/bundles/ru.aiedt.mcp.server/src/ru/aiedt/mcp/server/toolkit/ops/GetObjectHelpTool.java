@@ -50,7 +50,7 @@ public class GetObjectHelpTool implements IMcpTool
 {
     public static final String NAME = "get_object_help"; //$NON-NLS-1$
 
-    /** Lazy-init CopyDown (thread-confined - method is invoked from UI thread). */
+    /** The HTML-to-Markdown converter, built on first use and reused after that. */
     private CopyDown copyDown;
 
     @Override

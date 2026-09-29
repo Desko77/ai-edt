@@ -10,8 +10,9 @@ handler; which parameters the handler reads is known only to its code.
 
 This derives that map from the sources, so it cannot drift from them:
 
-  * a branch that hands the call to another tool (`new XxxTool().execute(params)`) takes that tool's
-    schema - the delegate's own advertised parameters are exactly what the operation accepts;
+  * a branch that hands the call to another tool (`new XxxTool().execute(params)`, or `.dispatch`
+    when the tool's `execute` wraps that answer before returning) takes that tool's schema - the
+    delegate's own advertised parameters are exactly what the operation accepts;
   * a branch that does the work itself contributes every `extract*Argument(params, "name")` it
     reaches, following one level into private methods of the same class.
 
@@ -46,7 +47,7 @@ BASELINE = ROOT / "scripts/unadvertised-parameters.txt"
 DISPATCH = re.compile(r"switch\s*\((operation|action|op|mode)\)")
 CASE_LABEL = re.compile(r'case\s+"([a-z0-9_]+)"\s*:')
 # The delegate is the tool, whatever wraps params on the way in - some facades rewrite first.
-DELEGATE = re.compile(r"new\s+(\w+)\(\)\.execute\(")
+DELEGATE = re.compile(r"new\s+(\w+)\(\)\.(?:execute|dispatch)\(")
 # Every helper that reads an argument by name, and every helper of the same shape that does not.
 # Both lists are kept because neither side can be guessed: `addTypedCollectionChild(params,
 # "Dimension")` passes a collection and `branchArgument(params, onDisk)` a value, so matching "any
@@ -56,8 +57,12 @@ DELEGATE = re.compile(r"new\s+(\w+)\(\)\.execute\(")
 # a helper of this shape belonging to neither list fails the check - see unclassified_helpers.
 READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalInt", "boolArg",
                   "intArg", "isTrue", "parseNumericArgument", "objectArgumentProblem")
+# dispatchExport and dispatchRestore take the map and the project name, and read nothing by literal
+# name themselves: their callers extract the arguments and hand them down, so the operation's
+# vocabulary is established at the facade (`read in place`) and not here.
 NOT_READERS = ("addContentEntry", "addTypedCollectionChild", "bind", "unbind", "branchArgument",
-               "dispatchExport", "doBorrow", "pathOf", "put", "removeContentEntry", "withMode")
+               "dispatchExport", "dispatchRestore", "doBorrow", "pathOf", "put",
+               "removeContentEntry", "withMode")
 READERS = r"\b(?:extract\w*|" + "|".join(READER_HELPERS) + r")"
 HELPER_SIGNATURE = re.compile(r"\b(\w+)\(Map<String, ?String> \w+, String \w+")
 SRC = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server"
@@ -75,16 +80,15 @@ EXTRACT = re.compile(READERS + r'\(\s*params\s*,\s*(?://[^\n]*\n\s*)*"([A-Za-z0-
 # stringArray comes before string: the alternation is ordered, and "string" would match the
 # first six letters of stringArrayProperty and then fail on "Property". Measured: 12
 # declarations naming objectFqns, objects, sections and tags were invisible, and
-# revalidate_objects came out of the map knowing only projectName. numberProperty is gone -
-# SchemaComposer has no such method, so the alternative matched nothing.
+# revalidate_objects came out of the map knowing only projectName.
 SCHEMA_PROP = re.compile(
-    r'\.(?:stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+    r'\.(?:stringArray|string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 # The same call sites read for their kind as well. The builder's name IS the kind, which is why this
 # is read rather than inferred from how the parameter is used.
 SCHEMA_KIND = re.compile(
-    r'\.(stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+    r'\.(stringArray|string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 KIND_OF_BUILDER = {"stringArray": "string[]", "string": "string", "boolean": "boolean",
-                   "integer": "integer", "array": "array", "object": "object"}
+                   "integer": "integer", "number": "number", "array": "array", "object": "object"}
 # What stands in the map for a parameter nobody declares. Not a guess, and not an empty column: the
 # 85 parameters read without being advertised have no declared kind anywhere, and writing a
 # plausible one would put an invention where a client looks for a fact.
@@ -255,8 +259,16 @@ def method_body(source: str, name: str) -> str:
     Braces are matched with strings, character literals and comments skipped: a message ending in
     a brace closed the body early, and everything the method read after that point went missing -
     which for an operation means a guard that refuses the arguments it did not see.
+
+    The declaration is written over more than one line in part of the tree - `throws Exception` on
+    its own line, or on the line of the parameters with the opening brace below it - so the
+    whitespace before the brace is matched rather than the brace having to follow the clause. Read
+    with the brace required on the clause's line, every method of `GitTool` came back empty: the
+    seven operations of that facade were in the map knowing one parameter each, and the derivation
+    had fallen through to the facade-wide set instead of what each operation reads.
     """
-    signature = re.search(r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w., ]+)?\{", source)
+    signature = re.search(
+        r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w.,\s]+)?\s*\{", source)
     if not signature:
         return ""
     start = source.find("{", signature.end() - 1)

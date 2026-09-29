@@ -455,7 +455,7 @@ public class MethodSourceReader
                         {
                             rest = rest.substring(0, comment);
                         }
-                        return rest.matches("(?i)\\s*(?:Экспорт|Export)\\s*"); //$NON-NLS-1$
+                        return rest.matches("(?iu)\\s*(?:Экспорт|Export)\\s*"); //$NON-NLS-1$
                     }
                 }
             }

@@ -68,6 +68,7 @@ import ru.aiedt.mcp.server.support.FormBaseSetup;
 import ru.aiedt.mcp.server.support.FormEventRegistry;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.ModelEditabilityGuard;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -118,6 +119,8 @@ public class EditMetadataTool implements IMcpTool
     private final ObjectOps objectOps = new ObjectOps();
     private final SpecializedOps specializedOps = new SpecializedOps();
     private final FormEventOps formEventOps = new FormEventOps();
+
+    private final FormAppearanceOps formAppearanceOps = new FormAppearanceOps();
     private final FormCommandInterfaceOps formCommandInterfaceOps = new FormCommandInterfaceOps();
     private final FormCreateOps formCreateOps = new FormCreateOps();
     private final FormItemsOps formItemsOps = new FormItemsOps();
@@ -162,6 +165,110 @@ public class EditMetadataTool implements IMcpTool
     static final String[] SHARED_BATCH_PARAMS = {
         "projectName", "ownerFqn", "formFqn", "dryRun" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     };
+
+    /** The batch entry field naming the earlier operation a failure follows from. */
+    static final String CAUSED_BY_OPERATION = "causedByOperation"; //$NON-NLS-1$
+
+    /** The batch entry field marking a failure that follows from an earlier operation. */
+    static final String DERIVED_FAILURE = "derivedFailure"; //$NON-NLS-1$
+
+    /** The arguments through which an operation names the object it works on or refers to. */
+    private static final String[] OBJECT_ADDRESS_PARAMS = {
+        "ownerFqn", "parentFqn", "objectName", "formFqn", "bpFqn", "targetFqn", "objectFqn", "valueFqn" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$ //$NON-NLS-8$
+    };
+
+    /**
+     * The object an operation of a batch creates, when it is one that creates an object.
+     *
+     * @param operation the normalized operation name
+     * @param opParams the operation's arguments
+     * @return the created object's FQN ({@code Catalog.X}, {@code Catalog.X.Form.Y}), or
+     *         <code>null</code> when the operation creates no object this can name
+     */
+    static String createdObjectOf(String operation, Map<String, String> opParams)
+    {
+        String name = JsonUtils.extractStringArgument(opParams, "name"); //$NON-NLS-1$
+        if ("create_object".equals(operation)) //$NON-NLS-1$
+        {
+            String type = JsonUtils.extractStringArgument(opParams, "objectType"); //$NON-NLS-1$
+            return type == null || type.isEmpty() || name == null || name.isEmpty() ? null
+                : type + "." + name; //$NON-NLS-1$
+        }
+        if ("create_form".equals(operation)) //$NON-NLS-1$
+        {
+            String owner = JsonUtils.extractStringArgument(opParams, "ownerFqn"); //$NON-NLS-1$
+            String form = JsonUtils.extractStringArgument(opParams, "formName"); //$NON-NLS-1$
+            return owner == null || owner.isEmpty() || form == null || form.isEmpty() ? null
+                : owner + ".Form." + form; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Which earlier operation of a batch left absent an object this operation addresses.
+     *
+     * @param opParams the failed operation's arguments
+     * @param absent objects earlier operations previewed or failed to create, keyed by
+     *            {@link #objectKey}, each with the index of that operation
+     * @return the index of that earlier operation, or <code>null</code> when the operation addresses
+     *         none of those objects
+     */
+    static Integer causedBy(Map<String, String> opParams, Map<String, Integer> absent)
+    {
+        if (absent.isEmpty())
+        {
+            return null;
+        }
+        for (String param : OBJECT_ADDRESS_PARAMS)
+        {
+            String address = JsonUtils.extractStringArgument(opParams, param);
+            if (address == null || address.isEmpty())
+            {
+                continue;
+            }
+            String key = objectKey(address);
+            for (Map.Entry<String, Integer> missing : absent.entrySet())
+            {
+                if (key.equals(missing.getKey()) || key.startsWith(missing.getKey() + ".")) //$NON-NLS-1$
+                {
+                    return missing.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Compares FQNs the way the platform does: types in either language, names without regard to
+     * case.
+     *
+     * @param fqn the FQN
+     * @return the comparison key
+     */
+    static String objectKey(String fqn)
+    {
+        String normalized = MetadataTypeCatalog.normalizeFqn(fqn);
+        return (normalized != null ? normalized : fqn).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * The first line of a batch answer when some operations failed.
+     *
+     * @param failed how many operations failed
+     * @param total how many operations the batch had
+     * @param preview <code>true</code> when every operation that ran was a preview
+     * @return the message, before the list of failures
+     */
+    static String batchFailureText(int failed, int total, boolean preview)
+    {
+        String head = failed + " of " + total + " operations failed. "; //$NON-NLS-1$ //$NON-NLS-2$
+        if (preview)
+        {
+            return head + "Nothing was written: every operation ran as a preview (dryRun) in its own " //$NON-NLS-1$
+                + "transaction, so an object one operation would create does not exist for the next.\n"; //$NON-NLS-1$
+        }
+        return head + "Operations are NOT rolled back: the ones that succeeded are already applied.\n"; //$NON-NLS-1$
+    }
 
     /** How many failed operations a batch names in its message before it says how many are left. */
     private static final int FAILURES_NAMED = 5;
@@ -241,7 +348,13 @@ public class EditMetadataTool implements IMcpTool
             }
             sb.append("  [").append(entry.get("index")).append("] ") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 .append(entry.get("operation")).append(": ") //$NON-NLS-1$ //$NON-NLS-2$
-                .append(reasonOf(entry)).append('\n');
+                .append(reasonOf(entry));
+            if (entry.get(CAUSED_BY_OPERATION) != null)
+            {
+                sb.append(" (follows from [").append(entry.get(CAUSED_BY_OPERATION)) //$NON-NLS-1$
+                    .append("], which did not create what this operation needs)"); //$NON-NLS-1$
+            }
+            sb.append('\n');
             named++;
         }
         if (unnamed > 0)
@@ -289,7 +402,13 @@ public class EditMetadataTool implements IMcpTool
                 "add_exchange_plan_content: per-item auto change registration - Deny (default) or Allow.") //$NON-NLS-1$
             .stringProperty("use", //$NON-NLS-1$
                 "add_common_attribute_content: per-object usage of the common attribute - " //$NON-NLS-1$
-                + "Auto (default), Use or DontUse.") //$NON-NLS-1$
+                + "Auto (default), Use or DontUse. Schema parameter: Auto or Always.") //$NON-NLS-1$
+            .stringProperty("expression", //$NON-NLS-1$
+                "Schema parameter value expression.") //$NON-NLS-1$
+            .booleanProperty("valueListAllowed", //$NON-NLS-1$
+                "Schema parameter accepts a value list.") //$NON-NLS-1$
+            .booleanProperty("denyIncompleteValues", //$NON-NLS-1$
+                "Schema parameter refuses incomplete values.") //$NON-NLS-1$
             .stringProperty("subsystems", //$NON-NLS-1$
                 "set_subsystems_order: comma-separated top-level subsystems in the wanted " //$NON-NLS-1$
                     + "leading order.") //$NON-NLS-1$
@@ -369,6 +488,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("formFqn", //$NON-NLS-1$
                 "FQN of the form for form operations (e.g. Catalog.Users.Form.ItemForm, " //$NON-NLS-1$
                     + "CommonForm.X.Form).") //$NON-NLS-1$
+            .stringProperty("itemNames", //$NON-NLS-1$
+                "add_form_appearance_rule: form items to style, comma-separated; omitted = whole form.") //$NON-NLS-1$
+            .stringProperty("field", //$NON-NLS-1$
+                "add/remove_form_appearance_rule: data path the condition reads (Объект.Флаг).") //$NON-NLS-1$
+            .integerProperty("index", //$NON-NLS-1$
+                "remove_form_appearance_rule: 0-based rule index.") //$NON-NLS-1$
             .booleanProperty("keyParameter", //$NON-NLS-1$
                 "add_form_parameter: mark the parameter as a key parameter (FormParameter.keyParameter). " //$NON-NLS-1$
                 + "Default false.") //$NON-NLS-1$
@@ -387,7 +512,7 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("templateName", //$NON-NLS-1$
                 "Template name.") //$NON-NLS-1$
             .stringProperty("templateType", //$NON-NLS-1$
-                "Template type for addTemplate: SpreadsheetDocument / TextDocument / BinaryData / ActiveDocument / GraphicalScheme / DataCompositionSchema / DataCompositionAppearanceTemplate / Geographical Schema / HTMLDocument / AddIn.") //$NON-NLS-1$
+                "Template type for addTemplate: SpreadsheetDocument / TextDocument / BinaryData / ActiveDocument / GraphicalSchema / DataCompositionSchema / DataCompositionAppearanceTemplate / GeographicalSchema / HTMLDocument / AddIn.") //$NON-NLS-1$
             .stringProperty("content", //$NON-NLS-1$
                 "Plain-text body of a TextDocument or HTMLDocument template - filled on " //$NON-NLS-1$
                     + "create, replaced by set_template_content, returned by " //$NON-NLS-1$
@@ -401,6 +526,15 @@ public class EditMetadataTool implements IMcpTool
                 "create/get/remove_route_map: BusinessProcess FQN (alias of ownerFqn), e.g. BusinessProcess.Order.") //$NON-NLS-1$
             .booleanProperty("overwrite", //$NON-NLS-1$
                 "create_route_map: replace an existing Flowchart.scheme (default false - refuses to clobber).") //$NON-NLS-1$
+            // set_task_addressing parameters (the addressing of a Task, or of the Task a BP owns).
+            .stringProperty("addressingRegister", //$NON-NLS-1$
+                "set_task_addressing: InformationRegister FQN the task is addressed in.") //$NON-NLS-1$
+            .stringProperty("addressingAttributes", //$NON-NLS-1$
+                "set_task_addressing: JSON array of {name,type,dimension} the task addresses by.") //$NON-NLS-1$
+            .stringProperty("mainAddressingAttribute", //$NON-NLS-1$
+                "set_task_addressing: the attribute that addresses the task (name or FQN).") //$NON-NLS-1$
+            .stringProperty("currentPerformer", //$NON-NLS-1$
+                "set_task_addressing: SessionParameter FQN the current performer comes from.") //$NON-NLS-1$
             .stringProperty("tabularSection", //$NON-NLS-1$
                 "Tabular section name for addTabularSectionAttribute / removeTabularSectionAttribute (alias of tabularSectionName).") //$NON-NLS-1$
             .stringProperty("tabularSectionName", //$NON-NLS-1$
@@ -497,9 +631,8 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("description", //$NON-NLS-1$
                 "add_predefined_item: presentation/description of the predefined item (optional).") //$NON-NLS-1$
             .stringProperty("code", //$NON-NLS-1$
-                "add_predefined_item: item code (applied only for ChartOfAccounts / " //$NON-NLS-1$
-                + "ChartOfCharacteristicTypes where code is a String; Value-typed codes are skipped " //$NON-NLS-1$
-                + "with a warning). Optional.") //$NON-NLS-1$
+                "add_predefined_item: item code, a number or text by the owner's code type. " //$NON-NLS-1$
+                + "Optional.") //$NON-NLS-1$
             .booleanProperty("isFolder", //$NON-NLS-1$
                 "add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
                     + "ChartOfCharacteristicTypes only).") //$NON-NLS-1$
@@ -548,8 +681,7 @@ public class EditMetadataTool implements IMcpTool
                 "Child kind for adopt_child: Form / Attribute / TabularSection / Template " //$NON-NLS-1$
                     + "/ Command / Dimension / Resource.") //$NON-NLS-1$
             .stringProperty("containerFqn", //$NON-NLS-1$
-                "remove_item: the form item holding the one named by `name`. move_item: the form itself, with " //$NON-NLS-1$
-                + "parentName naming the destination container.") //$NON-NLS-1$ //$NON-NLS-1$
+                "remove_item, move_item: the form, alias of formFqn.") //$NON-NLS-1$
             // ---- Composition settings, for the operations run by dcs_workshop under an alias ----
             .stringProperty("parentPath", //$NON-NLS-1$
                 "add_settings_group: the group to nest the new one inside, as " //$NON-NLS-1$
@@ -560,6 +692,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("userSettingID", //$NON-NLS-1$
                 "set_settings_parameter: the identifier under which the parameter appears in user " //$NON-NLS-1$
                     + "settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
+            .booleanProperty("reportAffectedSettings", //$NON-NLS-1$
+                "remove_dataset, remove_dataset_field, remove_parameter, remove_calculated_field, " //$NON-NLS-1$
+                    + "remove_total_field (and the edit_metadata names remove_data_set, " //$NON-NLS-1$
+                    + "remove_data_set_field, remove_schema_parameter, remove_calculated_field, " //$NON-NLS-1$
+                    + "remove_total_field): list settings that still reference the removed element. " //$NON-NLS-1$
+                    + "Default true. The settings are left unchanged. false omits the list.") //$NON-NLS-1$
             // ---- Parameters of the operations handed to a standalone tool
             //      (add_metadata_attribute / rename_metadata_object) ----
             .stringProperty("parentFqn", //$NON-NLS-1$
@@ -612,6 +750,8 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("handlerName", //$NON-NLS-1$
                 "BSL handler procedure name for add_form_event_handler (default derived " //$NON-NLS-1$
                     + "from the event / item).") //$NON-NLS-1$
+            .booleanProperty("writeStub", //$NON-NLS-1$
+                "add_form_event_handler / add_command_handler: append the procedure to the form module. Default true.") //$NON-NLS-1$
             .stringProperty("picture", //$NON-NLS-1$
                 "Picture reference for add_decoration elementType=Picture (StdPicture.X / " //$NON-NLS-1$
                     + "CommonPicture.X).") //$NON-NLS-1$
@@ -629,6 +769,9 @@ public class EditMetadataTool implements IMcpTool
             .booleanProperty("confirm", //$NON-NLS-1$
                 "delete_metadata_object only: applies the deletion rather than returning a " //$NON-NLS-1$
                     + "preview.") //$NON-NLS-1$
+            .booleanProperty("cascadeForms", //$NON-NLS-1$
+                "Removing an attribute, tabular section or column: also remove the form items bound " //$NON-NLS-1$
+                    + "to it.") //$NON-NLS-1$
             .booleanProperty("batch", //$NON-NLS-1$
                 "Run several operations from ONE call, in order, each in its own " //$NON-NLS-1$
                     + "transaction. An operation or argument name that does not exist stops " //$NON-NLS-1$
@@ -1031,7 +1174,16 @@ public class EditMetadataTool implements IMcpTool
         {
             return ToolResult.error("batch=true requires `operations` parameter").toJson(); //$NON-NLS-1$
         }
-        java.util.List<Map<String, String>> ops = parseBatchOperations(operationsRaw, params);
+        java.util.List<Map<String, String>> ops;
+        try
+        {
+            ops = parseBatchOperations(operationsRaw, params);
+        }
+        catch (IllegalArgumentException unreadable)
+        {
+            return ToolResult.error("This batch was not started: " + unreadable.getMessage() //$NON-NLS-1$
+                + " Nothing was changed in the project.").toJson(); //$NON-NLS-1$
+        }
         if (ops.isEmpty())
         {
             return ToolResult.error("batch operations parsed empty - check format").toJson(); //$NON-NLS-1$
@@ -1049,6 +1201,8 @@ public class EditMetadataTool implements IMcpTool
         }
         boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
         java.util.List<Map<String, Object>> results = new java.util.ArrayList<>();
+        Map<String, Integer> absent = new LinkedHashMap<>();
+        boolean anyApplied = false;
         int okCount = 0;
         int failCount = 0;
         int stoppedAt = -1;
@@ -1126,6 +1280,8 @@ public class EditMetadataTool implements IMcpTool
                     isOk = json != null && json.contains("\"success\":true"); //$NON-NLS-1$
                 }
                 entry.put("ok", isOk); //$NON-NLS-1$
+                boolean preview = JsonUtils.extractBooleanArgument(opParams, "dryRun", false); //$NON-NLS-1$
+                anyApplied |= !preview;
                 if (isOk)
                 {
                     okCount++;
@@ -1133,6 +1289,17 @@ public class EditMetadataTool implements IMcpTool
                 else
                 {
                     failCount++;
+                    Integer cause = causedBy(opParams, absent);
+                    if (cause != null)
+                    {
+                        entry.put(DERIVED_FAILURE, Boolean.TRUE);
+                        entry.put(CAUSED_BY_OPERATION, cause);
+                    }
+                }
+                String created = createdObjectOf(subOp, opParams);
+                if (created != null && (preview || !isOk))
+                {
+                    absent.putIfAbsent(objectKey(created), Integer.valueOf(i));
                 }
             }
             catch (Exception e)
@@ -1180,10 +1347,8 @@ public class EditMetadataTool implements IMcpTool
         // passes for a clean one.
         if (failCount > 0)
         {
-            batchResult = batchResult.demote(failCount + " of " //$NON-NLS-1$
-                + (okCount + failCount + skippedCount)
-                + " operations failed. Operations are NOT rolled back: the ones that succeeded " //$NON-NLS-1$
-                + "are already applied.\n" + whyEachFailed(results)); //$NON-NLS-1$
+            batchResult = batchResult.demote(batchFailureText(failCount, okCount + failCount + skippedCount,
+                !anyApplied) + whyEachFailed(results));
         }
         return batchResult.toJson();
         }
@@ -1210,25 +1375,15 @@ public class EditMetadataTool implements IMcpTool
         {
             return ToolResult.error("batch=true requires `operations` parameter").toJson(); //$NON-NLS-1$
         }
-        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
-        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         String providedRunKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
         long softTimeoutMs = Math.max(5, Math.min(120,
             JsonUtils.extractIntArgument(params, "timeoutSeconds", 25))) * 1000L; //$NON-NLS-1$
 
-        boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
-
         PendingWorkRegistry reg = PendingWorkRegistry.UPDATE;
         reg.pruneExpired();
-        // Fold every outer-inherited shared param (ownerFqn, dryRun, stopOnError) into the key: a preview
-        // (dryRun=true) and a real apply of byte-identical operations - or the same operations against a
-        // different ownerFqn target, or with a different stopOnError policy - must NOT coalesce onto one
-        // execution.
         String runKey = (providedRunKey != null && !providedRunKey.isEmpty())
             ? providedRunKey
-            : PendingWorkRegistry.computeRunKey("batch", projectName, ownerFqn, //$NON-NLS-1$
-                String.valueOf(dryRun), String.valueOf(stopOnError), operationsRaw);
+            : batchRunKey(params);
 
         PendingWorkRegistry.PendingEntry entry;
         if (providedRunKey != null && !providedRunKey.isEmpty())
@@ -1294,6 +1449,35 @@ public class EditMetadataTool implements IMcpTool
             pending.put("progress", entry.progressNote); //$NON-NLS-1$
         }
         return pending.toJson();
+    }
+
+    /**
+     * The run key of a batch call: everything that decides what the batch does.
+     * <p>
+     * Every parameter an operation inherits from the outer call ({@link #SHARED_BATCH_PARAMS}) is
+     * part of the key, together with the stop policy and the operations themselves. Two batches
+     * that differ in any of them are different work and must not share one execution - the same
+     * operations against two forms of one object would otherwise receive one form's results.
+     * </p>
+     *
+     * @param params the outer batch call.
+     * @return the run key
+     */
+    static String batchRunKey(Map<String, String> params)
+    {
+        List<String> parts = new ArrayList<>();
+        parts.add("batch"); //$NON-NLS-1$
+        for (String name : SHARED_BATCH_PARAMS)
+        {
+            String value = "dryRun".equals(name) //$NON-NLS-1$
+                ? String.valueOf(JsonUtils.extractBooleanArgument(params, name, false))
+                : String.valueOf(JsonUtils.extractStringArgument(params, name));
+            parts.add(name + '=' + value);
+        }
+        parts.add("stopOnError=" //$NON-NLS-1$
+            + JsonUtils.extractBooleanArgument(params, "stopOnError", false)); //$NON-NLS-1$
+        parts.add(String.valueOf(JsonUtils.extractStringArgument(params, "operations"))); //$NON-NLS-1$
+        return PendingWorkRegistry.computeRunKey(parts.toArray(new String[0]));
     }
 
     /**
@@ -1375,20 +1559,38 @@ public class EditMetadataTool implements IMcpTool
             {
                 continue;
             }
-            Map<String, String> opParams = new LinkedHashMap<>();
-            String[] tokens = l.split("\\s+"); //$NON-NLS-1$
-            opParams.put("operation", tokens[0]); //$NON-NLS-1$
-            for (int i = 1; i < tokens.length; i++)
-            {
-                int eq = tokens[i].indexOf('=');
-                if (eq > 0)
-                {
-                    opParams.put(tokens[i].substring(0, eq), tokens[i].substring(eq + 1));
-                }
-            }
-            ops.add(opParams);
+            ops.add(parseBatchLine(l));
         }
         return ops;
+    }
+
+    /**
+     * Reads one operation written in the line form: the operation name, then {@code name=value}
+     * tokens separated by spaces, each split at its first {@code =}.
+     *
+     * @param line one non-empty line of the batch.
+     * @return the operation's parameters, the name under {@code operation}
+     * @throws IllegalArgumentException when a token after the name is not {@code name=value} -
+     *     a value with spaces, which the line form cannot carry, would otherwise be cut short and
+     *     its tail dropped
+     */
+    static Map<String, String> parseBatchLine(String line)
+    {
+        Map<String, String> opParams = new LinkedHashMap<>();
+        String[] tokens = line.trim().split("\\s+"); //$NON-NLS-1$
+        opParams.put("operation", tokens[0]); //$NON-NLS-1$
+        for (int i = 1; i < tokens.length; i++)
+        {
+            int eq = tokens[i].indexOf('=');
+            if (eq <= 0)
+            {
+                throw new IllegalArgumentException("batch line '" + line + "': '" + tokens[i] //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' is not name=value. A value with spaces cannot be written in the line " //$NON-NLS-1$
+                    + "form - pass operations as a JSON array."); //$NON-NLS-1$
+            }
+            opParams.put(tokens[i].substring(0, eq), tokens[i].substring(eq + 1));
+        }
+        return opParams;
     }
 
     /**
@@ -1922,58 +2124,105 @@ public class EditMetadataTool implements IMcpTool
     }
 
     /**
+     * Reads a multi-language synonym written as a JSON object, without touching any model.
+     *
+     * @param json the text, already known to start with an opening and end with a closing brace.
+     * @param byLanguage receives language code to text, in the order written; a JSON null is an
+     *     empty text.
+     * @return <code>null</code> when every entry was read, otherwise why the synonym is refused
+     */
+    static String readSynonymObject(String json, Map<String, String> byLanguage)
+    {
+        com.google.gson.JsonObject obj;
+        try
+        {
+            obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        }
+        catch (RuntimeException notJson)
+        {
+            return "synonym looks like a JSON object of language codes but is not valid JSON: " //$NON-NLS-1$
+                + notJson.getMessage() + ". Nothing was written."; //$NON-NLS-1$
+        }
+        for (Map.Entry<String, com.google.gson.JsonElement> e : obj.entrySet())
+        {
+            String code = e.getKey() != null ? e.getKey().trim() : ""; //$NON-NLS-1$
+            if (code.isEmpty())
+            {
+                return "synonym names an empty language code. Nothing was written."; //$NON-NLS-1$
+            }
+            com.google.gson.JsonElement value = e.getValue();
+            if (value.isJsonNull())
+            {
+                byLanguage.put(code, ""); //$NON-NLS-1$
+            }
+            else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString())
+            {
+                byLanguage.put(code, value.getAsString());
+            }
+            else
+            {
+                return "synonym for language '" + code + "' is not a string: " + value //$NON-NLS-1$ //$NON-NLS-2$
+                    + ". Nothing was written."; //$NON-NLS-1$
+            }
+        }
+        if (byLanguage.isEmpty())
+        {
+            return "synonym is an empty JSON object: it names no language. Nothing was written."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
      * Fills the {@code synonym} (EMap&lt;lang,text&gt;) of a freshly created
      * metadata object (attribute, EventSubscription, Catalog, ...): explicit
      * value when supplied, otherwise auto-generated from the name like the EDT
      * wizard. Language is the configuration default, falling back to {@code ru}.
      * Best-effort - a setter failure (e.g. a type that has no synonym) is logged,
-     * never fatal. Returns a {@link SynonymResult} so callers can surface the
-     * outcome to the agent instead of letting it be silently lost.
+     * never fatal. A JSON object of language codes replaces the whole map, and is
+     * refused whole - the map untouched - when it is not valid JSON, names no
+     * language or holds a value that is not a string. Returns a
+     * {@link SynonymResult} so callers can surface the outcome to the agent
+     * instead of letting it be silently lost.
+     *
+     * @param mdObject the object whose synonym is written.
+     * @param explicitSynonym the synonym the caller passed, plain text or a JSON object of
+     *     language codes; <code>null</code> or empty generates one from the name.
+     * @param name the object's name, for the generated synonym.
+     * @param project the project, for its default language and name prefix.
+     * @return what was written, that nothing was, or why the synonym was refused
      */
     static SynonymResult applyMdObjectSynonym(MdObject mdObject, String explicitSynonym,
         String name, IProject project)
     {
-        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
-        Configuration config = cp != null ? cp.getConfiguration(project) : null;
         String trimmed = (explicitSynonym != null) ? explicitSynonym.trim() : null;
-        // Multi-language synonym: a JSON object {"ru":"...","en":"..."} REPLACES
-        // the whole synonym map (one entry per language code). Any non-object or
-        // unparseable value falls through to the single-language path below.
+        // Multi-language synonym: a JSON object {"ru":"...","en":"..."} REPLACES the whole synonym
+        // map (one entry per language code). It is read whole before the map is touched: a value
+        // that is not a string, text that is not JSON, or an object naming no language is refused
+        // and the map keeps what it had.
         if (trimmed != null && trimmed.length() > 1
             && trimmed.charAt(0) == '{' && trimmed.charAt(trimmed.length() - 1) == '}')
         {
-            try
+            Map<String, String> byLanguage = new LinkedHashMap<>();
+            String refusal = readSynonymObject(trimmed, byLanguage);
+            if (refusal != null)
             {
-                com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(trimmed)
-                    .getAsJsonObject();
-                if (obj.size() > 0)
+                return SynonymResult.error(refusal);
+            }
+            mdObject.getSynonym().clear();
+            StringBuilder applied = new StringBuilder();
+            for (Map.Entry<String, String> e : byLanguage.entrySet())
+            {
+                mdObject.getSynonym().put(e.getKey(), e.getValue());
+                if (applied.length() > 0)
                 {
-                    mdObject.getSynonym().clear();
-                    StringBuilder applied = new StringBuilder();
-                    for (Map.Entry<String, com.google.gson.JsonElement> e : obj.entrySet())
-                    {
-                        String code = e.getKey() != null ? e.getKey().trim() : null;
-                        if (code == null || code.isEmpty())
-                        {
-                            continue;
-                        }
-                        String val = e.getValue().isJsonNull() ? "" : e.getValue().getAsString(); //$NON-NLS-1$
-                        mdObject.getSynonym().put(code, val);
-                        if (applied.length() > 0)
-                        {
-                            applied.append(", "); //$NON-NLS-1$
-                        }
-                        applied.append(code).append('=').append(val);
-                    }
-                    return SynonymResult.ok(applied.toString());
+                    applied.append(", "); //$NON-NLS-1$
                 }
+                applied.append(e.getKey()).append('=').append(e.getValue());
             }
-            catch (Exception jsonEx)
-            {
-                // Not a JSON object synonym - treat the literal string as the
-                // single-language synonym value below.
-            }
+            return SynonymResult.ok(applied.toString());
         }
+        IConfigurationProvider cp = Activator.getDefault().getConfigurationProvider();
+        Configuration config = cp != null ? cp.getConfiguration(project) : null;
         String synonymValue;
         if (trimmed != null && !trimmed.isEmpty())
         {
@@ -2170,10 +2419,18 @@ public class EditMetadataTool implements IMcpTool
         }
         if (isErrorOutcome(helperResult))
         {
-            return ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
+            ToolResult error = ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
                 .put("operation", op) //$NON-NLS-1$
-                .put("formFqn", formFqn) //$NON-NLS-1$
-                .toJson();
+                .put("formFqn", formFqn); //$NON-NLS-1$
+            // A refusal by the support registry carries its tag as a line of the helper's text;
+            // here is where that text becomes structured again, so the answer holds the same
+            // supportLock field the object path holds.
+            Map<String, Object> supportLock = ModelEditabilityGuard.parseSupportLockLine(helperResult);
+            if (supportLock != null)
+            {
+                error.put(ErrorTags.SUPPORT_LOCK.wire(), supportLock);
+            }
+            return error.toJson();
         }
         return putNotAsked(putAdopted(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
@@ -2286,14 +2543,6 @@ public class EditMetadataTool implements IMcpTool
             sb.append("Single constructor across 7 operation groups. ") //$NON-NLS-1$
                 .append("Pass `operation=<name>` plus operation-specific arguments. ") //$NON-NLS-1$
                 .append("Add `dryRun=true` to preview changes inside a BM transaction.\n\n"); //$NON-NLS-1$
-            sb.append("**Status (1.43.0):** 7 operation groups + 1.42 RSV 4.2 parity ops. ") //$NON-NLS-1$
-                .append("Object enhancements (propertyMismatch idempotency, cascade form cleanup) ") //$NON-NLS-1$
-                .append("plus 4 defensive layers (3.8.1-3.8.4) for headless metadata creation. ") //$NON-NLS-1$
-                .append("1.42.5 fixes: canonical primitive Type proxy via IEObjectProvider, ") //$NON-NLS-1$
-                .append("create_form writes Form.form/Module.bsl on disk, full TypeDescription ") //$NON-NLS-1$
-                .append("qualifier wiring (length/precision/fractionDigits/dateFractions/nonNegative). ") //$NON-NLS-1$
-                .append("1.43 deferred-block work: deep Type resolution in in-session BM, ") //$NON-NLS-1$
-                .append("MXL cell mutation persistence to .mxlx, extension top-level form test.\n\n"); //$NON-NLS-1$
 
             sb.append(buildOperationCatalogHelp());
 
@@ -2374,7 +2623,7 @@ public class EditMetadataTool implements IMcpTool
             + "   - edit_metadata operation=setupSettingsComposerOnForm \\\n" //$NON-NLS-1$
             + "       formFqn=Report.Sales.Forms.Form\n" //$NON-NLS-1$
             + "4. Optionally pre-fill default settings:\n" //$NON-NLS-1$
-            + "   - dcs_workshop operation=add_grouping field=Manager groupingType=Standard\n" //$NON-NLS-1$
+            + "   - dcs_workshop operation=add_grouping field=Manager groupingType=Items\n" //$NON-NLS-1$
             + "   - dcs_workshop operation=add_filter field=Period comparisonType=Between\n"; //$NON-NLS-1$
     }
 
@@ -2385,7 +2634,7 @@ public class EditMetadataTool implements IMcpTool
             + "2. Add a calculated total: dcs_workshop add_total expression=Quantity \\\n" //$NON-NLS-1$
             + "       aggregateFunction=Sum\n" //$NON-NLS-1$
             + "3. Build the structure - one root with a nested table:\n" //$NON-NLS-1$
-            + "   - dcs_workshop add_grouping field=Product groupingType=Standard\n" //$NON-NLS-1$
+            + "   - dcs_workshop add_grouping field=Product groupingType=Items\n" //$NON-NLS-1$
             + "   - dcs_workshop add_settings_table field=Period (deferred to 1.37+)\n" //$NON-NLS-1$
             + "4. Apply conditional appearance for highlighting:\n" //$NON-NLS-1$
             + "   - dcs_workshop add_appearance conditionType=Greater conditionValue=1000 \\\n" //$NON-NLS-1$
@@ -2397,8 +2646,10 @@ public class EditMetadataTool implements IMcpTool
     {
         return "Structured error tags surfaced in the JSON response (1.37).\n\n" //$NON-NLS-1$
             + "Top-level fields next to `error`:\n" //$NON-NLS-1$
-            + "- `supportLock` { target, ownerType, userSupportMode, discoveredApi, hint } -\n" //$NON-NLS-1$
-            + "    object is on vendor support; use an extension instead.\n" //$NON-NLS-1$
+            + "- `supportLock` { object, userSupportMode, canEdit, guard, hint } -\n" //$NON-NLS-1$
+            + "    object is on vendor support; use an extension instead. `object` is the address\n" //$NON-NLS-1$
+            + "    the guard judged, `userSupportMode` the mode the registry holds,\n" //$NON-NLS-1$
+            + "    `guard` = model_editability_guard.\n" //$NON-NLS-1$
             + "- `standardAttributeConflict` { name, conflictsWith, ownerType, source } -\n" //$NON-NLS-1$
             + "    candidate name shadows a platform-standard attribute. Pick another name.\n" //$NON-NLS-1$
             + "- `alreadyExists` { name, ownerFqn, kind } - the child is already present.\n" //$NON-NLS-1$
@@ -2454,7 +2705,8 @@ public class EditMetadataTool implements IMcpTool
         sb.append("Rights API present (for setRoleRight)? ") //$NON-NLS-1$
             .append(ru.aiedt.mcp.server.support.BmRightsHelper.isAvailable()).append("\n"); //$NON-NLS-1$
         sb.append("Common group (2): move_item moves a form item between containers; " //$NON-NLS-1$
-            + "remove_item routes by FQN shape to the typed remove operation.\n"); //$NON-NLS-1$
+            + "remove_item removes a form item (formFqn or containerFqn plus name); for a template " //$NON-NLS-1$
+            + "or a metadata object it refuses and names the operation that removes from it.\n"); //$NON-NLS-1$
         sb.append("\nDefensive layers (1.40):\n"); //$NON-NLS-1$
         sb.append("- 3.8.1 EventSubscription handler auto-prefix CommonModule.\n"); //$NON-NLS-1$
         sb.append("- 3.8.2 Extension CommonModule guards (privileged, global+server).\n"); //$NON-NLS-1$
@@ -2638,9 +2890,9 @@ public class EditMetadataTool implements IMcpTool
 
         // ---- Command interface (5) ----
         reg(m, "set_subsystems_order", "Command interface", "Configuration: order of subsystem sections", p -> commandInterfaceOps.opSetSubsystemsOrder(p));
-        reg(m, "set_subsystem_visibility", "Command interface", "Configuration: show/hide a subsystem section; role=<Role FQN> sets one role's per-role view (RSV 5.10)", p -> commandInterfaceOps.opSetSubsystemVisibility(p));
-        reg(m, "set_main_section_command_visibility", "Command interface", "Configuration main section: show/hide a command; role=<Role FQN> for per-role (RSV 5.10)", p -> commandInterfaceOps.opSetMainSectionCommandVisibility(p));
-        reg(m, "set_subsystem_command_visibility", "Command interface", "subsystem command interface: show/hide a command; role=<Role FQN> for per-role (RSV 5.10)", p -> commandInterfaceOps.opSetSubsystemCommandVisibility(p));
+        reg(m, "set_subsystem_visibility", "Command interface", "Configuration: show/hide a subsystem section; role=<Role FQN> sets one role's per-role view", p -> commandInterfaceOps.opSetSubsystemVisibility(p));
+        reg(m, "set_main_section_command_visibility", "Command interface", "Configuration main section: show/hide a command; role=<Role FQN> for per-role", p -> commandInterfaceOps.opSetMainSectionCommandVisibility(p));
+        reg(m, "set_subsystem_command_visibility", "Command interface", "subsystem command interface: show/hide a command; role=<Role FQN> for per-role", p -> commandInterfaceOps.opSetSubsystemCommandVisibility(p));
         reg(m, "set_command_placement", "Command interface", "place command into group, optional order", p -> commandInterfaceOps.opSetCommandPlacement(p));
         reg(m, "set_command_order", "Command interface", "batch-reorder commands in one group (commands JSON array)", p -> commandInterfaceOps.opSetCommandOrder(p));
 
@@ -2655,7 +2907,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_web_service_operation", "Services HTTP/SOAP", "", p -> serviceOps.opRemoveWebServiceOperation(p));
         reg(m, "add_operation_parameter", "Services HTTP/SOAP", "typed Web operation parameter", p -> serviceOps.opAddOperationParameter(p));
 
-        // ---- Forms (27) ----
+        // ---- Forms (30) ----
         reg(m, "create_form", "Forms", "", p -> formCreateOps.opCreateForm(p));
         reg(m, "add_form_attribute", "Forms", "", p -> formItemsOps.opAddFormAttribute(p));
         reg(m, "add_form_attribute_column", "Forms", "", p -> formItemsOps.opAddFormAttributeColumn(p));
@@ -2685,6 +2937,9 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_form_command", "Forms", "delete a form command (form.getFormCommands), incl. orphans", p -> formItemsOps.opRemoveFormCommand(p));
         reg(m, "set_form_command_property", "Forms", "set a form command display property: title / representation (Auto,Text,Picture,TextPicture) / picture (build-limited)", p -> formItemsOps.opSetFormCommandProperty(p));
         reg(m, "set_form_item_property", "Forms", "alias of set_property", p -> formItemsOps.opSetFormItemProperty(p));
+        reg(m, "add_form_appearance_rule", "Forms", "conditional appearance rule: itemNames, condition, appearance", p -> formAppearanceOps.opAddFormAppearanceRule(p));
+        reg(m, "list_form_appearance_rules", "Forms", "the form's conditional appearance rules", p -> formAppearanceOps.opListFormAppearanceRules(p));
+        reg(m, "remove_form_appearance_rule", "Forms", "remove a rule by index or by the field of its condition", p -> formAppearanceOps.opRemoveFormAppearanceRule(p));
 
         // ---- Templates (6) ----
         reg(m, "add_template", "Templates", "", p -> templateOps.opAddTemplate(p));
@@ -2694,10 +2949,11 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "merge_template_cells", "Templates", "", p -> templateOps.opTemplateCellOp("merge_template_cells", p));
         reg(m, "draw_template", "Templates", "", p -> templateOps.opTemplateCellOp("draw_template", p));
 
-        // ---- BusinessProcess route map (3) ----
+        // ---- BusinessProcess route map (4) ----
         reg(m, "create_route_map", "BusinessProcess route map", "", p -> routeMapOps.opCreateRouteMap(p));
         reg(m, "get_route_map", "BusinessProcess route map", "", p -> routeMapOps.opGetRouteMap(p));
         reg(m, "remove_route_map", "BusinessProcess route map", "", p -> routeMapOps.opRemoveRouteMap(p));
+        reg(m, "set_task_addressing", "BusinessProcess route map", "", p -> specializedOps.opSetTaskAddressing(p));
 
         // ---- Extensions (5) - uniform delegate miscOps.opExtensionAdopt(op, params) ----
         for (String adoptOp : Arrays.asList("adopt_object", "adopt_objects", "adopt_child",
@@ -2758,13 +3014,17 @@ public class EditMetadataTool implements IMcpTool
         sb.append("These parameters carry more rules than their one-line schema description " //$NON-NLS-1$
             + "states. Every one of them is still declared in the schema - this is the detail, " //$NON-NLS-1$
             + "not a second list of parameters.\n\n"); //$NON-NLS-1$
+        sb.append("### addressingAttributes\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: the addressing attributes (реквизиты адресации) the Task must have, as a JSON array of {\"name\":<name>, \"type\"?:<type>, \"dimension\"?:<InformationRegister.X.Dimension.Y or a dimension name of the addressing register>}. names are compared without regard to case. An attribute that is already on the Task is left as it is; one that is missing is created with the type and dimension the entry gives it, which is add_addressing_attribute's work done in the same call. An attribute named with neither type nor dimension and not already there is refused - the tool does not guess a type. An attribute left without a dimension takes the addressing register's dimension of the same name; when the register has none by that name the call is refused with the register's dimensions, because EDT reports an addressing attribute without a dimension as an error. The read-back lists the attribute names the Task holds afterwards.\n\n"); //$NON-NLS-1$
+        sb.append("### addressingRegister\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: the InformationRegister the Task is addressed in (задача адресуется), as an FQN - InformationRegister.<Name>. It is the register whose dimensions the addressing attributes draw on. One of the four arguments of set_task_addressing; a call naming none of them is refused with the list.\n\n"); //$NON-NLS-1$
         sb.append("### attributeName\n\n"); //$NON-NLS-1$
         sb.append("Form attribute name for add_dynamic_list_table / add_form_attribute_column and for set_property targeting an attribute's extInfo (e.g. a DynamicList's queryText / customQuery). For add_form_attribute_column prefer parentAttributeName; attributeName is accepted as an alias.\n\n"); //$NON-NLS-1$
         sb.append("### autoGenerateColumns\n\n"); //$NON-NLS-1$
         sb.append("add_table with dataPath: auto-create columns for every attribute of the " //$NON-NLS-1$
             + "underlying tabular section / value table. Default false.\n\n"); //$NON-NLS-1$
         sb.append("### batch\n\n"); //$NON-NLS-1$
-        sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
+        sb.append("Run several operations from ONE call. With batch=true the `operations` array runs in order, each op in its own BM transaction; projectName / ownerFqn / formFqn / dryRun are inherited from the outer call when an op omits them. Later ops may depend on earlier ones (create_object then add_object_attribute to the new object). NOT ATOMIC: each op commits on its own, so a failure partway leaves the earlier ops applied - there is no rollback of the batch. With dryRun each op previews in its own transaction, so an op that needs an object an earlier op would create fails; such a failure, and one that follows from an earlier op that failed to create the object, carries derivedFailure=true and causedByOperation=<index>. Response: batchResults[] (index, operation, ok, response) plus ok / fail counts and stoppedOnError. Use it to author a whole object (attributes + tabular sections + forms) or add many attributes in a single round-trip.\n\n"); //$NON-NLS-1$
         sb.append("Before anything runs, the whole batch is read for what can be told without touching the project: an operation this tool does not have, an entry naming no operation, an argument of a name neither the schema nor the operation map knows, an entry carrying batch or operations of its own. If any of that is found the batch is NOT started, nothing is changed, and the answer lists every such entry by its index in refusedBeforeRunning. What is visible only while running - the object is not there, the name is taken - still comes back per operation in batchResults.\n\n"); //$NON-NLS-1$
         sb.append("### cascadeDependencies\n\n"); //$NON-NLS-1$
         sb.append("set_role_right: when granting (value=true), ALSO grant the rights this one REQUIRES per the platform dependency model (Update->Read, Posting->Read+Update, InteractiveInsert->Insert+View+Edit, ...) so the role stays consistent. Grant-direction only - never revokes, never over-grants (granting Read never implies Update). Auto-added prerequisites are listed in cascadedRights. Default false.\n\n"); //$NON-NLS-1$
@@ -2785,8 +3045,10 @@ public class EditMetadataTool implements IMcpTool
             + "preview. Call once without confirm to see what would be affected, then " //$NON-NLS-1$
             + "call again with confirm=true to carry it out. Ignored by every other " //$NON-NLS-1$
             + "operation.\n\n"); //$NON-NLS-1$
+        sb.append("### currentPerformer\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: the SessionParameter the current performer of the Task comes from (текущий исполнитель), as an FQN - SessionParameter.<Name>. One of the four arguments of set_task_addressing.\n\n"); //$NON-NLS-1$
         sb.append("### containerFqn\n\n"); //$NON-NLS-1$
-        sb.append("For remove_item: FQN of the form-item container - the item (group / table / command bar) that holds the target named by `name`. For move_item: the form FQN, accepted as an alias of formFqn; the destination container is parentName (omit it to move the item to the form root) and beforeName places it in front of a named sibling.\n\n"); //$NON-NLS-1$
+        sb.append("For remove_item and move_item: the form FQN, accepted as an alias of formFqn. remove_item finds the item named by `name` anywhere on the form, root included, and takes no parent group. For move_item the destination container is parentName (omit it to move the item to the form root) and beforeName places it in front of a named sibling.\n\n"); //$NON-NLS-1$
         sb.append("### content\n\n"); //$NON-NLS-1$
         sb.append("Plain-text content for a TextDocument (Template.txt) or HTMLDocument (Template.htmldoc) template. Used by add_template (fill on create), set_template_content (replace whole content, empty string clears), and returned by get_template_content. For SpreadsheetDocument use mxl_workshop, for DataCompositionSchema use dcs_workshop.\n\n"); //$NON-NLS-1$
         sb.append("### disableIndices\n\n"); //$NON-NLS-1$
@@ -2820,6 +3082,8 @@ public class EditMetadataTool implements IMcpTool
             + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
             + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
             + "usedMobileApplicationFunctionalities.\n\n"); //$NON-NLS-1$
+        sb.append("### mainAddressingAttribute\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: which of the Task's addressing attributes is its main one (основной реквизит адресации) - the bare name, or the full child FQN Task.<Task>.AddressingAttribute.<Name>. The attribute must be on the Task afterwards: list it in addressingAttributes to have it created in the same call, or add it first with add_addressing_attribute. set_object_reference can set the same property on its own when the attribute already exists.\n\n"); //$NON-NLS-1$
         sb.append("### isFolder\n\n"); //$NON-NLS-1$
         sb.append("add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
             + "ChartOfCharacteristicTypes only). Default false. Optional.\n\n"); //$NON-NLS-1$
@@ -2850,7 +3114,13 @@ public class EditMetadataTool implements IMcpTool
             + "Russian. A register field, which carries a kind and a type, is added by " //$NON-NLS-1$
             + "add_register_field instead.\n\n"); //$NON-NLS-1$
         sb.append("### points\n\n"); //$NON-NLS-1$
-        sb.append("create_route_map: JSON array of route points, laid out top to bottom. Each object: {\"type\":Start|Action|Condition|Completion|NestedBusinessProcess, \"name\":<unique>, \"title\"?, \"taskDescription\"? (Action/Nested), \"subprocess\"? (Nested = a BusinessProcess FQN)}. Action points auto-carry the linked Task's addressing attributes. Points are laid out top to bottom in array order - declare a shared target (e.g. a common Completion) after its sources for cleaner connectors. Needs exactly one Start and at least one Completion.\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map: JSON array of route points, laid out top to bottom. Each object: {\"type\":Start|Action|Condition|Completion|NestedBusinessProcess, \"name\":<unique>, \"title\"?, \"taskDescription\"? (Action/Nested), \"subprocess\"? (Nested = a BusinessProcess FQN), \"location\"?, \"handlers\"?}. Action points auto-carry the linked Task's addressing attributes. Point names are compared without regard to case, so 'Старт' and 'старт' are one point and the second is refused as a duplicate. Points are laid out top to bottom in array order - declare a shared target (e.g. a common Completion) after its sources for cleaner connectors. Needs exactly one Start and at least one Completion.\n\n"); //$NON-NLS-1$
+        sb.append("get_route_map answers the same map back: pointCount, transitionCount, points[] (type, name, title, taskDescription, subprocess, location {top,left,bottom,right}, addressingAttributes[] of child FQNs, events[] of {event,handler}) and transitions[] (from, to, title, and branch true|false on a transition out of a Condition). create_route_map takes events[] as it takes handlers, so the answer goes back in as it came. A property the scheme does not carry is left out of a point rather than answered as null, and an event with no handler is not listed - the writer emits every event of a point kind and only the handled ones carry a procedure name.\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map answers with written, replaced (true when a Flowchart.scheme was already there and this call replaced it), pointCount, transitionCount, points[] carrying every point's coordinates as written and locationFromCaller, handlers[] of {point,event,handler} for each handler that went into the scheme, and stubsWritten / stubsAlreadyPresent for the handler procedures of the object module. A write that replaced a map is a different thing from a first write, and a caller that may not have meant to replace one has to be told which happened.\n\n"); //$NON-NLS-1$
+        sb.append("### location\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map, per point: where the point sits on the map, as {\"top\":<px>,\"left\":<px>,\"bottom\":<px>,\"right\":<px>} or {\"x\":<centre>,\"y\":<centre>,\"width\"?,\"height\"?}, the width and height defaulting to the point kind's own box. Give one of the two forms, not both, and give all four corners of the first - an incomplete set is refused rather than completed by guesswork. Omit the argument entirely and the point is laid out by the default order. What was used comes back in the answer's points[] as top / left / bottom / right, with locationFromCaller=true when the coordinates were the caller's rather than the layout's. get_route_map reads the same four figures back out of the scheme, under the point's location.\n\n"); //$NON-NLS-1$
+        sb.append("### handlers\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map, per point: the handler of the point's events, as an object of event name to handler name {\"before\":\"ОбработкаПеред\"} or as an array of {\"event\":<event>,\"handler\":<handler>}. The event name is the one the point kind declares (Start / Action / Condition / Completion / NestedBusinessProcess each have their own set); an event the kind does not declare is refused with the list it does have, and an empty handler name is refused. A point whose event is given no handler keeps the event with no handler, which is what the editor shows as an unbound event. The names are written into the scheme and come back in the answer's handlers[]. A handler the BusinessProcess object module does not declare yet gets a procedure there with the parameters of its event and an empty body, named in stubsWritten; one already declared is left alone and named in stubsAlreadyPresent; dryRun names the procedures it would write in stubsToWrite. get_route_map reads the handlers back as each point's events[].\n\n"); //$NON-NLS-1$
         sb.append("### properties\n\n"); //$NON-NLS-1$
         sb.append("create_object: a JSON object of property name to value, applied to the " //$NON-NLS-1$
             + "new object before it joins the configuration - e.g. " //$NON-NLS-1$
@@ -2867,7 +3137,7 @@ public class EditMetadataTool implements IMcpTool
             + "For a list-shaped property it is JSON: an array of literals, an array of " //$NON-NLS-1$
             + "objects, or an object naming inner lists.\n\n"); //$NON-NLS-1$
         sb.append("### purpose\n\n"); //$NON-NLS-1$
-        sb.append("create_form: form purpose driving the EDT form generator (renderable form with main attribute + default layout). Values: ItemForm/ObjectForm (OBJECT), ListForm (LIST), ChoiceForm (CHOICE), FolderForm (FOLDER), FolderChoiceForm (FOLDER_CHOICE), RecordSetForm (RECORD_SET), RecordForm (RECORD), Generic (GENERIC); RU synonyms accepted. When omitted the purpose is derived from the owner type and the form name (object-owning types -> OBJECT, registers -> RECORD_SET, a 'Список'/'List' name -> LIST, a 'Выбор'/'Choice' name -> CHOICE, DataProcessor/Report and ExternalDataProcessor/ExternalReport -> OBJECT (main form, Объект attr; pass purpose=Generic for a custom empty form), CommonForm -> GENERIC). Optional. Ignored for ORDINARY forms and when the generator is unavailable (the form is then created empty).\n\n"); //$NON-NLS-1$
+        sb.append("create_form: form purpose driving the EDT form generator (renderable form with main attribute + default layout). Values: ItemForm/ObjectForm (OBJECT), ListForm (LIST), ChoiceForm (CHOICE), FolderForm (FOLDER), FolderChoiceForm (FOLDER_CHOICE), RecordSetForm (RECORD_SET), RecordForm (RECORD), Generic (GENERIC); RU synonyms accepted. When omitted the purpose is derived from the owner type and the form name (object-owning types -> OBJECT, registers -> RECORD_SET, a 'Список'/'List' name -> LIST, a 'Выбор'/'Choice' name -> CHOICE, DataProcessor/Report and ExternalDataProcessor/ExternalReport -> OBJECT (main form, Объект attr; pass purpose=Generic for a custom empty form), CommonForm -> GENERIC). Optional. Ignored for ORDINARY forms. A managed form without layout=empty is refused when the generator does not deliver (retry with layout=empty).\n\n"); //$NON-NLS-1$
         sb.append("### reuseSessions\n\n"); //$NON-NLS-1$
         sb.append("create_http_service: reuse HTTP sessions across requests. Maps to the " //$NON-NLS-1$
             + "platform SessionReuseMode enum - true -> Use, false -> DontUse; omitted " //$NON-NLS-1$
@@ -3029,7 +3299,7 @@ public class EditMetadataTool implements IMcpTool
             case "Templates":
                 return "template create + content I/O + MXL cell ops";
             case "BusinessProcess route map":
-                return "create / read / remove";
+                return "create / read / remove, and the addressing of the linked Task";
             case "Extensions":
                 return "adopt (borrow) base-configuration objects into an extension";
             case "DCS":

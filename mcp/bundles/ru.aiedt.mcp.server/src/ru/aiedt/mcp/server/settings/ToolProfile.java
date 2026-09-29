@@ -253,6 +253,7 @@ public enum ToolProfile
             // git covers these
             "git_commit", //$NON-NLS-1$
             "git_checkout", //$NON-NLS-1$
+            "git_revert_file", //$NON-NLS-1$
 
             // launch_debugger covers these
             "debug_launch", //$NON-NLS-1$
@@ -260,6 +261,7 @@ public enum ToolProfile
             "set_exception_breakpoint", //$NON-NLS-1$
             "run_to_line", //$NON-NLS-1$
             "remove_breakpoint", //$NON-NLS-1$
+            "set_breakpoint_state", //$NON-NLS-1$
             "list_breakpoints", //$NON-NLS-1$
             "wait_for_break", //$NON-NLS-1$
             "debug_status", //$NON-NLS-1$
@@ -267,6 +269,7 @@ public enum ToolProfile
             "set_variable", //$NON-NLS-1$
             "step", //$NON-NLS-1$
             "resume", //$NON-NLS-1$
+            "pause_thread", //$NON-NLS-1$
             "terminate_launch", //$NON-NLS-1$
             "evaluate_expression", //$NON-NLS-1$
             "start_profiling", //$NON-NLS-1$
@@ -307,6 +310,7 @@ public enum ToolProfile
 
             // infobase_admin covers these
             "get_applications", //$NON-NLS-1$
+            "list_registered_infobases", //$NON-NLS-1$
             "create_infobase", //$NON-NLS-1$
             "register_infobase", //$NON-NLS-1$
             "delete_infobase", //$NON-NLS-1$
@@ -411,8 +415,15 @@ public enum ToolProfile
      * missing: {@code extension_lifecycle} borrows an object into an extension and appends a handler
      * stub, yet it sits in the agent-composites group that Read-only, Debug &amp; Test and Code Review
      * all leave on, and none of the three named it. All three therefore let a write through.
-     * {@code PresetWriteBlockingTest} now asserts every preset that claims to block writing contains
-     * this whole set.
+     * {@code PresetWriteBlockingTest} asserts that every preset that claims to block writing
+     * disables each writer of its own list, written out there by hand rather than read from here.
+     * </p>
+     * <p>
+     * The repository is as much a write target as the sources, and the three git doors live in the
+     * VCS group, which no write-blocking preset disables wholesale: a commit writes the index and the
+     * history, a checkout rewrites the work tree, and putting a file back overwrites that file. The
+     * reads of the same facade - status, branches, log, show_file_changes - stay on under all three,
+     * because only the doors are named here.
      * </p>
      *
      * @return the names no write-blocking preset may leave enabled
@@ -423,6 +434,9 @@ public enum ToolProfile
         names.add("write_module_source"); //$NON-NLS-1$
         names.add("generate_event_handlers"); //$NON-NLS-1$
         names.add("extension_lifecycle"); //$NON-NLS-1$
+        names.add("git_commit"); //$NON-NLS-1$
+        names.add("git_checkout"); //$NON-NLS-1$
+        names.add("git_revert_file"); //$NON-NLS-1$
         // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
         // send a question and whatever Naparnik's tools read to that service. A preset that blocks
         // writing switches the whole name off.
@@ -438,11 +452,6 @@ public enum ToolProfile
         Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING,
             ToolCategory.CONSTRUCTORS);
         disabled.addAll(writersOutsideWriteGroups());
-        // The repository is as much a write target as the sources: a commit writes the index and
-        // the history, and a checkout rewrites the work tree. Reading them (status, branches,
-        // log) stays on - only the two writes are off.
-        disabled.add("git_commit"); //$NON-NLS-1$
-        disabled.add("git_checkout"); //$NON-NLS-1$
         // Returns a snippet and writes nothing, but a preset this strict is expected to hand back
         // nothing that reads like generated code either.
         disabled.add("code_template"); //$NON-NLS-1$

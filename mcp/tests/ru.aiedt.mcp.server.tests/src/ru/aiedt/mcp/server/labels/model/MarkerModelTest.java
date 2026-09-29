@@ -344,6 +344,60 @@ public class MarkerModelTest
     }
 
     @Test
+    public void renameObjectCarriesDescendantAssignments()
+    {
+        storage.addMarker(new Marker("bug"));
+        storage.addMarker(new Marker("note"));
+        storage.assignMarker("Catalog.Products", "bug");
+        storage.assignMarker("Catalog.Products.CatalogAttribute.Description", "note");
+
+        assertTrue(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+
+        assertTrue(storage.getMarkerNames("Catalog.Goods").contains("bug"));
+        assertTrue(storage.getMarkerNames("Catalog.Goods.CatalogAttribute.Description").contains("note"));
+        assertTrue(storage.getMarkerNames("Catalog.Products").isEmpty());
+        assertTrue(storage.getMarkerNames("Catalog.Products.CatalogAttribute.Description").isEmpty());
+    }
+
+    @Test
+    public void renameObjectLeavesANameThatOnlySharesAPrefix()
+    {
+        storage.addMarker(new Marker("bug"));
+        storage.assignMarker("Catalog.ProductsExtra", "bug");
+
+        assertFalse(storage.renameObject("Catalog.Products", "Catalog.Goods"));
+        assertTrue(storage.getMarkerNames("Catalog.ProductsExtra").contains("bug"));
+    }
+
+    @Test
+    public void holdsObjectOrDescendantSeesAMarkedChild()
+    {
+        storage.addMarker(new Marker("note"));
+        storage.assignMarker("Catalog.Products.CatalogAttribute.Description", "note");
+
+        assertTrue(storage.holdsObjectOrDescendant("Catalog.Products"));
+        assertFalse(storage.holdsObjectOrDescendant("Catalog.ProductsExtra"));
+        assertFalse(storage.holdsObjectOrDescendant("Catalog.Other"));
+        assertFalse(storage.holdsObjectOrDescendant(null));
+    }
+
+    @Test
+    public void copyKeepsLaterEditsOffTheOriginal()
+    {
+        storage.addMarker(new Marker("bug", "#112233", "kept"));
+        storage.assignMarker("Catalog.Products", "bug");
+        MarkerStore snapshot = storage.copy();
+
+        storage.addMarker(new Marker("later"));
+        snapshot.addMarker(new Marker("ghost"));
+
+        assertNull(snapshot.getMarkerByName("later"));
+        assertNull(storage.getMarkerByName("ghost"));
+        assertEquals("#112233", snapshot.getMarkerByName("bug").getColor());
+        assertTrue(snapshot.getMarkerNames("Catalog.Products").contains("bug"));
+    }
+
+    @Test
     public void removeObjectWipesItsAssignments()
     {
         storage.addMarker(new Marker("t"));

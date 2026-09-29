@@ -26,14 +26,16 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
- * Unified documentation-lookup facade with two operations.
+ * Unified documentation-lookup facade with three operations.
  *
- * <p>Collapses the two documentation-reading tools under one name:
+ * <p>Collapses the documentation-reading tools under one name:
  * <ul>
  *   <li>{@code get_platform_documentation} - platform type/method/property documentation
  *       (delegates to {@link PlatformDocReader})</li>
  *   <li>{@code get_object_help} - an object's built-in help pages, the same content shown
  *       by pressing F1 in the 1C UI (delegates to {@link GetObjectHelpTool})</li>
+ *   <li>{@code system_enum_values} - the values a system enumeration may take, read from
+ *       the platform's own type register</li>
  *   <li>{@code help} - built-in topic-driven help</li>
  * </ul>
  *
@@ -42,8 +44,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * already answer as MARKDOWN, matching this facade's own response type, so nothing is
  * lost by calling through it. An agent that needs the structured variant of either -
  * neither currently has one - would call the standalone directly, the same tradeoff the
- * other facades accept. Both operations are read-only: this facade needs no
- * preset-gating.
+ * other facades accept. Every operation is preset-gated under its own name: reaching a
+ * tool through a facade is still reaching that tool, and a preset that switched it off
+ * means it.
  */
 public class DocsLookupFacadeTool implements IMcpTool
 {
@@ -98,13 +101,13 @@ public class DocsLookupFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Documentation lookup - platform type/method docs and an object's " //$NON-NLS-1$
-            + "built-in help. Operations: get_platform_documentation, get_object_help, " //$NON-NLS-1$
-            + "help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
+        return "Documentation lookup - platform type/method docs, an object's " //$NON-NLS-1$
+            + "built-in help, and the values a system enumeration may take. Operations: " //$NON-NLS-1$
+            + "get_platform_documentation, get_object_help, system_enum_values, help. " //$NON-NLS-1$
+            + "Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
             + "getPlatformDocumentation is also accepted); remaining parameters follow " //$NON-NLS-1$
-            + "the per-operation contracts (call operation=help for the catalog). Both " //$NON-NLS-1$
-            + "operations are read-only. The standalone tools remain available for " //$NON-NLS-1$
-            + "back-compat."; //$NON-NLS-1$
+            + "the per-operation contracts (call operation=help for the catalog). The " //$NON-NLS-1$
+            + "standalone tools remain available for back-compat."; //$NON-NLS-1$
     }
 
     @Override

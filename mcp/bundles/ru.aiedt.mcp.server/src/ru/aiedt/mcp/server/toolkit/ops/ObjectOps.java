@@ -22,6 +22,8 @@ import com._1c.g5.v8.bm.integration.IBmTask;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -35,6 +37,7 @@ import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmExtensionTypeHelper;
 import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
+import ru.aiedt.mcp.server.support.BmFormCleanupHelper;
 import ru.aiedt.mcp.server.support.BmFormResourceHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.ConfigurationListProperties;
@@ -408,6 +411,11 @@ final class ObjectOps
             }
         }
 
+        // The project-aware creation route needs the V8 project, and the task body below is an
+        // anonymous class - so the project is resolved once, here, and captured by it.
+        IV8ProjectManager v8ProjectManager = Activator.getDefault().getV8ProjectManager();
+        IV8Project v8Project = v8ProjectManager != null ? v8ProjectManager.getProject(project) : null;
+
         // Create+add inside a write task
         IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
         IBmModel bmModel = bmModelManager != null ? bmModelManager.getModel(project) : null;
@@ -419,6 +427,9 @@ final class ObjectOps
         // 3.8.4: track inner-form creation for CommonForm
         AtomicReference<String> innerFormFqn = new AtomicReference<>(null);
         AtomicReference<String> innerFormCreateError = new AtomicReference<>(null);
+        // Set when the object had to come from the raw factory because the initialized route
+        // could not run: the answer says so rather than presenting the object as a full one.
+        AtomicReference<String> defaultsWarning = new AtomicReference<>(null);
         // Expose synonym outcome to the agent (no silent skip on best-effort failure).
         AtomicReference<EditMetadataTool.SynonymResult> synonymRef = new AtomicReference<>(EditMetadataTool.SynonymResult.skipped());
 
@@ -438,13 +449,29 @@ final class ObjectOps
                 @Override
                 public Void execute(IBmTransaction tx, IProgressMonitor pm)
                 {
-                    MdObject created = BmObjectHelper.createGenericObject(englishType);
+                    // Through the project-aware factory, so the new object carries the defaults
+                    // the EDT wizard would have written into the .mdo. The raw factory below
+                    // stays as the fallback for a runtime where that service is unavailable.
+                    BmObjectHelper.CreationOutcome creation =
+                        BmObjectHelper.createInitializedObjectWithReason(englishType, v8Project);
+                    MdObject created = creation.getObject();
+                    if (created == null)
+                    {
+                        created = BmObjectHelper.createGenericObject(englishType);
+                        // The fallback builds a usable object, but without the per-type defaults.
+                        // An unreachable or failing factory is a degraded object the client has
+                        // to be told about; a name that does not resolve keeps its old refusal.
+                        if (created != null && creation.isFactoryFailure())
+                        {
+                            defaultsWarning.set(creation.getDefaultsWarning());
+                        }
+                    }
                     if (created == null)
                     {
                         finalErr.append("Cannot create '" + englishType //$NON-NLS-1$
-                            + "' - neither MdClassFactory.create" + englishType //$NON-NLS-1$
-                            + "() nor MdClassPackage.eINSTANCE.get" + englishType //$NON-NLS-1$
-                            + "() resolves on this EDT runtime."); //$NON-NLS-1$
+                            + "' - MdObjectFactory.create, MdClassFactory.create" + englishType //$NON-NLS-1$
+                            + "() and MdClassPackage.eINSTANCE.get" + englishType //$NON-NLS-1$
+                            + "() all fail on this EDT runtime."); //$NON-NLS-1$
                         return null;
                     }
                     created.setName(name);
@@ -579,6 +606,13 @@ final class ObjectOps
             Map<String, Object> reason = new LinkedHashMap<>();
             reason.put("reason", sr.error); //$NON-NLS-1$
             ok.put("synonymNotSet", reason); //$NON-NLS-1$
+        }
+        // A successful call is not proof of a fully initialized object: when the raw factory
+        // had to stand in, the per-type defaults are absent and the client has to know before
+        // it goes on to fill the object in by hand.
+        if (defaultsWarning.get() != null)
+        {
+            ok.put("warning", defaultsWarning.get()); //$NON-NLS-1$
         }
         // Audit B2/G10: surface a failed CommonForm inner-form creation (was only
         // logged). Without the inner Form the new .mdo opens as a blank form, so
@@ -1291,6 +1325,11 @@ final class ObjectOps
             typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
         }
         r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+        List<String> ignoredQualifiers = qualifiers.ignoredFor(type);
+        if (!ignoredQualifiers.isEmpty())
+        {
+            r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
+        }
         return EditMetadataTool.formatResult(r, "set_object_type"); //$NON-NLS-1$
     }
 
@@ -1470,35 +1509,7 @@ final class ObjectOps
         // when already adopted / extension-own) lets the write proceed. Skipped for the
         // Configuration-root sentinel. Best-effort: a failure is recorded, not fatal.
         maybeAutoBorrowOwner(project, ownerFqn, autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
-        if (type != null && !type.isEmpty() && BmDcsHelper.isExtensionProject(project))
-        {
-            for (String targetFqn : extractReferenceTargetFqns(type))
-            {
-                if (autoBorrow)
-                {
-                    BmExtensionHelper.BorrowResult br = BmExtensionHelper.attemptBorrow(project,
-                        null, targetFqn, null);
-                    if (br.ok)
-                    {
-                        autoBorrowed.add(targetFqn);
-                    }
-                    else
-                    {
-                        Map<String, Object> sk = new LinkedHashMap<>();
-                        sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                        sk.put("reason", br.error != null ? br.error : "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
-                        autoBorrowSkipped.add(sk);
-                    }
-                }
-                else
-                {
-                    Map<String, Object> sk = new LinkedHashMap<>();
-                    sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                    sk.put("reason", "auto_borrow=false"); //$NON-NLS-1$ //$NON-NLS-2$
-                    autoBorrowSkipped.add(sk);
-                }
-            }
-        }
+        autoBorrowReferenceTargets(project, type, autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
 
         // Capture configuration for type application inside the BM transaction.
         IConfigurationProvider attrConfigProvider = Activator.getDefault().getConfigurationProvider();
@@ -1742,6 +1753,11 @@ final class ObjectOps
                 typeApply.put("warning", lenWarn); //$NON-NLS-1$
             }
             r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+            List<String> ignoredQualifiers = attrQualifiers.ignoredFor(type);
+            if (!ignoredQualifiers.isEmpty())
+            {
+                r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
+            }
             if (r.ok && TypeApplication.failed(typeAppliedFlag[0], typeUnresolved))
             {
                 typeFailure = TypeApplication.failureMessage("attribute '" + name + "'", //$NON-NLS-1$ //$NON-NLS-2$
@@ -1789,6 +1805,67 @@ final class ObjectOps
             }
         }
         return out;
+    }
+
+    /**
+     * Adds the borrow outcomes for reference targets in an attribute type without mutating an
+     * extension during a dry run.
+     *
+     * @param project the target project
+     * @param typeDescription the requested attribute type
+     * @param autoBorrow whether automatic borrowing was requested
+     * @param dryRun whether the operation is only a preview
+     * @param autoBorrowed targets borrowed successfully
+     * @param autoBorrowSkipped planned or refused targets with their reasons
+     */
+    private void autoBorrowReferenceTargets(IProject project, String typeDescription, boolean autoBorrow,
+        boolean dryRun, List<String> autoBorrowed, List<Map<String, Object>> autoBorrowSkipped)
+    {
+        if (typeDescription == null || typeDescription.isEmpty() || !BmDcsHelper.isExtensionProject(project))
+        {
+            return;
+        }
+        for (String targetFqn : extractReferenceTargetFqns(typeDescription))
+        {
+            String skipReason = referenceBorrowSkipReason(autoBorrow, dryRun);
+            if (skipReason != null)
+            {
+                Map<String, Object> skipped = new LinkedHashMap<>();
+                skipped.put("targetFqn", targetFqn); //$NON-NLS-1$
+                skipped.put("reason", skipReason); //$NON-NLS-1$
+                autoBorrowSkipped.add(skipped);
+                continue;
+            }
+            BmExtensionHelper.BorrowResult borrowed = BmExtensionHelper.attemptBorrow(project, null,
+                targetFqn, null);
+            if (borrowed.ok)
+            {
+                autoBorrowed.add(targetFqn);
+            }
+            else
+            {
+                Map<String, Object> skipped = new LinkedHashMap<>();
+                skipped.put("targetFqn", targetFqn); //$NON-NLS-1$
+                skipped.put("reason", borrowed.error != null ? borrowed.error : "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
+                autoBorrowSkipped.add(skipped);
+            }
+        }
+    }
+
+    /**
+     * Chooses the reason a reference target must not be borrowed.
+     *
+     * @param autoBorrow whether automatic borrowing was requested
+     * @param dryRun whether the operation is only a preview
+     * @return the skip reason, or {@code null} when the target may be borrowed
+     */
+    static String referenceBorrowSkipReason(boolean autoBorrow, boolean dryRun)
+    {
+        if (dryRun)
+        {
+            return "dryRun"; //$NON-NLS-1$
+        }
+        return autoBorrow ? null : "auto_borrow=false"; //$NON-NLS-1$
     }
 
     /** Maps ONE reference-type token ({@code CatalogRef.X}) to its object FQN ({@code Catalog.X}), else null. */
@@ -1869,12 +1946,24 @@ final class ObjectOps
             autoBorrowSkipped.add(sk);
         }
     }
+    /**
+     * Removes an attribute of a metadata object.
+     * <p>
+     * A form item of the owner whose data path reaches the attribute refuses the removal with
+     * {@code requiresCascadeForms}, unless {@code cascadeForms=true} removes those items with it.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, name, and optionally dryRun and cascadeForms
+     * @return the JSON answer
+     */
     String opRemoveObjectAttribute(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
+        AtomicReference<BmFormCleanupHelper.CleanupResult> cleaned = new AtomicReference<>();
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -1901,9 +1990,11 @@ final class ObjectOps
                 {
                     throw BmObjectHelper.notFound(name, ownerFqn, "attribute"); //$NON-NLS-1$
                 }
+                cleaned.set(BmFormCleanupHelper.clearOrRefuse(tx, owner, name, cascadeForms));
                 attrs.remove(existing);
                 return name;
             });
+        reportFormCleanup(r, project, dryRun, cleaned.get());
         return EditMetadataTool.formatResult(r, "remove_object_attribute"); //$NON-NLS-1$
     }
     String opAddTabularSection(Map<String, String> params)
@@ -1961,12 +2052,25 @@ final class ObjectOps
         EditMetadataTool.addSynonymTags(r, tsSynonymRef.get());
         return EditMetadataTool.formatResult(r, "add_tabular_section"); //$NON-NLS-1$
     }
+    /**
+     * Removes a tabular section of a metadata object.
+     * <p>
+     * A form item of the owner whose data path reaches the tabular section or one of its columns
+     * refuses the removal with {@code requiresCascadeForms}, unless {@code cascadeForms=true}
+     * removes those items with it.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, name, and optionally dryRun and cascadeForms
+     * @return the JSON answer
+     */
     String opRemoveTabularSection(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
+        AtomicReference<BmFormCleanupHelper.CleanupResult> cleaned = new AtomicReference<>();
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -1993,9 +2097,11 @@ final class ObjectOps
                 {
                     throw BmObjectHelper.notFound(name, ownerFqn, "tabularSection"); //$NON-NLS-1$
                 }
+                cleaned.set(BmFormCleanupHelper.clearOrRefuse(tx, owner, name, cascadeForms));
                 tcs.remove(existing);
                 return name;
             });
+        reportFormCleanup(r, project, dryRun, cleaned.get());
         return EditMetadataTool.formatResult(r, "remove_tabular_section"); //$NON-NLS-1$
     }
     String opAddTabularSectionAttribute(Map<String, String> params)
@@ -2062,35 +2168,7 @@ final class ObjectOps
             maybeAutoBorrowOwner(project, ownerFqn + ".TabularSection." + tcName, //$NON-NLS-1$
                 autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
         }
-        if (type != null && !type.isEmpty() && BmDcsHelper.isExtensionProject(project))
-        {
-            for (String targetFqn : extractReferenceTargetFqns(type))
-            {
-                if (autoBorrow)
-                {
-                    BmExtensionHelper.BorrowResult br = BmExtensionHelper.attemptBorrow(project,
-                        null, targetFqn, null);
-                    if (br.ok)
-                    {
-                        autoBorrowed.add(targetFqn);
-                    }
-                    else
-                    {
-                        Map<String, Object> sk = new LinkedHashMap<>();
-                        sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                        sk.put("reason", br.error != null ? br.error : "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
-                        autoBorrowSkipped.add(sk);
-                    }
-                }
-                else
-                {
-                    Map<String, Object> sk = new LinkedHashMap<>();
-                    sk.put("targetFqn", targetFqn); //$NON-NLS-1$
-                    sk.put("reason", "auto_borrow=false"); //$NON-NLS-1$ //$NON-NLS-2$
-                    autoBorrowSkipped.add(sk);
-                }
-            }
-        }
+        autoBorrowReferenceTargets(project, type, autoBorrow, dryRun, autoBorrowed, autoBorrowSkipped);
 
         // Capture configuration for type application inside the BM transaction.
         IConfigurationProvider tcConfigProvider = Activator.getDefault().getConfigurationProvider();
@@ -2246,6 +2324,11 @@ final class ObjectOps
                 typeApply.put("warning", tcLenWarn); //$NON-NLS-1$
             }
             r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
+            List<String> ignoredQualifiers = tcQualifiers.ignoredFor(type);
+            if (!ignoredQualifiers.isEmpty())
+            {
+                r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
+            }
             if (r.ok && TypeApplication.failed(tcTypeAppliedFlag[0], tcTypeUnresolved))
             {
                 r.ok = false;
@@ -2256,6 +2339,17 @@ final class ObjectOps
         }
         return EditMetadataTool.formatResult(r, "add_tabular_section_attribute"); //$NON-NLS-1$
     }
+    /**
+     * Removes a column of a tabular section.
+     * <p>
+     * A form item of the owner whose data path reaches the column refuses the removal with
+     * {@code requiresCascadeForms}, unless {@code cascadeForms=true} removes those items with it.
+     * </p>
+     *
+     * @param params projectName, ownerFqn, tabularSectionName, name, and optionally dryRun and
+     *            cascadeForms
+     * @return the JSON answer
+     */
     String opRemoveTabularSectionAttribute(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -2263,6 +2357,8 @@ final class ObjectOps
         String tcName = JsonUtils.extractStringArgument(params, "tabularSectionName"); //$NON-NLS-1$
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
+        AtomicReference<BmFormCleanupHelper.CleanupResult> cleaned = new AtomicReference<>();
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
             + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
@@ -2293,10 +2389,40 @@ final class ObjectOps
                     throw BmObjectHelper.notFound(name, ownerFqn + "." + tcName, //$NON-NLS-1$
                         "tabularSectionAttribute"); //$NON-NLS-1$
                 }
+                cleaned.set(BmFormCleanupHelper.clearOrRefuse(tx, owner, tcName + "." + name, //$NON-NLS-1$
+                    cascadeForms));
                 attrs.remove(existing);
                 return tcName + "." + name; //$NON-NLS-1$
             });
+        reportFormCleanup(r, project, dryRun, cleaned.get());
         return EditMetadataTool.formatResult(r, "remove_tabular_section_attribute"); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds the form items a removal took with it to the answer, and writes the cleaned forms.
+     *
+     * @param r the result of the removal
+     * @param project the project the owner belongs to
+     * @param dryRun whether the removal was rolled back
+     * @param cleaned the items removed from forms, or <code>null</code> when the write did not
+     *            reach the cleanup
+     */
+    private static void reportFormCleanup(BmObjectHelper.Result r, IProject project, boolean dryRun,
+        BmFormCleanupHelper.CleanupResult cleaned)
+    {
+        if (!r.ok || cleaned == null || cleaned.totalRemoved() == 0)
+        {
+            return;
+        }
+        r.tags.put("formItemsRemoved", cleaned.toTagData()); //$NON-NLS-1$
+        if (!dryRun)
+        {
+            String exportError = BmFormCleanupHelper.exportCleanedForms(project, cleaned);
+            if (exportError != null)
+            {
+                r.tags.put("formExportWarning", exportError); //$NON-NLS-1$
+            }
+        }
     }
     /**
      * 1.42 (RSV 4.2 parity): removes a metadata object whole - the same

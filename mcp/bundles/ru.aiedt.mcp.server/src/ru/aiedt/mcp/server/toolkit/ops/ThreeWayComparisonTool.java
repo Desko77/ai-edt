@@ -12,8 +12,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.eclipse.core.resources.IProject;
+
 import ru.aiedt.mcp.server.support.BmComparisonHelper;
+import ru.aiedt.mcp.server.support.MergeRestorePoint;
 import ru.aiedt.mcp.server.support.ParameterHelp;
+import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.UpdateReport;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -33,8 +37,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * <p>
  * <b>Reading is the default; merging is possible and deliberate.</b> A merge happens only when the
  * caller names the intent, has supplied decisions to apply, and - past a problem the environment
- * itself called blocking - asks again in different words. A merge writes into a configuration and a
- * wrong one is not undone by a button, so nothing about it is a default, a flag, or a shorthand.
+ * itself called blocking - asks again in different words. A changing intent first records a restore
+ * point of the project files and does not start when that point cannot be taken. The infobase is
+ * not part of the point.
  * </p>
  */
 public class ThreeWayComparisonTool
@@ -120,7 +125,9 @@ public class ThreeWayComparisonTool
             + "intent=MERGE applies the decisions to the project, which is IRREVERSIBLE and is " //$NON-NLS-1$
             + "refused when the environment raises a blocking problem or when no decisions were " //$NON-NLS-1$
             + "given; after a merge the touched objects are revalidated and the errors standing " //$NON-NLS-1$
-            + "against them are reported."; //$NON-NLS-1$
+            + "against them are reported. Before a changing intent a restore point of the project " //$NON-NLS-1$
+            + "files is taken; if it cannot be taken the merge does not start. git " //$NON-NLS-1$
+            + "restore_merge_point puts those files back and does not roll back the infobase."; //$NON-NLS-1$
     }
 
     /**
@@ -142,7 +149,10 @@ public class ThreeWayComparisonTool
     private static Map<String, String> buildParameterRules()
     {
         Map<String, String> rules = new LinkedHashMap<>();
-        rules.put("intent", "MERGE applies the decisions to the project - IRREVERSIBLE. The " //$NON-NLS-1$
+        rules.put("intent", "MERGE applies the decisions to the project - IRREVERSIBLE. " //$NON-NLS-1$
+            + "A restore point of the project files is taken first and the merge does not start " //$NON-NLS-1$
+            + "without it; git restore_merge_point puts the files back and does not roll back the " //$NON-NLS-1$
+            + "infobase. The " //$NON-NLS-1$
             + "environment validates first and stops before writing when it raises a " //$NON-NLS-1$
             + "blocking problem; merged says what actually happened, not what was " //$NON-NLS-1$
             + "asked for. MERGE_IGNORING_PROBLEMS proceeds past those problems; it " //$NON-NLS-1$
@@ -230,6 +240,10 @@ public class ThreeWayComparisonTool
         rules.put("offset", "Default 0. With limit this walks the whole set: a real update runs to " //$NON-NLS-1$
             + "tens of thousands of changed objects and one page names at most 500 " //$NON-NLS-1$
             + "of them."); //$NON-NLS-1$
+        rules.put("sectionsOffset", "Pages the sections the same way offset pages the objects: one " //$NON-NLS-1$
+            + "page of sections holds at most 500 pieces, moreSections says there are more, and " //$NON-NLS-1$
+            + "this argument walks the rest without narrowing the scope and re-running the " //$NON-NLS-1$
+            + "comparison."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -265,25 +279,27 @@ public class ThreeWayComparisonTool
                     + "and object correspondences are applied before anything else.") //$NON-NLS-1$
             .stringProperty("changedBy", //$NON-NLS-1$
                 "List only objects with this attribution: OURS, VENDOR, BOTH or UNKNOWN. The " //$NON-NLS-1$
-                    + "counts are unaffected - they always cover everything. OURS is what a " //$NON-NLS-1$
-                    + "customisation-preserving update needs to enumerate.") //$NON-NLS-1$
+                    + "counts always cover everything; OURS is what a customisation-preserving " //$NON-NLS-1$
+                    + "update needs to enumerate.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "List only objects of this metadata type, as the comparison qualifies names " //$NON-NLS-1$
                     + "(Catalog, Document, CommonModule).") //$NON-NLS-1$
             .booleanProperty("oneSided", //$NON-NLS-1$
-                "true lists only objects present on one side, false only those present on both. " //$NON-NLS-1$
-                    + "Omit for either.") //$NON-NLS-1$
+                "true lists only objects present on one side, false only those on both. Omit " //$NON-NLS-1$
+                    + "for either.") //$NON-NLS-1$
             .booleanProperty("mustBeMergedOnly", //$NON-NLS-1$
                 "List only objects the environment says must take part in a merge.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
                 "How many matching objects to skip. Default 0.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "How many objects to name. Default and maximum 500.") //$NON-NLS-1$
+            .integerProperty("sectionsOffset", //$NON-NLS-1$
+                "Module pieces to skip before the page of sections starts. Default 0.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "Compare only these objects, comma separated and named as this tool names " //$NON-NLS-1$
                     + "them (Catalog.X,Document.Y). Omit for the whole configuration. What the " //$NON-NLS-1$
-                    + "environment added comes back in scopeExtendedBy, and a name it does not " //$NON-NLS-1$
-                    + "recognise in scopeUnrecognised rather than dropped.") //$NON-NLS-1$
+                    + "environment added comes back in scopeExtendedBy, unrecognised names in " //$NON-NLS-1$
+                    + "scopeUnrecognised rather than dropped.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
                 "Assemble the answer into one document a person can read before deciding to " //$NON-NLS-1$
                     + "update: summary (ten names per section) or full.") //$NON-NLS-1$
@@ -292,9 +308,8 @@ public class ThreeWayComparisonTool
                     + "and a decision can be addressed at one method. Off by default; " //$NON-NLS-1$
                     + "comparedInMs comes back either way, so the cost is measurable.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
-                "Close the comparison after answering instead of keeping it open for the " //$NON-NLS-1$
-                    + "next page. Off by default; an open comparison expires after 20 idle " //$NON-NLS-1$
-                    + "minutes.") //$NON-NLS-1$
+                "Close the comparison after answering rather than keep it open for paging. " //$NON-NLS-1$
+                    + "Off by default; it expires after 20 idle minutes.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
                 "Compare the sides even when they do not identify as the same configuration " //$NON-NLS-1$
                     + "in different versions. Off by default.") //$NON-NLS-1$
@@ -315,7 +330,10 @@ public class ThreeWayComparisonTool
                     + "object and such an object is held instead. Putting the delivery in " //$NON-NLS-1$
                     + "front does NOT guarantee that work only this side had survives - what " //$NON-NLS-1$
                     + "came out identical to the delivery is named in ourContentLost. Why each " //$NON-NLS-1$
-                    + "mode behaves so, and when it refuses: help=parameters.") //$NON-NLS-1$
+                    + "mode behaves so, and when it refuses: help=parameters. A restore point of the " //$NON-NLS-1$
+                    + "project files is taken before a changing intent; without it the merge does " //$NON-NLS-1$
+                    + "not start. git restore_merge_point puts the files back and does not roll " //$NON-NLS-1$
+                    + "back the infobase.") //$NON-NLS-1$
             .build();
     }
 
@@ -491,6 +509,13 @@ public class ThreeWayComparisonTool
             || symbol == ' ' || symbol == ' ' || symbol == ' ';
     }
 
+    /**
+     * Compares the project. A changing intent records a restore point of the project files first
+     * and does not compare when that point cannot be taken.
+     *
+     * @param params the call arguments
+     * @return the answer JSON
+     */
     @Override
     public String execute(Map<String, String> params)
     {
@@ -569,6 +594,7 @@ public class ThreeWayComparisonTool
             JsonUtils.extractBooleanArgument(params, "mustBeMergedOnly", false); //$NON-NLS-1$
         page.offset = JsonUtils.extractIntArgument(params, "offset", 0); //$NON-NLS-1$
         page.limit = JsonUtils.extractIntArgument(params, "limit", 0); //$NON-NLS-1$
+        page.sectionsOffset = JsonUtils.extractIntArgument(params, "sectionsOffset", 0); //$NON-NLS-1$
         boolean closeSession = JsonUtils.extractBooleanArgument(params, "closeSession", false); //$NON-NLS-1$
         page.methodLevel = JsonUtils.extractBooleanArgument(params, "methodLevel", false); //$NON-NLS-1$
         BmComparisonHelper.Request request = new BmComparisonHelper.Request();
@@ -584,15 +610,35 @@ public class ThreeWayComparisonTool
         request.closeSession = closeSession;
         request.scopeNames = readScope(params);
         request.parentId = JsonUtils.extractStringArgument(params, "parentId"); //$NON-NLS-1$
+        String mergeRestorePoint = null;
+        if (intent != BmComparisonHelper.Intent.REPORT)
+        {
+            // Only a project that is actually open can be snapshotted. A name that resolves to
+            // nothing falls through to the comparison, which already refuses it, and there are no
+            // project files here to change.
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project != null)
+            {
+                MergeRestorePoint.Created point = MergeRestorePoint.create(project);
+                if (point.error != null)
+                {
+                    return ToolResult.error("No merge was started: " + point.error //$NON-NLS-1$
+                        + " Nothing in the project was changed.") //$NON-NLS-1$
+                        .put("mergeStarted", false) //$NON-NLS-1$
+                        .toJson();
+                }
+                mergeRestorePoint = point.pointId;
+            }
+        }
         BmComparisonHelper.Outcome outcome = BmComparisonHelper.compare(request);
         if (outcome.cannotTell != null)
         {
-            return ToolResult.error(outcome.cannotTell)
+            return noteRestorePoint(ToolResult.error(outcome.cannotTell)
                 .put("threeWay", outcome.threeWay) //$NON-NLS-1$
-                .put("status", outcome.status) //$NON-NLS-1$
+                .put("status", outcome.status), mergeRestorePoint) //$NON-NLS-1$
                 .toJson();
         }
-        return ToolResult.success()
+        return noteRestorePoint(ToolResult.success()
             .put("threeWay", outcome.threeWay) //$NON-NLS-1$
             .put("status", outcome.status) //$NON-NLS-1$
             // A reporting comparison stays open under this key, so the next page costs nothing;
@@ -697,6 +743,7 @@ public class ThreeWayComparisonTool
             .put("comparedInMs", outcome.comparedInMs) //$NON-NLS-1$
             .put("sections", outcome.sections) //$NON-NLS-1$
             .put("moreSections", outcome.moreSections) //$NON-NLS-1$
+            .put("sectionsOffset", outcome.sectionsOffset) //$NON-NLS-1$
             // The document, when it was asked for. Absent otherwise: a report nobody wanted is
             // several kilobytes on every answer.
             .put("report", report(outcome, params)) //$NON-NLS-1$
@@ -755,6 +802,27 @@ public class ThreeWayComparisonTool
             // leaves the configuration broken is ordinary, not exceptional.
             .put("errorsAfterMerge", outcome.errorsAfterMerge) //$NON-NLS-1$
             .put("revalidatedAfterMerge", outcome.revalidatedAfterMerge) //$NON-NLS-1$
+            // Present when the revalidated set was narrower than the merge: silence would let
+            // errorsAfterMerge read as a statement about every object that moved.
+            .put("revalidationNote", outcome.revalidationNote), mergeRestorePoint) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * Names the restore point on an answer, so the caller can put the project files back.
+     *
+     * @param result the answer so far
+     * @param pointId the point taken before this comparison, or {@code null} when none was taken
+     * @return {@code result}, with the point named when there is one
+     */
+    private static ToolResult noteRestorePoint(ToolResult result, String pointId)
+    {
+        if (pointId == null)
+        {
+            return result;
+        }
+        return result.put("mergeRestorePoint", pointId) //$NON-NLS-1$
+            .put("mergeRestoreNote", "Project files can be put back with git operation " //$NON-NLS-1$ //$NON-NLS-2$
+                + "restore_merge_point. " + MergeRestorePoint.INFOBASE_NOT_ROLLED_BACK); //$NON-NLS-1$
     }
 }

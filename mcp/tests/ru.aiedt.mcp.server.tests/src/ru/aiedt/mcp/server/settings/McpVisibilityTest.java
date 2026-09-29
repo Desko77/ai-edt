@@ -55,17 +55,20 @@ public class McpVisibilityTest
         assertNotNull(unlisted);
         assertFalse("CANONICAL must hide something, or it is just ALL_TOOLS", unlisted.isEmpty()); //$NON-NLS-1$
 
-        // The exact membership: 7 from code_search, 16 from launch_debugger, 2 from yaxunit_tests,
-        // 7 from extension_workshop, 6 from diagnostics, 9 from project_admin, 9 from
-        // infobase_admin, 5 from config_io, 8 from insights, 3 from security_audit, 4 from
+        // The exact membership: 7 from code_search, 3 from git, 18 from launch_debugger, 2 from
+        // yaxunit_tests, 7 from extension_workshop, 6 from diagnostics, 10 from project_admin,
+        // 11 from infobase_admin, 6 from config_io, 9 from insights, 3 from security_audit, 4 from
         // workspace_marks, 2 from docs_lookup, 3 from edit_metadata. Pinning the
         // size catches an accidental add or drop.
-        assertEquals(87, unlisted.size());
+        assertEquals(91, unlisted.size());
 
         // A standalone from each facade is hidden.
+        assertTrue(unlisted.contains("git_revert_file")); //$NON-NLS-1$ // git
         assertTrue(unlisted.contains("search_in_code")); //$NON-NLS-1$ // code_search
         assertTrue(unlisted.contains("get_outgoing_structures")); //$NON-NLS-1$ // code_search (ungrouped)
         assertTrue(unlisted.contains("set_breakpoint")); //$NON-NLS-1$ // launch_debugger
+        assertTrue(unlisted.contains("set_breakpoint_state")); //$NON-NLS-1$ // launch_debugger
+        assertTrue(unlisted.contains("pause_thread")); //$NON-NLS-1$ // launch_debugger
         assertTrue(unlisted.contains("terminate_launch")); //$NON-NLS-1$ // launch_debugger
         assertTrue(unlisted.contains("run_yaxunit_tests")); //$NON-NLS-1$ // yaxunit_tests
         assertTrue(unlisted.contains("install_extension")); //$NON-NLS-1$ // extension_workshop

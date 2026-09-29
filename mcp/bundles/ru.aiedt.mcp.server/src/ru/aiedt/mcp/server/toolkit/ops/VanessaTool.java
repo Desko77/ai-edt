@@ -27,6 +27,7 @@ import org.eclipse.jface.preference.IPreferenceStore;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.support.AllureResultReader;
+import ru.aiedt.mcp.server.support.ClientDialogReader;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InfobaseAddress;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
@@ -42,6 +43,7 @@ import ru.aiedt.mcp.server.support.JUnitRunOutcome;
 import ru.aiedt.mcp.server.support.JUnitXmlReader;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.RunReceipts;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import com.google.gson.JsonObject;
 
@@ -57,8 +59,9 @@ import com.google.gson.JsonObject;
  * and {@link PrefKeys#PREF_VANESSA_1C_EXE} at the 1C thick client
  * ({@code 1cv8.exe}); this tool launches
  * {@code 1cv8 ENTERPRISE /IBConnectionString ... /Execute <epf> /C "StartFeaturePlayer;VAParams=<json>"},
- * waits for the run to finish, parses the JUnit XML Vanessa writes, and returns
- * scenario counts + failure details + failure screenshots. When either path is
+ * waits for the run to finish, reads the result files Vanessa writes - one
+ * {@code <uuid>-result.json} per scenario, under the Allure output key it was given - and
+ * returns scenario counts + failure details + failure screenshots. When either path is
  * not configured it returns a setup hint instead of failing hard.
  *
  * <p><b>Tier-1 (synchronous)</b>: the run blocks up to {@code timeoutSeconds};
@@ -97,6 +100,11 @@ public class VanessaTool implements IMcpTool
         return PendingWorkRegistry.VANESSA.domain().equals(domain) ? NAME : null;
     }
 
+    /**
+     * What an agent reads before it calls the tool, in the catalogue and on the preference page.
+     *
+     * @return the description
+     */
     @Override
     public String getDescription()
     {
@@ -116,7 +124,9 @@ public class VanessaTool implements IMcpTool
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
             + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
             + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
-            + "back for the result and also cancels the run. Raise timeoutSeconds for long suites."; //$NON-NLS-1$
+            + "back for the result and also cancels the run. Raise timeoutSeconds for long suites. " //$NON-NLS-1$
+            + "A timeout held by a 1C window returns that window as blockingWindows, with its " //$NON-NLS-1$
+            + "title, texts, buttons and imageFile, and does not ask to raise timeoutSeconds."; //$NON-NLS-1$
     }
 
     @Override
@@ -466,6 +476,25 @@ public class VanessaTool implements IMcpTool
             }
         }
         final String composedScenario = hasText ? scenarioText : null;
+        // What identifies this run in its receipt: the feature the caller named, or the list
+        // arguments that composed the scenario. A run given as text is named inside play(),
+        // where the composed file's path is known; the text itself never goes.
+        final Map<String, Object> receiptFilters = new java.util.LinkedHashMap<>();
+        if (hasPath)
+        {
+            receiptFilters.put("featurePath", featurePath.getAbsolutePath()); //$NON-NLS-1$
+        }
+        else if (hasList)
+        {
+            for (String key : RECEIPT_LIST_KEYS)
+            {
+                String value = JsonUtils.extractStringArgument(params, key);
+                if (value != null)
+                {
+                    receiptFilters.put(key, value);
+                }
+            }
+        }
         final InfobaseAddress.Address settledAddress = infobaseAddress;
         final String settledInfobase = infobaseFrom;
         final String settledConnection = connectionString;
@@ -558,7 +587,8 @@ public class VanessaTool implements IMcpTool
             return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
                 screenshots, keepOpen, settledTimeout, settledClientPort,
                 extraVaParams, settledOurs, settledSought, runDirForJob, null, settledInfobase,
-                settledAddress, settledWantsTestClient, settledWantsManager);
+                settledAddress, settledWantsTestClient, settledWantsManager, receiptFilters,
+                projectName);
         }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
@@ -578,7 +608,7 @@ public class VanessaTool implements IMcpTool
                     composedScenario, screenshots, keepOpen, settledTimeout,
                     settledClientPort, extraVaParams, settledOurs, settledSought, runDirForJob,
                     jobKey, settledInfobase, settledAddress, settledWantsTestClient,
-                    settledWantsManager));
+                    settledWantsManager, receiptFilters, projectName));
             // The name a poll of this run arrives under, so a live key exempts only this tool's
             // own resumption path from the heavy gates.
             entry.startedBy = NAME;
@@ -628,6 +658,11 @@ public class VanessaTool implements IMcpTool
      *            <code>null</code> when the caller named the connection string itself.
      * @param withTestClient whether to name a test client for the start step to launch.
      * @param asTestManager whether the client is started as a test manager.
+     * @param receiptFilters what identifies the run in its receipt, filled by the caller on the
+     *            file and list branches and completed here on the text branch, once the composed
+     *            file's path is known.
+     * @param receiptProject the project the call named, or <code>null</code> when the infobase was
+     *            named directly.
      * @return the answer
      */
     private String play(File exeFile, File epfFile, String connectionString, File featurePath,
@@ -635,7 +670,7 @@ public class VanessaTool implements IMcpTool
         int timeoutSec, int clientPort, JsonObject extraVaParams, JsonObject oursVaParams,
         JsonObject sought, File workingDir, String jobKey,
         String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
-        boolean asTestManager)
+        boolean asTestManager, Map<String, Object> receiptFilters, String receiptProject)
     {
         String refused = refusedBeforeLaunch(jobKey);
         if (refused != null)
@@ -683,6 +718,14 @@ public class VanessaTool implements IMcpTool
                 // partial scenario, and nothing would be tracking it to remove.
                 composedFile = playing;
                 writeUtf8Bom(playing, withTheFramePath(composedScenario, shotsDir));
+            }
+            if (composedScenario != null && receiptFilters.isEmpty())
+            {
+                // The text stays out of the receipt - a scenario may type a password. Where it
+                // was played from and how long it was is what identifies the run.
+                receiptFilters.put("featurePath", playing.getAbsolutePath()); //$NON-NLS-1$
+                receiptFilters.put("scenarioTextLength", //$NON-NLS-1$
+                    Integer.valueOf(composedScenario.length()));
             }
 
             String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
@@ -746,18 +789,12 @@ public class VanessaTool implements IMcpTool
             {
                 if (pr.timedOut)
                 {
-                    return ToolResult.error("Vanessa run timed out after " + timeoutSec + "s" //$NON-NLS-1$ //$NON-NLS-2$
-                        + (keepOpen ? " (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)." //$NON-NLS-1$
-                            : ". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog.") //$NON-NLS-1$
-                        // Named before the deadline is blamed: a client that never got the
-                        // infobase spends the whole deadline and looks exactly like a slow run.
-                        + (heldBack == null ? "" : " " + heldBack + ".") //$NON-NLS-1$ //$NON-NLS-2$
-                        + " " + tail(pr.output))
+                    return timeoutAnswer(timeoutSec, keepOpen, heldBack, pr.output, pr.dialogs)
                         .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
                         .put("infobaseNotReleased", heldBack).toJson(); //$NON-NLS-1$
                 }
                 String incomplete = whatTheDistributionIsMissing(epfFile);
-                return ToolResult.error("Vanessa produced no JUnit report (exit " + pr.exitCode //$NON-NLS-1$
+                return ToolResult.error("Vanessa produced no result files (exit " + pr.exitCode //$NON-NLS-1$
                     + "). The run may not have started (bad connectionString, an unadopted Vanessa " //$NON-NLS-1$
                     + "extension in the infobase, a login window, or Vanessa-version-specific launch " //$NON-NLS-1$
                     + "parameters - the launched command and the key names of VAParams.json " //$NON-NLS-1$
@@ -800,13 +837,37 @@ public class VanessaTool implements IMcpTool
                 .put("failures", results.getFailures()) //$NON-NLS-1$
                 .put("errors", results.getErrors()) //$NON-NLS-1$
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
-                .put("junitXmlPath", junitFile.getAbsolutePath()) //$NON-NLS-1$
                 .put("screenshots", shots) //$NON-NLS-1$
                 .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
                 .put("screenshotsByStep", attributed.byStep()) //$NON-NLS-1$
                 .put("screenshotsNotAttributed", attributed.unattributed()) //$NON-NLS-1$
                 .put("markdown", JUnitReportFormatter.format(results) //$NON-NLS-1$
                     + attributed.toMarkdown(pathByName));
+            // The path the answer names is the one this run was read from, chosen by which of the
+            // two the run actually produced.
+            ok = withProducedPaths(ok, resultDir, junitFile, vanessaReported);
+            // The run reached a result (a report after a timeout counts): file its receipt. The
+            // write failing costs the receipt, never the answer.
+            Map<String, Object> receiptFields = new java.util.LinkedHashMap<>();
+            receiptFields.put("tool", NAME); //$NON-NLS-1$
+            receiptFields.put("projectName", receiptProject); //$NON-NLS-1$
+            receiptFields.put("filters", receiptFilters); //$NON-NLS-1$
+            receiptFields.put("total", results.getTotal()); //$NON-NLS-1$
+            receiptFields.put("passed", results.getPassed()); //$NON-NLS-1$
+            receiptFields.put("failures", results.getFailures()); //$NON-NLS-1$
+            receiptFields.put("errors", results.getErrors()); //$NON-NLS-1$
+            receiptFields.put("skipped", results.getSkipped()); //$NON-NLS-1$
+            receiptFields.put("reportPath", receiptReportPath(resultDir, junitFile, vanessaReported)); //$NON-NLS-1$
+            receiptFields.put("screenshots", shots); //$NON-NLS-1$
+            RunReceipts.Outcome receipt = RunReceipts.write(receiptFields);
+            if (receipt.path != null)
+            {
+                ok.put("receiptPath", receipt.path.toString()); //$NON-NLS-1$
+            }
+            else
+            {
+                ok.put("receiptError", receipt.error); //$NON-NLS-1$
+            }
             if (sought != null)
             {
                 ok.put("sought", sought); //$NON-NLS-1$
@@ -848,7 +909,7 @@ public class VanessaTool implements IMcpTool
                 CANCELLED.remove(jobKey);
             }
         }
-        // The output dir (junit.xml + screenshots) is intentionally NOT deleted: the
+        // The output dir (Vanessa's result files + screenshots) is intentionally NOT deleted: the
         // agent reads the returned screenshot paths. It is a temp dir the OS reclaims.
     }
 
@@ -1107,6 +1168,11 @@ public class VanessaTool implements IMcpTool
     private static final String[] LIST_ARGUMENTS = {
         "listKind", "listName", "tableName", "column", "columnValue", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         "whenSeveral", "buttonTitle", "buttonName", "windowTitle", "windowWaitSeconds"}; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+    /** The list arguments that name a run in its receipt: what was opened and what was pressed. */
+    private static final String[] RECEIPT_LIST_KEYS = {
+        "listKind", "listName", "tableName", "column", "columnValue", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "buttonName", "buttonTitle"}; //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Whether the call carries any of the list arguments, and so asks for the action they compose.
@@ -2752,6 +2818,7 @@ public class VanessaTool implements IMcpTool
         boolean timedOut;
         boolean cancelledBeforeLaunch;
         String output = ""; //$NON-NLS-1$
+        ClientDialogReader.Outcome dialogs = ClientDialogReader.Outcome.none();
     }
 
     /**
@@ -3047,8 +3114,93 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
+     * The answer a run gives when the client is still going at the deadline.
+     * <p>
+     * A window that was holding the client is named by its title and its first line of text, and
+     * the answer does not suggest waiting longer: more time would meet the same window. With no
+     * such window the answer is the one this gave before the windows were read.
+     * </p>
+     *
+     * @param timeoutSec how long the run was waited for
+     * @param keepOpen whether the client was left open on purpose
+     * @param heldBack why the infobase was not released, or {@code null}
+     * @param output what the client printed
+     * @param dialogs the windows read before the client was stopped
+     * @return the error result, including {@code blockingWindows}
+     */
+    static ToolResult timeoutAnswer(int timeoutSec, boolean keepOpen, String heldBack, String output,
+        ClientDialogReader.Outcome dialogs)
+    {
+        ClientDialogReader.Outcome read = dialogs == null ? ClientDialogReader.Outcome.none() : dialogs;
+        ClientDialogReader.Window window = read.windows().isEmpty()
+            ? null : ClientDialogReader.topModal(read.windows());
+        return ToolResult.error(timeoutMessage(timeoutSec, keepOpen, heldBack, output, window))
+            .put(ClientDialogReader.WINDOWS, read.fields())
+            .put(ClientDialogReader.ERROR, read.error());
+    }
+
+    /**
+     * The sentence a timed-out run shows.
+     * <p>
+     * The window's title and its first text are the sentence when a window was holding the run.
+     * {@code timeoutSeconds} is named only when no window was found, which is the case a longer
+     * wait might actually finish.
+     * </p>
+     *
+     * @param timeoutSec how long the run was waited for
+     * @param keepOpen whether the client was left open on purpose
+     * @param heldBack why the infobase was not released, or {@code null}
+     * @param output what the client printed
+     * @param window the top holding window, or {@code null} when none was read
+     * @return the error text
+     */
+    private static String timeoutMessage(int timeoutSec, boolean keepOpen, String heldBack,
+        String output, ClientDialogReader.Window window)
+    {
+        StringBuilder message = new StringBuilder();
+        message.append("Vanessa run timed out after ").append(timeoutSec).append('s'); //$NON-NLS-1$
+        if (keepOpen)
+        {
+            message.append(" (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)."); //$NON-NLS-1$
+        }
+        else if (window == null)
+        {
+            message.append(". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog."); //$NON-NLS-1$
+        }
+        else
+        {
+            message.append('.');
+        }
+        if (window != null)
+        {
+            String title = window.title() == null ? "" : window.title().trim(); //$NON-NLS-1$
+            String text = window.texts().isEmpty() ? "" : window.texts().get(0); //$NON-NLS-1$
+            message.append(" The run is held by a 1C window"); //$NON-NLS-1$
+            if (!title.isEmpty())
+            {
+                message.append(" \"").append(title).append('"'); //$NON-NLS-1$
+            }
+            if (text != null && !text.isEmpty())
+            {
+                message.append(title.isEmpty() ? " " : ": "); //$NON-NLS-1$ //$NON-NLS-2$
+                message.append('"').append(text).append('"'); //$NON-NLS-1$
+            }
+            message.append('.');
+        }
+        // Named before the deadline is blamed: a client that never got the infobase spends the
+        // whole deadline and looks exactly like a slow run.
+        if (heldBack != null)
+        {
+            message.append(' ').append(heldBack).append('.');
+        }
+        message.append(' ').append(tail(output));
+        return message.toString();
+    }
+
+    /**
      * Launches the thick client, draining its merged stdout/stderr as cp1251 on a daemon thread.
-     * On timeout, destroys the process tree (child 1C workers first). Registers the client under
+     * On timeout, reads the 1C windows of the process and its descendants, then destroys the
+     * process tree (child 1C workers first). Registers the client under
      * the run's key while it lives, so a cancel from another call can reach it.
      *
      * @param command the client and its arguments.
@@ -3130,6 +3282,8 @@ public class VanessaTool implements IMcpTool
         {
             if (!proc.waitFor(timeoutSec, TimeUnit.SECONDS))
             {
+                // Read while the client is still up. Destroying it first closes the dialog.
+                pr.dialogs = ClientDialogReader.ofProcess(proc, ClientDialogReader.imagesFor(NAME));
                 proc.descendants().forEach(ProcessHandle::destroyForcibly);
                 proc.destroyForcibly();
                 pr.timedOut = true;
@@ -3226,6 +3380,59 @@ public class VanessaTool implements IMcpTool
         {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * The path a receipt records as {@code reportPath}: the results directory on the Allure
+     * branch, which is the directory the answer names as {@code resultsDir}, and the JUnit file
+     * on the branch that was read from one.
+     *
+     * @param resultDir the directory the run's results were read from
+     * @param junitFile the file a JUnit reader takes, whether or not it exists
+     * @param vanessaReported whether the run left Vanessa's own result files in that directory
+     * @return the path the receipt and the answer both point at
+     */
+    static String receiptReportPath(File resultDir, File junitFile, boolean vanessaReported)
+    {
+        if (vanessaReported)
+        {
+            return resultDir.getAbsolutePath();
+        }
+        return junitFile.getAbsolutePath();
+    }
+
+    /**
+     * Names what the run really produced, under names its reader can act on.
+     * <p>
+     * Vanessa is asked for a machine-readable result through the Allure pair and writes one
+     * {@code <uuid>-result.json} per scenario into the directory it was given, choosing the file
+     * names itself. An answer that named {@code out/junit.xml} on that branch named a file nothing
+     * ever wrote, and a caller that opened it found nothing where the run's results were said to
+     * be. The directory and the files are reported as they are; a JUnit file is named only on the
+     * branch where the run was read from one, which is a caller-supplied {@code vanessaParams}
+     * document that orders JUnit output itself.
+     * </p>
+     *
+     * @param answer the answer so far.
+     * @param resultDir the directory the run's results were read from.
+     * @param junitFile the file a JUnit reader takes, whether or not it exists.
+     * @param vanessaReported whether the run left Vanessa's own result files in that directory.
+     * @return the answer with the produced paths on it
+     */
+    static ToolResult withProducedPaths(ToolResult answer, File resultDir, File junitFile,
+        boolean vanessaReported)
+    {
+        if (vanessaReported)
+        {
+            List<String> names = new ArrayList<>();
+            for (File one : AllureResultReader.resultsIn(resultDir))
+            {
+                names.add(one.getName());
+            }
+            return answer.put("resultsDir", resultDir.getAbsolutePath()) //$NON-NLS-1$
+                .put("resultFiles", names); //$NON-NLS-1$
+        }
+        return answer.put("junitXmlPath", junitFile.getAbsolutePath()); //$NON-NLS-1$
     }
 
     static List<String> collectScreenshots(File shotsDir)

@@ -418,6 +418,19 @@ public final class SyncBaseline
     }
 
     /**
+     * The stored dump-info of an infobase's last synchronization: the file beside the index that
+     * the platform reads on every {@code config dump-files} to decide what the base still holds.
+     *
+     * @param project the project the infobase belongs to
+     * @param infobaseUuid the infobase
+     * @return the file's path; it need not exist
+     */
+    public static Path dumpInfoFile(IProject project, String infobaseUuid)
+    {
+        return indexOf(project, infobaseUuid).getParent().resolve(DumpInfoProbe.FILE_NAME);
+    }
+
+    /**
      * The indexes of the infobases this project is bound to. Every index in the workspace store is
      * included: that store belongs to this project alone. From the per-user store, only an index
      * whose directory name is the uuid of an infobase application of this project. The recorded

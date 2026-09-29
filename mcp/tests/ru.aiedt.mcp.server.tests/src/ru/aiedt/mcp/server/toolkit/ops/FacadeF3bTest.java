@@ -175,6 +175,8 @@ public class FacadeF3bTest
         assertTrue(result.contains("syncOperation")); //$NON-NLS-1$
         assertTrue("the missing-operation error names rebuild_dump_info", //$NON-NLS-1$
             result.contains("rebuild_dump_info")); //$NON-NLS-1$
+        assertTrue("the missing-operation error names retrieve_database_changes", //$NON-NLS-1$
+            result.contains("retrieve_database_changes")); //$NON-NLS-1$
     }
 
     @Test
@@ -308,6 +310,90 @@ public class FacadeF3bTest
         params.put("topic", "workflow"); //$NON-NLS-1$ //$NON-NLS-2$
         String result = new ConfigIoFacadeTool().execute(params);
         assertTrue(result.contains("operation picker")); //$NON-NLS-1$
+    }
+
+    // -- config_io: the guarded database exports --
+
+    @Test
+    public void configIoUnknownOperationListNamesTheGuardedExports()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "not_a_real_operation"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(result.contains("export_database_configuration")); //$NON-NLS-1$
+        assertTrue(result.contains("export_database_extension")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void configIoHelpListsTheGuardedExports()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "help"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(result.contains("export_database_configuration")); //$NON-NLS-1$
+        assertTrue(result.contains("export_database_extension")); //$NON-NLS-1$
+        assertTrue(result.contains("overwrite")); //$NON-NLS-1$
+        assertTrue(result.contains("allowOutOfSync")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void configIoSchemaDeclaresTheGuardedExportArguments()
+    {
+        String schema = new ConfigIoFacadeTool().getInputSchema();
+        assertTrue(schema.contains("\"overwrite\"")); //$NON-NLS-1$
+        assertTrue(schema.contains("\"allowOutOfSync\"")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void exportDatabaseConfigurationRequiresProjectName()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "export_database_configuration"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", "whatever.cf"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(result.contains("projectName is required")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void exportDatabaseConfigurationRequiresOutputPath()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "export_database_configuration"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", "Whatever"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(result.contains("outputPath is required")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void exportDatabaseExtensionRequiresExtensionName()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "export_database_extension"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", "Whatever"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", "whatever.cfe"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(result.contains("extensionName is required")); //$NON-NLS-1$
+    }
+
+    /**
+     * The camelCase spelling reaches the same guarded operation: the dispatch normalizes
+     * the selector before matching, and the answer is the operation's own refusal rather
+     * than an unknown-operation error.
+     */
+    @Test
+    public void exportDatabaseConfigurationAcceptsTheCamelCaseSelector()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "exportDatabaseConfiguration"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ConfigIoFacadeTool().execute(params);
+
+        assertTrue(result.contains("projectName is required")); //$NON-NLS-1$
+        assertFalse(result.contains("Unknown operation")); //$NON-NLS-1$
     }
 
     // -- cross-facade sanity --

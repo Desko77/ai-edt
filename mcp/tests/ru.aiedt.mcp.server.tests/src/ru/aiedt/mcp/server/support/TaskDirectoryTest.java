@@ -171,12 +171,21 @@ public class TaskDirectoryTest
             polled.failure.contains("collected") && polled.failure.contains("evicted")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    /** Cancelling moves the task to its terminal state and says the work may still be finishing. */
+    /**
+     * Cancelling moves the task to its terminal state; work that began outside a call has no flag to
+     * raise, and the message says it may still be running.
+     */
     @Test
     public void cancellingIsTerminalAndSaysItIsCooperative() throws Exception
     {
         CountDownLatch release = new CountDownLatch(1);
         String key = start("never collected", release); //$NON-NLS-1$
+        PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.GENERIC.get(key);
+        for (int attempt = 0; attempt < 250 && entry.beganAt == 0; attempt++)
+        {
+            Thread.sleep(20L);
+        }
+        assertTrue("the work began", entry.beganAt > 0); //$NON-NLS-1$
         TaskDirectory.Task task = directory.open(key, "update_database", "update_database", args()); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertTrue(directory.cancel(task.taskId));
@@ -186,7 +195,7 @@ public class TaskDirectoryTest
         assertTrue("a cancelled task must not be quietly revived by a later poll", //$NON-NLS-1$
             polled.isTerminal());
         assertTrue("the message should not promise the work stopped: " + polled.statusMessage, //$NON-NLS-1$
-            polled.statusMessage.contains("may still be finishing")); //$NON-NLS-1$
+            polled.statusMessage.contains("may still be running")); //$NON-NLS-1$
         release.countDown();
     }
 

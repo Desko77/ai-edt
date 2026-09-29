@@ -922,11 +922,31 @@ public class NaparnikTool
         }
     }
 
+    /**
+     * Runs one question to its end and answers with the outcome. A refusal names the tools the
+     * question already called; a crash before the question exists has no tools to name.
+     *
+     * @param entry the registry slot the question holds
+     * @param runKey the key the run answers to
+     * @param live the question's own marks
+     * @param facade the Naparnik facade
+     * @param source the bundle the facade came from
+     * @param project the project the question is about
+     * @param text the question text
+     * @param conversationId the conversation to continue, or {@code null}
+     * @param replyTo the message to answer, or {@code null}
+     * @param forceNew whether a new conversation starts
+     * @param maxToolRounds the tool round ceiling
+     * @param allowed the read set to send, or {@code null} for no filter
+     * @param timeoutSeconds the overall wait ceiling
+     * @return the answer document
+     */
     private String runQuestion(PendingWorkRegistry.PendingEntry entry, String runKey, LiveAsk live,
         Object facade, BundleCopy source, Object project, String text, String conversationId,
         String replyTo, boolean forceNew, int maxToolRounds, Set<String> allowed, int timeoutSeconds)
     {
         long started = System.currentTimeMillis();
+        RunningQuestion question = null;
         try
         {
             if (withdrawn(entry, live))
@@ -934,13 +954,16 @@ public class NaparnikTool
                 live.userCancel = true;
                 return cancelled(live, System.currentTimeMillis() - started, List.of());
             }
-            RunningQuestion question = host.ask(facade, source, new Question(project, text,
+            question = host.ask(facade, source, new Question(project, text,
                 conversationId, replyTo, forceNew, SKILL_NAME, CHAT, maxToolRounds, allowed,
                 names -> notice(live, names, allowed)));
             live.question = question;
+            // The watcher lambda needs a final capture; the outer question stays mutable so the
+            // refusal after a crash can still read the tools the question called.
+            RunningQuestion watched = question;
             AtomicBoolean watching = new AtomicBoolean(true);
             Thread watcher = new Thread(
-                () -> watchForWithdrawal(watching, entry, live, question), "naparnik-cancel-watch"); //$NON-NLS-1$
+                () -> watchForWithdrawal(watching, entry, live, watched), "naparnik-cancel-watch"); //$NON-NLS-1$
             watcher.setDaemon(true);
             watcher.start();
             boolean finished;
@@ -1033,7 +1056,8 @@ public class NaparnikTool
         catch (RuntimeException failure)
         {
             Throwable cause = unwrap(failure);
-            return failed(live, System.currentTimeMillis() - started, List.of(), cause, maxToolRounds);
+            List<String> called = question == null ? List.of() : question.toolsCalled();
+            return failed(live, System.currentTimeMillis() - started, called, cause, maxToolRounds);
         }
         finally
         {

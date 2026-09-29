@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -69,6 +70,24 @@ public class IdleComparisonSweepTest
         IdleComparisonSweep.shutdown();
         IdleComparisonSweep.ensureRunning();
         assertFalse("a stopped sweep must not re-arm", IdleComparisonSweep.isRunning());
+    }
+
+    /**
+     * Verifies that the idle sweep keeps a session while its merge is still running.
+     */
+    @Test
+    public void aMergeRunningSessionSurvivesTheIdleSweep()
+    {
+        long now = System.currentTimeMillis();
+        ComparisonSessions.Session session = ComparisonSessions.open("sides", "handle",
+            now - ComparisonSessions.IDLE_LIMIT_MS - 1);
+        ComparisonSessions.markMergeRunning(session);
+        ComparisonSessions.release(session);
+
+        ComparisonSessions.expireIdle();
+
+        assertTrue(ComparisonSessions.list(now).contains(session));
+        assertTrue(ComparisonSessions.drainDropped().isEmpty());
     }
 
     @Test

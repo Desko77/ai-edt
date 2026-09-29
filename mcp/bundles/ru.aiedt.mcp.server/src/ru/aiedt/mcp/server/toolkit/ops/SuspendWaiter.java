@@ -170,13 +170,26 @@ public final class SuspendWaiter implements IMcpTool
      */
     private static void scanForAlreadySuspended(DebugSessionBook registry, String applicationId)
     {
+        scanForAlreadySuspended(registry, applicationId, DebugSessionBook.findActiveTarget(applicationId));
+    }
+
+    /**
+     * The same scan over a target the caller already holds, so a tool that resolved one does not
+     * resolve it again. Best-effort: any failure falls through as "nothing suspended here".
+     *
+     * @param registry the session registry
+     * @param applicationId the application to scan
+     * @param target the session's debug target; may be <code>null</code>
+     */
+    static void scanForAlreadySuspended(DebugSessionBook registry, String applicationId,
+        IDebugTarget target)
+    {
         try
         {
             if (registry.hasSnapshot(applicationId))
             {
                 return;
             }
-            IDebugTarget target = DebugSessionBook.findActiveTarget(applicationId);
             if (target == null || target.isTerminated())
             {
                 return;
@@ -209,6 +222,24 @@ public final class SuspendWaiter implements IMcpTool
      * @throws Exception when the debug model refuses to yield stack frames or frame details
      */
     static String buildSnapshotResponse(DebugSessionBook.SuspendSnapshot snapshot,
+        DebugSessionBook registry, String applicationId, boolean autoResolved) throws Exception
+    {
+        return buildSnapshotResult(snapshot, registry, applicationId, autoResolved).toJson();
+    }
+
+    /**
+     * The snapshot body itself, as a result a caller can add its own members to before it is rendered.
+     * Shared with {@link DebugStepper} and {@link DebugPauser}, which is why it is package-private.
+     *
+     * @param snapshot the suspended-thread snapshot
+     * @param registry the session registry
+     * @param applicationId the application that suspended
+     * @param autoResolved whether the application was auto-resolved rather than named by the caller
+     * @return the result document, carrying hit / threadId / threadName / applicationId / frames and,
+     *         when there is a stack, topFrameRef
+     * @throws Exception when the debug model refuses to yield stack frames or frame details
+     */
+    static ToolResult buildSnapshotResult(DebugSessionBook.SuspendSnapshot snapshot,
         DebugSessionBook registry, String applicationId, boolean autoResolved) throws Exception
     {
         IThread thread = snapshot.thread;
@@ -246,6 +277,6 @@ public final class SuspendWaiter implements IMcpTool
         {
             result.put("topFrameRef", frames.get(0).get("frameRef")); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return result.toJson();
+        return result;
     }
 }

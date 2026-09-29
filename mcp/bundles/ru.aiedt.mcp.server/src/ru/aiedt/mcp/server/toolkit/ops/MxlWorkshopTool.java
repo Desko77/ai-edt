@@ -62,12 +62,7 @@ public class MxlWorkshopTool implements IMcpTool
             + "read_template, add_named_area, list_named_areas, remove_named_area, " //$NON-NLS-1$
             + "check_print_width. " //$NON-NLS-1$
             + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
-            + "SpreadsheetDocument model directly. read_template returns dimensions, " //$NON-NLS-1$
-            + "the populated cell map, merged ranges and drawing ids. " //$NON-NLS-1$
-            + "Coordinates are 1-based. set_cell takes row/col/text; " //$NON-NLS-1$
-            + "merge_cells takes fromRow/fromCol/toRow/toCol; draw takes a " //$NON-NLS-1$
-            + "JSON layout with cells/merges arrays; add_drawing places a " //$NON-NLS-1$
-            + "Line/Rectangle/Ellipse/Text graphic anchored to begin/end cells. " //$NON-NLS-1$
+            + "SpreadsheetDocument model directly. Coordinates are 1-based. " //$NON-NLS-1$
             + "check_print_width reads the model alone: whether the print area fits the sheet " //$NON-NLS-1$
             + "by width, and which page defaults the answer took. It changes nothing."; //$NON-NLS-1$
     }
@@ -88,6 +83,11 @@ public class MxlWorkshopTool implements IMcpTool
             .integerProperty("row", "Cell row (1-based)") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("col", "Cell column (1-based)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("text", "Cell text content") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("fillType", //$NON-NLS-1$
+                "set_cell: how the cell is filled - text, parameter or template. " //$NON-NLS-1$
+                    + "A parameter name without fillType is read as parameter.") //$NON-NLS-1$
+            .stringProperty("parameter", //$NON-NLS-1$
+                "set_cell: template parameter name. BSL fills it through the area's parameters.") //$NON-NLS-1$
             .stringProperty("language", //$NON-NLS-1$
                 "Language tag for the LocalString content (default 'ru')") //$NON-NLS-1$
             .stringProperty("areaName", //$NON-NLS-1$
@@ -124,7 +124,8 @@ public class MxlWorkshopTool implements IMcpTool
             .stringProperty("textPlacement", //$NON-NLS-1$
                 "format_cells: how text behaves when it does not fit - auto / cut / block / wrap.") //$NON-NLS-1$
             .integerProperty("textOrientation", //$NON-NLS-1$
-                "format_cells: text rotation in degrees.") //$NON-NLS-1$
+                "format_cells: text rotation in degrees, from 0 to 360. The template stores " //$NON-NLS-1$
+                    + "tenths of a degree, so 90 is written as 900.") //$NON-NLS-1$
             .integerProperty("rowHeight", //$NON-NLS-1$
                 "format_cells: explicit row height. There is no auto-height flag in the model - a " //$NON-NLS-1$
                     + "row with no explicit height whose cells wrap is what the platform grows to " //$NON-NLS-1$
@@ -134,6 +135,44 @@ public class MxlWorkshopTool implements IMcpTool
             .integerProperty("columnWidth", "format_cells: explicit column width.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("columnWidthWeight", //$NON-NLS-1$
                 "format_cells: this column's share when the available width is distributed.") //$NON-NLS-1$
+            .stringProperty("border", //$NON-NLS-1$
+                "format_cells: line style on every side - None, Solid, Dotted, Double, " //$NON-NLS-1$
+                    + "ThinDashed, ThickDashed, LargeDashed.") //$NON-NLS-1$
+            .integerProperty("borderWidth", //$NON-NLS-1$
+                "format_cells: width of the borders this call adds. Defaults to 1.") //$NON-NLS-1$
+            .stringProperty("leftBorder", "format_cells: line style of the left side.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("topBorder", "format_cells: line style of the top side.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("rightBorder", "format_cells: line style of the right side.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("bottomBorder", "format_cells: line style of the bottom side.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("fontName", "format_cells: font face. A cell with no font yet starts from Arial.") //$NON-NLS-1$ //$NON-NLS-2$
+            .numberProperty("fontSize", "format_cells: font height in points, greater than 0.") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("fontBold", "format_cells: bold.") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("fontItalic", "format_cells: italic.") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("fontUnderline", "format_cells: underline.") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("fontStrikeout", "format_cells: strikeout.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("textColor", "format_cells: text color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("backColor", "format_cells: background color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("borderColor", "format_cells: border color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("patternColor", "format_cells: pattern color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("pattern", //$NON-NLS-1$
+                "format_cells: fill pattern - WithoutPattern, Solid, or Pattern1 through Pattern17.") //$NON-NLS-1$
+            .stringProperty("pageOrientation", //$NON-NLS-1$
+                "format_cells: page orientation, Portrait or Landscape. Applies to the whole template.") //$NON-NLS-1$
+            .integerProperty("scale", //$NON-NLS-1$
+                "format_cells: print scale in percent. Applies to the whole template.") //$NON-NLS-1$
+            .integerProperty("copies", "format_cells: number of copies. Applies to the whole template.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("perPage", //$NON-NLS-1$
+                "format_cells: pages per sheet. Applies to the whole template.") //$NON-NLS-1$
+            .booleanProperty("fitToPage", //$NON-NLS-1$
+                "format_cells: scale the sheet to fit the page. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("topMargin", //$NON-NLS-1$
+                "format_cells: top margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("leftMargin", //$NON-NLS-1$
+                "format_cells: left margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("bottomMargin", //$NON-NLS-1$
+                "format_cells: bottom margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
+            .numberProperty("rightMargin", //$NON-NLS-1$
+                "format_cells: right margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
             .integerProperty("smallScalePercent", //$NON-NLS-1$
                 "check_print_width: print scale below which the answer warns of unreadable type " //$NON-NLS-1$
                     + "(10..100, default 75). help topic=printWidth says where 75 comes from.") //$NON-NLS-1$
@@ -277,7 +316,16 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.42.2: native cell-level set via the moxel SpreadsheetDocument model.
+     * Writes a cell's text, its template parameter, and how the cell is filled.
+     * <p>
+     * A parameter is what BSL assigns through the area. The fill says whether the cell is plain
+     * text, that parameter, or a template string with placeholders. A name without a fill is read
+     * as a parameter. The refusal for a parameter with no name happens before the project is
+     * opened, so the call cannot report success and leave the cell as it was.
+     * </p>
+     *
+     * @param params the call's arguments
+     * @return the result as JSON
      */
     private String opSetCell(Map<String, String> params)
     {
@@ -292,7 +340,15 @@ public class MxlWorkshopTool implements IMcpTool
         int col = JsonUtils.extractIntArgument(params, "col", -1); //$NON-NLS-1$
         String text = JsonUtils.extractStringArgument(params, "text"); //$NON-NLS-1$
         String language = JsonUtils.extractStringArgument(params, "language"); //$NON-NLS-1$
+        String fillType = JsonUtils.extractStringArgument(params, "fillType"); //$NON-NLS-1$
+        String parameter = JsonUtils.extractStringArgument(params, "parameter"); //$NON-NLS-1$
+        boolean textPassed = params.containsKey("text"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String fillError = BmTemplateHelper.fillProblem(fillType, parameter, textPassed);
+        if (fillError != null)
+        {
+            return ToolResult.error(fillError).put("operation", "set_cell").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
 
         if (projectName == null || ownerFqn == null || templateName == null
             || row < 1 || col < 1)
@@ -308,11 +364,18 @@ public class MxlWorkshopTool implements IMcpTool
         final int rowF = row;
         final int colF = col;
         final String[] persistErrorRef = { null };
+        final String[] contentErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
-                BmTemplateHelper.setCellText(doc, rowF, colF, text, language);
+                String contentError = BmTemplateHelper.setCellContent(doc, rowF, colF, text,
+                    textPassed, language, fillType, parameter);
+                if (contentError != null)
+                {
+                    contentErrorRef[0] = contentError;
+                    return contentError;
+                }
                 // Persist BM-memory snapshot to Template.mxlx so the change
                 // survives an EDT restart. Without this, set_cell results
                 // only live in the in-memory moxel model.
@@ -325,8 +388,14 @@ public class MxlWorkshopTool implements IMcpTool
                         persistErrorRef[0] = pErr;
                     }
                 }
-                return "(" + rowF + "," + colF + ")=" + (text == null ? "" : text); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                String shown = textPassed ? (text == null ? "" : text) //$NON-NLS-1$
+                    : (parameter == null ? "" : parameter); //$NON-NLS-1$
+                return "(" + rowF + "," + colF + ")=" + shown; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             });
+        if (contentErrorRef[0] != null)
+        {
+            return ToolResult.error(contentErrorRef[0]).put("operation", "set_cell").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (persistErrorRef[0] != null && r.tags != null)
         {
             failOnPersist(r, persistErrorRef[0]);
@@ -495,8 +564,10 @@ public class MxlWorkshopTool implements IMcpTool
         }
         @SuppressWarnings("unchecked")
         final List<Map<String, Object>>[] areasRef = new List[] { null };
-        // dryRun=true runs the reader and rolls the get-or-create model touch back.
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+        // The read entry asks no support question: a template of a closed object stays readable.
+        // Its transaction still rolls back, because reading a template without a spreadsheet model
+        // touches the model to build the answer.
+        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -576,13 +647,36 @@ public class MxlWorkshopTool implements IMcpTool
         return formatResult(r, "merge_cells"); //$NON-NLS-1$
     }
 
+    /** String arguments of {@code format_cells} read together, so each one is a read. */
+    private static final String[] FORMAT_STRINGS = {
+        "border", "leftBorder", "topBorder", "rightBorder", "bottomBorder", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "fontName", "textColor", "backColor", "borderColor", "patternColor", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "pattern", "pageOrientation" //$NON-NLS-1$ //$NON-NLS-2$
+    };
+
+    /** Integer arguments of {@code format_cells} read together. */
+    private static final String[] FORMAT_INTS = {
+        "borderWidth", "scale", "copies", "perPage" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    };
+
+    /** Margin arguments of {@code format_cells}, read together: millimetres, fractions allowed. */
+    private static final String[] FORMAT_MARGINS = {
+        "topMargin", "leftMargin", "bottomMargin", "rightMargin" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    };
+
+    /** Boolean arguments of {@code format_cells} read together. Absent is not false. */
+    private static final String[] FORMAT_FLAGS = {
+        "fontBold", "fontItalic", "fontUnderline", "fontStrikeout", "fitToPage" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+    };
+
     /**
      * Applies presentation properties to a rectangle of cells and the columns under it.
      * <p>
      * Every property is optional and only what is passed is touched: this is a formatter, not a
      * style reset, and a template arrives with a look somebody chose. Passing none of them is
      * refused rather than treated as a no-op, because a call that changes nothing and reports
-     * success reads as a call that worked.
+     * success reads as a call that worked. Print settings belong to the document, so a call that
+     * only sets those does not need a cell range. {@code textOrientation} is degrees from 0 to 360.
      * </p>
      *
      * @param params the call's arguments.
@@ -606,27 +700,123 @@ public class MxlWorkshopTool implements IMcpTool
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         String placement = JsonUtils.extractStringArgument(params, "textPlacement"); //$NON-NLS-1$
-        Integer orientation = optionalInt(params, "textOrientation"); //$NON-NLS-1$
+        if (params.containsKey("fillType") || params.containsKey("parameter")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            return ToolResult.error("fillType and parameter are set_cell arguments - format_cells " //$NON-NLS-1$
+                + "has no fill of its own").put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String orientationRaw = JsonUtils.extractStringArgument(params, "textOrientation"); //$NON-NLS-1$
+        Integer orientation = null;
+        if (orientationRaw != null && !orientationRaw.isEmpty())
+        {
+            try
+            {
+                orientation = Integer.valueOf(orientationRaw.trim());
+            }
+            catch (NumberFormatException notANumber)
+            {
+                return ToolResult.error("textOrientation must be a whole number of degrees - got: " //$NON-NLS-1$
+                    + orientationRaw).put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
         Integer rowHeight = optionalInt(params, "rowHeight"); //$NON-NLS-1$
         Integer columnWidth = optionalInt(params, "columnWidth"); //$NON-NLS-1$
         Integer widthWeight = optionalInt(params, "columnWidthWeight"); //$NON-NLS-1$
         Boolean autoColumnWidth = params.containsKey("autoColumnWidth") //$NON-NLS-1$
             ? Boolean.valueOf(JsonUtils.extractBooleanArgument(params, "autoColumnWidth", false)) //$NON-NLS-1$
             : null;
-
-        if (projectName == null || ownerFqn == null || templateName == null
-            || fromRow < 1 || fromCol < 1 || toRow < fromRow || toCol < fromCol)
+        Map<String, String> strings = new LinkedHashMap<>();
+        for (String name : FORMAT_STRINGS)
         {
-            return ToolResult.error("projectName, ownerFqn, templateName and a cell range are " //$NON-NLS-1$
-                + "required: row/col for one cell, or fromRow/fromCol/toRow/toCol for a " //$NON-NLS-1$
-                + "rectangle").toJson(); //$NON-NLS-1$
+            strings.put(name, JsonUtils.extractStringArgument(params, name));
         }
-        if (placement == null && orientation == null && rowHeight == null && columnWidth == null
-            && widthWeight == null && autoColumnWidth == null)
+        Map<String, Integer> numbers = new LinkedHashMap<>();
+        for (String name : FORMAT_INTS)
+        {
+            String raw = JsonUtils.extractStringArgument(params, name);
+            Integer parsed = null;
+            if (raw != null && !raw.isEmpty())
+            {
+                try
+                {
+                    parsed = Integer.valueOf(raw.trim());
+                }
+                catch (NumberFormatException notAWholeNumber)
+                {
+                    // Includes a value past the int the model stores. Skipping it here would
+                    // answer success for a setting the template never got.
+                    return ToolResult.error(name + " must be a whole number - got: " + raw) //$NON-NLS-1$
+                        .put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            numbers.put(name, parsed);
+        }
+        Map<String, Float> margins = new LinkedHashMap<>();
+        for (String name : FORMAT_MARGINS)
+        {
+            String raw = JsonUtils.extractStringArgument(params, name);
+            Float parsed = null;
+            if (raw != null && !raw.isEmpty())
+            {
+                try
+                {
+                    parsed = Float.valueOf(raw.trim());
+                }
+                catch (NumberFormatException notANumber)
+                {
+                    return ToolResult.error(name + " must be a number of millimetres - got: " + raw) //$NON-NLS-1$
+                        .put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            margins.put(name, parsed);
+        }
+        Map<String, Boolean> flags = new LinkedHashMap<>();
+        for (String name : FORMAT_FLAGS)
+        {
+            if (params.containsKey(name))
+            {
+                flags.put(name, Boolean.valueOf(
+                    JsonUtils.extractBooleanArgument(params, name, false)));
+            }
+        }
+        Float fontSize = null;
+        String fontSizeRaw = JsonUtils.extractStringArgument(params, "fontSize"); //$NON-NLS-1$
+        if (fontSizeRaw != null && !fontSizeRaw.isEmpty())
+        {
+            try
+            {
+                fontSize = Float.valueOf(fontSizeRaw.trim());
+            }
+            catch (NumberFormatException notANumber)
+            {
+                return ToolResult.error("fontSize must be a number of points - got: " + fontSizeRaw) //$NON-NLS-1$
+                    .put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        BmTemplateHelper.CellLook look = cellLook(strings, numbers, margins, flags, fontSize);
+        boolean cellProperties = placement != null || orientation != null || rowHeight != null
+            || columnWidth != null || widthWeight != null || autoColumnWidth != null
+            || look.changesCells();
+        boolean printProperties = look.changesPrint();
+        if (!cellProperties && !printProperties)
         {
             return ToolResult.error("nothing to apply: pass at least one of textPlacement, " //$NON-NLS-1$
                 + "textOrientation, rowHeight, autoColumnWidth, columnWidth, " //$NON-NLS-1$
-                + "columnWidthWeight").toJson(); //$NON-NLS-1$
+                + "columnWidthWeight, border, font, color or print settings").toJson(); //$NON-NLS-1$
+        }
+        String problem = BmTemplateHelper.presentationProblem(orientation, look);
+        if (problem != null)
+        {
+            return ToolResult.error(problem).put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
+        }
+        if (cellProperties && (fromRow < 1 || fromCol < 1 || toRow < fromRow || toCol < fromCol))
+        {
+            return ToolResult.error("a cell range is required: row/col for one cell, or " //$NON-NLS-1$
+                + "fromRow/fromCol/toRow/toCol for a rectangle").toJson(); //$NON-NLS-1$
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -637,19 +827,39 @@ public class MxlWorkshopTool implements IMcpTool
         final int fromColF = fromCol;
         final int toRowF = toRow;
         final int toColF = toCol;
+        final Integer orientationF = orientation;
+        final boolean cellsF = cellProperties;
+        final boolean printF = printProperties;
         final String[] persistErrorRef = { null };
         final String[] formatErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
-                BmTemplateHelper.FormatOutcome outcome = BmTemplateHelper.applyCellFormat(doc,
-                    fromRowF, fromColF, toRowF, toColF, placement, orientation, rowHeight,
-                    autoColumnWidth, columnWidth, widthWeight);
-                if (outcome.error != null)
+                String written = ""; //$NON-NLS-1$
+                if (cellsF)
                 {
-                    formatErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    BmTemplateHelper.FormatOutcome outcome = BmTemplateHelper.applyCellFormat(doc,
+                        fromRowF, fromColF, toRowF, toColF, placement, orientationF, rowHeight,
+                        autoColumnWidth, columnWidth, widthWeight, look);
+                    if (outcome.error != null)
+                    {
+                        formatErrorRef[0] = outcome.error;
+                        return outcome.error;
+                    }
+                    written = outcome.cellsChanged + " cells, " + outcome.columnsChanged //$NON-NLS-1$
+                        + " columns"; //$NON-NLS-1$
+                }
+                if (printF)
+                {
+                    String printError = BmTemplateHelper.applyPrintSettings(doc, look);
+                    if (printError != null)
+                    {
+                        formatErrorRef[0] = printError;
+                        return printError;
+                    }
+                    written = written.isEmpty() ? "print settings" //$NON-NLS-1$
+                        : written + "; print settings"; //$NON-NLS-1$
                 }
                 if (!dryRun)
                 {
@@ -660,7 +870,7 @@ public class MxlWorkshopTool implements IMcpTool
                         persistErrorRef[0] = pErr;
                     }
                 }
-                return outcome.cellsChanged + " cells, " + outcome.columnsChanged + " columns"; //$NON-NLS-1$ //$NON-NLS-2$
+                return written;
             });
         if (formatErrorRef[0] != null)
         {
@@ -674,6 +884,50 @@ public class MxlWorkshopTool implements IMcpTool
             failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "format_cells"); //$NON-NLS-1$
+    }
+
+    /**
+     * The appearance and print request carried by the arguments {@code format_cells} read.
+     *
+     * @param strings the string arguments, missing ones null
+     * @param numbers the integer arguments, missing ones null
+     * @param margins the margin arguments in millimetres, missing ones null
+     * @param flags the boolean arguments that were actually passed
+     * @param fontSize the parsed font height, or {@code null}
+     * @return the request
+     */
+    private static BmTemplateHelper.CellLook cellLook(Map<String, String> strings,
+        Map<String, Integer> numbers, Map<String, Float> margins, Map<String, Boolean> flags,
+        Float fontSize)
+    {
+        BmTemplateHelper.CellLook look = new BmTemplateHelper.CellLook();
+        look.border = strings.get("border"); //$NON-NLS-1$
+        look.leftBorder = strings.get("leftBorder"); //$NON-NLS-1$
+        look.topBorder = strings.get("topBorder"); //$NON-NLS-1$
+        look.rightBorder = strings.get("rightBorder"); //$NON-NLS-1$
+        look.bottomBorder = strings.get("bottomBorder"); //$NON-NLS-1$
+        look.fontName = strings.get("fontName"); //$NON-NLS-1$
+        look.fontSize = fontSize;
+        look.textColor = strings.get("textColor"); //$NON-NLS-1$
+        look.backColor = strings.get("backColor"); //$NON-NLS-1$
+        look.borderColor = strings.get("borderColor"); //$NON-NLS-1$
+        look.patternColor = strings.get("patternColor"); //$NON-NLS-1$
+        look.pattern = strings.get("pattern"); //$NON-NLS-1$
+        look.pageOrientation = strings.get("pageOrientation"); //$NON-NLS-1$
+        look.borderWidth = numbers.get("borderWidth"); //$NON-NLS-1$
+        look.scale = numbers.get("scale"); //$NON-NLS-1$
+        look.copies = numbers.get("copies"); //$NON-NLS-1$
+        look.perPage = numbers.get("perPage"); //$NON-NLS-1$
+        look.topMargin = margins.get("topMargin"); //$NON-NLS-1$
+        look.leftMargin = margins.get("leftMargin"); //$NON-NLS-1$
+        look.bottomMargin = margins.get("bottomMargin"); //$NON-NLS-1$
+        look.rightMargin = margins.get("rightMargin"); //$NON-NLS-1$
+        look.fontBold = flags.get("fontBold"); //$NON-NLS-1$
+        look.fontItalic = flags.get("fontItalic"); //$NON-NLS-1$
+        look.fontUnderline = flags.get("fontUnderline"); //$NON-NLS-1$
+        look.fontStrikeout = flags.get("fontStrikeout"); //$NON-NLS-1$
+        look.fitToPage = flags.get("fitToPage"); //$NON-NLS-1$
+        return look;
     }
 
     /**
@@ -1022,9 +1276,9 @@ public class MxlWorkshopTool implements IMcpTool
         }
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] dataRef = new Map[] { null };
-        // Read-only: dryRun=true executes the reader lambda then rolls the
+        // Read-only: the read entry asks no support question, and its transaction rolls the
         // (get-or-create) model touch back, so nothing is persisted.
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -1101,8 +1355,8 @@ public class MxlWorkshopTool implements IMcpTool
         final TemplatePrintWidth.CharMetrics metrics = TemplatePrintWidth.resolveCharMetrics();
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] widthRef = new Map[] { null };
-        // Read-only: dryRun=true runs the reader lambda and rolls the get-or-create model touch back.
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, true,
+        // Read-only: the read entry asks no support question and rolls the model touch back.
+        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -1280,7 +1534,14 @@ public class MxlWorkshopTool implements IMcpTool
             sb.append("MXL spreadsheet template constructor.\n\n"); //$NON-NLS-1$
             sb.append("**Operations:**\n"); //$NON-NLS-1$
             sb.append("- create_template - creates the Template MdObject (templateType=SpreadsheetDocument by default)\n"); //$NON-NLS-1$
-            sb.append("- set_cell - sets a cell's text. Args: row, col, text, language (default 'ru')\n"); //$NON-NLS-1$
+            sb.append("- set_cell - sets a cell's text or template parameter. Args: row, col, " //$NON-NLS-1$
+                + "text, language (default 'ru'), fillType (text / parameter / template), " //$NON-NLS-1$
+                + "parameter\n"); //$NON-NLS-1$
+            sb.append("- format_cells - placement, rotation in degrees (0..360, stored as tenths), " //$NON-NLS-1$
+                + "row height, column width, borders, font, colors and print settings. " //$NON-NLS-1$
+                + "A cell range is row/col or fromRow/fromCol/toRow/toCol. Print settings " //$NON-NLS-1$
+                + "(pageOrientation, scale, copies, perPage, fitToPage, margins in millimetres) " //$NON-NLS-1$
+                + "apply to the whole template, not to the cells in the range, and need no range.\n"); //$NON-NLS-1$
             sb.append("- merge_cells - merges a rectangle. Args: fromRow, fromCol, toRow, toCol (1-based, both inclusive)\n"); //$NON-NLS-1$
             sb.append("- draw - batch: layout='{\"cells\":[{row,col,text,language}],\"merges\":[{fromRow,fromCol,toRow,toCol}]}'\n"); //$NON-NLS-1$
             sb.append("- add_drawing - places a graphic. Args: drawingType (Line/Rectangle/Ellipse/Text), beginRow, beginColumn, endRow, endColumn, [*Offset], [formatIndex], [zOrder], text (for Text). Returns drawingId\n"); //$NON-NLS-1$

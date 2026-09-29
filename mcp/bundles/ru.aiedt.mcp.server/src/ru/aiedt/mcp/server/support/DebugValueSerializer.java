@@ -261,6 +261,31 @@ public final class DebugValueSerializer
     }
 
     /**
+     * The value to report, cut when it is too long to send whole, with a note of how long it was.
+     * <p>
+     * Shared API: every route that hands a value to a client goes through this, so that one value
+     * does not arrive whole down one route and clipped down another.
+     * </p>
+     *
+     * @param value the value as the debug model gave it; may be <code>null</code>
+     * @return a fresh mutable record holding {@code value} and, when it was cut, {@code truncated}
+     *         and {@code fullLength}
+     */
+    public static Map<String, Object> valueWithCut(String value)
+    {
+        Map<String, Object> record = new LinkedHashMap<>();
+        if (value != null && value.length() > MAX_VALUE_LENGTH)
+        {
+            record.put(KEY_VALUE, value.substring(0, MAX_VALUE_LENGTH));
+            record.put(KEY_TRUNCATED, Boolean.TRUE);
+            record.put(KEY_FULL_LENGTH, Integer.valueOf(value.length()));
+            return record;
+        }
+        record.put(KEY_VALUE, value);
+        return record;
+    }
+
+    /**
      * Puts the value into the DTO, cutting it when it is too long to send whole.
      *
      * @param dto the DTO being built
@@ -268,14 +293,7 @@ public final class DebugValueSerializer
      */
     private static void putValue(Map<String, Object> dto, String value)
     {
-        if (value != null && value.length() > MAX_VALUE_LENGTH)
-        {
-            dto.put(KEY_VALUE, value.substring(0, MAX_VALUE_LENGTH));
-            dto.put(KEY_TRUNCATED, Boolean.TRUE);
-            dto.put(KEY_FULL_LENGTH, Integer.valueOf(value.length()));
-            return;
-        }
-        dto.put(KEY_VALUE, value);
+        dto.putAll(valueWithCut(value));
     }
 
     /**

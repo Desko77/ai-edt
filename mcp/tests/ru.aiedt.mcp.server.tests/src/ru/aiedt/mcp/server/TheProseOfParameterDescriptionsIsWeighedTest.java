@@ -221,22 +221,48 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * way to say whether the new application becomes the project's default without the flag.
      * Their rules live in the operation help.
      * </p>
+     * <p>
+     * And by 458 on edit_metadata for addressingRegister, addressingAttributes,
+     * mainAddressingAttribute and currentPerformer: set_task_addressing writes the addressing
+     * register, the addressing attributes, the main one and the current performer of a Task,
+     * and a caller names each by its own argument.
+     * And by 945 on infobase_admin for the two snapshot operations: path says which .dt a dump
+     * writes and which one a load reads, backupTo names where the load's backup of the current
+     * contents goes, and timeoutSeconds, runKey and cancel are described for both - a run answered
+     * as Pending is waited on, looked at and stopped through the same three arguments the update
+     * takes.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
     {
-        PROSE.put("edit_metadata", Integer.valueOf(13730));
+        // Raised from 13730 for the route map and task addressing operations, and for
+        // reportAffectedSettings: the facade names the removal operations, workshop and its own,
+        // that list settings still pointing at what was removed (measured 29.09: 14772).
+        PROSE.put("edit_metadata", Integer.valueOf(14772));
         // git: operation, projectName and the log's limit are the whole surface a client builds
         // the call from - the repository answers the rest. Grown to 875 for the commit's five
         // arguments (paths by name - there is no add-all - the message, and the author pair a
         // repository without its own configuration needs) and the checkout's two (the branch,
         // and whether to create it).
-        PROSE.put("git", Integer.valueOf(875));
-        PROSE.put("compare_three_way", Integer.valueOf(3558));
-        // Raised from 5393 by 52: detect_query_anti_patterns names methodName, one sentence.
+        // Grown to 1553 for filePath, fromRef, toRef, granularity and dryRun: a caller names the
+        // file, the two revisions, whether the cut is by line or by method, and whether revert
+        // only previews (measured 29.09: 1553).
+        // 1854 for the line endings revert_file names, the editor note on dryRun and the file limit
+        // of show_file_changes, and 143 more for pointId of restore_merge_point.
+        PROSE.put("git", Integer.valueOf(1997));
+        // Grown to 3747: the intent sentence says a changing run records a restore point first.
+        PROSE.put("compare_three_way", Integer.valueOf(3747));
+        // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
-        PROSE.put("insights", Integer.valueOf(5445));
-        PROSE.put("dcs_workshop", Integer.valueOf(4249));
+        // compare_configurations: mode says that the answer's failed and failedCount name what the
+        // comparison could not read, and projectName that mode=files takes the path of the first
+        // export; the intent sentence names the merge restore point.
+        PROSE.put("insights", Integer.valueOf(6079));
+        // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
+        // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
+        // them, and a client that builds its call from the schema has to see them there.
+        PROSE.put("dcs_workshop", Integer.valueOf(4986));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
@@ -246,11 +272,23 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // set_infobase_credentials on accessMode, userName and password: the credentials a base
         // with users needs are passed to the registration itself, so a client that can see one
         // operation store them can see the other take them.
-        PROSE.put("infobase_admin", Integer.valueOf(5771));
+        // Raised to the measured 6234 for the data-loss protection of update_database and
+        // inspect_database_sync: protectData now says the comparison is made before the update
+        // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
+        // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot
+        // operations add path, backupTo, timeoutSeconds, runKey and cancel sentences, and
+        // retrieve_database_changes adds replaceLocal, markSynchronized and the sentences
+        // timeoutSeconds, runKey and cancel gained for that pull.
+        // And for verifyInfobaseContent: an incremental update can be asked to read the infobase's
+        // own ConfigDumpInfo and refuse when it does not match the stored copy. Measured 29.09: 8364.
+        PROSE.put("infobase_admin", Integer.valueOf(8364));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
-        // runKey gained naming that operation (measured 24.09: 3810).
-        PROSE.put("config_io", Integer.valueOf(3810));
+        // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
+        // export_database_configuration and export_database_extension: the new overwrite and
+        // allowOutOfSync arguments, one sentence each, and the sentences extensionName,
+        // applicationId and outputPath gained naming the two operations (measured 28.09: 4734).
+        PROSE.put("config_io", Integer.valueOf(4734));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
@@ -268,8 +306,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // parameters - the test runners already pass theirs the same way) and for waitForEndpoint:
         // a process that exists is not an opened processor that answers, and the wait is the only
         // way to tell them apart.
-        PROSE.put("launch_debugger", Integer.valueOf(4186));
-        PROSE.put("mxl_workshop", Integer.valueOf(2164));
+        // Raised by 534 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
+        // add_breakpoint (measured 29.09: 4720).
+        PROSE.put("launch_debugger", Integer.valueOf(4720));
+        // Each argument is one sentence naming the unit the call takes. Measured 4039 bytes.
+        PROSE.put("mxl_workshop", Integer.valueOf(4039));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
         PROSE.put("project_admin", Integer.valueOf(1767));
@@ -281,12 +322,17 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 1170 by 235: find_rls_violations and sensitive_data_scan advertise scope,
         // moduleFqn, methodName and subsystemName, one sentence each. The sentences that say
         // which combination is a walk and which is a refusal moved to operation help.
-        PROSE.put("security_audit", Integer.valueOf(1405));
+        // Raised from 1405 to 1792 for the complete orphan mode contract: role, apply behavior,
+        // and every object type accepted by the standalone audit.
+        PROSE.put("security_audit", Integer.valueOf(1792));
         PROSE.put("xdto_workshop", Integer.valueOf(1155));
         PROSE.put("get_form_screenshot", Integer.valueOf(1154));
         PROSE.put("code_review", Integer.valueOf(1129));
         PROSE.put("get_metadata_objects", Integer.valueOf(1090));
-        PROSE.put("yaxunit_tests", Integer.valueOf(1077));
+        // Raised from 1077 to 1123 for reuseRecent on the facade: the flag that takes a report of a
+        // run finished within the last five minutes, whose default (false) is the whole point of it
+        // - a second call after a delivered report runs the tests again (measured 29.09: 1123).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1123));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -472,6 +518,103 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * bytes, and this budget weighs parameter descriptions only. Measured addition: 0. The list
      * budget records the sentence. Together with the twenty-eighth: 92481.
      * </p>
+     * <p>
+     * And a thirtieth, by 105, for length, precision, fractionDigits, nonNegative, dateFractions
+     * and allowedLength on dcs_workshop: add_parameter, set_parameter and add_field write them into
+     * the value type, and a client that builds its call from the schema has to see them there.
+     * Together with the twenty-ninth: 92586.
+     * </p>
+     * <p>
+     * And a thirty-first, by 99, for writeStub on edit_metadata: add_form_event_handler and
+     * add_command_handler append the handler procedure to the form module unless the call turns
+     * that off, and the switch has to be in the schema to be turned off. Measured with the
+     * templateType sentence of add_template one byte shorter: 92685.
+     * </p>
+     * <p>
+     * And a thirty-second, by 924, for the overwrite and allowOutOfSync sentences of
+     * export_database_configuration and export_database_extension on config_io. Measured 28.09:
+     * 93609.
+     * </p>
+     * <p>
+     * And a thirty-third, by 253, for use, valueListAllowed and denyIncompleteValues of a schema
+     * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
+     * edit_metadata: 93862.
+     * </p>
+     * <p>
+     * And by 128 for addressingRegister, addressingAttributes, mainAddressingAttribute and
+     * currentPerformer on edit_metadata, the four arguments of set_task_addressing: 95865.
+     * </p>
+     * <p>
+     * And one by 196 for itemNames, field and index on edit_metadata: add_form_appearance_rule and
+     * remove_form_appearance_rule name the styled form items, the field of the condition and the
+     * rule to remove: 93805.
+     * </p>
+     * <p>
+     * And one by 15 for format on security_audit: markdown applies to audit_role_rights in
+     * mode=rights only: 93877.
+     * </p>
+     * <p>
+     * Raised from 93877 to 94099 for security_audit orphan cleanup: the facade now exposes its
+     * role, apply behavior and full object-type contract.
+     * </p>
+     * <p>
+     * Raised from 92685 to 92779 for normalizeInvalidCharacters on write_module_source: the module
+     * writer replaces the characters BSL has no place for unless the call turns that off, and the
+     * switch has to be in the schema to be turned off.
+     * </p>
+     * <p>
+     * And a thirty-fourth, by 127, for reuseRecent on the yaxunit_tests facade: the flag that takes
+     * the report of a run finished within the last five minutes has to say so in its own sentence,
+     * because its default - run again - is the answer a caller cannot guess from the name. The 127
+     * bytes are that sentence and nothing else; the two hidden aliases, run_yaxunit_tests and
+     * debug_yaxunit_tests, gained declarations of the same flags and are not weighed here, because
+     * {@code tools/list} under the default preset does not advertise them: 95864.
+     * </p>
+     * <p>
+     * And by 444 for reportAffectedSettings on dcs_workshop and edit_metadata: the
+     * removal operations list settings that still reference what was removed.
+     * </p>
+     * <p>
+     * And a thirty-fifth, by 274, for breakpointEnabled on set_breakpoint_state and replaceModuleSet
+     * on add_breakpoint: both sentences have to say what the argument does to the session, and the
+     * facade's own description gained the two operation names. Measured 29.09: 96665.
+     * </p>
+     * <p>
+     * And a thirty-fourth, by 292, for protectData and acceptDataLoss of update_database on
+     * infobase_admin, and the same pair plus inspect_database_sync in the operation list.
+     * </p>
+     * <p>
+     * Raised from 95832 to 96003 for the reworked data-loss protection: protectData and
+     * acceptDataLoss of update_database and the pendingDataLoss the inspection answers now describe
+     * a comparison made against the base's synchronization baseline before the update starts, in
+     * place of the confirmation window that was read while the update ran (measured 29.09).
+     * </p>
+     * <p>
+     * Raised from 96170 to 96231 for the compare_configurations contract on insights: the mode and
+     * projectName descriptions say what the operation reads and what failed / failedCount mean.
+     * </p>
+     * <p>
+     * And by 678 for filePath, fromRef, toRef, granularity and dryRun on git. The git prose grew
+     * from 875 to 1553 and nothing else in the list changed. Measured 29.09: 98229.
+     * </p>
+     * <p>
+     * And by 301 for the line endings revert_file names, the editor note on dryRun and the file
+     * limit of show_file_changes, and by 463 for the merge restore point: pointId of
+     * restore_merge_point, and the sentence of compare_three_way and insights that a changing
+     * comparison records a point first.
+     * </p>
+     * <p>
+     * And by 917 for the two snapshot operations on infobase_admin: path, backupTo,
+     * timeoutSeconds, runKey and cancel. Measured 29.09: 100551.
+     * </p>
+     * <p>
+     * And for the retrieve_database_changes sentences on infobase_admin. Measured 29.09: 101612.
+     * </p>
+     * <p>
+     * And for verifyInfobaseContent on infobase_admin: the sentence that an incremental update
+     * reads the infobase's own ConfigDumpInfo and refuses when it does not match the stored copy.
+     * Measured 29.09: 101764.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 92481;
+    private static final int DOCUMENT_PROSE = 101764;
 }

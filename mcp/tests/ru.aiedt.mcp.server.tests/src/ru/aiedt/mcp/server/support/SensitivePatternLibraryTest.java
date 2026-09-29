@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -59,6 +60,44 @@ public class SensitivePatternLibraryTest
         assertFalse(SensitivePatternLibrary.isSensitiveName("Наименование")); //$NON-NLS-1$
         assertFalse(SensitivePatternLibrary.isSensitiveName("Quantity")); //$NON-NLS-1$
         assertFalse(SensitivePatternLibrary.isSensitiveName("ДатаДокумента")); //$NON-NLS-1$
+    }
+
+    /**
+     * A dictionary word counts only where it is a word of the identifier.
+     * <p>
+     * The short words of the dictionary - tin, inn, ssn, инн - sit inside ordinary words
+     * (Setting, Beginning, Длинный), and a substring match flagged all of those as personal
+     * data. The word boundaries of a 1C identifier are a change of case, a digit, an underscore
+     * and the ends of the name, so an acronym reads as a word of its own on either side of it.
+     * </p>
+     */
+    @Test
+    public void onlyAWordOfItsOwnCounts()
+    {
+        String[][] expectations = {
+            // The word stands as a word of its own.
+            { "ИНН", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "КонтрагентИНН", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "ИННКонтрагента", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "CustomerSSN", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "TaxINN", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "UserPassword", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "ДатаРождения", "true" }, //$NON-NLS-1$ //$NON-NLS-2$
+            // The word is only a substring of a longer word.
+            { "Setting", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "Settings", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "Testing", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "Beginning", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "ClassName", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "Длинный", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "Старинный", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+            { "Винный", "false" }, //$NON-NLS-1$ //$NON-NLS-2$
+        };
+        for (String[] row : expectations)
+        {
+            assertEquals(row[0], Boolean.parseBoolean(row[1]),
+                SensitivePatternLibrary.isSensitiveName(row[0]));
+        }
     }
 
     @Test

@@ -417,7 +417,7 @@ public final class BslModuleAccess
      * @param token the FQN segment to test
      * @return <code>true</code> when it is one of {@code form}, {@code forms} and their Russian twins
      */
-    private static boolean isFormKeyword(String token)
+    static boolean isFormKeyword(String token)
     {
         return "form".equalsIgnoreCase(token) //$NON-NLS-1$
             || "forms".equalsIgnoreCase(token) //$NON-NLS-1$
@@ -600,6 +600,37 @@ public final class BslModuleAccess
             }
             return lines;
         }
+    }
+
+    /**
+     * The text of a module named by its path or FQN, read from its file under the project's
+     * {@code src/} folder.
+     * <p>
+     * {@link #resolveModulePath} answers a {@code src/}-relative path, so the file is looked up
+     * under {@code src/}; a module that has no file yet answers null rather than an error, which
+     * lets a caller about to create it treat it as empty.
+     * </p>
+     *
+     * @param project the project that owns the module
+     * @param modulePathOrFqn the module path under {@code src/} or its FQN
+     * @return the module text, or <code>null</code> when the reference does not resolve or the
+     *         module has no file
+     * @throws Exception when the file is there and cannot be read
+     */
+    public static String readModuleIfPresent(IProject project, String modulePathOrFqn) throws Exception
+    {
+        ModulePathResolution resolved = resolveModulePath(project, modulePathOrFqn);
+        if (project == null || !resolved.isResolved())
+        {
+            return null;
+        }
+        IFile file = project.getFile(new Path("src").append(resolved.getPath())); //$NON-NLS-1$
+        boolean onDisk = file.getLocation() != null && file.getLocation().toFile().isFile();
+        if (!file.exists() && !onDisk)
+        {
+            return null;
+        }
+        return readFileText(file);
     }
 
     /**

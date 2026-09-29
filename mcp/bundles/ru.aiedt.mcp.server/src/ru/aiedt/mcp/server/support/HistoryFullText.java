@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.support;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
@@ -90,8 +91,8 @@ public final class HistoryFullText
      * The directory the store and the journal share.
      * <p>
      * The configured path when it is usable, and the plugin's own state location otherwise. A path
-     * that cannot be created or written to is NOT a reason to lose the call: the store falls back
-     * and {@link #pathProblem()} says what was wrong with it.
+     * that is not a valid path at all, cannot be created or cannot be written to is NOT a reason to
+     * lose the call: the store falls back and {@link #pathProblem()} says what was wrong with it.
      * </p>
      *
      * @param settings the history settings in force.
@@ -102,8 +103,19 @@ public final class HistoryFullText
         String configured = settings == null ? null : settings.diskPath();
         if (configured != null && !configured.trim().isEmpty())
         {
-            Path asked = Paths.get(configured.trim());
-            if (asked.isAbsolute())
+            Path asked = null;
+            try
+            {
+                asked = Paths.get(configured.trim());
+            }
+            catch (InvalidPathException e)
+            {
+                // A path the file system cannot even name is a configuration problem, not a reason
+                // to take the recording - or the server starting it - down: fall back and say so.
+                pathProblem = "the configured history directory is not a valid path: " + configured //$NON-NLS-1$
+                    + " (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (asked != null && asked.isAbsolute())
             {
                 try
                 {
@@ -121,7 +133,7 @@ public final class HistoryFullText
                         + " (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
                 }
             }
-            else
+            else if (asked != null)
             {
                 pathProblem = "the configured history directory must be an absolute path: " + configured; //$NON-NLS-1$
             }
@@ -151,12 +163,15 @@ public final class HistoryFullText
     /**
      * Writes the full text of one call.
      * <p>
-     * Never throws: failing to keep a copy of a call must not fail the call.
+     * Personal data in both texts is masked here under the same redaction setting the journal
+     * obeys, so the store never carries on disk what the journal would not. Never throws: failing
+     * to keep a copy of a call must not fail the call.
      * </p>
      *
      * @param entryId the id the buffer record carries.
      * @param toolName the tool that ran.
-     * @param fullArgs its arguments, masked and NOT shortened; may be <code>null</code>.
+     * @param fullArgs its arguments, with credentials already masked and NOT shortened; may be
+     *        <code>null</code>.
      * @param fullResult what it answered, NOT shortened; may be <code>null</code>.
      * @param binaryResult whether the answer is inline binary data, which is not stored.
      * @param settings the history settings in force.
@@ -168,6 +183,11 @@ public final class HistoryFullText
         if (entryId == null || settings == null || !settings.isDiskEnabled())
         {
             return;
+        }
+        if (settings.isFileRedacted())
+        {
+            fullArgs = SensitiveTextMasker.redact(fullArgs);
+            fullResult = SensitiveTextMasker.redact(fullResult);
         }
         try
         {

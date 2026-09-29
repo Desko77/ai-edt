@@ -5,37 +5,28 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 124 | a test class named after it |
-| exercised | 152 | reached by some other test |
-| tool-sweep | 62 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 47 | needs a display or an extension point |
-| workspace-bound | 44 | drives a live EDT project or debug session |
+| direct | 138 | a test class named after it |
+| exercised | 211 | reached by some other test |
+| tool-sweep | 46 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 41 | needs a display or an extension point |
+| workspace-bound | 22 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **429** | across 396 test classes |
+| **total** | **458** | across 562 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (44)
+## workspace-bound (22)
 
 **folders**
-- IClusterChangeObserver
 - IClusterManager
-
-**folders/internal**
-- ClusterManagerImpl
 
 **folders/refactoring**
 - ClusterDeleteRefactorHook
 
-**folders/repository**
-- IClusterStore
-- YamlClusterStore
-
 **labels**
 - MarkerHelpers
-- MarkerManager
 
 **labels/refactoring**
 - MarkerDeleteRefactorHook
@@ -45,27 +36,16 @@ _none_
 - BmCommonFormPostCreate
 - BmCommonModuleGuards
 - BmEventSubscriptionHelper
-- BmExportHelper
 - BmExtensionProjectHelper
-- BmFormCleanupHelper
-- BmFormGeneratorHelper
-- BmFormResourceHelper
-- BmHelpHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
-- BmRouteMapHelper
-- BmSubsystemHelper
 - BmXdtoHelper
 - BreakpointAccess
 - BslCallGraphHelper
 - BslSignatureReader
 - BuildTaskHelper
 - ExternalProjectResolver
-- FileMarkers
-- InfobaseIdentity
 - ProjectReadinessGate
-- ProjectScopeResolver
-- RoleRightsAnalyzer
 
 **toolkit/mdreport**
 - EObjectProbe
@@ -73,30 +53,19 @@ _none_
 
 **toolkit/ops**
 - CommandInterfaceOps
-- ContentOps
-- FormCreateOps
 - FormEventOps
-- PredefinedOps
-- RoleOps
-- RouteMapOps
-- SpecializedOps
 
-## ui-bound (47)
+## ui-bound (41)
 
 **(root)**
 - McpAutoStart
 
 **folders/handlers**
-- AddToClusterCommand
-- ClusterCommandHandler
 - CopyClusterCommand
 - DeleteClusterCommand
 - NewClusterCommand
 - RemoveFromClusterCommand
 - RenameClusterCommand
-
-**folders/refactoring**
-- ClusterRenameRefactorHook
 
 **folders/ui**
 - ClusterEditDialog
@@ -122,10 +91,8 @@ _none_
 - MarkerFilterController
 - MarkerFilterDialog
 - MarkerFilterPanel
-- MarkerIconFactory
 - MarkerManagerDialog
 - MarkerMenuBuilder
-- MarkerQueryFilter
 
 **navigation**
 - CollapseTreeCommand
@@ -143,7 +110,6 @@ _none_
 - BslHoverAccess
 - BslProposalAccess
 - DebugLog
-- EditorImageCapture
 - OffScreenWidget
 - UiSync
 
@@ -152,29 +118,22 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (62)
+## tool-sweep (46)
 
 **toolkit/ops**
 - ApplicationsReader
 - AttributeAdder
-- AuditRoleRightsTool
 - BookmarksReader
 - BreakpointRemover
-- BreakpointSetter
 - BreakpointsLister
-- CallHierarchyReader
 - CodeTemplateTool
 - CommonPictureExporter
-- CompareConfigurationsTool
 - ConfigurationInfoReader
 - ConfigurationXmlExporter
-- ConfigurationXmlImporter
 - DcsSearchTool
 - DebugResumer
 - DebugStateReader
 - DebugStepper
-- DebugVariableWriter
-- DebugVariablesReader
 - DefinitionNavigator
 - DialogAnswerer
 - DiskResynchronizer
@@ -182,25 +141,19 @@ _none_
 - EventLogTool
 - ExportExtensionTool
 - ExportObjectTool
-- ExpressionEvaluator
 - ExtensionDiffTool
 - ExtensionLifecycleTool
 - ExternalDataSourceWorkshopTool
 - FindDeadCodeTool
 - FormScreenshotGrabber
 - GenerateHealthSnapshotTool
-- GetCommandInterfaceTool
-- GetFormStructureTool
 - GetObjectHelpTool
 - GetSubsystemsTool
 - InstallExtensionTool
 - LaunchConfigCreator
 - LaunchConfigsLister
 - ListExtensionsTool
-- McpHistoryReader
 - OutgoingStructuresReader
-- PlatformDocReader
-- ProblemSummaryReader
 - ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
@@ -210,15 +163,12 @@ _none_
 - RunToLineTool
 - SelfStatusTool
 - SemanticMetadataSearchTool
-- SetExceptionBreakpointTool
 - TaggedObjectsReader
 - TagsReader
-- TasksReader
 - UninstallExtensionTool
 - XdtoWorkshopTool
-- YaxunitDebugRunner
 
-## exercised (152)
+## exercised (211)
 
 **(root)**
 - Activator
@@ -228,18 +178,40 @@ _none_
 
 **folders**
 - ClusterKeys
+- IClusterChangeObserver
+
+**folders/handlers**
+- AddToClusterCommand
+
+**folders/internal**
+- ClusterManagerImpl
 
 **folders/model**
 - Cluster
 - ClusterStore
 
+**folders/repository**
+- IClusterStore
+- YamlClusterStore
+
 **labels**
 - MarkerDecorationHelpers
 - MarkerKeys
+- MarkerManager
+- MarkerSearch
 
 **labels/model**
 - Marker
 - MarkerStore
+
+**labels/ui**
+- MarkerEditCommit
+- MarkerIconFactory
+- MarkerMatchCache
+- MarkerMenuIndex
+- MarkerOwnership
+- MarkerQueryFilter
+- MarkerRenamePlan
 
 **settings**
 - McpAuth
@@ -251,22 +223,30 @@ _none_
 - BmComparisonHelper
 - BmConfigurationProjectHelper
 - BmDcsHelper
+- BmExportHelper
 - BmExtensionHelper
 - BmExtensionTypeHelper
 - BmExternalObjectDumpHelper
 - BmExternalObjectProjectHelper
+- BmFormCleanupHelper
 - BmFormHelper
+- BmFormResourceHelper
+- BmHelpHelper
 - BmInfobaseExtensionHelper
 - BmInfobaseLifecycleHelper
 - BmObjectHelper
 - BmReferencesHelper
 - BmRightsHelper
+- BmRouteMapHelper
+- BmSubsystemHelper
 - BmSupportRegistryHelper
 - BmTemplateHelper
 - ChildBorrow
 - ClientLaunchMode
 - ConfigurationListProperties
 - ContainerScope
+- DataLossPlan
+- DatabaseChangesResolver
 - DcsExtensionExportHelper
 - DcsSchemaRestorer
 - DebugSessionBook
@@ -275,15 +255,20 @@ _none_
 - DumpInfoProbe
 - DumpInfoRebuilder
 - EditorBuffer
+- EditorImageCapture
 - EndpointWaiter
 - ErrorTags
 - ExportedFiles
 - FacadeParameterHelp
+- FileMarkers
 - FormEventContainers
+- GitFileDiff
 - GitRepositoryAccess
 - HistoryFullText
 - InfobaseAddress
+- InfobaseIdentity
 - InfobaseObjectsExporter
+- InfobaseOutsideChange
 - JUnitRunOutcome
 - LaunchConfigAccess
 - MetadataDiffEngine
@@ -296,12 +281,17 @@ _none_
 - PictureValidator
 - ProjectMetricsCollector
 - ProjectResolver
+- ProjectScopeResolver
 - ProjectStateGuard
 - QlValidator
+- RemovedObjectFiles
+- RoleRightsAnalyzer
+- RunReceipts
 - SubsystemMembership
 - SupportSnapshotStore
 - SyncBaseline
 - TemplatePrintWidth
+- ThickClientLaunch
 - ToolRoad
 - UnreadArguments
 - WatchForCancel
@@ -327,27 +317,44 @@ _none_
 - MetadataFormatter
 
 **toolkit/ops**
+- AuditRoleRightsTool
+- BreakpointSetter
+- BreakpointStateSetter
 - BslCodeReviewTool
 - BslModuleAccess
+- CallHierarchyReader
 - CheckDocReader
 - CodeSearchTool
 - CodeTextSearcher
+- CompareConfigurationsTool
 - ConfigIoFacadeTool
 - ContentAssistReader
+- ContentOps
+- DatabaseSyncInspector
 - DatabaseUpdater
 - DcsWorkshopTool
+- DebugFrameResolution
+- DebugPauser
 - DebugSessionStarter
+- DebugVariableWriter
+- DebugVariablesReader
 - DependencyGraphTool
 - DetectQueryAntiPatternsTool
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
+- ExpressionEvaluator
 - ExternalObjectWorkshopTool
 - FindRlsViolationsTool
+- FormAppearanceOps
 - FormCommandInterfaceOps
+- FormCreateOps
 - FormItemsOps
 - GenerateEventHandlersTool
+- GetCommandInterfaceTool
+- GetFormStructureTool
 - GitCheckoutTool
 - GitCommitTool
+- GitFileRestore
 - GitTool
 - ImpactAnalysisTool
 - InfobaseAdminFacadeTool
@@ -358,6 +365,7 @@ _none_
 - LaunchDebuggerTool
 - LaunchTerminator
 - ListInterceptorsTool
+- McpHistoryReader
 - MetadataDetailsReader
 - MetadataObjectDeleter
 - MetadataObjectRenamer
@@ -372,21 +380,30 @@ _none_
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
+- PlatformDocReader
+- PredefinedOps
+- ProblemSummaryReader
 - ProjectAdminFacadeTool
 - ProjectMetricsTool
 - ProjectProblemsReader
 - ReferenceLocator
 - RestartEdtTool
+- RoleOps
+- RouteMapOps
 - SecurityAuditFacadeTool
 - SensitiveDataScanTool
 - ServiceOps
+- SetExceptionBreakpointTool
+- SpecializedOps
 - SuspendWaiter
 - SymbolInfoReader
 - SyncControlTool
+- TasksReader
 - TemplateOps
 - ValidateForExportTool
 - VanessaTool
 - WorkspaceMarksFacadeTool
+- YaxunitDebugRunner
 - YaxunitTestsTool
 
 **wire**
@@ -402,11 +419,17 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (124)
+## direct (138)
 
 **(root)**
 - BrowserOrigin
 - OperatorSignal
+
+**folders/handlers**
+- ClusterCommandHandler
+
+**folders/refactoring**
+- ClusterRenameRefactorHook
 
 **labels/ui**
 - Messages
@@ -422,18 +445,23 @@ _none_
 - ToolSettingsStore
 
 **support**
+- ApplicableRightsResolver
 - AttributionRule
 - BmBinaryImportHelper
 - BmDefinedTypeHelper
+- BmFormGeneratorHelper
 - BmInfobaseCredentialsHelper
 - BmInfobaseRegistrationHelper
 - BranchInfobaseBook
 - BslCommentParseHelper
+- ClientDialogReader
 - ComparisonSessions
 - ControlledFragment
 - DbViewSurvey
+- DcsSettingsImpact
 - DeliveryIdentity
 - DependencyGraphBuilder
+- DtSnapshotRunner
 - DynamicListSettingsReader
 - EventLogFormat
 - EventLogReader
@@ -455,6 +483,7 @@ _none_
 - IdleComparisonSweep
 - InfobaseHolders
 - InstanceRegistry
+- InvalidCharacters
 - JUnitReportFormatter
 - JUnitXmlReader
 - LaunchApplicationIds
@@ -462,11 +491,13 @@ _none_
 - LineDelimiters
 - LocalizedStringUtils
 - MarkdownTableHelper
+- MergeRestorePoint
 - MetadataMutationLock
 - MetadataPathMapper
 - MetadataTypeCatalog
 - MethodSignature
 - ModalDialogWatch
+- ModelEditabilityGuard
 - MonopolyLock
 - MutatorIdempotency
 - MutatorIdempotencyStore
@@ -483,6 +514,7 @@ _none_
 - SensitivePatternLibrary
 - SensitiveTextMasker
 - StandardCommandRegistry
+- StockPictures
 - SupportSnapshot
 - SystemEnumValues
 - TaskDirectory
@@ -509,17 +541,20 @@ _none_
 - BslSyntaxValidator
 - ClientSessionStarter
 - ConfigurationBinaryImporter
+- ConfigurationXmlImporter
 - DbTablesReader
 - DiffModuleTool
 - EditFormTool
 - EditMetadataTool
 - ExtensionWorkshopTool
 - ExternalBinaryUnpacker
+- FormModuleStubs
 - InfobaseRegistrar
 - MarkerCorrectionTool
 - ModuleSourceWriter
 - ObjectCopier
 - QueryValidator
+- RegisteredInfobasesReader
 - SelfUpkeepTool
 - SupportRegistryTool
 - ThreeWayComparisonTool
@@ -562,17 +597,18 @@ closes.
 | Test methods | Classes |
 |---:|---:|
 | 1 | 0 |
-| 2 | 1 |
-| 3-4 | 15 |
-| 5-8 | 37 |
-| 9-16 | 52 |
-| 17+ | 19 |
+| 2 | 2 |
+| 3-4 | 13 |
+| 5-8 | 43 |
+| 9-16 | 58 |
+| 17+ | 22 |
 
-3469 test methods across 396 test classes; 124 classes have a test of their own, median 9 methods each.
+4533 test methods across 562 test classes; 138 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 124 of 429 classes have one: 62 are covered by the registry-wide contract sweep and 44 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 138 of 458 classes have one: 46 are covered by the registry-wide contract sweep and 22 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
-### Resting on 2 test method(s) or fewer (1)
+### Resting on 2 test method(s) or fewer (2)
 
+- folders/handlers/ClusterCommandHandler - 2
 - support/BmInfobaseCredentialsHelper - 2
 

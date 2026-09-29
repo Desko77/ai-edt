@@ -36,7 +36,11 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExportHelper;
+import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.InvalidCharacters;
 import ru.aiedt.mcp.server.support.LineDelimiters;
+import ru.aiedt.mcp.server.support.MetadataGuards;
+import ru.aiedt.mcp.server.support.ModelEditabilityGuard;
 import ru.aiedt.mcp.server.support.FileMarkers;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
@@ -195,6 +199,9 @@ public class ModuleSourceWriter implements IMcpTool
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "Shows what the write would produce without touching the file. Reports diff stats " //$NON-NLS-1$
                     + "(linesBefore, linesAfter, removedLines, addedLines)") //$NON-NLS-1$
+            .booleanProperty("normalizeInvalidCharacters", //$NON-NLS-1$
+                "Replaces dashes, no-break spaces and soft hyphens outside string literals with plain " //$NON-NLS-1$
+                    + "characters and reports where. Default: true.") //$NON-NLS-1$
             .booleanProperty("skipSyntaxCheck", //$NON-NLS-1$
                 "Bypasses the BSL syntax check (default: false). At the default, it confirms balanced " //$NON-NLS-1$
                     + "Procedure/EndProcedure, Function/EndFunction, If/EndIf, While/EndDo, " //$NON-NLS-1$
@@ -249,6 +256,8 @@ public class ModuleSourceWriter implements IMcpTool
         boolean skipSyntaxCheck = JsonUtils.extractBooleanArgument(params, "skipSyntaxCheck", false); //$NON-NLS-1$
         boolean validateAfterWrite = JsonUtils.extractBooleanArgument(params, "validateAfterWrite", true); //$NON-NLS-1$
         boolean confirmFullReplace = JsonUtils.extractBooleanArgument(params, "confirmFullReplace", false); //$NON-NLS-1$
+        boolean normalizeInvalidCharacters =
+            JsonUtils.extractBooleanArgument(params, "normalizeInvalidCharacters", true); //$NON-NLS-1$
 
         // --- step 2: validate required parameters ---
         if (projectName == null || projectName.isEmpty())
@@ -338,12 +347,52 @@ public class ModuleSourceWriter implements IMcpTool
                 + "the source in as its entire content)."; //$NON-NLS-1$
         }
 
+        // --- step 6a: the support registry's own answer ---
+        // Asked before anything is read or written, so that a preview is refused exactly as a real
+        // call is, and so that the caller is told which object is closed rather than which file is.
+        // A module of the configuration root (Configuration/*.bsl) names the root itself, which the
+        // validation FQN below does not derive: the root's directory names no object type.
+        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project,
+            guardFqnOf(objectName, modulePath));
+        if (notEditable.blocked)
+        {
+            // A refusal in the shape the rest of this tool's answers take, with the supportLock tag
+            // as a field rather than as prose: the status line is what tells a client this answer
+            // failed, and the tag is what lets one act on the refusal without reading the text.
+            YamlFrontMatter refused = YamlFrontMatter.create()
+                .put("tool", NAME) //$NON-NLS-1$
+                .put("projectName", projectName) //$NON-NLS-1$
+                .put("modulePath", modulePath) //$NON-NLS-1$
+                .put("status", "error"); //$NON-NLS-1$ //$NON-NLS-2$
+            refused.put("error", notEditable.error); //$NON-NLS-1$
+            if (notEditable.hint != null && !notEditable.hint.isEmpty())
+            {
+                refused.put("hint", notEditable.hint); //$NON-NLS-1$
+            }
+            String supportLock = supportLockAsText(notEditable);
+            if (supportLock != null)
+            {
+                refused.put(ErrorTags.SUPPORT_LOCK.wire(), supportLock);
+            }
+            return refused.wrapContent("Error: " + notEditable.error //$NON-NLS-1$
+                + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
+                    ? "" : " - " + notEditable.hint)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
         // -- outer try: steps 7-17 --
         try
         {
             // --- step 7: normalise source line endings ---
             if (source != null)
                 source = source.replace("\r\n", "\n"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            // --- step 7a: what the character pass changes ---
+            // Only what is written is touched, and each piece is read as the module reads it where
+            // it lands - a fragment that begins inside a string literal keeps the characters of that
+            // literal, a fragment that begins in code has its own replaced. oldSource is matched
+            // against the file as it stands and expectedText against what the caller read, so
+            // neither is rewritten here.
+            InvalidCharacters.Report characterFix = new InvalidCharacters.Report();
 
             // --- step 8: read current content + BOM ---
             List<String> originalLines;
@@ -370,9 +419,13 @@ public class ModuleSourceWriter implements IMcpTool
             switch (mode)
             {
                 case MODE_REPLACE:
+                    source = normalizeWhereWritten(source, "", normalizeInvalidCharacters, //$NON-NLS-1$
+                        characterFix, null);
                     newLines = splitSourceLines(source);
                     break;
                 case MODE_APPEND:
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, totalOriginal),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>(originalLines);
                     newLines.addAll(splitSourceLines(source));
                     break;
@@ -395,7 +448,10 @@ public class ModuleSourceWriter implements IMcpTool
                             + " occurrences). Provide a longer, more specific oldSource fragment " //$NON-NLS-1$
                             + "that pins down a single location."; //$NON-NLS-1$
                     }
-                    String newContent = currentContent.substring(0, idx) + source
+                    String before = currentContent.substring(0, idx);
+                    source = normalizeWhereWritten(source, before, normalizeInvalidCharacters,
+                        characterFix, null);
+                    String newContent = before + source
                         + currentContent.substring(idx + oldSource.length());
                     newLines = splitSourceLines(newContent);
                     break;
@@ -418,6 +474,8 @@ public class ModuleSourceWriter implements IMcpTool
                         if (!actualBlock.equals(expectedBlock))
                             return lineDriftError(lineFrom, lineTo, expectedBlock, actualBlock);
                     }
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, lineFrom - 1),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, lineFrom - 1));
                     newLines.addAll(splitSourceLines(source));
@@ -433,6 +491,8 @@ public class ModuleSourceWriter implements IMcpTool
                     if (line > totalOriginal)
                         return "Error: line (" + line + ") is past the end of the file (" + totalOriginal //$NON-NLS-1$ //$NON-NLS-2$
                             + " lines). Use 'append' mode instead to add at the end."; //$NON-NLS-1$
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, line - 1),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, line - 1));
                     newLines.addAll(splitSourceLines(source));
@@ -447,6 +507,8 @@ public class ModuleSourceWriter implements IMcpTool
                     if (line > totalOriginal)
                         return "Error: line (" + line + ") is past the end of the file (" + totalOriginal //$NON-NLS-1$ //$NON-NLS-2$
                             + " lines). Use 'append' mode instead to add at the end."; //$NON-NLS-1$
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, line),
+                        normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, line));
                     newLines.addAll(splitSourceLines(source));
@@ -489,6 +551,8 @@ public class ModuleSourceWriter implements IMcpTool
                     methodStart = directiveStart;
                     if (firstNonBlankIsComment(source))
                         methodStart = includeLeadingCommentBlock(originalLines, methodStart);
+                    source = normalizeWhereWritten(source, moduleTextBefore(originalLines, methodStart),
+                        normalizeInvalidCharacters, characterFix, null);
                     int methodEnd = -1;
                     for (int i = methodStart + 1; i < totalOriginal; i++)
                     {
@@ -510,7 +574,8 @@ public class ModuleSourceWriter implements IMcpTool
                 }
                 case MODE_REPLACE_METHODS:
                 {
-                    ReplaceMethodsResult result = applyReplaceMethods(originalLines, methodsJson);
+                    ReplaceMethodsResult result = applyReplaceMethods(originalLines, methodsJson,
+                        normalizeInvalidCharacters, characterFix);
                     if (result.error != null)
                         return result.error;
                     newLines = result.newLines;
@@ -565,6 +630,8 @@ public class ModuleSourceWriter implements IMcpTool
                     .put("lineDelta", newLines.size() - totalOriginal); //$NON-NLS-1$
                 if (protectionWarning != null)
                     dryFm.put("protection", protectionWarning); //$NON-NLS-1$
+                if (characterFix.changed())
+                    putCharacterFix(dryFm, characterFix);
                 if (provided != null)
                 {
                     describeProvided(dryFm, provided);
@@ -577,6 +644,8 @@ public class ModuleSourceWriter implements IMcpTool
                     preview.append("**").append(protectionWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
                 if (handlerWarning != null)
                     preview.append("**").append(handlerWarning).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (characterFix.changed())
+                    preview.append(describeCharacterFix(characterFix)).append("\n\n"); //$NON-NLS-1$
                 preview.append("Lines: ").append(totalOriginal).append(" -> ") //$NON-NLS-1$ //$NON-NLS-2$
                     .append(newLines.size()).append("\n\n"); //$NON-NLS-1$
                 return dryFm.wrapContent(preview.toString());
@@ -652,6 +721,9 @@ public class ModuleSourceWriter implements IMcpTool
             if (protectionWarning != null)
                 fm.put("protection", protectionWarning); //$NON-NLS-1$
 
+            if (characterFix.changed())
+                putCharacterFix(fm, characterFix);
+
             if (provided != null)
             {
                 describeProvided(fm, provided);
@@ -687,6 +759,8 @@ public class ModuleSourceWriter implements IMcpTool
                 body.append("\n\n**").append(protectionWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
             if (handlerWarning != null)
                 body.append("\n\n**").append(handlerWarning).append("**"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (characterFix.changed())
+                body.append("\n\n").append(describeCharacterFix(characterFix)); //$NON-NLS-1$
 
             if (!duplicateMethods.isEmpty())
             {
@@ -816,6 +890,73 @@ public class ModuleSourceWriter implements IMcpTool
                 return "Error: unrecognized moduleType: " + moduleType + ". Valid values: ObjectModule, " //$NON-NLS-1$ //$NON-NLS-2$
                     + "ManagerModule, FormModule, CommandModule, RecordSetModule, Module"; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Records the character pass in a response front matter.
+     *
+     * @param fm the front matter being built
+     * @param fix what the pass changed; its {@code changed()} is already known to be true
+     */
+    private static void putCharacterFix(YamlFrontMatter fm, InvalidCharacters.Report fix)
+    {
+        fm.put("invalidCharactersReplaced", fix.count); //$NON-NLS-1$
+        fm.put("invalidCharactersPositions", fix.positionsAsText()); //$NON-NLS-1$
+    }
+
+    /**
+     * One line naming what the character pass changed and where.
+     *
+     * @param fix what the pass changed; its {@code changed()} is already known to be true
+     * @return the line, without a trailing newline
+     */
+    private static String describeCharacterFix(InvalidCharacters.Report fix)
+    {
+        return "**" + fix.describe() + " Positions (line:column): " + fix.positionsAsText() + "**"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * Passes text about to be written through the character pass, read as the module reads it where
+     * the text lands, and folds what it changed into the report of the whole call.
+     * <p>
+     * A fragment is not a module: it may begin inside a string literal - a line of a multi-line
+     * literal, or the middle of one - and the characters that stand there are data. The state at the
+     * point comes from the module text that precedes it.
+     * </p>
+     *
+     * @param text the text about to be written; may be <code>null</code>
+     * @param contextBefore the module text that stands before the point where the text lands; empty
+     *            for a text that stands for the whole module
+     * @param enabled the caller's {@code normalizeInvalidCharacters} switch
+     * @param target the report of the whole call, which what was changed is folded into
+     * @param part the name the positions are measured in, or <code>null</code> when the text is the
+     *            whole of what is written
+     * @return the text to write
+     */
+    private static String normalizeWhereWritten(String text, String contextBefore, boolean enabled,
+        InvalidCharacters.Report target, String part)
+    {
+        if (text == null || !enabled)
+            return text;
+        InvalidCharacters.Report fix = InvalidCharacters.normalize(text,
+            InvalidCharacters.stateOf(contextBefore));
+        target.merge(part, fix);
+        return fix.changed() ? fix.text : text;
+    }
+
+    /**
+     * The module text that stands before one of its lines.
+     *
+     * @param lines the module as it stands
+     * @param beforeLine how many of its lines stand before the point, counted from zero
+     * @return those lines joined by newlines and closed by one, so that the text ends at the start
+     *         of a line; an empty string when no line stands before
+     */
+    private static String moduleTextBefore(List<String> lines, int beforeLine)
+    {
+        if (beforeLine <= 0)
+            return ""; //$NON-NLS-1$
+        return String.join("\n", lines.subList(0, Math.min(beforeLine, lines.size()))) + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -958,10 +1099,13 @@ public class ModuleSourceWriter implements IMcpTool
      *
      * @param originalLines the current module
      * @param methodsJson JSON array of {@code {methodName, source}} objects (aliases supported)
+     * @param normalizeInvalidCharacters whether each entry's source is passed through
+     *        {@link InvalidCharacters}
+     * @param characterFix collects what that pass changed, per method
      * @return either the new lines or an error
      */
     private static ReplaceMethodsResult applyReplaceMethods(List<String> originalLines,
-        String methodsJson)
+        String methodsJson, boolean normalizeInvalidCharacters, InvalidCharacters.Report characterFix)
     {
         if (methodsJson == null || methodsJson.trim().isEmpty())
         {
@@ -1018,6 +1162,8 @@ public class ModuleSourceWriter implements IMcpTool
                 missing.add(name.trim());
                 continue;
             }
+            src = normalizeWhereWritten(src, moduleTextBefore(originalLines, span[0]),
+                normalizeInvalidCharacters, characterFix, name.trim());
             if (firstNonBlankIsComment(src))
                 span[0] = includeLeadingCommentBlock(originalLines, span[0]);
             spans.add(span);
@@ -1244,6 +1390,59 @@ public class ModuleSourceWriter implements IMcpTool
         if (typePart == null)
             return null;
         return typePart + "." + namePart; //$NON-NLS-1$
+    }
+
+    /**
+     * The address the support question is asked about for this write.
+     * <p>
+     * The validation FQN names the object a modulePath or objectName spells, but the configuration
+     * root's directory ({@code Configuration/*.bsl} - the session module and its kin) names no
+     * object type, so the validation FQN comes back empty there. The root is a metadata object the
+     * registry holds a record for, and a write into one of its modules is judged by that record, so
+     * the guard's address falls back to the one-segment {@code Configuration} for it.
+     * </p>
+     *
+     * @param objectName explicit FQN from the call, may be null
+     * @param modulePath path under src/, used when objectName is absent
+     * @return the address to judge, or <code>null</code> when the write names no metadata object
+     */
+    private static String guardFqnOf(String objectName, String modulePath)
+    {
+        String fqn = resolveFqnForValidation(objectName, modulePath);
+        if (fqn != null)
+        {
+            return fqn;
+        }
+        if (objectName != null && !objectName.isEmpty() || modulePath == null || modulePath.isEmpty())
+        {
+            return null;
+        }
+        String dir = modulePath.replace('\\', '/').split("/")[0]; //$NON-NLS-1$ //$NON-NLS-2$
+        return "Configuration".equalsIgnoreCase(dir) ? "Configuration" : null; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The refusal's structured tag as one line of fields, for the response front matter.
+     *
+     * @param verdict a blocked verdict carrying a tag
+     * @return the fields as {@code key=value} pairs, or <code>null</code> when there is no tag
+     */
+    private static String supportLockAsText(MetadataGuards.Verdict verdict)
+    {
+        if (verdict.tag == null || verdict.tag.data.isEmpty())
+        {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Object> field : verdict.tag.data.entrySet())
+        {
+            if (sb.length() > 0)
+            {
+                sb.append(' ');
+            }
+            sb.append(field.getKey()).append('=').append(field.getValue());
+        }
+        return sb.toString();
     }
 
     /**

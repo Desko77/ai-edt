@@ -82,12 +82,30 @@ public class AddToClusterCommand
         for (EObject object : objects)
         {
             String fqn = MarkerHelpers.extractFqn(object);
-            if (fqn != null)
+            if (fqn == null || isAlreadyIn(service.findClusterForObject(project, fqn), target))
             {
-                service.addObjectToCluster(project, fqn, target.getFullPath());
+                continue;
+            }
+            if (!service.addObjectToCluster(project, fqn, target.getFullPath()))
+            {
+                ClusterCommandHandler.showSaveFailure(shell, project);
+                break;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether an object already sits in the chosen cluster, so there is nothing to move and nothing
+     * to save.
+     *
+     * @param current the cluster the object is in, or <code>null</code>
+     * @param target the chosen cluster
+     * @return <code>true</code> when both are the same cluster
+     */
+    static boolean isAlreadyIn(Cluster current, Cluster target)
+    {
+        return current != null && target != null && current.getFullPath().equals(target.getFullPath());
     }
 
     /**

@@ -6,6 +6,8 @@
 
 package ru.aiedt.mcp.server.labels.ui;
 
+import java.util.Objects;
+
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.resource.ResourceManager;
@@ -156,6 +158,43 @@ public final class MarkerIconFactory
             this.size = Math.max(1, size);
             this.circular = circular;
             this.checked = checked;
+        }
+
+        /**
+         * Two swatches are the same image when they paint the same color, size and shape.
+         * <p>
+         * {@link org.eclipse.jface.resource.ResourceManager} keys images by the descriptor's equality.
+         * Without this, every repaint allocates a new image for the same swatch.
+         * </p>
+         *
+         * @param obj the object to compare with
+         * @return <code>true</code> when {@code obj} is a swatch with the same appearance
+         */
+        @Override
+        public boolean equals(Object obj)
+        {
+            if (this == obj)
+            {
+                return true;
+            }
+            if (!(obj instanceof SwatchImageDescriptor))
+            {
+                return false;
+            }
+            SwatchImageDescriptor other = (SwatchImageDescriptor)obj;
+            return size == other.size && circular == other.circular && checked == other.checked
+                && Objects.equals(rgb, other.rgb);
+        }
+
+        /**
+         * Hashes the appearance, to agree with {@link #equals(Object)}.
+         *
+         * @return the hash of the color, size and shape
+         */
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(rgb, Integer.valueOf(size), Boolean.valueOf(circular), Boolean.valueOf(checked));
         }
 
         @Override

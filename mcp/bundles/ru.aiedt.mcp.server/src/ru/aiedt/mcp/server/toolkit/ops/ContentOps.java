@@ -9,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
-import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 
@@ -220,9 +219,18 @@ final class ContentOps
     }
 
     /**
-     * 1.40: addSubsystemContent / removeSubsystemContent via {@link BmSubsystemHelper}.
-     * Resolves the target object by FQN through the configuration and mutates
-     * the subsystem's content EList atomically inside a BM transaction.
+     * Adds an object to a subsystem's content or removes it, via {@link BmSubsystemHelper}.
+     * <p>
+     * The target object is resolved by FQN through the configuration and the subsystem's content
+     * list is changed inside one BM transaction. An owner that is not a subsystem is refused
+     * before anything changes, naming the owner; the project is found by its full or short name.
+     * </p>
+     *
+     * @param params the call: {@code projectName}, {@code ownerFqn} and the content object as
+     *     {@code name}, {@code targetFqn} or {@code valueFqn}.
+     * @param add <code>true</code> to add the object, <code>false</code> to remove it.
+     * @param opName the operation name the answer carries.
+     * @return the JSON answer
      */
     String opSubsystemContent(Map<String, String> params, boolean add, String opName)
     {
@@ -244,14 +252,19 @@ final class ContentOps
         {
             return ToolResult.error(opName + " requires 'name' (or 'targetFqn' / 'valueFqn' alias) parameter").toJson(); //$NON-NLS-1$
         }
-        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
-        if (project == null || !project.exists())
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
         {
-            return ToolResult.error("Project not found").toJson(); //$NON-NLS-1$
+            return ProjectResolver.notFound(projectName).toJson();
         }
         final String resolvedContentFqn = contentFqn;
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, subsystem) -> {
+                String refusal = notASubsystem(subsystem, ownerFqn, opName);
+                if (refusal != null)
+                {
+                    throw new RuntimeException(refusal);
+                }
                 if (add)
                 {
                     Configuration config = Activator.getDefault().getConfigurationProvider()
@@ -274,6 +287,25 @@ final class ContentOps
                 return "removed " + resolvedContentFqn;
             });
         return EditMetadataTool.formatResult(r, opName);
+    }
+
+    /**
+     * Refuses a subsystem content operation on an owner that has no subsystem content.
+     *
+     * @param owner the object the call named as the owner.
+     * @param ownerFqn the owner as the caller wrote it.
+     * @param opName the operation, for the text.
+     * @return the refusal naming the owner, or <code>null</code> when the owner is a subsystem
+     */
+    static String notASubsystem(MdObject owner, String ownerFqn, String opName)
+    {
+        if (BmSubsystemHelper.canHoldContent(owner))
+        {
+            return null;
+        }
+        String kind = owner == null ? "nothing" : owner.eClass().getName(); //$NON-NLS-1$
+        return opName + " applies to Subsystem, not " + kind + " (ownerFqn=" + ownerFqn //$NON-NLS-1$ //$NON-NLS-2$
+            + "). Nothing was changed; name a subsystem as ownerFqn, e.g. Subsystem.Sales."; //$NON-NLS-1$
     }
 
     // ---- Cluster-local helpers --------------------------------------------

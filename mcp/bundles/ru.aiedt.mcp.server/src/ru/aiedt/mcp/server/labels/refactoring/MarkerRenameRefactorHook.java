@@ -29,8 +29,9 @@ import ru.aiedt.mcp.server.labels.MarkerHelpers;
  * <p>
  * The plugin does not touch the rename itself. It only contributes an undoable change that runs after
  * the rename has committed and moves the object's marker assignments from its old FQN to its new one.
- * The change is contributed only when the renamed object actually carries markers and its FQN really
- * changes.
+ * The change is contributed when the renamed object carries markers or one of its children does, and
+ * its FQN really changes. A child marker follows the object: its FQN is the object's FQN plus a dot
+ * and the rest of the path.
  * </p>
  */
 public class MarkerRenameRefactorHook
@@ -75,7 +76,7 @@ public class MarkerRenameRefactorHook
         {
             return null;
         }
-        if (MarkerManager.getInstance().getObjectMarkers(project, oldFqn).isEmpty())
+        if (!MarkerManager.getInstance().holdsObjectOrDescendant(project, oldFqn))
         {
             return null;
         }

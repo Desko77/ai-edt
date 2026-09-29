@@ -57,7 +57,7 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🧱 **Build complex artifacts** | Work with DCS, MXL, XDTO, extensions, external objects and external data sources through dedicated workshops. |
 | 🧪 **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
 | 🛡️ **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
-| 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. |
+| 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. An extension is imported against the named project of its base configuration (`baseProjectName`). |
 | 🔀 **Update a configuration on support** | Compare the project with a new delivery and their common ancestor, decide per object or per method, and apply the update keeping local changes. Read the vendor support registry and record object modes to a file before merging. |
 | 🧯 **Check an extension before an update** | Get the extension objects that stop applying after a new delivery, with the reason for each: a changed signature on an intercepted method, a target that is gone, a borrowed object that no longer matches. |
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
@@ -66,12 +66,20 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🔎 **Ask what an update would face** | Learn before starting whether the infobase needs an update and of which kind: `update_database` with `dryRun=true` answers with the update state and starts nothing. Readiness and the export validation are not run this way - the answer names them in `notCheckedInDryRun`. |
 | 🧷 **Connect an existing infobase** | Add a file infobase by path or a server one by connection string to EDT's list and bind it to the project in one call - with the infobase user and password, without the access prompt: `infobase_admin operation=register_infobase`. |
 | 📤 **Take an object from the infobase, not the project** | Export a form or an object of the infobase configuration to Designer XML (`config_io operation=export_infobase_objects`) - for example, to compare with the project what was edited in Designer. |
-| 🧰 **Get incremental updates back** | Rebuild the stored dump-info file with Designer's own dump (`sync_control operation=rebuild_dump_info`) when `update_database` refuses a foreign file format, and mark synchronized an infobase binding that has no baseline yet (`mark_synchronized`). |
+| 🧰 **Get incremental updates back** | Rebuild the stored dump-info file with Designer's own dump (`sync_control operation=rebuild_dump_info`) when `update_database` refuses a foreign file format, and mark synchronized an infobase binding that has no baseline yet (`mark_synchronized`). An incremental `update_database` is refused while the stored copy describes another infobase or one a `.dt` load replaced; `verifyInfobaseContent=true` compares the copy with the infobase itself before the update. |
+| 💾 **Back the infobase up to one file and load it back** | Dump the whole infobase into a `.dt` (`infobase_admin operation=export_database_snapshot`; a file already standing at the path is refused, not replaced) and load it back (`restore_database_snapshot`; a copy of what the infobase holds now is written first - `backupTo`, derived beside the file when omitted - and the load does not start without it; the load replaces everything the infobase holds). Both operations hold the infobase monopoly for the run: a `busy` refusal names the holders in an `infobaseHolders` block when the server sees them, and past `timeoutSeconds` the answer is `Pending` with a `runKey`. |
+| 🔁 **Take the infobase's changes into the project** | Pull the changes made in the infobase into the project - the direction opposite to `update_database`: `infobase_admin operation=sync_control` with `syncOperation=retrieve_database_changes`. A project carrying changes of its own is refused until `replaceLocal=true` is passed; a thick client this EDT launched is refused before the pull by its launch name (`heldBy`); after a successful pull `markSynchronized=true` rewrites the synchronization baseline. |
 | 🖨️ **Check a print form before printing** | Learn from the template model whether the print area fits the page width and by what margin: `mxl_workshop operation=check_print_width`, no platform run. |
 | 🎬 **Check an action in a running 1C** | Open a list, go to a row, press a button and get a screen capture with the test client's window after the action: `vanessa` with the list arguments. |
 | 🤝 **Ask 1C:Naparnik** | Put a question to Naparnik from the agent (`naparnik operation=ask`) with the bridge on; by default Naparnik gets read-only tools, including search over the platform documentation and ITS in the service's knowledge base. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
+| 🛑 **Keep data through an update** | Learn before an infobase update which tables would lose data to a removed object or part of one: `update_database` refuses with a `dataLossTables` list and does not take the infobase until the loss is accepted explicitly (`acceptDataLoss=true`). |
+| ↩️ **Put a file or the project back after a merge** | See a file's changes against a commit, method by method for a module (`git operation=show_file_changes`), write a file back from a commit with the line endings `git checkout` would give it (`revert_file`), and put the project files back to the point recorded before a merge with a delivery (`restore_merge_point`). |
+| 📥 **Export the configuration from the infobase** | Export the infobase configuration or an extension to `.cf` and `.cfe` (`config_io operation=export_database_configuration`, `export_database_extension`); an occupied path and an infobase that differs from the project are refused without explicit leave. |
+| 🗂️ **See EDT's infobase list** | Get the infobases from EDT's list with their groups, the connection string with passwords masked, the platform version and the bound projects: `infobase_admin operation=list_registered_infobases`. |
+| 🎨 **Set a form's conditional appearance** | Add, read and remove the conditional appearance rules of a managed form: `edit_metadata` `add_form_appearance_rule`, `list_form_appearance_rules`, `remove_form_appearance_rule`. |
+| ⏸️ **Pause a debug thread** | Suspend one thread or the whole session (`launch_debugger action=pause_thread`), disable a breakpoint without removing it (`set_breakpoint_state`) and replace a module's breakpoint set in one call (`add_breakpoint` with `replaceModuleSet`). |
 
 The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
 
@@ -85,7 +93,7 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **And what that query returns, too.** With `describeResult=true` the same tool reports the columns of each result and their types, taken from EDT's query-wizard model rather than read off the text. A package is worked through whole: temporary tables are not passed off as results, but they keep their position in `ВыполнитьПакет()`, so the indexes match the real ones. A type that cannot be determined is left out entirely - a confident wrong answer would cost more than an honest gap. The assistant stops guessing column names, and a whole class of errors that otherwise survives until run time goes with them.
 
-**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` - which also reports the composition settings of every dynamic list on the form: order, filter, groupings and conditional appearance - and looked at through `get_form_screenshot` - in the editor, and through `vanessa` with `formToOpen` in a running 1C as well, where a scenario opens the form and saves a frame of the test client's top window, which the add-in draws into the file whatever covers it - while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration; `update_database` runs that same scan itself and refuses on a finding rather than letting the platform meet it.
+**A form is built by the EDT generator, not by the assistant.** Describing the form you need is enough: `create_form` takes a purpose - object form, list form, choice form, Russian synonyms accepted - and the form is produced by the same generator the IDE wizard uses, with a main attribute and a working layout. When the generator does not deliver, `create_form` refuses and creates no form, and `layout=empty` creates an empty form without the generator. From there it is refined piece by piece: attributes and columns, fields, dynamic list tables, commands, event handlers, parameters, the command interface, functional options. The result is read back through `get_form_structure` - which also reports the composition settings of every dynamic list on the form: order, filter, groupings and conditional appearance - and looked at through `get_form_screenshot` - in the editor, and through `vanessa` with `formToOpen` in a running 1C as well, where a scenario opens the form and saves a frame of the test client's top window, which the add-in draws into the file whatever covers it - while `validate_for_export` catches the form defects that pass EDT validation and only surface when the infobase loads the configuration; `update_database` runs that same scan itself and refuses on a finding rather than letting the platform meet it.
 
 ## 🔄 A typical agent loop
 
@@ -253,6 +261,18 @@ The repository name is arbitrary, for example `AI-EDT`.
 ![EDT offers to restart once the installation finishes.](docs/assets/screenshots/install-restart.png)
 
 After the restart, continue with **4. Start and verify** below.
+
+#### 🔏 Verifying a release archive
+
+Every release carries `release-manifest.json` (name, size in bytes and SHA-256 of each archive) and `SHA256SUMS`, and GitHub issues a build attestation for the archives themselves. To check an archive downloaded for installation through **Archive**, download it and `release-manifest.json` from the same release, compare the size and hash with the manifest entry, then verify the attestation (GitHub CLI required):
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\AI-EDT-update-site.zip
+(Get-Item .\AI-EDT-update-site.zip).Length
+gh attestation verify .\AI-EDT-update-site.zip --repo Desko77/ai-edt
+```
+
+On Linux and in Git Bash, `sha256sum -c SHA256SUMS --ignore-missing` checks the hashes of every downloaded archive. `gh attestation verify` passes only for an archive built by this repository's release workflow.
 
 #### ⌨️ From the command line
 
@@ -432,7 +452,7 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `config_io` | Configuration and single-artifact import and export. |
 | `docs_lookup` | Platform documentation and built-in 1C object help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks and tasks. |
-| `git` | The project's repository inside EDT: status, branches, history, a commit of named files and a switch of branch - through the JGit the IDE ships. The writes are switched off by presets under the names `git_commit` and `git_checkout`. |
+| `git` | The project's repository inside EDT: status, branches, history, a commit of named files, a switch of branch, a file's changes and its restore from a commit, a point before a merge - through the JGit the IDE ships. The writes `commit`, `checkout`, `revert_file` and `restore_merge_point` are switched off by presets under the names `git_commit`, `git_checkout` and `git_revert_file`; `create_merge_restore_point` writes nothing into the work tree and no preset switches it off. |
 | `dcs_workshop` / `mxl_workshop` / `xdto_workshop` / `external_data_source_workshop` | Programmatic builders for complex 1C artifacts. |
 | `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations; `import_external_object` converts an `.epf` / `.erf` through the Designer of the named infobase (`applicationId`) and hands the infobase back to EDT. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |
@@ -451,6 +471,8 @@ A call that does not finish within the wait returns `status=Pending` and a `runK
 An `edit_metadata batch` answer also carries `progress`: how many operations are done, applied and rejected, and which one is running. A batch commits each operation separately, so the ones it reports as applied are already written.
 
 A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
+
+`tasks/cancel` turns the task `cancelled`, and its `statusMessage` says what stopping came to: the work stopped; it was told to stop and is still going and may still write; or the server only stopped waiting, because a Designer-mode process cannot be interrupted once started. Until the stopped work ends, calling the same work again answers `stillStopping: true` and no second copy starts.
 
 Heavy calls - an infobase update, including one before a client starts, configuration export and import, a Designer run, infobase creation, project-wide scans - run at most three at a time, and once more than 92 % of EDT's heap survives a collection a new heavy call is refused before any work starts. An external client gets `503` with `Retry-After`. A `Pending` answer holds its permit until the background work ends; polling a `runKey` takes no permit.
 

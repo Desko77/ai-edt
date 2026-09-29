@@ -146,6 +146,61 @@ public class FormExtensionDataPathGuardTest
     public void removeTheInstalledPort()
     {
         FormExtensionDataPathGuard.installPort(null);
+        FormExtensionDataPathGuard.installProjectKind(null);
+    }
+
+    /**
+     * A form whose project is a configuration one is left alone even when it
+     * declares a base form.
+     * <p>
+     * A configuration form can answer a non-null {@code getBaseForm()}. The
+     * project's kind decides; the base form is only the fallback for a form
+     * whose project cannot be told.
+     * </p>
+     */
+    @Test
+    public void aConfigurationProjectWinsOverANonNullBaseForm()
+    {
+        // A base form is declared, and the project says configuration.
+        Form form = extensionForm("Объект"); //$NON-NLS-1$
+        FormExtensionDataPathGuard.installProjectKind(f -> Boolean.FALSE);
+        RecordingPort port = new RecordingPort();
+        FormExtensionDataPathGuard.installPort(port);
+
+        FormExtensionDataPathGuard.Outcome outcome =
+            FormExtensionDataPathGuard.assign(form, path(UNRESOLVED_PATH), UNRESOLVED_PATH, ITEM);
+
+        assertTrue("a configuration form is not the guard's business", outcome.isAccepted()); //$NON-NLS-1$
+        assertNull("no extension refusal may name a configuration form", outcome.getRefusal()); //$NON-NLS-1$
+        assertEquals("the port is asked nothing about belonging", 0, port.belongingAsked); //$NON-NLS-1$
+        assertEquals(0, port.borrowAsked);
+        assertEquals("and nothing about export of an extension form", 0, port.skipAsked); //$NON-NLS-1$
+        assertEquals("and nothing about the path's resolution", 0, port.resolvedAsked); //$NON-NLS-1$
+    }
+
+    /**
+     * The fallback keeps its place: a form whose project cannot be told is
+     * still classified by its base form.
+     * <p>
+     * The project lookup answers "unknown" for a form outside a model - and an
+     * extension form built in memory is exactly that, so the borrow behaviour
+     * the rest of this class pins rests on the base-form fallback.
+     * </p>
+     */
+    @Test
+    public void aFormWithoutAProjectIsClassifiedByItsBaseForm()
+    {
+        Form form = extensionForm("Объект"); //$NON-NLS-1$
+        FormExtensionDataPathGuard.installProjectKind(f -> null);
+        RecordingPort port = new RecordingPort();
+        FormExtensionDataPathGuard.installPort(port);
+
+        FormExtensionDataPathGuard.Outcome outcome =
+            FormExtensionDataPathGuard.assign(form, path(PATH), PATH, ITEM);
+
+        assertTrue(outcome.isAccepted());
+        assertEquals("the base-form fallback still borrows", 1, port.borrowAsked); //$NON-NLS-1$
+        assertEquals(List.of("Объект"), outcome.getAdoptedAttributes()); //$NON-NLS-1$
     }
 
     @Test

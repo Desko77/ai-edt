@@ -94,12 +94,15 @@ public class ConfigIoFacadeTool implements IMcpTool
         }
         String normalized = JsonUtils.normalizeOperationToken(operation);
         if ("export_infobase_objects".equals(normalized) //$NON-NLS-1$
-            || "export_configuration_to_cf".equals(normalized)) //$NON-NLS-1$
+            || "export_configuration_to_cf".equals(normalized) //$NON-NLS-1$
+            || "export_database_configuration".equals(normalized) //$NON-NLS-1$
+            || "export_database_extension".equals(normalized)) //$NON-NLS-1$
         {
-            // Neither operation has a delegate to name: the facade runs both itself, through a
-            // Designer spawned against the infobase. Its own name is the answer, so the road weighs
-            // the call by it (HeavyTools names both). DESCRIBED cannot hold them - that map is the
-            // delegate catalog the parameter help reads, and these cases dispatch to none.
+            // None of these operations has a delegate to name: the facade runs them itself,
+            // through a Designer spawned against the infobase. Its own name is the answer, so
+            // the road weighs the call by it (HeavyTools names all four). DESCRIBED cannot
+            // hold them - that map is the delegate catalog the parameter help reads, and
+            // these cases dispatch to none.
             return normalized;
         }
         Supplier<IMcpTool> delegate = DESCRIBED.get(normalized);
@@ -170,7 +173,7 @@ public class ConfigIoFacadeTool implements IMcpTool
             + "Operations: export_configuration_to_xml, " //$NON-NLS-1$
             + "import_configuration_from_xml, import_configuration_from_binary, export_object, " //$NON-NLS-1$
             + "export_common_picture, export_configuration_to_cf, export_infobase_objects, " //$NON-NLS-1$
-            + "help. Pass operation=<name> " //$NON-NLS-1$
+            + "export_database_configuration, export_database_extension, help. Pass operation=<name> " //$NON-NLS-1$
             + "(snake_case canonical; camelCase like exportObject is also accepted); remaining " //$NON-NLS-1$
             + "parameters follow the per-operation contracts (call operation=help for the catalog). " //$NON-NLS-1$
             + "import_configuration_from_xml and import_configuration_from_binary mutate " //$NON-NLS-1$
@@ -180,7 +183,12 @@ public class ConfigIoFacadeTool implements IMcpTool
             + "facade only routes, it adds no dryRun. export_configuration_to_cf dumps the " //$NON-NLS-1$
             + "infobase's current configuration (run update_database first to capture project " //$NON-NLS-1$
             + "changes); export_infobase_objects reads the infobase's own configuration and " //$NON-NLS-1$
-            + "writes the Designer-XML files to a destination directory. The standalone tools " //$NON-NLS-1$
+            + "writes the Designer-XML files to a destination directory; " //$NON-NLS-1$
+            + "export_database_configuration and export_database_extension are the guarded " //$NON-NLS-1$
+            + ".cf/.cfe dumps - they refuse an occupied outputPath (overwrite=true overrides) " //$NON-NLS-1$
+            + "and an infobase that does not hold the project's current configuration " //$NON-NLS-1$
+            + "(allowOutOfSync=true overrides), so an old file can never pass as the result. " //$NON-NLS-1$
+            + "The standalone tools " //$NON-NLS-1$
             + "remain available for back-compat."; //$NON-NLS-1$
     }
 
@@ -223,6 +231,14 @@ public class ConfigIoFacadeTool implements IMcpTool
             + "reads the infobase."); //$NON-NLS-1$
         rules.put("runKey", "Still pass operation - the facade needs it to know which run you are " //$NON-NLS-1$
             + "collecting."); //$NON-NLS-1$
+        rules.put("overwrite", "Read only by export_database_configuration and " //$NON-NLS-1$
+            + "export_database_extension. Without it an existing file at outputPath is left " //$NON-NLS-1$
+            + "untouched and the call refused; with overwrite=true the file is replaced only " //$NON-NLS-1$
+            + "after the new dump has been written and verified."); //$NON-NLS-1$
+        rules.put("allowOutOfSync", "Read only by export_database_configuration and " //$NON-NLS-1$
+            + "export_database_extension. The refused states are NOT_EQUAL (run update_database " //$NON-NLS-1$
+            + "first), LOADING (wait for the synchronization) and an unreadable state (connect " //$NON-NLS-1$
+            + "the infobase in EDT)."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -234,7 +250,8 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
                     + "import_configuration_from_binary / export_object / export_common_picture " //$NON-NLS-1$
                     + "/ export_configuration_to_cf / export_infobase_objects / " //$NON-NLS-1$
-                    + "unpack_external_binary / help (snake_case " //$NON-NLS-1$
+                    + "unpack_external_binary / export_database_configuration / " //$NON-NLS-1$
+                    + "export_database_extension / help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like exportObject is also accepted). " //$NON-NLS-1$
                     + "operation=help lists them; topic=<operation> answers what that one " //$NON-NLS-1$
                     + "takes.", true) //$NON-NLS-1$
@@ -250,7 +267,9 @@ public class ConfigIoFacadeTool implements IMcpTool
                     + "infobase (e.g. 8.3.24).") //$NON-NLS-1$
             .stringProperty("extensionName", //$NON-NLS-1$
                 "import_configuration_from_binary, .cfe only: the name to load the extension " //$NON-NLS-1$
-                    + "under. Omit to take it from the file name.") //$NON-NLS-1$
+                    + "under. Omit to take it from the file name. " //$NON-NLS-1$
+                    + "export_database_extension: the exact name of the extension to export " //$NON-NLS-1$
+                    + "(required for that operation; list_extension shows the installed names).") //$NON-NLS-1$
             .stringProperty("baseConfigurationPath", //$NON-NLS-1$
                 "import_configuration_from_binary, .cfe only: a .cf to load into the staging " //$NON-NLS-1$
                     + "infobase first, so the extension has the configuration it borrows from.") //$NON-NLS-1$
@@ -262,15 +281,18 @@ public class ConfigIoFacadeTool implements IMcpTool
                     + "project to create, which must not already exist.") //$NON-NLS-1$
             .stringProperty("outputPath", //$NON-NLS-1$
                 "Absolute output path (required for export_configuration_to_xml, " //$NON-NLS-1$
-                    + "export_object, export_common_picture, export_configuration_to_cf and " //$NON-NLS-1$
-                    + "export_infobase_objects). " //$NON-NLS-1$
+                    + "export_object, export_common_picture, export_configuration_to_cf, " //$NON-NLS-1$
+                    + "export_infobase_objects, export_database_configuration and " //$NON-NLS-1$
+                    + "export_database_extension). " //$NON-NLS-1$
                     + "export_configuration_to_xml: a directory for the Designer-XML dump " //$NON-NLS-1$
                     + "(created if missing; existing contents overwritten). export_object: " //$NON-NLS-1$
                     + "the .epf/.erf file path (extension decides the kind, or it is " //$NON-NLS-1$
                     + "auto-detected). export_common_picture: a FILE path for the default / " //$NON-NLS-1$
                     + "single-variant export, or a DIRECTORY path when allVariants=true. " //$NON-NLS-1$
                     + "export_configuration_to_cf: the .cf file path. " //$NON-NLS-1$
-                    + "export_infobase_objects: a DIRECTORY path that must be absent or empty.") //$NON-NLS-1$
+                    + "export_infobase_objects: a DIRECTORY path that must be absent or empty. " //$NON-NLS-1$
+                    + "export_database_configuration / export_database_extension: the .cf / " //$NON-NLS-1$
+                    + ".cfe file path - an existing file there is refused unless overwrite=true.") //$NON-NLS-1$
             .stringArrayProperty("objects", //$NON-NLS-1$
                 "export_infobase_objects: object addresses to export from the INFOBASE's " //$NON-NLS-1$
                     + "configuration - a whole top object (Catalog.Банки / Справочник.Банки), a " //$NON-NLS-1$
@@ -286,14 +308,23 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "unpack_external_binary: directory the XML is written into (required for " //$NON-NLS-1$
                     + "that operation).") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "export_configuration_to_cf: infobase application id (from " //$NON-NLS-1$
+                "export_configuration_to_cf, export_database_configuration and " //$NON-NLS-1$
+                    + "export_database_extension: infobase application id (from " //$NON-NLS-1$
                     + "get_applications).") //$NON-NLS-1$
+            .booleanProperty("overwrite", //$NON-NLS-1$
+                "export_database_configuration / export_database_extension: allow replacing " //$NON-NLS-1$
+                    + "an existing file at outputPath (default false - an occupied path is " //$NON-NLS-1$
+                    + "refused, so a previous file can never pass as the result).") //$NON-NLS-1$
+            .booleanProperty("allowOutOfSync", //$NON-NLS-1$
+                "export_database_configuration / export_database_extension: allow dumping " //$NON-NLS-1$
+                    + "while the infobase does not hold the project's current configuration " //$NON-NLS-1$
+                    + "(default false - the dump is refused instead of silently missing " //$NON-NLS-1$
+                    + "changes not yet applied; run update_database first).") //$NON-NLS-1$
             .stringProperty("skipValidation", //$NON-NLS-1$
                 "export_configuration_to_cf: pass 'true' to skip the built-in " //$NON-NLS-1$
                     + "validate_for_export guard.") //$NON-NLS-1$
-            .stringProperty("projectNature", //$NON-NLS-1$
-                "import_configuration_from_xml: EDT nature id, or omit to auto-detect (e.g. " //$NON-NLS-1$
-                    + "com._1c.g5.v8.dt.core.V8ConfigurationNature).") //$NON-NLS-1$
+            .stringProperty("baseProjectName", //$NON-NLS-1$
+                "Both imports, for an extension: the project of the configuration it extends.") //$NON-NLS-1$
             .stringProperty("xmlVersion", //$NON-NLS-1$
                 "import_configuration_from_xml: platform XML format version (e.g. 8.3.20), " //$NON-NLS-1$
                     + "or omit to auto-detect.") //$NON-NLS-1$
@@ -337,7 +368,8 @@ public class ConfigIoFacadeTool implements IMcpTool
             return ToolResult.error("operation is required. Allowed: " //$NON-NLS-1$
                 + "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
                 + "import_configuration_from_binary / export_object / export_common_picture / " //$NON-NLS-1$
-                + "export_configuration_to_cf / export_infobase_objects / help.").toJson(); //$NON-NLS-1$
+                + "export_configuration_to_cf / export_infobase_objects / " //$NON-NLS-1$
+                + "export_database_configuration / export_database_extension / help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
@@ -388,6 +420,10 @@ public class ConfigIoFacadeTool implements IMcpTool
                     () -> new ExternalBinaryUnpacker().execute(params));
             case "export_configuration_to_cf": //$NON-NLS-1$
                 return exportConfigurationCfMarkdown(params);
+            case "export_database_configuration": //$NON-NLS-1$
+                return exportDatabaseConfigurationMarkdown(params);
+            case "export_database_extension": //$NON-NLS-1$
+                return exportDatabaseExtensionMarkdown(params);
             case "export_infobase_objects": //$NON-NLS-1$
                 // Routed through the gate rather than called straight: this operation writes
                 // files and runs a Designer against the infobase, exactly what the applications
@@ -454,6 +490,14 @@ public class ConfigIoFacadeTool implements IMcpTool
                 + "configuration (not the EDT project's) to hierarchical Designer-XML: whole " //$NON-NLS-1$
                 + "top objects, forms and common forms, named in objects[]. Edits made in the " //$NON-NLS-1$
                 + "Configurator become visible this way. May reply Pending with a runKey.\n"); //$NON-NLS-1$
+            sb.append("- **export_database_configuration** - the guarded .cf dump of the " //$NON-NLS-1$
+                + "infobase's MAIN configuration: refuses an existing outputPath " //$NON-NLS-1$
+                + "(overwrite=true overrides) and an infobase out of sync with the project " //$NON-NLS-1$
+                + "(allowOutOfSync=true overrides), so an old file can never pass as the " //$NON-NLS-1$
+                + "result. Synchronous.\n"); //$NON-NLS-1$
+            sb.append("- **export_database_extension** - the same guarded dump for a named " //$NON-NLS-1$
+                + "configuration extension, to a .cfe file (extensionName required). " //$NON-NLS-1$
+                + "Synchronous.\n"); //$NON-NLS-1$
             sb.append("- **unpack_external_binary** - turn a binary .epf or .erf into XML " //$NON-NLS-1$
                 + "sources. The first of two steps: import the XML afterwards to get a " //$NON-NLS-1$
                 + "project.\n"); //$NON-NLS-1$
@@ -479,6 +523,9 @@ public class ConfigIoFacadeTool implements IMcpTool
                 + "export_common_picture |\n"); //$NON-NLS-1$
             sb.append("| Dump the whole configuration to a binary .cf file | " //$NON-NLS-1$
                 + "export_configuration_to_cf (infobase's current config; update_database first) |\n"); //$NON-NLS-1$
+            sb.append("| Dump a .cf/.cfe that must provably be this run's product (an old file " //$NON-NLS-1$
+                + "must not pass, unsaved changes must not be missed) | " //$NON-NLS-1$
+                + "export_database_configuration / export_database_extension |\n"); //$NON-NLS-1$
             sb.append("| Pull a few objects out of the infobase itself (changes made in the " //$NON-NLS-1$
                 + "Configurator) | export_infobase_objects |\n"); //$NON-NLS-1$
             return sb.toString();
@@ -534,7 +581,8 @@ public class ConfigIoFacadeTool implements IMcpTool
             "import_configuration_from_binary", //$NON-NLS-1$
             "export_object", "export_common_picture", //$NON-NLS-1$ //$NON-NLS-2$
             "export_configuration_to_cf", "unpack_external_binary", //$NON-NLS-1$ //$NON-NLS-2$
-            "export_infobase_objects")) //$NON-NLS-1$
+            "export_infobase_objects", "export_database_configuration", //$NON-NLS-1$ //$NON-NLS-2$
+            "export_database_extension")) //$NON-NLS-1$
         {
             m.put(op, op);
         }
@@ -632,6 +680,120 @@ public class ConfigIoFacadeTool implements IMcpTool
             out.append("\nThe .cf holds the infobase's CURRENT configuration. Run `update_database` " //$NON-NLS-1$
                 + "first to capture the EDT project's latest changes, and `validate_for_export` to " //$NON-NLS-1$
                 + "catch export-breakers (e.g. a <help> page without its HTML file) before dumping.\n"); //$NON-NLS-1$
+        }
+        else
+        {
+            out.append("**Failed:** ").append(res.error).append("\n"); //$NON-NLS-1$
+            if (res.failureKind != null)
+            {
+                out.append("- failureKind: ").append(res.failureKind).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (res.infobaseName != null && !res.infobaseName.isEmpty())
+            {
+                out.append("- infobase: ").append(res.infobaseName).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * The guarded .cf dump behind {@code export_database_configuration}: the infobase's
+     * MAIN configuration, refused on an occupied outputPath (overwrite=true overrides) and
+     * on an infobase out of sync with the project (allowOutOfSync=true overrides).
+     *
+     * @param params the call arguments (projectName / applicationId / outputPath / overwrite
+     *               / allowOutOfSync)
+     * @return the MARKDOWN report
+     */
+    private static String exportDatabaseConfigurationMarkdown(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
+        String outputPath = JsonUtils.extractStringArgument(params, "outputPath"); //$NON-NLS-1$
+        boolean overwrite = JsonUtils.extractBooleanArgument(params, "overwrite", false); //$NON-NLS-1$
+        boolean allowOutOfSync =
+            JsonUtils.extractBooleanArgument(params, "allowOutOfSync", false); //$NON-NLS-1$
+        if (projectName == null || projectName.isEmpty())
+        {
+            return "Error: projectName is required for export_database_configuration."; //$NON-NLS-1$
+        }
+        if (outputPath == null || outputPath.isEmpty())
+        {
+            return "Error: outputPath is required for export_database_configuration (.cf file path)."; //$NON-NLS-1$
+        }
+
+        BmInfobaseExtensionHelper.ExportResult res = BmInfobaseExtensionHelper
+            .exportDatabaseConfiguration(projectName, applicationId, outputPath, overwrite,
+                allowOutOfSync);
+        return databaseExportMarkdown("export_database_configuration", res); //$NON-NLS-1$
+    }
+
+    /**
+     * The guarded .cfe dump behind {@code export_database_extension}: one named
+     * configuration extension, under the same refusals as
+     * {@link #exportDatabaseConfigurationMarkdown(Map)}.
+     *
+     * @param params the call arguments (projectName / applicationId / extensionName /
+     *               outputPath / overwrite / allowOutOfSync)
+     * @return the MARKDOWN report
+     */
+    private static String exportDatabaseExtensionMarkdown(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
+        String extensionName = JsonUtils.extractStringArgument(params, "extensionName"); //$NON-NLS-1$
+        String outputPath = JsonUtils.extractStringArgument(params, "outputPath"); //$NON-NLS-1$
+        boolean overwrite = JsonUtils.extractBooleanArgument(params, "overwrite", false); //$NON-NLS-1$
+        boolean allowOutOfSync =
+            JsonUtils.extractBooleanArgument(params, "allowOutOfSync", false); //$NON-NLS-1$
+        if (projectName == null || projectName.isEmpty())
+        {
+            return "Error: projectName is required for export_database_extension."; //$NON-NLS-1$
+        }
+        if (extensionName == null || extensionName.isEmpty())
+        {
+            return "Error: extensionName is required for export_database_extension (use " //$NON-NLS-1$
+                + "list_extension to see installed names)."; //$NON-NLS-1$
+        }
+        if (outputPath == null || outputPath.isEmpty())
+        {
+            return "Error: outputPath is required for export_database_extension (.cfe file path)."; //$NON-NLS-1$
+        }
+
+        BmInfobaseExtensionHelper.ExportResult res = BmInfobaseExtensionHelper
+            .exportDatabaseExtension(projectName, applicationId, extensionName, outputPath,
+                overwrite, allowOutOfSync);
+        return databaseExportMarkdown("export_database_extension", res); //$NON-NLS-1$
+    }
+
+    /**
+     * Renders the guarded .cf/.cfe dump result as the facade's MARKDOWN.
+     *
+     * @param operation the operation the report is headed with
+     * @param res the export result
+     * @return the MARKDOWN report
+     */
+    private static String databaseExportMarkdown(String operation,
+        BmInfobaseExtensionHelper.ExportResult res)
+    {
+        StringBuilder out = new StringBuilder();
+        out.append("# ").append(operation).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (res.ok)
+        {
+            out.append("**Exported:** ").append(res.outputPath).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append("- size: ").append(res.sizeBytes).append(" bytes\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (res.extensionName != null && !res.extensionName.isEmpty())
+            {
+                out.append("- extension: ").append(res.extensionName).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (res.infobaseName != null && !res.infobaseName.isEmpty())
+            {
+                out.append("- infobase: ").append(res.infobaseName).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            out.append("\nThe file was written by this call and verified before it reached " //$NON-NLS-1$
+                + "outputPath: an occupied destination is refused unless overwrite=true, and " //$NON-NLS-1$
+                + "a dump that would miss project changes not yet in the infobase is refused " //$NON-NLS-1$
+                + "unless allowOutOfSync=true.\n"); //$NON-NLS-1$
         }
         else
         {

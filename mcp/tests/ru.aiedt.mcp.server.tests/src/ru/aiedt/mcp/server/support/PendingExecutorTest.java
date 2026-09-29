@@ -269,4 +269,148 @@ public class PendingExecutorTest
         p.put("timeoutSeconds", "notanumber"); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("unparseable -> default", 9999L, PendingExecutor.parseTimeoutMs(p, 9999L)); //$NON-NLS-1$
     }
+
+    /**
+     * A run that takes longer than the abandoned TTL keeps its entry, its result, and its place in
+     * the key: work whose duration the server cannot bound reaches that TTL.
+     */
+    @Test
+    public void workStillExecutingIsNotEvictedByTheAbandonedTtl() throws Exception
+    {
+        String rk = key("still-executing"); //$NON-NLS-1$
+        CountDownLatch began = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        int[] runs = {0};
+        Supplier<String> longWork = () ->
+        {
+            runs[0]++;
+            began.countDown();
+            try
+            {
+                release.await(20, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return "{\"updated\":true}"; //$NON-NLS-1$
+        };
+        try
+        {
+            String pending = PendingExecutor.start(REG, "update_database", rk, 100L, longWork, null); //$NON-NLS-1$
+            assertTrue("status Pending", pending.contains("\"status\":\"Pending\"")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the body is executing", began.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
+
+            PendingWorkRegistry.PendingEntry entry = REG.get(rk);
+            assertNotNull(entry);
+            entry.beganAt = System.currentTimeMillis() - REG.abandonedTtlMs() - 1000L;
+
+            REG.pruneExpired();
+
+            assertNotNull("a run whose body is still executing keeps its entry", REG.get(rk)); //$NON-NLS-1$
+
+            String again = PendingExecutor.start(REG, "update_database", rk, 100L, longWork, null); //$NON-NLS-1$
+            assertTrue("the repeat coalesces onto the run in flight", //$NON-NLS-1$
+                again.contains("\"status\":\"Pending\"")); //$NON-NLS-1$
+            assertEquals("and does not start a second copy", 1, runs[0]); //$NON-NLS-1$
+
+            release.countDown();
+            String result = PendingExecutor.resume(REG, "update_database", rk, 5000L, null); //$NON-NLS-1$
+            assertTrue("the result of the long run is still collectable", //$NON-NLS-1$
+                result.contains("\"updated\":true")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            release.countDown();
+            REG.remove(rk);
+        }
+    }
+
+    /**
+     * Collecting a result drops the run that produced it, not whatever run holds the key by then.
+     * <p>
+     * A caller with the same arguments coalesces onto one run, so a second caller can be waiting
+     * for the same result while a third - after the key was freed - starts a new run under it. The
+     * two waiters then collect the same answer, and the one removing by key alone deletes the run
+     * nobody has collected: it goes on with nothing tracking it and cannot be polled or cancelled.
+     * </p>
+     */
+    @Test
+    public void collectingAResultDropsThatRunAndNotWhateverTookItsKey() throws Exception
+    {
+        assertThatCollectingKeepsTheRunThatTookTheKey(false);
+    }
+
+    /** The same for a poll: a resume drops the run it read, not a newer one under the same key. */
+    @Test
+    public void resumingAResultDropsThatRunAndNotWhateverTookItsKey() throws Exception
+    {
+        assertThatCollectingKeepsTheRunThatTookTheKey(true);
+    }
+
+    /**
+     * Runs a long body, frees its key while a second caller waits on its result, and then lets it
+     * finish - the second caller collecting by {@code resume} or by a repeat {@code start}.
+     *
+     * @param byResume whether the waiting caller polls instead of re-issuing the call
+     * @throws Exception when the waiting thread cannot be joined
+     */
+    private static void assertThatCollectingKeepsTheRunThatTookTheKey(boolean byResume) throws Exception
+    {
+        String rk = key(byResume ? "generation-resume" : "generation-start"); //$NON-NLS-1$ //$NON-NLS-2$
+        CountDownLatch began = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        int[] runs = {0};
+        Supplier<String> firstWork = () ->
+        {
+            runs[0]++;
+            began.countDown();
+            try
+            {
+                release.await(20, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return "{\"first\":true}"; //$NON-NLS-1$
+        };
+        try
+        {
+            String pending = PendingExecutor.start(REG, "export_object", rk, 100L, firstWork, null); //$NON-NLS-1$
+            assertTrue("status Pending", pending.contains("\"status\":\"Pending\"")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the body is executing", began.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
+
+            PendingWorkRegistry.PendingEntry first = REG.get(rk);
+            assertNotNull(first);
+
+            // The second caller waits for this run's result.
+            java.util.concurrent.atomic.AtomicReference<String> collected = new java.util.concurrent
+                .atomic.AtomicReference<>();
+            Thread waiter = new Thread(() -> collected.set(byResume
+                ? PendingExecutor.resume(REG, "export_object", rk, 10000L, null) //$NON-NLS-1$
+                : PendingExecutor.start(REG, "export_object", rk, 10000L, firstWork, null))); //$NON-NLS-1$
+            waiter.start();
+            Thread.sleep(300L);
+
+            // The run that owned the key is gone and a new one takes it, while the waiter is still
+            // holding the first run's result.
+            assertTrue("the first run is dropped", REG.remove(rk, first)); //$NON-NLS-1$
+            PendingWorkRegistry.PendingEntry second = REG.getOrStart(rk, e -> "{\"second\":true}"); //$NON-NLS-1$
+            assertNotNull(second);
+
+            release.countDown();
+            waiter.join(15000L);
+            assertTrue("the waiter collected the first run's result, not the second's: " //$NON-NLS-1$
+                + collected.get(), collected.get() != null && collected.get().contains("\"first\":true")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("and did not start a second copy of the work", 1, runs[0]); //$NON-NLS-1$
+
+            assertNotNull("the run that took the key is still tracked", REG.get(rk)); //$NON-NLS-1$
+        }
+        finally
+        {
+            release.countDown();
+            REG.remove(rk);
+        }
+    }
 }

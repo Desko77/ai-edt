@@ -91,10 +91,27 @@ public class PayloadSummaryTest
     }
 
     @Test
-    public void aLongMessageIsCutRatherThanDropped()
+    public void aFailureOfSeveralSentencesArrivesWhole()
+    {
+        // A batch failure names each failed operation with its reason; cut at the length of a
+        // summary, the second reason and the note on which operation a failure follows from were lost.
+        StringBuilder message = new StringBuilder("1 of 2 operations failed. "); //$NON-NLS-1$
+        for (int i = 0; i < 20; i++)
+        {
+            message.append("reason ").append(i).append(" of the failed operation. "); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        message.append("(follows from [0])"); //$NON-NLS-1$
+        String line = summarize("{\"success\": false, \"error\": \"" + message + "\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue("longer than a summary: " + message.length(), message.length() > 400); //$NON-NLS-1$
+        assertTrue(line, line.endsWith("(follows from [0])")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFailureLongerThanItsLimitIsCutRatherThanDropped()
     {
         StringBuilder message = new StringBuilder();
-        for (int i = 0; i < 60; i++)
+        while (message.length() <= PayloadSummary.MAX_FAILURE_LENGTH)
         {
             message.append("very long explanation "); //$NON-NLS-1$
         }
@@ -102,7 +119,7 @@ public class PayloadSummaryTest
 
         assertTrue(line, line.startsWith("very long explanation")); //$NON-NLS-1$
         assertTrue(line, line.endsWith("...")); //$NON-NLS-1$
-        assertTrue(line, line.length() <= 400);
+        assertTrue(line, line.length() <= PayloadSummary.MAX_FAILURE_LENGTH);
     }
 
     @Test

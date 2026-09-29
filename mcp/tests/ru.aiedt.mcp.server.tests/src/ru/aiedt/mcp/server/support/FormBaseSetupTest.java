@@ -18,37 +18,55 @@ import org.junit.Test;
  * name at runtime - which means the interesting behaviour is what happens when a name is not there.
  * Skipping quietly is the deliberate choice: EDT renames and drops form features between releases,
  * and a form that comes out with ten of eleven defaults is far better than a create that fails. The
- * doubles here stand in for the form exactly as the reflection sees it.
+ * doubles here stand in for the form exactly as the reflection sees it: scalar setters, a command
+ * bar container the form already holds, and nothing else.
  * </p>
  */
 public class FormBaseSetupTest
 {
-    /** Exposes the property kinds the coercion has to handle: enum-ish text, plain text, boolean. */
+    /** The command bar container a form root exposes, as the reflection sees it. */
+    public static final class BarDouble
+    {
+        private String horizontalAlign;
+        private boolean autoFill;
+
+        public void setHorizontalAlign(String value)
+        {
+            horizontalAlign = value;
+        }
+
+        public void setAutoFill(boolean value)
+        {
+            autoFill = value;
+        }
+    }
+
+    /** Exposes the property kinds the coercion has to handle: enum-ish text, plain boolean, a container. */
     public static final class FormDouble
     {
-        private String childrenAlign;
-        private String itemsGroup;
-        private boolean enableContentChange;
-        private Boolean autoCommandBar;
+        private boolean enabled;
+        private String group;
+        private boolean saveWindowSettings;
+        private final BarDouble bar = new BarDouble();
 
-        public void setChildrenAlign(String value)
+        public void setEnabled(boolean value)
         {
-            childrenAlign = value;
+            enabled = value;
         }
 
-        public void setItemsGroup(String value)
+        public void setGroup(String value)
         {
-            itemsGroup = value;
+            group = value;
         }
 
-        public void setEnableContentChange(boolean value)
+        public void setSaveWindowSettings(boolean value)
         {
-            enableContentChange = value;
+            saveWindowSettings = value;
         }
 
-        public void setAutoCommandBar(Boolean value)
+        public BarDouble getAutoCommandBar()
         {
-            autoCommandBar = value;
+            return bar;
         }
     }
 
@@ -68,12 +86,13 @@ public class FormBaseSetupTest
 
         int applied = FormBaseSetup.applyDefaults(form);
 
-        assertEquals("all four setters this double exposes should have been used", 4, applied); //$NON-NLS-1$
-        assertEquals("ItemsCenter", form.childrenAlign); //$NON-NLS-1$
-        assertEquals("Vertical", form.itemsGroup); //$NON-NLS-1$
-        assertTrue("a boolean property has to be coerced from its text form", //$NON-NLS-1$
-            form.enableContentChange);
-        assertEquals(Boolean.TRUE, form.autoCommandBar);
+        assertEquals("three scalar setters and the command bar container should have been used", //$NON-NLS-1$
+            4, applied);
+        assertTrue("a boolean property has to be coerced from its text form", form.enabled);
+        assertEquals("VERTICAL", form.group); //$NON-NLS-1$
+        assertTrue(form.saveWindowSettings);
+        assertEquals("LEFT", form.bar.horizontalAlign); //$NON-NLS-1$
+        assertTrue(form.bar.autoFill);
     }
 
     @Test
@@ -99,6 +118,6 @@ public class FormBaseSetupTest
         FormDouble form = new FormDouble();
 
         assertEquals(FormBaseSetup.applyDefaults(form), FormBaseSetup.applyDefaults(form));
-        assertEquals("ItemsCenter", form.childrenAlign); //$NON-NLS-1$
+        assertEquals("VERTICAL", form.group); //$NON-NLS-1$
     }
 }

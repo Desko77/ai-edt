@@ -69,6 +69,10 @@ public class NarrowingWalkTest
 
     private static final String TAIL_MODULE = "CommonModule.NarrowTail"; //$NON-NLS-1$
 
+    private static final String LOG_MODULE = "src/CommonModules/NarrowLog/Module.bsl"; //$NON-NLS-1$
+
+    private static final String LOG_MODULE_FQN = "CommonModule.NarrowLog"; //$NON-NLS-1$
+
     private static IProject project;
 
     @BeforeClass
@@ -92,6 +96,10 @@ public class NarrowingWalkTest
         write("src/Subsystems/NarrowParent/Subsystems/NarrowChild/NarrowChild.mdo", //$NON-NLS-1$
             subsystem("NarrowChild", "CommonModule.NarrowNested", null)); //$NON-NLS-1$ //$NON-NLS-2$
         write("src/CommonModules/NarrowTail/Module.bsl", tailModule()); //$NON-NLS-1$
+        write(LOG_MODULE, "Процедура ЗаписатьЛог()\n" //$NON-NLS-1$
+            + "\tЗаписьЖурналаРегистрации(\"Аудит\", УровеньЖурналаРегистрации.Информация, , , " //$NON-NLS-1$
+            + "\"пароль утерян\");\n" //$NON-NLS-1$
+            + "КонецПроцедуры\n"); //$NON-NLS-1$
         write("backup/CommonModules/NarrowInside/Module.bsl", //$NON-NLS-1$
             module("BackupIn", "Catalog.BackupTable", "BACKUPBACKUPBACKUPBACKUP", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 null, null, "DebtBackup")); //$NON-NLS-1$
@@ -377,6 +385,55 @@ public class NarrowingWalkTest
         missing(json, INSIDE, OUTSIDE);
     }
 
+    /** The facade schema names all as the default, so the word selects every check. */
+    @Test
+    public void sensitiveAllChecksKeepsEveryCheckOn() throws Exception
+    {
+        String json = sensitiveWith("all"); //$NON-NLS-1$
+        found(json, INSIDE, NESTED, OUTSIDE);
+    }
+
+    /** A check name counts in whatever case the caller wrote it. */
+    @Test
+    public void sensitiveCheckNamesAreReadWithoutRegardToCase() throws Exception
+    {
+        String json = sensitiveWith("hardcoded_secret"); //$NON-NLS-1$
+        found(json, INSIDE);
+    }
+
+    /** An unknown check name refuses the call and lists what it could have been. */
+    @Test
+    public void sensitiveUnknownCheckRefusesWithTheValidNames() throws Exception
+    {
+        String json = sensitiveWith("hardcoded_secretz"); //$NON-NLS-1$
+        assertTrue(json, json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json, json.contains("hardcoded_secretz")); //$NON-NLS-1$
+        assertTrue(json, json.contains("HARDCODED_SECRET")); //$NON-NLS-1$
+    }
+
+    /** An unknown check name beside all refuses the call the same way. */
+    @Test
+    public void sensitiveUnknownCheckBesideAllRefuses() throws Exception
+    {
+        String json = sensitiveWith("all,hardcoded_secretz"); //$NON-NLS-1$
+        assertTrue(json, json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json, json.contains("hardcoded_secretz")); //$NON-NLS-1$
+    }
+
+    /**
+     * Findings the severity filter drops are still counted.
+     * <p>
+     * LOG_SENSITIVE findings are INFO, and the default filter is warning, so without the counter
+     * an explicit checks=LOG_SENSITIVE call would answer empty and read as a clean module.
+     * </p>
+     */
+    @Test
+    public void sensitiveFindingsBelowTheSeverityFilterAreCounted() throws Exception
+    {
+        String json = sensitiveWith("LOG_SENSITIVE", "moduleFqn", LOG_MODULE_FQN); //$NON-NLS-1$ //$NON-NLS-2$
+        found(json, "\"findings\":0", "\"omittedBelowSeverityFilter\":1"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     @Test
     public void toolsAnswerEveryRefusedScopeRowBeforeWalking()
     {
@@ -485,10 +542,30 @@ public class NarrowingWalkTest
         return new ProjectMetricsTool().collect(project, decision, true, 60, "json"); //$NON-NLS-1$
     }
 
+    /**
+     * Runs sensitive_data_scan with the HARDCODED_SECRET check.
+     *
+     * @param pairs further arguments as name, value pairs
+     * @return the JSON answer
+     * @throws Exception when the scan fails
+     */
     private static String sensitive(String... pairs) throws Exception
     {
+        return sensitiveWith("HARDCODED_SECRET", pairs); //$NON-NLS-1$
+    }
+
+    /**
+     * Runs sensitive_data_scan with the named checks.
+     *
+     * @param checks the checks argument
+     * @param pairs further arguments as name, value pairs
+     * @return the JSON answer
+     * @throws Exception when the scan fails
+     */
+    private static String sensitiveWith(String checks, String... pairs) throws Exception
+    {
         Map<String, String> params = args(pairs);
-        params.put("checks", "HARDCODED_SECRET"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("checks", checks); //$NON-NLS-1$
         WalkNarrowing.Decision decision = WalkNarrowing.decide(params, SENSITIVE_SCOPES,
             WalkNarrowing.Selectors.MODULE_AND_SUBSYSTEM);
         assertFalse(String.valueOf(decision.refusal()), decision.refused());

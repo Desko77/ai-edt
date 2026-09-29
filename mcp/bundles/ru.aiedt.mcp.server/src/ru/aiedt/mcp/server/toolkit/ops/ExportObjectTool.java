@@ -180,7 +180,7 @@ public class ExportObjectTool implements IMcpTool
         // Pass the RAW objectName (may be null) so doExport's resolveRoot can
         // auto-pick the single object regardless of the project name.
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> doExport(project, projectName, objectName, outputPath));
+            startedRun -> doExport(project, projectName, objectName, outputPath, startedRun));
         // The name a poll of this run arrives under, so a live key exempts only this tool's own
         // resumption path from the heavy gates.
         entry.startedBy = NAME;
@@ -198,9 +198,17 @@ public class ExportObjectTool implements IMcpTool
      * Synchronous export work (runs inside the registry executor): resolves the
      * root external object, syncs BM state to disk, resolves the dumper, and runs
      * the build via {@link BmExternalObjectDumpHelper}.
+     *
+     * @param project the external object project
+     * @param projectName the project name, as the caller gave it
+     * @param objectName the object to build, or <code>null</code> to auto-pick the project's own
+     * @param outputPath the normalized output path
+     * @param entry the run this export belongs to; the launch boundary of the build is claimed on
+     *            it
+     * @return a JSON result body
      */
     private String doExport(IProject project, String projectName, String objectName,
-        String outputPath)
+        String outputPath, PendingWorkRegistry.PendingEntry entry)
     {
         long start = System.currentTimeMillis();
 
@@ -276,6 +284,21 @@ public class ExportObjectTool implements IMcpTool
         if (dumper == null)
         {
             return buildDumperUnavailableError(projectName, outputPath);
+        }
+
+        // The launch boundary: the build is a platform job this side cannot pull back once it has
+        // started. A cancel that arrived before this line raised the call's flag, and here it keeps
+        // the build from starting rather than leaving a cancelled run to write a file.
+        if (!entry.claimTheLaunch())
+        {
+            return ToolResult.error("The export was cancelled before the build started. No file was " //$NON-NLS-1$
+                + "written at " + outputPath + ".") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("tag", ErrorTags.CANCELLED.wire()) //$NON-NLS-1$
+                .put("operation", NAME) //$NON-NLS-1$
+                .put("projectName", projectName) //$NON-NLS-1$
+                .put("objectName", root.objectName) //$NON-NLS-1$
+                .put("outputPath", outputPath) //$NON-NLS-1$
+                .toJson();
         }
 
         BmExternalObjectDumpHelper.DumpInvocation inv =

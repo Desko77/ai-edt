@@ -125,14 +125,37 @@ public class ClusterStore
     }
 
     /**
-     * Removes the cluster at a full path.
+     * Removes the cluster at a full path, and every cluster nested under it.
+     * <p>
+     * A nested cluster is one whose path equals that full path or continues past it with a slash.
+     * Objects those clusters held are no longer clustered, so the navigator stops hiding them.
+     * A cluster whose path merely shares a prefix is left in place. When the named cluster is not
+     * here, nothing is removed. Every duplicate instance with the named full path is removed as well.
+     * </p>
      *
      * @param fullPath the full path of the cluster to remove
-     * @return <code>true</code> if a cluster was removed
+     * @return <code>true</code> if the cluster was removed
      */
     public boolean removeCluster(String fullPath)
     {
-        return clusters.removeIf(cluster -> Objects.equals(cluster.getFullPath(), fullPath));
+        if (getClusterByFullPath(fullPath) == null || fullPath == null)
+        {
+            return false;
+        }
+        String nestedPrefix = fullPath + "/"; //$NON-NLS-1$
+        clusters.removeIf(cluster -> {
+            if (Objects.equals(cluster.getFullPath(), fullPath))
+            {
+                return true;
+            }
+            String clusterPath = cluster.getPath();
+            if (clusterPath == null)
+            {
+                return false;
+            }
+            return clusterPath.equals(fullPath) || clusterPath.startsWith(nestedPrefix);
+        });
+        return true;
     }
 
     /**
@@ -279,23 +302,95 @@ public class ClusterStore
     }
 
     /**
-     * Renames an object across every cluster that holds it.
+     * Renames an object across every cluster that holds it, and rewrites names nested under it.
+     * <p>
+     * A nested name continues past {@code oldFqn} with a dot. A name that only shares a prefix is
+     * not rewritten. The rename is what a metadata rename has to do: EDT renames the object, and
+     * the children that were clustered under it change FQN with it even when the parent itself was
+     * not a member of the cluster. Cluster collection paths built from that FQN are rewritten too.
+     * </p>
      *
      * @param oldFqn the current fully qualified name
      * @param newFqn the fully qualified name to give it
-     * @return <code>true</code> if at least one cluster held the old name
+     * @return <code>true</code> if at least one cluster held the old name or a name nested under it
      */
     public boolean renameObject(String oldFqn, String newFqn)
     {
         boolean renamed = false;
         for (Cluster cluster : clusters)
         {
-            if (cluster.renameChild(oldFqn, newFqn))
+            if (cluster.renameChildTree(oldFqn, newFqn))
             {
+                renamed = true;
+            }
+            String renamedPath = renameFqnTree(cluster.getPath(), oldFqn, newFqn);
+            if (!Objects.equals(cluster.getPath(), renamedPath))
+            {
+                cluster.setPath(renamedPath);
                 renamed = true;
             }
         }
         return renamed;
+    }
+
+    /**
+     * Rewrites an exact fully qualified name or a dot-delimited descendant.
+     *
+     * @param value the value to inspect; may be <code>null</code>
+     * @param oldFqn the current fully qualified name
+     * @param newFqn the replacement fully qualified name
+     * @return the rewritten value, or the original value when it does not match
+     */
+    private static String renameFqnTree(String value, String oldFqn, String newFqn)
+    {
+        if (value == null || oldFqn == null || newFqn == null || oldFqn.isEmpty())
+        {
+            return value;
+        }
+        if (value.equals(oldFqn))
+        {
+            return newFqn;
+        }
+        if (value.startsWith(oldFqn + ".")) //$NON-NLS-1$
+        {
+            return newFqn + value.substring(oldFqn.length());
+        }
+        return value;
+    }
+
+    /**
+     * Tells whether any cluster holds the given name or a name nested under it.
+     * <p>
+     * Nested means the held name continues with a dot, so a sibling that merely shares a prefix
+     * does not count. A rename contributor uses this to decide whether there is membership to
+     * carry when the renamed object itself is not a cluster member but one of its children is.
+     * </p>
+     *
+     * @param objectFqn the fully qualified name
+     * @return <code>true</code> when a cluster holds that name or a descendant of it
+     */
+    public boolean holdsObjectOrDescendant(String objectFqn)
+    {
+        if (objectFqn == null || objectFqn.isEmpty())
+        {
+            return false;
+        }
+        if (findClusterForObject(objectFqn) != null)
+        {
+            return true;
+        }
+        String nestedPrefix = objectFqn + "."; //$NON-NLS-1$
+        for (Cluster cluster : clusters)
+        {
+            for (String child : cluster.getChildren())
+            {
+                if (child != null && child.startsWith(nestedPrefix))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

@@ -144,6 +144,12 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         boolean failRemember;
 
+        /** What {@link #copyRecordFailure()} answers, or {@code null} when the record was written. */
+        String copyRecordNote;
+
+        /** Thrown by {@link #releaseInfobase()} when a test wants the release to fail. */
+        Exception releaseFailure;
+
         /** The quick run, which writes the dump-info alone - the primary path. */
         DesignerRun quick = dir -> {
             Files.write(dir.resolve(DumpInfoProbe.FILE_NAME), platformDump().getBytes(
@@ -210,9 +216,13 @@ public class TheRebuildRunsItsStepsInOrderTest
         final List<Path> tempDirs = new ArrayList<>();
 
         @Override
-        public boolean releaseInfobase()
+        public boolean releaseInfobase() throws Exception
         {
             asked.add("release"); //$NON-NLS-1$
+            if (releaseFailure != null)
+            {
+                throw releaseFailure;
+            }
             return connectedAtStart;
         }
 
@@ -264,6 +274,12 @@ public class TheRebuildRunsItsStepsInOrderTest
         }
 
         @Override
+        public String copyRecordFailure()
+        {
+            return copyRecordNote;
+        }
+
+        @Override
         public void deleteTempDir(Path dir)
         {
             asked.add("deleteTempDir"); //$NON-NLS-1$
@@ -299,6 +315,166 @@ public class TheRebuildRunsItsStepsInOrderTest
     private Outcome run(StandIn io)
     {
         return DumpInfoRebuilder.performRebuild(io, "stamp", "8.3.27.2214"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A content read uses the dump-info-only Designer run and leaves the stored copy byte for byte
+     * as it was. The full dump is not a fallback, and the store's record is not rewritten.
+     */
+    @Test
+    public void aContentReadLeavesTheStoredCopyUntouched() throws IOException
+    {
+        Path stored = storedOld();
+        byte[] before = Files.readAllBytes(stored);
+        StandIn io = standIn();
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertTrue(probe.ok);
+        assertNull(probe.error);
+        assertTrue("the stored copy was not replaced", probe.storedCopyUntouched); //$NON-NLS-1$
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(stored)));
+        assertEquals("the fingerprint is the infobase's dump, not the stored copy", //$NON-NLS-1$
+            2, probe.content.records);
+        assertEquals(1, InfobaseOutsideChange.copyOf(stored, "file:///infobase").records); //$NON-NLS-1$
+        assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("rememberPair")); //$NON-NLS-1$
+        assertEquals(Arrays.asList("identity", "lock", "tempDir", "release", "work", "dumpInfoOnly", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            "reconnect", "cleanup", "unlock"), probe.sequence); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the temporary dump directory is deleted", Files.exists(io.tempDirs.get(0))); //$NON-NLS-1$
+        assertFalse("the lock is released", io.lockHeld); //$NON-NLS-1$
+    }
+
+    /**
+     * A Designer run that fails is a failed read: the stored copy stays, the full dump is not
+     * asked for, and the answer carries the failure.
+     */
+    @Test
+    public void aDesignerFailureIsAFailedReadAndTheStoreStays() throws IOException
+    {
+        Path stored = storedOld();
+        byte[] before = Files.readAllBytes(stored);
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new IOException("designer refused"); //$NON-NLS-1$
+        };
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertFalse(probe.ok);
+        assertTrue(probe.error.contains("designer refused")); //$NON-NLS-1$
+        assertTrue(probe.storedCopyUntouched);
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(stored)));
+        assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertFalse(io.lockHeld);
+    }
+
+    /**
+     * A base that is already held is not released and not read.
+     */
+    @Test
+    public void aContentReadRefusedTheLockDoesNotReleaseTheInfobase() throws IOException
+    {
+        Path stored = storedOld();
+        byte[] before = Files.readAllBytes(stored);
+        StandIn io = standIn();
+        io.refuseLock = true;
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertFalse(probe.ok);
+        assertTrue(probe.error.contains("pid 4242")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("release")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("dumpInfoOnly")); //$NON-NLS-1$
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(stored)));
+    }
+
+    /**
+     * A Designer run that is still going when the wait gives up is not followed by a reconnection.
+     * EDT must not take the infobase back while that process still holds it.
+     */
+    @Test
+    public void aContentReadAbandonedWhileTheDesignerRunsDoesNotReconnect() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new DumpInfoRebuilder.Abandoned("the Designer dump did not finish within 600s", //$NON-NLS-1$
+                true, null);
+        };
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertFalse("the step sequence does not reconnect", probe.sequence.contains("reconnect")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("reconnect was not asked for", io.asked.contains("reconnect")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("thickClientFailed", probe.failureKind); //$NON-NLS-1$
+        assertTrue(io.lockHeld);
+    }
+
+    /**
+     * A base another operation already holds is a busy read, not a change of the infobase.
+     */
+    @Test
+    public void aContentReadRefusedTheLockIsBusy() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.refuseLock = true;
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertEquals("busy", probe.failureKind); //$NON-NLS-1$
+        assertTrue(probe.error.contains("pid 4242")); //$NON-NLS-1$
+    }
+
+    /**
+     * EDT not letting the infobase go is the release's own failure, not a change of the infobase.
+     */
+    @Test
+    public void aContentReadTheInfobaseDidNotReleaseNamesThat() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.releaseFailure = new IOException("an editor holds the infobase"); //$NON-NLS-1$
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertEquals("infobaseNotReleased", probe.failureKind); //$NON-NLS-1$
+        assertTrue(probe.error.contains("could not release")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("dumpInfoOnly")); //$NON-NLS-1$
+    }
+
+    /**
+     * An infobase this server cannot name is not read, and the failure is that it was not resolved.
+     */
+    @Test
+    public void aContentReadOfAnUnidentifiedInfobaseNamesResolveFailed() throws IOException
+    {
+        StandIn io = standIn();
+        io.refuseIdentity = true;
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertEquals("resolveFailed", probe.failureKind); //$NON-NLS-1$
+        assertFalse(probe.sequence.contains("lock")); //$NON-NLS-1$
+    }
+
+    /**
+     * A Designer run that fails is a thick-client failure. The infobase's content was not compared.
+     */
+    @Test
+    public void aDesignerFailureOfAContentReadIsAThickClientFailure() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new IOException("designer refused"); //$NON-NLS-1$
+        };
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertEquals("thickClientFailed", probe.failureKind); //$NON-NLS-1$
+        assertTrue(probe.error.contains("designer refused")); //$NON-NLS-1$
     }
 
     // ---- success ---------------------------------------------------------------------------
@@ -463,6 +639,29 @@ public class TheRebuildRunsItsStepsInOrderTest
         assertFalse("a second rebuild is refused while the first Designer is still running", //$NON-NLS-1$
             second.ok);
         assertTrue(second.error.contains("still going")); //$NON-NLS-1$
+    }
+
+    /**
+     * An abandonment that took the launch boundary first says no Designer run was started, rather
+     * than that a run did not finish and may still be running.
+     */
+    @Test
+    public void anAbandonmentThatPreventedTheLaunchSaysNoRunStarted() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new DumpInfoRebuilder.Abandoned("the Designer dump was cancelled before the Designer " //$NON-NLS-1$
+                + "run it was waiting for started; that run was not launched", false, true, null); //$NON-NLS-1$
+        };
+
+        Outcome outcome = run(io);
+
+        assertFalse(outcome.ok);
+        assertTrue(outcome.error, outcome.error.startsWith("No Designer run was started")); //$NON-NLS-1$
+        assertFalse(outcome.error, outcome.error.contains("did not finish")); //$NON-NLS-1$
+        assertFalse(outcome.error, outcome.error.contains("finishes on its own")); //$NON-NLS-1$
+        assertFalse(outcome.designerStillRunning);
     }
 
     // ---- fail-closed on an unidentified base ------------------------------------------------
@@ -700,6 +899,74 @@ public class TheRebuildRunsItsStepsInOrderTest
     }
 
     /**
+     * A format pair that cannot be written does not skip the stored copy's record. The record of
+     * the copy just swapped in replaces a load mark.
+     */
+    @Test
+    public void aFormatPairThatCannotBeWrittenStillRewritesTheCopyRecord() throws IOException
+    {
+        Path dir = Files.createDirectories(tempRoot.resolve("pair-copy")); //$NON-NLS-1$
+        Path copy = dir.resolve(DumpInfoProbe.FILE_NAME);
+        Files.write(copy, platformDump().getBytes(StandardCharsets.UTF_8));
+        Path record = InfobaseOutsideChange.recordFileOf(copy);
+        InfobaseOutsideChange.copyOf(copy, "file:///infobase") //$NON-NLS-1$
+            .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z").writeTo(record); //$NON-NLS-1$ //$NON-NLS-2$
+        Path blocker = dir.resolve("not-a-directory"); //$NON-NLS-1$
+        Files.write(blocker, "x".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+        Path formats = blocker.resolve("formats.properties"); //$NON-NLS-1$
+
+        boolean threw = false;
+        try
+        {
+            DumpInfoRebuilder.rememberPairAndCopy("file:///infobase", "2.7", "8.3.27.2214", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                formats, copy, new String[1]);
+        }
+        catch (IOException expected)
+        {
+            threw = true;
+        }
+
+        assertTrue("the format pair could not be written", threw); //$NON-NLS-1$
+        InfobaseOutsideChange left = InfobaseOutsideChange.read(record);
+        assertTrue("the copy's content is what the fresh record holds", left.known()); //$NON-NLS-1$
+        assertFalse("the copy record is rewritten even when the format pair is not", //$NON-NLS-1$
+            left.replacedByLoad());
+        assertEquals("file:///infobase", left.identity); //$NON-NLS-1$
+    }
+
+    /**
+     * A copy record that cannot be written is named on its own. The format pair's sentence stays
+     * the one a recorded pair already carries, and the answer says a load mark that was there
+     * remains.
+     */
+    @Test
+    public void aCopyRecordThatCannotBeWrittenIsNamedBesideTheFormatPair() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.copyRecordNote = "disk full"; //$NON-NLS-1$
+
+        Outcome outcome = run(io);
+
+        assertTrue(outcome.ok);
+        assertEquals("file:///infobase -> 2.7 on 8.3.27.2214", outcome.pairRemembered); //$NON-NLS-1$
+        assertNotNull(outcome.copyRecord);
+        assertTrue(outcome.copyRecord.contains("disk full")); //$NON-NLS-1$
+        assertTrue(outcome.copyRecord.contains("remains")); //$NON-NLS-1$
+        assertTrue(outcome.copyRecord.contains("incremental update refuses")); //$NON-NLS-1$
+
+        StandIn both = standIn();
+        both.failRemember = true;
+        both.copyRecordNote = "disk full"; //$NON-NLS-1$
+        Outcome refused = run(both);
+        assertTrue(refused.pairRemembered.startsWith("NOT recorded")); //$NON-NLS-1$
+        assertTrue(refused.pairRemembered.contains("will not compare")); //$NON-NLS-1$
+        assertTrue(refused.pairRemembered.contains("disk full")); //$NON-NLS-1$
+        assertNotNull(refused.copyRecord);
+        assertTrue(refused.copyRecord.contains("remains")); //$NON-NLS-1$
+    }
+
+    /**
      * A swap whose move fails and whose rollback fails too is not "untouched": the stored file is
      * in an unknown state, and the answer names the backup.
      */
@@ -867,8 +1134,8 @@ public class TheRebuildRunsItsStepsInOrderTest
     {
         List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
         ReentrantLock lock = new ReentrantLock();
-        BmInfobaseExtensionHelper.LauncherContext ctx =
-            new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx =
+            new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         CountDownLatch gate = new CountDownLatch(1);
         ctx.launcher = blockingFullDumpLauncher(order, gate);
@@ -908,8 +1175,8 @@ public class TheRebuildRunsItsStepsInOrderTest
     {
         List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
         ReentrantLock lock = new ReentrantLock();
-        BmInfobaseExtensionHelper.LauncherContext ctx =
-            new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx =
+            new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         CountDownLatch gate = new CountDownLatch(1);
         ctx.launcher = blockingFullDumpLauncher(order, gate);

@@ -17,6 +17,7 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.dialogs.IDialogConstants;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.resource.LocalResourceManager;
 import org.eclipse.jface.viewers.CheckboxTreeViewer;
@@ -493,8 +494,25 @@ public class MarkerFilterDialog
         MarkerEditDialog dialog = new MarkerEditDialog(getShell(), marker);
         if (dialog.open() == Window.OK)
         {
-            service.updateMarker(project, marker.getName(), dialog.getMarkerName(), dialog.getMarkerColor(),
-                dialog.getMarkerDescription());
+            IProject owning = project;
+            MarkerEditCommit.Result result = MarkerEditCommit.apply(new MarkerEditCommit.Editor()
+            {
+                @Override
+                public boolean update(String oldName, String newName, String color, String description)
+                {
+                    return service.updateMarker(owning, oldName, newName, color, description);
+                }
+
+                @Override
+                public boolean defined(String name)
+                {
+                    return service.getMarkerStorage(owning).getMarkerByName(name) != null;
+                }
+            }, marker.getName(), dialog.getMarkerName(), dialog.getMarkerColor(), dialog.getMarkerDescription());
+            if (result.message() != null)
+            {
+                MessageDialog.openWarning(getShell(), "Marker", result.message()); //$NON-NLS-1$
+            }
             treeViewer.refresh();
             treeViewer.expandAll();
         }

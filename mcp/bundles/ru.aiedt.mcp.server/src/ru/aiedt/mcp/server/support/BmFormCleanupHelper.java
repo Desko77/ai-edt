@@ -11,35 +11,37 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
+import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
 
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
+import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 import ru.aiedt.mcp.server.Activator;
 
 /**
- * 1.40 — Cascade cleanup of form items that reference an attribute / tabular
- * section / column being removed from a metadata object. <p>
- *
- * extension framework parity: when {@code removeObjectAttribute} / {@code removeTabularSection}
- * / {@code removeTabularSectionAttribute} is called with {@code cascadeForms=true}
- * (or {@code force=true}), the helper sweeps every form belonging to the owner
- * and removes any FormField/FormGroup/Table item whose {@code dataPath} starts
- * with the deleted member, so the resulting forms remain valid and
- * UpdateDBCfg succeeds without "broken-form" errors.
- *
- * <p>Without {@code cascadeForms=true}, callers should use {@link #previewAffected}
- * to obtain a {@code affectedForms} dry-run list and refuse the operation with
- * {@code requiresCascadeForms} tag - the user explicitly opts in to cascade
- * deletion only after seeing what it touches.
- *
- * <p>All operations execute inside an existing BM read-write transaction
- * supplied by the caller (typically the {@code executeWriteOnObject} lambda
- * in {@code EditMetadataTool}) so cleanup and removal commit atomically.
+ * Cleanup of the form items that reference an attribute, a tabular section or a tabular-section
+ * column being removed from a metadata object.
+ * <p>
+ * {@code remove_object_attribute}, {@code remove_tabular_section} and
+ * {@code remove_tabular_section_attribute} call {@link #previewAffected} before the removal: when
+ * a form of the owner holds an item whose data path reaches the member, the call is refused with
+ * {@link #requiresCascadeForms}, listing the forms and items. With {@code cascadeForms=true} they
+ * call {@link #cleanupReferencesToMember} instead, and the items go in the same transaction as the
+ * member.
+ * </p>
+ * <p>
+ * An item references the member when its data path is the member under one of the form's data
+ * roots, or runs below it: {@code Объект.Товары} and {@code Объект.Товары.Номенклатура} for the
+ * tabular section {@code Товары}. The data roots are the form's main attributes; a form that
+ * declares none is read with {@code Object} and {@code Объект}. A path that merely ends in the
+ * member's name, such as a column {@code Товары} of another tabular section, is not a reference.
+ * </p>
  */
 public final class BmFormCleanupHelper
 {
@@ -47,6 +49,12 @@ public final class BmFormCleanupHelper
     {
         // utility
     }
+
+    /** The data roots of a form that declares no main attribute. */
+    private static final List<String> DEFAULT_DATA_ROOTS = List.of("Object", "Объект"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** How long the export of the cleaned forms is waited for. */
+    private static final long FORM_EXPORT_WAIT_MS = 10_000L;
 
     /**
      * Result of a cleanup pass.
@@ -56,6 +64,14 @@ public final class BmFormCleanupHelper
         /** Map formFqn -&gt; list of removed item names. */
         public final Map<String, List<String>> removedByForm = new LinkedHashMap<>();
 
+        /** Top-object FQNs of the form models the pass changed, for the export to disk. */
+        final List<String> formModelFqns = new ArrayList<>();
+
+        /**
+         * Counts the items across every form.
+         *
+         * @return how many items the pass removed or would remove
+         */
         public int totalRemoved()
         {
             int n = 0;
@@ -66,6 +82,11 @@ public final class BmFormCleanupHelper
             return n;
         }
 
+        /**
+         * Lists the forms the pass touched.
+         *
+         * @return the form FQNs, in the order the forms were read
+         */
         public List<String> formFqns()
         {
             return new ArrayList<>(removedByForm.keySet());
@@ -99,9 +120,8 @@ public final class BmFormCleanupHelper
      * @param owner        the metadata object whose forms are scanned
      * @param memberPath   dot-segment path of the removed member, e.g.
      *                     {@code "Goods"} for an attribute, {@code "Items.Price"}
-     *                     for a column inside a tabular section. Comparison is
-     *                     case-insensitive and prefix-aware ({@code Object.Goods}
-     *                     and {@code Object.Items.Price.*} both match).
+     *                     for a column inside a tabular section. Compared ignoring
+     *                     case, under each data root of the form.
      * @return cleanup result with per-form item lists; never null.
      */
     public static CleanupResult cleanupReferencesToMember(IBmTransaction tx, MdObject owner,
@@ -133,20 +153,25 @@ public final class BmFormCleanupHelper
             {
                 continue;
             }
-            List<String> removed = removeMatchingItems(formRoot, memberPath);
+            List<String> removed = removeItemsReferencing(formRoot, memberPath);
             if (!removed.isEmpty())
             {
                 String fqn = computeFqn(owner, txForm);
                 result.removedByForm.put(fqn, removed);
+                result.formModelFqns.add(fqn + ".Form"); //$NON-NLS-1$
             }
         }
         return result;
     }
 
     /**
-     * Dry-run: compute the same {@link CleanupResult} without actually mutating
-     * anything. Useful to surface {@code affectedForms} preview when caller did
-     * not pass {@code cascadeForms=true}.
+     * Computes the same {@link CleanupResult} as {@link #cleanupReferencesToMember} without
+     * changing any form.
+     *
+     * @param tx live BM transaction
+     * @param owner the metadata object whose forms are scanned
+     * @param memberPath dot-segment path of the member about to be removed
+     * @return the items that reference the member, per form; never null
      */
     public static CleanupResult previewAffected(IBmTransaction tx, MdObject owner,
         String memberPath)
@@ -173,7 +198,7 @@ public final class BmFormCleanupHelper
             {
                 continue;
             }
-            List<String> matches = listMatchingItems(formRoot, memberPath);
+            List<String> matches = itemsReferencing(formRoot, memberPath);
             if (!matches.isEmpty())
             {
                 String fqn = computeFqn(owner, txForm);
@@ -184,9 +209,12 @@ public final class BmFormCleanupHelper
     }
 
     /**
-     * Builds a {@code requiresCascadeForms} tag carrying the
-     * {@code affectedForms} preview. Use this in mutation lambdas to refuse
-     * a remove operation when {@code cascadeForms=true} was not passed.
+     * Builds the refusal of a removal whose member is still referenced by form items.
+     *
+     * @param memberPath dot-segment path of the member
+     * @param preview the referencing items, from {@link #previewAffected}
+     * @return the exception to throw from the write, carrying the {@code requiresCascadeForms}
+     *         tag with {@code affectedForms}
      */
     public static MetadataGuards.BlockedGuardException requiresCascadeForms(String memberPath,
         CleanupResult preview)
@@ -196,14 +224,151 @@ public final class BmFormCleanupHelper
         data.put("affectedForms", preview.toTagData()); //$NON-NLS-1$
         data.put("affectedFormCount", preview.removedByForm.size()); //$NON-NLS-1$
         data.put("affectedItemCount", preview.totalRemoved()); //$NON-NLS-1$
-        String hint = "Pass cascadeForms=true (or force=true) to delete these items along with the member. "
-            + "Form fields/columns/tables that reference '" + memberPath
-            + "' will be removed automatically.";
+        String hint = "Pass cascadeForms=true to remove these items together with the member. " //$NON-NLS-1$
+            + "Nothing was removed."; //$NON-NLS-1$
         return new MetadataGuards.BlockedGuardException(MetadataGuards.Verdict.block(
-            "Cannot remove '" + memberPath + "' - " + preview.totalRemoved()
-                + " form item(s) in " + preview.removedByForm.size() + " form(s) reference it.",
+            "Cannot remove '" + memberPath + "' - " + preview.totalRemoved() //$NON-NLS-1$ //$NON-NLS-2$
+                + " form item(s) in " + preview.removedByForm.size() + " form(s) reference it.", //$NON-NLS-1$ //$NON-NLS-2$
             hint,
             new MetadataGuards.ErrorTag(ErrorTags.REQUIRES_CASCADE_FORMS.wire(), data)));
+    }
+
+    /**
+     * Refuses the removal of a member that form items still reference, or removes those items.
+     * <p>
+     * Called inside the write, before the member is removed. Without {@code cascadeForms} a
+     * referenced member is refused with {@link #requiresCascadeForms} and nothing in the
+     * transaction has changed; with it the referencing items are removed.
+     * </p>
+     *
+     * @param tx live BM transaction
+     * @param owner the metadata object whose forms are scanned
+     * @param memberPath dot-segment path of the member about to be removed
+     * @param cascadeForms whether the caller asked for the referencing items to be removed
+     * @return the removed items, per form; empty when no item referenced the member
+     */
+    public static CleanupResult clearOrRefuse(IBmTransaction tx, MdObject owner, String memberPath,
+        boolean cascadeForms)
+    {
+        if (cascadeForms)
+        {
+            return cleanupReferencesToMember(tx, owner, memberPath);
+        }
+        CleanupResult preview = previewAffected(tx, owner, memberPath);
+        if (preview.totalRemoved() > 0)
+        {
+            throw requiresCascadeForms(memberPath, preview);
+        }
+        return preview;
+    }
+
+    /**
+     * Writes the form models a committed cleanup changed to disk.
+     *
+     * @param project the project the forms belong to
+     * @param cleaned the result of {@link #cleanupReferencesToMember} after the transaction
+     *            committed
+     * @return the export's error text, or <code>null</code> when every form was written or there
+     *         was nothing to write
+     */
+    public static String exportCleanedForms(IProject project, CleanupResult cleaned)
+    {
+        if (project == null || cleaned == null || cleaned.formModelFqns.isEmpty())
+        {
+            return null;
+        }
+        IBmModelManager manager = Activator.getDefault().getBmModelManager();
+        if (manager == null)
+        {
+            return "the model manager is unavailable, the cleaned forms were not written to disk"; //$NON-NLS-1$
+        }
+        BmExportHelper.Result exported = BmExportHelper.forceExportAndWait(manager, project,
+            cleaned.formModelFqns, FORM_EXPORT_WAIT_MS);
+        if (exported != null && !exported.isOk())
+        {
+            return exported.error != null ? exported.error : "forceExport returned not-ok"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Names the items of a form whose data path references a member.
+     *
+     * @param formRoot the form model, the object exposing {@code getItems()}
+     * @param memberPath dot-segment path of the member
+     * @return the item names, depth first; empty when none references it
+     */
+    static List<String> itemsReferencing(Object formRoot, String memberPath)
+    {
+        return listMatchingItems(formRoot, dataPathsOf(formRoot, memberPath));
+    }
+
+    /**
+     * Removes the items of a form whose data path references a member.
+     *
+     * @param formRoot the form model, the object exposing {@code getItems()}
+     * @param memberPath dot-segment path of the member
+     * @return the names of the removed items, depth first
+     */
+    static List<String> removeItemsReferencing(Object formRoot, String memberPath)
+    {
+        return removeMatchingItems(formRoot, dataPathsOf(formRoot, memberPath));
+    }
+
+    /**
+     * The data paths of a member on a form, one per data root, lower-cased.
+     *
+     * @param formRoot the form model
+     * @param memberPath dot-segment path of the member
+     * @return {@code <root>.<memberPath>} for each data root of the form
+     */
+    private static List<String> dataPathsOf(Object formRoot, String memberPath)
+    {
+        List<String> paths = new ArrayList<>();
+        for (String root : dataRoots(formRoot))
+        {
+            paths.add((root + "." + memberPath).toLowerCase(Locale.ROOT)); //$NON-NLS-1$
+        }
+        return paths;
+    }
+
+    /**
+     * The names of the form's main attributes, the roots its data paths start from.
+     *
+     * @param formRoot the form model
+     * @return the main attribute names; {@code Object} and {@code Объект} when the form declares
+     *         no main attribute
+     */
+    static List<String> dataRoots(Object formRoot)
+    {
+        List<String> roots = new ArrayList<>();
+        try
+        {
+            Object attributes = formRoot.getClass().getMethod("getAttributes").invoke(formRoot); //$NON-NLS-1$
+            if (attributes instanceof List)
+            {
+                for (Object attribute : (List<?>) attributes)
+                {
+                    Object main = attribute.getClass().getMethod("isMain").invoke(attribute); //$NON-NLS-1$
+                    Object name = attribute.getClass().getMethod("getName").invoke(attribute); //$NON-NLS-1$
+                    if (Boolean.TRUE.equals(main) && name != null && !name.toString().isEmpty())
+                    {
+                        roots.add(name.toString());
+                    }
+                }
+            }
+        }
+        catch (NoSuchMethodException ignored)
+        {
+            // The receiver is an Object whose shape this helper does not control, so a
+            // missing member is an answer, not a failure: the form declares no attributes,
+            // and its paths are read with the default roots.
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("dataRoots failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return roots.isEmpty() ? DEFAULT_DATA_ROOTS : roots;
     }
 
     // -----------------------------------------------------------------------
@@ -301,12 +466,15 @@ public final class BmFormCleanupHelper
     }
 
     /**
-     * Walks the form tree from {@code container} and removes every form item
-     * whose {@code dataPath} matches {@code memberPath}. Returns the list of
-     * removed item names.
+     * Walks the form tree from {@code container} and removes every form item whose
+     * {@code dataPath} references one of the member paths.
+     *
+     * @param container the form or a group inside it
+     * @param memberPaths the member's lower-cased data paths, one per data root
+     * @return the names of the removed items
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    private static List<String> removeMatchingItems(Object container, String memberPath)
+    private static List<String> removeMatchingItems(Object container, List<String> memberPaths)
     {
         List<String> removed = new ArrayList<>();
         try
@@ -321,16 +489,16 @@ public final class BmFormCleanupHelper
             List<Object> toRemove = new ArrayList<>();
             for (Object item : list)
             {
-                if (matchesByDataPath(item, memberPath))
+                if (matchesByDataPath(item, memberPaths))
                 {
                     toRemove.add(item);
                     removed.add(itemName(item));
+                    continue;
                 }
-                // recurse into containers regardless (groups always recurse,
-                // even when not themselves matching)
+                // A group that stays is walked: its items may still reference the member.
                 if (hasGetItems(item))
                 {
-                    removed.addAll(removeMatchingItems(item, memberPath));
+                    removed.addAll(removeMatchingItems(item, memberPaths));
                 }
             }
             for (Object o : toRemove)
@@ -346,10 +514,13 @@ public final class BmFormCleanupHelper
     }
 
     /**
-     * Same traversal as {@link #removeMatchingItems} but read-only - returns
-     * names of items that would be removed.
+     * Same traversal as {@link #removeMatchingItems}, read-only.
+     *
+     * @param container the form or a group inside it
+     * @param memberPaths the member's lower-cased data paths, one per data root
+     * @return the names of the items that would be removed
      */
-    private static List<String> listMatchingItems(Object container, String memberPath)
+    private static List<String> listMatchingItems(Object container, List<String> memberPaths)
     {
         List<String> matches = new ArrayList<>();
         try
@@ -361,13 +532,14 @@ public final class BmFormCleanupHelper
             }
             for (Object item : (EList<?>) items)
             {
-                if (matchesByDataPath(item, memberPath))
+                if (matchesByDataPath(item, memberPaths))
                 {
                     matches.add(itemName(item));
+                    continue;
                 }
                 if (hasGetItems(item))
                 {
-                    matches.addAll(listMatchingItems(item, memberPath));
+                    matches.addAll(listMatchingItems(item, memberPaths));
                 }
             }
         }
@@ -379,41 +551,28 @@ public final class BmFormCleanupHelper
     }
 
     /**
-     * Returns true when the form item's dataPath references the removed
-     * member. Matches both direct ({@code Object.Goods}) and child-of-tabular-
-     * section ({@code Object.Items.Price}) shapes.
+     * Whether a form item's data path is one of the member paths or runs below one of them.
+     *
+     * @param item the form item
+     * @param memberPaths the member's lower-cased data paths, one per data root
+     * @return <code>true</code> when the item references the member
      */
-    private static boolean matchesByDataPath(Object item, String memberPath)
+    private static boolean matchesByDataPath(Object item, List<String> memberPaths)
     {
         String dataPath = readDataPathString(item);
         if (dataPath == null || dataPath.isEmpty())
         {
             return false;
         }
-        String dp = dataPath.toLowerCase(java.util.Locale.ROOT);
-        String mp = memberPath.toLowerCase(java.util.Locale.ROOT);
-        // Common 1C dataPath shape: Object.<member> or Object.<TS>.<column>
-        // We accept match in any segment for robustness.
-        if (dp.equals("object." + mp))
+        String dp = dataPath.toLowerCase(Locale.ROOT);
+        for (String mp : memberPaths)
         {
-            return true;
+            if (dp.equals(mp) || dp.startsWith(mp + ".")) //$NON-NLS-1$
+            {
+                return true;
+            }
         }
-        if (dp.startsWith("object." + mp + "."))
-        {
-            return true;
-        }
-        // Also match the trimmed form (without "Object." prefix)
-        if (dp.equals(mp))
-        {
-            return true;
-        }
-        if (dp.startsWith(mp + "."))
-        {
-            return true;
-        }
-        // Last segment match (column inside tabular section that was removed
-        // as part of removeTabularSection cascade)
-        return dp.endsWith("." + mp);
+        return false;
     }
 
     /**
@@ -466,6 +625,8 @@ public final class BmFormCleanupHelper
         }
         catch (Exception e)
         {
+            // Best-effort read: an item that will not answer leaves the caller with null,
+            // the same answer a missing member gives.
             return null;
         }
     }
@@ -485,14 +646,17 @@ public final class BmFormCleanupHelper
     }
 
     /**
-     * Computes a printable FQN for a Form belonging to the given owner.
-     * Format: {@code <OwnerType>.<OwnerName>.Forms.<FormName>}.
+     * Computes the FQN of a form of the given owner, in the shape the form operations take.
+     *
+     * @param owner the metadata object
+     * @param form the form
+     * @return {@code <OwnerType>.<OwnerName>.Form.<FormName>}
      */
     private static String computeFqn(MdObject owner, MdObject form)
     {
         String type = owner.eClass().getName();
         String ownerName = owner.getName();
         String formName = form.getName();
-        return type + "." + ownerName + ".Forms." + formName;
+        return type + "." + ownerName + ".Form." + formName; //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

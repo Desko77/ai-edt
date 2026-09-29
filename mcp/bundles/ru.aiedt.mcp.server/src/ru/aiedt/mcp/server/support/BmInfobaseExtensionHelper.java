@@ -13,16 +13,12 @@ import java.util.concurrent.locks.Lock;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
-import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
-import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessType;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallation;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallationManager;
-import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ComponentExecutorInfo;
-import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ILaunchableRuntimeComponent;
-import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentManager;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentTypes;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IThickClientLauncher;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.RuntimeExecutionArguments;
@@ -54,8 +50,6 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class BmInfobaseExtensionHelper
 {
-    private static final String RUNTIME_TYPE_ENTERPRISE =
-        "com._1c.g5.v8.dt.platform.services.core.runtimeType.EnterprisePlatform"; //$NON-NLS-1$
 
     private BmInfobaseExtensionHelper()
     {
@@ -104,7 +98,13 @@ public final class BmInfobaseExtensionHelper
         public String infobaseName;
         public String extensionName;
         public String inputPath;
+        /** True only when a requested database update is confirmed by the designer log. */
         public boolean databaseUpdated;
+        /**
+         * Why a requested database update could not be confirmed, when it could not;
+         * <code>null</code> otherwise.
+         */
+        public String databaseUpdateNote;
         public String designerLog;
     }
 
@@ -112,7 +112,7 @@ public final class BmInfobaseExtensionHelper
     public static ListResult listExtensions(String projectName, String applicationId)
     {
         ListResult r = new ListResult();
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -154,7 +154,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
     }
@@ -168,7 +168,7 @@ public final class BmInfobaseExtensionHelper
     {
         DeleteResult r = new DeleteResult();
         r.extensionName = extensionName;
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -206,7 +206,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
     }
@@ -326,7 +326,7 @@ public final class BmInfobaseExtensionHelper
      * @param binary the {@code .epf} / {@code .erf} to read (second launcher argument)
      * @throws Exception when the Designer run fails
      */
-    private static void convertUnderInfobaseLock(LauncherContext ctx, java.nio.file.Path xmlDir,
+    private static void convertUnderInfobaseLock(ThickClientLaunch.LauncherContext ctx, java.nio.file.Path xmlDir,
         java.nio.file.Path binary)
         throws Exception
     {
@@ -363,7 +363,7 @@ public final class BmInfobaseExtensionHelper
      * @param work the launcher call
      * @throws Exception whatever the call throws
      */
-    static void underThickClientHandshake(LauncherContext ctx, Work work) throws Exception
+    static void underThickClientHandshake(ThickClientLaunch.LauncherContext ctx, Work work) throws Exception
     {
         handshakeOrder(ctx.lock, () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
     }
@@ -386,6 +386,91 @@ public final class BmInfobaseExtensionHelper
             if (lock != null)
             {
                 lock.lock();
+            }
+            try
+            {
+                work.run();
+            }
+            finally
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+            }
+        }
+        finally
+        {
+            if (disconnected)
+            {
+                reconnect.run();
+            }
+        }
+    }
+
+    /**
+     * The release/lock/reconnect order of
+     * {@link #underThickClientHandshake(ThickClientLaunch.LauncherContext, Work)}, with the launch
+     * boundary claimed by the worker under the per-infobase lock and before the work runs.
+     * <p>
+     * The boundary is the one state a bounded run and its abandonment cross: whichever claims it
+     * first owns the launch. Claiming it on the worker side is what makes the abandonment's own
+     * answer true - an abandonment that claimed the boundary first then finds the worker did not,
+     * so the work was never handed to the platform, while a worker that claimed it first is a
+     * launcher call the abandonment has to report as still running.
+     * </p>
+     * <p>
+     * The lock wait is interruptible, unlike {@link #handshakeOrder}: the abandonment interrupts a
+     * worker that has not crossed yet, and this one leaves the wait instead of taking the lock when
+     * the caller that held it lets go.
+     * </p>
+     *
+     * @param ctx the resolved launcher context; its {@code launchClaim} is this call's boundary
+     * @param work the launcher call, run under the lock and only once the boundary is this run's
+     * @throws InterruptedException when the boundary was claimed before this worker reached it; the
+     *             launcher is not called then
+     * @throws Exception whatever the call throws, after the infobase has been taken back
+     */
+    static void underThickClientHandshakeWithLaunchClaim(ThickClientLaunch.LauncherContext ctx,
+        Work work) throws Exception
+    {
+        handshakeOrderWithLaunchClaim(ctx.lock, ctx.launchClaim,
+            () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
+    }
+
+    /**
+     * The order itself, as {@link #handshakeOrder} and with the launch boundary claimed between the
+     * lock and the work, with every step handed in so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param launchClaim the launch boundary this call claims before the work runs, or
+     *            <code>null</code> for a call that has no boundary
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and after the boundary was claimed
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @throws InterruptedException when the boundary was already claimed; the lock, when it was
+     *             taken, is given back and the work does not run
+     * @throws Exception whatever the work throws, after the infobase has been taken back
+     */
+    static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
+        java.util.concurrent.atomic.AtomicBoolean launchClaim,
+        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+    {
+        boolean disconnected = release.getAsBoolean();
+        try
+        {
+            if (lock != null)
+            {
+                lock.lockInterruptibly();
+            }
+            if (launchClaim != null && !launchClaim.compareAndSet(false, true))
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+                throw new InterruptedException("the launch was abandoned before the launcher call " //$NON-NLS-1$
+                    + "started");
             }
             try
             {
@@ -500,7 +585,7 @@ public final class BmInfobaseExtensionHelper
         catch (java.nio.file.InvalidPathException e)
         {
             r.error = "sourcePath or targetPath is not a valid file path: " //$NON-NLS-1$
-                + oneLine(causeChainText(e));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
             r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
             return r;
         }
@@ -515,7 +600,7 @@ public final class BmInfobaseExtensionHelper
             return r;
         }
 
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -558,7 +643,7 @@ public final class BmInfobaseExtensionHelper
         catch (java.io.IOException | RuntimeException e)
         {
             r.error = "Cannot create the target directory " + target + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                + oneLine(causeChainText(e));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
             r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
             return r;
         }
@@ -591,19 +676,19 @@ public final class BmInfobaseExtensionHelper
                     {
                         r.reconnectError = "EDT could not reconnect the infobase " + ctx.infobaseName //$NON-NLS-1$
                             + " after the Designer run; it shows as disconnected in EDT - reconnect it " //$NON-NLS-1$
-                            + "by hand: " + oneLine(causeChainText(handshake.reconnectError)); //$NON-NLS-1$
+                            + "by hand: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(handshake.reconnectError)); //$NON-NLS-1$
                     }
                     if (handshake.releaseError != null)
                     {
                         r.error = "EDT could not release the infobase " + ctx.infobaseName //$NON-NLS-1$
                             + " for the Designer, so the conversion did not start: " //$NON-NLS-1$
-                            + oneLine(causeChainText(handshake.releaseError));
+                            + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(handshake.releaseError));
                         r.failureKind = ErrorTags.INFOBASE_NOT_RELEASED.wire();
                         return r;
                     }
                     if (handshake.workError != null)
                     {
-                        classifyThickClientFailure(handshake.workError,
+                        ThickClientLaunch.classifyFailure(handshake.workError,
                             s -> { r.error = s.error; r.failureKind = s.failureKind; });
                         return r;
                     }
@@ -649,7 +734,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
         }
@@ -730,14 +815,90 @@ public final class BmInfobaseExtensionHelper
      * Exports a named configuration extension from the project's infobase to a
      * {@code .cfe} file on disk (read-only on the infobase - writes only the
      * output file).
+     * <p>
+     * The dump lands in a temporary sibling file first and is moved over
+     * {@code outputPath} only after it proves to be the product of this run, so a
+     * file an earlier run left at {@code outputPath} can no longer be reported as
+     * this export's result.
+     * </p>
      */
     public static ExportResult exportExtension(String projectName, String applicationId,
         String extensionName, String outputPath)
     {
+        return exportCfToFile(projectName, applicationId, extensionName, outputPath,
+            true, false, false, "export_extension"); //$NON-NLS-1$
+    }
+
+    /**
+     * The guarded variant of {@link #exportConfigurationCf} behind config_io's
+     * {@code export_database_configuration}: refuses an occupied {@code outputPath}
+     * unless {@code overwrite}, and refuses to dump while the infobase does not hold
+     * the project's current configuration unless {@code allowOutOfSync}.
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param outputPath absolute path of the {@code .cf} file to write
+     * @param overwrite allow replacing an existing file at {@code outputPath}
+     * @param allowOutOfSync allow dumping while the project and the infobase disagree
+     * @return the export result (check {@link ExportResult#ok})
+     */
+    public static ExportResult exportDatabaseConfiguration(String projectName,
+        String applicationId, String outputPath, boolean overwrite, boolean allowOutOfSync)
+    {
+        return exportCfToFile(projectName, applicationId, null, outputPath,
+            overwrite, true, allowOutOfSync, "export_database_configuration"); //$NON-NLS-1$
+    }
+
+    /**
+     * The guarded variant of {@link #exportExtension} behind config_io's
+     * {@code export_database_extension}: refuses an occupied {@code outputPath} unless
+     * {@code overwrite}, and refuses to dump while the infobase does not hold the
+     * project's current configuration unless {@code allowOutOfSync}.
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param extensionName the exact extension name to export
+     * @param outputPath absolute path of the {@code .cfe} file to write
+     * @param overwrite allow replacing an existing file at {@code outputPath}
+     * @param allowOutOfSync allow dumping while the project and the infobase disagree
+     * @return the export result (check {@link ExportResult#ok})
+     */
+    public static ExportResult exportDatabaseExtension(String projectName, String applicationId,
+        String extensionName, String outputPath, boolean overwrite, boolean allowOutOfSync)
+    {
+        return exportCfToFile(projectName, applicationId, extensionName, outputPath,
+            overwrite, true, allowOutOfSync, "export_database_extension"); //$NON-NLS-1$
+    }
+
+    /**
+     * The shared .cf/.cfe dump: resolve the launcher, guard the destination, dump to a
+     * temporary sibling file, verify the product, move it into place.
+     * <p>
+     * Success is provable only because of the temp file: it exists solely because this
+     * run created it, so a non-empty fresh temp file IS this run's product, and the
+     * destination is touched by the move alone - a failed run leaves whatever sat at
+     * {@code outputPath} byte-for-byte intact. Judging the destination directly, the way
+     * the predecessor of this method did, let a previous run's file pass as the result.
+     * </p>
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param extensionName the extension to dump, or <code>null</code> for the MAIN configuration
+     * @param outputPath absolute path of the file to write
+     * @param overwrite allow replacing an existing file at {@code outputPath}
+     * @param checkEquality refuse while the infobase may not hold the project's configuration
+     * @param allowOutOfSync the caller's opt-out of that refusal
+     * @param operation the name the infobase monopoly claim is taken under
+     * @return the export result (check {@link ExportResult#ok})
+     */
+    private static ExportResult exportCfToFile(String projectName, String applicationId,
+        String extensionName, String outputPath, boolean overwrite, boolean checkEquality,
+        boolean allowOutOfSync, String operation)
+    {
         ExportResult r = new ExportResult();
         r.extensionName = extensionName;
         r.outputPath = outputPath;
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -757,7 +918,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (java.nio.file.InvalidPathException e)
         {
-            r.error = "outputPath is not a valid file path: " + oneLine(causeChainText(e)); //$NON-NLS-1$
+            r.error = "outputPath is not a valid file path: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
             r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
             return r;
         }
@@ -771,10 +932,49 @@ public final class BmInfobaseExtensionHelper
             catch (java.io.IOException | RuntimeException e)
             {
                 r.error = "Cannot create the output directory " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(e));
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
                 r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
                 return r;
             }
+        }
+
+        // The guarded operations refuse an occupied destination before anything runs:
+        // they exist so a file already sitting there is neither silently replaced nor
+        // silently reported as this run's result.
+        String occupied = occupiedOutputRefusal(dest, overwrite);
+        if (occupied != null)
+        {
+            r.error = occupied;
+            r.failureKind = ErrorTags.ALREADY_EXISTS.wire();
+            return r;
+        }
+
+        // A dump reads the INFOBASE. When the project carries changes the infobase does
+        // not hold, the file would silently miss them, so the guarded operations refuse
+        // rather than write a plausible-looking stale dump.
+        if (checkEquality && !allowOutOfSync)
+        {
+            String outOfSync = outOfSyncRefusal(readEqualityState(ctx));
+            if (outOfSync != null)
+            {
+                r.error = outOfSync;
+                r.failureKind = ErrorTags.OUT_OF_SYNC.wire();
+                return r;
+            }
+        }
+
+        java.time.Instant startedAt = java.time.Instant.now();
+        java.nio.file.Path temp;
+        try
+        {
+            temp = java.nio.file.Files.createTempFile(parent, ".aiedt-export-", ".part"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            r.error = "Cannot create the temporary export file in " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.WRITE_FAILED.wire();
+            return r;
         }
 
         try
@@ -783,8 +983,8 @@ public final class BmInfobaseExtensionHelper
             // about the EDT next door, and a Designer launched against an infobase another
             // instance is already working on fails with a platform error about a locked
             // configuration - or waits out the timeout. Neither names anybody.
-            MonopolyLock.Claim claim =
-                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_extension"); //$NON-NLS-1$
+            MonopolyLock.Claim claim = MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase),
+                operation);
             if (!claim.granted())
             {
                 r.error = claim.refusal();
@@ -800,8 +1000,9 @@ public final class BmInfobaseExtensionHelper
                 // call hangs until the MCP timeout (row 55). ctx.lock alone does not
                 // release that platform lock (live-verified).
                 underThickClientHandshake(ctx, () -> {
+                    // null extension name = the MAIN configuration (not an extension).
                     ctx.launcher.exportCfFromInfobase(ctx.component, ctx.infobase, ctx.args,
-                        extensionName, dest);
+                        extensionName, temp);
                 });
             }
             finally
@@ -811,20 +1012,213 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            deleteQuietly(temp);
             return r;
         }
-        java.io.File out = new java.io.File(outputPath);
-        if (!out.isFile())
+
+        String problem = freshExportProblem(temp, startedAt);
+        if (problem != null)
         {
-            r.error = "The export reported success but no file was written at " //$NON-NLS-1$
-                + outputPath + "."; //$NON-NLS-1$
+            r.error = "The export reported success but its output did not materialize at " //$NON-NLS-1$
+                + dest + ": " + problem + "."; //$NON-NLS-1$ //$NON-NLS-2$
             r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
+            deleteQuietly(temp);
+            return r;
+        }
+        String moveError = moveExportIntoPlace(temp, dest, overwrite);
+        if (moveError != null)
+        {
+            r.error = moveError;
+            r.failureKind = !overwrite && java.nio.file.Files.exists(dest)
+                ? ErrorTags.ALREADY_EXISTS.wire() : ErrorTags.WRITE_FAILED.wire();
+            deleteQuietly(temp);
             return r;
         }
         r.ok = true;
-        r.sizeBytes = out.length();
+        try
+        {
+            r.sizeBytes = java.nio.file.Files.size(dest);
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            r.sizeBytes = dest.toFile().length();
+        }
         return r;
+    }
+
+    /**
+     * The refusal a guarded export gives for an occupied destination.
+     * <p>
+     * Package-visible so the guard is testable without an infobase: it is the branch that
+     * keeps a previous file from silently standing in for this run's result - and the
+     * branch that leaves that file byte-for-byte intact.
+     * </p>
+     *
+     * @param dest the destination path
+     * @param overwrite whether the caller allowed replacing an existing file
+     * @return the refusal text, or <code>null</code> when the destination may be written
+     */
+    static String occupiedOutputRefusal(java.nio.file.Path dest, boolean overwrite)
+    {
+        if (overwrite || dest == null || !java.nio.file.Files.exists(dest))
+        {
+            return null;
+        }
+        return "A file already exists at " + dest //$NON-NLS-1$
+            + " and overwrite was not allowed - it was left untouched. Pass overwrite=true " //$NON-NLS-1$
+            + "to replace it, or choose another outputPath."; //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal a guarded export gives when the infobase may not hold what the project
+     * holds.
+     *
+     * @param state the project/infobase equality state; <code>null</code> when unreadable
+     * @return the refusal text, or <code>null</code> when the dump reflects the project
+     */
+    static String outOfSyncRefusal(InfobaseEqualityState state)
+    {
+        if (state == InfobaseEqualityState.EQUAL)
+        {
+            return null;
+        }
+        if (state == null)
+        {
+            return "The project/infobase synchronization state could not be read, so nothing " //$NON-NLS-1$
+                + "vouches for the dump being current. Connect the infobase in EDT and retry, " //$NON-NLS-1$
+                + "or pass allowOutOfSync=true to export without the check."; //$NON-NLS-1$
+        }
+        if (state == InfobaseEqualityState.LOADING)
+        {
+            return "The infobase is being updated right now (equality state LOADING). Wait " //$NON-NLS-1$
+                + "for the synchronization to finish and retry, or pass allowOutOfSync=true " //$NON-NLS-1$
+                + "to export anyway."; //$NON-NLS-1$
+        }
+        return "The infobase does not hold the project's current configuration (equality " //$NON-NLS-1$
+            + "state " + state + "): the dump would silently miss changes not yet applied. " //$NON-NLS-1$ //$NON-NLS-2$
+            + "Run update_database first, or pass allowOutOfSync=true to export what the " //$NON-NLS-1$
+            + "infobase holds now."; //$NON-NLS-1$
+    }
+
+    /**
+     * Reads the project/infobase equality state for a guarded export.
+     *
+     * @param ctx the resolved launcher context
+     * @return the equality state, or <code>null</code> when it cannot be obtained (no
+     *         synchronization manager on this runtime, or the read failed) - the caller
+     *         refuses on <code>null</code>, because a guard that could not run cleared nothing
+     */
+    private static InfobaseEqualityState readEqualityState(ThickClientLaunch.LauncherContext ctx)
+    {
+        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
+        if (mgr == null || ctx.project == null)
+        {
+            return null;
+        }
+        try
+        {
+            return mgr.getEqualityState(ctx.project, ctx.infobase);
+        }
+        catch (Throwable e)
+        {
+            Activator.logWarning("getEqualityState failed; treating the synchronization state " //$NON-NLS-1$
+                + "as unreadable: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e))); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * How much earlier than the start of a run the modification time of its product may be.
+     */
+    static final java.time.Duration FILE_TIME_SLACK = java.time.Duration.ofSeconds(2);
+
+    /**
+     * Tells what is wrong with a file an export run claims to have written.
+     * <p>
+     * Three judgements, in order: the file must exist, it must be non-empty (the platform
+     * creates an empty file before writing into one), and it must not predate the run -
+     * the check that keeps a previous run's leftover from passing as this one's product.
+     * The file system stamps a modification time coarser than the clock the start is read
+     * from (a coarse kernel clock on Linux, two seconds on FAT), so a file written right after
+     * the start can carry a time slightly before it: the comparison allows
+     * {@link #FILE_TIME_SLACK}.
+     * Package-visible: the .cf/.cfe export and the .epf/.erf dump both judge their product
+     * through it, and a test can exercise it without an infobase.
+     * </p>
+     *
+     * @param file the file the run was pointed at
+     * @param notBefore the moment the run started
+     * @return the problem, or <code>null</code> when the file is this run's non-empty product
+     */
+    static String freshExportProblem(java.nio.file.Path file, java.time.Instant notBefore)
+    {
+        if (file == null || !java.nio.file.Files.isRegularFile(file))
+        {
+            return "no file was written"; //$NON-NLS-1$
+        }
+        try
+        {
+            if (java.nio.file.Files.size(file) == 0L)
+            {
+                return "the written file is empty"; //$NON-NLS-1$
+            }
+            if (notBefore != null)
+            {
+                java.nio.file.attribute.FileTime modified =
+                    java.nio.file.Files.getLastModifiedTime(file);
+                if (modified.toInstant().isBefore(notBefore.minus(FILE_TIME_SLACK)))
+                {
+                    return "the written file predates this run (last modified " + modified //$NON-NLS-1$
+                        + ", the run started " + notBefore //$NON-NLS-1$
+                        + ") - it is what a previous run left"; //$NON-NLS-1$
+                }
+            }
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            return "the written file could not be verified: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Moves a verified export file over its destination.
+     *
+     * @param temp the verified temporary file
+     * @param dest the destination path
+     * @param overwrite whether an existing destination may be replaced
+     * @return the failure text, or <code>null</code> when the file is in place
+     */
+    static String moveExportIntoPlace(java.nio.file.Path temp, java.nio.file.Path dest,
+        boolean overwrite)
+    {
+        try
+        {
+            if (overwrite)
+            {
+                java.nio.file.Files.move(temp, dest,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            else
+            {
+                java.nio.file.Files.move(temp, dest);
+            }
+            return null;
+        }
+        catch (java.nio.file.FileAlreadyExistsException race)
+        {
+            // The destination appeared between the occupied guard and this move; the
+            // guarded caller refuses rather than replaces it.
+            return "A file appeared at " + dest //$NON-NLS-1$
+                + " while the export ran - it was left untouched; pass overwrite=true to " //$NON-NLS-1$
+                + "replace it."; //$NON-NLS-1$
+        }
+        catch (java.io.IOException | RuntimeException e)
+        {
+            return "The export succeeded but the file could not be moved into place at " //$NON-NLS-1$
+                + dest + ": " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -839,6 +1233,13 @@ public final class BmInfobaseExtensionHelper
      * {@code validate_for_export} first to catch export-breakers (e.g. a {@code <help>}
      * page declared in an {@code .mdo} without its {@code Help/<lang>.html} file) that
      * crash the DESIGNER dump.
+     * </p>
+     * <p>
+     * The dump lands in a temporary sibling file first and is moved over
+     * {@code outputPath} only after it proves to be the product of this run, so a
+     * file an earlier run left at {@code outputPath} can no longer be reported as
+     * this export's result.
+     * </p>
      *
      * @param projectName the EDT project that owns the infobase
      * @param applicationId the infobase application id (nullable -> the project default)
@@ -848,92 +1249,8 @@ public final class BmInfobaseExtensionHelper
     public static ExportResult exportConfigurationCf(String projectName, String applicationId,
         String outputPath)
     {
-        ExportResult r = new ExportResult();
-        r.outputPath = outputPath;
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
-        if (ctx.error != null)
-        {
-            r.error = ctx.error;
-            r.failureKind = ctx.failureKind;
-            r.infobaseName = ctx.infobaseName;
-            return r;
-        }
-        r.infobaseName = ctx.infobaseName;
-
-        // Resolve and prepare the output path client-side, before the thick-client call,
-        // so a bad path or missing directory is reported as such instead of being
-        // misclassified as an infobase/runtime failure by classifyThickClientFailure.
-        java.nio.file.Path dest;
-        try
-        {
-            dest = java.nio.file.Paths.get(outputPath);
-        }
-        catch (java.nio.file.InvalidPathException e)
-        {
-            r.error = "outputPath is not a valid file path: " + oneLine(causeChainText(e)); //$NON-NLS-1$
-            r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
-            return r;
-        }
-        java.nio.file.Path parent = dest.toAbsolutePath().getParent();
-        if (parent != null)
-        {
-            try
-            {
-                java.nio.file.Files.createDirectories(parent);
-            }
-            catch (java.io.IOException | RuntimeException e)
-            {
-                r.error = "Cannot create the output directory " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(e));
-                r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
-                return r;
-            }
-        }
-
-        try
-        {
-            // The in-process lock below keeps this EDT's own callers apart. It says nothing
-            // about the EDT next door, and a Designer launched against an infobase another
-            // instance is already working on fails with a platform error about a locked
-            // configuration - or waits out the timeout. Neither names anybody.
-            MonopolyLock.Claim claim =
-                MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "export_configuration_to_cf"); //$NON-NLS-1$
-            if (!claim.granted())
-            {
-                r.error = claim.refusal();
-                r.failureKind = ErrorTags.BUSY.wire();
-                return r;
-            }
-            try
-            {
-                // Same disconnect/reconnect as exportExtension: the dump thick-client needs
-                // EDT's designer agent off the file infobase or it blocks on the monopoly.
-                underThickClientHandshake(ctx, () -> {
-                    // null extension name = the MAIN configuration (not an extension).
-                    ctx.launcher.exportCfFromInfobase(ctx.component, ctx.infobase, ctx.args, null, dest);
-                });
-            }
-            finally
-            {
-                claim.close();
-            }
-        }
-        catch (Throwable e)
-        {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
-            return r;
-        }
-        java.io.File out = new java.io.File(outputPath);
-        if (!out.isFile())
-        {
-            r.error = "The export reported success but no file was written at " //$NON-NLS-1$
-                + outputPath + "."; //$NON-NLS-1$
-            r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
-            return r;
-        }
-        r.ok = true;
-        r.sizeBytes = out.length();
-        return r;
+        return exportCfToFile(projectName, applicationId, null, outputPath,
+            true, false, false, "export_configuration_to_cf"); //$NON-NLS-1$
     }
 
     /**
@@ -1001,7 +1318,7 @@ public final class BmInfobaseExtensionHelper
             catch (Exception ghEx)
             {
                 r.error = "Failed to resolve the latest release of " + repoSource[0] //$NON-NLS-1$
-                    + " from GitHub: " + oneLine(causeChainText(ghEx)); //$NON-NLS-1$
+                    + " from GitHub: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(ghEx)); //$NON-NLS-1$
                 r.failureKind = ErrorTags.GITHUB_RESOLVE_FAILED.wire();
                 return r;
             }
@@ -1019,7 +1336,7 @@ public final class BmInfobaseExtensionHelper
                 // the empty/partial temp file so repeated failures do not litter temp.
                 deleteQuietly(tmp);
                 r.error = "Failed to download extension from " + resolvedUrl + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(dlEx));
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(dlEx));
                 r.failureKind = ErrorTags.INPUT_DOWNLOAD_FAILED.wire();
                 return r;
             }
@@ -1036,7 +1353,7 @@ public final class BmInfobaseExtensionHelper
             catch (Exception dlEx)
             {
                 r.error = "Failed to download extension from " + inputPath + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(dlEx));
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(dlEx));
                 r.failureKind = ErrorTags.INPUT_DOWNLOAD_FAILED.wire();
                 return r;
             }
@@ -1049,7 +1366,7 @@ public final class BmInfobaseExtensionHelper
             }
             catch (java.nio.file.InvalidPathException e)
             {
-                r.error = "inputPath is not a valid file path: " + oneLine(causeChainText(e)); //$NON-NLS-1$
+                r.error = "inputPath is not a valid file path: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
                 r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
                 return r;
             }
@@ -1063,7 +1380,7 @@ public final class BmInfobaseExtensionHelper
             }
         }
 
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             // A downloaded temp file (URL/GitHub source) has no install try/finally yet -
@@ -1134,12 +1451,12 @@ public final class BmInfobaseExtensionHelper
         catch (java.lang.reflect.InvocationTargetException e)
         {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            classifyThickClientFailure(cause, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(cause, s -> { r.error = s.error; r.failureKind = s.failureKind; });
             return r;
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
             return r;
         }
         finally
@@ -1158,8 +1475,102 @@ public final class BmInfobaseExtensionHelper
         }
 
         r.ok = true;
-        r.databaseUpdated = updateDatabase;
+        if (updateDatabase)
+        {
+            // databaseUpdated must say the update happened, not that it was asked for:
+            // the designer log is the only witness the run leaves, so it is read for
+            // what it vouches for, and an unreadable or silent log is answered honestly
+            // rather than claimed as success.
+            DatabaseUpdateOutcome outcome = databaseUpdateOutcome(r.designerLog);
+            if (outcome == DatabaseUpdateOutcome.FAILED)
+            {
+                r.ok = false;
+                r.failureKind = ErrorTags.DATABASE_UPDATE_FAILED.wire();
+                r.error = "The extension was loaded, but the database update reported errors " //$NON-NLS-1$
+                    + "in the designer log - the extension was NOT applied to the database. " //$NON-NLS-1$
+                    + "Fix the cause named in the log and retry."; //$NON-NLS-1$
+            }
+            else if (outcome == DatabaseUpdateOutcome.CONFIRMED)
+            {
+                r.databaseUpdated = true;
+            }
+            else
+            {
+                r.databaseUpdateNote = "The designer log carries no line that confirms the " //$NON-NLS-1$
+                    + "database update, so databaseUpdated stays false rather than being " //$NON-NLS-1$
+                    + "claimed: verify the extension in the Configurator (or apply it there) " //$NON-NLS-1$
+                    + "before relying on it."; //$NON-NLS-1$
+            }
+        }
         return r;
+    }
+
+    /** What the designer log of an install run vouches for about a requested database update. */
+    enum DatabaseUpdateOutcome
+    {
+        /** A success line naming the database is present and no failure line is. */
+        CONFIRMED,
+        /** The log says nothing either way (or there is no log). */
+        UNVERIFIED,
+        /** A failure line is present. */
+        FAILED
+    }
+
+    /**
+     * Reads the designer log of an install run for what it says about the database update
+     * the run was asked to perform.
+     * <p>
+     * The platform speaks the language the IDE runs in, so both English and Russian
+     * wordings are matched; a failure line anywhere wins over every success line, and a
+     * summary that counts zero errors ("errors: 0" / its Russian twin) is not a failure
+     * report. Only a success line that names the database confirms the update: the same
+     * run loads the extension first, and its "Загрузка конфигурации успешно завершена"
+     * vouches for the load alone. Measured: a load and update run of an unchanged
+     * extension leaves that load line as the whole log. Package-visible: the matching turns on prose and is exactly the kind that
+     * stops working without anyone noticing, so a test reads it directly.
+     * </p>
+     *
+     * @param designerLog the captured designer log; may be <code>null</code>
+     * @return what the log vouches for, never <code>null</code>
+     */
+    static DatabaseUpdateOutcome databaseUpdateOutcome(String designerLog)
+    {
+        if (designerLog == null || designerLog.trim().isEmpty())
+        {
+            return DatabaseUpdateOutcome.UNVERIFIED;
+        }
+        boolean failed = false;
+        boolean confirmed = false;
+        for (String raw : designerLog.split("\n")) //$NON-NLS-1$
+        {
+            String line = raw.trim().toLowerCase(Locale.ROOT);
+            if (line.isEmpty())
+            {
+                continue;
+            }
+            boolean zeroCount = line.contains("errors: 0") || line.contains("error: 0") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("ошибок: 0"); //$NON-NLS-1$
+            if (!zeroCount && (line.contains("error") || line.contains("failed") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("failure") || line.contains("exception") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("ошибк") // the Russian error word, any case ending //$NON-NLS-1$
+                || line.contains("не удалось"))) // the Russian "could not" wording //$NON-NLS-1$
+            {
+                failed = true;
+            }
+            boolean success = line.contains("successfully") || line.contains("completed") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("успешно"); // the Russian "successfully" wording //$NON-NLS-1$
+            boolean namesTheDatabase = line.contains("database") //$NON-NLS-1$
+                || line.contains("базы данных"); // the Russian "of the database" wording //$NON-NLS-1$
+            if (success && namesTheDatabase)
+            {
+                confirmed = true;
+            }
+        }
+        if (failed)
+        {
+            return DatabaseUpdateOutcome.FAILED;
+        }
+        return confirmed ? DatabaseUpdateOutcome.CONFIRMED : DatabaseUpdateOutcome.UNVERIFIED;
     }
 
     /**
@@ -1193,8 +1604,12 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    /** Best-effort delete of a path (typically a downloaded temp file); swallows errors. */
-    private static void deleteQuietly(java.nio.file.Path path)
+    /**
+     * Best-effort delete of a path (a temporary export or dump file, a downloaded temp
+     * file); swallows errors. Package-visible: every export path in this package cleans
+     * its temporary product up through it.
+     */
+    static void deleteQuietly(java.nio.file.Path path)
     {
         if (path == null)
         {
@@ -1271,11 +1686,21 @@ public final class BmInfobaseExtensionHelper
      * state for a nominally read-only operation. {@code disconnectInfobase} on an already-disconnected
      * infobase is a successful no-op, so it cannot tell the two apart on its own.
      * </p>
+     * <p>
+     * A context carrying no project names no connection to ask about, so the synchronization
+     * service is not requested for it: {@code ServiceAccess.get} answers with a service or throws,
+     * and on a runtime where the platform services are not registered yet it throws, which would
+     * end a call that had nothing to release in the first place.
+     * </p>
      */
-    private static boolean disconnectForThickClient(LauncherContext ctx)
+    private static boolean disconnectForThickClient(ThickClientLaunch.LauncherContext ctx)
     {
+        if (ctx.project == null)
+        {
+            return false;
+        }
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (mgr == null)
         {
             return false;
         }
@@ -1288,7 +1713,7 @@ public final class BmInfobaseExtensionHelper
         catch (Throwable e)
         {
             Activator.logWarning("disconnectInfobase failed; running thick-client without it: " //$NON-NLS-1$
-                + oneLine(causeChainText(e)));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)));
             return false;
         }
     }
@@ -1302,7 +1727,7 @@ public final class BmInfobaseExtensionHelper
      * @return <code>true</code> when the infobase was connected and is now released
      * @throws Exception when the release failed
      */
-    static boolean releaseForThickClient(LauncherContext ctx) throws Exception
+    static boolean releaseForThickClient(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1335,9 +1760,9 @@ public final class BmInfobaseExtensionHelper
                 catch (Throwable alsoFailed)
                 {
                     rethrowIfFatal(alsoFailed);
-                    throw new IllegalStateException(oneLine(causeChainText(failed))
+                    throw new IllegalStateException(ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(failed))
                         + "; the infobase could not be reconnected either and stays disconnected - " //$NON-NLS-1$
-                        + "reconnect it by hand: " + oneLine(causeChainText(alsoFailed)), failed); //$NON-NLS-1$
+                        + "reconnect it by hand: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(alsoFailed)), failed); //$NON-NLS-1$
                 }
             }
             if (failed instanceof Exception)
@@ -1360,7 +1785,7 @@ public final class BmInfobaseExtensionHelper
      * @param ctx the resolved launcher context
      * @throws Exception when the reconnection failed
      */
-    static void takeInfobaseBack(LauncherContext ctx) throws Exception
+    static void takeInfobaseBack(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1396,7 +1821,7 @@ public final class BmInfobaseExtensionHelper
      * @param tempDir the directory the dump-info file is written into
      * @throws Exception when EDT does not expose the execution internals, or the Designer failed
      */
-    static void runDesignerDumpInfoOnly(LauncherContext ctx, java.nio.file.Path tempDir)
+    static void runDesignerDumpInfoOnly(ThickClientLaunch.LauncherContext ctx, java.nio.file.Path tempDir)
         throws Exception
     {
         java.lang.reflect.Method splitM =
@@ -1449,7 +1874,7 @@ public final class BmInfobaseExtensionHelper
      * @throws Exception when EDT does not expose the execution internals, or the Designer failed
      */
     static String runDesignerExportList(
-        BmInfobaseExtensionHelper.LauncherContext ctx, java.nio.file.Path targetDir,
+        ThickClientLaunch.LauncherContext ctx, java.nio.file.Path targetDir,
         java.nio.file.Path listFile) throws Exception
     {
         java.lang.reflect.Method splitM =
@@ -1490,7 +1915,7 @@ public final class BmInfobaseExtensionHelper
      * @return the fresh dump-info file, or {@code null} for the conventional name
      * @throws Exception when the Designer run failed
      */
-    static java.nio.file.Path runFullDumpUnderInfobaseLock(LauncherContext ctx,
+    static java.nio.file.Path runFullDumpUnderInfobaseLock(ThickClientLaunch.LauncherContext ctx,
         java.nio.file.Path tempDir) throws Exception
     {
         lockForRebuild(ctx);
@@ -1538,7 +1963,7 @@ public final class BmInfobaseExtensionHelper
     /**
      * Invokes a Designer run of the dump-info rebuild under the per-infobase lock. Differs from
      * {@link #invokeUnderInfobaseLock} only in how the run is entered: see
-     * {@link #lockForRebuild(LauncherContext)}.
+     * {@link #lockForRebuild(ThickClientLaunch.LauncherContext)}.
      *
      * @param ctx the launcher context of the rebuild's current run
      * @param method the method to invoke
@@ -1548,7 +1973,7 @@ public final class BmInfobaseExtensionHelper
      * @throws InterruptedException when the rebuild was abandoned before the run started
      * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}
      */
-    static Object invokeUnderRebuildLock(LauncherContext ctx,
+    static Object invokeUnderRebuildLock(ThickClientLaunch.LauncherContext ctx,
         java.lang.reflect.Method method, Object target, Object... args) throws Exception
     {
         lockForRebuild(ctx);
@@ -1567,7 +1992,7 @@ public final class BmInfobaseExtensionHelper
      * @throws InterruptedException when the run was abandoned before the boundary was claimed;
      *             the lock is not held then
      */
-    static void lockForRebuild(LauncherContext ctx) throws InterruptedException
+    static void lockForRebuild(ThickClientLaunch.LauncherContext ctx) throws InterruptedException
     {
         if (ctx.lock != null)
         {
@@ -1628,7 +2053,7 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static void reconnectInfobase(LauncherContext ctx)
+    private static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx)
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null || ctx.project == null)
@@ -1642,123 +2067,8 @@ public final class BmInfobaseExtensionHelper
         catch (Throwable e)
         {
             Activator.logWarning("connectInfobase failed; the infobase may show as " //$NON-NLS-1$
-                + "disconnected in EDT - reconnect it manually: " + oneLine(causeChainText(e))); //$NON-NLS-1$
+                + "disconnected in EDT - reconnect it manually: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e))); //$NON-NLS-1$
         }
-    }
-
-    /** The resolved thick-client environment one launcher call runs in. */
-    static final class LauncherContext
-    {
-        IThickClientLauncher launcher;
-        ILaunchableRuntimeComponent component;
-        InfobaseReference infobase;
-        IProject project;
-        Lock lock;
-        RuntimeExecutionArguments args;
-        String infobaseName;
-        String error;
-        String failureKind;
-
-        /**
-         * The Designer launch boundary of the rebuild's current run, claimed once by whoever
-         * crosses it first: the worker under the per-infobase lock, right before it calls the
-         * launcher, or the abandonment side when it gives the run up. Fresh for every run - a
-         * rebuild asks twice, the quick dump and the fallback - so each launch is claimed or
-         * abandoned on its own.
-         */
-        java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
-    }
-
-    /**
-     * Resolves the ThickClient launcher + component + execution args for the IB. Package-visible:
-     * the dump-info rebuild in this package runs its Designer step through the same resolution.
-     */
-    static LauncherContext resolveLauncher(String projectName, String applicationId)
-    {
-        LauncherContext ctx = new LauncherContext();
-        IProject project = ProjectResolver.resolve(projectName);
-        if (project == null)
-        {
-            ctx.error = ProjectResolver.describeNotFound(projectName);
-            ctx.failureKind = ErrorTags.PROJECT_NOT_FOUND.wire();
-            return ctx;
-        }
-        InfobaseReference infobase = resolveInfobase(project, applicationId, ctx);
-        if (infobase == null)
-        {
-            return ctx; // ctx.error set
-        }
-        ctx.infobase = infobase;
-        ctx.infobaseName = infobase.getName();
-        ctx.project = project;
-
-        Activator a = Activator.getDefault();
-        IResolvableRuntimeInstallationManager riMgr =
-            a != null ? a.getResolvableRuntimeInstallationManager() : null;
-        IRuntimeComponentManager compMgr = a != null ? a.getRuntimeComponentManager() : null;
-        IInfobaseAccessManager accessMgr = a != null ? a.getInfobaseAccessManager() : null;
-        IInfobaseManager infobaseManager = a != null ? a.getInfobaseManager() : null;
-        if (riMgr == null || compMgr == null || accessMgr == null || infobaseManager == null)
-        {
-            ctx.error = "Runtime / infobase managers (incl. the per-infobase lock service) " //$NON-NLS-1$
-                + "are not available on this EDT runtime."; //$NON-NLS-1$
-            ctx.failureKind = ErrorTags.MANAGER_UNAVAILABLE.wire();
-            return ctx;
-        }
-        // EDT holds the connected infobase through a persistent designer session, so a
-        // spawned DESIGNER batch cannot take the platform config lock on its own. EDT's
-        // own UI (ExportConfigurationFileService) wraps every thick-client IB call in
-        // IInfobaseManager.getLock(infobase) to coordinate with that session; mirror it
-        // here. Callers still null-guard ctx.lock for the rare getLock()-returns-null case.
-        ctx.lock = infobaseManager.getLock(infobase);
-
-        // The credential read below touches encrypted secure storage; prime it so
-        // the master-password dialog is not posted on this background thread.
-        String primeErr = BmInfobaseCredentialsHelper.primeSecureStorage();
-        if (primeErr != null)
-        {
-            ctx.error = primeErr;
-            ctx.failureKind = ErrorTags.STORAGE_LOCKED.wire();
-            return ctx;
-        }
-
-        try
-        {
-            IResolvableRuntimeInstallation resolvable = riMgr.resolveByProjectAndInfobase(
-                RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
-            RuntimeInstallation installation = resolvable.resolve(
-                Collections.singletonList(IRuntimeComponentTypes.THICK_CLIENT), infobase.getAppArch());
-            ComponentExecutorInfo<ILaunchableRuntimeComponent, IThickClientLauncher> info =
-                compMgr.resolveExecutor(ILaunchableRuntimeComponent.class, IThickClientLauncher.class,
-                    installation, IRuntimeComponentTypes.THICK_CLIENT);
-            ctx.launcher = info.getExecutor();
-            ctx.component = info.getComponent();
-        }
-        catch (Throwable e)
-        {
-            classifyThickClientFailure(e, s -> { ctx.error = s.error; ctx.failureKind = s.failureKind; });
-            return ctx;
-        }
-
-        RuntimeExecutionArguments args = new RuntimeExecutionArguments();
-        try
-        {
-            IInfobaseAccessSettings s = accessMgr.resolveSettings(infobase);
-            if (s != null)
-            {
-                args.setAccess(s.access());
-                args.setUsername(emptyToNull(s.userName()));
-                args.setPassword(emptyToNull(s.password()));
-            }
-        }
-        catch (Throwable e)
-        {
-            Activator.logWarning("extension mgmt: resolveSettings failed (proceeding without " //$NON-NLS-1$
-                + "credentials): " + msg(e)); //$NON-NLS-1$
-        }
-        ctx.args = args;
-        return ctx;
     }
 
     /**
@@ -1785,7 +2095,7 @@ public final class BmInfobaseExtensionHelper
                 return null;
             }
             IResolvableRuntimeInstallation resolvable = riMgr.resolveByProjectAndInfobase(
-                RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
+                ThickClientLaunch.RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
             RuntimeInstallation installation = resolvable.resolve(
                 Collections.singletonList(IRuntimeComponentTypes.THICK_CLIENT), infobase.getAppArch());
             return installation.getVersionWithBuild();
@@ -1796,173 +2106,4 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static InfobaseReference resolveInfobase(IProject project, String applicationId,
-        LauncherContext ctx)
-    {
-        IApplicationManager appMgr = Activator.getDefault() != null
-            ? Activator.getDefault().getApplicationManager() : null;
-        if (appMgr == null)
-        {
-            ctx.error = "IApplicationManager is not available on this EDT runtime."; //$NON-NLS-1$
-            ctx.failureKind = ErrorTags.MANAGER_UNAVAILABLE.wire();
-            return null;
-        }
-        try
-        {
-            IApplication app;
-            if (applicationId != null && !applicationId.isEmpty())
-            {
-                app = appMgr.getApplication(project, applicationId).orElse(null);
-                if (app == null)
-                {
-                    ctx.error = "No application '" + applicationId + "' in project '" //$NON-NLS-1$ //$NON-NLS-2$
-                        + project.getName() + "'. Use get_applications to list ids."; //$NON-NLS-1$
-                    ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                    return null;
-                }
-            }
-            else
-            {
-                List<IApplication> apps = appMgr.getApplications(project);
-                if (apps == null || apps.isEmpty())
-                {
-                    ctx.error = "Project '" + project.getName() + "' has no infobase application."; //$NON-NLS-1$ //$NON-NLS-2$
-                    ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                    return null;
-                }
-                if (apps.size() > 1)
-                {
-                    ctx.error = "Project '" + project.getName() + "' has multiple applications; " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "pass applicationId (see get_applications)."; //$NON-NLS-1$
-                    ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                    return null;
-                }
-                app = apps.get(0);
-            }
-            if (!(app instanceof IInfobaseApplication))
-            {
-                ctx.error = "Application is not an infobase application; extension management " //$NON-NLS-1$
-                    + "applies only to infobases."; //$NON-NLS-1$
-                ctx.failureKind = ErrorTags.NOT_INFOBASE.wire();
-                return null;
-            }
-            InfobaseReference ib = ((IInfobaseApplication) app).getInfobase();
-            if (ib == null)
-            {
-                ctx.error = "The infobase application has no infobase reference."; //$NON-NLS-1$
-                ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                return null;
-            }
-            return ib;
-        }
-        catch (Exception e)
-        {
-            ctx.error = "Failed to resolve the infobase: " + msg(e); //$NON-NLS-1$
-            ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-            return null;
-        }
-    }
-
-    // --- failure classification ---
-
-    private static final class Classified
-    {
-        String error;
-        String failureKind;
-    }
-
-    private interface Sink
-    {
-        void accept(Classified c);
-    }
-
-    private static void classifyThickClientFailure(Throwable cause, Sink sink)
-    {
-        Classified c = new Classified();
-        String chain = causeChainText(cause);
-        String lower = chain.toLowerCase(Locale.ROOT);
-        if (lower.contains("runtimeversionrequired")) //$NON-NLS-1$
-        {
-            // The .cfe / operation requires a platform version that the infobase's
-            // associated runtime does not match. Public launcher verbs retry on a
-            // fallback installation (findFallbackClient); the direct install path
-            // cannot, so surface this distinctly instead of as a generic failure.
-            c.failureKind = ErrorTags.PLATFORM_VERSION_MISMATCH.wire();
-            c.error = "This operation requires a 1C:Enterprise platform version that does not " //$NON-NLS-1$
-                + "match the infobase's associated runtime. Associate/install the required " //$NON-NLS-1$
-                + "platform version for this infobase, then retry. Underlying: " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        else if (lower.contains("matchingruntimenotfound") //$NON-NLS-1$
-            || (lower.contains("runtime") && (lower.contains("not found") //$NON-NLS-1$ //$NON-NLS-2$
-                || lower.contains("no matching") || lower.contains("cannot be resolved")))) //$NON-NLS-1$ //$NON-NLS-2$
-        {
-            c.failureKind = ErrorTags.RUNTIME_NOT_FOUND.wire();
-            c.error = "No resolvable 1C:Enterprise platform runtime (with a thick client) for " //$NON-NLS-1$
-                + "this infobase. Install/associate a matching platform version. Underlying: " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        else if (lower.contains("authentication") || lower.contains("noaccessright") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.contains("access right") || lower.contains("no access") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.contains("аутентификаци") || lower.contains("недостаточно прав") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.contains("прав доступа")) //$NON-NLS-1$
-        {
-            c.failureKind = ErrorTags.AUTH_FAILED.wire();
-            c.error = "The infobase rejected the stored credentials. Set the correct user / " //$NON-NLS-1$
-                + "password with set_infobase_credentials, then retry. Underlying: " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        else
-        {
-            c.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
-            c.error = "The thick-client operation failed (the infobase may be locked by a " //$NON-NLS-1$
-                + "running 1C client, unreachable, or the extension was not found): " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        sink.accept(c);
-    }
-
-    private static String causeChainText(Throwable t)
-    {
-        StringBuilder sb = new StringBuilder();
-        int depth = 0;
-        Throwable c = t;
-        while (c != null && depth < 8)
-        {
-            if (sb.length() > 0)
-            {
-                sb.append(" | "); //$NON-NLS-1$
-            }
-            sb.append(c.getClass().getSimpleName());
-            if (c.getMessage() != null)
-            {
-                sb.append(": ").append(c.getMessage()); //$NON-NLS-1$
-            }
-            c = c.getCause();
-            depth++;
-        }
-        return sb.toString();
-    }
-
-    private static String oneLine(String s)
-    {
-        if (s == null)
-        {
-            return ""; //$NON-NLS-1$
-        }
-        // Flatten to a single line, preserving the whole cause chain (joined by
-        // " | ") rather than truncating at the first embedded newline.
-        String line = s.replace('\n', ' ').replace('\r', ' ');
-        return line.length() > 500 ? line.substring(0, 500) + "..." : line; //$NON-NLS-1$
-    }
-
-    private static String emptyToNull(String s)
-    {
-        return (s == null || s.isEmpty()) ? null : s;
-    }
-
-    private static String msg(Throwable e)
-    {
-        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-    }
 }

@@ -6,12 +6,8 @@
 
 package ru.aiedt.mcp.server.support;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.emf.common.util.EList;
 
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
@@ -31,21 +27,17 @@ import ru.aiedt.mcp.server.Activator;
  *
  * <p>Three reference forms are recognised:
  * <ul>
- *   <li>{@code StdPicture.<Name>} - looked up against the EDT
- *       {@code StandardPictures} reflection registry</li>
- *   <li>{@code StdExtPicture.<Name>} - same registry, extension namespace</li>
+ *   <li>{@code StdPicture.<Name>} - looked up among the stock pictures of the
+ *       project's platform version ({@link StockPictures}), by English or
+ *       Russian name</li>
+ *   <li>{@code StdExtPicture.<Name>} - the same, among the extended stock
+ *       pictures</li>
  *   <li>{@code CommonPicture.<Name>} - looked up against the configuration's
  *       {@code getCommonPictures()} collection</li>
  * </ul>
  */
 public final class PictureValidator
 {
-    private static final String[] STOCK_REGISTRY_CLASSES = {
-        "com._1c.g5.v8.dt.platform.pictures.StandardPictures", //$NON-NLS-1$
-        "com._1c.g5.v8.dt.platform.pictures.PlatformPictures", //$NON-NLS-1$
-        "com._1c.g5.v8.dt.ui.platform.PlatformPictures" //$NON-NLS-1$
-    };
-
     private PictureValidator()
     {
     }
@@ -54,9 +46,10 @@ public final class PictureValidator
      * Validates a picture reference. Empty or null input is accepted as
      * "no picture requested" and returns {@code null} (no error).
      *
-     * @param projectName project that owns the configuration. Required only
-     *        for {@code CommonPicture.<Name>} references; may be {@code null}
-     *        otherwise.
+     * @param projectName project that owns the configuration. Required for
+     *        {@code CommonPicture.<Name>} references; for a stock picture it
+     *        names the platform version checked against, and without it the
+     *        newest version is used.
      * @param pictureRef full reference, e.g. {@code StdPicture.Delete},
      *        {@code CommonPicture.MyLogo}, or a bare {@code Delete} (treated
      *        as {@code StdPicture.Delete}).
@@ -80,14 +73,14 @@ public final class PictureValidator
         {
             case "StdPicture": //$NON-NLS-1$
             case "StdExtPicture": //$NON-NLS-1$
-                if (isValidStockPicture(name))
+                if (isValidStockPicture(projectName, prefix, name))
                 {
                     return null;
                 }
                 return "Stock picture '" + pictureRef + "' was not found in the platform " //$NON-NLS-1$ //$NON-NLS-2$
                     + "registry. Either a typo or the picture appeared in a later 1C " //$NON-NLS-1$
                     + "platform version. List the available names via " //$NON-NLS-1$
-                    + "edit_metadata operation=listPictures."; //$NON-NLS-1$
+                    + "edit_metadata operation=list_pictures."; //$NON-NLS-1$
             case "CommonPicture": //$NON-NLS-1$
                 if (projectName == null || projectName.isEmpty())
                 {
@@ -107,35 +100,42 @@ public final class PictureValidator
         }
     }
 
-    private static boolean isValidStockPicture(String name)
+    /**
+     * Whether a stock picture of the project's platform version answers to a name.
+     *
+     * @param projectName the project whose version is checked, or <code>null</code> for the newest
+     * @param prefix {@link StockPictures#STD} or {@link StockPictures#STD_EXT}
+     * @param name the picture name without the prefix, English or Russian
+     * @return <code>true</code> when a picture of that prefix answers to the name, and when this
+     *         runtime registers no stock pictures at all - the name cannot be checked then, and the
+     *         write resolves it itself
+     */
+    private static boolean isValidStockPicture(String projectName, String prefix, String name)
     {
-        for (String cls : STOCK_REGISTRY_CLASSES)
+        java.util.List<StockPictures.Entry> pictures = StockPictures.read(StockPictures.versionOf(projectName));
+        if (pictures.isEmpty())
         {
-            try
+            return true;
+        }
+        for (StockPictures.Entry picture : pictures)
+        {
+            if (picture.prefix.equals(prefix) && picture.answersTo(name))
             {
-                Class<?> clazz = Class.forName(cls);
-                for (Field f : clazz.getDeclaredFields())
-                {
-                    if (Modifier.isStatic(f.getModifiers())
-                        && Modifier.isPublic(f.getModifiers())
-                        && name.equals(f.getName()))
-                    {
-                        return true;
-                    }
-                }
-                // Class found but field absent - registry exists, name is wrong.
-                return false;
-            }
-            catch (ClassNotFoundException ignored)
-            {
-                // Try next candidate class.
+                return true;
             }
         }
-        // No stock registry class on this EDT runtime - cannot validate.
-        // Conservative default: accept the name to avoid false rejections.
-        return true;
+        return false;
     }
 
+    /**
+     * Whether the configuration of a project has a common picture of a name.
+     *
+     * @param projectName the project
+     * @param name the common picture's name, in any case
+     * @return <code>true</code> when the picture is there, and when reading the configuration
+     *         throws - the write resolves the name itself then; <code>false</code> for a project or
+     *         configuration that is not there
+     */
     private static boolean isValidCommonPicture(String projectName, String name)
     {
         try
@@ -147,21 +147,7 @@ public final class PictureValidator
             }
             Configuration config = Activator.getDefault().getConfigurationProvider()
                 .getConfiguration(project);
-            if (config == null)
-            {
-                return false;
-            }
-            EList<?> pictures = (EList<?>) config.getClass()
-                .getMethod("getCommonPictures").invoke(config); //$NON-NLS-1$
-            for (Object pic : pictures)
-            {
-                if (pic instanceof MdObject
-                    && name.equals(((MdObject) pic).getName()))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return config != null && carriesCommonPicture(config, name);
         }
         catch (Exception e)
         {
@@ -170,5 +156,25 @@ public final class PictureValidator
             // Conservative default - avoid blocking the operation when probe fails.
             return true;
         }
+    }
+
+    /**
+     * Whether a configuration carries a common picture of a name. Metadata names do not tell case
+     * apart, so neither does this.
+     *
+     * @param config the configuration
+     * @param name the common picture's name, in any case
+     * @return <code>true</code> when a common picture answers to the name
+     */
+    static boolean carriesCommonPicture(Configuration config, String name)
+    {
+        for (Object pic : config.getCommonPictures())
+        {
+            if (pic instanceof MdObject && name.equalsIgnoreCase(((MdObject) pic).getName()))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }

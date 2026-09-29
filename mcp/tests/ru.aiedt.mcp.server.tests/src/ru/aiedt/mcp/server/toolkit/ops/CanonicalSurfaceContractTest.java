@@ -90,9 +90,10 @@ public class CanonicalSurfaceContractTest
         // evaluate is the one exception, see RENAMED_STANDALONES.
         m.put("launch_debugger", Set.of(
             "launch", "debug_launch", "add_breakpoint", "set_breakpoint",
-            "set_exception_breakpoint", "run_to_line", "remove_breakpoint", "list_breakpoints",
+            "set_exception_breakpoint", "run_to_line", "remove_breakpoint", "set_breakpoint_state",
+            "list_breakpoints",
             "wait_for_break", "get_state", "debug_status", "get_variables", "set_variable",
-            "step_over", "step_into", "step_out", "step", "resume", "terminate",
+            "step_over", "step_into", "step_out", "step", "resume", "pause_thread", "terminate",
             "terminate_launch", "evaluate", "start_profiling", "get_profiling_results", "help"));
 
         // edit_metadata (EditMetadataTool.buildRegistry): a single-source registry map, 160
@@ -209,15 +210,17 @@ public class CanonicalSurfaceContractTest
             "create_project", "delete_project", "resync_to_disk", "restart_edt",
             "answer_dialog", "self_upkeep", "list_subsystems", "help"));
 
-        // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): ten operations,
-        // all literally the standalone names they replace, plus help. sync_control's own inner
-        // action travels as a separate "syncOperation" parameter and is not part of this
-        // vocabulary.
+        // infobase_admin (InfobaseAdminFacadeTool.execute + its OPS catalog): the standalone
+        // names it replaces, plus help, plus inspect_database_sync which the facade runs itself
+        // (no standalone behind it). sync_control's own inner action travels as a separate
+        // "syncOperation" parameter and is not part of this vocabulary.
         m.put("infobase_admin", Set.of(
-            "get_applications", "read_event_log", "create_infobase", "register_infobase",
+            "get_applications", "list_registered_infobases", "read_event_log", "create_infobase",
+            "register_infobase",
             "delete_infobase",
             "set_infobase_credentials", "create_launch_config", "start_client", "branch_infobase",
             "update_database",
+            "inspect_database_sync",
             "sync_control", "help"));
 
         // config_io (ConfigIoFacadeTool.execute + its OPS catalog): four operations, all
@@ -228,10 +231,11 @@ public class CanonicalSurfaceContractTest
             "export_common_picture", "export_configuration_to_cf", "export_infobase_objects",
             "unpack_external_binary", "import_configuration_from_binary", "help"));
 
-        // git (GitTool.execute): a plain switch on "operation". The two write doors are reached
-        // as commit and checkout; their standalone names carry the git_ prefix (see
+        // git (GitTool.execute): a plain switch on "operation". The write doors are reached
+        // as commit, checkout and revert_file; their standalone names carry the git_ prefix (see
         // RENAMED_STANDALONES).
-        m.put("git", Set.of("status", "branches", "log", "commit", "checkout"));
+        m.put("git", Set.of("status", "branches", "log", "commit", "checkout", "show_file_changes",
+            "revert_file", "create_merge_restore_point", "restore_merge_point"));
 
         // insights (InsightsFacadeTool.execute + its OPS catalog): nine operations, all
         // literally the standalone names they replace, plus help.
@@ -280,6 +284,7 @@ public class CanonicalSurfaceContractTest
         m.put("debug_yaxunit_tests", "debug"); // YaxunitDebugRunner.NAME == "debug_yaxunit_tests"
         m.put("git_commit", "commit"); // GitCommitTool.getName() == "git_commit"
         m.put("git_checkout", "checkout"); // GitCheckoutTool.getName() == "git_checkout"
+        m.put("git_revert_file", "revert_file"); // GitFileRestore.getName() == "git_revert_file"
         return m;
     }
 
@@ -338,7 +343,11 @@ public class CanonicalSurfaceContractTest
         // means a standalone moved in or out of a facade's coverage - update this number
         // deliberately after confirming the move is intended, not to silence a failure.
         // On 2026-09-23 register_infobase joined the infobase_admin coverage (+1 -> 87).
-        assertEquals(87, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-09-28 list_registered_infobases joined the infobase_admin coverage (+1 -> 88).
+        // On 2026-09-29 pause_thread and set_breakpoint_state joined the launch_debugger coverage
+        // (+2 -> 90).
+        // On 2026-09-29 git_revert_file joined the git coverage (+1 -> 91).
+        assertEquals(91, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

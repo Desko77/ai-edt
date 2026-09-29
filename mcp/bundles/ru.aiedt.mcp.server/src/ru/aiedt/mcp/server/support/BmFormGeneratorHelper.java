@@ -7,13 +7,21 @@
 package ru.aiedt.mcp.server.support;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.Platform;
 import org.osgi.framework.Bundle;
 
+import com._1c.g5.v8.dt.core.platform.IEditingLanguageManager;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
+import com._1c.g5.v8.dt.metadata.mdclass.CompatibilityMode;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.platform.version.Version;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -59,11 +67,8 @@ public final class BmFormGeneratorHelper
     private static final String IFORM_FIELD_GENERATOR =
         "com._1c.g5.v8.dt.form.generator.IFormFieldGenerator"; //$NON-NLS-1$
 
-    /** Cached generator instance; resolved once per runtime. */
-    private static volatile Object cachedGenerator;
-
-    /** Guards a second resolve attempt after a confirmed miss. */
-    private static volatile boolean resolveAttempted;
+    /** What the attempts at finding the generator have left behind. */
+    private static final ResolutionCache CACHE = new ResolutionCache();
 
     private BmFormGeneratorHelper()
     {
@@ -71,7 +76,66 @@ public final class BmFormGeneratorHelper
     }
 
     /**
-     * Outcome of {@link #generate}.
+     * The two facts an attempt at resolving the generator leaves behind: the generator, once one is
+     * found, and whether this runtime carries one at all.
+     * <p>
+     * A runtime without the form bundle answers {@code null} for good, and asking it again would cost
+     * a class lookup on every {@code create_form} call - so that answer is kept. A runtime that
+     * carries the bundle but has not started it yet answers the same {@code null}, and that answer
+     * must not be kept: the next call is the one that finds the generator. Keeping it made every form
+     * created in that window fall back to the empty path for the rest of the session.
+     * </p>
+     */
+    static final class ResolutionCache
+    {
+        private volatile Object generator;
+
+        private volatile boolean runtimeLacksIt;
+
+        /**
+         * @return the generator found by an earlier attempt, or {@code null} when none was
+         */
+        Object generator()
+        {
+            return generator;
+        }
+
+        /**
+         * @return true when this runtime has already answered that it does not carry the generator
+         */
+        boolean runtimeLacksIt()
+        {
+            return runtimeLacksIt;
+        }
+
+        /**
+         * Records the outcome of one attempt. A generator, once found, is kept: a later miss cannot
+         * undo it, and neither can it turn the runtime into one that lacks the generator.
+         *
+         * @param found the generator the attempt produced, or {@code null} when it produced none
+         * @param absentOnThisRuntime true when the attempt could not have found one here - the bundle
+         *            or the class is not on this runtime - and no later attempt will either
+         */
+        void record(Object found, boolean absentOnThisRuntime)
+        {
+            if (found != null)
+            {
+                generator = found;
+                runtimeLacksIt = false;
+                return;
+            }
+            if (generator == null)
+            {
+                runtimeLacksIt = absentOnThisRuntime;
+            }
+        }
+    }
+
+    /**
+     * Outcome of {@link #generate}. Besides the ok / error verdict, the outcome carries what a
+     * caller needs to judge the generated layout without opening the form: the item count of the
+     * produced tree, which {@code getFormGeneratorFields} overload answered and how large its field
+     * tree was, and every argument whose value did not fit the parameter type it was passed to.
      */
     public static final class Result
     {
@@ -85,29 +149,63 @@ public final class BmFormGeneratorHelper
         public String error;
         /** The FormType constant name actually used (e.g. {@code OBJECT}). */
         public String formPurpose;
+        /** Items in the generated form's item tree, counted recursively; -1 when nothing was generated. */
+        public int itemCount = -1;
+        /** Parameter count of the {@code getFormGeneratorFields} overload that answered (5 preferred
+         *  over 4); 0 when no matching overload was found. */
+        public int fieldsOverloadArgs;
+        /** Nodes in the field tree the overload returned, its root included; -1 when it did not answer. */
+        public int fieldTreeSize = -1;
+        /** Text of the exception {@code getFormGeneratorFields} threw ("<code>Exception: message</code>",
+         *  no stack), when it threw one; null otherwise. */
+        public String fieldsError;
+        /** One entry per {@code generateForm} / {@code getFormGeneratorFields} argument whose value
+         *  failed its parameter type: "<code>call.argument</code>: expected &lt;type&gt;, got &lt;type&gt;". */
+        public List<String> coercionMismatches = new ArrayList<>();
+    }
+
+    /**
+     * What {@link #computeFormFields} got out of one {@code getFormGeneratorFields} call: the
+     * returned tree root (possibly null), the overload that answered it, and that tree's node count.
+     */
+    static final class Fields
+    {
+        /** The {@code FormFieldInfo} root the overload returned, or null when it returned nothing. */
+        final Object root;
+        /** Parameter count of the overload that answered. */
+        final int overloadArgs;
+        /** Nodes in the tree, root included; 0 when the root is null. */
+        final int treeSize;
+
+        Fields(Object root, int overloadArgs, int treeSize)
+        {
+            this.root = root;
+            this.overloadArgs = overloadArgs;
+            this.treeSize = treeSize;
+        }
     }
 
     /**
      * Resolves the {@code IFormGenerator} singleton through the
      * {@code FormPlugin} Guice injector by reflection (mirrors
      * {@link BmExtensionHelper#resolveModelObjectAdopter()}). The instance is
-     * cached; on a confirmed miss a single warning is logged and {@code null}
-     * is returned without re-probing.
+     * cached; a miss this runtime cannot recover from is kept, and one it can - the bundle present
+     * but not started, a call that threw - is not, so the next call asks again.
      *
      * @return the generator instance, or {@code null} when the form bundle /
      *     plugin / injector is unreachable on this EDT runtime
      */
     public static Object resolveFormGenerator()
     {
-        if (cachedGenerator != null)
+        Object found = CACHE.generator();
+        if (found != null)
         {
-            return cachedGenerator;
+            return found;
         }
-        if (resolveAttempted)
+        if (CACHE.runtimeLacksIt())
         {
             return null;
         }
-        resolveAttempted = true;
         try
         {
             Bundle b = Platform.getBundle(FORM_BUNDLE);
@@ -115,6 +213,7 @@ public final class BmFormGeneratorHelper
             {
                 Activator.logWarning("Bundle " + FORM_BUNDLE + " not present - " //$NON-NLS-1$ //$NON-NLS-2$
                     + "create_form falls back to the empty path"); //$NON-NLS-1$
+                CACHE.record(null, true);
                 return null;
             }
             // FormPlugin lives in com._1c.g5.v8.dt.internal.form (x-internal),
@@ -126,12 +225,15 @@ public final class BmFormGeneratorHelper
             {
                 Activator.logWarning("FormPlugin.getDefault() returned null - " //$NON-NLS-1$
                     + "bundle not started yet"); //$NON-NLS-1$
+                // The plugin starts later in the session, so this miss is not final.
+                CACHE.record(null, false);
                 return null;
             }
             Object injector = pluginClass.getMethod("getInjector").invoke(plugin); //$NON-NLS-1$
             if (injector == null)
             {
                 Activator.logWarning("FormPlugin.getInjector() returned null"); //$NON-NLS-1$
+                CACHE.record(null, false);
                 return null;
             }
             Class<?> ifg = b.loadClass(IFORM_GENERATOR);
@@ -143,19 +245,21 @@ public final class BmFormGeneratorHelper
             Class<?> injectorIface = b.loadClass("com.google.inject.Injector"); //$NON-NLS-1$
             Object gen = injectorIface.getMethod("getInstance", Class.class) //$NON-NLS-1$
                 .invoke(injector, ifg);
-            cachedGenerator = gen;
+            CACHE.record(gen, false);
             return gen;
         }
         catch (ClassNotFoundException cnf)
         {
             Activator.logWarning("FormPlugin / IFormGenerator not on classpath: " //$NON-NLS-1$
                 + cnf.getMessage());
+            CACHE.record(null, true);
             return null;
         }
         catch (Exception e)
         {
             Activator.logWarning("resolveFormGenerator failed: " //$NON-NLS-1$
                 + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+            CACHE.record(null, false);
             return null;
         }
     }
@@ -185,7 +289,8 @@ public final class BmFormGeneratorHelper
      *     (e.g. {@code "OBJECT"}, {@code "LIST"}, {@code "GENERIC"})
      * @param config         the owning {@code Configuration} (for script variant
      *     and interface-compatibility mode); may be null
-     * @param project        the host project (for the runtime {@code Version})
+     * @param project        the host project (for the project {@code Version} and
+     *     the editing language code)
      * @return a {@link Result}; never null
      */
     public static Result generate(MdObject owner, Object mdFormWrapper, String purposeConst,
@@ -214,19 +319,71 @@ public final class BmFormGeneratorHelper
                 // Last-resort: GENERIC always exists.
                 formTypeValue = resolveEnumConstant(formTypeClass, "GENERIC"); //$NON-NLS-1$
             }
-            r.formPurpose = formTypeValue != null
-                ? ((Enum<?>) formTypeValue).name() : purposeConst;
+            // --- The field-tree generator (same Guice injector as the wizard) --
+            Object fieldGenerator = injectorService(b, IFORM_FIELD_GENERATOR);
+            return invokeGeneration(generator, fieldGenerator, formTypeValue, owner, mdFormWrapper,
+                purposeConst, config, project);
+        }
+        catch (ClassNotFoundException cnf)
+        {
+            r.error = "form.generator type missing: " + cnf.getMessage(); //$NON-NLS-1$
+            return r;
+        }
+        catch (Exception e)
+        {
+            r.error = "generateForm failed: " + e.getClass().getSimpleName() //$NON-NLS-1$
+                + ": " + e.getMessage(); //$NON-NLS-1$
+            return r;
+        }
+    }
 
+    /**
+     * Drives one already-resolved {@code IFormGenerator} / {@code IFormFieldGenerator} pair through
+     * the generateForm call. Split from {@link #generate} so the decision logic - overload choice,
+     * coercion reporting, item counting - runs against any objects exposing the two method shapes,
+     * which is what the fragment test exercises; {@code generate} only adds the bundle / injector
+     * resolution around it.
+     * <p>
+     * Refuses (a {@link Result} with {@code ok=false} and an {@code error}) when the field
+     * generator is unavailable, its overload answered no root, or {@code generateForm} threw or
+     * returned null. A root WITHOUT children is not a refusal: the wizard's own generators lay out
+     * such a tree into a form (a main group and whatever the purpose builds; {@code
+     * ItemFormContainGenerator.generateObjectForm} iterates {@code getChildren()} and an empty list
+     * adds no fields but breaks nothing) - it is the tree of an owner without attributes.
+     *
+     * @param generator       the resolved {@code IFormGenerator} instance
+     * @param fieldGenerator  the resolved {@code IFormFieldGenerator} instance, or null
+     * @param formTypeValue   the resolved {@code FormType} enum constant (or a stand-in in tests)
+     * @param owner           the owner {@code MdObject}
+     * @param mdFormWrapper   the {@code BasicForm} wrapper
+     * @param purposeConst    the requested {@code FormType} constant name (fallback reporting)
+     * @param config          the owning {@code Configuration}; may be null
+     * @param project         the host project; may be null
+     * @return a {@link Result}; never null
+     */
+    static Result invokeGeneration(Object generator, Object fieldGenerator, Object formTypeValue,
+        MdObject owner, Object mdFormWrapper, String purposeConst, Configuration config,
+        IProject project)
+    {
+        Result r = new Result();
+        r.formPurpose = formTypeValue instanceof Enum<?> ? ((Enum<?>) formTypeValue).name()
+            : formTypeValue != null ? String.valueOf(formTypeValue) : purposeConst;
+        try
+        {
             // --- ScriptVariant (from configuration, default RUSSIAN) ----------
             Object scriptVariant = resolveScriptVariant(config);
 
-            // --- Platform Version (from IRuntimeVersionSupport) ---------------
-            Object version = resolveRuntimeVersion(project);
+            // --- Platform Version (the wizard's IV8Project.getVersion) --------
+            Object version = resolveProjectVersion(project);
+
+            // --- Compatibility Version (wizard: parseCompatibilityMode) -------
+            Object compatibilityVersion = resolveCompatibilityVersion(config, version);
 
             // --- InterfaceCompatibilityMode (from configuration) --------------
             Object compatMode = resolveCompatibilityMode(config);
 
-            String languageCode = "ru"; //$NON-NLS-1$
+            // --- Language code (the wizard's editing language) ----------------
+            String languageCode = resolveLanguageCode(project);
 
             // --- Find generateForm(...) by name + arity (9 params) ------------
             Method generateForm = findGenerateForm(generator.getClass());
@@ -250,29 +407,40 @@ public final class BmFormGeneratorHelper
             // Signature:
             //   generateForm(MdObject owner, BasicForm mdForm, FormType formType,
             //                ScriptVariant scriptVariant, String languageCode,
-            //                Version version, FormFieldInfo fields, Integer startId,
+            //                Version version, FormFieldInfo fields, Integer columnCount,
             //                InterfaceCompatibilityMode mode)
             // generateForm NPEs on a null FormFieldInfo (it dereferences
             // rootField.getChildren()). Build the default field tree via
-            // IFormFieldGenerator.getFormGeneratorFields(owner, formType,
-            // scriptVariant, version) - the same fields the New Form wizard uses.
-            Object fields = computeFormFields(b, owner, formTypeValue, scriptVariant, version);
-            if (fields == null)
+            // IFormFieldGenerator.getFormGeneratorFields - the same fields the
+            // New Form wizard computes, through the same overloads it calls.
+            // A root without children passes through: that is the legal tree of an
+            // owner without attributes, and the wizard's generators build a form
+            // over it (no fields laid out, everything else still built).
+            Fields fields = computeFormFields(fieldGenerator, owner, formTypeValue, scriptVariant,
+                version, compatibilityVersion, r);
+            if (fields == null || fields.root == null)
             {
                 r.error = "IFormFieldGenerator.getFormGeneratorFields produced no field tree " //$NON-NLS-1$
-                    + "(generateForm requires a non-null FormFieldInfo)"; //$NON-NLS-1$
+                    + "(generateForm requires a non-null FormFieldInfo); field generator " //$NON-NLS-1$
+                    + "available: " + (fieldGenerator != null); //$NON-NLS-1$
                 return r;
             }
             Object[] args = new Object[pt.length];
             args[0] = owner;
             args[1] = mdFormWrapper;
-            args[2] = coerceOrNull(pt[2], formTypeValue);
-            args[3] = coerceOrNull(pt[3], scriptVariant);
+            args[2] = coerceOrNull(pt[2], formTypeValue, "generateForm.formType", r); //$NON-NLS-1$
+            args[3] = coerceOrNull(pt[3], scriptVariant, "generateForm.scriptVariant", r); //$NON-NLS-1$
             args[4] = languageCode;
-            args[5] = coerceOrNull(pt[5], version);
-            args[6] = fields;
-            args[7] = Integer.valueOf(1); // startId
-            args[8] = coerceOrNull(pt[8], compatMode);
+            args[5] = coerceOrNull(pt[5], version, "generateForm.version", r); //$NON-NLS-1$
+            args[6] = fields.root;
+            // The wizard's COLUMN COUNT, not an item id: FormNewWizardRelatedModelsFactory
+            // passes FormWizardContext.getColumnCount() here, and FormGeneratorCore.generateColumns
+            // builds the Header group with LeftColumn / RightColumn subgroups only above 1 (the
+            // count is capped at the number of fields). One column is the wizard's default, so 1
+            // reproduces the default wizard layout; generateForm dereferences the value
+            // (Integer.intValue()), so it cannot be null.
+            args[7] = Integer.valueOf(1);
+            args[8] = coerceOrNull(pt[8], compatMode, "generateForm.compatibilityMode", r); //$NON-NLS-1$
 
             generateForm.setAccessible(true);
             Object generated = generateForm.invoke(generator, args);
@@ -281,13 +449,9 @@ public final class BmFormGeneratorHelper
                 r.error = "IFormGenerator.generateForm returned null"; //$NON-NLS-1$
                 return r;
             }
+            r.itemCount = countFormItems(generated);
             r.generatedForm = generated;
             r.ok = true;
-            return r;
-        }
-        catch (ClassNotFoundException cnf)
-        {
-            r.error = "form.generator type missing: " + cnf.getMessage(); //$NON-NLS-1$
             return r;
         }
         catch (java.lang.reflect.InvocationTargetException ite)
@@ -309,34 +473,186 @@ public final class BmFormGeneratorHelper
      * Builds the default form-field tree via {@code IFormFieldGenerator} (the same
      * fields EDT's New Form wizard computes). {@code generateForm} requires a
      * non-null {@code FormFieldInfo} (it dereferences {@code rootField.getChildren()}).
-     * Returns null when the field generator is unavailable or yields nothing.
+     * <p>
+     * The overload choice follows the wizard: {@code FormWizardModel} calls the 5-argument
+     * {@code getFormGeneratorFields(owner, formType, scriptVariant, version, compatibilityVersion)}
+     * when the runtime carries it (EDT 2026.2 does; the interface's own 4-argument overload then
+     * delegates to it passing the runtime version as the compatibility version). On a runtime
+     * with only the 4-argument overload the wizard passes the COMPATIBILITY version as that
+     * single Version ({@code Version.parseCompatibilityMode} of the configuration's mode, the
+     * project version when the mode is absent) - so the 4-argument fallback here receives the
+     * same value, not the project version the 5-argument overload keeps in its own slot. Which
+     * overload answered and how large the returned tree is are recorded on {@code outcome} so a
+     * caller can see what the layout was built from; an exception the call threw is recorded on
+     * {@code outcome.fieldsError} instead of living only in the log.
+     *
+     * @param fieldGenerator       the {@code IFormFieldGenerator} instance, or null when unavailable
+     * @param owner                the owner {@code MdObject}
+     * @param formTypeValue        the resolved {@code FormType} constant
+     * @param scriptVariant        the resolved {@code ScriptVariant}
+     * @param version              the project {@code Version}
+     * @param compatibilityVersion the compatibility {@code Version} (wizard's 5th argument, and
+     *            the single Version of the 4-argument overload)
+     * @param outcome              the result the overload / tree-size observations are recorded on
+     * @return the tree the overload returned with its shape facts, or null when the field
+     *         generator is unavailable, matches no overload, or the call failed
      */
-    private static Object computeFormFields(Bundle b, MdObject owner, Object formTypeValue,
-        Object scriptVariant, Object version)
+    static Fields computeFormFields(Object fieldGenerator, MdObject owner, Object formTypeValue,
+        Object scriptVariant, Object version, Object compatibilityVersion, Result outcome)
     {
+        if (fieldGenerator == null)
+        {
+            return null;
+        }
         try
         {
-            Object fieldGen = injectorService(b, IFORM_FIELD_GENERATOR);
-            if (fieldGen == null)
+            Method m = findFieldsOverload(fieldGenerator.getClass());
+            if (m == null)
             {
                 return null;
             }
-            for (Method m : fieldGen.getClass().getMethods())
+            Class<?>[] p = m.getParameterTypes();
+            Object[] args = new Object[p.length];
+            args[0] = owner;
+            args[1] = coerceOrNull(p[1], formTypeValue, "getFormGeneratorFields.formType", outcome); //$NON-NLS-1$
+            args[2] = coerceOrNull(p[2], scriptVariant, "getFormGeneratorFields.scriptVariant", outcome); //$NON-NLS-1$
+            if (p.length >= 5)
             {
-                if ("getFormGeneratorFields".equals(m.getName()) && m.getParameterCount() == 4) //$NON-NLS-1$
-                {
-                    Class<?>[] p = m.getParameterTypes();
-                    m.setAccessible(true);
-                    return m.invoke(fieldGen, owner, coerceOrNull(p[1], formTypeValue),
-                        coerceOrNull(p[2], scriptVariant), coerceOrNull(p[3], version));
-                }
+                args[3] = coerceOrNull(p[3], version, "getFormGeneratorFields.version", outcome); //$NON-NLS-1$
+                args[4] = coerceOrNull(p[4], compatibilityVersion,
+                    "getFormGeneratorFields.compatibilityVersion", outcome); //$NON-NLS-1$
             }
-            return null;
+            else
+            {
+                // The single Version of the 4-argument overload is the compatibility version -
+                // what the wizard itself passes on a runtime without the newer signature.
+                args[3] = coerceOrNull(p[3], compatibilityVersion,
+                    "getFormGeneratorFields.version", outcome); //$NON-NLS-1$
+            }
+            m.setAccessible(true);
+            Object root = m.invoke(fieldGenerator, args);
+            int treeSize = countFieldTreeNodes(root);
+            outcome.fieldsOverloadArgs = p.length;
+            outcome.fieldTreeSize = root != null ? treeSize : 0;
+            return new Fields(root, p.length, root != null ? treeSize : 0);
         }
         catch (Exception e)
         {
-            Activator.logWarning("computeFormFields failed: " + e.getClass().getSimpleName() //$NON-NLS-1$
-                + ": " + e.getMessage()); //$NON-NLS-1$
+            // m.invoke wraps what the overload threw in an InvocationTargetException whose own
+            // message is null - the text worth reporting sits on the cause.
+            Throwable failure = e instanceof java.lang.reflect.InvocationTargetException
+                && e.getCause() != null ? e.getCause() : e;
+            Activator.logWarning("computeFormFields failed: " + failure.getClass().getSimpleName() //$NON-NLS-1$
+                + ": " + failure.getMessage()); //$NON-NLS-1$
+            outcome.fieldsError = failure.getClass().getSimpleName() + ": " //$NON-NLS-1$
+                + failure.getMessage(); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Picks the {@code getFormGeneratorFields} overload to call: the 5-argument variant the New
+     * Form wizard uses when the runtime has it, otherwise the 4-argument one. Matching is by name
+     * and parameter count, as the generator types are resolved reflectively.
+     *
+     * @param fieldGeneratorClass the concrete field-generator class
+     * @return the chosen method, or null when the class declares neither overload
+     */
+    static Method findFieldsOverload(Class<?> fieldGeneratorClass)
+    {
+        Method fourArg = null;
+        for (Method m : fieldGeneratorClass.getMethods())
+        {
+            if (!"getFormGeneratorFields".equals(m.getName())) //$NON-NLS-1$
+            {
+                continue;
+            }
+            if (m.getParameterCount() == 5)
+            {
+                return m;
+            }
+            if (m.getParameterCount() == 4 && fourArg == null)
+            {
+                fourArg = m;
+            }
+        }
+        return fourArg;
+    }
+
+    /**
+     * Counts the nodes of a {@code FormFieldInfo} tree: the root plus every descendant reachable
+     * through {@code getChildren()}. A tree whose count is 1 is a root without children - the
+     * legal tree of an owner without attributes; the generator lays out no fields over it but
+     * still builds the form.
+     *
+     * @param node a {@code FormFieldInfo} root, or null
+     * @return the node count, 0 for null
+     */
+    static int countFieldTreeNodes(Object node)
+    {
+        if (node == null)
+        {
+            return 0;
+        }
+        int count = 1;
+        Object children = invokeNoArg(node, "getChildren"); //$NON-NLS-1$
+        if (children instanceof Collection<?>)
+        {
+            for (Object child : (Collection<?>) children)
+            {
+                count += countFieldTreeNodes(child);
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Counts the items of a generated form's item tree: every entry under {@code getItems()},
+     * plus the nested items of containers (a group, a table, a page also expose {@code getItems()}).
+     * The form root itself is not counted, so a form with one field answers 1 and a wizard layout
+     * with groups and standard fields answers more.
+     *
+     * @param form the generated {@code Form} root, or null
+     * @return the item count, 0 for null
+     */
+    static int countFormItems(Object form)
+    {
+        if (form == null)
+        {
+            return 0;
+        }
+        int count = 0;
+        Object items = invokeNoArg(form, "getItems"); //$NON-NLS-1$
+        if (items instanceof Collection<?>)
+        {
+            for (Object item : (Collection<?>) items)
+            {
+                count += 1 + countFormItems(item);
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Invokes a no-arg method by name; returns its result or null on any miss. A receiver without
+     * the member reads as "no such property", not as a failure.
+     *
+     * @param target the receiver, may be null
+     * @param method the no-arg method name
+     * @return the invocation result, or null
+     */
+    private static Object invokeNoArg(Object target, String method)
+    {
+        if (target == null)
+        {
+            return null;
+        }
+        try
+        {
+            return target.getClass().getMethod(method).invoke(target);
+        }
+        catch (Exception ignored)
+        {
             return null;
         }
     }
@@ -492,11 +808,94 @@ public final class BmFormGeneratorHelper
     }
 
     /**
+     * Resolves the platform {@code Version} the wizard passes to {@code generateForm} and to the
+     * 4th slot of the 5-argument {@code getFormGeneratorFields}: {@code IV8Project.getVersion()}
+     * through {@code IV8ProjectManager}, the source
+     * {@code FormNewWizardRelatedModelsFactory.createModels} reads it from. Falls back to
+     * {@code IRuntimeVersionSupport.getRuntimeVersion} when the
+     * project manager does not answer, and to null when neither does.
+     *
+     * @param project the host project; may be null
+     * @return the project {@code Version}, or null when no source answers
+     */
+    static Object resolveProjectVersion(IProject project)
+    {
+        try
+        {
+            Activator activator = Activator.getDefault();
+            if (activator != null && project != null)
+            {
+                IV8ProjectManager manager = activator.getV8ProjectManager();
+                IV8Project v8Project = manager == null ? null : manager.getProject(project);
+                if (v8Project != null)
+                {
+                    Version projectVersion = v8Project.getVersion();
+                    if (projectVersion != null)
+                    {
+                        return projectVersion;
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveProjectVersion failed: " //$NON-NLS-1$
+                + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        return resolveRuntimeVersion(project);
+    }
+
+    /**
+     * Resolves the language code the wizard passes to {@code generateForm}:
+     * {@code IEditingLanguageManager.getEditingLanguageCode(project)} - the key the generated
+     * titles are stored under ({@code FormAttribute.getTitle().put(languageCode, text)}), so a
+     * form of an English-language project gets its titles under {@code en} where the editor reads
+     * them. Falls back to the configuration's default language code
+     * ({@link DefaultLanguage#codeFor(IProject)}) when the service or the project is unavailable,
+     * which answers {@code ru} only when the configuration cannot be asked at all.
+     *
+     * @param project the host project; may be null
+     * @return the editing language code; never null
+     */
+    static String resolveLanguageCode(IProject project)
+    {
+        try
+        {
+            Activator activator = Activator.getDefault();
+            if (activator != null)
+            {
+                IEditingLanguageManager manager = activator.getEditingLanguageManager();
+                if (manager != null && project != null)
+                {
+                    String code = manager.getEditingLanguageCode(project);
+                    if (code != null && !code.isEmpty())
+                    {
+                        return code;
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveLanguageCode failed: " //$NON-NLS-1$
+                + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        try
+        {
+            return DefaultLanguage.codeFor(project);
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveLanguageCode default language failed: " //$NON-NLS-1$
+                + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+            return DefaultLanguage.FALLBACK;
+        }
+    }
+
+    /**
      * Resolves the platform {@code Version} for the project through EDT's
-     * {@code IRuntimeVersionSupport} - the exact path used by
-     * {@code BmDefinedTypeHelper.createCanonicalPrimitiveProxy}. Returns null
-     * when the service or call is unavailable; the generator falls back to a
-     * default version in that case.
+     * {@code IRuntimeVersionSupport}. Returns null when the service or call is unavailable;
+     * the generator falls back to a default version in that case.
      */
     private static Object resolveRuntimeVersion(IProject project)
     {
@@ -526,17 +925,65 @@ public final class BmFormGeneratorHelper
 
     /**
      * Returns {@code value} when it is assignment-compatible with the parameter
-     * type (or the parameter is non-primitive and {@code value} is null);
-     * otherwise null. Keeps a mismatched optional argument from breaking the
-     * call - the generator treats a null script-variant / version / mode as
-     * "use the default".
+     * type; otherwise null, with the mismatch recorded on {@code outcome} as
+     * "<code>callAndArg</code>: expected &lt;parameter type&gt;, got &lt;value type&gt;". Keeps a
+     * mismatched optional argument from breaking the call - the generator treats a null
+     * script-variant / version / mode as "use the default" - while making the drop visible to the
+     * caller instead of silent. A null value (nothing was resolved to pass) records nothing: no
+     * value was dropped by a type check.
+     *
+     * @param paramType the parameter the value is being passed to
+     * @param value     the resolved value, may be null
+     * @param callAndArg call and argument name for the mismatch record (e.g. {@code
+     *        generateForm.scriptVariant})
+     * @param outcome   the result the mismatch is recorded on
+     * @return the value when it fits the parameter, otherwise null
      */
-    private static Object coerceOrNull(Class<?> paramType, Object value)
+    private static Object coerceOrNull(Class<?> paramType, Object value, String callAndArg,
+        Result outcome)
     {
         if (value != null && paramType.isInstance(value))
         {
             return value;
         }
+        if (value != null)
+        {
+            outcome.coercionMismatches.add(callAndArg + ": expected " + paramType.getName() //$NON-NLS-1$
+                + ", got " + value.getClass().getName()); //$NON-NLS-1$
+        }
         return null;
+    }
+
+    /**
+     * Resolves the compatibility {@code Version} the wizard passes as the fifth argument of the
+     * 5-argument {@code getFormGeneratorFields} (and as the single Version of the 4-argument
+     * overload): {@code Version.parseCompatibilityMode} of the configuration's
+     * {@code CompatibilityMode}, falling back to the project version when the configuration or
+     * its mode is absent (the fallback {@code FormWizardModel} itself uses - {@code
+     * IV8Project.getVersion()}, not a runtime-derived version).
+     *
+     * @param config         the owning {@code Configuration}; may be null
+     * @param projectVersion the project {@code Version} (the fallback value)
+     * @return the compatibility version, or the project version when there is nothing to parse
+     */
+    private static Object resolveCompatibilityVersion(Configuration config, Object projectVersion)
+    {
+        try
+        {
+            if (config != null)
+            {
+                CompatibilityMode mode = config.getCompatibilityMode();
+                if (mode != null)
+                {
+                    return Version.parseCompatibilityMode(mode);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveCompatibilityVersion failed: " //$NON-NLS-1$
+                + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        return projectVersion;
     }
 }

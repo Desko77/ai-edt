@@ -110,9 +110,8 @@ public final class BmFormResourceHelper
         Path formDir = resolveFormDir(project, ownerFqn, formName);
         if (formDir == null)
         {
-            return "Cannot resolve form directory for " + ownerFqn //$NON-NLS-1$
-                + "/Forms/" + formName //$NON-NLS-1$
-                + " (project location is not on the local filesystem)"; //$NON-NLS-1$
+            return "Cannot resolve form directory: " //$NON-NLS-1$
+                + unresolvableReason(project, ownerFqn, formName);
         }
         Path formFile = formDir.resolve("Form.form"); //$NON-NLS-1$
         Path moduleFile = formDir.resolve("Module.bsl"); //$NON-NLS-1$
@@ -178,9 +177,8 @@ public final class BmFormResourceHelper
         Path formDir = resolveFormDir(project, ownerFqn, formName);
         if (formDir == null)
         {
-            return "Cannot resolve form directory for " + ownerFqn //$NON-NLS-1$
-                + "/Forms/" + formName //$NON-NLS-1$
-                + " (project location is not on the local filesystem)"; //$NON-NLS-1$
+            return "Cannot resolve form directory: " //$NON-NLS-1$
+                + unresolvableReason(project, ownerFqn, formName);
         }
         Path moduleFile = formDir.resolve("Module.bsl"); //$NON-NLS-1$
         try
@@ -218,7 +216,91 @@ public final class BmFormResourceHelper
     }
 
     /**
-     * Resolves the on-disk form directory based on the owner FQN.
+     * The form's folder relative to the project root, or {@code null} when the owner FQN or the form
+     * name cannot address one.
+     * <p>
+     * The owner name and the form name are single path elements, and are checked as such before
+     * anything is joined: a name carrying a separator or standing for a parent directory would place
+     * the form's files outside the folder it names - measured on a live project, a
+     * {@code formName} of {@code ../TraversalProbe} wrote {@code Form.form} and {@code Module.bsl}
+     * outside {@code Forms/} and the object stopped resolving. The type folder comes from
+     * {@link MetadataTypeCatalog}, the one place a metadata type is spelled out, so an owner whose
+     * type nobody recognizes is refused rather than pointed at a folder that exists nowhere.
+     * </p>
+     *
+     * @param ownerFqn FQN of the owning metadata object ({@code Catalog.Products},
+     *            {@code CommonForm.MyForm}, ...)
+     * @param formName name of the form
+     * @return the relative folder, for example {@code src/Catalogs/Products/Forms/MainForm}, or
+     *         {@code null} when the two cannot address one
+     */
+    public static Path formDirRelativePath(String ownerFqn, String formName)
+    {
+        int dot = ownerFqn == null ? -1 : ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return null;
+        }
+        MetadataTypeCatalog.MetadataTypeInfo type =
+            MetadataTypeCatalog.resolve(ownerFqn.substring(0, dot));
+        String ownerName = ownerFqn.substring(dot + 1);
+        if (type == null || type.getDirectoryName() == null
+            || !MetadataGuards.isPlainName(ownerName) || !MetadataGuards.isPlainName(formName))
+        {
+            return null;
+        }
+        Path src = Path.of("src").resolve(type.getDirectoryName()); //$NON-NLS-1$
+        if (type == MetadataTypeCatalog.MetadataTypeInfo.COMMON_FORM)
+        {
+            // A common form is the whole object: src/CommonForms/<Name>, with no Forms level - the
+            // shape its .mdo lives in.
+            return src.resolve(ownerName);
+        }
+        return src.resolve(ownerName).resolve("Forms").resolve(formName); //$NON-NLS-1$
+    }
+
+    /**
+     * Why the owner FQN and the form name do not address a form folder, or {@code null} when they do.
+     * Both answer from the same rule as {@link #formDirRelativePath}: this one names the reason, that
+     * one builds the path.
+     *
+     * @param ownerFqn FQN of the owning metadata object
+     * @param formName name of the form
+     * @return the reason, or {@code null} when the two address a folder
+     */
+    public static String formDirRefusal(String ownerFqn, String formName)
+    {
+        if (ownerFqn == null || ownerFqn.isEmpty())
+        {
+            return "ownerFqn is required"; //$NON-NLS-1$
+        }
+        int dot = ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return "ownerFqn must be <Type>.<Name>, got '" + ownerFqn + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String typePrefix = ownerFqn.substring(0, dot);
+        MetadataTypeCatalog.MetadataTypeInfo type = MetadataTypeCatalog.resolve(typePrefix);
+        if (type == null || type.getDirectoryName() == null)
+        {
+            return "ownerFqn names no metadata type that owns forms: '" + typePrefix + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!MetadataGuards.isPlainName(ownerFqn.substring(dot + 1)))
+        {
+            return "the owner name must be a plain name, got '" + ownerFqn.substring(dot + 1) //$NON-NLS-1$
+                + "'"; //$NON-NLS-1$
+        }
+        if (!MetadataGuards.isPlainName(formName))
+        {
+            return "the form name must be a plain name, got '" + formName + "'"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the on-disk form directory based on the owner FQN. The result is normalized and
+     * checked to be inside the project: a path that would land outside the project the caller named
+     * is not resolved at all.
      */
     private static Path resolveFormDir(IProject project, String ownerFqn, String formName)
     {
@@ -226,22 +308,35 @@ public final class BmFormResourceHelper
         {
             return null;
         }
-        Path projectRoot = project.getLocation().toFile().toPath();
-        String[] parts = ownerFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
+        Path relative = formDirRelativePath(ownerFqn, formName);
+        if (relative == null)
         {
             return null;
         }
-        if ("CommonForm".equals(parts[0]) || "ОбщаяФорма".equals(parts[0])) //$NON-NLS-1$ //$NON-NLS-2$
+        Path projectRoot = project.getLocation().toFile().toPath().toAbsolutePath().normalize();
+        Path resolved = projectRoot.resolve(relative).normalize();
+        return resolved.startsWith(projectRoot) ? resolved : null;
+    }
+
+    /**
+     * Why the form directory could not be resolved: the owner or the name does not address one, or -
+     * when both do - the project has no location on the local filesystem.
+     *
+     * @param project the EDT project
+     * @param ownerFqn the owner's FQN
+     * @param formName the form's name
+     * @return the reason, for the caller's error message
+     */
+    private static String unresolvableReason(IProject project, String ownerFqn, String formName)
+    {
+        String refusal = formDirRefusal(ownerFqn, formName);
+        if (refusal != null)
         {
-            // CommonForm.X is a top-level metadata; the disk folder is the
-            // CommonForm itself, not a wrapper Forms subfolder. The owner
-            // name (parts[1]) IS the form name in this case.
-            return projectRoot.resolve("src").resolve("CommonForms").resolve(parts[1]); //$NON-NLS-1$ //$NON-NLS-2$
+            return refusal;
         }
-        String typePlural = englishTypePlural(parts[0]);
-        return projectRoot.resolve("src").resolve(typePlural).resolve(parts[1]) //$NON-NLS-1$
-            .resolve("Forms").resolve(formName); //$NON-NLS-1$
+        return project == null || project.getLocation() == null
+            ? "the project has no location on the local filesystem" //$NON-NLS-1$
+            : "the form path leaves the project"; //$NON-NLS-1$
     }
 
     /**
@@ -251,77 +346,16 @@ public final class BmFormResourceHelper
      */
     private static IFolder locateFormFolder(IProject project, String ownerFqn, String formName)
     {
-        String[] parts = ownerFqn.split("\\.", 2); //$NON-NLS-1$
-        if (parts.length != 2 || parts[1].isEmpty())
+        Path relative = formDirRelativePath(ownerFqn, formName);
+        if (relative == null)
         {
             return null;
         }
-        if ("CommonForm".equals(parts[0]) || "ОбщаяФорма".equals(parts[0])) //$NON-NLS-1$ //$NON-NLS-2$
+        IFolder folder = project.getFolder(relative.getName(0).toString());
+        for (int index = 1; index < relative.getNameCount(); index++)
         {
-            return project.getFolder("src").getFolder("CommonForms").getFolder(parts[1]); //$NON-NLS-1$ //$NON-NLS-2$
+            folder = folder.getFolder(relative.getName(index).toString());
         }
-        return project.getFolder("src") //$NON-NLS-1$
-            .getFolder(englishTypePlural(parts[0]))
-            .getFolder(parts[1])
-            .getFolder("Forms") //$NON-NLS-1$
-            .getFolder(formName);
-    }
-
-    /**
-     * Maps an English-singular metadata type prefix to the plural folder
-     * name EDT uses on disk. Falls back to {@code prefix + "s"} when no
-     * special case applies. Mirrors the table in
-     * {@code BmTemplateHelper.englishTypePlural} - kept local to avoid a
-     * cross-helper coupling for a private helper.
-     */
-    private static String englishTypePlural(String typePrefix)
-    {
-        if (typePrefix == null || typePrefix.isEmpty())
-        {
-            return ""; //$NON-NLS-1$
-        }
-        switch (typePrefix)
-        {
-            case "Catalog": //$NON-NLS-1$
-                return "Catalogs"; //$NON-NLS-1$
-            case "Document": //$NON-NLS-1$
-                return "Documents"; //$NON-NLS-1$
-            case "DataProcessor": //$NON-NLS-1$
-                return "DataProcessors"; //$NON-NLS-1$
-            case "Report": //$NON-NLS-1$
-                return "Reports"; //$NON-NLS-1$
-            case "ChartOfAccounts": //$NON-NLS-1$
-                return "ChartsOfAccounts"; //$NON-NLS-1$
-            case "ChartOfCalculationTypes": //$NON-NLS-1$
-                return "ChartsOfCalculationTypes"; //$NON-NLS-1$
-            case "ChartOfCharacteristicTypes": //$NON-NLS-1$
-                return "ChartsOfCharacteristicTypes"; //$NON-NLS-1$
-            case "BusinessProcess": //$NON-NLS-1$
-                return "BusinessProcesses"; //$NON-NLS-1$
-            case "ExchangePlan": //$NON-NLS-1$
-                return "ExchangePlans"; //$NON-NLS-1$
-            case "InformationRegister": //$NON-NLS-1$
-                return "InformationRegisters"; //$NON-NLS-1$
-            case "AccumulationRegister": //$NON-NLS-1$
-                return "AccumulationRegisters"; //$NON-NLS-1$
-            case "AccountingRegister": //$NON-NLS-1$
-                return "AccountingRegisters"; //$NON-NLS-1$
-            case "CalculationRegister": //$NON-NLS-1$
-                return "CalculationRegisters"; //$NON-NLS-1$
-            case "Task": //$NON-NLS-1$
-                return "Tasks"; //$NON-NLS-1$
-            case "Enum": //$NON-NLS-1$
-            case "Enumeration": //$NON-NLS-1$
-                return "Enums"; //$NON-NLS-1$
-            case "ExternalDataProcessor": //$NON-NLS-1$
-                // An empty folder here used to collapse the path segment, so the module landed in
-                // src/<Name>/ while EDT itself writes the .mdo and the form to
-                // src/ExternalDataProcessors/<Name>/ - the object ended up split across two places.
-                return "ExternalDataProcessors"; //$NON-NLS-1$
-            case "ExternalReport": //$NON-NLS-1$
-                return "ExternalReports"; //$NON-NLS-1$
-            default:
-                return typePrefix + "s"; //$NON-NLS-1$
-        }
+        return folder;
     }
 }

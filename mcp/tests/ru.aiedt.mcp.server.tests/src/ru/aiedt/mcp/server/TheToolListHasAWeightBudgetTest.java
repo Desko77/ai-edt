@@ -54,8 +54,110 @@ public class TheToolListHasAWeightBudgetTest
     /**
      * What the whole document may weigh. Measured at 160766 bytes; the allowance is the per-tool
      * headroom spent a few times over, not a free hand.
+     * <p>
+     * Raised from 168000 to 168428 for length, precision, fractionDigits, nonNegative,
+     * dateFractions and allowedLength on dcs_workshop: add_parameter, set_parameter and add_field
+     * write them into the value type.
+     * </p>
+     * <p>
+     * Raised from 168428 to 168575 for writeStub on edit_metadata: add_form_event_handler and
+     * add_command_handler append the handler procedure to the form module unless the call turns
+     * that off.
+     * </p>
+     * <p>
+     * Raised from 168575 to 169962 for export_database_configuration and
+     * export_database_extension on config_io: two operations, their overwrite and allowOutOfSync
+     * arguments, and the description sentence that an old file can never pass as the result.
+     * </p>
+     * <p>
+     * Raised from 169962 to 170444 for valueListAllowed and denyIncompleteValues on dcs_workshop
+     * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
+     * and add_schema_parameter write them into the schema parameter.
+     * </p>
+     * <p>
+     * Raised from 173621 to 173715 for addressingRegister, addressingAttributes,
+     * mainAddressingAttribute and currentPerformer on edit_metadata: set_task_addressing writes
+     * the addressing of a Task.
+     * </p>
+     * <p>
+     * Raised from 169962 to 170245 for itemNames, field and index on edit_metadata:
+     * add_form_appearance_rule, list_form_appearance_rules and remove_form_appearance_rule.
+     * </p>
+     * <p>
+     * Raised from 170444 to 170459 for format on security_audit: markdown applies to
+     * audit_role_rights in mode=rights only.
+     * </p>
+     * <p>
+     * Raised from 170459 to 170725 for the security_audit orphan mode contract and its boolean
+     * apply argument.
+     * </p>
+     * <p>
+     * Raised from 168575 to 168736 for normalizeInvalidCharacters on write_module_source: the
+     * module writer replaces the characters BSL has no place for unless the call turns that off.
+     * </p>
+     * <p>
+     * Raised from 170444 to 170476 for the docs_lookup description, which names system_enum_values
+     * among the operations it accepts and no longer counts them.
+     * </p>
+     * <p>
+     * Raised from 173621 to 174078 for reuseRecent on the yaxunit_tests facade and for the
+     * sentences that say what a call does about the infobase before it launches: the flag that
+     * takes a report of a run finished within the last five minutes, and the refusal a call gets
+     * when the update it asked for does not finish.
+     * </p>
+     * <p>
+     * Raised from 174185 to 174710 for reportAffectedSettings on dcs_workshop: a removal lists the
+     * settings that still reference what was removed.
+     * </p>
+     * <p>
+     * Raised from 174835 to 175155 for breakpointEnabled on set_breakpoint_state and replaceModuleSet
+     * on add_breakpoint, and for the two operation names the launch_debugger description carries.
+     * </p>
+     * <p>
+     * And from 173621 to 173735 for the data-loss protection of update_database - protectData and
+     * acceptDataLoss in its own schema and the facade's - and the inspect_database_sync
+     * operation of infobase_admin.
+     * </p>
+     * <p>
+     * And from 173735 to 173958 for the reworked data-loss protection: the descriptions of
+     * protectData and acceptDataLoss now say the comparison is made before the update starts and
+     * answers dataLossTables, and the help names acceptDataLoss beside protectData (measured
+     * 29.09).
+     * </p>
+     * <p>
+     * Raised from 176567 to 178350 for show_file_changes and revert_file on git: the file path,
+     * the two revisions, the granularity and the dry-run flag. The git entry grew from 1330 to
+     * 3113 bytes and nothing else in the list changed.
+     * </p>
+     * <p>
+     * Raised from 178350 to 178385 for the line endings revert_file names, the editor note on
+     * dryRun and the file limit of show_file_changes. Measured 29.09: 178385.
+     * </p>
+     * <p>
+     * Raised from 178350 to 178983 on 2026-09-29 for the merge restore point: the two git
+     * operations and the sentences on compare_three_way and insights that name it.
+     * </p>
+     * <p>
+     * And for backupTo on infobase_admin, the path, timeoutSeconds, runKey and cancel sentences
+     * that name the two snapshot operations, and the schema description that says a load
+     * replaces everything the infobase holds. Measured 29.09: 181766.
+     * </p>
+     * <p>
+     * And for retrieve_database_changes on the infobase_admin schema; the hidden sync_control alias
+     * is not in tools/list, so the document moves by this facade only. Measured 29.09: 182933.
+     * </p>
+     * <p>
+     * And for verifyInfobaseContent on the infobase_admin schema, and for the sentence that a
+     * load marks the stored copy. The hidden update_database alias is not in tools/list, so the
+     * document moves by this facade only. Measured 29.09: 183171.
+     * </p>
+     * <p>
+     * And for the sentence that a load names the stored copy when the mark could not be written.
+     * The hidden update_database alias is not in tools/list, so the document moves by this facade
+     * only. Measured 29.09: 183217.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 168000;
+    private static final int DOCUMENT_BUDGET = 183217;
 
     private LiveServer server;
 
@@ -195,10 +297,15 @@ public class TheToolListHasAWeightBudgetTest
         // Grown to 1330 for the commit operation: staging by name and a refusal for a blanket
         // add is the whole point of having git inside the IDE, and the schema is where a client
         // learns that.
-        BUDGETS.put("git", Integer.valueOf(1330)); //$NON-NLS-1$
+        // Grown to 4040 for show_file_changes and revert_file (the file path, the two revisions,
+        // the line-or-method granularity, the dry-run flag, the file limit, the line endings) and
+        // for create_merge_restore_point and restore_merge_point with pointId (measured 29.09: 4040).
+        BUDGETS.put("git", Integer.valueOf(4040)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
-        BUDGETS.put("dcs_workshop", Integer.valueOf(8523)); //$NON-NLS-1$
+        // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a
+        // parameter lists the settings that still reference it, and the schema says so.
+        BUDGETS.put("dcs_workshop", Integer.valueOf(9341)); //$NON-NLS-1$
         BUDGETS.put("code_search", Integer.valueOf(7248)); //$NON-NLS-1$
         // Raised by 787 for runMode and clientType on start_client: a configuration on ordinary
         // forms starts under the thick client in the ordinary run mode, and the caller names both.
@@ -206,19 +313,39 @@ public class TheToolListHasAWeightBudgetTest
         // and bound to the project in one call, and the facade's schema is where a client learns
         // the operation and its two new arguments exist. And by 407 for the dump-info work: the
         // syncOperation value rebuild_dump_info, the rebuild's wait budget, the format override.
-        BUDGETS.put("infobase_admin", Integer.valueOf(9056)); //$NON-NLS-1$
+        // Raised to the measured 9864 for the data-loss protection of update_database and
+        // inspect_database_sync: protectData now says the comparison is made before the update
+        // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
+        // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot
+        // operations add backupTo and name themselves for path, timeoutSeconds, runKey and cancel,
+        // and retrieve_database_changes adds the operation, replaceLocal, markSynchronized and the
+        // pending wait the schema describes. And for verifyInfobaseContent and the sentence that
+        // a load marks the stored copy. Raised for the sentence that a load names the stored copy
+        // when the mark could not be written. Measured 29.09: 12539.
+        BUDGETS.put("infobase_admin", Integer.valueOf(12539)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
-        BUDGETS.put("config_io", Integer.valueOf(5945)); //$NON-NLS-1$
+        // Raised by 1803 for export_database_configuration and export_database_extension: the
+        // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
+        // description says an old file can never pass as the result (measured 28.09: 7748).
+        BUDGETS.put("config_io", Integer.valueOf(7748)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
         // sentence in the tool's own description that names the way they compose an action.
-        BUDGETS.put("vanessa", Integer.valueOf(7160)); //$NON-NLS-1$
+        // Raised from 7160 to 7834 for the sentence that a timeout held by a 1C window returns
+        // blockingWindows (title, texts, buttons, imageFile) and does not ask to raise the
+        // deadline. Measured 29.09: 7834.
+        BUDGETS.put("vanessa", Integer.valueOf(7834)); //$NON-NLS-1$
         BUDGETS.put("extension_workshop", Integer.valueOf(5402)); //$NON-NLS-1$
         // Raised from 5400 for startupOption: the startup string is how an object opened at
         // startup receives its parameters, and the test runners already pass theirs the same way.
         // Raised by 1073 for runMode and clientType on launch, the same two arguments start_client
         // takes, so a debug launch of a configuration on ordinary forms opens the same client.
-        BUDGETS.put("launch_debugger", Integer.valueOf(7158)); //$NON-NLS-1$
-        BUDGETS.put("mxl_workshop", Integer.valueOf(4636)); //$NON-NLS-1$
+        // Raised by 840 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
+        // add_breakpoint, and for the two operation names the facade description and help now carry
+        // (measured 29.09: 7998).
+        BUDGETS.put("launch_debugger", Integer.valueOf(7998)); //$NON-NLS-1$
+        // The entry names the operations and the model; what each argument takes is the schema's
+        // to say. Measured 7813 bytes.
+        BUDGETS.put("mxl_workshop", Integer.valueOf(7813)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
@@ -228,12 +355,17 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("external_object_workshop", Integer.valueOf(2602)); //$NON-NLS-1$
         BUDGETS.put("docs_lookup", Integer.valueOf(2547)); //$NON-NLS-1$
         BUDGETS.put("validate_query", Integer.valueOf(2460)); //$NON-NLS-1$
-        BUDGETS.put("yaxunit_tests", Integer.valueOf(2395)); //$NON-NLS-1$
+        // Raised from 2395 to 2639 for reuseRecent, its sentence, and the sentences that say the
+        // infobase is updated before the launch and that a refused update starts nothing. The two
+        // hidden aliases carry the same declarations and are not weighed: tools/list under the
+        // default preset does not advertise them. Measured 29.09: 2639.
+        BUDGETS.put("yaxunit_tests", Integer.valueOf(2639)); //$NON-NLS-1$
         // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains
         // after that move (the four sentences are 235 bytes; the rest is the properties themselves).
-        BUDGETS.put("security_audit", Integer.valueOf(3008)); //$NON-NLS-1$
+        // Raised from 3008 to 3274 for the complete orphan mode contract and apply property.
+        BUDGETS.put("security_audit", Integer.valueOf(3274)); //$NON-NLS-1$
         BUDGETS.put("code_review", Integer.valueOf(2209)); //$NON-NLS-1$
         BUDGETS.put("find_dead_code", Integer.valueOf(1867)); //$NON-NLS-1$
         BUDGETS.put("diff_module", Integer.valueOf(1816)); //$NON-NLS-1$

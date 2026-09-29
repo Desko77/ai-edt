@@ -28,8 +28,6 @@ import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.ILaunchManager;
-import org.eclipse.swt.widgets.Display;
-import org.eclipse.swt.widgets.Shell;
 
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com.e1c.g5.dt.applications.ApplicationException;
@@ -48,20 +46,25 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.ApplicationUpdater;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.BranchInfobaseBook;
+import ru.aiedt.mcp.server.support.DataLossPlan;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
+import ru.aiedt.mcp.server.support.DumpInfoRebuilder;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.GitBranch;
 import ru.aiedt.mcp.server.support.InfobaseHolders;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
+import ru.aiedt.mcp.server.support.InfobaseOutsideChange;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.MonopolyLock;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
+import ru.aiedt.mcp.server.support.TextSuggest;
 
 /**
  * Pushes a project's configuration into its infobase - a full reload or just the changes - through
@@ -113,6 +116,18 @@ public class DatabaseUpdater implements IMcpTool
     /** How often to ask whether the update has finished. */
     private static final long BEING_UPDATED_POLL_MS = 1_000L;
 
+    /**
+     * How long the dump-info-only Designer run is waited for when an incremental update was asked
+     * to compare the infobase's own dump with the stored copy. The same budget a rebuild gives
+     * each Designer run: the read is that run, and a shorter one would abandon a base the rebuild
+     * would have waited for.
+     */
+    private static final long CONTENT_VERIFY_TIMEOUT_MS = 600_000L;
+
+    /** The step an answer names when the stored copy has to be rewritten from the infobase. */
+    static final String REBUILD_COPY_STEP =
+        "infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true"; //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -142,6 +157,20 @@ public class DatabaseUpdater implements IMcpTool
             + "For an extension project - which has no infobase of its own - the infobase of the " //$NON-NLS-1$
             + "configuration it extends is updated, which is what carries the extension's code into it. " //$NON-NLS-1$
             + "Handles both a full update (complete reload) and an incremental update (changes only). " //$NON-NLS-1$
+            + "Before the update starts, protectData (default on) compares the infobase's synchronization " //$NON-NLS-1$
+            + "baseline with the model: a data-carrying entity the base holds and the model does not " //$NON-NLS-1$
+            + "stops the call before anything is started, with the addresses in dataLossTables and " //$NON-NLS-1$
+            + "status=confirmationRequired; resend with acceptDataLoss=true to carry it through. " //$NON-NLS-1$
+            + "An incremental update is also refused when the stored ConfigDumpInfo.xml was written " //$NON-NLS-1$
+            + "for another infobase than the one this application now points at: the update would be " //$NON-NLS-1$
+            + "decided about the wrong base, and the answer names both bases in recordedInfobase and " //$NON-NLS-1$
+            + "currentInfobase, with fullUpdate=true as the way past it. A load through " //$NON-NLS-1$
+            + "restore_database_snapshot marks that copy, and an incremental update is then refused " //$NON-NLS-1$
+            + "with infobaseChanged until the copy is rebuilt or fullUpdate=true is passed. " //$NON-NLS-1$
+            + "verifyInfobaseContent (default off) reads the infobase's own dump before an incremental " //$NON-NLS-1$
+            + "update and refuses the same way when it does not match the stored copy; a dry run and a " //$NON-NLS-1$
+            + "full update do not read it and say so. The answer of an update that " //$NON-NLS-1$
+            + "went through says what the file held and which base it is about in infobaseChangeCheck. " //$NON-NLS-1$
             + "A slow full / restructure run replies with a Pending status and a runKey instead of blocking - " //$NON-NLS-1$
             + "call this tool again passing that runKey to keep waiting (cancel=true plus the runKey stops tracking)."; //$NON-NLS-1$
     }
@@ -168,7 +197,30 @@ public class DatabaseUpdater implements IMcpTool
                     + "answers it. No run is recorded, no runKey is issued, and no infobase is " //$NON-NLS-1$
                     + "claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("verifyInfobaseContent", //$NON-NLS-1$
+                "Before an incremental update, read the infobase's own ConfigDumpInfo and refuse when it does not match the stored copy (default: false).") //$NON-NLS-1$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("protectData", //$NON-NLS-1$
+                "Stop the update before it starts when it would delete data (default: true). The " //$NON-NLS-1$
+                    + "deletion is computed from the infobase's synchronization baseline - the " //$NON-NLS-1$
+                    + "ConfigDumpInfo.xml of its last synchronization, one record per entity the " //$NON-NLS-1$
+                    + "base holds, matched by uuid against the model. A data-carrying entity the " //$NON-NLS-1$
+                    + "base holds and the model does not (a catalog, document, register, constant or " //$NON-NLS-1$
+                    + "common attribute, and under them an attribute, tabular section, dimension, " //$NON-NLS-1$
+                    + "resource or accounting flag) means the restructure would drop its table. The " //$NON-NLS-1$
+                    + "answer carries dataLossTables with those addresses, dataLossCheck saying what " //$NON-NLS-1$
+                    + "was compared, and status=confirmationRequired; nothing is started - no " //$NON-NLS-1$
+                    + "update, no claim on the infobase, no client stopped. A rename keeps the uuid " //$NON-NLS-1$
+                    + "and is not a deletion. A base with no baseline file, or a model that cannot " //$NON-NLS-1$
+                    + "be read whole, is not compared and says so in dataLossCheck instead of " //$NON-NLS-1$
+                    + "refusing. Off, nothing is compared and the platform restructures silently, " //$NON-NLS-1$
+                    + "which the answer says.") //$NON-NLS-1$
+            .booleanProperty("acceptDataLoss", //$NON-NLS-1$
+                "Go ahead with a data deletion protectData found (default: false). Without it " //$NON-NLS-1$
+                    + "such an update is refused before it starts, and resending the same call " //$NON-NLS-1$
+                    + "with acceptDataLoss=true is what carries it through; the answer then names " //$NON-NLS-1$
+                    + "what it accepted. Only the deletion this comparison found is ever accepted, " //$NON-NLS-1$
+                    + "and only for that call.") //$NON-NLS-1$
             .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
                 + "on is bound to a different application (see branch_infobase). Off by default: " //$NON-NLS-1$
                 + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
@@ -388,6 +440,8 @@ public class DatabaseUpdater implements IMcpTool
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         boolean fullUpdate = JsonUtils.extractBooleanArgument(params, "fullUpdate", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoRestructure = JsonUtils.extractBooleanArgument(params, "autoRestructure", true); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean protectData = JsonUtils.extractBooleanArgument(params, "protectData", true); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean acceptDataLoss = JsonUtils.extractBooleanArgument(params, "acceptDataLoss", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoFreeClients = JsonUtils.extractBooleanArgument(params, "autoFreeClients", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean ignoreBranchBinding =
             JsonUtils.extractBooleanArgument(params, "ignoreBranchBinding", false); //$NON-NLS-1$
@@ -459,20 +513,28 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
+        final boolean fProtect = protectData;
+        final boolean fAcceptLoss = acceptDataLoss;
         final boolean fIgnoreDumpInfo =
             JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
+        final boolean fVerifyContent =
+            JsonUtils.extractBooleanArgument(params, "verifyInfobaseContent", false); //$NON-NLS-1$ //$NON-NLS-2$
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
-        // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
-        // the key below is the one a real update under these arguments owns.
+        // to a caller who had said to go ahead. The data-loss pair is part of it for the same
+        // reason - a refused call and its accepted resend are two intentions, and a caller who
+        // accepted the loss must not be served a run that refused it. Reading the infobase before
+        // the update is part of it too: a call that asked for the comparison and one that did not
+        // are not one run. A probe carries none of it - it is not a run, and the key below is the
+        // one a real update under these arguments owns.
         String runKey = runKeyFor(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-            fIgnoreDumpInfo);
+            fIgnoreDumpInfo, fProtect, fAcceptLoss, fVerifyContent);
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
         return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, checkOnly, params));
+            entry -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+                fSkipValidation, checkOnly, fProtect, fAcceptLoss, params, entry));
     }
 
     /**
@@ -486,15 +548,45 @@ public class DatabaseUpdater implements IMcpTool
      * @param autoFreeClients whether client sessions are freed
      * @param ignoreBranchBinding whether the branch-binding check is bypassed
      * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @param protectData whether the data-loss comparison is made before the update
+     * @param acceptDataLoss whether a deletion it finds is carried through rather than refused
+     * @param verifyInfobaseContent whether the infobase's own dump is read before an incremental
+     *            update
      * @return the run key
      */
     static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean ignoreDumpInfoFormat)
+        boolean ignoreDumpInfoFormat, boolean protectData, boolean acceptDataLoss,
+        boolean verifyInfobaseContent)
     {
         return PendingWorkRegistry.computeRunKey(projectName, applicationId,
             String.valueOf(fullUpdate), String.valueOf(autoRestructure), String.valueOf(autoFreeClients),
-            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat));
+            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat),
+            String.valueOf(protectData), String.valueOf(acceptDataLoss),
+            String.valueOf(verifyInfobaseContent));
+    }
+
+    /**
+     * As {@link #runKeyFor(String, String, boolean, boolean, boolean, boolean, boolean, boolean, boolean, boolean)}
+     * with the infobase read left off, which is the call that does not ask for it.
+     *
+     * @param projectName the project
+     * @param applicationId the application naming the infobase
+     * @param fullUpdate whether the update loads the whole configuration
+     * @param autoRestructure whether restructuring is left automatic
+     * @param autoFreeClients whether client sessions are freed
+     * @param ignoreBranchBinding whether the branch-binding check is bypassed
+     * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @param protectData whether the data-loss comparison is made before the update
+     * @param acceptDataLoss whether a deletion it finds is carried through rather than refused
+     * @return the run key
+     */
+    static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
+        boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
+        boolean ignoreDumpInfoFormat, boolean protectData, boolean acceptDataLoss)
+    {
+        return runKeyFor(projectName, applicationId, fullUpdate, autoRestructure, autoFreeClients,
+            ignoreBranchBinding, ignoreDumpInfoFormat, protectData, acceptDataLoss, false);
     }
 
     /**
@@ -520,9 +612,34 @@ public class DatabaseUpdater implements IMcpTool
     static String runOrAnswer(boolean answerInPlace, String runKey, PendingWorkRegistry registry,
         String projectName, long timeoutMs, java.util.function.Supplier<String> work)
     {
+        return runOrAnswer(answerInPlace, runKey, registry, projectName, timeoutMs,
+            entry -> work.get());
+    }
+
+    /**
+     * As {@link #runOrAnswer(boolean, String, PendingWorkRegistry, String, long, java.util.function.Supplier)}
+     * for a body that has to see the entry it runs under.
+     * <p>
+     * The update claims the launch boundary on it: past {@code appManager.update} a cancel cannot
+     * reach the work, and before it a raised flag keeps the call from starting.
+     * </p>
+     *
+     * @param answerInPlace whether this call is a probe, answered on the calling thread
+     * @param runKey the key a real run under these arguments owns
+     * @param registry the run registry, which a probe does not touch
+     * @param projectName the project, named in a Pending body
+     * @param timeoutMs how long a real run is waited for before a Pending answer
+     * @param work the body, handed the entry it runs under
+     * @return a JSON result body
+     */
+    static String runOrAnswer(boolean answerInPlace, String runKey, PendingWorkRegistry registry,
+        String projectName, long timeoutMs,
+        java.util.function.Function<PendingWorkRegistry.PendingEntry, String> work)
+    {
         if (answerInPlace)
         {
-            return work.get();
+            // A probe is not a run: it has no entry, and nothing about it is claimed.
+            return work.apply(null);
         }
         registry.pruneExpired();
         // A FRESH call must never be silently served a finished cached result for the same params:
@@ -681,7 +798,7 @@ public class DatabaseUpdater implements IMcpTool
         String infobaseOwnerName)
     {
         return whatAnUpdateWouldFace(appManager, application, refresh, applicationId, projectName,
-            viaParent, infobaseOwnerName, null, false);
+            viaParent, infobaseOwnerName, null, false, false);
     }
 
     /**
@@ -730,6 +847,23 @@ public class DatabaseUpdater implements IMcpTool
         WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
         String infobaseOwnerName, DumpInfoProbe.Reading dumpInfo, boolean ignoreDumpInfoFormat)
     {
+        return whatAnUpdateWouldFace(appManager, application, refresh, applicationId, projectName,
+            viaParent, infobaseOwnerName, dumpInfo, ignoreDumpInfoFormat, false);
+    }
+
+    /**
+     * As {@link #whatAnUpdateWouldFace(IApplicationManager, IApplication, WorkspaceRefresh, String, String, boolean, String, DumpInfoProbe.Reading, boolean)},
+     * when the caller also asked to compare the infobase's own dump. A probe does not read it: the
+     * sentence in {@code infobaseChangeCheck} says so, and nothing is started.
+     *
+     * @param verifyInfobaseContent whether the caller asked for that comparison
+     * @return the answer
+     */
+    static String whatAnUpdateWouldFace(IApplicationManager appManager, IApplication application,
+        WorkspaceRefresh refresh, String applicationId, String projectName, boolean viaParent,
+        String infobaseOwnerName, DumpInfoProbe.Reading dumpInfo, boolean ignoreDumpInfoFormat,
+        boolean verifyInfobaseContent)
+    {
         JsonObject workspaceRefresh = refresh == null ? null : refresh.refresh();
         ApplicationUpdateState state;
         try
@@ -767,6 +901,18 @@ public class DatabaseUpdater implements IMcpTool
         {
             answer.put("dumpInfoFormatCheck", dumpInfoCheck); //$NON-NLS-1$
         }
+        // Same shape, same reason: which base the stored copy belongs to and what it holds would
+        // decide an incremental update, so the probe names it and stops nothing. A request to
+        // read the infobase itself is named and not performed: a dry run starts no Designer run.
+        String infobaseChangeCheck = describeInfobaseChangeCheck(dumpInfo);
+        if (verifyInfobaseContent)
+        {
+            infobaseChangeCheck = joinCheck(infobaseChangeCheck, aDryRunDoesNotReadTheInfobase());
+        }
+        if (infobaseChangeCheck != null)
+        {
+            answer.put("infobaseChangeCheck", infobaseChangeCheck); //$NON-NLS-1$
+        }
         return answer
             .put("notCheckedInDryRun", List.of("readiness", "exportValidation")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .put("notCheckedInDryRunNote", "The readiness check an update itself performs is not run " //$NON-NLS-1$ //$NON-NLS-2$
@@ -782,10 +928,10 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
-     * Reads the stored dump-info of an application's infobase and the format recorded for that base
-     * by its own Designer. Every leg that EDT may not be able to answer collapses to a reading with
-     * no expectation rather than to an exception: a check with nothing to compare is a fact the
-     * answer names, not a failure to run.
+     * Reads the stored dump-info of an application's infobase, the format recorded for that base by
+     * its own Designer, and what the file holds beside the base it is claimed for. Every leg that
+     * EDT may not be able to answer collapses to a reading with no expectation rather than to an
+     * exception: a check with nothing to compare is a fact the answer names, not a failure to run.
      *
      * @param infobaseProject the project that owns the infobase - the parent, for an extension
      * @param application the application the update targets
@@ -803,8 +949,7 @@ public class DatabaseUpdater implements IMcpTool
             return null;
         }
         java.nio.file.Path stored = ru.aiedt.mcp.server.support.SyncBaseline
-            .indexOf(infobaseProject, infobase.getUuid().toString()).getParent()
-            .resolve(DumpInfoProbe.FILE_NAME);
+            .dumpInfoFile(infobaseProject, infobase.getUuid().toString());
         String platformVersion =
             ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.thickClientPlatformVersion(
                 infobaseProject, infobase);
@@ -812,8 +957,14 @@ public class DatabaseUpdater implements IMcpTool
         java.nio.file.Path state = DumpInfoProbe.stateFile();
         String expected = DumpInfoProbe.applicableFormat(identity, state, platformVersion);
         String notCompared = DumpInfoProbe.inapplicableReason(identity, state, platformVersion);
+        // What the copy is, and what this store recorded for it when an update last left it there.
+        // Read in the same pass as the format: both are in the same file, and a caller that reads
+        // one of them has no reason to read the file twice.
+        InfobaseOutsideChange copy = InfobaseOutsideChange.copyOf(stored, identity);
+        InfobaseOutsideChange recorded =
+            InfobaseOutsideChange.read(InfobaseOutsideChange.recordFileOf(stored));
         return DumpInfoProbe.reading(stored.toString(), DumpInfoProbe.formatOf(stored), expected,
-            platformVersion, notCompared);
+            platformVersion, notCompared, copy, recorded);
     }
 
     /**
@@ -915,7 +1066,7 @@ public class DatabaseUpdater implements IMcpTool
             .put("expectedDumpInfoFormat", dumpInfo.expectedFormat) //$NON-NLS-1$
             .put("platformVersion", dumpInfo.platformVersion) //$NON-NLS-1$
             .put("tag", ErrorTags.DUMP_INFO_FORMAT.wire()) //$NON-NLS-1$
-            .put("nextStep", "sync_control syncOperation=rebuild_dump_info confirm=true") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("nextStep", "infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true") //$NON-NLS-1$ //$NON-NLS-2$
             .toJson();
     }
 
@@ -958,40 +1109,348 @@ public class DatabaseUpdater implements IMcpTool
     }
 
     /**
+     * The refusal an incremental update answers when the store's dump-info copy was recorded for an
+     * infobase other than the one this call targets, or {@code null} to go on.
+     * <p>
+     * An incremental update is decided against that copy, and the copy belongs to the store of one
+     * application: an application pointed at another base reads a file describing the base it used
+     * to name, so the update would be decided about the wrong database while answering about this
+     * one. A full update is not gated - it loads the model into the base it was given and does not
+     * read the copy.
+     * </p>
+     *
+     * @param dumpInfo the reading of the stored file, or {@code null}
+     * @param fullUpdate whether the caller asked for a full update
+     * @return the refusal as a JSON body, or {@code null} to go on
+     */
+    static String stopOnAnotherInfobase(DumpInfoProbe.Reading dumpInfo, boolean fullUpdate)
+    {
+        if (fullUpdate || dumpInfo == null || dumpInfo.recorded == null)
+        {
+            return null;
+        }
+        if (dumpInfo.recorded.replacedByLoad())
+        {
+            return stopOnALoadedInfobase(dumpInfo);
+        }
+        if (dumpInfo.copy == null || !dumpInfo.recorded.describesAnotherInfobaseThan(dumpInfo.copy))
+        {
+            return null;
+        }
+        return ToolResult.error("The stored ConfigDumpInfo.xml of this application was written " //$NON-NLS-1$
+            + "for infobase \"" + dumpInfo.recorded.identity + "\" while this application now " //$NON-NLS-1$ //$NON-NLS-2$
+            + "points at \"" + dumpInfo.copy.identity + "\". An incremental update is decided by " //$NON-NLS-1$ //$NON-NLS-2$
+            + "comparing the model against that file, so it would be decided about the " //$NON-NLS-1$
+            + "infobase the file describes, not the one this call names - which is how a base " //$NON-NLS-1$
+            + "ends up answered as up to date while it does not hold what the model carries. " //$NON-NLS-1$
+            + "Nothing was started. Write the file from the base this application points at: " //$NON-NLS-1$
+            + "infobase_admin operation=sync_control syncOperation=rebuild_dump_info " //$NON-NLS-1$
+            + "projectName=<this project> confirm=true, or pass fullUpdate=true to load the " //$NON-NLS-1$
+            + "configuration into this base without reading the file.") //$NON-NLS-1$
+            .put("dumpInfoFile", dumpInfo.file) //$NON-NLS-1$
+            .put("recordedInfobase", dumpInfo.recorded.identity) //$NON-NLS-1$
+            .put("currentInfobase", dumpInfo.copy.identity) //$NON-NLS-1$
+            .put("tag", ErrorTags.INFOBASE_CHANGED.wire()) //$NON-NLS-1$
+            .put("nextStep", REBUILD_COPY_STEP) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The refusal an incremental update answers when a load of a {@code .dt} has replaced the
+     * infobase and the stored copy has not been rewritten since. A full update is not gated: it
+     * loads the model into the base and the record written afterwards drops the mark.
+     *
+     * @param dumpInfo the reading, whose record carries the load
+     * @return the refusal as a JSON body
+     */
+    static String stopOnALoadedInfobase(DumpInfoProbe.Reading dumpInfo)
+    {
+        InfobaseOutsideChange recorded = dumpInfo.recorded;
+        String when = recorded.replacedAt == null ? "an unrecorded time" : recorded.replacedAt; //$NON-NLS-1$
+        return ToolResult.error("The infobase was replaced by loading \"" + recorded.replacedBy //$NON-NLS-1$
+            + "\" at " + when + ". The stored ConfigDumpInfo.xml still describes what the last " //$NON-NLS-1$ //$NON-NLS-2$
+            + "update here left, so an incremental update would be decided against that copy and " //$NON-NLS-1$
+            + "could answer that nothing has to be loaded. Nothing was started. Rewrite the copy " //$NON-NLS-1$
+            + "from the base: infobase_admin operation=sync_control syncOperation=rebuild_dump_info " //$NON-NLS-1$
+            + "projectName=<this project> confirm=true, or pass fullUpdate=true to load the " //$NON-NLS-1$
+            + "configuration into this base without reading the copy.") //$NON-NLS-1$
+            .put("dumpInfoFile", dumpInfo.file) //$NON-NLS-1$
+            .put("loadedFrom", recorded.replacedBy) //$NON-NLS-1$
+            .put("loadedAt", when) //$NON-NLS-1$
+            .put("tag", ErrorTags.INFOBASE_CHANGED.wire()) //$NON-NLS-1$
+            .put("nextStep", REBUILD_COPY_STEP) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The refusal an incremental update answers when the infobase's own dump does not match the
+     * stored copy, or when that dump could not be read. {@code null} when the two match.
+     * <p>
+     * A failed read carries the read's own failure kind. {@code infobaseChanged} is the tag of a
+     * difference of content and of a stored copy that cannot be read.
+     * </p>
+     *
+     * @param dumpInfo the stored reading, or {@code null}
+     * @param probe what the read of the infobase answered
+     * @return the refusal as a JSON body, or {@code null} when the infobase matches the copy
+     */
+    static String stopWhenTheInfobaseDiffers(DumpInfoProbe.Reading dumpInfo,
+        DumpInfoRebuilder.ContentProbe probe)
+    {
+        if (probe == null || probe.error != null || probe.content == null || !probe.content.known())
+        {
+            String reason = probe == null ? "the infobase was not read" //$NON-NLS-1$
+                : probe.error != null ? probe.error
+                    : "the infobase's dump carried no records"; //$NON-NLS-1$
+            return ToolResult.error("The infobase's ConfigDumpInfo.xml could not be read, so the " //$NON-NLS-1$
+                + "update was not started: " + reason) //$NON-NLS-1$
+                .put("tag", tagOfAFailedRead(probe)) //$NON-NLS-1$
+                .toJson();
+        }
+        if (dumpInfo == null || dumpInfo.copy == null || !dumpInfo.copy.known())
+        {
+            return ToolResult.error("verifyInfobaseContent was asked for, but the stored " //$NON-NLS-1$
+                + "ConfigDumpInfo.xml could not be read, so nothing was compared and the update " //$NON-NLS-1$
+                + "was not started. Rewrite the copy from the base: infobase_admin " //$NON-NLS-1$
+                + "operation=sync_control syncOperation=rebuild_dump_info " //$NON-NLS-1$
+                + "projectName=<this project> confirm=true.") //$NON-NLS-1$
+                .put("tag", ErrorTags.INFOBASE_CHANGED.wire()) //$NON-NLS-1$
+                .put("nextStep", REBUILD_COPY_STEP) //$NON-NLS-1$
+                .toJson();
+        }
+        if (!dumpInfo.copy.contentDiffersFrom(probe.content))
+        {
+            return null;
+        }
+        return ToolResult.error("The infobase holds " + probe.content.records //$NON-NLS-1$
+            + " records while the stored copy holds " + dumpInfo.copy.records //$NON-NLS-1$
+            + ". An incremental update is decided by comparing the model against that copy, so it " //$NON-NLS-1$
+            + "would be decided about content the infobase no longer holds. Nothing was started. " //$NON-NLS-1$
+            + "Rewrite the copy from the base: infobase_admin operation=sync_control " //$NON-NLS-1$
+            + "syncOperation=rebuild_dump_info projectName=<this project> confirm=true, or pass " //$NON-NLS-1$
+            + "fullUpdate=true to load the configuration into this base without reading the copy.") //$NON-NLS-1$
+            .put("dumpInfoFile", dumpInfo.file) //$NON-NLS-1$
+            .put("infobaseRecords", Integer.valueOf(probe.content.records)) //$NON-NLS-1$
+            .put("copyRecords", Integer.valueOf(dumpInfo.copy.records)) //$NON-NLS-1$
+            .put("tag", ErrorTags.INFOBASE_CHANGED.wire()) //$NON-NLS-1$
+            .put("nextStep", REBUILD_COPY_STEP) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The tag a failed read of the infobase carries. A read that names its own kind keeps it; one
+     * that names none is a Designer failure. A difference of content is not this case.
+     *
+     * @param probe the read, or {@code null} when none was made
+     * @return the tag
+     */
+    private static String tagOfAFailedRead(DumpInfoRebuilder.ContentProbe probe)
+    {
+        if (probe != null && probe.failureKind != null && !probe.failureKind.isEmpty())
+        {
+            return probe.failureKind;
+        }
+        return ErrorTags.THICK_CLIENT_FAILED.wire();
+    }
+
+    /**
+     * The sentence an update carries when the infobase's own dump matched the stored copy.
+     *
+     * @param probe the read that matched
+     * @return the sentence
+     */
+    static String describeVerifiedMatch(DumpInfoRebuilder.ContentProbe probe)
+    {
+        return "the infobase's own dump matches the stored copy: " + probe.content.records //$NON-NLS-1$
+            + " records"; //$NON-NLS-1$
+    }
+
+    /**
+     * @return the sentence a full update carries when it was asked to read the infobase and did not
+     */
+    static String aFullUpdateDoesNotReadTheInfobase()
+    {
+        return "a full update loads the configuration and does not read the infobase's dump"; //$NON-NLS-1$
+    }
+
+    /**
+     * @return the sentence a dry run carries when it was asked to read the infobase and did not
+     */
+    static String aDryRunDoesNotReadTheInfobase()
+    {
+        return "the infobase itself was not read: a dry run does not start a Designer run"; //$NON-NLS-1$
+    }
+
+    /**
+     * Joins two check sentences, either of which may be absent.
+     *
+     * @param first the sentence already chosen, or {@code null}
+     * @param second the sentence to add, or {@code null}
+     * @return the joined sentence, or {@code null} when both are absent
+     */
+    static String joinCheck(String first, String second)
+    {
+        if (second == null || second.isEmpty())
+        {
+            return first;
+        }
+        if (first == null || first.isEmpty())
+        {
+            return second;
+        }
+        return first + "; " + second; //$NON-NLS-1$
+    }
+
+    /**
+     * One sentence about the stored copy's base and content for answers that went ahead: what was
+     * compared, what matched, which base the copy belongs to, and that nothing has been recorded
+     * yet. A copy whose content differs from the record is named rather than passed over - the
+     * update is decided against the file, and the caller is the one who can act on that.
+     *
+     * @param dumpInfo the reading of the stored file, or {@code null}
+     * @return the sentence, or {@code null} when there is nothing to say (no file, or no
+     *         application of an infobase kind)
+     */
+    static String describeInfobaseChangeCheck(DumpInfoProbe.Reading dumpInfo)
+    {
+        if (dumpInfo == null)
+        {
+            return null;
+        }
+        // A load is the fact the next incremental update has to hear, including when the copy
+        // itself still matches the record: that match is exactly what hides the replacement.
+        // Another base stays the stronger fact when both are true, and the branch below names it.
+        if (dumpInfo.recorded != null && dumpInfo.recorded.replacedByLoad()
+            && (dumpInfo.copy == null || dumpInfo.copy.identity == null
+                || !dumpInfo.recorded.describesAnotherInfobaseThan(dumpInfo.copy)))
+        {
+            return describeALoad(dumpInfo.recorded);
+        }
+        if (dumpInfo.copy == null)
+        {
+            return null;
+        }
+        String records = dumpInfo.copy.records + " records"; //$NON-NLS-1$
+        if (dumpInfo.copy.identity == null)
+        {
+            return dumpInfo.copy.known()
+                ? "not compared: this application does not say where its infobase is, so the " //$NON-NLS-1$
+                    + "stored copy (" + records + ") cannot be matched to a base" //$NON-NLS-1$
+                : null;
+        }
+        // Said before the content is looked at, and whether or not the copy reads: which base the
+        // store belongs to is the stronger fact, and it holds even for a full update, which reads
+        // the copy but does not act on it.
+        if (dumpInfo.recorded != null && dumpInfo.recorded.known()
+            && dumpInfo.recorded.describesAnotherInfobaseThan(dumpInfo.copy))
+        {
+            return "the stored copy was recorded for infobase \"" + dumpInfo.recorded.identity //$NON-NLS-1$
+                + "\" while this application now points at \"" + dumpInfo.copy.identity //$NON-NLS-1$
+                + "\" - a full update does not read the copy, an incremental one would be " //$NON-NLS-1$
+                + "decided against the wrong base"; //$NON-NLS-1$
+        }
+        if (!dumpInfo.copy.known())
+        {
+            return null;
+        }
+        if (dumpInfo.recorded == null || !dumpInfo.recorded.known())
+        {
+            return "not compared: no copy has been recorded for this base yet - the file carries " //$NON-NLS-1$
+                + records + ", and an update that finishes records what it leaves"; //$NON-NLS-1$
+        }
+        if (dumpInfo.recorded.contentDiffersFrom(dumpInfo.copy))
+        {
+            return "the stored copy is not the one the last update here left: " //$NON-NLS-1$
+                + (dumpInfo.recorded.records < 0 ? "an unknown number of records" //$NON-NLS-1$
+                    : dumpInfo.recorded.records + " records") //$NON-NLS-1$
+                + " then, " + records + " now - an update before launch or another writer " //$NON-NLS-1$ //$NON-NLS-2$
+                + "rewrote it, and this update is decided against the file as it is"; //$NON-NLS-1$
+        }
+        return "matched: " + records + ", the content the last update here left"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The sentence that names a load recorded on the store's copy.
+     *
+     * @param recorded the record that carries the load
+     * @return the sentence
+     */
+    static String describeALoad(InfobaseOutsideChange recorded)
+    {
+        String when = recorded.replacedAt == null ? "an unrecorded time" : recorded.replacedAt; //$NON-NLS-1$
+        return "the infobase was replaced by loading \"" + recorded.replacedBy + "\" at " + when //$NON-NLS-1$ //$NON-NLS-2$
+            + " - the stored copy still describes what the last update here left, so an " //$NON-NLS-1$
+            + "incremental update would be decided against that copy. " //$NON-NLS-1$
+            + REBUILD_COPY_STEP + " rewrites the copy from the base, or pass fullUpdate=true"; //$NON-NLS-1$
+    }
+
+    /**
+     * Records which infobase the store's copy now belongs to and what it holds, after an update
+     * this server ran has left it there.
+     * <p>
+     * Read back rather than remembered from the reading taken before the update: the platform
+     * rewrites the copy while it works, so what the next update will be decided against is the file
+     * as it is now. Called after the update has finished, so a copy written halfway through a
+     * failed run is not recorded as one this server left. An unreadable copy is not a reason to
+     * keep a load mark: the update that just finished loaded the model into the base, so the mark
+     * is cleared and the other keys stay.
+     * </p>
+     *
+     * @param infobaseProject the project that owns the infobase - the parent, for an extension
+     * @param application the application whose infobase was updated
+     * @return why the record could not be written, or {@code null} when there was nothing to record
+     *         or the record was written
+     */
+    static String recordTheCopy(IProject infobaseProject, IApplication application)
+    {
+        if (!(application instanceof IInfobaseApplication))
+        {
+            return null;
+        }
+        InfobaseReference infobase = ((IInfobaseApplication)application).getInfobase();
+        if (infobase == null || infobase.getUuid() == null)
+        {
+            return null;
+        }
+        java.nio.file.Path stored =
+            ru.aiedt.mcp.server.support.SyncBaseline.dumpInfoFile(infobaseProject,
+                infobase.getUuid().toString());
+        InfobaseOutsideChange copy =
+            InfobaseOutsideChange.copyOf(stored, InfobaseIdentity.of(infobase));
+        if (!copy.known())
+        {
+            // A copy that does not read cannot be recorded as this update's. A load mark on the
+            // record would still stop the next incremental update, so it is cleared; a record
+            // with no mark is left as it was.
+            return InfobaseOutsideChange.clearTheLoad(InfobaseOutsideChange.recordFileOf(stored));
+        }
+        try
+        {
+            copy.writeTo(InfobaseOutsideChange.recordFileOf(stored));
+            return null;
+        }
+        catch (Exception | LinkageError cannotWrite)
+        {
+            return cannotWrite.toString();
+        }
+    }
+
+    /**
      * An execution context carrying the active shell.
      * <p>
      * The update is given one, because it wants a shell for any modal it raises. A probe is not:
      * it raises none, and nothing else it reads asks for a shell.
      * </p>
+     * <p>
+     * The wait for the UI thread is the bounded one {@link ApplicationUpdater} uses: a UI thread
+     * held by a modal dialog costs that wait, and the update goes on without a shell.
+     * </p>
      *
      * @return the context, carrying a shell when the workbench has one
      */
-    private static ExecutionContext contextWithActiveShell()
+    static ExecutionContext contextWithActiveShell()
     {
-        ExecutionContext context = new ExecutionContext();
-        Display display = Display.getDefault();
-        if (display == null || display.isDisposed())
-        {
-            return context;
-        }
-        final Shell[] shellHolder = new Shell[1];
-        display.syncExec(() ->
-        {
-            shellHolder[0] = display.getActiveShell();
-            if (shellHolder[0] == null)
-            {
-                Shell[] shells = display.getShells();
-                if (shells.length > 0)
-                {
-                    shellHolder[0] = shells[0];
-                }
-            }
-        });
-        if (shellHolder[0] != null)
-        {
-            context.setProperty(ExecutionContext.ACTIVE_SHELL_NAME, shellHolder[0]);
-        }
-        return context;
+        return ApplicationUpdater.buildExecutionContext(ApplicationUpdater.SHELL_WAIT_MS);
     }
 
     /**
@@ -1041,12 +1500,17 @@ public class DatabaseUpdater implements IMcpTool
      * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
      * @param checkOnly whether to answer what an update would face and start nothing. Reached only
      *            from the caller's thread - a probe is never a tracked run, see {@link #runOrAnswer}
+     * @param protectData whether the update stops for a restructure that would delete data
+     * @param acceptDataLoss whether the caller accepted that loss up front
      * @param params the full call, for the refreshWorkspace flag
+     * @param entry the run this update belongs to, or <code>null</code> for a probe, which is
+     *            answered on the caller's thread and is not a run
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean skipValidation, boolean checkOnly, Map<String, String> params)
+        boolean skipValidation, boolean checkOnly, boolean protectData, boolean acceptDataLoss,
+        Map<String, String> params, PendingWorkRegistry.PendingEntry entry)
     {
         String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
             DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
@@ -1143,21 +1607,57 @@ public class DatabaseUpdater implements IMcpTool
                 readDumpInfoProbe(infobaseProject, application);
             boolean ignoreDumpInfoFormat =
                 JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
+            boolean verifyContent =
+                JsonUtils.extractBooleanArgument(params, "verifyInfobaseContent", false); //$NON-NLS-1$ //$NON-NLS-2$
             if (checkOnly)
             {
                 // Answered here, and only here: the probe reaches this method on the caller's
                 // thread, never as a tracked run - see runOrAnswer. What it reads is the state and,
                 // if asked, a refresh; what it must not read is the readiness check, which
-                // synchronizes with the infobase.
+                // synchronizes with the infobase. The infobase's own dump is among what it must
+                // not read: a dry run starts no Designer run, and the answer says so.
                 return whatAnUpdateWouldFace(appManager, application,
                     refreshForProbe(params, project, infobaseProject), applicationId, projectName,
-                    viaParent, infobaseProject.getName(), dumpInfo, ignoreDumpInfoFormat);
+                    viaParent, infobaseProject.getName(), dumpInfo, ignoreDumpInfoFormat,
+                    verifyContent);
             }
             String formatStop = passTheFormatGate(appManager, application, dumpInfo,
                 ignoreDumpInfoFormat, () -> null);
             if (formatStop != null)
             {
                 return formatStop;
+            }
+            // Read in the same pass as the format and checked after it: a foreign format is a fact
+            // about the file's shape and is answered first, while this is a fact about WHICH base
+            // the file describes. Both stand before the workspace refresh and before anything is
+            // asked of the infobase, so a refusal leaves the base and the model as they were.
+            String infobaseStop = stopOnAnotherInfobase(dumpInfo, fullUpdate);
+            if (infobaseStop != null)
+            {
+                return infobaseStop;
+            }
+            // After the mark and the other-base gate, and before this update claims the infobase:
+            // the read takes that claim itself, releases the infobase, runs the same dump-info-only
+            // Designer path a rebuild uses, and gives the claim back. A full update does not read
+            // the copy, so it does not read the infobase either.
+            String verificationLine = null;
+            if (verifyContent)
+            {
+                if (fullUpdate)
+                {
+                    verificationLine = aFullUpdateDoesNotReadTheInfobase();
+                }
+                else
+                {
+                    DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContentViaEdt(
+                        infobaseProject.getName(), applicationId, CONTENT_VERIFY_TIMEOUT_MS);
+                    String contentStop = stopWhenTheInfobaseDiffers(dumpInfo, probe);
+                    if (contentStop != null)
+                    {
+                        return contentStop;
+                    }
+                    verificationLine = describeVerifiedMatch(probe);
+                }
             }
 
             boolean refreshWorkspace =
@@ -1170,6 +1670,20 @@ public class DatabaseUpdater implements IMcpTool
                 // decision right below is made against the model. Reported, never silent: 0 means
                 // the model already matched the disk, a number names how much this call picked up.
                 workspaceRefresh = refreshFromDisk(project, infobaseProject);
+            }
+
+            // The data-loss decision, and the place it is taken: after the model has been re-read
+            // from disk, so the comparison is against what the update would carry, and before
+            // anything is claimed or stopped, so a refusal leaves the base exactly as it was. The
+            // deletion is read from the base's own baseline rather than from the platform's
+            // confirmation window - see DataLossPlan for why the window cannot name it.
+            DataLossPlan.Plan dataLoss =
+                readDataLossPlan(infobaseProject, project, application, protectData);
+            String dataLossStop = passTheDataLossGate(dataLoss, protectData, acceptDataLoss,
+                () -> null);
+            if (dataLossStop != null)
+            {
+                return dataLossStop;
             }
 
             ApplicationUpdateState stateBefore = appManager.getUpdateState(application);
@@ -1271,7 +1785,31 @@ public class DatabaseUpdater implements IMcpTool
                 return switched.toJson();
             }
 
-            ApplicationUpdateState stateAfter = appManager.update(application, updateType, context, monitor);
+            // The launch boundary. Past this line the work is inside a blocking platform call with
+            // no budget: a cancel arriving later cannot pull it out, and the answer says so
+            // (STILL_RUNNING). A cancel that arrived earlier raised the flag, and here it keeps the
+            // call from starting at all - which is what makes cancelling an update mean something
+            // before the base is touched.
+            if (entry != null && !entry.claimTheLaunch())
+            {
+                ToolResult cancelled = ToolResult.error("The update was cancelled before it reached "
+                    + "the infobase. Nothing was started; the base is as it was.");
+                cancelled.put("tag", ErrorTags.CANCELLED.wire()); //$NON-NLS-1$
+                cancelled.put("projectName", projectName); //$NON-NLS-1$
+                cancelled.put("applicationId", applicationId); //$NON-NLS-1$
+                if (freedClients != null)
+                {
+                    cancelled.put("freedClients", freedClients); //$NON-NLS-1$
+                }
+                return cancelled.toJson();
+            }
+
+            ApplicationUpdateState stateAfter =
+                appManager.update(application, updateType, context, monitor);
+            if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
+            {
+                stateAfter = awaitUpdateEnd(appManager, application);
+            }
 
             // update() can hand back BEING_UPDATED: the work goes on inside EDT after this call
             // returns. Releasing the claim then would announce the infobase free while it is being
@@ -1282,17 +1820,18 @@ public class DatabaseUpdater implements IMcpTool
             String stillUpdating = null;
             if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
             {
-                stateAfter = awaitUpdateEnd(appManager, application);
-                if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
-                {
-                    stillUpdating = "The update was still running after " //$NON-NLS-1$
-                        + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
-                        + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
-                        + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
-                }
+                stillUpdating = "The update was still running after " //$NON-NLS-1$
+                    + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
+                    + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
+                    + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
             }
 
             boolean updateComplete = stateAfter == ApplicationUpdateState.UPDATED;
+            // The record of the copy is written only by an update that finished: the platform
+            // rewrites the file while it works, and a run that ended in another state may have left
+            // half of its own dump there. A failure to record is named in the answer rather than
+            // thrown - the update itself has already happened.
+            String recordFailure = updateComplete ? recordTheCopy(infobaseProject, application) : null;
             ToolResult result = ToolResult.success()
                 .put("project", projectName) //$NON-NLS-1$
                 .put("applicationId", applicationId) //$NON-NLS-1$
@@ -1309,6 +1848,10 @@ public class DatabaseUpdater implements IMcpTool
             {
                 result.put("withoutCrossProcessClaim", infobaseClaim.unprotectedReason()); //$NON-NLS-1$
             }
+
+            // What the pre-flight comparison found, said in the same answer the update answers
+            // with: the file it read, how many records it compared, and the addresses it named.
+            putDataLossCheck(result, dataLoss, protectData, acceptDataLoss);
 
             if (stillUpdating != null)
             {
@@ -1334,6 +1877,23 @@ public class DatabaseUpdater implements IMcpTool
             if (formatCheckLine != null)
             {
                 result.put("dumpInfoFormatCheck", formatCheckLine); //$NON-NLS-1$
+            }
+
+            // Which base the file the update was decided against belongs to, and what it held: the
+            // same check the refusal above stands on, said in the answer of an update that went
+            // through - a caller is owed the fact that the update was decided about this base.
+            String changeCheckLine = joinCheck(describeInfobaseChangeCheck(dumpInfo), verificationLine);
+            if (changeCheckLine != null)
+            {
+                result.put("infobaseChangeCheck", changeCheckLine); //$NON-NLS-1$
+            }
+            if (recordFailure != null)
+            {
+                // Said rather than passed over: the next update compares the copy against nothing
+                // and reports that, so a store that could not be recorded is a fact about this one.
+                result.put("infobaseChangeRecord", "the stored dump-info copy of this base could " //$NON-NLS-1$
+                    + "not be recorded after the update, so the next update has nothing to compare " //$NON-NLS-1$
+                    + "it against: " + recordFailure); //$NON-NLS-1$
             }
 
             if (updateComplete)
@@ -1366,6 +1926,7 @@ public class DatabaseUpdater implements IMcpTool
                     .put("stateBefore", stateBefore.name()) //$NON-NLS-1$
                     .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                     .put("updateComplete", Boolean.FALSE); //$NON-NLS-1$
+                putDataLossCheck(refusal, dataLoss, protectData, acceptDataLoss);
                 if (stillUpdating != null)
                 {
                     refusal.put("claimReleased", stillUpdating); //$NON-NLS-1$
@@ -1545,6 +2106,207 @@ public class DatabaseUpdater implements IMcpTool
             }
         }
         return ApplicationUpdateState.BEING_UPDATED;
+    }
+
+    /**
+     * Reads the data-loss comparison for this call, or answers {@code null} when the caller did not
+     * ask for it.
+     * <p>
+     * The project that owns the infobase carries the baseline; the model compared with it is the
+     * union of the projects this update would write, which for an extension routed to its parent is
+     * both of them. Reading is all this does - a plan that could not be built comes back saying so.
+     * </p>
+     *
+     * @param infobaseProject the project that owns the infobase
+     * @param project the project the call named
+     * @param application the application the call resolved to
+     * @param protectData whether the caller asked for the protection
+     * @return the plan, or {@code null} when nothing was to be compared
+     */
+    static DataLossPlan.Plan readDataLossPlan(IProject infobaseProject, IProject project,
+        IApplication application, boolean protectData)
+    {
+        if (!protectData)
+        {
+            return null;
+        }
+        List<IProject> modelProjects = new ArrayList<>();
+        modelProjects.add(project);
+        if (!project.equals(infobaseProject))
+        {
+            modelProjects.add(infobaseProject);
+        }
+        try
+        {
+            return DataLossPlan.fromStore.read(infobaseProject, application, modelProjects);
+        }
+        catch (RuntimeException | LinkageError cannotRead)
+        {
+            // A comparison that could not be made is reported, never turned into a refusal: what a
+            // refusal must rest on is two sides that were really read.
+            return DataLossPlan.notCompared(null, "the baseline could not be read (" //$NON-NLS-1$
+                + TextSuggest.safeMessage(cannotRead) + ")"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The update path's data-loss gate: a deletion the comparison found returns before
+     * {@code launch} runs.
+     * <p>
+     * This is the same shape as {@link #passTheFormatGate}, for the same reason: production passes a
+     * supplier answering {@code null}, because what follows the gate in {@link #updateDatabase} IS
+     * the path that starts the update, while a test passes a recording stand-in - which is what
+     * makes "a refusal launches nothing" a measurement rather than a reading of the source. The
+     * gate sits before the infobase is claimed and before any client is stopped, so a refusal
+     * leaves the base free and the answer can say nothing was started.
+     * </p>
+     *
+     * @param plan the comparison, or {@code null} when the caller asked for no protection
+     * @param protectData whether the caller asked for the protection
+     * @param acceptDataLoss whether the caller accepted the deletion up front
+     * @param launch what the update does once the comparison allows it; not called on a refusal
+     * @return the refusal JSON, or whatever {@code launch} returned
+     */
+    static String passTheDataLossGate(DataLossPlan.Plan plan, boolean protectData,
+        boolean acceptDataLoss, java.util.function.Supplier<String> launch)
+    {
+        if (protectData && plan != null && plan.compared && !plan.isEmpty() && !acceptDataLoss)
+        {
+            return dataLossRefusal(plan);
+        }
+        return launch == null ? null : launch.get();
+    }
+
+    /**
+     * The refusal an update answers when the comparison found data the restructure would delete.
+     * <p>
+     * It names what was compared and what was found, and says in the same breath that nothing was
+     * started - the caller has to be able to tell this from an update that ran and failed.
+     * </p>
+     *
+     * @param plan the comparison, non-empty and compared
+     * @return the refusal as a JSON body
+     */
+    static String dataLossRefusal(DataLossPlan.Plan plan)
+    {
+        return ToolResult.error("The update was not started: it would delete data this infobase " //$NON-NLS-1$
+            + "holds. The synchronization baseline " + plan.file + " records " //$NON-NLS-1$
+            + plan.dataLoss.size() + (plan.dataLoss.size() == 1 //$NON-NLS-1$
+                ? " entity that holds data and is missing from the model, so a restructure " //$NON-NLS-1$
+                    + "would drop the table behind it: " //$NON-NLS-1$
+                : " entities that hold data and are missing from the model, so a restructure " //$NON-NLS-1$
+                    + "would drop the tables behind them: ") //$NON-NLS-1$
+            + String.join(", ", plan.dataLoss) + ". Nothing was started - no update, no claim on " //$NON-NLS-1$ //$NON-NLS-2$
+            + "the infobase, no client stopped - and the base is as it was. Read the addresses and " //$NON-NLS-1$
+            + "resend the same call with acceptDataLoss=true if the loss is intended.") //$NON-NLS-1$
+            .put("status", "confirmationRequired") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("nothingStarted", Boolean.TRUE) //$NON-NLS-1$
+            .put("protectData", Boolean.TRUE) //$NON-NLS-1$
+            .put("dataLossCompared", Boolean.TRUE) //$NON-NLS-1$
+            .put("dataLossTables", plan.dataLoss) //$NON-NLS-1$
+            .put("dataLossCount", plan.dataLoss.size()) //$NON-NLS-1$
+            .put("dataLossFile", plan.file) //$NON-NLS-1$
+            .put("dataLossCheck", plan.check()) //$NON-NLS-1$
+            .put("nextStep", "resend the same call with acceptDataLoss=true") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
+
+    /**
+     * Adds what the comparison found to an answer.
+     * <p>
+     * An unprotected update says just that, because a caller reading {@code protectData} needs to
+     * know the update ran with the platform restructuring unasked. A protected one says what was
+     * compared and how many records it covered, whether or not anything was found - an answer that
+     * left the comparison out would read the same whether nothing was lost or nothing was read.
+     * </p>
+     *
+     * @param answer the answer being built
+     * @param plan the comparison, or {@code null} when {@code protectData} was off
+     * @param protectData whether the caller asked for the protection
+     * @param acceptDataLoss whether the caller accepted a deletion up front
+     */
+    static void putDataLossCheck(ToolResult answer, DataLossPlan.Plan plan, boolean protectData,
+        boolean acceptDataLoss)
+    {
+        answer.put("protectData", Boolean.valueOf(protectData)); //$NON-NLS-1$
+        if (!protectData)
+        {
+            answer.put("dataLossCompared", Boolean.FALSE); //$NON-NLS-1$
+            answer.put("dataLossCheck", "not compared: protectData=false, so the model was not " //$NON-NLS-1$
+                + "matched against the infobase's synchronization baseline; the platform " //$NON-NLS-1$
+                + "restructures without asking."); //$NON-NLS-1$
+            return;
+        }
+        if (plan == null)
+        {
+            answer.put("dataLossCompared", Boolean.FALSE); //$NON-NLS-1$
+            answer.put("dataLossCheck", "not compared: no comparison was made for this call."); //$NON-NLS-1$
+            return;
+        }
+        answer.put("dataLossCompared", Boolean.valueOf(plan.compared)); //$NON-NLS-1$
+        if (plan.compared)
+        {
+            answer.put("dataLossTables", plan.dataLoss); //$NON-NLS-1$
+            answer.put("dataLossCount", plan.dataLoss.size()); //$NON-NLS-1$
+            answer.put("dataLossFile", plan.file); //$NON-NLS-1$
+        }
+        answer.put("dataLossCheck", plan.check() //$NON-NLS-1$
+            + (plan.compared && !plan.isEmpty() && acceptDataLoss //$NON-NLS-1$
+                ? "; acceptDataLoss=true carried it through" //$NON-NLS-1$
+                : "")); //$NON-NLS-1$
+    }
+
+    /**
+     * The preference access against the running environment: the platform's own infobase
+     * preferences manager, wherever it is tracked, and no preference rather than an error where
+     * it is not.
+     *
+     * @return the access, whose reads answer {@code null} when the service is missing
+     */
+    static PromptAccess platformPromptAccess()
+    {
+        return infobaseId -> {
+            if (infobaseId == null)
+            {
+                return null;
+            }
+            Activator activator = Activator.getDefault();
+            com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager manager =
+                activator == null ? null : activator.getInfobasePreferencesManager();
+            if (manager == null)
+            {
+                return null;
+            }
+            try
+            {
+                return Boolean.valueOf(manager.getPromptConfirmationOnRestructure(infobaseId));
+            }
+            catch (RuntimeException | LinkageError unreadable)
+            {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * Reads an infobase's ask-confirmation-on-restructure preference - read only.
+     * <p>
+     * Nothing in this server writes it any more: the preference decides whether the platform opens
+     * its own restructure window, and an update that switched it on would leave every later update
+     * of that base asking a person. What an update protects itself with is the comparison made
+     * before it starts, not a window somebody has to answer.
+     * </p>
+     */
+    @FunctionalInterface
+    interface PromptAccess
+    {
+        /**
+         * The preference of one infobase.
+         *
+         * @param infobaseId the infobase's UUID
+         * @return the value, or {@code null} when it cannot be read
+         */
+        Boolean promptConfirmationOnRestructure(java.util.UUID infobaseId);
     }
 
     /**

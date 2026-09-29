@@ -34,8 +34,14 @@ import java.util.TreeMap;
 public final class GenericPending
 {
     /**
-     * The one argument that steers the Pending flow rather than the work's
-     * identity: {@code runKey} is a resume handle, so it is dropped from the key.
+     * The arguments that steer the Pending flow rather than the work's identity,
+     * so they are dropped from the key.
+     * <p>
+     * {@code runKey} is a resume handle. {@code operation} selects which delegate
+     * a facade runs; the subject already carries that choice, and a call through
+     * the facade and a direct call to the tool it routes to are the same work and
+     * must not sit on two keys because only one of them names the operation. No
+     * listed tool reads {@code operation} as part of its own work.
      * <p>
      * Note {@code timeoutSeconds} is deliberately <b>not</b> here: several listed
      * tools ({@code code_review}, {@code project_metrics}) already use it as their
@@ -45,7 +51,7 @@ public final class GenericPending
      * collide with a tool's own {@code timeoutSeconds}.
      */
     private static final Set<String> CONTROL_ARGS =
-        Collections.unmodifiableSet(new HashSet<>(Arrays.asList("runKey"))); //$NON-NLS-1$
+        Collections.unmodifiableSet(new HashSet<>(Arrays.asList("runKey", "operation"))); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
      * Read-only, idempotent, side-effect-free slow tools. See class contract.

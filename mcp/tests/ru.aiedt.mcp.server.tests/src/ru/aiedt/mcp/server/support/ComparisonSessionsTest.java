@@ -73,11 +73,15 @@ public class ComparisonSessionsTest
         assertEquals(twoSided, ComparisonSessions.fingerprintOf("P", "other", "   "));
     }
 
+    /**
+     * Verifies that an unused session is expired and returned for closing.
+     */
     @Test
     public void anIdleSessionExpiresAndIsHandedBackForClosing()
     {
         long opened = 1_000L;
         ComparisonSessions.Session session = ComparisonSessions.open(SIDES, "handle", opened);
+        ComparisonSessions.release(session);
         long later = opened + ComparisonSessions.IDLE_LIMIT_MS + 1;
         assertNull(ComparisonSessions.findByFingerprint(SIDES, later));
 
@@ -101,11 +105,15 @@ public class ComparisonSessionsTest
             nearlyExpired + ComparisonSessions.IDLE_LIMIT_MS - 1));
     }
 
+    /**
+     * Verifies that eviction removes an idle session when capacity is exceeded.
+     */
     @Test
     public void theOldestGoesWhenThereAreTooMany()
     {
         long now = 1_000L;
         ComparisonSessions.Session first = ComparisonSessions.open("sides 0", "h0", now);
+        ComparisonSessions.release(first);
         for (int i = 1; i <= ComparisonSessions.MAX_SESSIONS; i++)
         {
             ComparisonSessions.open("sides " + i, "h" + i, now + i);
@@ -119,6 +127,139 @@ public class ComparisonSessionsTest
         assertEquals(first.key, dropped.get(0).key);
     }
 
+
+    /**
+     * Verifies that a call holding a session protects it from idle expiry.
+     */
+    @Test
+    public void anInUseSessionDoesNotExpire()
+    {
+        long opened = 1_000L;
+        ComparisonSessions.Session session = ComparisonSessions.open(SIDES, "handle", opened);
+
+        assertTrue(ComparisonSessions.list(opened + ComparisonSessions.IDLE_LIMIT_MS + 1)
+            .contains(session));
+        assertTrue(ComparisonSessions.drainDropped().isEmpty());
+    }
+
+    /**
+     * Verifies that a merge continuing after the caller returns survives idle expiry.
+     */
+    @Test
+    public void aMergeRunningSessionDoesNotExpire()
+    {
+        long opened = 1_000L;
+        ComparisonSessions.Session session = ComparisonSessions.open(SIDES, "handle", opened);
+        ComparisonSessions.markMergeRunning(session);
+        ComparisonSessions.release(session);
+
+        assertTrue(ComparisonSessions.list(opened + ComparisonSessions.IDLE_LIMIT_MS + 1)
+            .contains(session));
+        assertTrue(ComparisonSessions.drainDropped().isEmpty());
+    }
+
+    /**
+     * A session whose merge was seen to end is under the idle limit again, and is no longer listed
+     * for the sweep to ask about.
+     */
+    @Test
+    public void aSessionWhoseMergeEndedExpiresAgain()
+    {
+        long opened = 1_000L;
+        ComparisonSessions.Session session = ComparisonSessions.open(SIDES, "handle", opened);
+        ComparisonSessions.markMergeRunning(session);
+        ComparisonSessions.release(session);
+        assertTrue(ComparisonSessions.mergesRunning().contains(session));
+
+        ComparisonSessions.setMergeRunning(session, false);
+
+        assertFalse(ComparisonSessions.mergesRunning().contains(session));
+        assertFalse(ComparisonSessions.list(opened + ComparisonSessions.IDLE_LIMIT_MS + 1)
+            .contains(session));
+        assertTrue(ComparisonSessions.drainDropped().contains(session));
+    }
+
+    /**
+     * Only a status naming an unfinished merge keeps the protection; no status and the three ends
+     * release it.
+     */
+    @Test
+    public void onlyAnUnfinishedMergeStatusKeepsTheSession()
+    {
+        assertFalse(BmComparisonHelper.stillMerging(null));
+        assertFalse(BmComparisonHelper.stillMerging("MERGE_PROCESS_FINISHED")); //$NON-NLS-1$
+        assertFalse(BmComparisonHelper.stillMerging("MERGE_PROCESS_DISCARDED")); //$NON-NLS-1$
+        assertFalse(BmComparisonHelper.stillMerging("COMPARISON_MERGE_PROCESS_CANCELLED")); //$NON-NLS-1$
+        assertTrue(BmComparisonHelper.stillMerging("MERGE_PROCESS_VALIDATION_FINISHED")); //$NON-NLS-1$
+    }
+
+    /**
+     * A finished merge that reports its end decorated is finished all the same.
+     * <p>
+     * The environment discards the session in the same breath as finishing, and the answer marks
+     * that by naming the state {@code "MERGE_PROCESS_FINISHED (session discarded on completion)"}.
+     * Read as an exact string that was a merge still going: the session stayed open past its end
+     * and its key reached the caller for a session nothing could page through.
+     * </p>
+     */
+    @Test
+    public void aDecoratedEndIsAnEnd()
+    {
+        assertFalse(BmComparisonHelper
+            .stillMerging("MERGE_PROCESS_FINISHED (session discarded on completion)")); //$NON-NLS-1$
+        assertFalse(BmComparisonHelper
+            .stillMerging("MERGE_PROCESS_DISCARDED (session discarded on completion)")); //$NON-NLS-1$
+        assertTrue("a decorated state that is not an end keeps the protection", //$NON-NLS-1$
+            BmComparisonHelper.stillMerging("MERGE_PROCESS_VALIDATION_FINISHED (settling)")); //$NON-NLS-1$
+    }
+
+    /**
+     * Verifies that eviction drops the oldest free session instead of a session a call holds.
+     */
+    @Test
+    public void anInUseSessionIsNotEvictedWhenThereAreTooMany()
+    {
+        long now = 1_000L;
+        ComparisonSessions.Session first = ComparisonSessions.open("sides 1", "h1", now);
+        ComparisonSessions.Session second = ComparisonSessions.open("sides 2", "h2", now + 1);
+        ComparisonSessions.release(second);
+        for (int i = 3; i <= ComparisonSessions.MAX_SESSIONS; i++)
+        {
+            ComparisonSessions.Session session = ComparisonSessions.open("sides " + i, "h" + i,
+                now + i);
+            ComparisonSessions.release(session);
+        }
+        ComparisonSessions.open("sides 5", "h5", now + 5);
+        assertNotNull(ComparisonSessions.findByKey(first.key, now + 6));
+        List<ComparisonSessions.Session> dropped = ComparisonSessions.drainDropped();
+        assertEquals(1, dropped.size());
+        assertEquals(second.key, dropped.get(0).key);
+    }
+
+    /**
+     * Verifies that eviction does not stop a merge that keeps running after its call returns.
+     */
+    @Test
+    public void aMergeRunningSessionIsNotEvictedWhenThereAreTooMany()
+    {
+        long now = 1_000L;
+        ComparisonSessions.Session first = ComparisonSessions.open("sides 1", "h1", now);
+        ComparisonSessions.markMergeRunning(first);
+        ComparisonSessions.release(first);
+        ComparisonSessions.Session second = ComparisonSessions.open("sides 2", "h2", now + 1);
+        ComparisonSessions.release(second);
+        for (int i = 3; i <= ComparisonSessions.MAX_SESSIONS; i++)
+        {
+            ComparisonSessions.Session session = ComparisonSessions.open("sides " + i, "h" + i,
+                now + i);
+            ComparisonSessions.release(session);
+        }
+        ComparisonSessions.open("sides 5", "h5", now + 5);
+        assertNotNull(ComparisonSessions.findByKey(first.key, now + 6));
+        List<ComparisonSessions.Session> dropped = ComparisonSessions.drainDropped();
+        assertEquals(1, dropped.size());
+        assertEquals(second.key, dropped.get(0).key);
+    }
     @Test
     public void closingForgetsAndHandsBackTheHandle()
     {
@@ -149,10 +290,14 @@ public class ComparisonSessionsTest
         assertTrue(ComparisonSessions.list(1_002L).isEmpty());
     }
 
+    /**
+     * Verifies that draining a dropped idle session is a one-time operation.
+     */
     @Test
     public void drainingTwiceDoesNotHandTheSameSessionBack()
     {
-        ComparisonSessions.open(SIDES, "handle", 1_000L);
+        ComparisonSessions.Session opened = ComparisonSessions.open(SIDES, "handle", 1_000L);
+        ComparisonSessions.release(opened);
         ComparisonSessions.findByFingerprint(SIDES, 1_000L + ComparisonSessions.IDLE_LIMIT_MS + 1);
         assertEquals(1, ComparisonSessions.drainDropped().size());
         assertTrue("closing the same comparison twice is an error the environment reports as a "
@@ -173,13 +318,17 @@ public class ComparisonSessionsTest
         assertFalse(ComparisonSessions.anythingOpen());
     }
 
+    /**
+     * Verifies that an expired idle session still counts until its handle is drained.
+     */
     @Test
     public void aDroppedSessionStillCountsAsSomethingToClose()
     {
         // The defect this guards: expiry forgets a session, and only a later call came back to
         // close the comparison behind it. A shutdown that asked "is anything OPEN" would answer
         // no, and the comparison would outlive the plugin holding the comparison store.
-        ComparisonSessions.open(SIDES, "handle", 1_000L);
+        ComparisonSessions.Session opened = ComparisonSessions.open(SIDES, "handle", 1_000L);
+        ComparisonSessions.release(opened);
         ComparisonSessions.findByFingerprint(SIDES, 1_000L + ComparisonSessions.IDLE_LIMIT_MS + 1);
         assertTrue("expired is not closed - the environment still holds the comparison",
             ComparisonSessions.anythingOpen());
