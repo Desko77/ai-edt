@@ -5170,6 +5170,21 @@ public class BmFormHelper
     }
 
     /**
+     * The FQN under which the settings of a dynamic-list attribute are registered.
+     *
+     * @param form the form, as a transaction holds it.
+     * @param attributeName the dynamic-list attribute.
+     * @return {@code <form FQN>.Attributes.<name>.ExtInfo.ListSettings}, or <code>null</code> when
+     *         the attribute is absent or the form is not a registered top object
+     * @throws Exception if the attribute name cannot be read
+     */
+    public String listSettingsFqn(Object form, String attributeName) throws Exception
+    {
+        Object attribute = findFormAttributeByName(form, attributeName);
+        return attribute == null ? null : externalPropertyFqn(form, attribute, LIST_SETTINGS);
+    }
+
+    /**
      * The FQN under which an external property of a form attribute is registered.
      * <p>
      * Composed the way the shipped delegate composes it: the form's own FQN, then
