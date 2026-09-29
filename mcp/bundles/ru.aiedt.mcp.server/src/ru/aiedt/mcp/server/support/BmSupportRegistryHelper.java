@@ -314,8 +314,9 @@ public final class BmSupportRegistryHelper
         /**
          * Objects whose mode the environment would not take, and why.
          * <p>
-         * Named rather than counted. A restore that reports a number and not the objects leaves a
-         * person unable to tell which of their work is still unprotected.
+         * Named, up to {@link BmSupportRegistryHelper#PAGE_LIMIT} entries; {@link #refusedCount} carries
+         * the total. A restore that reports a number and not the objects leaves a person unable to
+         * tell which of their work is still unprotected.
          * </p>
          */
         public final List<String> refused = new ArrayList<>();
