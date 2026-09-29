@@ -55,7 +55,10 @@ than all of them.
 - **The whole infobase as one `.dt` file.** `infobase_admin operation=export_database_snapshot`
   dumps the infobase into a `.dt`, and `restore_database_snapshot` loads one back after writing a
   backup of what the infobase holds (`backupTo`, derived beside the file when omitted): the load
-  replaces everything the infobase holds and does not start without the backup.
+  replaces everything the infobase holds and does not start without the backup. A finished load
+  marks the stored `ConfigDumpInfo.xml` copy, and an incremental `update_database` is then refused
+  (`infobaseChanged`) until `sync_control syncOperation=rebuild_dump_info` rewrites it;
+  `verifyInfobaseContent=true` compares the copy with the infobase itself before an update.
 
 - **Working inside an extension.** Borrowing (`extension_workshop operation=borrow_object` /
   `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
