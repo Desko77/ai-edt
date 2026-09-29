@@ -109,8 +109,7 @@ public final class BmInfobaseExtensionHelper
         public boolean databaseUpdated;
         /**
          * Why a requested database update could not be confirmed, when it could not;
-         * <code>null</code> otherwise. Carries the honest answer where
-         * {@link #databaseUpdated} once simply echoed the request.
+         * <code>null</code> otherwise.
          */
         public String databaseUpdateNote;
         public String designerLog;
@@ -1422,7 +1421,7 @@ public final class BmInfobaseExtensionHelper
     /** What the designer log of an install run vouches for about a requested database update. */
     enum DatabaseUpdateOutcome
     {
-        /** A success line is present and no failure line is. */
+        /** A success line naming the database is present and no failure line is. */
         CONFIRMED,
         /** The log says nothing either way (or there is no log). */
         UNVERIFIED,
@@ -1437,7 +1436,10 @@ public final class BmInfobaseExtensionHelper
      * The platform speaks the language the IDE runs in, so both English and Russian
      * wordings are matched; a failure line anywhere wins over every success line, and a
      * summary that counts zero errors ("errors: 0" / its Russian twin) is not a failure
-     * report. Package-visible: the matching turns on prose and is exactly the kind that
+     * report. Only a success line that names the database confirms the update: the same
+     * run loads the extension first, and its "Загрузка конфигурации успешно завершена"
+     * vouches for the load alone. Measured: a load and update run of an unchanged
+     * extension leaves that load line as the whole log. Package-visible: the matching turns on prose and is exactly the kind that
      * stops working without anyone noticing, so a test reads it directly.
      * </p>
      *
@@ -1468,8 +1470,11 @@ public final class BmInfobaseExtensionHelper
             {
                 failed = true;
             }
-            if (line.contains("successfully") || line.contains("completed") //$NON-NLS-1$ //$NON-NLS-2$
-                || line.contains("успешно")) // the Russian "successfully" wording //$NON-NLS-1$
+            boolean success = line.contains("successfully") || line.contains("completed") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("успешно"); // the Russian "successfully" wording //$NON-NLS-1$
+            boolean namesTheDatabase = line.contains("database") //$NON-NLS-1$
+                || line.contains("базы данных"); // the Russian "of the database" wording //$NON-NLS-1$
+            if (success && namesTheDatabase)
             {
                 confirmed = true;
             }
